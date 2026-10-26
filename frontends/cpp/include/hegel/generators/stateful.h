@@ -386,6 +386,36 @@ namespace hegel::stateful {
     /// @cond INTERNAL
     namespace detail {
 
+        class TakenVariables {
+          public:
+            TakenVariables(const TestCase& tc,
+                           hegel::internal::PoolHandle& pool)
+                : tc_(tc), pool_(pool) {}
+            TakenVariables(const TakenVariables&) = delete;
+            TakenVariables& operator=(const TakenVariables&) = delete;
+            ~TakenVariables() {
+                for (int64_t variable : variables_) {
+                    pool_.restore_unchecked(tc_, variable);
+                }
+            }
+
+            void add(int64_t variable) { variables_.push_back(variable); }
+
+            void keep_last() { variables_.pop_back(); }
+
+            void restore() {
+                while (!variables_.empty()) {
+                    pool_.restore(tc_, variables_.back());
+                    variables_.pop_back();
+                }
+            }
+
+          private:
+            const TestCase& tc_;
+            hegel::internal::PoolHandle& pool_;
+            std::vector<int64_t> variables_;
+        };
+
         // A filtered consuming draw from a pool whose values `values` holds
         // by variable id. Each attempt consumes a variable the engine
         // chooses, in a span that is discarded when `predicate` rejects its
@@ -400,26 +430,25 @@ namespace hegel::stateful {
                                const std::function<bool(const T&)>& predicate) {
             namespace hi = hegel::internal;
             uint64_t attempt = hi::label(hi::LabelName::FilterAttempt);
-            std::vector<int64_t> rejected;
+            TakenVariables taken(tc, pool);
             std::optional<T> accepted;
             for (int i = 0; i < hi::filter_attempts && !accepted; ++i) {
                 hi::start_span(tc, attempt);
                 hi::start_span(tc, label);
                 int64_t variable = pool.draw_variable(tc, true);
+                taken.add(variable);
                 hi::stop_span(tc);
                 T& value = values.at(variable);
                 if (predicate(value)) {
                     hi::stop_span(tc);
+                    taken.keep_last();
                     accepted = std::move(value);
                     values.erase(variable);
                 } else {
                     hi::stop_span(tc, true);
-                    rejected.push_back(variable);
                 }
             }
-            for (int64_t variable : rejected) {
-                pool.restore(tc, variable);
-            }
+            taken.restore();
             if (!accepted) {
                 tc.reject();
             }
@@ -1135,8 +1164,7 @@ namespace hegel::stateful {
                     for (std::size_t worker = 0; worker < worker_count;
                          ++worker) {
                         state.cases[worker] = tc.clone();
-                        internal::set_concurrent_worker(*state.cases[worker],
-                                                        worker);
+                        state.cases[worker]->set_worker(worker);
                     }
                     state.num_workers_completed = 0;
                     ++state.round_number;

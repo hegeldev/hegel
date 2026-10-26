@@ -13,6 +13,7 @@
 #include <map>
 #include <optional>
 #include <ostream>
+#include <regex>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -563,4 +564,117 @@ TEST(ReprLayout, TextWithANewlineIsAnError) {
 
 TEST(ReprLayout, ZeroWidthIsAnError) {
     EXPECT_THROW(hegel::internal::Document(0), std::runtime_error);
+}
+
+namespace {
+    std::string print_list(uint64_t width) {
+        hegel::internal::Document document(width);
+        hegel::internal::Printer printer = document.printer();
+        printer.begin_group(1, "{");
+        printer.text("1000");
+        printer.text(",");
+        printer.breakable(" ");
+        printer.text("2000");
+        printer.if_break(",");
+        printer.end_group("}");
+        return document.finish();
+    }
+} // namespace
+
+TEST(ReprLayout, IfBreakTextShowsOnlyInABrokenGroup) {
+    EXPECT_EQ(print_list(79), "{1000, 2000}");
+    EXPECT_EQ(print_list(8), "{1000,\n 2000,}");
+}
+
+TEST(ReprLayout, ACommentEndsItsLineAndBreaksTheGroup) {
+    hegel::internal::Document document(79);
+    hegel::internal::Printer printer = document.printer();
+    printer.begin_group(1, "{");
+    printer.text("1,");
+    printer.comment("the first");
+    printer.breakable(" ");
+    printer.text("2");
+    printer.end_group("}");
+    EXPECT_EQ(document.finish(), "{1,  // the first\n 2\n}");
+}
+
+TEST(ReprLayout, ADeferredPrinterFillsItsHoleLater) {
+    hegel::internal::Document document(79);
+    hegel::internal::Printer printer = document.printer();
+    printer.text("[");
+    hegel::internal::DeferredPrinter hole(printer);
+    printer.text("]");
+    hole.printer().text("filled");
+    EXPECT_EQ(document.finish(), "[filled]");
+    hole.printer().text("dropped");
+    hegel::internal::DeferredPrinter dead(hole.printer());
+    dead.printer().text("dropped");
+    EXPECT_EQ(document.finish(), "[filled]");
+}
+
+TEST(ReprLayout, ASpeculationKeepsOnlyWhatItCommits) {
+    hegel::internal::Document document(79);
+    hegel::internal::Printer printer = document.printer();
+    {
+        hegel::internal::Speculation kept(printer);
+        printer.text("kept");
+        kept.commit();
+    }
+    {
+        hegel::internal::Speculation dropped(printer);
+        printer.text("dropped");
+    }
+    EXPECT_EQ(document.finish(), "kept");
+}
+
+class Unprintable {
+  public:
+    explicit Unprintable(int v) : v_(v) {}
+    friend std::ostream& operator<<(std::ostream&, const Unprintable& u) {
+        throw std::runtime_error("cannot print " + std::to_string(u.v_));
+    }
+
+  private:
+    int v_;
+};
+
+TEST(ReprLayout, AValueThatFailsToPrintLeavesNoPartialLine) {
+    testing::internal::CaptureStderr();
+    EXPECT_THROW(hegel::test(
+                     [](hegel::TestCase& tc) {
+                         tc.note("before");
+                         (void)tc.draw(gs::just(Unprintable(1)));
+                     },
+                     hegel::Settings{.test_cases = 1,
+                                     .verbosity = hegel::Verbosity::Verbose,
+                                     .database = hegel::Database::disabled()}),
+                 std::runtime_error);
+    std::string output = testing::internal::GetCapturedStderr();
+    EXPECT_TRUE(contains(output, "before")) << output;
+    EXPECT_FALSE(contains(output, "auto draw_1")) << output;
+}
+
+TEST(ReprLayout, ARandomEnginePrintsWhatItHandedOut) {
+    testing::internal::CaptureStderr();
+    hegel::test(
+        [](hegel::TestCase& tc) {
+            auto rng = tc.draw("rng", gs::randoms());
+            (void)rng();
+            (void)rng();
+            auto seeded =
+                tc.draw("seeded", gs::randoms({.use_true_random = true}));
+            (void)seeded();
+        },
+        hegel::Settings{.test_cases = 1,
+                        .verbosity = hegel::Verbosity::Verbose,
+                        .database = hegel::Database::disabled()});
+    std::string output = testing::internal::GetCapturedStderr();
+    EXPECT_TRUE(std::regex_search(
+        output,
+        std::regex(
+            R"(auto rng = HegelRandom\{\.consumed = \{[0-9]+, [0-9]+\}\};)")))
+        << output;
+    EXPECT_TRUE(std::regex_search(
+        output, std::regex(R"(auto seeded = HegelRandom\{\.seed = [0-9]+\};)")))
+        << output;
 }

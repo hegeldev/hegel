@@ -137,3 +137,49 @@ TEST(Floats, LongDoubleDrawsAsDouble) {
                    std::fabs(x) <= std::numeric_limits<double>::max();
         });
 }
+
+TEST(Floats, NarrowingABoundMovesItInward) {
+    using gs::detail::narrow_down;
+    using gs::detail::narrow_up;
+    float up = narrow_up<float>(0.1);
+    float down = narrow_down<float>(0.1);
+    EXPECT_GT(static_cast<double>(up), 0.1);
+    EXPECT_LT(static_cast<double>(down), 0.1);
+    EXPECT_EQ(std::nextafter(down, 1.0f), up);
+    EXPECT_EQ(narrow_up<float>(0.5), 0.5f);
+    EXPECT_EQ(narrow_down<float>(0.5), 0.5f);
+    EXPECT_EQ(narrow_up<float>(1e300), std::numeric_limits<float>::infinity());
+    EXPECT_EQ(narrow_down<float>(1e300), std::numeric_limits<float>::max());
+    EXPECT_EQ(narrow_up<float>(-1e300), std::numeric_limits<float>::lowest());
+    EXPECT_EQ(narrow_down<float>(-1e300),
+              -std::numeric_limits<float>::infinity());
+}
+
+TEST(Floats, LongDoubleBoundsBetweenDoublesAreRespected) {
+    double above_one = std::nextafter(1.0, 2.0);
+    double third = std::nextafter(std::nextafter(above_one, 2.0), 2.0);
+    long double tiny = std::ldexp(1.0L, -54);
+    long double min_value = 1.0L + tiny;
+    long double max_value = static_cast<long double>(third) - tiny;
+    hegel::tests::common::assert_all_examples<long double>(
+        gs::floats<long double>(
+            {.min_value = min_value, .max_value = max_value}),
+        [&](const long double& x) { return x >= min_value && x <= max_value; });
+}
+
+TEST(Floats, LongDoubleExcludesOnlyBoundsThatAreDoubles) {
+    double above_one = std::nextafter(1.0, 2.0);
+    double second = std::nextafter(above_one, 2.0);
+    long double tiny = std::ldexp(1.0L, -54);
+    long double max_value = static_cast<long double>(second) - tiny;
+    for (long double min_value : {1.0L, 1.0L + tiny}) {
+        hegel::tests::common::assert_all_examples<long double>(
+            gs::floats<long double>({.min_value = min_value,
+                                     .max_value = max_value,
+                                     .exclude_min = true,
+                                     .exclude_max = true}),
+            [&](const long double& x) {
+                return x == static_cast<long double>(above_one);
+            });
+    }
+}

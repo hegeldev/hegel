@@ -320,10 +320,12 @@ namespace hegel::internal {
             return;
         }
         Printer printer = test_case_printer(tc);
+        Speculation speculation(printer);
         printer.text(prefix);
         print_value(printer, value);
         printer.text(suffix);
         printer.hard_break();
+        speculation.commit();
     }
 
 } // namespace hegel::internal

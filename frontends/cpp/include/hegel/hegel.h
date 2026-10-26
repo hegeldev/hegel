@@ -104,18 +104,15 @@
  * and then shrink it to find the smallest counterexample. It reports:
  *
  * @code{.txt}
- * --- Failure: below_50 (my_test.cpp:3) ----------------------------------
- * Falsified after 3 test cases (0 discarded):
+ * auto n = 50;
  *
- *   auto n = 50;
- *
- * Exception: std::runtime_error: n should be below 50
- * rerun with: HEGEL_REPRODUCE_FAILURE(below_50, "AAEAAAAACgEAAAAy")
+ * To reproduce this failure, add this line above HEGEL_TEST(below_50):
+ *     HEGEL_REPRODUCE_FAILURE(below_50, "AAEAAAAACgEAAAAy")
  * @endcode
  *
- * The header names the test and where it is defined, the count says how
- * many cases it took to find the failure, and the falsifying value(s). The last
- * line replays that exact failure. See @ref HEGEL_REPRODUCE_FAILURE.
+ * The report shows the falsifying value(s), then the line that replays that
+ * exact failure (see @ref HEGEL_REPRODUCE_FAILURE). The test's own exception,
+ * `n should be below 50`, then propagates out of `below_50()`.
  *
  * To fix this test, you can constrain the integers you generate with the
  * `min_value` and `max_value` parameters:
@@ -232,14 +229,12 @@
  * @endcode
  *
  * @code{.txt}
- * --- Failure: running_sum_stays_positive (my_test.cpp:17) ---------------
- * Falsified after 2 test cases (0 discarded):
+ * auto l = std::vector<int>{-1};
  *
- *   auto l = std::vector<int>{-1};
- *
- * Exception: std::runtime_error: running sum went negative
- * rerun with: HEGEL_REPRODUCE_FAILURE(running_sum_stays_positive,
- * "AAMAAAABAQAKAQAAAP8BAA==")
+ * To reproduce this failure, add this line above
+ * HEGEL_TEST(running_sum_stays_positive):
+ *     HEGEL_REPRODUCE_FAILURE(running_sum_stays_positive,
+ *     "AAMAAAABAQAKAQAAAP8BAA==")
  * @endcode
  *
  * The assertion macros of a test framework work too. See @ref use_gtest for
@@ -326,20 +321,20 @@
  * @endcode
  *
  * @code{.txt}
- * --- Failure: Arithmetic.AdditionCommutes (arithmetic_test.cpp:8) ---
- * Falsified after 2 test cases (0 discarded):
+ * auto x = 51;
+ * auto y = 0;
  *
- *   auto x = 51;
- *   auto y = 0;
- *
- * Exception: hegel::GTestFailure: arithmetic_test.cpp:11: Expected: (x + y) ==
- * (y + x), actual: 51 vs 0
+ * To reproduce this failure, pass its blob to hegel::test():
+ *     hegel::test(test_fn, settings, {"AAMAAAAACgEAAAAzCgEAAAAA"})
  * @endcode
  *
- * Outside a test framework, use @ref HEGEL_TEST, since it names the test in
- * the failure report for you. hegel::test() can still be used: it derives the
- * database key from the function that calls it, and you pass a TestLocation to
- * name the test in the failure output.
+ * GoogleTest then reports the test failed with the hegel::GTestFailure that
+ * holds the failed assertion (`arithmetic_test.cpp:11: Expected: (x + y) ==
+ * (y + x), actual: 51 vs 0`).
+ *
+ * Outside a test framework, use @ref HEGEL_TEST, since it names the test for
+ * you. hegel::test() can still be used: it derives the database key from the
+ * function that calls it, and you can pass a TestLocation to name the test.
  *
  * @subsection learning_more Learning more
  *
@@ -430,14 +425,14 @@ namespace hegel {
     /**
      * @brief Where a test is defined.
      *
-     * A failure report names the test and its source line in its header:
-     * `--- Failure: my_property (tests/example.cpp:42) ---`. @ref HEGEL_TEST
-     * fills this in from the test's name and position. A property inside
-     * a GoogleTest test fills this in from that test's name and the line of the
-     * hegel::test() call.
+     * The location scopes the example database (the default
+     * Settings::database_key) and tells the engine where the test is
+     * defined. @ref HEGEL_TEST fills this in from the test's name and
+     * position. A property inside a GoogleTest test fills this in from that
+     * test's name and the line of the hegel::test() call.
      */
     struct TestLocation {
-        /// Test name, as it appears in the report header.
+        /// Test name.
         std::string name;
         /// Source file the test is defined in.
         std::string file;
@@ -456,9 +451,9 @@ namespace hegel {
      * function. The key is derived also when the database is disabled,
      * because a derandomized run derives its seed from it.
      *
-     * Inside a GoogleTest test the failure report's header names that test
-     * and the line of the call. Outside one it reads `--- Failure ---`. Pass
-     * a TestLocation to the overload below to name it yourself.
+     * Inside a GoogleTest test, the test location is that test and the line
+     * of the call. Pass a TestLocation to the overload below to name it
+     * yourself.
      *
      * @code{.cpp}
      * #include "hegel/hegel.h"
@@ -513,11 +508,11 @@ namespace hegel {
               int caller_line = HEGEL_CALLER_LINE);
 
     /**
-     * @brief Run a Hegel test that names itself in its failure report.
+     * @brief Run a Hegel test at a location you name.
      *
-     * Behaves like the overload above. The failure report's header names
-     * @p location's test and source line instead of reading `--- Failure ---`,
-     * and Settings::database_key defaults to the location's file and name.
+     * Behaves like the overload above, except that the test location is
+     * @p location and Settings::database_key defaults to the location's file
+     * and name.
      *
      * @code{.cpp}
      * hegel::test(my_body, {"my_property", __FILE__, __LINE__},
@@ -636,7 +631,8 @@ namespace hegel {
  * @brief Replay a failing example for a @ref HEGEL_TEST from its blob.
  *
  * @code{.txt}
- * rerun with: HEGEL_REPRODUCE_FAILURE(addition_commutes, "AAEAAAAACgEAAAAA")
+ * To reproduce this failure, add this line above HEGEL_TEST(addition_commutes):
+ *     HEGEL_REPRODUCE_FAILURE(addition_commutes, "AAEAAAAACgEAAAAA")
  * @endcode
  *
  * Place it above the matching HEGEL_TEST, keyed by the same name. The test

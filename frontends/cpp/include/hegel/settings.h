@@ -93,11 +93,11 @@ namespace hegel {
       public:
         /// The configuration of the database. See the methods below.
         enum class Kind {
-            Unset,    ///< Use the settings profile's database: `.hegel` by
-                      ///< default, disabled by the `ci` and `workload`
-                      ///< profiles.
-            Default,  ///< Use the database at `.hegel`, whatever the
-                      ///< profile says.
+            Unset,    ///< Use the settings profile's database:
+                      ///< `.hegel/examples` by default, disabled by the
+                      ///< `ci` and `workload` profiles.
+            Default,  ///< Use the database at `.hegel/examples`, whatever
+                      ///< the profile says.
             Disabled, ///< Disable the database.
             Path,     ///< Use the given directory as the database.
         };
@@ -106,8 +106,8 @@ namespace hegel {
         /// @return A database with Database::Kind::Unset.
         static Database unset() { return {Kind::Unset, {}}; }
 
-        /// Use the database at `.hegel`, also where the settings profile
-        /// disables the database.
+        /// Use the database at `.hegel/examples`, also where the settings
+        /// profile disables the database.
         /// @return A database with Database::Kind::Default.
         static Database default_location() { return {Kind::Default, {}}; }
 
@@ -228,8 +228,9 @@ namespace hegel {
         /// NondeterminismStrictness::Quiet.
         std::optional<NondeterminismStrictness> nondeterminism_strictness;
 
-        /// If true, a failure report ends with a `rerun with:` line holding
-        /// the base64 blob that replays the failure. The base value is true.
+        /// If true, the report of each failure ends with the line that
+        /// replays it from its base64 reproduce blob, at every verbosity.
+        /// The base value is true.
         std::optional<bool> print_blob;
 
         /// If true, the run prints statistics at its end: for each label
@@ -243,8 +244,9 @@ namespace hegel {
         std::optional<bool> unbounded_choices;
 
         /// Configure the Hegel database. See Database. The default,
-        /// Database::unset(), keeps the database of the profile: `.hegel`,
-        /// or disabled under the `ci` and `workload` profiles.
+        /// Database::unset(), keeps the database of the profile:
+        /// `.hegel/examples`, or disabled under the `ci` and `workload`
+        /// profiles.
         Database database = Database::unset();
 
         /// Key scoping the examples stored in and replayed from the

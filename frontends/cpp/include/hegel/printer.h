@@ -47,9 +47,40 @@ namespace hegel::internal {
         // Text from a formatter that knows nothing of the printer: the engine
         // recovers its bracket structure, so it can break like the rest.
         void reflow(std::string_view text);
+        void if_break(std::string_view text);
+        void comment(std::string_view text);
+
+        hegel_printer_t* handle() const { return handle_; }
 
       private:
         hegel_printer_t* handle_;
+    };
+
+    class DeferredPrinter {
+      public:
+        explicit DeferredPrinter(const Printer& at);
+        ~DeferredPrinter();
+        DeferredPrinter(const DeferredPrinter&) = delete;
+        DeferredPrinter& operator=(const DeferredPrinter&) = delete;
+
+        Printer printer() const { return Printer(handle_); }
+
+      private:
+        hegel_printer_t* handle_ = nullptr;
+    };
+
+    class Speculation {
+      public:
+        explicit Speculation(const Printer& printer);
+        ~Speculation();
+        Speculation(const Speculation&) = delete;
+        Speculation& operator=(const Speculation&) = delete;
+
+        void commit();
+
+      private:
+        hegel_printer_t* handle_;
+        bool resolved_ = false;
     };
 
     // A standalone engine document, for rendering a value outside a test

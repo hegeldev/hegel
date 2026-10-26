@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <functional>
 #include <future>
 #include <memory>
@@ -221,6 +222,35 @@ namespace hegel {
          * @endcode
          */
         TestCase clone() const;
+
+        /**
+         * @brief Attribute what this test case prints from now on to a
+         *        worker.
+         *
+         * When several threads each draw from their own clone, give each
+         * clone a worker index so the output says which thread printed what.
+         * Every line this test case prints after the call, and every line
+         * of the blocks and clones made from it after the call, is prefixed
+         * with `[worker N +X.XXXms]`: the worker index and the time since
+         * the test case started.
+         *
+         * @param worker_index The worker to attribute the output to.
+         * @throws std::invalid_argument in an explicit test case.
+         *
+         * @code{.cpp}
+         * std::vector<std::thread> threads;
+         * for (std::size_t i = 0; i < 2; i++) {
+         *     threads.emplace_back([worker = tc.clone(), i]() mutable {
+         *         worker.set_worker(i);
+         *         auto n = worker.draw(gs::integers<int>());
+         *     });
+         * }
+         * for (auto& thread : threads) {
+         *     thread.join();
+         * }
+         * @endcode
+         */
+        void set_worker(std::size_t worker_index);
 
         /**
          * @brief Run @p fn on a clone of this test case in a new thread.

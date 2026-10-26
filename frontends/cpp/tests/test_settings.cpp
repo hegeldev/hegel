@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <hegel.h>
 #include <hegel/hegel.h>
 #include <hegel/internal.h>
 #include <map>
@@ -218,14 +219,11 @@ TEST(FlakyReporting, QuietReportsUnconfirmedFailures) {
     EXPECT_EQ(failure_count, 2u);
     EXPECT_NE(output.find("note: unconfirmed failure"), std::string::npos)
         << output;
-    EXPECT_NE(output.find("Exception: std::runtime_error: first case fails"),
-              std::string::npos)
-        << output;
-    EXPECT_NE(output.find("Exception: std::logic_error: thirtieth case fails"),
-              std::string::npos)
-        << output;
+    EXPECT_NE(message.find("first case fails"), std::string::npos) << message;
+    EXPECT_NE(message.find("thirtieth case fails"), std::string::npos)
+        << message;
     EXPECT_NE(output.find("saw "), std::string::npos) << output;
-    EXPECT_EQ(output.find("rerun with:"), std::string::npos) << output;
+    EXPECT_EQ(output.find("To reproduce"), std::string::npos) << output;
 }
 
 TEST(FlakyReporting, WarnStrictnessKeepsRunning) {
@@ -534,6 +532,63 @@ TEST(FailureBlobs, BlobReproduceFailure) {
     }
 }
 
+int engine_cases_of_a_failing_run() {
+    hegel_context_t* ctx = hegel_context_new();
+    hegel_settings_t* s = nullptr;
+    hegel_settings_new(ctx, &s);
+    hegel_settings_set_derandomize(ctx, s, true);
+    hegel_string_t no_database{"", 0};
+    hegel_settings_set_database(ctx, s, &no_database);
+    hegel_settings_set_verbosity(ctx, s, HEGEL_VERBOSITY_QUIET);
+    hegel_run_t* run = nullptr;
+    hegel_run_start(ctx, s, nullptr, nullptr, &run);
+    hegel_string_t origin{"failure", 7};
+    int cases = 0;
+    while (true) {
+        hegel_test_case_t* tc = nullptr;
+        hegel_next_test_case(ctx, run, &tc);
+        if (tc == nullptr) {
+            break;
+        }
+        cases++;
+        hegel_mark_complete(ctx, tc, HEGEL_STATUS_INTERESTING, &origin);
+        hegel_test_case_free(ctx, tc);
+    }
+    hegel_run_free(ctx, run);
+    hegel_settings_free(ctx, s);
+    hegel_context_free(ctx);
+    return cases;
+}
+
+TEST(FailureReport, TheBodyRunsOnlyForTheEnginesTestCases) {
+    int runs = 0;
+    EXPECT_THROW(hegel::test(
+                     [&](hegel::TestCase&) {
+                         runs++;
+                         throw std::runtime_error("fail");
+                     },
+                     {.verbosity = hegel::Verbosity::Quiet,
+                      .derandomize = true,
+                      .database = Database::disabled()}),
+                 std::runtime_error);
+    EXPECT_EQ(runs, engine_cases_of_a_failing_run());
+}
+
+TEST(FailureBlobs, AReproducedFailureRunsTheBodyOnce) {
+    int runs = 0;
+    EXPECT_THROW(hegel::test(
+                     [&](hegel::TestCase& tc) {
+                         runs++;
+                         int n = tc.draw(gs::integers<int>());
+                         if (n < 50) {
+                             throw std::runtime_error("fail");
+                         }
+                     },
+                     {}, {"AAEAAAAACgEAAAAA"}),
+                 std::runtime_error);
+    EXPECT_EQ(runs, 1);
+}
+
 TEST(FailureBlobs, EveryReproducedBlobIsReported) {
     try {
         hegel::test(
@@ -625,7 +680,9 @@ TEST(Profiles, ProfileVerbosityAndPrintBlobAreKept) {
     testing::internal::CaptureStderr();
     EXPECT_THROW(hegel::test(failing, {.profile = "cpp_quiet"}),
                  std::runtime_error);
-    EXPECT_EQ(testing::internal::GetCapturedStderr(), "");
+    std::string quiet = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(quiet.find("auto draw_1"), std::string::npos) << quiet;
+    EXPECT_EQ(quiet.rfind("\nTo reproduce this failure", 0), 0u) << quiet;
 
     hegel::register_profile(
         "cpp_no_blob", {.print_blob = false, .database = Database::disabled()});
@@ -633,9 +690,8 @@ TEST(Profiles, ProfileVerbosityAndPrintBlobAreKept) {
     EXPECT_THROW(hegel::test(failing, {.profile = "cpp_no_blob"}),
                  std::runtime_error);
     std::string output = testing::internal::GetCapturedStderr();
-    EXPECT_NE(output.find("Exception: std::runtime_error"), std::string::npos)
-        << output;
-    EXPECT_EQ(output.find("rerun with:"), std::string::npos) << output;
+    EXPECT_NE(output.find("auto draw_1 = 11;"), std::string::npos) << output;
+    EXPECT_EQ(output.find("To reproduce"), std::string::npos) << output;
 }
 
 TEST(Profiles, ProfileHealthChecksCanBeCleared) {

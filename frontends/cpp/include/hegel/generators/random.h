@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <random>
 
@@ -73,11 +75,20 @@ namespace hegel::generators {
 
         /// @brief Generate a random uint32_t value
         result_type operator()();
+
+        void print_to(internal::Printer& printer) const;
         /// @endcond
 
       private:
+        struct Record {
+            std::optional<uint64_t> seed;
+            std::unique_ptr<internal::DeferredPrinter> consumed;
+            std::size_t count = 0;
+        };
+
         const TestCase* tc_ = nullptr;
         std::optional<std::mt19937> engine_;
+        std::shared_ptr<Record> record_ = std::make_shared<Record>();
     };
 
     /// @name Random

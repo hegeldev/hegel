@@ -121,6 +121,7 @@ CPP = Component(
         "frontends/cpp/CMakeLists.txt",
     ),
     engine_bump_entry="This release updates the bundled libhegel engine to {version}.",
+    install_docs=("frontends/cpp/README.md", "frontends/cpp/include/hegel/hegel.h"),
 )
 JAVA = Component(
     path="frontends/java",

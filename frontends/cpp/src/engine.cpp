@@ -403,17 +403,6 @@ namespace hegel::impl {
         check_rc(ctx, hegel_settings_set_database_key(ctx, s, &database_key));
     }
 
-    hegel_test_case_t* test_case_from_blob(hegel_context_t* ctx,
-                                           hegel_settings_t* s,
-                                           std::string_view blob) {
-        hegel_test_case_t* tc = nullptr;
-        // A NULL output callback (and user data) keeps engine output on
-        // stderr.
-        check_rc(ctx, hegel_test_case_from_blob(ctx, s, borrow(blob), nullptr,
-                                                nullptr, &tc));
-        return tc;
-    }
-
     bool test_case_should_capture(hegel_context_t* ctx,
                                   const hegel_test_case_t* tc) {
         bool should_capture = false;
@@ -492,7 +481,7 @@ namespace hegel::impl {
 
             explicit DrawScope(const TestCase& obj) {
                 if (obj.data()->explicit_state) {
-                    throw std::invalid_argument(
+                    throw internal::UsageError(
                         "This operation needs generated data, which an "
                         "explicit test case does not have: it gives values "
                         "only to TestCase::draw().");
@@ -1011,6 +1000,49 @@ namespace hegel::internal {
             hegel_printer_reflow(ctx, handle_, nullptr, impl::borrow(text)));
     }
 
+    void Printer::if_break(std::string_view text) {
+        hegel_context_t* ctx = impl::thread_context();
+        impl::tolerate_dead_region(
+            ctx, hegel_printer_if_break(ctx, handle_, impl::borrow(text)));
+    }
+
+    void Printer::comment(std::string_view text) {
+        hegel_context_t* ctx = impl::thread_context();
+        std::string rendered = "  // " + std::string(text);
+        impl::tolerate_dead_region(
+            ctx, hegel_printer_comment(ctx, handle_, impl::borrow(rendered)));
+    }
+
+    DeferredPrinter::DeferredPrinter(const Printer& at) {
+        hegel_context_t* ctx = impl::thread_context();
+        impl::tolerate_dead_region(
+            ctx, hegel_printer_deferred(ctx, at.handle(), &handle_));
+    }
+
+    DeferredPrinter::~DeferredPrinter() {
+        hegel_printer_free(impl::thread_context(), handle_);
+    }
+
+    Speculation::Speculation(const Printer& printer)
+        : handle_(printer.handle()) {
+        hegel_context_t* ctx = impl::thread_context();
+        impl::tolerate_dead_region(
+            ctx, hegel_printer_begin_speculative(ctx, handle_));
+    }
+
+    Speculation::~Speculation() {
+        if (!resolved_) {
+            hegel_printer_abort_speculative(impl::thread_context(), handle_);
+        }
+    }
+
+    void Speculation::commit() {
+        resolved_ = true;
+        hegel_context_t* ctx = impl::thread_context();
+        impl::tolerate_dead_region(
+            ctx, hegel_printer_commit_speculative(ctx, handle_));
+    }
+
     Document::Document(uint64_t width) {
         hegel_context_t* ctx = impl::thread_context();
         hegel_printer_options_t* options = nullptr;
@@ -1171,6 +1203,12 @@ namespace hegel::internal {
         scope.raise_for_rc(
             hegel_pool_restore(scope.ctx, scope.tc, handle_, variable),
             "hegel_pool_restore");
+    }
+
+    void PoolHandle::restore_unchecked(const TestCase& tc,
+                                       int64_t variable) noexcept {
+        hegel_pool_restore(impl::thread_context(), tc.data()->tc, handle_,
+                           variable);
     }
 
     RecursionHandle::RecursionHandle(const TestCase& tc, uint64_t max_depth,

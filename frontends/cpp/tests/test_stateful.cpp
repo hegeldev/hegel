@@ -19,8 +19,8 @@ namespace gs = hegel::generators;
 namespace hs = hegel::stateful;
 
 using ApprovalTests::Approvals;
+using hegel::tests::common::scrub_blob;
 using hegel::tests::common::scrub_concurrent_report;
-using hegel::tests::common::scrub_report;
 
 TEST(Pools, PoolsRoundTrip) {
     hegel::test([](hegel::TestCase& tc) {
@@ -119,6 +119,43 @@ TEST(Pools, FilteredConsumeWithNoAcceptableValueRejects) {
         },
         hegel::Settings{.test_cases = 50,
                         .database = hegel::Database::disabled()});
+}
+
+TEST(Pools, FilteredConsumeRestoresValuesWhenThePredicateThrows) {
+    int checked = 0;
+    hegel::test(
+        [&](hegel::TestCase& tc) {
+            hegel::stateful::Pool<int> pool(tc);
+            pool.add(1);
+            pool.add(2);
+            pool.add(3);
+            bool threw = false;
+            tc.repeat([&] {
+                if (threw) {
+                    return;
+                }
+                int calls = 0;
+                (void)tc.draw(hegel::stateful::values_consumed(pool).filter(
+                    [&](const int&) {
+                        if (++calls == 2) {
+                            threw = true;
+                            tc.reject();
+                        }
+                        return false;
+                    }));
+            });
+            if (!threw) {
+                return;
+            }
+            int a = tc.draw(hegel::stateful::values_consumed(pool));
+            int b = tc.draw(hegel::stateful::values_consumed(pool));
+            int c = tc.draw(hegel::stateful::values_consumed(pool));
+            EXPECT_EQ(a + b + c, 6);
+            checked++;
+        },
+        hegel::Settings{.test_cases = 100,
+                        .database = hegel::Database::disabled()});
+    EXPECT_GT(checked, 0);
 }
 
 TEST(Pools, FilteredReuseKeepsEveryValue) {
@@ -419,7 +456,7 @@ TEST(Stateful, VerboseNestsDrawsAndHidesStopDecision) {
                         .database = hegel::Database::disabled(),
                         .stateful_step_count = 3});
     std::string out = testing::internal::GetCapturedStderr();
-    Approvals::verify(out, scrub_report());
+    Approvals::verify(out, scrub_blob());
 }
 
 // The state prints before the first step and after every step that runs to
@@ -427,12 +464,12 @@ TEST(Stateful, VerboseNestsDrawsAndHidesStopDecision) {
 // that throws prints no state, leaving the last state before the exception
 // as the one the failing step started from.
 TEST(Stateful, StatePrintingIsOnByDefault) {
-    Approvals::verify(capture_counter_failure(), scrub_report());
+    Approvals::verify(capture_counter_failure(), scrub_blob());
 }
 
 TEST(Stateful, StatePrintingCanBeDisabled) {
     Approvals::verify(capture_counter_failure({.print_state = false}),
-                      scrub_report());
+                      scrub_blob());
 }
 
 namespace {
@@ -767,11 +804,9 @@ TEST(ConcurrentStateful, WorkerExceptionHasOriginAndBufferedOutput) {
                             " \\+[0-9]+\\.[0-9]{3}ms\\] +auto "
                             "draw_[0-9]+ =");
     EXPECT_TRUE(std::regex_search(output, draw_pattern)) << output;
-    EXPECT_NE(output.find("Exception: std::runtime_error: concurrent boom"),
-              std::string::npos)
-        << output;
     EXPECT_EQ(output.find("<unknown>"), std::string::npos) << output;
-    EXPECT_NE(output.find("rerun with:"), std::string::npos) << output;
+    EXPECT_NE(output.find("To reproduce this failure"), std::string::npos)
+        << output;
 }
 
 // Failures that never replay are reported unconfirmed, without a reproduce
@@ -803,12 +838,9 @@ TEST(ConcurrentStateful, UnconfirmedFailuresAreReportedFromCapturedOutput) {
         << message;
     EXPECT_NE(output.find("note: unconfirmed failure"), std::string::npos)
         << output;
-    EXPECT_NE(output.find("Exception: std::runtime_error: first call fails"),
-              std::string::npos)
-        << output;
-    EXPECT_NE(output.find("Exception: std::logic_error: thirtieth case fails"),
-              std::string::npos)
-        << output;
+    EXPECT_NE(message.find("first call fails"), std::string::npos) << message;
+    EXPECT_NE(message.find("thirtieth case fails"), std::string::npos)
+        << message;
     EXPECT_NE(output.find("---------------- Round 1: group \"<anonymous>\" "
                           "----------------"),
               std::string::npos)
@@ -816,7 +848,7 @@ TEST(ConcurrentStateful, UnconfirmedFailuresAreReportedFromCapturedOutput) {
     std::regex rule_pattern(
         R"(\[worker [0-9]+ \+[0-9]+\.[0-9]{3}ms\] +Rule: boom twice)");
     EXPECT_TRUE(std::regex_search(output, rule_pattern)) << output;
-    EXPECT_EQ(output.find("rerun with:"), std::string::npos) << output;
+    EXPECT_EQ(output.find("To reproduce"), std::string::npos) << output;
 }
 
 TEST(ConcurrentStateful, FixedSingleWorkerFailureRemainsDeterministic) {
