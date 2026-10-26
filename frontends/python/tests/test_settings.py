@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+import pickle
 import re
 from pathlib import Path
 
@@ -61,6 +63,25 @@ def test_replace_and_parent():
     assert child.test_cases == 3 and child.seed == 9
     assert Settings(base, seed=10).seed == 10
     assert base.seed is None
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        Settings(),
+        Settings(test_cases=3, phases=[Phase.generate], suppress_health_check=["too_slow"]),
+        Settings.from_profile("base", seed=4, verbosity=Verbosity.verbose),
+    ],
+)
+@pytest.mark.parametrize(
+    "duplicate", [copy.copy, copy.deepcopy, lambda s: pickle.loads(pickle.dumps(s))]
+)
+def test_settings_can_be_copied_and_pickled(settings, duplicate):
+    duplicated = duplicate(settings)
+    assert duplicated == settings
+    assert repr(duplicated) == repr(settings)
+    assert duplicated.test_cases == settings.test_cases
+    assert duplicated.replace(seed=1) == settings.replace(seed=1)
 
 
 def test_profiles():

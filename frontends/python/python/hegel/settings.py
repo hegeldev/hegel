@@ -333,6 +333,9 @@ class Settings:
     def __delattr__(self, name: str) -> None:
         raise AttributeError(f"Settings are immutable: cannot delete {name!r}")
 
+    def __reduce__(self) -> tuple[Any, ...]:
+        return (_restore_settings, (self._profile, dict(self._overrides)))
+
     def _key(self) -> tuple[Any, ...]:
         return (self._profile, tuple(sorted(self._overrides.items())))
 
@@ -360,10 +363,7 @@ class Settings:
         error. Unlike ``Settings()``, this ignores which profile is the
         default."""
         _check_profile_name(name)
-        settings = object.__new__(cls)
-        object.__setattr__(settings, "_profile", name)
-        object.__setattr__(settings, "_overrides", {})
-        return cls(settings, **overrides)
+        return cls(_restore_settings(name, {}), **overrides)
 
     @staticmethod
     def register_profile(name: str, settings: Settings | None = None, **overrides: Any) -> None:
@@ -540,3 +540,10 @@ def _read_native(native: _native.Settings) -> dict[str, Any]:
 
 
 _FIELDS = tuple(name for name in Settings.__annotations__ if not name.startswith("_"))
+
+
+def _restore_settings(profile: str | None, overrides: dict[str, Any]) -> Settings:
+    settings = object.__new__(Settings)
+    object.__setattr__(settings, "_profile", profile)
+    object.__setattr__(settings, "_overrides", overrides)
+    return settings
