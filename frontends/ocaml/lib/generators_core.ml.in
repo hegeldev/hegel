@@ -695,9 +695,8 @@ let rec do_draw : type a. a core -> Internal.test_case -> a * show =
     group label data (fun () ->
       match flatten_filter source predicate with
       | Values { consume = true; select; _ }, predicate ->
-        (* consuming pools *)
         select data ~filter:(Some (Labels.filter_attempt, predicate)), opaque_show
-      | source, predicate -> (* any other generator *)
+      | source, predicate ->
         let rec attempt i =
           if i > max_filter_attempts
           then raise Internal.Assume_rejected

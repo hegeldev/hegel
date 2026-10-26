@@ -11,8 +11,6 @@ open! Core
 open Hegel
 open Generators
 
-(* ---- draw / draw_silent through the engine ---- *)
-
 (* Seeded run at normal verbosity; swallow the failure the property raises so the
    expect block only sees what we printed. *)
 let run_failing

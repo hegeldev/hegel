@@ -276,8 +276,6 @@ let test_no_settings_runs_with_defaults () =
       Alcotest.(check bool) "sdk.jsonl exists" true (Stdlib.Sys.file_exists path)))
 ;;
 
-(* ---- explicit examples ---- *)
-
 let example_calls = ref []
 let generated_calls = ref 0
 

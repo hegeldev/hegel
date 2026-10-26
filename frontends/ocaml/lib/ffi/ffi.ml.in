@@ -603,13 +603,13 @@ let c_grammar_new =
   foreign
     "hegel_grammar_new"
     (handle_t
-     @-> handle_t (* builder *)
-     @-> str_opt (* start *)
-     @-> uint64_t (* max_size *)
-     @-> uint32_t (* max_depth *)
-     @-> handle_t (* alphabet, nullable *)
-     @-> ptr Str.t (* explicit_names *)
-     @-> size_t (* explicit_len *)
+     @-> handle_t
+     @-> str_opt
+     @-> uint64_t
+     @-> uint32_t
+     @-> handle_t
+     @-> ptr Str.t
+     @-> size_t
      @-> ptr handle_t
      @-> returning int)
 ;;
