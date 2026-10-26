@@ -1135,8 +1135,7 @@ namespace hegel::stateful {
                     for (std::size_t worker = 0; worker < worker_count;
                          ++worker) {
                         state.cases[worker] = tc.clone();
-                        internal::set_concurrent_worker(*state.cases[worker],
-                                                        worker);
+                        state.cases[worker]->set_worker(worker);
                     }
                     state.num_workers_completed = 0;
                     ++state.round_number;

@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <set>
 #include <string>
 #include <vector>
@@ -17,8 +18,10 @@
 namespace hegel::impl::test_case {
 
     // The display names the draws of a test case have taken. Shared by a test
-    // case and its blocks, whose draws print into one sequence of names.
+    // case, its blocks and its clones, whose draws print into one sequence of
+    // names. Clones draw on other threads, so the mutex guards the names.
     struct DrawNames {
+        std::mutex mutex;
         std::map<std::string, int> counts;
         std::set<std::string> taken;
     };

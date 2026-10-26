@@ -256,3 +256,41 @@ TEST(CloneOutput, CloneOutputAppearsWhereTheCloneWasMade) {
     });
     Approvals::verify(out, scrub_blob());
 }
+
+// A clone's draws continue the parent's draw names, so no two draws of one
+// test case print under the same name.
+TEST(CloneOutput, CloneDrawsContinueTheParentsNames) {
+    std::string out = capture_failure_report([](hegel::TestCase& tc) {
+        (void)tc.draw(gs::just(1));
+        hegel::TestCase worker = tc.clone();
+        (void)worker.draw(gs::just(2));
+        (void)tc.draw(gs::just(3));
+        throw std::runtime_error("boom");
+    });
+    EXPECT_NE(
+        out.find("auto draw_1 = 1;\nauto draw_2 = 2;\nauto draw_3 = 3;\n"),
+        std::string::npos)
+        << out;
+}
+
+// set_worker() attributes what a clone prints to a worker.
+TEST(CloneOutput, SetWorkerPrefixesTheClonesLines) {
+    std::string out = capture_failure_report([](hegel::TestCase& tc) {
+        tc.note("from the parent");
+        hegel::TestCase worker = tc.clone();
+        worker.set_worker(3);
+        worker.note("from worker three");
+        throw std::runtime_error("boom");
+    });
+    EXPECT_NE(out.find("from the parent\n[worker 3 +"), std::string::npos)
+        << out;
+    EXPECT_NE(out.find("ms] from worker three\n"), std::string::npos) << out;
+}
+
+TEST(CloneOutput, SetWorkerIsAUsageErrorInAnExplicitTestCase) {
+    EXPECT_THROW(
+        hegel::test([](hegel::TestCase& tc) { tc.set_worker(0); },
+                    hegel::Settings{.database = hegel::Database::disabled()},
+                    {}, {hegel::ExplicitTestCase()}),
+        std::invalid_argument);
+}

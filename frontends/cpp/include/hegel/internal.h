@@ -281,10 +281,6 @@ namespace hegel::internal {
     // once.
     TestCase block(const TestCase& tc, uint64_t indent);
 
-    // Attributes everything `tc` prints from now on to concurrent worker
-    // `worker_index` (hegel_test_case_set_worker).
-    void set_concurrent_worker(TestCase& tc, std::size_t worker_index);
-
     /* Exception thrown when a test case is rejected and should be
      * discarded (e.g. by `TestCase::assume(false)`, an exhausted
      * `filter()`, or an `UnsatisfiedAssumption` from the engine).

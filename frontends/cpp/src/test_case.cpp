@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -68,8 +69,19 @@ namespace hegel {
         }
         hegel_test_case_t* handle =
             impl::test_case_clone(impl::thread_context(), data_->tc);
-        return TestCase(std::make_unique<impl::test_case::TestCaseData>(
-            handle, data_->emit, data_->stateful_step_count));
+        auto cloned = std::make_unique<impl::test_case::TestCaseData>(
+            handle, data_->emit, data_->stateful_step_count);
+        cloned->draw_names = data_->draw_names;
+        return TestCase(std::move(cloned));
+    }
+
+    void TestCase::set_worker(std::size_t worker_index) {
+        if (data_->explicit_state) {
+            throw internal::UsageError(
+                "set_worker() is not supported in an explicit test case");
+        }
+        impl::test_case_set_worker(impl::thread_context(), data_->tc,
+                                   static_cast<int64_t>(worker_index));
     }
 
     void TestCase::assume(bool condition) const {
@@ -200,6 +212,7 @@ namespace hegel {
         std::string draw_display_name(const TestCase& tc, std::string_view name,
                                       bool repeatable) {
             impl::test_case::DrawNames& names = *tc.data()->draw_names;
+            std::lock_guard<std::mutex> lock(names.mutex);
             std::string base(name.empty() ? "draw" : name);
             int count = ++names.counts[base];
             if (!name.empty() && !repeatable) {
@@ -224,11 +237,6 @@ namespace hegel {
                 handle, data->emit, data->stateful_step_count);
             block->draw_names = data->draw_names;
             return TestCase(std::move(block));
-        }
-
-        void set_concurrent_worker(TestCase& tc, std::size_t worker_index) {
-            impl::test_case_set_worker(impl::thread_context(), tc.data()->tc,
-                                       static_cast<int64_t>(worker_index));
         }
 
     } // namespace internal
