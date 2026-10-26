@@ -207,11 +207,7 @@ let negative s = String.length s > 1 && Char.equal s.[0] '-'
 let single_token s =
   (not (String.equal s ""))
   && (not (negative s))
-  && String.for_all
-       (function
-         | ' ' | '\t' | '\n' | '\r' | ',' | ';' -> false
-         | _ -> true)
-       s
+  && not (String.exists (fun c -> String.contains " \t\n\r,;" c) s)
 ;;
 
 let of_to_string to_string x =

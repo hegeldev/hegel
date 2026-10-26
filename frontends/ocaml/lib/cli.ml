@@ -59,13 +59,8 @@ let fixed_settings =
 
 let without_function_name message =
   let prefix = "hegel_settings_set_from_string: " in
-  if String.starts_with ~prefix message
-  then
-    String.sub
-      message
-      (String.length prefix)
-      (String.length message - String.length prefix)
-  else message
+  let n = String.length prefix * Bool.to_int (String.starts_with ~prefix message) in
+  String.sub message n (String.length message - n)
 ;;
 
 let is_unknown_setting message =
