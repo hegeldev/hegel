@@ -189,6 +189,30 @@ Requires Java 10.10.2.1 or 0.10.20.
 """
 
 
+CPP_README = """\
+FetchContent_Declare(
+    hegel
+    GIT_REPOSITORY https://github.com/hegeldev/hegel.git
+    GIT_TAG frontends/cpp/0.13.1
+    SOURCE_SUBDIR frontends/cpp
+)
+"""
+
+
+CPP_HEGEL_H = """\
+/**
+ * @code{.cmake}
+ * FetchContent_Declare(
+ *     hegel
+ *     GIT_REPOSITORY https://github.com/hegeldev/hegel.git
+ *     GIT_TAG frontends/cpp/0.13.1
+ *     SOURCE_SUBDIR frontends/cpp
+ * )
+ * @endcode
+ */
+"""
+
+
 PATCH = ("patch", "This patch does a thing.")
 MINOR = ("minor", "This release breaks the C ABI.")
 
@@ -206,6 +230,8 @@ class ApplyVersionBumpTest(unittest.TestCase):
             ("frontends/typescript/package-lock.json", json.dumps(TYPESCRIPT_LOCK, indent=2) + "\n"),
             ("frontends/typescript/src/libhegel-version.ts", TYPESCRIPT_PIN),
             ("frontends/cpp/CMakeLists.txt", CPP_CMAKE),
+            ("frontends/cpp/README.md", CPP_README),
+            ("frontends/cpp/include/hegel/hegel.h", CPP_HEGEL_H),
             ("frontends/java/pom.xml", JAVA_PARENT_POM),
             ("frontends/java/hegel-lowlevel/pom.xml", JAVA_MODULE_POM),
             ("frontends/java/hegel/pom.xml", JAVA_MODULE_POM),
@@ -274,6 +300,25 @@ class ApplyVersionBumpTest(unittest.TestCase):
             .replace("hegel:0.10.2", "hegel:0.11.0")
             .replace("hegel-jna:0.10.2", "hegel-jna:0.11.0"),
         )
+
+    def test_rewrites_the_cpp_fetchcontent_tags(self) -> None:
+        # The README's CMake snippet and the Doxygen copy of it in hegel.h
+        # both name the release tag.
+        release.apply_version_bump(self.root, {CPP: "0.14.0"})
+        self.assertEqual(
+            self.read("frontends/cpp/README.md"),
+            CPP_README.replace("frontends/cpp/0.13.1", "frontends/cpp/0.14.0"),
+        )
+        self.assertEqual(
+            self.read("frontends/cpp/include/hegel/hegel.h"),
+            CPP_HEGEL_H.replace("frontends/cpp/0.13.1", "frontends/cpp/0.14.0"),
+        )
+
+    def test_install_docs_in_the_checkout_name_the_current_version(self) -> None:
+        for component in release.COMPONENTS:
+            version = release.current_version(component.manifest())
+            for doc in component.install_docs:
+                self.assertIn(version, (release.ROOT / doc).read_text(), doc)
 
     def test_an_install_doc_without_the_version_is_an_error(self) -> None:
         (self.root / "frontends/java/README.md").write_text("no version here\n")
