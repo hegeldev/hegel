@@ -63,10 +63,10 @@ let%expect_test "require failures get caller-derived origins" =
     {|
     Property-based test failed with 2 distinct failures.
 
-    draw_1 = 60
+    let draw_1 = 60 in
     Exception: Failure("too big")
 
-    draw_1 = 0
+    let draw_1 = 0 in
     Exception: Failure("too small")
     |}]
 ;;

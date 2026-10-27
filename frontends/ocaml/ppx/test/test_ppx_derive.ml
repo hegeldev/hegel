@@ -590,17 +590,9 @@ let test_portable_matches_plain_e2e () =
     Hegel.run_hegel_test
       ~settings:(Hegel.Settings.create ~test_cases:30 ~seed:0 ())
       (fun tc ->
-         let value, show =
-           Hegel.Generators.Ppx_internal.draw
-             tc
-             gen
-             ~sexp_of:(Hegel.Generators.printer gen)
-         in
+         let value, shown = Hegel.Generators.Private.render_draw tc gen in
          seen
-         := (Hegel.Printer.to_string (show ())
-             ^ " "
-             ^ Sexp.to_string ((Hegel.Generators.printer gen) value))
-            :: !seen);
+         := (shown ^ " " ^ Sexp.to_string ((Hegel.Generators.printer gen) value)) :: !seen);
     List.rev !seen
   in
   let same name plain portable =
@@ -625,11 +617,7 @@ let shown ?(n = 30) gen =
   let seen = ref [] in
   Hegel.run_hegel_test
     ~settings:(Hegel.Settings.create ~test_cases:n ~seed:0 ())
-    (fun tc ->
-       let value, show =
-         Hegel.Generators.Ppx_internal.draw tc gen ~sexp_of:(Hegel.Generators.printer gen)
-       in
-       seen := (value, Hegel.Printer.to_string (show ())) :: !seen);
+    (fun tc -> seen := Hegel.Generators.Private.render_draw tc gen :: !seen);
   List.rev !seen
 ;;
 
@@ -716,13 +704,7 @@ let%hegel_test test_opaque_field_e2e tc =
     Sexp.to_string ((Hegel.Generators.printer hegel_generator_with_opaque) w)
   in
   assert (String.is_substring rendered ~substring:"opaque");
-  let _, show =
-    Hegel.Generators.Ppx_internal.draw
-      tc
-      hegel_generator_with_opaque
-      ~sexp_of:sexp_of_with_opaque
-  in
-  let rendered = Hegel.Printer.to_string (show ()) in
+  let _, rendered = Hegel.Generators.Private.render_draw tc hegel_generator_with_opaque in
   assert (String.is_substring rendered ~substring:"handle = <opaque>")
 [@@settings Hegel.Settings.create ~test_cases:20 ~seed:0 ()]
 ;;

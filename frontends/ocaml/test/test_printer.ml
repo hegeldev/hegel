@@ -194,6 +194,232 @@ let test_layout () =
     (Printer.option (Printer.of_sexp (fun () -> Sexplib0.Sexp.Atom "-")) (Some ()))
 ;;
 
+let render ?max_width f = Printer.Out.with_document ?max_width f
+
+let check_out ?max_width name expected f =
+  Alcotest.(check string) name expected (render ?max_width f)
+;;
+
+let raises_usage_error name f =
+  match f () with
+  | _ -> Alcotest.failf "%s: expected Usage_error" name
+  | exception Usage_error _ -> ()
+;;
+
+let numbers p =
+  Printer.Out.seq p "[" "]" [ 1000; 2000 ] (fun p n -> Printer.Out.value p Printer.int n)
+;;
+
+let test_doc_primitives () =
+  let trailing =
+    Printer.group
+      "["
+      [ Printer.text "1000;"
+      ; Printer.breakable " "
+      ; Printer.text "2000"
+      ; Printer.if_break ";"
+      ]
+      "]"
+  in
+  check "if_break in a group that fits" "[1000; 2000]" trailing;
+  check_narrow "if_break in a broken group" ~max_width:8 "[1000;\n 2000;]" trailing;
+  check
+    "hard_break"
+    "a\nb"
+    (Printer.concat [ Printer.text "a"; Printer.hard_break; Printer.text "b" ]);
+  check
+    "comment"
+    "[1;  (* one *)\n 2\n]"
+    (Printer.group
+       "["
+       [ Printer.text "1;"
+       ; Printer.comment "one"
+       ; Printer.breakable " "
+       ; Printer.text "2"
+       ]
+       "]");
+  check_narrow
+    "shift_indent"
+    ~max_width:3
+    "(a\n   b)"
+    (Printer.group
+       "("
+       [ Printer.text "a"
+       ; Printer.shift_indent 2
+       ; Printer.breakable " "
+       ; Printer.text "b"
+       ]
+       ")");
+  raises_usage_error "comment with a newline" (fun () -> Printer.comment "a\nb");
+  raises_usage_error "comment with a terminator" (fun () -> Printer.comment "a *) b")
+;;
+
+let test_out_primitives () =
+  let open Printer.Out in
+  check_out "text" "a\nb\n" (fun p -> text p "a\nb\n");
+  check_out ~max_width:5 "breakable" "[aaa\n bbb]" (fun p ->
+    group p "[" "]" (fun p ->
+      text p "aaa";
+      breakable p " ";
+      text p "bbb"));
+  let trailing p =
+    group p "[" "]" (fun p ->
+      text p "1000;";
+      breakable p " ";
+      text p "2000";
+      if_break p ";")
+  in
+  check_out "if_break in a group that fits" "[1000; 2000]" trailing;
+  check_out ~max_width:8 "if_break in a broken group" "[1000;\n 2000;]" trailing;
+  check_out "hard_break" "a\nb" (fun p ->
+    text p "a";
+    hard_break p;
+    text p "b");
+  check_out ~max_width:3 "begin_group and end_group" "<<a\n    b>>" (fun p ->
+    begin_group p ~indent:4 "<<";
+    text p "a";
+    breakable p " ";
+    text p "b";
+    end_group p ">>");
+  raises_usage_error "an unbalanced end_group" (fun () ->
+    render (fun p -> end_group p "]"));
+  check_out ~max_width:3 "shift_indent" "(a\n   b)" (fun p ->
+    group p "(" ")" (fun p ->
+      text p "a";
+      shift_indent p 2;
+      breakable p " ";
+      text p "b"));
+  check_out "comment" "[1;  (* one *)\n 2\n]" (fun p ->
+    group p "[" "]" (fun p ->
+      text p "1;";
+      comment p "one";
+      breakable p " ";
+      text p "2"));
+  raises_usage_error "comment with a newline" (fun () ->
+    render (fun p -> comment p "a\nb"));
+  raises_usage_error "comment with a terminator" (fun () ->
+    render (fun p -> comment p "*)"));
+  check_out ~max_width:8 "reflow" "Foo(111,\n    222)" (fun p -> reflow p "Foo(111, 222)");
+  check_out "seq" "[1000; 2000]" numbers;
+  check_out ~max_width:8 "seq breaks" "[1000;\n 2000]" numbers;
+  check_out "seq with a separator" "(1, 2)" (fun p ->
+    seq p ~sep:"," "(" ")" [ 1; 2 ] (fun p n -> value p Printer.int n));
+  check_out "separator" "a; b" (fun p ->
+    text p "a";
+    separator p ";";
+    text p "b");
+  check_out "doc" "Some 1" (fun p -> doc p (Printer.option Printer.int (Some 1)));
+  check_out "sexp" "(1 2)" (fun p ->
+    sexp p Sexplib0.Sexp_conv.(sexp_of_list sexp_of_int) [ 1; 2 ]);
+  check_out "group closes when its body raises" "[a]" (fun p ->
+    match
+      group p "[" "]" (fun p ->
+        text p "a";
+        failwith "body")
+    with
+    | () -> ()
+    | exception Failure _ -> ())
+;;
+
+let test_out_argument () =
+  let open Printer.Out in
+  check_out "a negative argument is parenthesized" "(-5)" (fun p ->
+    value (argument p) Printer.int (-5));
+  check_out "an atomic argument is not" "5" (fun p -> value (argument p) Printer.int 5);
+  check_out "a top-position document is not" "-5" (fun p -> value p Printer.int (-5));
+  check_out "parens_if_argument" "(f x)" (fun p ->
+    parens_if_argument (argument p) (fun p ->
+      Alcotest.(check bool) "inside is top position" false (in_argument p);
+      text p "f x"));
+  check_out "parens_if_argument at top position" "f x" (fun p ->
+    parens_if_argument p (fun p -> text p "f x"));
+  check_out "a group resets the position" "[-5]" (fun p ->
+    let p = argument p in
+    Alcotest.(check bool) "argument" true (in_argument p);
+    group p "[" "]" (fun p -> value p Printer.int (-5)));
+  Alcotest.(check bool) "noop is never an argument" false (in_argument (argument noop))
+;;
+
+let test_out_speculation () =
+  let open Printer.Out in
+  check_out "commit keeps" "ab" (fun p ->
+    text p "a";
+    speculate p (fun p ->
+      text p "b";
+      (), `Commit));
+  check_out "abort discards" "a" (fun p ->
+    text p "a";
+    speculate p (fun p ->
+      text p "b";
+      (), `Abort));
+  check_out "raising discards" "a" (fun p ->
+    text p "a";
+    match
+      speculate p (fun p ->
+        text p "b";
+        failwith "attempt")
+    with
+    | () -> ()
+    | exception Failure _ -> ());
+  check_out "begin and commit" "ab" (fun p ->
+    text p "a";
+    begin_speculation p;
+    text p "b";
+    commit_speculation p);
+  check_out "begin and abort" "a" (fun p ->
+    text p "a";
+    begin_speculation p;
+    text p "b";
+    abort_speculation p)
+;;
+
+let test_out_deferred () =
+  let open Printer.Out in
+  check_out "a deferred region fills in at its anchor" "[1; 2; 3]" (fun p ->
+    group p "[" "]" (fun p ->
+      text p "1; ";
+      let hole = deferred p in
+      text p "; 3";
+      Alcotest.(check bool) "live" true (should_print hole);
+      text hole "2"));
+  check_out "a deferred region keeps its parent's position" "Some (-1)" (fun p ->
+    text p "Some ";
+    value (deferred (argument p)) Printer.int (-1));
+  let escaped = ref noop in
+  check_out "a deferred region in an aborted speculation dies" "a" (fun p ->
+    text p "a";
+    let hole =
+      speculate p (fun p ->
+        let hole = deferred p in
+        hole, `Abort)
+    in
+    Alcotest.(check bool) "dead" false (should_print hole);
+    text hole "b";
+    Alcotest.(check bool) "no region in a dead one" false (should_print (deferred hole));
+    escaped := hole);
+  Alcotest.(check bool) "freed with its document" false (should_print !escaped);
+  text !escaped "late";
+  Alcotest.(check bool)
+    "no region in a freed one"
+    false
+    (should_print (deferred !escaped))
+;;
+
+let test_out_noop () =
+  let open Printer.Out in
+  Alcotest.(check bool) "noop prints nothing" false (should_print noop);
+  text noop "a";
+  value noop (fun _ -> Alcotest.fail "formatted for noop") 1;
+  Alcotest.(check bool) "deferred noop" false (should_print (deferred noop));
+  Alcotest.(check int)
+    "speculate on noop"
+    3
+    (speculate noop (fun p ->
+       text p "a";
+       3, `Abort));
+  Printer.release noop
+;;
+
 let tests =
   [ Alcotest.test_case "integers" `Quick test_integers
   ; Alcotest.test_case "floats" `Quick test_floats
@@ -201,5 +427,11 @@ let tests =
   ; Alcotest.test_case "strings" `Quick test_strings
   ; Alcotest.test_case "structures" `Quick test_structures
   ; Alcotest.test_case "layout" `Quick test_layout
+  ; Alcotest.test_case "document primitives" `Quick test_doc_primitives
+  ; Alcotest.test_case "printer primitives" `Quick test_out_primitives
+  ; Alcotest.test_case "argument position" `Quick test_out_argument
+  ; Alcotest.test_case "speculation" `Quick test_out_speculation
+  ; Alcotest.test_case "deferred regions" `Quick test_out_deferred
+  ; Alcotest.test_case "noop printer" `Quick test_out_noop
   ]
 ;;

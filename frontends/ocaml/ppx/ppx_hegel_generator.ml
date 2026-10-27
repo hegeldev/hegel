@@ -22,11 +22,11 @@
 
     The deriver also emits [sexp_of_<t>] through ppx_sexp_conv's expander,
     and every derived generator is printable, with [sexp_of_<t>] as its
-    printer. A derived generator prints what it draws as OCaml syntax: it
-    pairs each drawn part with that part's display ([Ppx_internal.draw], which
-    falls back on the s-expression of the part's type when its generator has
-    no printer) and assembles the record, constructor or tuple display from
-    them. *)
+    printer. A derived generator prints what it draws as OCaml syntax, as it
+    draws it: it opens the record, constructor or tuple on the printer, and
+    each part prints itself inside it ([Ppx_internal.draw_and_print], which
+    prints the s-expression of the part's type when the part's generator does
+    not print). *)
 
 open Ppxlib
 
@@ -78,19 +78,50 @@ let internal ~loc name =
   Ast_builder.Default.evar ~loc ("Hegel.Generators.Ppx_internal." ^ name)
 ;;
 
-let printer ~loc name = Ast_builder.Default.evar ~loc ("Hegel.Printer." ^ name)
+let out ~loc name = Ast_builder.Default.evar ~loc ("Hegel.Printer.Out." ^ name)
 
 (** [composite ~portable ~loc ~label ~sexp_of make_body] is a derived
-    generator drawing with [fun tc -> make_body tc], whose body returns the
-    value with its display, inside a span tagged [label], and printable with
-    [sexp_of]. *)
+    generator drawing with [fun tc printer -> make_body tc printer], whose
+    body draws the value and prints it to [printer], inside a span tagged
+    [label], and printable with [sexp_of]. *)
 let composite ~portable ~loc ~label ~sexp_of make_body =
   let tc = gen_symbol ~prefix:"_hegel_tc" () in
+  let printer = gen_symbol ~prefix:"_hegel_printer" () in
   [%expr
     [%e with_mode ~portable (internal ~loc "composite_with_label")]
       ~label:[%e label]
       ~sexp_of:[%e sexp_of]
-      (fun [%p Ast_builder.Default.pvar ~loc tc] -> [%e make_body tc])]
+      (fun
+          [%p Ast_builder.Default.pvar ~loc tc]
+           [%p Ast_builder.Default.pvar ~loc printer]
+         -> [%e make_body tc printer])]
+;;
+
+(** [in_group ~loc ~printer ?indent open_ close body] is [body], run with
+    [printer] rebound to the inside of the group [open_ … close]. *)
+let in_group ~loc ~printer ?indent open_ close body =
+  let indent =
+    Option.map (fun n -> Labelled "indent", Ast_builder.Default.eint ~loc n) indent
+  in
+  Ast_builder.Default.pexp_apply
+    ~loc
+    (out ~loc "group")
+    ((Nolabel, Ast_builder.Default.evar ~loc printer)
+     :: (Option.to_list indent
+         @ [ Nolabel, Ast_builder.Default.estring ~loc open_
+           ; Nolabel, Ast_builder.Default.estring ~loc close
+           ; Nolabel, [%expr fun [%p Ast_builder.Default.pvar ~loc printer] -> [%e body]]
+           ]))
+;;
+
+(** [print_text ~loc ~printer s then_] prints the text [s], then evaluates
+    [then_]. *)
+let print_text ~loc ~printer s then_ =
+  [%expr
+    [%e out ~loc "text"]
+      [%e Ast_builder.Default.evar ~loc printer]
+      [%e Ast_builder.Default.estring ~loc s];
+    [%e then_]]
 ;;
 
 (** [sexp_of_type_name ~loc name] is the [sexp_of] converter the deriver
@@ -124,82 +155,106 @@ let rec generator_expr_of_core_type ~portable (ct : core_type) : expression =
             ~loc
             ~label:[%expr Hegel.Generators.Ppx_internal.Labels.fixed_dict]
             ~sexp_of:(Ppx_compat.sexp_of_core_type ct)
-            (fun tc ->
-               draw_all ~portable ~loc ~tc components (fun values shows ->
-                 [%expr
-                   [%e Ast_builder.Default.pexp_tuple ~loc values]
-                 , fun () ->
-                     [%e printer ~loc "tuple"] [%e Ast_builder.Default.elist ~loc shows]]))
+            (fun tc printer ->
+               drawn_tuple
+                 ~portable
+                 ~loc
+                 ~tc
+                 ~printer
+                 components
+                 (Ast_builder.Default.pexp_tuple ~loc))
         | None ->
           Location.raise_errorf
             ~loc
             "ppx_hegel_generator: unsupported type in [@@deriving hegel_generator]"))
 
-(** [draw_all ~portable ~loc ~tc types k] draws one value of each type in
-    order, binding each value and its display, and continues with
-    [k values shows]: the bound values, and their forced displays. *)
-and draw_all ~portable ~loc ~tc (types : core_type list) k =
-  let named =
-    List.map
-      (fun ct ->
-         gen_symbol ~prefix:"_hegel_value" (), gen_symbol ~prefix:"_hegel_show" (), ct)
-      types
-  in
-  let values = List.map (fun (v, _, _) -> Ast_builder.Default.evar ~loc v) named in
-  let shows =
-    List.map (fun (_, s, _) -> [%expr [%e Ast_builder.Default.evar ~loc s] ()]) named
-  in
+(** [draw_all ~portable ~loc ~tc ~printer ~before types k] draws one value
+    of each type in order, printing each to [printer] after what [before i]
+    prints ([i] counting from 0), and continues with [k values]. *)
+and draw_all ~portable ~loc ~tc ~printer ~before (types : core_type list) k =
+  let named = List.map (fun ct -> gen_symbol ~prefix:"_hegel_value" (), ct) types in
+  let values = List.map (fun (v, _) -> Ast_builder.Default.evar ~loc v) named in
   List.fold_right
-    (fun (v, s, ct) acc ->
-       [%expr
-         let [%p Ast_builder.Default.pvar ~loc v], [%p Ast_builder.Default.pvar ~loc s] =
-           [%e internal ~loc "draw"]
-             [%e Ast_builder.Default.evar ~loc tc]
-             [%e generator_expr_of_core_type ~portable ct]
-             ~sexp_of:[%e Ppx_compat.sexp_of_core_type ct]
-         in
-         [%e acc]])
-    named
-    (k values shows)
+    (fun (i, (v, ct)) acc ->
+       before
+         i
+         [%expr
+           let [%p Ast_builder.Default.pvar ~loc v] =
+             [%e internal ~loc "draw_and_print"]
+               [%e Ast_builder.Default.evar ~loc tc]
+               [%e Ast_builder.Default.evar ~loc printer]
+               [%e generator_expr_of_core_type ~portable ct]
+               ~sexp_of:[%e Ppx_compat.sexp_of_core_type ct]
+           in
+           [%e acc]])
+    (List.mapi (fun i x -> i, x) named)
+    (k values)
+
+(** [separated ~loc ~printer sep i then_] prints the separator [sep] before
+    every part but the first, then evaluates [then_]. *)
+and separated ~loc ~printer sep i then_ =
+  if i = 0
+  then then_
+  else
+    [%expr
+      [%e out ~loc "separator"]
+        [%e Ast_builder.Default.evar ~loc printer]
+        [%e Ast_builder.Default.estring ~loc sep];
+      [%e then_]]
+
+(** [drawn_tuple ~portable ~loc ~tc ~printer types k] draws a tuple of the
+    [types], printing it as [(a, b, …)], and continues with [k values]. *)
+and drawn_tuple ~portable ~loc ~tc ~printer types k =
+  in_group
+    ~loc
+    ~printer
+    "("
+    ")"
+    (draw_all ~portable ~loc ~tc ~printer ~before:(separated ~loc ~printer ",") types k)
 ;;
 
-(** [drawn_record ~portable ~loc ~tc ~wrap ~wrap_show labels] draws the fields
-    in declaration order, and pairs [wrap] of the record literal with
-    [wrap_show] of the record's display. [wrap] and [wrap_show] let an
-    inline-record constructor enclose the literal and its display. *)
-let drawn_record ~portable ~loc ~tc ~wrap ~wrap_show (labels : label_declaration list)
+(** [drawn_record ~portable ~loc ~tc ~printer ~wrap labels] draws the fields
+    in declaration order, printing the record [{ x = …; y = … }], and is
+    [wrap] of the record literal. [wrap] lets an inline-record constructor
+    enclose the literal. *)
+let drawn_record ~portable ~loc ~tc ~printer ~wrap (labels : label_declaration list)
   : expression
   =
   if List.is_empty labels
   then Location.raise_errorf ~loc "ppx_hegel_generator: empty record types not supported";
   let names = List.map (fun (ld : label_declaration) -> ld.pld_name.txt) labels in
-  draw_all
-    ~portable
+  in_group
     ~loc
-    ~tc
-    (List.map (fun (ld : label_declaration) -> ld.pld_type) labels)
-    (fun values shows ->
-       let record_expr =
-         Ast_builder.Default.pexp_record
-           ~loc
-           (List.map2
-              (fun field value -> Ast_builder.Default.Located.lident ~loc field, value)
-              names
-              values)
-           None
-       in
-       let fields =
-         Ast_builder.Default.elist
-           ~loc
-           (List.map2
-              (fun field show ->
-                 [%expr [%e Ast_builder.Default.estring ~loc field], [%e show]])
-              names
-              shows)
-       in
-       [%expr
-         [%e wrap record_expr]
-       , fun () -> [%e wrap_show [%expr [%e printer ~loc "record"] [%e fields]]]])
+    ~printer
+    ~indent:2
+    "{"
+    " }"
+    [%expr
+      [%e out ~loc "breakable"] [%e Ast_builder.Default.evar ~loc printer] " ";
+      [%e
+        draw_all
+          ~portable
+          ~loc
+          ~tc
+          ~printer
+          ~before:(fun i then_ ->
+            separated
+              ~loc
+              ~printer
+              ";"
+              i
+              (print_text ~loc ~printer (List.nth names i ^ " = ") then_))
+          (List.map (fun (ld : label_declaration) -> ld.pld_type) labels)
+          (fun values ->
+             wrap
+               (Ast_builder.Default.pexp_record
+                  ~loc
+                  (List.map2
+                     (fun field value ->
+                        Ast_builder.Default.Located.lident ~loc field, value)
+                     names
+                     values)
+                  None))]]
 ;;
 
 (** [type_label ~loc ~type_name kind] is the label expression for the derived
@@ -217,13 +272,33 @@ let type_label ~loc ~type_name kind =
       ]]
 ;;
 
-(** [constructor_show ~loc name args] is the display of the constructor
-    [name] applied to the displays [args]. *)
-let constructor_show ~loc name args =
+(** [drawn_constructor ~loc ~printer name body] prints the constructor
+    application [name arg], parenthesized in argument position, where [body]
+    draws and prints the argument with [printer] rebound to argument
+    position. *)
+let drawn_constructor ~loc ~printer name body =
+  let p = Ast_builder.Default.evar ~loc printer in
   [%expr
-    [%e printer ~loc "constructor"]
-      [%e Ast_builder.Default.estring ~loc name]
-      [%e Ast_builder.Default.elist ~loc args]]
+    [%e out ~loc "parens_if_argument"]
+      [%e p]
+      (fun [%p Ast_builder.Default.pvar ~loc printer] ->
+         [%e
+           in_group
+             ~loc
+             ~printer
+             ~indent:2
+             ""
+             ""
+             (print_text
+                ~loc
+                ~printer
+                name
+                [%expr
+                  [%e out ~loc "breakable"] [%e p] " ";
+                  let [%p Ast_builder.Default.pvar ~loc printer] =
+                    [%e out ~loc "argument"] [%e p]
+                  in
+                  [%e body]])])]
 ;;
 
 let generator_of_data_variant
@@ -238,7 +313,7 @@ let generator_of_data_variant
     ~loc
     ~label:(type_label ~loc ~type_name "enum_variant")
     ~sexp_of:(sexp_of_type_name ~loc type_name)
-    (fun tc ->
+    (fun tc printer ->
        let variant_idx = gen_symbol ~prefix:"_variant_idx" () in
        let n = List.length constrs in
        let index_options = List.init n (fun i -> Ast_builder.Default.eint ~loc i) in
@@ -252,27 +327,39 @@ let generator_of_data_variant
               in
               let rhs =
                 match Ppx_compat.extract_constr_args cd.pcd_args with
-                | Tuple [] ->
-                  [%expr
-                    [%e construct None], fun () -> [%e constructor_show ~loc name []]]
-                | Tuple cts ->
-                  draw_all ~portable ~loc ~tc cts (fun values shows ->
-                    let arg =
-                      match values with
-                      | [ value ] -> value
-                      | values -> Ast_builder.Default.pexp_tuple ~loc values
-                    in
-                    [%expr
-                      [%e construct (Some arg)]
-                    , fun () -> [%e constructor_show ~loc name shows]])
-                | Record labels ->
-                  drawn_record
-                    ~portable
+                | Tuple [] -> print_text ~loc ~printer name (construct None)
+                | Tuple [ ct ] ->
+                  drawn_constructor
                     ~loc
-                    ~tc
-                    ~wrap:(fun record -> construct (Some record))
-                    ~wrap_show:(fun record -> constructor_show ~loc name [ record ])
-                    labels
+                    ~printer
+                    name
+                    (draw_all
+                       ~portable
+                       ~loc
+                       ~tc
+                       ~printer
+                       ~before:(fun _ then_ -> then_)
+                       [ ct ]
+                       (fun values -> construct (Some (List.hd values))))
+                | Tuple cts ->
+                  drawn_constructor
+                    ~loc
+                    ~printer
+                    name
+                    (drawn_tuple ~portable ~loc ~tc ~printer cts (fun values ->
+                       construct (Some (Ast_builder.Default.pexp_tuple ~loc values))))
+                | Record labels ->
+                  drawn_constructor
+                    ~loc
+                    ~printer
+                    name
+                    (drawn_record
+                       ~portable
+                       ~loc
+                       ~tc
+                       ~printer
+                       ~wrap:(fun record -> construct (Some record))
+                       labels)
               in
               Ast_builder.Default.case
                 ~lhs:(Ast_builder.Default.pint ~loc i)
@@ -350,7 +437,8 @@ let variant_of_constructors
              (Ast_builder.Default.Located.lident ~loc cd.pcd_name.txt)
              None)
         ~guard:None
-        ~rhs:(constructor_show ~loc cd.pcd_name.txt [])
+        ~rhs:
+          [%expr Hegel.Printer.text [%e Ast_builder.Default.estring ~loc cd.pcd_name.txt]]
     in
     let excluded_case =
       if List.length generated = List.length all
@@ -531,7 +619,7 @@ let generate_impl
         ~loc
         ~label:(type_label ~loc ~type_name "fixed_dict")
         ~sexp_of:(sexp_of_type_name ~loc type_name)
-        (fun tc -> drawn_record ~portable ~loc ~tc ~wrap:Fun.id ~wrap_show:Fun.id labels)
+        (fun tc printer -> drawn_record ~portable ~loc ~tc ~printer ~wrap:Fun.id labels)
     | Ptype_variant constrs, _ -> generator_of_variant ~portable ~loc ~type_name constrs
     | Ptype_abstract, Some ct ->
       [%expr

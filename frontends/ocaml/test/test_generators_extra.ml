@@ -19,8 +19,7 @@ let check_all_silent ?test_cases gen check =
 let shown gen =
   let result = ref "" in
   run_hegel_test ~settings:(settings ~test_cases:1 ()) (fun tc ->
-    let _, show = Ppx_internal.draw tc gen ~sexp_of:(printer gen) in
-    result := Printer.to_string (show ()));
+    result := snd (Private.render_draw tc gen));
   !result
 ;;
 

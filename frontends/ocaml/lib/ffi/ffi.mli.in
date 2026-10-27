@@ -225,6 +225,12 @@ exception Usage_error of string
     {!recursion_finish}). *)
 exception Retry
 
+(** Raised by the printer operations that write to a region ({!printer_text}
+    through {!printer_deferred} and the speculation calls) when the region
+    has died: its document was read, or the speculative region its anchor
+    sat in was aborted. *)
+exception Printer_dead_region
+
 (** {2 Phase bitmask values}
 
     The [HEGEL_PHASE_*] constants. *)

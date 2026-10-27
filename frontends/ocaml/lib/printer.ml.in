@@ -1,0 +1,507 @@
+module Ffi = Hegel_ffi.Ffi
+
+#ifdef OXCAML
+#define PORTABLE_ARG(x) (x @ portable)
+#define KIND(k) : k
+#else
+#define PORTABLE_ARG(x) x
+#define KIND(k)
+#endif
+
+type node =
+  | Text of string
+  | Breakable of string
+  | If_break of string
+  | Hard_break
+  | Comment of string
+  | Shift_indent of int
+  | Group of
+      { indent : int
+      ; open_ : string
+      ; body : node list
+      ; close : string
+      }
+  | Seq of node list
+  | Reflow of string
+
+type doc =
+  { node : node
+  ; atomic : bool
+  }
+
+type 'a t = 'a -> doc
+
+let text s = { node = Text s; atomic = true }
+let breakable sep = { node = Breakable sep; atomic = true }
+let concat docs = { node = Seq (List.map (fun d -> d.node) docs); atomic = false }
+let reflow s = { node = Reflow s; atomic = false }
+let opaque = text "<abstr>"
+let if_break s = { node = If_break s; atomic = true }
+let hard_break = { node = Hard_break; atomic = false }
+let shift_indent delta = { node = Shift_indent delta; atomic = true }
+
+let comment_text s =
+  let rec closes i =
+    i + 1 < String.length s
+    && ((Char.equal s.[i] '*' && Char.equal s.[i + 1] ')') || closes (i + 1))
+  in
+  if String.contains s '\n' || closes 0
+  then
+    raise
+      (Ffi.Usage_error
+         (Printf.sprintf "a comment must be one line and must not contain *): %S" s));
+  "  (* " ^ s ^ " *)"
+;;
+
+let comment s = { node = Comment (comment_text s); atomic = true }
+let compound s = { node = Text s; atomic = false }
+
+let group ?indent open_ docs close =
+  let indent = Option.value indent ~default:(String.length open_) in
+  { node = Group { indent; open_; body = List.map (fun d -> d.node) docs; close }
+  ; atomic = true
+  }
+;;
+
+let parenthesize doc = if doc.atomic then doc else group "(" [ doc ] ")"
+
+let separated sep docs =
+  List.concat
+    (List.mapi (fun i d -> if i = 0 then [ d ] else [ text sep; breakable " "; d ]) docs)
+;;
+
+let tuple = function
+  | [] -> text "()"
+  | [ doc ] -> doc
+  | docs -> group "(" (separated "," docs) ")"
+;;
+
+let record fields =
+  group
+    ~indent:2
+    "{"
+    (breakable " "
+     :: separated
+          ";"
+          (List.map (fun (name, d) -> concat [ text (name ^ " = "); d ]) fields))
+    " }"
+;;
+
+let apply f args =
+  match args with
+  | [] -> f
+  | args ->
+    let body = List.concat_map (fun arg -> [ breakable " "; parenthesize arg ]) args in
+    { (group ~indent:2 "" (f :: body) "") with atomic = false }
+;;
+
+let constructor name = function
+  | [] -> text name
+  | [ arg ] -> apply (text name) [ arg ]
+  | args -> apply (text name) [ tuple args ]
+;;
+
+let int n = if n < 0 then compound (string_of_int n) else text (string_of_int n)
+
+let suffixed to_string suffix is_negative n =
+  let s = to_string n ^ suffix in
+  if is_negative n then compound s else text s
+;;
+
+let int32 = suffixed Int32.to_string "l" (fun n -> Int32.compare n 0l < 0)
+let int64 = suffixed Int64.to_string "L" (fun n -> Int64.compare n 0L < 0)
+let nativeint = suffixed Nativeint.to_string "n" (fun n -> Nativeint.compare n 0n < 0)
+let bool b = text (string_of_bool b)
+let unit () = text "()"
+let char c = text (Printf.sprintf "%C" c)
+
+let float_literal f =
+  match Float.classify_float f with
+  | FP_nan -> "nan"
+  | FP_infinite -> if f > 0. then "infinity" else "neg_infinity"
+  | FP_zero -> if Float.sign_bit f then "-0." else "0."
+  | FP_normal | FP_subnormal ->
+    let rec digits precision =
+      let s = Printf.sprintf "%.*e" (precision - 1) f in
+      if Float.equal (float_of_string s) f then precision, s else digits (precision + 1)
+    in
+    let precision, scientific = digits 1 in
+    let e = String.index scientific 'e' in
+    let exponent =
+      int_of_string (String.sub scientific (e + 1) (String.length scientific - e - 1))
+    in
+    if exponent >= -5 && exponent < 16
+    then (
+      let s = Printf.sprintf "%.*f" (max 0 (precision - 1 - exponent)) f in
+      if String.contains s '.' then s else s ^ ".")
+    else scientific
+;;
+
+let float f =
+  let s = float_literal f in
+  if Float.sign_bit f && Float.is_finite f then compound s else text s
+;;
+
+let escaped_code_point cp =
+  let ranges = Unicode_escapes.ranges in
+  let at i =
+    (String.get_uint8 ranges i lsl 16)
+    lor (String.get_uint8 ranges (i + 1) lsl 8)
+    lor String.get_uint8 ranges (i + 2)
+  in
+  let rec search lo hi =
+    if lo >= hi
+    then false
+    else (
+      let mid = (lo + hi) / 2 in
+      if cp < at (mid * 6)
+      then search lo mid
+      else if cp > at ((mid * 6) + 3)
+      then search (mid + 1) hi
+      else true)
+  in
+  search 0 (String.length ranges / 6)
+;;
+
+let escape ~utf_8 s =
+  let b = Buffer.create (String.length s + 2) in
+  Buffer.add_char b '"';
+  let n = String.length s in
+  let rec go i =
+    if i < n
+    then (
+      match s.[i] with
+      | '"' ->
+        Buffer.add_string b "\\\"";
+        go (i + 1)
+      | '\\' ->
+        Buffer.add_string b "\\\\";
+        go (i + 1)
+      | '\n' ->
+        Buffer.add_string b "\\n";
+        go (i + 1)
+      | '\t' ->
+        Buffer.add_string b "\\t";
+        go (i + 1)
+      | '\r' ->
+        Buffer.add_string b "\\r";
+        go (i + 1)
+      | '\b' ->
+        Buffer.add_string b "\\b";
+        go (i + 1)
+      | c when Char.code c < 0x20 || Char.code c = 0x7f ->
+        Buffer.add_string b (Printf.sprintf "\\%03d" (Char.code c));
+        go (i + 1)
+      | c when Char.code c < 0x80 ->
+        Buffer.add_char b c;
+        go (i + 1)
+      | c ->
+        let d = String.get_utf_8_uchar s i in
+        if utf_8 && Uchar.utf_decode_is_valid d
+        then (
+          let len = Uchar.utf_decode_length d in
+          let cp = Uchar.to_int (Uchar.utf_decode_uchar d) in
+          if escaped_code_point cp
+          then Buffer.add_string b (Printf.sprintf "\\u{%x}" cp)
+          else Buffer.add_string b (String.sub s i len);
+          go (i + len))
+        else (
+          Buffer.add_string b (Printf.sprintf "\\%03d" (Char.code c));
+          go (i + 1)))
+  in
+  go 0;
+  Buffer.add_char b '"';
+  Buffer.contents b
+;;
+
+let string s = text (escape ~utf_8:true s)
+let bytes s = text (escape ~utf_8:false s)
+let sequence open_ close print xs = group open_ (separated ";" (List.map print xs)) close
+let list print xs = sequence "[" "]" print xs
+let array print xs = sequence "[|" "|]" print (Array.to_list xs)
+
+let option print = function
+  | None -> text "None"
+  | Some x -> constructor "Some" [ print x ]
+;;
+
+let result print_ok print_error = function
+  | Ok x -> constructor "Ok" [ print_ok x ]
+  | Error e -> constructor "Error" [ print_error e ]
+;;
+
+let pair p1 p2 (a, b) = tuple [ p1 a; p2 b ]
+let triple p1 p2 p3 (a, b, c) = tuple [ p1 a; p2 b; p3 c ]
+let negative s = String.length s > 1 && Char.equal s.[0] '-'
+
+let single_token s =
+  (not (String.equal s ""))
+  && (not (negative s))
+  && not (String.exists (fun c -> String.contains " \t\n\r,;" c) s)
+;;
+
+let of_to_string to_string x =
+  let s = to_string x in
+  { node = Reflow s; atomic = single_token s }
+;;
+
+let rec sexp (s : Sexplib0.Sexp.t) =
+  match s with
+  | Atom _ ->
+    let atom = Sexplib0.Sexp.to_string s in
+    if negative atom then compound atom else text atom
+  | List children ->
+    group
+      "("
+      (List.concat
+         (List.mapi
+            (fun i child ->
+               if i = 0 then [ sexp child ] else [ breakable " "; sexp child ])
+            children))
+      ")"
+;;
+
+let of_sexp sexp_of x = sexp (sexp_of x)
+
+module Out = struct
+  type state = { mutable live : bool }
+
+  type region KIND(value mod portable contended) =
+    { handle : Ffi.printer
+    ; context : Ffi.context
+    ; state : state Locked.t
+    ; owner : owner
+    }
+
+  and owner_state = { mutable regions : region list }
+
+  and owner = owner_state Locked.t
+
+  type t KIND(value mod portable contended) =
+    | Noop
+    | Region of
+        { region : region
+        ; argument : bool
+        }
+
+  let noop = Noop
+
+  let free_region region =
+    Locked.protect region.state (fun state ->
+      if state.live
+      then (
+        state.live <- false;
+        Ffi.printer_free region.context region.handle;
+        Ffi.context_free region.context))
+  ;;
+
+  let adopt owner context handle =
+    let region = { handle; context; state = Locked.create (fun () -> { live = true }); owner } in
+    Locked.protect owner (fun o -> o.regions <- region :: o.regions);
+    region
+  ;;
+
+  let create_owner () = Locked.create (fun () -> { regions = [] })
+
+  let rec free_owner owner =
+    match
+      Locked.protect owner (fun o ->
+        let regions = o.regions in
+        o.regions <- [];
+        regions)
+    with
+    | [] -> ()
+    | regions ->
+      List.iter free_region regions;
+      free_owner owner
+  ;;
+
+  let of_handle owner context handle =
+    Region { region = adopt owner context handle; argument = false }
+  ;;
+
+  let write t PORTABLE_ARG(f) =
+    match t with
+    | Noop -> ()
+    | Region { region; _ } ->
+      Locked.protect region.state (fun state ->
+        if state.live
+        then (
+          try f region.context region.handle with
+          | Ffi.Printer_dead_region -> ()))
+  ;;
+
+  let should_print = function
+    | Noop -> false
+    | Region { region; _ } ->
+      Locked.protect region.state (fun state ->
+        state.live && Ffi.printer_is_live region.context region.handle)
+  ;;
+
+  let hard_break t = write t Ffi.printer_hard_break
+
+  let text t s =
+    List.iteri
+      (fun i line ->
+         if i > 0 then hard_break t;
+         if not (String.equal line "") then write t (fun c h -> Ffi.printer_text c h line))
+      (String.split_on_char '\n' s)
+  ;;
+
+  let breakable t sep = write t (fun c h -> Ffi.printer_breakable c h sep)
+  let if_break t s = write t (fun c h -> Ffi.printer_if_break c h s)
+
+  let begin_group t ?indent open_ =
+    let indent = Option.value indent ~default:(String.length open_) in
+    write t (fun c h -> Ffi.printer_begin_group c h ~indent open_)
+  ;;
+
+  let end_group t close = write t (fun c h -> Ffi.printer_end_group c h close)
+  let shift_indent t delta = write t (fun c h -> Ffi.printer_shift_indent c h delta)
+
+  let comment t s =
+    let s = comment_text s in
+    write t (fun c h -> Ffi.printer_comment c h s)
+  ;;
+
+  let raw_comment t s = write t (fun c h -> Ffi.printer_comment c h s)
+  let reflow t s = write t (fun c h -> Ffi.printer_reflow c h s)
+
+  let top = function
+    | Noop -> Noop
+    | Region r -> Region { r with argument = false }
+  ;;
+
+  let argument = function
+    | Noop -> Noop
+    | Region r -> Region { r with argument = true }
+  ;;
+
+  let in_argument = function
+    | Noop -> false
+    | Region { argument; _ } -> argument
+  ;;
+
+  let group t ?indent open_ close f =
+    begin_group t ?indent open_;
+    match f (top t) with
+    | v ->
+      end_group t close;
+      v
+    | exception exn ->
+      let backtrace = Printexc.get_raw_backtrace () in
+      end_group t close;
+      Printexc.raise_with_backtrace exn backtrace
+  ;;
+
+  let parens_if_argument t f = if in_argument t then group t "(" ")" f else f t
+
+  let separator t sep =
+    text t sep;
+    breakable t " "
+  ;;
+
+  let seq t ?(sep = ";") open_ close items print =
+    group t open_ close (fun t ->
+      List.iteri
+        (fun i item ->
+           if i > 0 then separator t sep;
+           print t item)
+        items)
+  ;;
+
+  let rec render_node t = function
+    | Text s -> text t s
+    | Breakable sep -> breakable t sep
+    | If_break s -> if_break t s
+    | Hard_break -> hard_break t
+    | Comment s -> raw_comment t s
+    | Shift_indent delta -> shift_indent t delta
+    | Group { indent; open_; body; close } ->
+      begin_group t ~indent open_;
+      List.iter (render_node t) body;
+      end_group t close
+    | Seq nodes -> List.iter (render_node t) nodes
+    | Reflow s -> reflow t s
+  ;;
+
+  let doc t d =
+    if in_argument t && not d.atomic
+    then group t "(" ")" (fun t -> render_node t d.node)
+    else render_node t d.node
+  ;;
+
+  let value t print v = if should_print t then doc t (print v)
+  let sexp t sexp_of v = value t (of_sexp sexp_of) v
+  let begin_speculation t = write t Ffi.printer_begin_speculative
+  let commit_speculation t = write t Ffi.printer_commit_speculative
+  let abort_speculation t = write t Ffi.printer_abort_speculative
+
+  let speculate t f =
+    begin_speculation t;
+    match f t with
+    | v, `Commit ->
+      commit_speculation t;
+      v
+    | v, `Abort ->
+      abort_speculation t;
+      v
+    | exception exn ->
+      let backtrace = Printexc.get_raw_backtrace () in
+      abort_speculation t;
+      Printexc.raise_with_backtrace exn backtrace
+  ;;
+
+  let deferred = function
+    | Noop -> Noop
+    | Region { region; argument } ->
+      let child =
+        Locked.protect region.state (fun state ->
+          if state.live
+          then (
+            match Ffi.printer_deferred region.context region.handle with
+            | handle -> Some (adopt region.owner (Ffi.context_new ()) handle)
+            | exception Ffi.Printer_dead_region -> None)
+          else None)
+      in
+      (match child with
+       | None -> Noop
+       | Some region -> Region { region; argument })
+  ;;
+
+  let with_document ?max_width f =
+    let context = Ffi.context_new () in
+    let options =
+      Option.map
+        (fun width ->
+           let options = Ffi.printer_options_new context in
+           Ffi.printer_options_set_max_width context options width;
+           options)
+        max_width
+    in
+    let handle = Ffi.printer_new context options in
+    Option.iter (Ffi.printer_options_free context) options;
+    let owner = create_owner () in
+    let root = adopt owner context handle in
+    Fun.protect
+      ~finally:(fun () -> free_owner owner)
+      (fun () ->
+         f (Region { region = root; argument = false });
+         Locked.protect root.state (fun _ ->
+           (try Ffi.printer_resolve root.context root.handle with
+            | Ffi.Usage_error _ -> ());
+           Ffi.printer_value root.context root.handle))
+  ;;
+end
+
+type owner = Out.owner
+
+let create_owner = Out.create_owner
+let free_owner = Out.free_owner
+let of_handle = Out.of_handle
+
+let release = function
+  | Out.Noop -> ()
+  | Out.Region { region; _ } -> Out.free_region region
+;;
+let to_string ?max_width doc = Out.with_document ?max_width (fun t -> Out.doc t doc)

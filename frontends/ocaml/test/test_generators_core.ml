@@ -319,8 +319,7 @@ let test_printer_optional_none () =
 let shown ?(n = 1) gen =
   let out = ref [] in
   Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:n ()) (fun tc ->
-    let _, show = Ppx_internal.draw tc gen ~sexp_of:(printer gen) in
-    out := Printer.to_string (show ()) :: !out);
+    out := snd (Private.render_draw tc gen) :: !out);
   List.rev !out
 ;;
 
@@ -430,8 +429,13 @@ let test_make_generators () =
 
 let test_display_unprintable_parts () =
   Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:1 ()) (fun tc ->
-    let _, show = Ppx_internal.draw tc (just 3) ~sexp_of:Core.Int.sexp_of_t in
-    Alcotest.(check string) "falls back on sexp_of" "3" (Printer.to_string (show ())))
+    Alcotest.(check string)
+      "falls back on sexp_of"
+      "3"
+      (Printer.Out.with_document (fun printer ->
+         ignore
+           (Ppx_internal.draw_and_print tc printer (just 3) ~sexp_of:Core.Int.sexp_of_t
+            : int))))
 ;;
 
 let test_display_structures () =

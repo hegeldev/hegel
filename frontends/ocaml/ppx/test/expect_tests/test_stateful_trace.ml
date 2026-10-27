@@ -101,7 +101,7 @@ let%expect_test "state trace across multiple rules" =
     {|
     state = ()
     Step 1: push
-      n = 50
+      let n = 50 in
     state = (50)
     Step 2: pop
     Exception: File "ppx/test/expect_tests/test_stateful_trace.ml", line LINE, characters C1-C2: Assertion failed
@@ -144,7 +144,7 @@ let%expect_test "a rule failure keeps its origin between replays" =
   [%expect
     {|
     Step 1: boom
-      draw_1 = 0
+      let draw_1 = 0 in
     Exception: Failure("tail boom")
 
     To reproduce this failure, pass this argument to run_hegel_test:
@@ -187,7 +187,7 @@ let%expect_test "one concurrent worker remains deterministic" =
     {|
     ---------------- Round 1: group "<anonymous>" ----------------
     [worker 0 +time] Rule: boom
-    [worker 0 +time]   draw_1 = 0
+    [worker 0 +time]   let draw_1 = 0 in
     Exception: Failure("concurrent boom")
 
     To reproduce this failure, pass this argument to run_hegel_test:

@@ -53,10 +53,10 @@ let%template one_of (generators : ('a, printable) generator list MODE(m))
       Composite
         { label = Labels.combine (Labels.one_of :: List.map label_of generators)
         ; generate_fn =
-            (fun data ->
+            (fun data printer ->
               let idx = Internal.generate_integer data ~min_value:0 ~max_value:(n - 1) in
               Atomic.set drawn idx;
-              do_draw (core_of (List.nth generators idx)) data)
+              do_draw (core_of (List.nth generators idx)) data printer)
         }
     in
     Printable
@@ -78,12 +78,17 @@ let%template optional (element : ('a, printable) generator MODE(m))
       Composite
         { label = Labels.combine [ Labels.optional; label_of_core element ]
         ; generate_fn =
-            (fun data ->
+            (fun data printer ->
               if Internal.generate_boolean data 0.5 None
-              then (
-                let value, show = do_draw element data in
-                Some value, fun () -> Printer.constructor "Some" [ show () ])
-              else None, fun () -> Printer.text "None")
+              then
+                Out.parens_if_argument printer (fun printer ->
+                  Out.group printer ~indent:2 "" "" (fun printer ->
+                    Out.text printer "Some";
+                    Out.breakable printer " ";
+                    Some (do_draw element data (Out.argument printer))))
+              else (
+                Out.text printer "None";
+                None))
         }
   ; sexp_of = (fun v -> Sexplib0.Sexp_conv.sexp_of_option elt v)
   }
@@ -144,10 +149,12 @@ Printable
         Composite
           { label = Labels.combine [ Labels.tuple; label_of_core g1; label_of_core g2 ]
           ; generate_fn =
-              (fun data ->
-                let a, s1 = do_draw g1 data in
-                let b, s2 = do_draw g2 data in
-                (a, b), fun () -> Printer.tuple [ s1 (); s2 () ])
+              (fun data printer ->
+                Out.group printer "(" ")" (fun printer ->
+                  let a = do_draw g1 data printer in
+                  Out.separator printer ",";
+                  let b = do_draw g2 data printer in
+                  a, b))
           }
     ; sexp_of = (fun (a, b) -> Sexp.List [ p1 a; p2 b ])
     }
@@ -173,11 +180,14 @@ let%template tuples3
         Composite
           { label = Labels.combine [ Labels.tuple; label_of_core g1; label_of_core g2; label_of_core g3 ]
           ; generate_fn =
-              (fun data ->
-                let a, s1 = do_draw g1 data in
-                let b, s2 = do_draw g2 data in
-                let c, s3 = do_draw g3 data in
-                (a, b, c), fun () -> Printer.tuple [ s1 (); s2 (); s3 () ])
+              (fun data printer ->
+                Out.group printer "(" ")" (fun printer ->
+                  let a = do_draw g1 data printer in
+                  Out.separator printer ",";
+                  let b = do_draw g2 data printer in
+                  Out.separator printer ",";
+                  let c = do_draw g3 data printer in
+                  a, b, c))
           }
     ; sexp_of = (fun (a, b, c) -> Sexp.List [ p1 a; p2 b; p3 c ])
     }
@@ -207,12 +217,16 @@ let%template tuples4
           { label =
               Labels.combine [ Labels.tuple; label_of_core g1; label_of_core g2; label_of_core g3; label_of_core g4 ]
           ; generate_fn =
-              (fun data ->
-                let a, s1 = do_draw g1 data in
-                let b, s2 = do_draw g2 data in
-                let c, s3 = do_draw g3 data in
-                let d, s4 = do_draw g4 data in
-                (a, b, c, d), fun () -> Printer.tuple [ s1 (); s2 (); s3 (); s4 () ])
+              (fun data printer ->
+                Out.group printer "(" ")" (fun printer ->
+                  let a = do_draw g1 data printer in
+                  Out.separator printer ",";
+                  let b = do_draw g2 data printer in
+                  Out.separator printer ",";
+                  let c = do_draw g3 data printer in
+                  Out.separator printer ",";
+                  let d = do_draw g4 data printer in
+                  a, b, c, d))
           }
     ; sexp_of = (fun (a, b, c, d) -> Sexp.List [ p1 a; p2 b; p3 c; p4 d ])
     }
@@ -252,14 +266,18 @@ let%template tuples5
                 ; label_of_core g5
                 ]
           ; generate_fn =
-              (fun data ->
-                let a, s1 = do_draw g1 data in
-                let b, s2 = do_draw g2 data in
-                let c, s3 = do_draw g3 data in
-                let d, s4 = do_draw g4 data in
-                let e, s5 = do_draw g5 data in
-                ( (a, b, c, d, e)
-                , fun () -> Printer.tuple [ s1 (); s2 (); s3 (); s4 (); s5 () ] ))
+              (fun data printer ->
+                Out.group printer "(" ")" (fun printer ->
+                  let a = do_draw g1 data printer in
+                  Out.separator printer ",";
+                  let b = do_draw g2 data printer in
+                  Out.separator printer ",";
+                  let c = do_draw g3 data printer in
+                  Out.separator printer ",";
+                  let d = do_draw g4 data printer in
+                  Out.separator printer ",";
+                  let e = do_draw g5 data printer in
+                  a, b, c, d, e))
           }
     ; sexp_of = (fun (a, b, c, d, e) -> Sexp.List [ p1 a; p2 b; p3 c; p4 d; p5 e ])
     }
@@ -303,15 +321,20 @@ let%template tuples6
                 ; label_of_core g6
                 ]
           ; generate_fn =
-              (fun data ->
-                let a, s1 = do_draw g1 data in
-                let b, s2 = do_draw g2 data in
-                let c, s3 = do_draw g3 data in
-                let d, s4 = do_draw g4 data in
-                let e, s5 = do_draw g5 data in
-                let f, s6 = do_draw g6 data in
-                ( (a, b, c, d, e, f)
-                , fun () -> Printer.tuple [ s1 (); s2 (); s3 (); s4 (); s5 (); s6 () ] ))
+              (fun data printer ->
+                Out.group printer "(" ")" (fun printer ->
+                  let a = do_draw g1 data printer in
+                  Out.separator printer ",";
+                  let b = do_draw g2 data printer in
+                  Out.separator printer ",";
+                  let c = do_draw g3 data printer in
+                  Out.separator printer ",";
+                  let d = do_draw g4 data printer in
+                  Out.separator printer ",";
+                  let e = do_draw g5 data printer in
+                  Out.separator printer ",";
+                  let f = do_draw g6 data printer in
+                  a, b, c, d, e, f))
           }
     ; sexp_of = (fun (a, b, c, d, e, f) -> Sexp.List [ p1 a; p2 b; p3 c; p4 d; p5 e; p6 f ])
     }
@@ -359,16 +382,22 @@ let%template tuples7
                 ; label_of_core g7
                 ]
           ; generate_fn =
-              (fun data ->
-                let a, s1 = do_draw g1 data in
-                let b, s2 = do_draw g2 data in
-                let c, s3 = do_draw g3 data in
-                let d, s4 = do_draw g4 data in
-                let e, s5 = do_draw g5 data in
-                let f, s6 = do_draw g6 data in
-                let g, s7 = do_draw g7 data in
-                ( (a, b, c, d, e, f, g)
-                , fun () -> Printer.tuple [ s1 (); s2 (); s3 (); s4 (); s5 (); s6 (); s7 () ] ))
+              (fun data printer ->
+                Out.group printer "(" ")" (fun printer ->
+                  let a = do_draw g1 data printer in
+                  Out.separator printer ",";
+                  let b = do_draw g2 data printer in
+                  Out.separator printer ",";
+                  let c = do_draw g3 data printer in
+                  Out.separator printer ",";
+                  let d = do_draw g4 data printer in
+                  Out.separator printer ",";
+                  let e = do_draw g5 data printer in
+                  Out.separator printer ",";
+                  let f = do_draw g6 data printer in
+                  Out.separator printer ",";
+                  let g = do_draw g7 data printer in
+                  a, b, c, d, e, f, g))
           }
     ; sexp_of = (fun (a, b, c, d, e, f, g) -> Sexp.List [ p1 a; p2 b; p3 c; p4 d; p5 e; p6 f; p7 g ])
     }
@@ -420,17 +449,24 @@ let%template tuples8
                 ; label_of_core g8
                 ]
           ; generate_fn =
-              (fun data ->
-                let a, s1 = do_draw g1 data in
-                let b, s2 = do_draw g2 data in
-                let c, s3 = do_draw g3 data in
-                let d, s4 = do_draw g4 data in
-                let e, s5 = do_draw g5 data in
-                let f, s6 = do_draw g6 data in
-                let g, s7 = do_draw g7 data in
-                let h, s8 = do_draw g8 data in
-                ( (a, b, c, d, e, f, g, h)
-                , fun () -> Printer.tuple [ s1 (); s2 (); s3 (); s4 (); s5 (); s6 (); s7 (); s8 () ] ))
+              (fun data printer ->
+                Out.group printer "(" ")" (fun printer ->
+                  let a = do_draw g1 data printer in
+                  Out.separator printer ",";
+                  let b = do_draw g2 data printer in
+                  Out.separator printer ",";
+                  let c = do_draw g3 data printer in
+                  Out.separator printer ",";
+                  let d = do_draw g4 data printer in
+                  Out.separator printer ",";
+                  let e = do_draw g5 data printer in
+                  Out.separator printer ",";
+                  let f = do_draw g6 data printer in
+                  Out.separator printer ",";
+                  let g = do_draw g7 data printer in
+                  Out.separator printer ",";
+                  let h = do_draw g8 data printer in
+                  a, b, c, d, e, f, g, h))
           }
     ; sexp_of = (fun (a, b, c, d, e, f, g, h) -> Sexp.List [ p1 a; p2 b; p3 c; p4 d; p5 e; p6 f; p7 g; p8 h ])
     }
@@ -450,7 +486,7 @@ let%template permutations ABSTRACT(a, value mod c) (values : a list MODE(m))
         Composite
           { label = Labels.permutation
           ; generate_fn =
-              (fun data ->
+              (fun data _ ->
                 let arr = Array.of_list values in
                 let n = Array.length arr in
                 for i = 0 to n - 2 do
@@ -459,7 +495,7 @@ let%template permutations ABSTRACT(a, value mod c) (values : a list MODE(m))
                   arr.(i) <- arr.(j);
                   arr.(j) <- x
                 done;
-                Array.to_list arr, opaque_show)
+                Array.to_list arr)
           }
     }
 [@@mode (m, c) = ((nonportable, uncontended), (portable, contended))]
@@ -534,7 +570,7 @@ let%template from_lark
           { draw =
               (fun data ->
                 Internal.generate_grammar data compiled ~provide:(fun terminal ->
-                  fst (do_draw (core_of (snd (List.nth explicit terminal))) data)))
+                  do_draw (core_of (snd (List.nth explicit terminal))) data Out.noop))
           ; print = Printer.string
           ; label =
               Labels.combine

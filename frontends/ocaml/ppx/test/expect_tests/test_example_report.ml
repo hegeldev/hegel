@@ -14,8 +14,8 @@ let%expect_test "a failing explicit example prints the values it gave" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    n = 7
-    s = "seven"
+    let n = 7 in
+    let s = "seven" in
     checking
     Exception: Failure("seven")
     |}]

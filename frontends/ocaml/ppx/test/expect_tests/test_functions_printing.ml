@@ -393,7 +393,7 @@ let%expect_test "a printable function generator prints with its sexp_of" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    f = <fun>
+    let f = <fun> in
     f 42 = 10
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
 

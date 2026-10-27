@@ -134,6 +134,8 @@ type test_case KIND(value mod portable contended) =
   ; draw_state : draw_state
   ; owned : owned
   ; explicit : explicit Locked.t option
+  ; printer : Printer.Out.t option Atomic.t
+  ; printers : Printer.owner
   }
 
 (* Accessors so other library modules can read the internal fields they need
@@ -146,6 +148,7 @@ let is_high_verbosity (tc : test_case) =
 
 (** [free_owned tc] releases every resource the case owns *)
 let free_owned (tc : test_case) =
+  Printer.free_owner tc.printers;
   let clones, pools =
     Locked.protect tc.owned (fun owned ->
       let c, p = owned.clones, owned.pools in
@@ -215,7 +218,7 @@ let explicit_draw (tc : test_case) ~name ~source value =
       (Ffi.Usage_error
          "Explicit example values can only be drawn in an explicit example's test case")
   | Some explicit ->
-    let line = Printf.sprintf "%s = %s" name source in
+    let line = Printf.sprintf "let %s = %s in" name source in
     Locked.protect explicit (fun e ->
       e.drawn <- name :: e.drawn;
       e.lines <- line :: e.lines);
@@ -248,6 +251,8 @@ let clone (tc : test_case) =
   ; draw_state = tc.draw_state
   ; owned = tc.owned
   ; explicit = None
+  ; printer = Atomic.make None
+  ; printers = tc.printers
   }
 ;;
 
@@ -267,9 +272,12 @@ let with_block (tc : test_case) ~indent LOCAL(f) =
     ; draw_state = Locked.create (fun () -> Hashtbl.create 16)
     ; owned = tc.owned
     ; explicit = None
+    ; printer = Atomic.make None
+    ; printers = tc.printers
     }
   in
   let free () =
+    Option.iter Printer.release (Atomic.get b.printer);
     Ffi.test_case_free context handle;
     Ffi.context_free context
   in
@@ -708,19 +716,30 @@ let note tc message =
   | None -> if should_print tc then Ffi.note tc.context tc.handle message
 ;;
 
-(** [print_line tc doc] appends [doc] as one line to the test case's print
-    region, subject to {!should_print}. *)
-let print_line tc doc =
+(** [printer tc] is the printer onto [tc]'s print region, fetched on first
+    use and owned by the test case. *)
+let printer (tc : test_case) =
+  require_engine tc;
+  match Atomic.get tc.printer with
+  | Some printer -> printer
+  | None ->
+    let context = Ffi.context_new () in
+    let printer =
+      Printer.of_handle tc.printers context (Ffi.test_case_printer context tc.handle None)
+    in
+    Atomic.set tc.printer (Some printer);
+    printer
+;;
+
+(** [print_line tc print] prints one line to the test case's print region
+    with [print], subject to {!should_print}. *)
+let print_line tc print =
   require_engine tc;
   if should_print tc
   then (
-    let ctx = tc.context in
-    let printer = Ffi.test_case_printer ctx tc.handle None in
-    Fun.protect
-      ~finally:(fun () -> Ffi.printer_free ctx printer)
-      (fun () ->
-         Printer.render ctx printer doc;
-         Ffi.printer_hard_break ctx printer))
+    let printer = printer tc in
+    print printer;
+    Printer.Out.hard_break printer)
 ;;
 
 (** [require tc ?msg condition] fails the current test case when [condition] is
@@ -1020,6 +1039,8 @@ let run_example ~(settings : Settings.t) index (names, body) =
     ; draw_state = Locked.create (fun () -> Hashtbl.create 16)
     ; owned = Locked.create (fun () -> { pools = []; clones = [] })
     ; explicit = Some explicit
+    ; printer = Atomic.make None
+    ; printers = Printer.create_owner ()
     }
   in
   let outcome =
@@ -1141,6 +1162,8 @@ let run_test
       ; draw_state = Locked.create (fun () -> Hashtbl.create 16)
       ; owned = Locked.create (fun () -> { pools = []; clones = [] })
       ; explicit = None
+      ; printer = Atomic.make None
+      ; printers = Printer.create_owner ()
       }
     in
     let run_body () =
