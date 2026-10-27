@@ -22,7 +22,7 @@ import java.time.ZonedDateTime;
  * {@link #offsets(Generator)} pairs it with a fixed {@link ZoneOffset} to make an {@link
  * OffsetDateTime}.
  */
-public final class DateTimeGenerator implements Generator<LocalDateTime> {
+public final class DateTimeGenerator extends ValueGenerator<LocalDateTime> {
     private final LocalDateTime min;
     private final LocalDateTime max;
 

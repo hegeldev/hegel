@@ -166,6 +166,14 @@ final class RealLibhegel implements Libhegel {
     private final MethodHandle printerResolve;
     private final MethodHandle printerValue;
     private final MethodHandle printerValueResultFree;
+    private final MethodHandle printerOptionsNew;
+    private final MethodHandle printerOptionsSetMaxWidth;
+    private final MethodHandle printerOptionsFree;
+    private final MethodHandle printerIfBreak;
+    private final MethodHandle printerComment;
+    private final MethodHandle printerShiftIndent;
+    private final MethodHandle printerDeferred;
+    private final MethodHandle printerIsLive;
     private final MethodHandle generateBoolean;
     private final MethodHandle generateInteger;
     private final MethodHandle generateIntegerBig;
@@ -470,6 +478,34 @@ final class RealLibhegel implements Libhegel {
                 h(linker, lookup, "hegel_printer_value", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
         this.printerValueResultFree =
                 h(linker, lookup, "hegel_printer_value_result_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.printerOptionsNew =
+                h(linker, lookup, "hegel_printer_options_new", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.printerOptionsSetMaxWidth = h(
+                linker,
+                lookup,
+                "hegel_printer_options_set_max_width",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG));
+        this.printerOptionsFree =
+                h(linker, lookup, "hegel_printer_options_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.printerIfBreak = h(
+                linker,
+                lookup,
+                "hegel_printer_if_break",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, STRING_LAYOUT));
+        this.printerComment = h(
+                linker,
+                lookup,
+                "hegel_printer_comment",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, STRING_LAYOUT));
+        this.printerShiftIndent = h(
+                linker,
+                lookup,
+                "hegel_printer_shift_indent",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG));
+        this.printerDeferred =
+                h(linker, lookup, "hegel_printer_deferred", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+        this.printerIsLive =
+                h(linker, lookup, "hegel_printer_is_live", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
         this.generateBoolean = h(
                 linker,
                 lookup,
@@ -1215,9 +1251,70 @@ final class RealLibhegel implements Libhegel {
 
     @Override
     public long printerNew() {
+        return printerNew(0);
+    }
+
+    @Override
+    public long printerNew(long options) {
         MemorySegment seg = Arena.ofAuto().allocate(ADDRESS);
-        check("hegel_printer_new", rc(printerNew, MemorySegment.NULL, seg));
+        check("hegel_printer_new", rc(printerNew, segment(options), seg));
         return seg.get(ADDRESS, 0).address();
+    }
+
+    @Override
+    public long printerOptionsNew() {
+        MemorySegment seg = Arena.ofAuto().allocate(ADDRESS);
+        check("hegel_printer_options_new", rc(printerOptionsNew, seg));
+        return seg.get(ADDRESS, 0).address();
+    }
+
+    @Override
+    public int printerOptionsSetMaxWidth(long options, long maxWidth) {
+        return rc(printerOptionsSetMaxWidth, segment(options), maxWidth);
+    }
+
+    @Override
+    public void printerOptionsFree(long options) {
+        check("hegel_printer_options_free", rc(printerOptionsFree, segment(options)));
+    }
+
+    @Override
+    public int printerIfBreak(long printer, String text) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(printerIfBreak, segment(printer), str(arena, text));
+        }
+    }
+
+    @Override
+    public int printerComment(long printer, String text) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(printerComment, segment(printer), str(arena, text));
+        }
+    }
+
+    @Override
+    public int printerShiftIndent(long printer, long delta) {
+        return rc(printerShiftIndent, segment(printer), delta);
+    }
+
+    @Override
+    public int printerDeferred(long printer, long[] out) {
+        MemorySegment seg = Arena.ofAuto().allocate(ADDRESS);
+        int code = rc(printerDeferred, segment(printer), seg);
+        if (code == Abi.OK) {
+            out[0] = seg.get(ADDRESS, 0).address();
+        }
+        return code;
+    }
+
+    @Override
+    public int printerIsLive(long printer, boolean[] out) {
+        MemorySegment seg = Arena.ofAuto().allocate(JAVA_BOOLEAN);
+        int code = rc(printerIsLive, segment(printer), seg);
+        if (code == Abi.OK) {
+            out[0] = seg.get(JAVA_BOOLEAN, 0);
+        }
+        return code;
     }
 
     @Override

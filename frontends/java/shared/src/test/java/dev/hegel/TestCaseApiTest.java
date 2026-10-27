@@ -58,7 +58,8 @@ class TestCaseApiTest {
         assertEquals(List.of("shown"), List.copyOf(failure.draws().keySet()));
         assertEquals(1, failure.output().size());
         assertTrue(
-                failure.output().get(0).startsWith("shown = "), failure.output().get(0));
+                failure.output().get(0).startsWith("var shown = "),
+                failure.output().get(0));
     }
 
     @Test
@@ -150,7 +151,13 @@ class TestCaseApiTest {
         Failure failure = report.failures().get(0);
         assertInstanceOf(AssertionError.class, failure.exception());
         assertEquals(
-                List.of("// Repetition #1", "  x = 0;", "// Repetition #2", "  x = 0;", "// Repetition #3", "  x = 0;"),
+                List.of(
+                        "// Repetition #1",
+                        "  var x = 0;",
+                        "// Repetition #2",
+                        "  var x = 0;",
+                        "// Repetition #3",
+                        "  var x = 0;"),
                 failure.output());
     }
 

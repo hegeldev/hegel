@@ -3,6 +3,8 @@ package dev.hegel.generators;
 import dev.hegel.Generator;
 import dev.hegel.Generators;
 import dev.hegel.Label;
+import dev.hegel.PrintableGenerator;
+import dev.hegel.Printer;
 import dev.hegel.TestCase;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -12,7 +14,8 @@ import java.util.concurrent.atomic.AtomicReference;
  *
  * <p>A {@code Deferred<T>} is itself a {@link Generator}: pass it into other generators while
  * building a recursive structure, then call {@link #set} once to supply the real implementation.
- * Drawing before {@code set} has been called fails.
+ * Drawing before {@code set} has been called fails. It prints what the generator it delegates to
+ * prints.
  *
  * <pre>{@code
  * // A binary tree of integers: a leaf, or a branch of two subtrees.
@@ -27,7 +30,7 @@ import java.util.concurrent.atomic.AtomicReference;
  *
  * @param <T> the type of value produced
  */
-public final class Deferred<T> implements Generator<T> {
+public final class Deferred<T> implements PrintableGenerator<T> {
     private final AtomicReference<Generator<T>> delegate = new AtomicReference<>();
 
     public Deferred() {}
@@ -50,12 +53,23 @@ public final class Deferred<T> implements Generator<T> {
         return Label.DEFERRED;
     }
 
+    /** @hidden */
     @Override
     public T doDraw(TestCase tc) {
+        return Components.draw(tc, delegate(), null);
+    }
+
+    /** @hidden */
+    @Override
+    public T doDrawAndPrint(TestCase tc, Printer printer) {
+        return Components.draw(tc, delegate(), printer);
+    }
+
+    private Generator<T> delegate() {
         Generator<T> g = delegate.get();
         if (g == null) {
             throw new IllegalStateException("deferred generator has not been set");
         }
-        return g.doDraw(tc);
+        return g;
     }
 }

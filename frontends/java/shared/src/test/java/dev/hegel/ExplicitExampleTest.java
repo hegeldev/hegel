@@ -62,10 +62,10 @@ class ExplicitExampleTest {
                 recorder);
         Failure failure = report.failures().get(0);
         assertTrue(failure.exception().getMessage().startsWith("two"));
-        assertEquals(List.of("xs = [3, 4];", "checking"), failure.output());
+        assertEquals(List.of("var xs = [3, 4];", "checking"), failure.output());
         assertEquals(Map.of("xs", List.of(3, 4)), failure.draws());
         assertTrue(failure.reproduceBlob().isEmpty());
-        assertEquals(List.of("failures: 1", "final: xs = [3, 4];", "final: checking"), recorder.events);
+        assertEquals(List.of("failures: 1", "final: var xs = [3, 4];", "final: checking"), recorder.events);
     }
 
     @Test
@@ -76,7 +76,7 @@ class ExplicitExampleTest {
                 SETTINGS.testCases(1).verbosity(Verbosity.VERBOSE).examples(Example.of("a\nb")),
                 recorder);
         assertEquals("live: Running explicit Example(\"a\\nb\")", recorder.events.get(0));
-        assertEquals("live: x = \"a\\nb\";", recorder.events.get(1));
+        assertEquals("live: var x = \"a\\nb\";", recorder.events.get(1));
 
         Recorder failing = new Recorder();
         Hegel.run(
@@ -269,7 +269,7 @@ class ExplicitExampleTest {
                 SETTINGS.testCases(1).examples(Example.of(3, 4)),
                 recorder);
         assertFalse(report.passed());
-        assertEquals(List.of("y = 4;"), report.failures().get(0).output());
+        assertEquals(List.of("var y = 4;"), report.failures().get(0).output());
     }
 
     @Test
@@ -314,7 +314,8 @@ class ExplicitExampleTest {
                 Reporter.silent());
         assertFalse(failing.passed());
         assertEquals(
-                List.of("// Repetition #1", "x = 9;"), failing.failures().get(0).output());
+                List.of("// Repetition #1", "var x = 9;"),
+                failing.failures().get(0).output());
 
         IllegalArgumentException unused = assertThrows(
                 IllegalArgumentException.class,

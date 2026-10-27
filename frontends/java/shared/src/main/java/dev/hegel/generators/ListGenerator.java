@@ -2,6 +2,8 @@ package dev.hegel.generators;
 
 import dev.hegel.Generator;
 import dev.hegel.Label;
+import dev.hegel.PrintableGenerator;
+import dev.hegel.Printer;
 import dev.hegel.TestCase;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -19,8 +21,11 @@ import java.util.function.Function;
  * <p>The length range defaults to any size; narrow it with the fluent {@link #minSize(int)} /
  * {@link #maxSize(int)} methods. {@link #unique()} and {@link #uniqueBy(Function)} make the
  * elements distinct: a drawn duplicate is rejected and the engine draws another in its place.
+ *
+ * <p>It prints as {@code [a, b]}, each element printed by the element generator as it is drawn;
+ * a rejected duplicate prints nothing.
  */
-public final class ListGenerator<T> implements Generator<List<T>> {
+public final class ListGenerator<T> implements PrintableGenerator<List<T>> {
     private final Generator<T> element;
     private final long minSize;
     private final long maxSize;
@@ -85,20 +90,40 @@ public final class ListGenerator<T> implements Generator<List<T>> {
     /** @hidden */
     @Override
     public List<T> doDraw(TestCase tc) {
+        return draw(tc, null);
+    }
+
+    /** @hidden */
+    @Override
+    public List<T> doDrawAndPrint(TestCase tc, Printer printer) {
+        return draw(tc, printer);
+    }
+
+    private List<T> draw(TestCase tc, Printer printer) {
+        Printer p = Components.out(printer);
         tc.startSpan(label());
         try {
             long id = tc.newCollection(minSize, maxSize);
             try {
                 List<T> out = new ArrayList<>();
                 Set<Object> keys = new HashSet<>();
+                p.beginGroup("[");
                 while (tc.collectionMore(id)) {
-                    T value = element.doDraw(tc);
-                    if (uniqueKey != null && !keys.add(new ContentKey(uniqueKey.apply(value)))) {
-                        tc.collectionReject(id, "duplicate element");
-                    } else {
-                        out.add(value);
+                    try (Printer.Speculation speculation = p.speculate()) {
+                        if (!out.isEmpty()) {
+                            p.separator();
+                        }
+                        T value = Components.draw(tc, element, printer);
+                        if (uniqueKey != null && !keys.add(new ContentKey(uniqueKey.apply(value)))) {
+                            speculation.abort();
+                            tc.collectionReject(id, "duplicate element");
+                        } else {
+                            speculation.commit();
+                            out.add(value);
+                        }
                     }
                 }
+                p.endGroup("]");
                 return out;
             } finally {
                 tc.collectionFree(id);

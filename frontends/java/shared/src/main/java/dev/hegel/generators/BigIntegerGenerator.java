@@ -1,6 +1,5 @@
 package dev.hegel.generators;
 
-import dev.hegel.Generator;
 import dev.hegel.Label;
 import dev.hegel.TestCase;
 import java.math.BigInteger;
@@ -14,7 +13,7 @@ import java.math.BigInteger;
  * [-2^127, 2^127)}. Values shrink toward zero, or toward the bound
  * nearest zero when zero is out of range.
  */
-public final class BigIntegerGenerator implements Generator<BigInteger> {
+public final class BigIntegerGenerator extends ValueGenerator<BigInteger> {
     /** How far an unset bound reaches beyond the other bound, or beyond zero. */
     private static final BigInteger UNBOUNDED_MAGNITUDE = BigInteger.ONE.shiftLeft(127);
 

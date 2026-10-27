@@ -1,6 +1,5 @@
 package dev.hegel.generators;
 
-import dev.hegel.Generator;
 import dev.hegel.Label;
 import dev.hegel.TestCase;
 import java.util.ArrayList;
@@ -12,7 +11,7 @@ import java.util.List;
  *
  * @param <T> the element type
  */
-public final class PermutationGenerator<T> implements Generator<List<T>> {
+public final class PermutationGenerator<T> extends ValueGenerator<List<T>> {
     private final List<T> elements;
 
     /**

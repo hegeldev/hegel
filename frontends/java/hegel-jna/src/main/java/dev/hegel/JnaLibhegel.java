@@ -200,6 +200,22 @@ final class JnaLibhegel implements Libhegel {
 
         int hegel_printer_value_result_free(Pointer ctx, HegelString result);
 
+        int hegel_printer_options_new(Pointer ctx, PointerByReference out);
+
+        int hegel_printer_options_set_max_width(Pointer ctx, Pointer options, long maxWidth);
+
+        int hegel_printer_options_free(Pointer ctx, Pointer options);
+
+        int hegel_printer_if_break(Pointer ctx, Pointer printer, HegelString.ByValue text);
+
+        int hegel_printer_comment(Pointer ctx, Pointer printer, HegelString.ByValue text);
+
+        int hegel_printer_shift_indent(Pointer ctx, Pointer printer, long delta);
+
+        int hegel_printer_deferred(Pointer ctx, Pointer printer, PointerByReference out);
+
+        int hegel_printer_is_live(Pointer ctx, Pointer printer, ByteByReference out);
+
         int hegel_generate_boolean(Pointer ctx, Pointer tc, double p, byte hasForced, byte forced, ByteByReference out);
 
         int hegel_generate_integer(Pointer ctx, Pointer tc, long min, long max, LongByReference out);
@@ -908,9 +924,66 @@ final class JnaLibhegel implements Libhegel {
 
     @Override
     public long printerNew() {
+        return printerNew(0);
+    }
+
+    @Override
+    public long printerNew(long options) {
         PointerByReference ref = new PointerByReference();
-        check("hegel_printer_new", lib.hegel_printer_new(ctx(), null, ref));
+        check("hegel_printer_new", lib.hegel_printer_new(ctx(), pointer(options), ref));
         return address(ref.getValue());
+    }
+
+    @Override
+    public long printerOptionsNew() {
+        PointerByReference ref = new PointerByReference();
+        check("hegel_printer_options_new", lib.hegel_printer_options_new(ctx(), ref));
+        return address(ref.getValue());
+    }
+
+    @Override
+    public int printerOptionsSetMaxWidth(long options, long maxWidth) {
+        return lib.hegel_printer_options_set_max_width(ctx(), pointer(options), maxWidth);
+    }
+
+    @Override
+    public void printerOptionsFree(long options) {
+        check("hegel_printer_options_free", lib.hegel_printer_options_free(ctx(), pointer(options)));
+    }
+
+    @Override
+    public int printerIfBreak(long printer, String text) {
+        return lib.hegel_printer_if_break(ctx(), pointer(printer), str(text));
+    }
+
+    @Override
+    public int printerComment(long printer, String text) {
+        return lib.hegel_printer_comment(ctx(), pointer(printer), str(text));
+    }
+
+    @Override
+    public int printerShiftIndent(long printer, long delta) {
+        return lib.hegel_printer_shift_indent(ctx(), pointer(printer), delta);
+    }
+
+    @Override
+    public int printerDeferred(long printer, long[] out) {
+        PointerByReference ref = new PointerByReference();
+        int code = lib.hegel_printer_deferred(ctx(), pointer(printer), ref);
+        if (code == Abi.OK) {
+            out[0] = address(ref.getValue());
+        }
+        return code;
+    }
+
+    @Override
+    public int printerIsLive(long printer, boolean[] out) {
+        ByteByReference ref = new ByteByReference();
+        int code = lib.hegel_printer_is_live(ctx(), pointer(printer), ref);
+        if (code == Abi.OK) {
+            out[0] = ref.getValue() != 0;
+        }
+        return code;
     }
 
     @Override

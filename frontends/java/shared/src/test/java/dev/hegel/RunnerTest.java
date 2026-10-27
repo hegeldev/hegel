@@ -620,7 +620,7 @@ class RunnerTest {
                 Reporter.printing(capture(buf)));
         assertTrue(report.failures().get(0).nondeterministic());
         String out = buf.toString(StandardCharsets.UTF_8).replace("\r\n", "\n");
-        assertEquals("x = 0;\nnote: nondeterministic failure, unconfirmed: failed 0 of 20 replays\n", out);
+        assertEquals("var x = 0;\nnote: nondeterministic failure, unconfirmed: failed 0 of 20 replays\n", out);
     }
 
     @Test

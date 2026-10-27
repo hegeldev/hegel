@@ -310,6 +310,27 @@ public interface Libhegel {
      */
     long printerNew();
 
+    /**
+     * {@code hegel_printer_new}: a caller-owned standalone document laid out per {@code options}
+     * (from {@link #printerOptionsNew}; 0 for the defaults), released with {@link #printerFree}.
+     */
+    long printerNew(long options);
+
+    /**
+     * {@code hegel_printer_options_new}: a caller-owned options handle with every option at its
+     * default, released with {@link #printerOptionsFree}.
+     */
+    long printerOptionsNew();
+
+    /**
+     * {@code hegel_printer_options_set_max_width}: the line width documents made with {@code
+     * options} are laid out to. Returns the raw rc: {@link Abi#E_INVALID_ARG} for a width of 0.
+     */
+    int printerOptionsSetMaxWidth(long options, long maxWidth);
+
+    /** {@code hegel_printer_options_free}. */
+    void printerOptionsFree(long options);
+
     /** {@code hegel_printer_free}. Freeing never discards document content. */
     void printerFree(long printer);
 
@@ -324,6 +345,21 @@ public interface Libhegel {
 
     /** {@code hegel_printer_hard_break}: an unconditional newline. */
     int printerHardBreak(long printer);
+
+    /**
+     * {@code hegel_printer_if_break}: {@code text}, which must not contain newlines, only when the
+     * innermost open group breaks.
+     */
+    int printerIfBreak(long printer, String text);
+
+    /**
+     * {@code hegel_printer_comment}: attach {@code text}, the comment's full rendered form (such as
+     * {@code "  // note"}), to the end of the current line, forcing every open group to break.
+     */
+    int printerComment(long printer, String text);
+
+    /** {@code hegel_printer_shift_indent}: adjust the indentation of later break points by {@code delta}. */
+    int printerShiftIndent(long printer, long delta);
 
     /** {@code hegel_printer_begin_group}: emit {@code open} and indent break points by {@code indent}. */
     int printerBeginGroup(long printer, long indent, String open);
@@ -345,6 +381,19 @@ public interface Libhegel {
 
     /** {@code hegel_printer_abort_speculative}: discard the innermost speculative region. */
     int printerAbortSpeculative(long printer);
+
+    /**
+     * {@code hegel_printer_deferred}: open a hole at {@code printer}'s current position. Returns the
+     * raw rc ({@link Abi#E_INVALID_HANDLE} for a dead region) and on OK writes a caller-owned handle
+     * onto the hole into {@code out[0]}; release it with {@link #printerFree}.
+     */
+    int printerDeferred(long printer, long[] out);
+
+    /**
+     * {@code hegel_printer_is_live}: whether {@code printer} can still be written to. Returns the
+     * raw rc and on OK writes the answer into {@code out[0]}.
+     */
+    int printerIsLive(long printer, boolean[] out);
 
     /**
      * {@code hegel_printer_resolve}: splice every deferred region (a clone's output) in at its anchor

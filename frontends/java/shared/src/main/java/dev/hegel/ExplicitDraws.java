@@ -22,7 +22,7 @@ final class ExplicitDraws implements AutoCloseable {
 
     ExplicitDraws(Libhegel lib, Example example) {
         this.example = example;
-        this.printer = new Printer(lib, lib.printerNew());
+        this.printer = new Printer(lib, lib.printerNew(), new Printer.Regions());
     }
 
     /**
@@ -39,7 +39,7 @@ final class ExplicitDraws implements AutoCloseable {
                 });
     }
 
-    /** The value of the draw named {@code name}, printed as {@code name = value;}. */
+    /** The value of the draw named {@code name}, printed as {@code var name = value;}. */
     synchronized Object take(String name) {
         Object value;
         if (example.named().containsKey(name)) {
@@ -51,8 +51,8 @@ final class ExplicitDraws implements AutoCloseable {
             throw new InvalidExample("Explicit example " + example + " has no value for draw " + name
                     + ": give it by name with Example.with, or add a positional value");
         }
-        printer.text(name + " = ");
-        printer.value(value);
+        printer.text("var " + name + " = ");
+        printer.repr(value);
         printer.text(";");
         printer.hardBreak();
         return value;
@@ -99,6 +99,6 @@ final class ExplicitDraws implements AutoCloseable {
 
     @Override
     public void close() {
-        printer.close();
+        printer.free();
     }
 }

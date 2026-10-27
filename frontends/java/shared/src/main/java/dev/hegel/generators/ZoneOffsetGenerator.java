@@ -1,6 +1,5 @@
 package dev.hegel.generators;
 
-import dev.hegel.Generator;
 import dev.hegel.TestCase;
 import java.time.ZoneOffset;
 
@@ -12,7 +11,7 @@ import java.time.ZoneOffset;
  * ZoneOffset} span ({@code -18:00} to {@code +18:00}); narrow it with the fluent {@link
  * #min(ZoneOffset)} / {@link #max(ZoneOffset)} methods.
  */
-public final class ZoneOffsetGenerator implements Generator<ZoneOffset> {
+public final class ZoneOffsetGenerator extends ValueGenerator<ZoneOffset> {
     private final int minSeconds;
     private final int maxSeconds;
 

@@ -24,7 +24,7 @@ class ReporterTest {
         silent.runStarted(new Settings());
         silent.engineOutput("line");
         silent.caseStarted(false);
-        silent.caseOutput("x = 1;", true);
+        silent.caseOutput("var x = 1;", true);
         silent.caseFinished(CaseOutcome.VALID, false);
         silent.failuresFound(1);
         silent.failure(failure);
@@ -38,11 +38,11 @@ class ReporterTest {
         printing.runStarted(new Settings());
         printing.engineOutput("engine line");
         printing.caseStarted(true); // a lone failure: no separating blank line
-        printing.caseOutput("xs = [1, 2];", true);
+        printing.caseOutput("var xs = [1, 2];", true);
         printing.caseOutput("a note", true);
         printing.caseFinished(CaseOutcome.INTERESTING, true);
         printing.failure(new Failure("o", "b64", null, new AssertionError("x"), Map.of(), List.of())); // printBlob off
-        assertEquals("engine line\nxs = [1, 2];\na note\n", text(buf));
+        assertEquals("engine line\nvar xs = [1, 2];\na note\n", text(buf));
     }
 
     @Test
@@ -63,7 +63,7 @@ class ReporterTest {
         ByteArrayOutputStream quietBuf = new ByteArrayOutputStream();
         Reporter quiet = Reporter.printing(new PrintStream(quietBuf, true, StandardCharsets.UTF_8));
         quiet.runStarted(new Settings().verbosity(Verbosity.QUIET));
-        quiet.caseOutput("x = 1;", true);
+        quiet.caseOutput("var x = 1;", true);
         quiet.caseOutput("hidden", true);
         assertEquals("", quietBuf.toString(StandardCharsets.UTF_8));
 
@@ -71,9 +71,9 @@ class ReporterTest {
         ByteArrayOutputStream verboseBuf = new ByteArrayOutputStream();
         Reporter verbose = Reporter.printing(new PrintStream(verboseBuf, true, StandardCharsets.UTF_8));
         verbose.runStarted(new Settings().verbosity(Verbosity.VERBOSE));
-        verbose.caseOutput("x = 1;", false);
+        verbose.caseOutput("var x = 1;", false);
         verbose.caseOutput("shown", false);
-        assertEquals("x = 1;\nshown\n", text(verboseBuf));
+        assertEquals("var x = 1;\nshown\n", text(verboseBuf));
     }
 
     @Test

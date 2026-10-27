@@ -1,6 +1,5 @@
 package dev.hegel.generators;
 
-import dev.hegel.Generator;
 import dev.hegel.TestCase;
 import java.time.LocalDate;
 
@@ -11,7 +10,7 @@ import java.time.LocalDate;
  * {@link #min(LocalDate)} / {@link #max(LocalDate)} methods. Values shrink toward 2000-01-01, or
  * the nearest bound when that is out of range.
  */
-public final class DateGenerator implements Generator<LocalDate> {
+public final class DateGenerator extends ValueGenerator<LocalDate> {
     static final LocalDate DEFAULT_MIN = LocalDate.of(1, 1, 1);
     static final LocalDate DEFAULT_MAX = LocalDate.of(9999, 12, 31);
     private static final int MAX_ENGINE_YEAR = 999_999;

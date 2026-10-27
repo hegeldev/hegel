@@ -3,6 +3,7 @@ package dev.hegel.generators;
 import dev.hegel.Generator;
 import dev.hegel.Generators;
 import dev.hegel.HegelException;
+import dev.hegel.PrintableGenerator;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.List;
@@ -19,11 +20,11 @@ public final class Derive {
 
     /** Erase a generator's element type; the derived value is consumed as {@code Object}. */
     @SuppressWarnings("unchecked")
-    private static Generator<Object> erase(Generator<?> g) {
-        return (Generator<Object>) g;
+    private static PrintableGenerator<Object> erase(Generator<?> g) {
+        return (PrintableGenerator<Object>) g;
     }
 
-    public static Generator<Object> fromType(Type type) {
+    public static PrintableGenerator<Object> fromType(Type type) {
         if (type instanceof ParameterizedType pt) {
             return parameterized(pt);
         }
@@ -33,7 +34,7 @@ public final class Derive {
         throw new HegelException("Cannot derive a generator for type: " + type);
     }
 
-    private static Generator<Object> fromClass(Class<?> cls) {
+    private static PrintableGenerator<Object> fromClass(Class<?> cls) {
         Generator<?> g = scalar(cls);
         if (g != null) {
             return erase(g);
@@ -113,7 +114,7 @@ public final class Derive {
         return null;
     }
 
-    private static Generator<Object> parameterized(ParameterizedType pt) {
+    private static PrintableGenerator<Object> parameterized(ParameterizedType pt) {
         Class<?> raw = (Class<?>) pt.getRawType();
         Type[] args = pt.getActualTypeArguments();
         if (raw == List.class) {

@@ -41,6 +41,7 @@ class HandleLeakTest {
         int grammarsCreated;
         int grammarDrawsCreated;
         int standalonePrintersCreated;
+        int deferredPrintersCreated;
         int maxLiveTestCases;
         int recursionsCreated;
         int blocksCreated;
@@ -140,6 +141,12 @@ class HandleLeakTest {
                         livePrinters.add(((long[]) args[1])[0]);
                     }
                 }
+                case "printerDeferred" -> {
+                    if (ok) {
+                        deferredPrintersCreated++;
+                        livePrinters.add(((long[]) args[1])[0]);
+                    }
+                }
                 case "printerFree" -> assertTrue(livePrinters.remove((Long) args[0]));
                 default -> {}
             }
@@ -215,6 +222,32 @@ class HandleLeakTest {
                 });
         assertFalse(report.passed());
         assertTrue(tracker.blocksCreated > 0);
+        tracker.assertNothingLeaked();
+    }
+
+    @Test
+    void deferredPrinterRegionsAreFreed() {
+        Tracker tracker = new Tracker(Engine.get());
+        PrintableGenerator<Printer> slots = (tc, p) -> {
+            p.text("slot(");
+            Printer slot = p.deferred();
+            p.text(")");
+            return slot;
+        };
+        RunReport report =
+                tracker.run(new Settings().verbosity(Verbosity.VERBOSE).testCases(5), tc -> {
+                    tc.draw(slots).text("filled");
+                    tc.fork(1).draw(slots);
+                    tc.repeat(() -> {
+                        tc.draw(slots);
+                        throw new IllegalStateException();
+                    });
+                });
+        assertFalse(report.passed());
+        List<String> output = report.failures().get(0).output();
+        assertEquals("var draw_1 = slot(filled);", output.get(0));
+        assertEquals("  var draw_1 = slot();", output.get(output.size() - 1));
+        assertTrue(tracker.deferredPrintersCreated > 0);
         tracker.assertNothingLeaked();
     }
 

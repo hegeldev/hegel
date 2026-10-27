@@ -1,6 +1,5 @@
 package dev.hegel.generators;
 
-import dev.hegel.Generator;
 import dev.hegel.Label;
 import dev.hegel.TestCase;
 
@@ -10,7 +9,7 @@ import dev.hegel.TestCase;
  * <p>The default range is the full {@code long} range; narrow it with the fluent {@link #min(long)}
  * / {@link #max(long)} methods.
  */
-public final class LongGenerator implements Generator<Long> {
+public final class LongGenerator extends ValueGenerator<Long> {
     private final long min;
     private final long max;
 

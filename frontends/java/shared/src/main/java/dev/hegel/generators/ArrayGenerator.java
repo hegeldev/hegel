@@ -2,15 +2,18 @@ package dev.hegel.generators;
 
 import dev.hegel.Generator;
 import dev.hegel.Label;
+import dev.hegel.PrintableGenerator;
+import dev.hegel.Printer;
 import dev.hegel.TestCase;
 import java.util.function.IntFunction;
 
 /**
- * Generates arrays of a fixed length, drawing each element from one generator.
+ * Generates arrays of a fixed length, drawing each element from one generator. It prints as {@code
+ * [a, b]}, each element printed by the element generator as it is drawn.
  *
  * @param <T> the element type
  */
-public final class ArrayGenerator<T> implements Generator<T[]> {
+public final class ArrayGenerator<T> implements PrintableGenerator<T[]> {
     private final Generator<T> element;
     private final int length;
     private final IntFunction<T[]> newArray;
@@ -39,12 +42,28 @@ public final class ArrayGenerator<T> implements Generator<T[]> {
     /** @hidden */
     @Override
     public T[] doDraw(TestCase tc) {
+        return draw(tc, null);
+    }
+
+    /** @hidden */
+    @Override
+    public T[] doDrawAndPrint(TestCase tc, Printer printer) {
+        return draw(tc, printer);
+    }
+
+    private T[] draw(TestCase tc, Printer printer) {
+        Printer p = Components.out(printer);
         tc.startSpan(label());
         try {
             T[] out = newArray.apply(length);
+            p.beginGroup("[");
             for (int i = 0; i < length; i++) {
-                out[i] = element.doDraw(tc);
+                if (i > 0) {
+                    p.separator();
+                }
+                out[i] = Components.draw(tc, element, printer);
             }
+            p.endGroup("]");
             return out;
         } finally {
             tc.stopSpan(false);

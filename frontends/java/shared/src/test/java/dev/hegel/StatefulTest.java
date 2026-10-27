@@ -96,13 +96,13 @@ class StatefulTest {
         assertEquals(
                 List.of(
                         "Step 1: step {",
-                        "  x = 0;",
+                        "  var x = 0;",
                         "}",
                         "Step 2: step {",
-                        "  x = 0;",
+                        "  var x = 0;",
                         "}",
                         "Step 3: step {",
-                        "  x = 0;"),
+                        "  var x = 0;"),
                 report.failures().get(0).output().subList(0, 8));
         assertEquals(
                 List.of("x", "x_2", "x_3"),

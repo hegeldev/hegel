@@ -137,10 +137,10 @@ class ConcurrentStatefulDriverTest {
                         "[worker 0] Rule: alpha {",
                         "[worker 0] }",
                         "[worker 0] Rule: gamma {",
-                        "  [worker 0] x = 0;",
+                        "  [worker 0] var x = 0;",
                         "[worker 0] }",
                         "[worker 1] Rule: gamma {",
-                        "  [worker 1] x = 0;",
+                        "  [worker 1] var x = 0;",
                         "[worker 1] }",
                         "---------------- Round 2: group \"<anonymous>\" ----------------",
                         "[worker 1] Rule: alpha {",
@@ -162,7 +162,7 @@ class ConcurrentStatefulDriverTest {
         List<String> printed = tc.output();
         assertTrue(printed.contains("[worker 0] Rule: alpha {"), printed.toString());
         assertTrue(printed.contains("[worker 1] Rule: gamma {"), printed.toString());
-        assertTrue(printed.contains("  [worker 1] x = 0;"), printed.toString());
+        assertTrue(printed.contains("  [worker 1] var x = 0;"), printed.toString());
         assertTrue(tc.draws().isEmpty());
     }
 
