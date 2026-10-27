@@ -89,7 +89,13 @@ let test_ip_both_e2e () =
   Alcotest.(check string)
     "printer"
     "1.2.3.4"
-    (Sexplib0.Sexp.to_string (printer (ip_addresses ()) (Ipaddr.of_string_exn "1.2.3.4")))
+    (Sexplib0.Sexp.to_string (printer (ip_addresses ()) (Ipaddr.of_string_exn "1.2.3.4")));
+  Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:1 ()) (fun tc ->
+    let ip, shown = Private.render_draw tc (ip_addresses ~version:`V4 ()) in
+    Alcotest.(check string)
+      "shown"
+      (Printf.sprintf "Ipaddr.of_string_exn %S" (Ipaddr.to_string ip))
+      shown)
 ;;
 
 (** Test: tuples2 primitive e2e. *)

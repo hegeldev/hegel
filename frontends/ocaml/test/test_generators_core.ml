@@ -524,6 +524,30 @@ let test_resolve_draw () =
   Alcotest.(check bool) "unknown id raises Flaky_strategy" true raised
 ;;
 
+(** Test: generators that print as they draw describe a value given to their
+    printer as abstract, unless given a printer. *)
+let test_print_as_drawn_printers () =
+  let sexp gen v = Sexplib0.Sexp.to_string (printer gen v) in
+  let composite = printable_composite (fun _ _ -> 0) in
+  Alcotest.(check string) "composite" "<abstr>" (sexp composite 0);
+  Alcotest.(check string)
+    "composite with a printer"
+    "0"
+    (sexp (printable_composite ~sexp_of:Sexplib0.Sexp_conv.sexp_of_int (fun _ _ -> 0)) 0);
+  Alcotest.(check string)
+    "map_as_call"
+    "<abstr>"
+    (sexp (map_as_call "f" Fun.id (int_gen 0)) 0);
+  Alcotest.(check string)
+    "flat_map_printable"
+    "<abstr>"
+    (sexp (flat_map_printable int_gen (int_gen 0)) 0);
+  check_shown
+    "composite"
+    (printable_composite ~label:"x" (fun _ p -> Printer.Out.text p "x"))
+    "x"
+;;
+
 let tests =
   [ Alcotest.test_case "stateful: resolve_draw" `Quick test_resolve_draw
   ; Alcotest.test_case "labels match engine" `Quick test_labels_match_engine
@@ -578,5 +602,6 @@ let tests =
   ; Alcotest.test_case "display structures" `Quick test_display_structures
   ; Alcotest.test_case "display one_of" `Quick test_display_one_of
   ; Alcotest.test_case "display optional" `Quick test_display_optional
+  ; Alcotest.test_case "print-as-drawn printers" `Quick test_print_as_drawn_printers
   ]
 ;;

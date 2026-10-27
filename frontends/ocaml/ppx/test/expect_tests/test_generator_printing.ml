@@ -59,7 +59,8 @@ let%expect_test "an element's own printing shows up inside its container" =
     ignore (xs, stack, o, r);
     assert false);
   print_report (Expect_scrub.scrub_report [%expect.output]);
-  [%expect {|
+  [%expect
+    {|
     let draw_1 = [0xff; 0xff] in
     let draw_2 = [Stack.of_list [1]; Stack.of_list [1]] in
     let draw_3 = Some (-3) in
@@ -98,7 +99,8 @@ let%expect_test "a deferred value is printed as it is used" =
     ignore unused;
     assert false);
   print_report (Expect_scrub.scrub_report [%expect.output]);
-  [%expect {|
+  [%expect
+    {|
     let draw_1 = Tape [0; 0] in
     let draw_2 = Tape [] in
     let draw_3 = [Tape [0]] in
@@ -161,7 +163,8 @@ let%expect_test "a mapped value prints as its printer or call describes it" =
     ignore (d, s, k, neg, ks, some, wide);
     assert false);
   print_report (Expect_scrub.scrub_report [%expect.output]);
-  [%expect {|
+  [%expect
+    {|
     let draw_1 = 6 in
     let draw_2 = (3 3) in
     let draw_3 = Key.of_int 3 in
@@ -199,7 +202,8 @@ let%expect_test "layout matches Rust's" =
     ignore (wide, sonar, pair, none);
     assert false);
   print_report (Expect_scrub.scrub_report [%expect.output]);
-  [%expect {|
+  [%expect
+    {|
     let draw_1 = ["aaaaaaaaaaaaaaaaaaaa";
      "aaaaaaaaaaaaaaaaaaaa";
      "aaaaaaaaaaaaaaaaaaaa"] in
@@ -214,7 +218,8 @@ let%expect_test "a narrow document breaks a record one field per line" =
     print_endline
       (Printer.Out.with_document ~max_width:20 (fun printer ->
          ignore (draw_and_print tc printer hegel_generator_sonar : sonar))));
-  [%expect {|
+  [%expect
+    {|
     {
       active = false;
       depth = 0 }
@@ -303,7 +308,8 @@ let%expect_test "rejected attempts and duplicates are never printed" =
     {|^let xs = \[(\(\d, (true|false)\)(; \(\d, (true|false)\))*)?\] in$|}
     assoc_lines;
   distinct "assoc lists" {|\((\d),|} assoc_lines;
-  [%expect {|
+  [%expect
+    {|
     filter: 100 lines ok
     unique lists: 100 lines ok
     unique lists: no duplicates
@@ -345,7 +351,8 @@ let%expect_test "combinators print what their components print" =
     ignore (either, dependent, silent);
     assert false);
   print_report (Expect_scrub.scrub_report [%expect.output]);
-  [%expect {|
+  [%expect
+    {|
     let draw_1 = 0xff in
     let draw_2 = [2; 2] in
     |}]
@@ -362,7 +369,8 @@ let%expect_test "a draw that raises leaves no partial binding" =
             failwith "mid-draw"))
        : int));
   print_string (Expect_scrub.scrub_report [%expect.output]);
-  [%expect {|
+  [%expect
+    {|
     let draw_1 = 1 in
     Exception: Failure("mid-draw")
 
@@ -385,7 +393,8 @@ let%expect_test "a note made while drawing prints after the binding" =
        : int);
     assert false);
   print_report (Expect_scrub.scrub_report [%expect.output]);
-  [%expect {|
+  [%expect
+    {|
     let n = 4 in
     drawing
     |}]

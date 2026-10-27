@@ -118,7 +118,11 @@ let test_ofdays_default_bounds () =
     if Ofday.equal t Ofday.start_of_next_day
     then saw_end_of_day := true
     else saw_within_day := true);
-  assert (!saw_end_of_day && !saw_within_day)
+  assert (!saw_end_of_day && !saw_within_day);
+  check_shown
+    "ofdays"
+    (Hegel_jane.ofdays ~max_ofday:(Ofday.of_string "12:00") ())
+    (Printer.of_sexp Ofday.sexp_of_t)
 ;;
 
 (** Test: lower bound to end of day always generates it *)
