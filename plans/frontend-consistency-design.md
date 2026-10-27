@@ -153,7 +153,7 @@ Argument validation duplicated in frontends is accepted: it gives construction-t
 | `state = …` printing | ✗ | ✗ | ✗ | ✓ (opt-out) | ✗ | ✓ (opt-in) |
 | teardown | ✗ | ✓ | ✗ | ✗ | ✗ | ✗ |
 
-**Changes (DECIDED):** T adds weights; C adds weights and always-check; T documents concurrency as unsupported in JavaScript (and fixes the CHANGELOG/BROWSER.md claims that it is pending a newer libhegel); J discovers rules on superclasses too (today `getDeclaredMethods` only). P removes `teardown()` (**Q10**). **Q9** state printing is still open; see "Still open" below.
+**Changes (DECIDED):** T adds weights; C adds weights and always-check; T documents concurrency as unsupported in JavaScript (and fixes the CHANGELOG/BROWSER.md claims that it is pending a newer libhegel); J discovers rules on superclasses too (today `getDeclaredMethods` only). P removes `teardown()` (**Q10**). C and O remove `state = …` printing (`RunParams::print_state`, `?print_state` / `?sexp_of_state`); "print the state" is tracked as a future feature for all six (**Q9, DECIDED**).
 
 ## 14. Resources and Unicode
 
@@ -193,19 +193,16 @@ R README calls the crate `hegel-rust`; P README calls it `hegel-python`, `TestCa
 - **Q18 Verbose per-case vocabulary.** Rust's.
 - **Q19 Settings model.** Rust's eager model everywhere (section 2).
 - **Q20 Engine env vars.** Added in this PR, plus a lint (section 15).
+- **Q9 Stateful `state = …` printing.** Removed from C++ and OCaml; "print the state" is a future feature for all six.
 
-## Still open
+## Work split
 
-- **Q9 Stateful `state = …` printing.** What exists: C++ prints `state = <repr of the machine's state>` after initialisation and after every successful step, on by default (`RunParams::print_state = true`, opt-out), so a failing run shows the state each step started from. OCaml prints the same line only when `run` is given `?print_state` or `?sexp_of_state` (opt-in). Rust, Python, TypeScript and Java print nothing about the state: the step log (`Step N: rule { args }`) is the whole record, and the state is not a drawn value, so it has no generator to print it. Options: (a) remove from C++ and OCaml now and track "print the state" as a feature to add to all six later, which is what the recommendation was; (b) keep it and add it to the other four as an opt-in (`print_state` on the runner's params; Rust would take a closure or a `Debug` bound, Python/TS a function or `repr`, Java `toString` or a function), always opt-in and always printed after the same events (initial state, each successful step). (a) is less work and keeps the report identical across frontends; (b) keeps a feature two frontends' users already have. Awaiting a decision.
-
-## Work split once settled
-
-One agent per feature, each touching every frontend that needs the change and merging back to `DRMacIver/consistency`:
-1. Draw naming (Q1) + user-generator default labels.
-2. Explicit examples (Q2, Q3, Q4, Q25).
-3. Failure report and verbose vocabulary (Q5, Q18) + stateful wording + Q8.
-4. Generators parity (section 11 DECIDED items, Q11, Q16, Q15, Q6).
-5. Stateful parity (section 13, Q9, Q10, Q14).
-6. Spans (Q13) and `repeat` (Q7, libhegel first).
-7. Settings (Q19 eager model in P/T/C/J, Q20 env vars + lint in libhegel, Python seed, C++ step count), CLI/errors small items (OCaml main, TS EngineError, engine_version) + libhegel docs + frontend docs.
-8. Float exclusive bounds (Q12) across P, T, C, J, O.
+One agent per feature, each in its own worktree on a `consistency/<feature>` branch off `DRMacIver/consistency`, touching every frontend the feature needs, merged back by the coordinator:
+1. `naming-spans`: draw naming (Q1: T, J, C, O), user-generator default label = host type name (P, T, C, J, O), spans per draw (Q13: T, C, J, O), Python stops printing the nested draws of a failing draw (Q6).
+2. `explicit-examples`: skip under blob replay (Q2: R), `report_multiple_failures` collects explicit failures (Q25: R, C), `draw_silent` is a usage error (Q3: J), `clone`/`set_worker` supported (Q4: R, C, O), Java `fork` → `clone()` + `setWorker()` (Q14).
+3. `report-verbosity`: Python drops `Falsifying example:` (Q5); verbose vocabulary is Rust's (Q18: P, C, J).
+4. `generators`: `weighted_booleans` (T, C, J), `unit` (O), `from_regex` alphabet (C), `subsequences`/`samples` (T, C, J, O), derived generators reject recursive types (J, C), Python drops `text(alphabet=<generator>)` (Q11a).
+5. `floats-and-forms`: `allow_subnormal` (T, C, O), exclusive bounds (Q12: P, T, C, J, O), Java `Set.of`/`UUID.fromString` (Q15), TypeScript `binary()` → `Uint8Array` (Q16).
+6. `stateful`: weights (T, C), always-check (C), wording (C, O), remove state printing (Q9: C, O), remove Python `teardown()` (Q10), Java superclass rules, TypeScript concurrency docs, C++ `stateful_step_count` → `RunParams`.
+7. `repeat-engine`: `repeat` into libhegel (Q7) and all six frontends onto it, host comment syntax for the note (Q8), libhegel header doc fixes (section 15).
+8. `settings`: eager model (Q19: P, T, C, J), env vars + lint (Q20), Python seed, Java seed sentinel doc, `engine_version` (R, T, J, O), OCaml `main` alignment, TypeScript `EngineError` export and `Document` finalizer, documentation fixes (section 16).
