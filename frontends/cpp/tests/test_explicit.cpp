@@ -333,8 +333,8 @@ namespace {
     hegel::Settings multiple_failure_settings(
         hegel::Verbosity verbosity = hegel::Verbosity::Normal) {
         return hegel::Settings{.test_cases = 20,
-                               .report_multiple_failures = true,
                                .verbosity = verbosity,
+                               .report_multiple_failures = true,
                                .database = hegel::Database::disabled(),
                                .suppress_health_check =
                                    hegel::all_health_checks()};
@@ -374,8 +374,8 @@ TEST(Explicit, FirstFailureEndsTheRunWithoutReportMultipleFailures) {
                          throw std::runtime_error("boom");
                      },
                      {hegel::ExplicitTestCase(1), hegel::ExplicitTestCase(2)},
-                     hegel::Settings{.report_multiple_failures = false,
-                                     .verbosity = hegel::Verbosity::Quiet,
+                     hegel::Settings{.verbosity = hegel::Verbosity::Quiet,
+                                     .report_multiple_failures = false,
                                      .database = hegel::Database::disabled()}),
                  std::runtime_error);
     EXPECT_EQ(calls, 1);

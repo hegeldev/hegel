@@ -160,6 +160,15 @@ def _unflags(cls: type[enum.Enum], mask: int) -> frozenset[Any]:
     return frozenset(member for member in cls if mask & int(member.value))
 
 
+def _show(value: Any) -> str:
+    if not isinstance(value, frozenset):
+        return repr(value)
+    if not value:
+        return "frozenset()"
+    members = sorted(value, key=lambda member: int(member.value))
+    return f"frozenset({{{', '.join(repr(member) for member in members)}}})"
+
+
 def _coerce_member(cls: type[E], field: str, value: Any) -> E:
     """``value`` as a member of ``cls``: a member, or a member's name."""
     if isinstance(value, cls):
@@ -349,7 +358,7 @@ class Settings:
         return hash(self._key())
 
     def __repr__(self) -> str:
-        fields = ", ".join(f"{name}={self._values[name]!r}" for name in _FIELDS)
+        fields = ", ".join(f"{name}={_show(self._values[name])}" for name in _FIELDS)
         return f"Settings({fields})"
 
     @classmethod

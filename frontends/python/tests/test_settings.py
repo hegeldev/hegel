@@ -348,3 +348,9 @@ def test_settings_cannot_be_changed_or_deleted():
         del settings.test_cases
     with pytest.raises(AttributeError, match="no attribute 'kittens'"):
         settings.kittens  # noqa: B018
+
+
+def test_repr_lists_set_members_in_a_fixed_order():
+    shown = repr(Settings(phases=[Phase.shrink, Phase.explicit, Phase.target]))
+    assert "phases=frozenset({<Phase.explicit: 1>, <Phase.target: 8>, <Phase.shrink: 16>})" in shown
+    assert "suppress_health_check=frozenset()" in repr(Settings(suppress_health_check=[]))
