@@ -393,7 +393,7 @@ def test_numbered_names_skip_names_already_taken():
     assert lines[1:] == ["x_1 = 0", "x_2 = 1", "x_3 = 1"]
 
 
-def test_a_draw_that_raises_reports_what_was_drawn_inside_it():
+def test_a_draw_that_raises_reports_neither_itself_nor_its_nested_draws():
     @gs.composite
     def failing_composite(tc):
         inner = tc.draw(gs.integers(0, 10))
@@ -408,14 +408,7 @@ def test_a_draw_that_raises_reports_what_was_drawn_inside_it():
         tc.draw(failing_composite())
 
     lines = notes(failing(body, KeyError))[0].splitlines()
-    assert lines == [
-        "Falsifying example:",
-        "first_1 = 0",
-        "draw_1 = <KeyError raised while drawing from failing_composite()>",
-        "  inner = 6",
-        "  draw = False",
-        "  named = 1",
-    ]
+    assert lines == ["Falsifying example:", "first_1 = 0"]
 
 
 def test_a_rejected_draw_reports_nothing():

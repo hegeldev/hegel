@@ -74,10 +74,19 @@ class Generator(Generic[T]):
     :meth:`print_with` make it printable. Drawing it with ``tc.draw``
     raises :class:`~hegel.NotPrintable`. ``label`` identifies the generator
     to the engine's shrinker: generators drawing the same shape of value
-    share one.
+    share one. A subclass that sets no ``label`` of its own is labelled by
+    its qualified class name, so two generator classes shrink apart.
     """
 
     label: int = label_from_name("hegel.generator")
+    _label_is_default = True
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        if "label" in cls.__dict__:
+            cls._label_is_default = False
+        elif cls._label_is_default:
+            cls.label = label_from_name(f"{cls.__module__}.{cls.__qualname__}")
 
     def do_draw(self, tc: TestCase) -> T:
         """Produce a value without printing it. Draw component generators

@@ -75,12 +75,13 @@ its draws and notes are the ones the report shows.
 To name the values in a report, Hegel looks at the source of the test and
 finds the variable each `tc.draw(...)` call is assigned to. A name that is
 assigned more than once, or is assigned inside a loop, is numbered: `x_1`,
-`x_2`, and so on. A draw that isn't assigned to a variable is named `draw_1`,
-`draw_2`. When the source isn't available, as in code typed at the
-interactive prompt, every draw is numbered this way.
+`x_2`, and so on, as is a name passed as `name=`. A draw that isn't assigned
+to a variable is named `draw_1`, `draw_2`. When the source isn't available, as
+in code typed at the interactive prompt, every draw is numbered this way.
 
 Draws made inside a composite generator are not reported separately: the
-report shows the value the composite returned.
+report shows the value the composite returned, and nothing at all for a draw
+that raised.
 
 ## Output
 

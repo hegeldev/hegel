@@ -257,7 +257,21 @@ def test_generator_base_class():
     with pytest.raises(NotImplementedError):
         Bare().do_draw(None)
     assert repr(Bare()) == "Bare()"
-    assert Bare().label == label_from_name("hegel.generator")
+    assert Bare().label == label_from_name(f"{__name__}.{Bare.__qualname__}")
+    assert Bare().label != Generator.label
+
+    class Labelled(Generator):
+        label = label_from_name("custom")
+
+    class Inherits(Labelled):
+        pass
+
+    class Overrides(Inherits):
+        label = label_from_name("other")
+
+    assert Labelled().label == label_from_name("custom")
+    assert Inherits().label == label_from_name("custom")
+    assert Overrides().label == label_from_name("other")
 
     printer = PrettyPrinter.noop()
 

@@ -400,7 +400,7 @@ def test_explicit_test_cases_accept_draw_only_generators():
     assert "b = 7" in "\n".join(notes(info.value)).splitlines()
 
 
-def test_a_failed_draw_reports_its_nested_draws_as_printed():
+def test_a_failed_draw_reports_nothing():
     @hegel.composite
     def broken(tc):
         tc.draw(gs.integers(0, 0).print_with(lambda value, printer: printer.text("<zero>")))
@@ -408,14 +408,10 @@ def test_a_failed_draw_reports_its_nested_draws_as_printed():
         raise KeyError
 
     def body(tc):
+        tc.draw(gs.integers(0, 0), name="first")
         tc.draw(broken())
 
-    lines = report(body, KeyError)
-    assert lines == [
-        "draw_1 = <KeyError raised while drawing from broken()>",
-        "  draw = <zero>",
-        "  named = 0",
-    ]
+    assert report(body, KeyError) == ["first_1 = 0"]
 
 
 def test_deferred_regions_on_threads():

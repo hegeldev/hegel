@@ -36,7 +36,8 @@ input. Hegel attaches the rest of the report to the exception as
 Under `Falsifying example:` Hegel lists every value the test drew, in the
 order it drew them. A draw assigned to a variable is named after the variable.
 A draw made in a loop, or assigned to a variable that is assigned more than
-once in the test, is numbered:
+once in the test, is numbered, each name on its own, in the order the draws
+run:
 
 ```python
 @hegel.test
@@ -57,8 +58,11 @@ E       x_1 = 1000
 
 A draw that is not assigned to a variable at all is named `draw_1`, `draw_2`,
 and so on. To choose the name yourself, pass `name=` to
-{meth}`~hegel.TestCase.draw`; to leave a draw out of the report, use
-{meth}`~hegel.TestCase.draw_silent`.
+{meth}`~hegel.TestCase.draw`; a name given this way is always numbered
+(`total_1`, `total_2`, ...), since it typically names a draw in a helper that
+may run more than once. A draw made inside another draw, such as a
+composite's, is not listed on its own: it is part of the outer value. To leave
+a draw out of the report, use {meth}`~hegel.TestCase.draw_silent`.
 
 ## Adding notes
 
