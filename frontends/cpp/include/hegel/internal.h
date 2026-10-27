@@ -198,8 +198,11 @@ namespace hegel::internal {
         StateMachineHandle(const TestCase& tc,
                            const std::vector<std::string>& rule_names,
                            const std::vector<int64_t>& rule_groups,
+                           const std::vector<double>& rule_weights,
                            const std::vector<std::string>& invariant_names,
-                           int64_t min_concurrency, int64_t max_concurrency);
+                           const std::vector<bool>& invariant_always_check,
+                           int64_t min_concurrency, int64_t max_concurrency,
+                           int64_t step_count);
         ~StateMachineHandle();
         StateMachineHandle(const StateMachineHandle&) = delete;
         StateMachineHandle& operator=(const StateMachineHandle&) = delete;

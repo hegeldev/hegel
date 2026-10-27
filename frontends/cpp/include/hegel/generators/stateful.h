@@ -92,10 +92,13 @@ namespace hegel::stateful {
          *
          * @param name The name of the rule
          * @param function The function that applies the rule
+         * @param weight How often the engine offers the rule relative to the
+         * others, a finite positive number; the engine rejects any other
+         * value with @c std::invalid_argument
          */
-        ConcurrentRule(std::string name, Function function)
+        ConcurrentRule(std::string name, Function function, double weight = 1.0)
             : ConcurrentRule(std::move(name), anonymous_group,
-                             std::move(function)) {}
+                             std::move(function), weight) {}
 
         /**
          * @brief Creates a rule in the specified group.
@@ -103,10 +106,14 @@ namespace hegel::stateful {
          * @param name The name of the rule
          * @param group The concurrency group of the rule
          * @param function The function that applies the rule
+         * @param weight How often the engine offers the rule relative to the
+         * others, a finite positive number; the engine rejects any other
+         * value with @c std::invalid_argument
          */
-        ConcurrentRule(std::string name, std::string group, Function function)
+        ConcurrentRule(std::string name, std::string group, Function function,
+                       double weight = 1.0)
             : name_(std::move(name)), group_(std::move(group)),
-              function_(std::move(function)) {}
+              function_(std::move(function)), weight_(weight) {}
 
         /**
          * @brief Returns the name of the rule.
@@ -129,10 +136,18 @@ namespace hegel::stateful {
          */
         const Function& function() const { return function_; }
 
+        /**
+         * @brief Returns the weight of the rule.
+         *
+         * @return The weight of the rule
+         */
+        double weight() const { return weight_; }
+
       private:
         std::string name_;
         std::string group_;
         Function function_;
+        double weight_;
     };
 
     /**
@@ -748,9 +763,13 @@ namespace hegel::stateful {
          * the state in place, drawing any arguments it needs from the test
          * case. Always check preconditions with @c assume() before mutating. A
          * rule that rejects after mutating leaves the state partially modified.
+         * @param weight how often the engine offers the rule relative to the
+         * others, a finite positive number; the engine rejects any other
+         * value with @c std::invalid_argument
          */
-        explicit Rule(std::string name, std::function<void(TestCase&, T&)> step)
-            : name_(std::move(name)), step_(std::move(step)) {}
+        explicit Rule(std::string name, std::function<void(TestCase&, T&)> step,
+                      double weight = 1.0)
+            : name_(std::move(name)), step_(std::move(step)), weight_(weight) {}
 
         /**
          * @brief Returns the name of the rule.
@@ -764,17 +783,24 @@ namespace hegel::stateful {
          * @return const std::function<void(TestCase&, T&)>&
          */
         const std::function<void(TestCase&, T&)>& step() const { return step_; }
+        /**
+         * @brief Returns the weight of the rule.
+         *
+         * @return double
+         */
+        double weight() const { return weight_; }
 
       private:
         std::string name_;
         std::function<void(TestCase&, T&)> step_;
+        double weight_;
     };
 
     /**
      * @brief An invariant is a predicate that must hold at any point in the
      * stateful test. They are evaluated in full on the initial and final state
-     * and sampled at intermediate join points. The invariant function should
-     * throw when the invariant is violated.
+     * and sampled at intermediate join points, unless declared always checked.
+     * The invariant function should throw when the invariant is violated.
      *
      * @tparam T The state-machine type the invariant checks
      */
@@ -783,12 +809,16 @@ namespace hegel::stateful {
         /**
          * @brief Declare a new invariant.
          *
-         * @param name
-         * @param invariant
+         * @param name The name of the invariant
+         * @param invariant The predicate, which throws when violated
+         * @param always_check If true, the invariant runs at every join point
+         * instead of being sampled between steps
          */
         explicit Invariant(std::string name,
-                           std::function<void(const T&)> invariant)
-            : name_(std::move(name)), invariant_(std::move(invariant)) {}
+                           std::function<void(const T&)> invariant,
+                           bool always_check = false)
+            : name_(std::move(name)), invariant_(std::move(invariant)),
+              always_check_(always_check) {}
 
         /**
          * @brief Returns the name of the invariant.
@@ -805,10 +835,17 @@ namespace hegel::stateful {
         const std::function<void(const T&)>& invariant() const {
             return invariant_;
         }
+        /**
+         * @brief Returns whether the invariant runs at every join point.
+         *
+         * @return bool
+         */
+        bool always_check() const { return always_check_; }
 
       private:
         std::string name_;
         std::function<void(const T&)> invariant_;
+        bool always_check_;
     };
 
     /**
@@ -871,8 +908,7 @@ namespace hegel::stateful {
         explicit StateMachine(StateMachineParams<State> params)
             : state(std::move(params.initial_state)) {}
 
-        /// The state the rules act on. Rules mutate it in place, and a
-        /// failing run prints it. See RunParams::print_state.
+        /// The state the rules act on. Rules mutate it in place.
         State state;
 
         /**
@@ -889,45 +925,19 @@ namespace hegel::stateful {
     };
 
     /**
-     * @brief Options for @ref run.
+     * @brief Options for @ref run and @ref run_concurrent.
      */
     struct RunParams {
-        /// If true (the default), a failing sequence prints the machine's
-        /// state before its first step and after every step that runs to
-        /// completion.
-        ///
-        /// @code{.txt}
-        /// state = 0
-        /// Step 1: add
-        ///   auto amount = 3;
-        /// state = 3
-        /// Step 2: add
-        ///   auto amount = 9;
-        /// @endcode
-        ///
-        /// A step that throws prints no state, so the last state shown is
-        /// the one the failing step started from.
-        bool print_state = true;
+        /// The maximum number of steps a test case attempts. Each case runs
+        /// at least one step and at most this many. Must be at least 1;
+        /// @ref run rejects other values with @c std::invalid_argument.
+        int64_t step_count = 50;
     };
 
     /// @cond INTERNAL
-    // prints the machine's state.
-    template <typename M>
-    void print_state(TestCase& tc, const M& machine, const RunParams& params) {
-        if (!params.print_state || !internal::records_output(tc)) {
-            return;
-        }
-        Printer printer = internal::test_case_printer(tc);
-        Speculation line = printer.speculate();
-        printer.text("state = ");
-        printer.repr(machine.state);
-        printer.hard_break();
-        line.commit();
-    }
-
     template <typename T>
     void check_invariants(
-        TestCase& tc, const std::string& origin, const T& state,
+        TestCase& tc, const T& state,
         const std::vector<Invariant<T>>& invariants,
         std::optional<std::reference_wrapper<internal::StateMachineHandle>>
             machine_handle = std::nullopt) {
@@ -941,9 +951,38 @@ namespace hegel::stateful {
             try {
                 inv.invariant()(state);
             } catch (...) {
-                tc.note("Invariant " + inv.name() + " violated " + origin);
+                tc.note("Invariant " + inv.name() + " failed:");
                 throw;
             }
+        }
+    }
+
+    template <typename T>
+    std::vector<std::string>
+    invariant_names(const std::vector<Invariant<T>>& invariants) {
+        std::vector<std::string> names;
+        names.reserve(invariants.size());
+        for (const Invariant<T>& invariant : invariants) {
+            names.push_back(invariant.name());
+        }
+        return names;
+    }
+
+    template <typename T>
+    std::vector<bool>
+    invariant_always_check(const std::vector<Invariant<T>>& invariants) {
+        std::vector<bool> flags;
+        flags.reserve(invariants.size());
+        for (const Invariant<T>& invariant : invariants) {
+            flags.push_back(invariant.always_check());
+        }
+        return flags;
+    }
+
+    inline void check_step_count(const RunParams& params) {
+        if (params.step_count < 1) {
+            throw std::invalid_argument(
+                "RunParams::step_count must be at least 1");
         }
     }
     /// @endcond
@@ -977,10 +1016,11 @@ namespace hegel::stateful {
      * @param tc The test case object
      * @param min_concurrency The minimum number of workers
      * @param max_concurrency The maximum number of workers
+     * @param params Options for the run. See RunParams.
      */
     template <typename M>
     void run_concurrent(M& machine, TestCase& tc, int64_t min_concurrency,
-                        int64_t max_concurrency) {
+                        int64_t max_concurrency, const RunParams& params = {}) {
         static_assert(std::is_base_of<ConcurrentStateMachine<M>, M>::value,
                       "run_concurrent() requires a machine deriving from "
                       "ConcurrentStateMachine<M>.");
@@ -988,6 +1028,7 @@ namespace hegel::stateful {
             throw std::invalid_argument(
                 "concurrency bounds must satisfy 1 <= min <= max");
         }
+        check_step_count(params);
 
         std::vector<ConcurrentRule<M>> rules = machine.rules();
         std::vector<Invariant<M>> invariants = machine.invariants();
@@ -997,16 +1038,18 @@ namespace hegel::stateful {
         }
 
         std::vector<std::string> rule_names;
-        std::vector<std::string> invariant_names;
+        std::vector<double> rule_weights;
         std::vector<std::string> group_names;     // maps group ID to name
         std::map<std::string, int64_t> group_ids; // maps group name to ID
         std::vector<int64_t>
             rule_groups; // ID of group that rule_names[i] belongs to is the ID
                          // at rule_groups[i].
         rule_names.reserve(rules.size());
+        rule_weights.reserve(rules.size());
         rule_groups.reserve(rules.size());
         for (const ConcurrentRule<M>& rule : rules) {
             rule_names.push_back(rule.name());
+            rule_weights.push_back(rule.weight());
             auto [group, inserted] = group_ids.emplace(
                 rule.group(), static_cast<int64_t>(group_ids.size()));
             if (inserted) {
@@ -1014,18 +1057,17 @@ namespace hegel::stateful {
             }
             rule_groups.push_back(group->second);
         }
-        invariant_names.reserve(invariants.size());
-        for (const Invariant<M>& invariant : invariants) {
-            invariant_names.push_back(invariant.name());
-        }
 
         internal::StateMachineHandle machine_handle(
-            tc, rule_names, rule_groups, invariant_names, min_concurrency,
-            max_concurrency);
+            tc, rule_names, rule_groups, rule_weights,
+            invariant_names(invariants), invariant_always_check(invariants),
+            min_concurrency, max_concurrency, params.step_count);
         tc.note("Concurrency level: " +
                 std::to_string(machine_handle.concurrency()));
-        tc.note("Initial invariant check.");
-        check_invariants(tc, "in the initial state", machine, invariants);
+        if (!invariants.empty()) {
+            tc.note("Checking invariants on the initial state.");
+        }
+        check_invariants(tc, machine, invariants);
 
         enum class EventKind { RoundDone, Invalid, Overrun, Control, Panicked };
         struct Event {
@@ -1083,16 +1125,25 @@ namespace hegel::stateful {
 
                     const ConcurrentRule<M>& rule =
                         rules[static_cast<std::size_t>(rule_index)];
-                    worker_tc.note("Rule: " + rule.name());
+                    worker_tc.note("Rule: " + rule.name() + " {");
                     try {
                         TestCase rule_tc = internal::block(worker_tc, 2);
                         rule.function()(rule_tc, machine);
                     } catch (const internal::HegelReject&) {
                         machine_handle.rule_rejected(
                             worker_tc, static_cast<int64_t>(worker));
-                        worker_tc.note(
-                            "Rule stopped early due to violated assumption.");
+                        internal::block(worker_tc, 2)
+                            .note("Rule stopped early due to violated "
+                                  "assumption.");
+                    } catch (...) {
+                        worker_tc.note("}");
+                        Event event = classify();
+                        if (event.kind == EventKind::Panicked) {
+                            worker_tc.note("Rule " + rule.name() + " failed:");
+                        }
+                        return event;
                     }
+                    worker_tc.note("}");
                 }
             } catch (...) {
                 return classify();
@@ -1231,13 +1282,14 @@ namespace hegel::stateful {
                 if (panic.has_value()) {
                     state.events[*panic].exception->rethrow();
                 }
-                check_invariants(
-                    tc, "after round " + std::to_string(state.round_number),
-                    machine, invariants, std::ref(machine_handle));
+                check_invariants(tc, machine, invariants,
+                                 std::ref(machine_handle));
             }
 
-            tc.note("Final invariant check.");
-            check_invariants(tc, "in the final state", machine, invariants);
+            if (!invariants.empty()) {
+                tc.note("Checking invariants on the final state.");
+            }
+            check_invariants(tc, machine, invariants);
         } catch (...) {
             stop_workers();
             throw;
@@ -1253,15 +1305,21 @@ namespace hegel::stateful {
      * @p machine in place. Raises @p std::invalid_argument if the machine
      * declares no rules.
      *
-     * On a failing replay, each applied rule prints as @c "Step N: <name>". A
-     * violated invariant identifies whether it was observed after a step or
-     * in the initial or final state.
+     * On a failing replay, each applied rule prints as @c "Step N: <name> {",
+     * with the draws and notes the step makes indented beneath it, and a
+     * failing rule or invariant is named right before its error.
      *
      * @code{.txt}
-        Step 1: add
-        Step 2: add
-        Invariant nonneg violated after step 2
+        Step 1: add {
+          auto amount = 3;
+        }
+        Step 2: add {
+          auto amount = 9;
+        }
+        Invariant nonneg failed:
      * @endcode
+     *
+     * Raises @c std::invalid_argument if RunParams::step_count is below 1.
      *
      * @tparam M The state-machine type, deriving from @ref StateMachine
      * @param machine The state machine, initialized by the caller and mutated
@@ -1275,6 +1333,7 @@ namespace hegel::stateful {
             std::is_base_of<StateMachine<M, typename M::state_type>, M>::value,
             "run() requires a machine deriving from "
             "StateMachine<M, State>.");
+        check_step_count(params);
         std::vector<Rule<M>> rules = machine.rules();
         std::vector<Invariant<M>> invariants = machine.invariants();
         if (rules.empty()) {
@@ -1282,21 +1341,23 @@ namespace hegel::stateful {
                 "Cannot run a state machine with no rules.");
         }
         std::vector<std::string> rule_names;
+        std::vector<double> rule_weights;
         rule_names.reserve(rules.size());
-        for (const Rule<M>& rule : rules)
+        rule_weights.reserve(rules.size());
+        for (const Rule<M>& rule : rules) {
             rule_names.push_back(rule.name());
-
-        std::vector<std::string> invariant_names;
-        invariant_names.reserve(invariants.size());
-        for (const Invariant<M>& invariant : invariants)
-            invariant_names.push_back(invariant.name());
+            rule_weights.push_back(rule.weight());
+        }
 
         std::vector<int64_t> rule_groups(rule_names.size(), 0);
-        internal::StateMachineHandle machine_handle(tc, rule_names, rule_groups,
-                                                    invariant_names, 1, 1);
-        tc.note("Initial invariant check.");
-        print_state(tc, machine, params);
-        check_invariants(tc, "in the initial state", machine, invariants);
+        internal::StateMachineHandle machine_handle(
+            tc, rule_names, rule_groups, rule_weights,
+            invariant_names(invariants), invariant_always_check(invariants), 1,
+            1, params.step_count);
+        if (!invariants.empty()) {
+            tc.note("Checking invariants on the initial state.");
+        }
+        check_invariants(tc, machine, invariants);
         int64_t steps_run = 0;
 
         // Sequential stateful testing is modeled as a concurrent stateful test
@@ -1320,7 +1381,7 @@ namespace hegel::stateful {
                 steps_run++;
                 const Rule<M>& rule = rules[static_cast<size_t>(next_rule_idx)];
                 tc.note("Step " + std::to_string(steps_run) + ": " +
-                        rule.name());
+                        rule.name() + " {");
 
                 try {
                     // nest the draws the step makes under its "Step N" header.
@@ -1328,23 +1389,32 @@ namespace hegel::stateful {
                         TestCase step_tc = internal::block(tc, 2);
                         rule.step()(step_tc, machine);
                     }
-                    print_state(tc, machine, params);
+                    tc.note("}");
                     internal::stop_span(tc);
                 } catch (const internal::HegelReject&) {
-                    tc.note("Rule stopped early due to violated assumption.");
                     machine_handle.rule_rejected(tc, 0);
+                    internal::block(tc, 2).note(
+                        "Rule stopped early due to violated assumption.");
+                    tc.note("}");
                     internal::stop_span(tc, true);
+                } catch (const internal::HegelStopTest&) {
+                    tc.note("}");
+                    internal::stop_span(tc);
+                    throw;
                 } catch (...) {
+                    tc.note("}");
+                    tc.note("Rule " + rule.name() + " failed:");
                     internal::stop_span(tc);
                     throw;
                 }
             }
-            check_invariants(tc, "after step " + std::to_string(steps_run),
-                             machine, invariants, std::ref(machine_handle));
+            check_invariants(tc, machine, invariants, std::ref(machine_handle));
         }
 
-        tc.note("Final invariant check.");
-        check_invariants(tc, "in the final state", machine, invariants);
+        if (!invariants.empty()) {
+            tc.note("Checking invariants on the final state.");
+        }
+        check_invariants(tc, machine, invariants);
     }
     /// @}
 

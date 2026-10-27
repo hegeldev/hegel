@@ -115,6 +115,14 @@ Generators now identify themselves to the engine with the same span labels as th
 
 A `filter()` on `hegel::stateful::values_consumed()` now removes only the value it returns from the pool. Before, every value its predicate rejected was also removed, so later draws could not use it, and the same happened to every value it had tried when the predicate threw.
 
+### Stateful testing
+
+A `Rule` or `ConcurrentRule` can now carry a weight, as in the other Hegel frontends: pass it as a trailing constructor argument (`Rule<M>("push", step, 3.0)`), and the engine offers the rule that many times as often as a rule of weight 1. A weight must be finite and positive; the engine rejects any other value with `std::invalid_argument`. An `Invariant` can be declared always checked (`Invariant<M>("sorted", check, true)`), in which case it runs at every join point instead of being sampled between steps.
+
+The step budget moves from `Settings::stateful_step_count` to `stateful::RunParams::step_count` (default 50), so it is set per machine rather than per run: `hegel::stateful::run(machine, tc, {.step_count = 10})`, and `run_concurrent` takes the same `RunParams` as a trailing argument. `Settings::stateful_step_count` is removed; `run` and `run_concurrent` reject a step count below 1 with `std::invalid_argument`.
+
+A failing stateful test's report now reads as it does in the other Hegel frontends. Each step prints as `Step 1: add {` with its draws and notes indented beneath it and a closing `}` (a concurrent worker's as `Rule: add {`), and the rule or invariant the failure escaped from is named right before the failure (`Rule add failed:`, `Invariant bounded failed:`) instead of `Invariant bounded violated after step 2`. The invariant checks on the initial and final state are announced as `Checking invariants on the initial state.` and `Checking invariants on the final state.`, and only when the machine has invariants. State printing is removed: the `state = …` lines and `RunParams::print_state` are gone, so a machine's state no longer needs to be printable. Note what matters from a rule or invariant instead.
+
 ### Removals and corrections
 
 The undocumented `hegel::verbosity_to_string()` and `hegel::health_check_to_string()` are removed.

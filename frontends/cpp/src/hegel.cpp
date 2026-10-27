@@ -181,12 +181,10 @@ namespace hegel {
             framework_hooks().run_case(body);
         }
 
-        // What a run reads from its resolved engine settings, plus the
-        // settings Hegel for C++ applies itself.
+        // What a run reads from its resolved engine settings.
         struct RunConfig {
             Verbosity verbosity;
             bool print_blob;
-            int64_t stateful_step_count;
         };
 
         struct BodyOutcome {
@@ -541,10 +539,6 @@ namespace hegel {
         // with the fields they set applied over it.
         void resolve_settings(hegel_context_t* ctx, SettingsGuard& guard,
                               const Settings& settings) {
-            if (settings.stateful_step_count < 1) {
-                throw std::invalid_argument(
-                    "Settings::stateful_step_count must be at least 1");
-            }
             guard.s =
                 settings.profile.has_value()
                     ? impl::settings_new_for_profile(ctx, *settings.profile)
@@ -590,8 +584,7 @@ namespace hegel {
                 }
                 bool stamped = impl::test_case_should_capture(ctx, handle);
                 TestCase tc_obj(std::make_unique<impl::test_case::TestCaseData>(
-                    handle, records_output(config.verbosity, stamped),
-                    config.stateful_step_count));
+                    handle, records_output(config.verbosity, stamped)));
                 BodyOutcome outcome = run_body(test_fn, tc_obj);
                 std::vector<std::string> lines;
                 if (tc_obj.data()->emit) {
@@ -725,7 +718,7 @@ namespace hegel {
             bool quiet = config.verbosity == Verbosity::Quiet;
             for (const ExplicitTestCase& test_case : explicit_cases) {
                 auto data = std::make_unique<impl::test_case::TestCaseData>(
-                    nullptr, false, config.stateful_step_count);
+                    nullptr, false);
                 auto state =
                     std::make_shared<impl::test_case::ExplicitState>(test_case);
                 data->explicit_state = state;
@@ -895,8 +888,7 @@ namespace hegel {
                 apply_test_location(ctx, s, *location);
             }
             RunConfig config{from_engine(impl::settings_get_verbosity(ctx, s)),
-                             impl::settings_get_print_blob(ctx, s),
-                             settings.stateful_step_count};
+                             impl::settings_get_print_blob(ctx, s)};
 
             if (failure_blobs.empty()) {
                 if ((impl::settings_get_phases(ctx, s) &

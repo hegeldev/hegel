@@ -41,10 +41,8 @@ namespace hegel::impl::test_case {
     // Generators reach `tc` through TestCase::data() to drive the typed draw
     // primitives. (The error-reporting context is per-thread.)
     struct TestCaseData {
-        TestCaseData(hegel_test_case_t* handle, bool emit,
-                     int64_t stateful_step_count)
-            : tc(handle), emit(emit), stateful_step_count(stateful_step_count) {
-        }
+        TestCaseData(hegel_test_case_t* handle, bool emit)
+            : tc(handle), emit(emit) {}
 
         // Releases the owned libhegel handles. The owning TestCase's
         // unique_ptr runs this on scope exit.
@@ -59,9 +57,6 @@ namespace hegel::impl::test_case {
         // replay, a case the engine stamped for capture, or any case at
         // Verbosity::Verbose and above), and never under Verbosity::Quiet.
         bool emit;
-        // Settings::stateful_step_count for this run, read when the case
-        // creates a state machine.
-        int64_t stateful_step_count;
         // Draws in progress on this handle. Only an outermost draw prints.
         int draw_depth = 0;
         std::shared_ptr<DrawNames> draw_names = std::make_shared<DrawNames>();
