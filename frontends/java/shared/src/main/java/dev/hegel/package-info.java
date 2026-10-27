@@ -148,7 +148,8 @@
  *         return next[0]++;
  *     };
  * };
- * // var c = Counter[calls=[3, 4, 5]];
+ *
+ * IntSupplier c = tc.draw(counters, "c");   // var c = Counter[calls=[3, 4, 5]];
  * }</pre>
  *
  * <p>{@link dev.hegel.Document} lays out a standalone document, for trying printing code outside a

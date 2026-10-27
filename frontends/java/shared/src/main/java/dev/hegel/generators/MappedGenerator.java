@@ -49,7 +49,7 @@ public final class MappedGenerator<T, U> extends ValueGenerator<U> {
      * representation is not how it is built:
      *
      * <pre>{@code
-     * tc.draw(integers().min(0).map(Key::of).printAsCall("Key.of"))   // var key = Key.of(3);
+     * tc.draw(integers().min(0).map(Key::of).printAsCall("Key.of"), "key")   // var key = Key.of(3);
      * }</pre>
      *
      * <p>The source must be printable; a structural source whose parts are not fails when drawn.

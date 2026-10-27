@@ -65,9 +65,9 @@ The generator describes each value as it draws it. The new `PrintableGenerator` 
 ```java
 Generator<Point> points = tc -> new Point(tc.drawSilent(integers()), tc.drawSilent(integers()));
 
-tc.draw(points.printAsRepr());                                         // var p = Point[x=0, y=0];
-tc.draw(points.printWith((p, printer) -> printer.text("origin()")));   // var p = origin();
-tc.draw(integers().map(Key::of).printAsCall("Key.of"));                // var k = Key.of(3);
+tc.draw(points.printAsRepr(), "p");                                         // var p = Point[x=0, y=0];
+tc.draw(points.printWith((p, printer) -> printer.text("origin()")), "p");   // var p = origin();
+tc.draw(integers().map(Key::of).printAsCall("Key.of"), "k");                // var k = Key.of(3);
 ```
 
 To print a value as it is built, implement `PrintableGenerator` and draw each part with the new `TestCase.drawAndPrint`, so that it prints itself in place, or use the new `Generators.composite((tc, printer) -> ...)`:
@@ -81,6 +81,8 @@ PrintableGenerator<Point> points = (tc, p) -> {
     p.endGroup(")");
     return Point.of(x, y);
 };
+
+Point point = tc.draw(points, "point");   // var point = Point.of(3, -1);
 ```
 
 `Printer` is the engine's layout engine: `text`, `repr`, `reflow`, `breakable`, `ifBreak`, `hardBreak`, `beginGroup`/`endGroup` and `group`, `seq`, `separator`, `shiftIndent`, `comment`, `speculate` (print an attempt and commit or abort it), `deferred` (a region filled in after the draw, for a value whose description is only known once it is used) and `shouldPrint`. `Printer.noop()` discards everything, and `Document` lays out a standalone document, for trying printing code outside a test.

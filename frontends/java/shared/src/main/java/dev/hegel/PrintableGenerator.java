@@ -18,7 +18,8 @@ package dev.hegel;
  *     p.endGroup(")");
  *     return Point.of(x, y);
  * });
- * // var point = Point.of(3, -1);
+ *
+ * Point point = tc.draw(points, "point");   // var point = Point.of(3, -1);
  * }</pre>
  *
  * <p>The silent {@link #doDraw} draws through {@link #doDrawAndPrint} with the {@link
