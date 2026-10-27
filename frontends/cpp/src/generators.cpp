@@ -69,7 +69,7 @@ namespace hegel::generators {
 
         // Base for every generator that draws through a string-generator
         // handle (text, characters, regex, emails, urls, domains).
-        class StringDrawGenerator : public IGenerator<std::string> {
+        class StringDrawGenerator : public detail::ValuePrinted<std::string> {
           public:
             StringDrawGenerator(internal::LabelName name,
                                 hegel_string_generator_t* generator)
@@ -169,7 +169,8 @@ namespace hegel::generators {
             }
         };
 
-        class BinaryGenerator : public IGenerator<std::vector<uint8_t>> {
+        class BinaryGenerator
+            : public detail::ValuePrinted<std::vector<uint8_t>> {
           public:
             explicit BinaryGenerator(const BinaryParams& params)
                 : min_size_(params.min_size),
@@ -193,7 +194,7 @@ namespace hegel::generators {
             uint64_t max_size_;
         };
 
-        class BooleansGenerator : public IGenerator<bool> {
+        class BooleansGenerator : public detail::ValuePrinted<bool> {
           public:
             bool do_draw(const TestCase& tc) const override {
                 return internal::draw_boolean(tc, 0.5);
@@ -229,21 +230,21 @@ namespace hegel::generators {
             return buf;
         }
 
-        class DatesGenerator : public IGenerator<std::string> {
+        class DatesGenerator : public detail::ValuePrinted<std::string> {
           public:
             std::string do_draw(const TestCase& tc) const override {
                 return format_date(impl::draw_date(tc));
             }
         };
 
-        class TimesGenerator : public IGenerator<std::string> {
+        class TimesGenerator : public detail::ValuePrinted<std::string> {
           public:
             std::string do_draw(const TestCase& tc) const override {
                 return format_time(impl::draw_time(tc));
             }
         };
 
-        class DatetimesGenerator : public IGenerator<std::string> {
+        class DatetimesGenerator : public detail::ValuePrinted<std::string> {
           public:
             std::string do_draw(const TestCase& tc) const override {
                 hegel_datetime_t dt = impl::draw_datetime(tc);
@@ -251,7 +252,7 @@ namespace hegel::generators {
             }
         };
 
-        class IpGenerator : public IGenerator<std::string> {
+        class IpGenerator : public detail::ValuePrinted<std::string> {
           public:
             explicit IpGenerator(int version) : version_(version) {}
 
@@ -270,7 +271,7 @@ namespace hegel::generators {
             int version_;
         };
 
-        class UuidGenerator : public IGenerator<std::string> {
+        class UuidGenerator : public detail::ValuePrinted<std::string> {
           public:
             explicit UuidGenerator(std::optional<uint8_t> version)
                 : version_(version) {}
@@ -301,7 +302,7 @@ namespace hegel::generators {
             hegel_grammar_t* grammar_;
         };
 
-        class LarkGenerator : public IGenerator<std::string> {
+        class LarkGenerator : public detail::ValuePrinted<std::string> {
           public:
             LarkGenerator(const std::string& grammar, const LarkParams& params)
                 : terminals_(params.explicit_terminals),
@@ -365,7 +366,7 @@ namespace hegel::generators {
                 return impl::grammar_new(grammar_params);
             }
 
-            std::vector<std::pair<std::string, Generator<std::string>>>
+            std::vector<std::pair<std::string, AnyGenerator<std::string>>>
                 terminals_;
             std::shared_ptr<GrammarHandle> grammar_;
             uint64_t label_ = 0;
@@ -459,13 +460,13 @@ namespace hegel::generators {
         return Generator<std::string>(new DatetimesGenerator());
     }
 
-    HegelRandom::HegelRandom(const TestCase& tc)
-        : tc_(&tc), engine_(std::nullopt) {}
+    HegelRandom::HegelRandom(const TestCase& tc, Printer consumed)
+        : tc_(&tc), engine_(std::nullopt) {
+        record_->consumed = std::move(consumed);
+    }
 
     HegelRandom::HegelRandom(uint64_t seed)
-        : tc_(nullptr), engine_(std::mt19937(seed)) {
-        record_->seed = seed;
-    }
+        : tc_(nullptr), engine_(std::mt19937(seed)) {}
 
     HegelRandom::result_type HegelRandom::operator()() {
         if (engine_) {
@@ -474,11 +475,10 @@ namespace hegel::generators {
         auto value = static_cast<result_type>(
             internal::draw_integer(*tc_, std::numeric_limits<uint32_t>::min(),
                                    std::numeric_limits<uint32_t>::max()));
-        if (record_->consumed) {
-            internal::Printer slot = record_->consumed->printer();
+        Printer& slot = record_->consumed;
+        if (slot.should_print()) {
             if (record_->count > 0) {
-                slot.text(",");
-                slot.breakable(" ");
+                slot.separator();
             }
             slot.text(std::to_string(value));
             record_->count++;
@@ -486,27 +486,49 @@ namespace hegel::generators {
         return value;
     }
 
-    void HegelRandom::print_to(internal::Printer& printer) const {
-        if (std::optional<uint64_t> seed = record_->seed) {
-            printer.text("HegelRandom{.seed = " + std::to_string(*seed) + "}");
-            return;
-        }
-        printer.begin_group(1, "HegelRandom{.consumed = {");
-        record_->consumed =
-            std::make_unique<internal::DeferredPrinter>(printer);
-        printer.end_group("}}");
-    }
+    namespace {
+
+        class RandomsGenerator : public IPrintableGenerator<HegelRandom> {
+          public:
+            explicit RandomsGenerator(bool use_true_random)
+                : use_true_random_(use_true_random) {}
+
+            HegelRandom do_draw_and_print(const TestCase& tc,
+                                          Printer& printer) const override {
+                internal::start_span(tc, label());
+                if (use_true_random_) {
+                    uint64_t seed = seeds_.do_draw(tc);
+                    internal::stop_span(tc);
+                    if (printer.should_print()) {
+                        printer.text("HegelRandom{.seed = " +
+                                     std::to_string(seed) + "}");
+                    }
+                    return HegelRandom(seed);
+                }
+                internal::stop_span(tc);
+                printer.begin_group(1, "HegelRandom{.consumed = {");
+                Printer consumed = printer.deferred();
+                printer.end_group("}}");
+                return HegelRandom(tc, std::move(consumed));
+            }
+
+            uint64_t label() const override {
+                return internal::label(internal::LabelName::Composite);
+            }
+
+          private:
+            bool use_true_random_;
+            Generator<uint64_t> seeds_ = integers<uint64_t>();
+        };
+
+    } // namespace
 
     Generator<HegelRandom> randoms(RandomsParams params) {
-        if (params.use_true_random) {
-            auto seed_gen = integers<uint64_t>();
-            return compose([seed_gen](const TestCase& tc) -> HegelRandom {
-                auto seed = seed_gen.do_draw(tc);
-                return HegelRandom(seed);
-            });
-        }
-        return compose(
-            [](const TestCase& tc) -> HegelRandom { return HegelRandom(tc); });
+        return make_generator<RandomsGenerator>(params.use_true_random);
+    }
+
+    uint64_t label_from_name(std::string_view name) {
+        return impl::label_from_name(impl::thread_context(), name);
     }
 
 } // namespace hegel::generators

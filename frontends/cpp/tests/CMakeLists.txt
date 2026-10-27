@@ -144,6 +144,7 @@ hegel_add_test(NAME test_guiding SOURCE test_guiding.cpp)
 
 # Value printer for draw output.
 hegel_add_test(NAME test_repr SOURCE test_repr.cpp)
+hegel_add_test(NAME test_printer SOURCE test_printer.cpp)
 # GoogleTest assertion macros inside a property body.
 hegel_add_test(NAME test_gtest_macros SOURCE test_gtest_macros.cpp)
 # Test-case cloning: clone(), spawn()/join(), and clone output approval.

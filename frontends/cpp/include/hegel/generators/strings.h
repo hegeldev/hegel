@@ -75,8 +75,9 @@ namespace hegel::generators {
         /// grammar, as pairs of a terminal name and a generator of strings.
         /// A terminal the grammar `%declare`s without a definition needs
         /// one; any other terminal may be given one to override its
-        /// pattern.
-        std::vector<std::pair<std::string, Generator<std::string>>>
+        /// pattern. The generators need not be printable: their values
+        /// print as part of the whole string.
+        std::vector<std::pair<std::string, AnyGenerator<std::string>>>
             explicit_terminals;
         /// The characters that terminals drawn from their patterns may
         /// contain. Default: all of Unicode.

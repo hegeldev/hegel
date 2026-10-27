@@ -19,7 +19,8 @@ namespace hegel::generators {
     // Concrete IGenerator<T> subclass produced by just(). A constant draws
     // zero entropy, so it returns the captured value without touching the
     // engine at all.
-    template <typename T> class JustGenerator : public IGenerator<T> {
+    template <typename T>
+    class JustGenerator : public detail::value_base_t<T, is_representable_v<T>> {
       public:
         explicit JustGenerator(T value) : value_(std::move(value)) {}
 
@@ -42,12 +43,17 @@ namespace hegel::generators {
      * auto greeting = just("hello");
      * @endcode
      *
+     * The result prints the value by its C++ representation, so it is a
+     * printable Generator\<T\> when hegel::is_representable_v is true for
+     * T, and an AnyGenerator\<T\> otherwise.
+     *
      * @tparam T The value type
      * @param value The constant value to generate
      * @return Generator that always produces value
      */
-    template <typename T> Generator<T> just(T value) {
-        return Generator<T>(new JustGenerator<T>(std::move(value)));
+    template <typename T> auto just(T value) {
+        return detail::handle_t<is_representable_v<T>, T>(
+            std::make_shared<JustGenerator<T>>(std::move(value)));
     }
 
     /**

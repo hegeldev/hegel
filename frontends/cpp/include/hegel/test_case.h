@@ -14,7 +14,12 @@ namespace hegel::impl::test_case {
 }
 
 namespace hegel::generators {
+    template <typename T> class AnyGenerator;
     template <typename T> class Generator;
+} // namespace hegel::generators
+
+namespace hegel {
+    class Printer;
 }
 
 namespace hegel {
@@ -52,14 +57,18 @@ namespace hegel {
         ~TestCase();
 
         /**
-         * @brief Draw a random value from a generator.
+         * @brief Draw a random value from a printable generator.
          *
          * Each draw is printed as a C++ declaration, `auto <name> =
          * <value>;`, on the final replay of a failing test case and on
-         * every case at Verbosity::Verbose and above. A value too wide for
-         * one line is broken across lines. Draws made through this overload
-         * print as `draw_1`, `draw_2`, ... in draw order. Use the named
-         * overload to print under a variable name.
+         * every case at Verbosity::Verbose and above. The generator prints
+         * the value as it draws it (see generators::IPrintableGenerator).
+         * A value too wide for one line is broken across lines. Draws made
+         * through this overload print as `draw_1`, `draw_2`, ... in draw
+         * order. Use the named overload to print under a variable name.
+         *
+         * Only a printable generator (generators::Generator) can be drawn
+         * with draw(). Draw any other generator with draw_silent().
          *
          * @tparam T The value type produced by @p gen
          * @param gen The generator to draw from
@@ -68,8 +77,8 @@ namespace hegel {
         template <typename T> T draw(const generators::Generator<T>& gen) const;
 
         /**
-         * @brief Draw a random value from a generator, printed under
-         *        @p name.
+         * @brief Draw a random value from a printable generator, printed
+         *        under @p name.
          *
          * @tparam T The value type produced by @p gen
          * @param name Variable name for the printed declaration.
@@ -83,6 +92,51 @@ namespace hegel {
         template <typename T>
         T draw(std::string_view name, const generators::Generator<T>& gen,
                bool repeatable = false) const;
+
+        /// @cond INTERNAL
+        template <typename T>
+        T draw(const generators::AnyGenerator<T>& gen) const;
+        template <typename T>
+        T draw(std::string_view name, const generators::AnyGenerator<T>& gen,
+               bool repeatable = false) const;
+        /// @endcond
+
+        /**
+         * @brief Draw a random value from any generator, without printing
+         *        it.
+         *
+         * Draws made by @p gen itself (for example with draw() inside a
+         * generators::compose() function) do not print either.
+         *
+         * @code{.cpp}
+         * auto handle = tc.draw_silent(gs::compose(open_file));
+         * @endcode
+         *
+         * @tparam T The value type produced by @p gen
+         * @param gen The generator to draw from
+         * @return A generated value of type T
+         * @throws std::invalid_argument in an explicit test case.
+         */
+        template <typename T>
+        T draw_silent(const generators::AnyGenerator<T>& gen) const;
+
+        /**
+         * @brief Draw a value from a printable generator and print it to
+         *        @p printer.
+         *
+         * For use in generators::IPrintableGenerator::do_draw_and_print(),
+         * to draw a component and print it where the component goes.
+         * Draws made by @p gen itself do not print.
+         *
+         * @tparam T The value type produced by @p gen
+         * @param gen The generator to draw from
+         * @param printer The printer to print the value to
+         * @return A generated value of type T
+         * @throws std::invalid_argument in an explicit test case.
+         */
+        template <typename T>
+        T draw_and_print(const generators::Generator<T>& gen,
+                         Printer& printer) const;
 
         /**
          * @brief Reject the current test case if @p condition is false.

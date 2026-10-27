@@ -254,6 +254,10 @@ namespace hegel::internal {
     // it was given instead of generating them.
     bool is_explicit(const TestCase& tc);
 
+    // Throws UsageError when `tc` runs an explicit test case, which cannot
+    // do `what`.
+    void check_not_explicit(const TestCase& tc, const char* what);
+
     // Takes the value that the explicit test case `tc` gives a draw, and
     // records the draw for the failure report: the value named for the
     // draw's display name, else the next positional value. Throws
@@ -268,7 +272,7 @@ namespace hegel::internal {
     bool records_output(const TestCase& tc);
 
     // `tc`'s printer onto its region of the test case's document.
-    Printer test_case_printer(const TestCase& tc);
+    hegel::Printer test_case_printer(const TestCase& tc);
 
     // The variable name a draw prints under: `name`, or `name_<n>` for a
     // repeatable name (and `draw_<n>` for an unnamed draw), skipping names

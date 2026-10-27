@@ -76,15 +76,16 @@ namespace hegel::generators {
     // Concrete IGenerator for vectors(). An engine-managed collection
     // decides how many elements to draw; uniqueness is enforced by
     // rejecting duplicate elements back to the engine.
-    template <typename T>
-    class VectorsGenerator : public IGenerator<std::vector<T>> {
+    template <typename T, bool Printable>
+    class VectorsGenerator
+        : public detail::Structural<std::vector<T>, Printable> {
       public:
         // Two elements are duplicates when `same` returns true for them.
         // An empty `same` allows duplicates.
         using Same = std::function<bool(const T&, const T&)>;
 
-        VectorsGenerator(Generator<T> elements, VectorsParams params = {},
-                         Same same = nullptr)
+        VectorsGenerator(detail::handle_t<Printable, T> elements,
+                         VectorsParams params = {}, Same same = nullptr)
             : elements_(std::move(elements)), params_(params),
               same_(std::move(same)),
               label_(hegel::internal::combine_labels(
@@ -108,42 +109,56 @@ namespace hegel::generators {
             }
         }
 
-        std::vector<T> do_draw(const TestCase& tc) const override {
+        uint64_t label() const override { return label_; }
+
+      protected:
+        std::vector<T> draw_printing(const TestCase& tc,
+                                     Printer& printer) const override {
             namespace hi = hegel::internal;
             hi::start_span(tc, label_);
             hi::CollectionHandle collection(
                 tc, params_.min_size,
                 detail::collection_max_size(params_.max_size));
             std::vector<T> result;
+            printer.begin_block(
+                detail::open_text<std::vector<T>>(printer, "{"));
             while (collection.more(tc)) {
-                T element = elements_.do_draw(tc);
+                Speculation element = printer.speculate();
+                if (!result.empty()) {
+                    printer.separator();
+                }
+                T value = detail::draw_component(tc, elements_, printer);
                 if (same_ && std::any_of(result.begin(), result.end(),
-                                         [this, &element](const T& existing) {
-                                             return same_(existing, element);
+                                         [this, &value](const T& existing) {
+                                             return same_(existing, value);
                                          })) {
+                    element.abort();
                     collection.reject(tc, "duplicate element");
                     continue;
                 }
-                result.push_back(std::move(element));
+                element.commit();
+                result.push_back(std::move(value));
             }
+            printer.end_block("}");
             hi::stop_span(tc);
             return result;
         }
 
-        uint64_t label() const override { return label_; }
-
       private:
-        Generator<T> elements_;
+        detail::handle_t<Printable, T> elements_;
         VectorsParams params_;
         Same same_;
         uint64_t label_;
     };
 
     // Concrete IGenerator for sets(). Duplicate elements are rejected back
-    // to the engine so it draws a replacement.
-    template <typename T> class SetsGenerator : public IGenerator<std::set<T>> {
+    // to the engine so it draws a replacement. Elements print in draw
+    // order.
+    template <typename T, bool Printable>
+    class SetsGenerator : public detail::Structural<std::set<T>, Printable> {
       public:
-        SetsGenerator(Generator<T> elements, SetsParams params = {})
+        SetsGenerator(detail::handle_t<Printable, T> elements,
+                      SetsParams params = {})
             : elements_(std::move(elements)), params_(params),
               label_(hegel::internal::combine_labels(
                   {hegel::internal::label(hegel::internal::LabelName::Sets),
@@ -153,37 +168,51 @@ namespace hegel::generators {
             }
         }
 
-        std::set<T> do_draw(const TestCase& tc) const override {
+        uint64_t label() const override { return label_; }
+
+      protected:
+        std::set<T> draw_printing(const TestCase& tc,
+                                  Printer& printer) const override {
             namespace hi = hegel::internal;
             hi::start_span(tc, label_);
             hi::CollectionHandle collection(
                 tc, params_.min_size,
                 detail::collection_max_size(params_.max_size));
             std::set<T> result;
+            printer.begin_block(detail::open_text<std::set<T>>(printer, "{"));
             while (collection.more(tc)) {
-                if (!result.insert(elements_.do_draw(tc)).second) {
-                    collection.reject(tc, "duplicate element");
+                Speculation element = printer.speculate();
+                if (!result.empty()) {
+                    printer.separator();
                 }
+                if (!result.insert(detail::draw_component(tc, elements_, printer))
+                         .second) {
+                    element.abort();
+                    collection.reject(tc, "duplicate element");
+                    continue;
+                }
+                element.commit();
             }
+            printer.end_block("}");
             hi::stop_span(tc);
             return result;
         }
 
-        uint64_t label() const override { return label_; }
-
       private:
-        Generator<T> elements_;
+        detail::handle_t<Printable, T> elements_;
         SetsParams params_;
         uint64_t label_;
     };
 
     // Concrete IGenerator for maps(). Draws the key first and only draws a
     // value once the key is known to be fresh; duplicate keys are rejected
-    // back to the engine.
-    template <typename K, typename V>
-    class MapsGenerator : public IGenerator<std::map<K, V>> {
+    // back to the engine. Entries print in draw order.
+    template <typename K, typename V, bool Printable>
+    class MapsGenerator
+        : public detail::Structural<std::map<K, V>, Printable> {
       public:
-        MapsGenerator(Generator<K> keys, Generator<V> values,
+        MapsGenerator(detail::handle_t<Printable, K> keys,
+                      detail::handle_t<Printable, V> values,
                       MapsParams params = {})
             : keys_(std::move(keys)), values_(std::move(values)),
               params_(params),
@@ -195,30 +224,45 @@ namespace hegel::generators {
             }
         }
 
-        std::map<K, V> do_draw(const TestCase& tc) const override {
+        uint64_t label() const override { return label_; }
+
+      protected:
+        std::map<K, V> draw_printing(const TestCase& tc,
+                                     Printer& printer) const override {
             namespace hi = hegel::internal;
             hi::start_span(tc, label_);
             hi::CollectionHandle collection(
                 tc, params_.min_size,
                 detail::collection_max_size(params_.max_size));
             std::map<K, V> result;
+            printer.begin_block(
+                detail::open_text<std::map<K, V>>(printer, "{"));
             while (collection.more(tc)) {
-                K key = keys_.do_draw(tc);
+                Speculation entry = printer.speculate();
+                if (!result.empty()) {
+                    printer.separator();
+                }
+                printer.begin_block("{");
+                K key = detail::draw_component(tc, keys_, printer);
                 if (result.find(key) != result.end()) {
+                    entry.abort();
                     collection.reject(tc, "duplicate key");
                     continue;
                 }
-                result.emplace(std::move(key), values_.do_draw(tc));
+                printer.separator();
+                V value = detail::draw_component(tc, values_, printer);
+                printer.end_block("}");
+                entry.commit();
+                result.emplace(std::move(key), std::move(value));
             }
+            printer.end_block("}");
             hi::stop_span(tc);
             return result;
         }
 
-        uint64_t label() const override { return label_; }
-
       private:
-        Generator<K> keys_;
-        Generator<V> values_;
+        detail::handle_t<Printable, K> keys_;
+        detail::handle_t<Printable, V> values_;
         MapsParams params_;
         uint64_t label_;
     };
@@ -229,6 +273,9 @@ namespace hegel::generators {
 
     /**
      * @brief Generate vectors with elements from another generator.
+     *
+     * The vector prints each element as @p elements prints it, so it is
+     * printable when @p elements is.
      *
      * @code{.cpp}
      * auto int_vec = vectors(integers<int>());
@@ -245,8 +292,37 @@ namespace hegel::generators {
     Generator<std::vector<T>> vectors(Generator<T> elements,
                                       VectorsParams params = {}) {
         return Generator<std::vector<T>>(
-            new VectorsGenerator<T>(std::move(elements), params));
+            new VectorsGenerator<T, true>(std::move(elements), params));
     }
+
+    /**
+     * @brief Generate vectors with elements from a generator that is not
+     *        printable.
+     *
+     * @tparam T Element type
+     * @param elements Generator for vector elements
+     * @param params Size and uniqueness constraints
+     * @return AnyGenerator producing vectors
+     */
+    template <typename T>
+    AnyGenerator<std::vector<T>> vectors(AnyGenerator<T> elements,
+                                         VectorsParams params = {}) {
+        return AnyGenerator<std::vector<T>>(
+            new VectorsGenerator<T, false>(std::move(elements), params));
+    }
+
+    /// @cond INTERNAL
+    namespace detail {
+
+        template <typename T, typename F>
+        std::function<bool(const T&, const T&)> same_key(F unique_by) {
+            return [key = std::move(unique_by)](const T& a, const T& b) {
+                return key(a) == key(b);
+            };
+        }
+
+    } // namespace detail
+    /// @endcond
 
     /**
      * @brief Generate vectors whose elements have distinct keys.
@@ -274,15 +350,36 @@ namespace hegel::generators {
               typename = std::enable_if_t<std::is_invocable_v<F, const T&>>>
     Generator<std::vector<T>> vectors(Generator<T> elements,
                                       VectorsParams params, F unique_by) {
-        return Generator<std::vector<T>>(new VectorsGenerator<T>(
+        return Generator<std::vector<T>>(new VectorsGenerator<T, true>(
             std::move(elements), params,
-            [key = std::move(unique_by)](const T& a, const T& b) {
-                return key(a) == key(b);
-            }));
+            detail::same_key<T>(std::move(unique_by))));
+    }
+
+    /**
+     * @brief Generate vectors whose elements have distinct keys, from a
+     *        generator that is not printable.
+     *
+     * @tparam T Element type
+     * @tparam F Callable taking `const T&` and returning the element's key
+     * @param elements Generator for vector elements
+     * @param params Size constraints
+     * @param unique_by Function from an element to its key
+     * @return AnyGenerator producing vectors with distinct keys
+     */
+    template <typename T, typename F,
+              typename = std::enable_if_t<std::is_invocable_v<F, const T&>>>
+    AnyGenerator<std::vector<T>> vectors(AnyGenerator<T> elements,
+                                         VectorsParams params, F unique_by) {
+        return AnyGenerator<std::vector<T>>(new VectorsGenerator<T, false>(
+            std::move(elements), params,
+            detail::same_key<T>(std::move(unique_by))));
     }
 
     /**
      * @brief Generate sets with elements from another generator.
+     *
+     * The set prints its elements in the order they were drawn, each as
+     * @p elements prints it, so it is printable when @p elements is.
      *
      * @code{.cpp}
      * auto int_set = sets(integers<int>());
@@ -297,11 +394,31 @@ namespace hegel::generators {
     template <typename T>
     Generator<std::set<T>> sets(Generator<T> elements, SetsParams params = {}) {
         return Generator<std::set<T>>(
-            new SetsGenerator<T>(std::move(elements), params));
+            new SetsGenerator<T, true>(std::move(elements), params));
+    }
+
+    /**
+     * @brief Generate sets with elements from a generator that is not
+     *        printable.
+     *
+     * @tparam T Element type (must be comparable)
+     * @param elements Generator for set elements
+     * @param params Size constraints
+     * @return AnyGenerator producing sets
+     */
+    template <typename T>
+    AnyGenerator<std::set<T>> sets(AnyGenerator<T> elements,
+                                   SetsParams params = {}) {
+        return AnyGenerator<std::set<T>>(
+            new SetsGenerator<T, false>(std::move(elements), params));
     }
 
     /**
      * @brief Generate maps with configurable key and value types.
+     *
+     * The map prints its entries in the order they were drawn, each key
+     * and value as its generator prints it, so it is printable when both
+     * generators are.
      *
      * @code{.cpp}
      * // String keys
@@ -325,44 +442,74 @@ namespace hegel::generators {
     template <typename K, typename V>
     Generator<std::map<K, V>> maps(Generator<K> keys, Generator<V> values,
                                    MapsParams params = {}) {
-        return Generator<std::map<K, V>>(new MapsGenerator<K, V>(
+        return Generator<std::map<K, V>>(new MapsGenerator<K, V, true>(
+            std::move(keys), std::move(values), params));
+    }
+
+    /**
+     * @brief Generate maps from generators that are not both printable.
+     *
+     * @tparam K Key type
+     * @tparam V Value type
+     * @param keys Generator for map keys
+     * @param values Generator for map values
+     * @param params Size constraints
+     * @return AnyGenerator producing maps
+     */
+    template <typename K, typename V>
+    AnyGenerator<std::map<K, V>> maps(AnyGenerator<K> keys,
+                                      AnyGenerator<V> values,
+                                      MapsParams params = {}) {
+        return AnyGenerator<std::map<K, V>>(new MapsGenerator<K, V, false>(
             std::move(keys), std::move(values), params));
     }
 
     /// @cond INTERNAL
-    namespace detail {
-
-        template <typename Tuple, typename GenTuple, size_t... Is>
-        Tuple draw_tuple_impl(const GenTuple& gens, std::index_sequence<Is...>,
-                              const TestCase& tc) {
-            return Tuple{std::get<Is>(gens).do_draw(tc)...};
-        }
-
-    } // namespace detail
-
     // Concrete IGenerator for tuples(). Draws each element in order inside
     // one tuple span.
-    template <typename... Ts>
-    class TuplesGenerator : public IGenerator<std::tuple<Ts...>> {
+    template <bool Printable, typename... Ts>
+    class TuplesGenerator
+        : public detail::Structural<std::tuple<Ts...>, Printable> {
       public:
         using ResultTuple = std::tuple<Ts...>;
 
-        explicit TuplesGenerator(Generator<Ts>... gens)
+        explicit TuplesGenerator(detail::handle_t<Printable, Ts>... gens)
             : gens_(std::move(gens)...),
               label_(make_label(std::index_sequence_for<Ts...>{})) {}
 
-        ResultTuple do_draw(const TestCase& tc) const override {
+        uint64_t label() const override { return label_; }
+
+      protected:
+        ResultTuple draw_printing(const TestCase& tc,
+                                  Printer& printer) const override {
             namespace hi = hegel::internal;
             hi::start_span(tc, label_);
-            ResultTuple result = detail::draw_tuple_impl<ResultTuple>(
-                gens_, std::index_sequence_for<Ts...>{}, tc);
+            printer.begin_block(detail::open_text<ResultTuple>(printer, "{"));
+            ResultTuple result = draw_all(tc, printer,
+                                          std::index_sequence_for<Ts...>{});
+            printer.end_block("}");
             hi::stop_span(tc);
             return result;
         }
 
-        uint64_t label() const override { return label_; }
-
       private:
+        // Braced-init evaluates its elements left to right, so the draws
+        // happen in order.
+        template <size_t... Is>
+        ResultTuple draw_all(const TestCase& tc, Printer& printer,
+                             std::index_sequence<Is...>) const {
+            return ResultTuple{draw_element<Is>(tc, printer)...};
+        }
+
+        template <size_t I>
+        std::tuple_element_t<I, ResultTuple>
+        draw_element(const TestCase& tc, Printer& printer) const {
+            if constexpr (I > 0) {
+                printer.separator();
+            }
+            return detail::draw_component(tc, std::get<I>(gens_), printer);
+        }
+
         template <size_t... Is>
         uint64_t make_label(std::index_sequence<Is...>) const {
             namespace hi = hegel::internal;
@@ -370,7 +517,7 @@ namespace hegel::generators {
                                        std::get<Is>(gens_).label()...});
         }
 
-        std::tuple<Generator<Ts>...> gens_;
+        std::tuple<detail::handle_t<Printable, Ts>...> gens_;
         uint64_t label_;
     };
     /// @endcond
@@ -378,7 +525,9 @@ namespace hegel::generators {
     /**
      * @brief Generate tuples from multiple generators.
      *
-     * Each generator produces one element of the resulting tuple.
+     * Each generator produces one element of the resulting tuple. The tuple
+     * prints each element as its generator prints it, so it is printable
+     * when every generator is.
      *
      * @code{.cpp}
      * auto pair = tuples(integers<int>(), text());
@@ -392,46 +541,70 @@ namespace hegel::generators {
     template <typename... Ts>
     Generator<std::tuple<Ts...>> tuples(Generator<Ts>... gens) {
         return Generator<std::tuple<Ts...>>(
-            new TuplesGenerator<Ts...>(std::move(gens)...));
+            new TuplesGenerator<true, Ts...>(std::move(gens)...));
+    }
+
+    /**
+     * @brief Generate tuples from generators that are not all printable.
+     *
+     * @tparam Ts Element types
+     * @param gens Generators for each tuple element
+     * @return AnyGenerator producing tuples
+     */
+    template <typename... Ts>
+    AnyGenerator<std::tuple<Ts...>> tuples(AnyGenerator<Ts>... gens) {
+        return AnyGenerator<std::tuple<Ts...>>(
+            new TuplesGenerator<false, Ts...>(std::move(gens)...));
     }
 
     /// @cond INTERNAL
     // Concrete IGenerator for arrays(). Draws exactly N elements from one
     // element generator inside a single tuple span (fixed arity, not the
     // engine-managed collection protocol vectors() uses).
-    template <typename T, size_t N>
-    class ArrayGenerator : public IGenerator<std::array<T, N>> {
+    template <typename T, size_t N, bool Printable>
+    class ArrayGenerator
+        : public detail::Structural<std::array<T, N>, Printable> {
       public:
-        explicit ArrayGenerator(Generator<T> element)
+        explicit ArrayGenerator(detail::handle_t<Printable, T> element)
             : element_(std::move(element)),
               label_(hegel::internal::combine_labels(
                   {hegel::internal::label(hegel::internal::LabelName::Array),
                    element_.label()})) {}
 
-        std::array<T, N> do_draw(const TestCase& tc) const override {
+        uint64_t label() const override { return label_; }
+
+      protected:
+        std::array<T, N> draw_printing(const TestCase& tc,
+                                       Printer& printer) const override {
             namespace hi = hegel::internal;
             hi::start_span(tc, label_);
+            printer.begin_block(
+                detail::open_text<std::array<T, N>>(printer, "{"));
             std::array<T, N> result =
-                draw_all(tc, std::make_index_sequence<N>{});
+                draw_all(tc, printer, std::make_index_sequence<N>{});
+            printer.end_block("}");
             hi::stop_span(tc);
             return result;
         }
 
       private:
         // Braced-init evaluates its elements left to right, so the N draws
-        // happen in order; the comma operator consumes each index.
+        // happen in order.
         template <size_t... Is>
-        std::array<T, N> draw_all(const TestCase& tc,
+        std::array<T, N> draw_all(const TestCase& tc, Printer& printer,
                                   std::index_sequence<Is...>) const {
-            return std::array<T, N>{
-                (static_cast<void>(Is), element_.do_draw(tc))...};
+            return std::array<T, N>{draw_element(tc, printer, Is)...};
         }
 
-      public:
-        uint64_t label() const override { return label_; }
+        T draw_element(const TestCase& tc, Printer& printer,
+                       size_t index) const {
+            if (index > 0) {
+                printer.separator();
+            }
+            return detail::draw_component(tc, element_, printer);
+        }
 
-      private:
-        Generator<T> element_;
+        detail::handle_t<Printable, T> element_;
         uint64_t label_;
     };
     /// @endcond
@@ -441,7 +614,8 @@ namespace hegel::generators {
      *
      * Draws exactly @p N elements from @p element, producing a
      * @c std::array<T, N>. Unlike vectors(), the length is fixed at compile
-     * time. @p N cannot be deduced, so specify it explicitly.
+     * time. @p N cannot be deduced, so specify it explicitly. The array is
+     * printable when @p element is.
      *
      * @code{.cpp}
      * auto rgb = arrays<int, 3>(integers<int>({.min_value = 0, .max_value =
@@ -457,7 +631,22 @@ namespace hegel::generators {
     template <typename T, size_t N>
     Generator<std::array<T, N>> arrays(Generator<T> element) {
         return Generator<std::array<T, N>>(
-            new ArrayGenerator<T, N>(std::move(element)));
+            new ArrayGenerator<T, N, true>(std::move(element)));
+    }
+
+    /**
+     * @brief Generate fixed-size arrays from a generator that is not
+     *        printable.
+     *
+     * @tparam T Element type
+     * @tparam N Number of elements
+     * @param element Generator for each element
+     * @return AnyGenerator producing std::array<T, N>
+     */
+    template <typename T, size_t N>
+    AnyGenerator<std::array<T, N>> arrays(AnyGenerator<T> element) {
+        return AnyGenerator<std::array<T, N>>(
+            new ArrayGenerator<T, N, false>(std::move(element)));
     }
 
     /// @cond INTERNAL
@@ -465,7 +654,8 @@ namespace hegel::generators {
     // index of one of the values not yet placed, inside an engine-managed
     // collection of exactly that many elements.
     template <typename T>
-    class PermutationsGenerator : public IGenerator<std::vector<T>> {
+    class PermutationsGenerator
+        : public detail::value_base_t<std::vector<T>, is_representable_v<T>> {
       public:
         explicit PermutationsGenerator(std::vector<T> values)
             : values_(std::move(values)) {}
@@ -511,14 +701,16 @@ namespace hegel::generators {
      * auto order = permutations(std::vector<int>{1, 2, 3, 4, 5});
      * @endcode
      *
+     * The result prints the reordered vector by its C++ representation, so
+     * it is printable when hegel::is_representable_v is true for T.
+     *
      * @tparam T Element type
      * @param values The values to reorder
      * @return Generator producing reorderings of @p values
      */
-    template <typename T>
-    Generator<std::vector<T>> permutations(std::vector<T> values) {
-        return Generator<std::vector<T>>(
-            new PermutationsGenerator<T>(std::move(values)));
+    template <typename T> auto permutations(std::vector<T> values) {
+        return detail::handle_t<is_representable_v<T>, std::vector<T>>(
+            std::make_shared<PermutationsGenerator<T>>(std::move(values)));
     }
 
     /**
@@ -529,8 +721,7 @@ namespace hegel::generators {
      * @param values The values to reorder
      * @return Generator producing reorderings of @p values
      */
-    template <typename T>
-    Generator<std::vector<T>> permutations(std::initializer_list<T> values) {
+    template <typename T> auto permutations(std::initializer_list<T> values) {
         return permutations(std::vector<T>(values));
     }
 

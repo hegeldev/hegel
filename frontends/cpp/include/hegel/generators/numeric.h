@@ -101,7 +101,7 @@ namespace hegel::generators {
     // Concrete IGenerator<T> subclass produced by integers().
     template <typename T>
     HEGEL_REQUIRES(std::is_integral_v<T>)
-    class IntegerGenerator : public IGenerator<T> {
+    class IntegerGenerator : public detail::ValuePrinted<T> {
         static_assert(std::is_integral_v<T>,
                       "integers<T> requires an integral type T");
 
@@ -142,7 +142,7 @@ namespace hegel::generators {
     // engine draw parameters once at construction.
     template <typename T>
     HEGEL_REQUIRES(std::is_floating_point_v<T>)
-    class FloatGenerator : public IGenerator<T> {
+    class FloatGenerator : public detail::ValuePrinted<T> {
         static_assert(std::is_floating_point_v<T>,
                       "floats<T> requires a floating-point type T");
 

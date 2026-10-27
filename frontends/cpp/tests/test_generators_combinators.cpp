@@ -147,7 +147,7 @@ namespace {
 TEST(NonSerializable, JustWorksWithOpaqueType) {
     auto gen = gs::just(OpaqueHandle{42});
     hegel::test([&gen](hegel::TestCase& tc) {
-        OpaqueHandle drawn = tc.draw(gen);
+        OpaqueHandle drawn = tc.draw_silent(gen);
         EXPECT_EQ(drawn.id(), 42);
     });
 }
@@ -159,7 +159,7 @@ TEST(NonSerializable, SampledFromWorksWithOpaqueType) {
     options.emplace_back(3);
     auto gen = gs::sampled_from(options);
     hegel::test([&gen](hegel::TestCase& tc) {
-        OpaqueHandle drawn = tc.draw(gen);
+        OpaqueHandle drawn = tc.draw_silent(gen);
         EXPECT_TRUE(drawn == OpaqueHandle{1} || drawn == OpaqueHandle{2} ||
                     drawn == OpaqueHandle{3});
     });
