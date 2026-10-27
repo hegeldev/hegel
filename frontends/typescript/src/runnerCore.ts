@@ -38,7 +38,14 @@ import type { RuntimeServices } from "./runtime.js";
 import { applySettings, resolveSettings, type Settings, type TestLocation } from "./settings.js";
 import { runError, DidNotReproduceError } from "./errors.js";
 import { resolveLabel, type LabelSpec } from "./labels.js";
-import { EngineDocument, printValue, printedLine, splitLines, type Printer } from "./pretty.js";
+import {
+  EngineDocument,
+  enginePrinter,
+  installDocumentEngine,
+  printedLine,
+  splitLines,
+  type Printer,
+} from "./pretty.js";
 import { ExplicitDataSource } from "./explicit.js";
 import { callSite, databaseKeyOf, locationOf, type CallSite } from "./callSite.js";
 
@@ -72,6 +79,10 @@ interface Family {
   readonly derived: TestCaseHandle[];
   readonly printers: PrinterHandle[];
   fault: EngineError | undefined;
+  /** Whether a deferred printer region was opened, so the document needs resolving. */
+  deferred: boolean;
+  /** Whether the document has been read or released: printing then does nothing. */
+  released: boolean;
 }
 
 /**
@@ -105,6 +116,8 @@ export class EngineDataSource implements DataSource {
       derived: [],
       printers: [],
       fault: undefined,
+      deferred: false,
+      released: false,
     };
   }
 
@@ -316,23 +329,21 @@ export class EngineDataSource implements DataSource {
   }
 
   printer(): Printer {
-    const { lib, ctx } = this;
-    const handle = this.newPrinter();
-    const run = (operation: () => void): void => this.call(operation);
-    return {
-      text: (text) => run(() => lib.printerText(ctx, handle, text)),
-      hardBreak: () => run(() => lib.printerHardBreak(ctx, handle)),
-      reflow: (text) => run(() => lib.printerReflow(ctx, handle, text)),
-      beginGroup: (indent, open) => run(() => lib.printerBeginGroup(ctx, handle, indent, open)),
-      endGroup: (close) => run(() => lib.printerEndGroup(ctx, handle, close)),
-      breakable: (sep) => run(() => lib.printerBreakable(ctx, handle, sep)),
-      ifBreak: (text) => run(() => lib.printerIfBreak(ctx, handle, text)),
-      comment: (text) => run(() => lib.printerComment(ctx, handle, text)),
-      shiftIndent: (delta) => run(() => lib.printerShiftIndent(ctx, handle, delta)),
-      beginSpeculative: () => run(() => lib.printerBeginSpeculative(ctx, handle)),
-      commitSpeculative: () => run(() => lib.printerCommitSpeculative(ctx, handle)),
-      abortSpeculative: () => run(() => lib.printerAbortSpeculative(ctx, handle)),
-    };
+    const family = this.family;
+    return enginePrinter(
+      {
+        lib: this.lib,
+        ctx: this.ctx,
+        released: () => family.released,
+        adopt: (handle) => {
+          family.printers.push(handle);
+          family.deferred = true;
+        },
+        run: (operation) => this.call(operation),
+      },
+      this.newPrinter(),
+      false,
+    );
   }
 
   /** Whether the engine stamped this test case for capture. */
@@ -347,8 +358,11 @@ export class EngineDataSource implements DataSource {
    */
   render(): string[] {
     const handle = this.newPrinter();
+    this.family.released = true;
     return this.call(() => {
-      if (this.family.derived.length > 0) this.lib.printerResolve(this.ctx, handle);
+      if (this.family.derived.length > 0 || this.family.deferred) {
+        this.lib.printerResolve(this.ctx, handle);
+      }
       return splitLines(this.lib.printerValue(this.ctx, handle));
     });
   }
@@ -382,6 +396,7 @@ export class EngineDataSource implements DataSource {
       }
     };
     const family = this.family;
+    family.released = true;
     release(family.printers, (printer) => this.lib.freePrinter(printer));
     release(family.derived, (tc) => this.lib.freeTestCase(tc));
     release(family.collections, (collection) => this.lib.freeCollection(collection));
@@ -563,12 +578,12 @@ function describeExample(lib: Engine, ctx: ContextHandle, example: ExplicitExamp
   return printedLine(lib, ctx, (printer) => {
     if (example.kind === "named") {
       printer.text("namedExample(");
-      printValue(printer, example.values);
+      printer.value(example.values);
     } else {
       printer.text("example(");
       example.values.forEach((value, index) => {
         if (index > 0) printer.text(", ");
-        printValue(printer, value);
+        printer.value(value);
       });
     }
     printer.text(")");
@@ -623,6 +638,7 @@ let installedRuntime: RuntimeServices | null = null;
  */
 export function installRuntime(runtime: RuntimeServices): void {
   installedRuntime = runtime;
+  installDocumentEngine(() => runtime.getEngine());
 }
 
 /**

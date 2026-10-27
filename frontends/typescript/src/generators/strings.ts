@@ -6,7 +6,7 @@
 
 import { TestCase, generateRaw } from "../testCase.js";
 import type { UuidVersion } from "../engine.js";
-import { Generator, BasicGenerator } from "./core.js";
+import { BasicGenerator, ValueGenerator, type Generator, type PrintableGenerator } from "./core.js";
 import { oneOf } from "./combinators.js";
 
 /**
@@ -95,7 +95,7 @@ function parseBytes(raw: unknown): Uint8Array {
  * Convenience base for generators that are pure schema+parse wrappers.
  * Subclasses supply a schema in the constructor; doDraw and asBasic use it.
  */
-abstract class SchemaStringGenerator extends Generator<string> {
+abstract class SchemaStringGenerator extends ValueGenerator<string> {
   protected readonly schema: Record<string, unknown>;
 
   constructor(schema: Record<string, unknown>) {
@@ -129,7 +129,7 @@ class TextGenerator extends SchemaStringGenerator {
 }
 
 /** Generate text strings. */
-export function text(options?: TextOptions): Generator<string> {
+export function text(options?: TextOptions): PrintableGenerator<string> {
   return new TextGenerator(options);
 }
 
@@ -155,7 +155,7 @@ export class CharactersGenerator extends SchemaStringGenerator {
 }
 
 /** Generate single characters. */
-export function characters(options?: CharacterOptions): Generator<string> {
+export function characters(options?: CharacterOptions): PrintableGenerator<string> {
   return new CharactersGenerator(options);
 }
 
@@ -169,7 +169,7 @@ export interface BinaryOptions {
   maxSize?: number;
 }
 
-class BinaryGenerator extends Generator<Uint8Array> {
+class BinaryGenerator extends ValueGenerator<Uint8Array> {
   private readonly schema: Record<string, unknown>;
 
   constructor(options?: BinaryOptions) {
@@ -194,7 +194,7 @@ class BinaryGenerator extends Generator<Uint8Array> {
 }
 
 /** Generate binary data (Uint8Array). */
-export function binary(options?: BinaryOptions): Generator<Uint8Array> {
+export function binary(options?: BinaryOptions): PrintableGenerator<Uint8Array> {
   return new BinaryGenerator(options);
 }
 
@@ -240,7 +240,7 @@ class FromRegexGenerator extends SchemaStringGenerator {
  * entire string matches the pattern); pass `{ fullmatch: false }` for
  * substring/contains behavior, and `alphabet` to restrict the characters.
  */
-export function fromRegex(pattern: string, options?: RegexOptions): Generator<string> {
+export function fromRegex(pattern: string, options?: RegexOptions): PrintableGenerator<string> {
   return new FromRegexGenerator(pattern, options);
 }
 
@@ -251,7 +251,7 @@ class EmailsGenerator extends SchemaStringGenerator {
 }
 
 /** Generate email addresses. */
-export function emails(): Generator<string> {
+export function emails(): PrintableGenerator<string> {
   return new EmailsGenerator();
 }
 
@@ -262,7 +262,7 @@ class UrlsGenerator extends SchemaStringGenerator {
 }
 
 /** Generate URLs. */
-export function urls(): Generator<string> {
+export function urls(): PrintableGenerator<string> {
   return new UrlsGenerator();
 }
 
@@ -282,7 +282,7 @@ class DomainsGenerator extends SchemaStringGenerator {
 }
 
 /** Generate domain names. */
-export function domains(options?: DomainOptions): Generator<string> {
+export function domains(options?: DomainOptions): PrintableGenerator<string> {
   return new DomainsGenerator(options);
 }
 
@@ -298,7 +298,7 @@ class IpAddressesGenerator extends SchemaStringGenerator {
 }
 
 /** Generate IP address strings. Defaults to either IPv4 or IPv6; pass `{ version }` to restrict. */
-export function ipAddresses(options?: IpAddressOptions): Generator<string> {
+export function ipAddresses(options?: IpAddressOptions): PrintableGenerator<string> {
   if (options?.version === 4) return new IpAddressesGenerator(4);
   if (options?.version === 6) return new IpAddressesGenerator(6);
   return oneOf(new IpAddressesGenerator(4), new IpAddressesGenerator(6));
@@ -311,7 +311,7 @@ class DatesGenerator extends SchemaStringGenerator {
 }
 
 /** Generate date strings (ISO 8601). */
-export function dates(): Generator<string> {
+export function dates(): PrintableGenerator<string> {
   return new DatesGenerator();
 }
 
@@ -322,7 +322,7 @@ class TimesGenerator extends SchemaStringGenerator {
 }
 
 /** Generate time strings (ISO 8601). */
-export function times(): Generator<string> {
+export function times(): PrintableGenerator<string> {
   return new TimesGenerator();
 }
 
@@ -333,7 +333,7 @@ class DatetimesGenerator extends SchemaStringGenerator {
 }
 
 /** Generate datetime strings (ISO 8601). */
-export function datetimes(): Generator<string> {
+export function datetimes(): PrintableGenerator<string> {
   return new DatetimesGenerator();
 }
 
@@ -355,6 +355,6 @@ class UuidsGenerator extends SchemaStringGenerator {
 }
 
 /** Generate UUID strings in canonical lowercase hyphenated form. */
-export function uuids(options?: UuidOptions): Generator<string> {
+export function uuids(options?: UuidOptions): PrintableGenerator<string> {
   return new UuidsGenerator(options);
 }

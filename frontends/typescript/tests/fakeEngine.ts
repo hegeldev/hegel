@@ -146,6 +146,8 @@ export function fakeEngine() {
     printerAbortSpeculative: vi.fn<Engine["printerAbortSpeculative"]>((_ctx, p) => {
       printerOf(p).regions.pop();
     }),
+    printerDeferred: vi.fn<Engine["printerDeferred"]>(() => new FakePrinter().handle),
+    printerIsLive: vi.fn<Engine["printerIsLive"]>(() => true),
     printerResolve: vi.fn<Engine["printerResolve"]>(),
     printerValue: vi.fn<Engine["printerValue"]>((_ctx, p) => printerOf(p).regions[0]),
     freeTestCase: vi.fn<Engine["freeTestCase"]>(),

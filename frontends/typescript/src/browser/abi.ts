@@ -77,6 +77,8 @@ export const signatures = {
   printer_begin_speculative: "II",
   printer_commit_speculative: "II",
   printer_abort_speculative: "II",
+  printer_deferred: "III",
+  printer_is_live: "III",
   printer_resolve: "II",
   printer_value: "III",
   printer_value_result_free: "II",

@@ -524,7 +524,7 @@ describe("WasmEngine real run lifecycle", () => {
           p.breakable("");
           p.shiftIndent(9);
         });
-        p.comment("  // half-open");
+        p.comment("half-open");
       }
     }
     const body = (tc: import("../src/testCase.js").TestCase) => {

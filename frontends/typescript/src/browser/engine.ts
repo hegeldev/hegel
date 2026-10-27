@@ -524,6 +524,14 @@ export class WasmEngine implements Engine {
   printerAbortSpeculative(ctx: ContextHandle, p: PrinterHandle): void {
     this.printerOp(ctx, "printer_abort_speculative", p);
   }
+  printerDeferred(ctx: ContextHandle, p: PrinterHandle): PrinterHandle {
+    const c = this.ptr(ctx);
+    return this.handle(c, "printer_deferred", [c, this.ptr(p)]);
+  }
+  printerIsLive(ctx: ContextHandle, p: PrinterHandle): boolean {
+    const c = this.ptr(ctx);
+    return this.output(c, "printer_is_live", [c, this.ptr(p)], 1, 1, (a, ptr) => a.boolean(ptr));
+  }
   printerResolve(ctx: ContextHandle, p: PrinterHandle): void {
     this.printerOp(ctx, "printer_resolve", p);
   }

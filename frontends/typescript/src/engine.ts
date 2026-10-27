@@ -383,6 +383,13 @@ export interface Engine {
   printerBeginSpeculative(ctx: ContextHandle, p: PrinterHandle): void;
   printerCommitSpeculative(ctx: ContextHandle, p: PrinterHandle): void;
   printerAbortSpeculative(ctx: ContextHandle, p: PrinterHandle): void;
+  /**
+   * A child region anchored at `p`'s current position, written later and
+   * laid out as if inline: released with {@link freePrinter}.
+   */
+  printerDeferred(ctx: ContextHandle, p: PrinterHandle): PrinterHandle;
+  /** Whether `p` can still be written to: false once its region has died. */
+  printerIsLive(ctx: ContextHandle, p: PrinterHandle): boolean;
   /** Splice every deferred region (clones, blocks) into the document. */
   printerResolve(ctx: ContextHandle, p: PrinterHandle): void;
   /** Read (and seal) the document of a root printer. */

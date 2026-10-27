@@ -5,10 +5,17 @@
  */
 
 import { TestCase, generateRaw } from "../testCase.js";
+import type { PrettyPrinter } from "../pretty.js";
 import { LabelNames, labelSpec, type LabelSpec } from "../labels.js";
-import { Generator, BasicGenerator } from "./core.js";
+import {
+  BasicGenerator,
+  PrintableGenerator,
+  ValueGenerator,
+  composedBasic,
+  type Generator,
+} from "./core.js";
 
-class JustGenerator<T> extends Generator<T> {
+class JustGenerator<T> extends ValueGenerator<T> {
   constructor(private readonly value: T) {
     super();
   }
@@ -24,16 +31,16 @@ class JustGenerator<T> extends Generator<T> {
 }
 
 /** Generate a constant value. */
-export function just<T>(value: T): Generator<T> {
+export function just<T>(value: T): PrintableGenerator<T> {
   return new JustGenerator(value);
 }
 
 /** Always generate `null`; the same as `just(null)`. */
-export function none(): Generator<null> {
+export function none(): PrintableGenerator<null> {
   return new JustGenerator(null);
 }
 
-class SampledFromGenerator<T> extends Generator<T> {
+class SampledFromGenerator<T> extends ValueGenerator<T> {
   private readonly elements: T[];
   private readonly schema: Record<string, unknown>;
 
@@ -60,11 +67,11 @@ class SampledFromGenerator<T> extends Generator<T> {
  * Pick from a fixed list of values, shrinking toward the first. Throws if
  * `elements` is empty.
  */
-export function sampledFrom<T>(elements: readonly T[]): Generator<T> {
+export function sampledFrom<T>(elements: readonly T[]): PrintableGenerator<T> {
   return new SampledFromGenerator(elements);
 }
 
-class OneOfGenerator<T> extends Generator<T> {
+class OneOfGenerator<T> extends PrintableGenerator<T> {
   private readonly sources: Generator<T>[];
   private readonly basic: BasicGenerator<T> | null;
 
@@ -79,25 +86,25 @@ class OneOfGenerator<T> extends Generator<T> {
     if (basics.every((b) => b !== null)) {
       const validBasics = basics as BasicGenerator<T>[];
       const childSchemas = validBasics.map((b) => b.schema);
-      this.basic = new BasicGenerator({ type: "one_of", generators: childSchemas }, (raw) => {
+      this.basic = composedBasic({ type: "one_of", generators: childSchemas }, (raw, printer) => {
         if (!Array.isArray(raw)) throw new Error(`Expected array, got ${typeof raw}`);
         const index = raw[0] as number;
-        return validBasics[index].parseRaw(raw[1]);
+        return validBasics[index].parseAndPrint(raw[1], printer);
       });
     } else {
       this.basic = null;
     }
   }
 
-  doDraw(tc: TestCase): T {
-    if (this.basic) return this.basic.doDraw(tc);
+  doDrawAndPrint(tc: TestCase, printer: PrettyPrinter): T {
+    if (this.basic) return this.basic.doDrawAndPrint(tc, printer);
     tc.startSpan(this.label);
     const index = generateRaw(tc, {
       type: "integer",
       min_value: 0,
       max_value: this.sources.length - 1,
     }) as number;
-    const result = this.sources[index].doDraw(tc);
+    const result = tc.drawAndPrint(this.sources[index] as PrintableGenerator<T>, printer);
     tc.stopSpan();
     return result;
   }
@@ -112,12 +119,17 @@ class OneOfGenerator<T> extends Generator<T> {
   }
 }
 
-/** Choose from multiple generators of the same type. */
+/**
+ * Choose from multiple generators of the same type. The value prints as the
+ * chosen generator prints it.
+ */
+export function oneOf<T>(...generators: PrintableGenerator<T>[]): PrintableGenerator<T>;
+export function oneOf<T>(...generators: Generator<T>[]): Generator<T>;
 export function oneOf<T>(...generators: Generator<T>[]): Generator<T> {
   return new OneOfGenerator(generators);
 }
 
-class OptionalGenerator<T> extends Generator<T | null> {
+class OptionalGenerator<T> extends PrintableGenerator<T | null> {
   private readonly inner: Generator<T>;
   private readonly basic: BasicGenerator<T | null> | null;
 
@@ -127,16 +139,16 @@ class OptionalGenerator<T> extends Generator<T | null> {
 
     const innerBasic = inner.asBasic();
     if (innerBasic) {
-      this.basic = new BasicGenerator(
+      this.basic = composedBasic(
         {
           type: "one_of",
           generators: [{ type: "constant", value: null }, innerBasic.schema],
         },
-        (raw) => {
+        (raw, printer) => {
           if (!Array.isArray(raw)) throw new Error(`Expected array, got ${typeof raw}`);
           const index = raw[0] as number;
-          if (index === 0) return null;
-          return innerBasic.parseRaw(raw[1]);
+          if (index === 0) return printNull(printer);
+          return innerBasic.parseAndPrint(raw[1], printer);
         },
       );
     } else {
@@ -144,11 +156,13 @@ class OptionalGenerator<T> extends Generator<T | null> {
     }
   }
 
-  doDraw(tc: TestCase): T | null {
-    if (this.basic) return this.basic.doDraw(tc);
+  doDrawAndPrint(tc: TestCase, printer: PrettyPrinter): T | null {
+    if (this.basic) return this.basic.doDrawAndPrint(tc, printer);
     tc.startSpan(this.label);
     const isSome = generateRaw(tc, { type: "boolean" }) as boolean;
-    const result = isSome ? this.inner.doDraw(tc) : null;
+    const result = isSome
+      ? tc.drawAndPrint(this.inner as PrintableGenerator<T>, printer)
+      : printNull(printer);
     tc.stopSpan();
     return result;
   }
@@ -163,7 +177,17 @@ class OptionalGenerator<T> extends Generator<T | null> {
   }
 }
 
-/** Generate either a value from the inner generator, or null. */
+function printNull(printer: PrettyPrinter): null {
+  printer.text("null");
+  return null;
+}
+
+/**
+ * Generate either a value from the inner generator, printed as the inner
+ * generator prints it, or null.
+ */
+export function optional<T>(inner: PrintableGenerator<T>): PrintableGenerator<T | null>;
+export function optional<T>(inner: Generator<T>): Generator<T | null>;
 export function optional<T>(inner: Generator<T>): Generator<T | null> {
   return new OptionalGenerator(inner);
 }

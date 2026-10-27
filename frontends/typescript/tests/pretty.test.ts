@@ -16,7 +16,7 @@ const lib = getLibhegel();
 const ctx = lib.newContext();
 
 function repr(value: unknown): string {
-  return printedLine(lib, ctx, (printer) => printValue(printer, value));
+  return printedLine(lib, ctx, (printer) => printer.value(value));
 }
 
 function document(body: (document: EngineDocument) => void): string[] {
@@ -173,7 +173,7 @@ describe.each([
     const wide = engine();
     const wideCtx = wide.newContext();
     const long = Array.from({ length: 40 }, (_, i) => i);
-    expect(printedLine(wide, wideCtx, (printer) => printValue(printer, long))).toBe(
+    expect(printedLine(wide, wideCtx, (printer) => printer.value(long))).toBe(
       `[${long.join(", ")}]`,
     );
   });
@@ -208,7 +208,7 @@ describe("printing through a class's own prettyPrint method", () => {
         p.shiftIndent(5);
       });
       p.reflow(" /* ok */");
-      p.comment("  // pair");
+      p.comment("pair");
     }
   }
 
@@ -235,14 +235,13 @@ describe("printing through a class's own prettyPrint method", () => {
       [prettyPrint](p: PrettyPrinter): void {
         p.text("a");
         p.hardBreak();
-        p.text("b");
+        p.text("b\n\nc");
       }
     }
-    expect(repr(new Lines())).toBe("a\nb");
+    expect(repr(new Lines())).toBe("a\nb\n\nc");
   });
 
   it.each([
-    ["text", (p: PrettyPrinter) => p.text("a\nb"), "text must not contain a newline"],
     [
       "a separator",
       (p: PrettyPrinter) => p.breakable("\n"),

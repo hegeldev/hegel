@@ -9,10 +9,10 @@
  */
 
 import { EngineError } from "./engine.js";
-import { printValue, type Printer } from "./pretty.js";
+import { PrettyPrinter, type Printer } from "./pretty.js";
 import type { LabelSpec } from "./labels.js";
 // Type-only import to avoid a runtime cycle: Generator depends on TestCase.
-import type { Generator } from "./generators/core.js";
+import type { Generator, PrintableGenerator } from "./generators/core.js";
 import type { GrammarSpec } from "./generate.js";
 
 export class StopTestError extends Error {
@@ -151,6 +151,18 @@ export interface DataSource {
   printer(): Printer;
 }
 
+function requirePrintable<T>(generator: Generator<T>): PrintableGenerator<T> {
+  const printable = generator as Generator<T> & Partial<PrintableGenerator<T>>;
+  if (typeof printable.doDrawAndPrint !== "function") {
+    throw new TypeError(
+      `${generator.constructor.name} cannot print the values it draws. Make it printable with ` +
+        ".printWith((value, printer) => …) or .printAsValue(); declare helpers as returning " +
+        "PrintableGenerator<T> rather than Generator<T>; or draw it with tc.drawSilent(…).",
+    );
+  }
+  return generator as PrintableGenerator<T>;
+}
+
 /** A name a draw is reported under; see {@link TestCase.draw}. */
 interface DrawState {
   readonly counts: Map<string, number>;
@@ -226,7 +238,7 @@ export class TestCase {
   private _dataSource: DataSource;
   private readonly shared: Shared;
   private readonly drawState: DrawState;
-  private _printer: Printer | null = null;
+  private _printer: PrettyPrinter | null = null;
   private spanDepth = 0;
   private printingDepth = 0;
 
@@ -256,8 +268,8 @@ export class TestCase {
     return this._dataSource;
   }
 
-  private printer(): Printer {
-    this._printer ??= this._dataSource.printer();
+  private printer(): PrettyPrinter {
+    this._printer ??= new PrettyPrinter(this._dataSource.printer());
     return this._printer;
   }
 
@@ -265,14 +277,20 @@ export class TestCase {
    * Draw a value from a generator.
    *
    * When this test case is reported (the failing example, or every test case
-   * of a verbose run), the value is printed as `const draw_1 = <value>;`,
-   * numbered in the order of the test's draws. Pass `name` to report it as
-   * `const <name> = <value>;` instead (a name drawn again is numbered:
-   * `<name>_2`, `<name>_3`, …). Draws made while another is in progress —
-   * inside a {@link generators.composite | composite} generator, say — are
-   * part of the outer value and are not printed separately.
+   * of a verbose run), the generator prints the value as it draws it, as
+   * `const draw_1 = <value>;`, numbered in the order of the test's draws.
+   * Pass `name` to report it as `const <name> = <value>;` instead (a name
+   * drawn again is numbered: `<name>_2`, `<name>_3`, …). Draws made while
+   * another is in progress — inside a {@link generators.composite | composite}
+   * generator, say — are part of the outer value and are not printed
+   * separately.
+   *
+   * The generator must be a {@link generators.PrintableGenerator}; a
+   * generator that cannot print throws a `TypeError`. Use
+   * {@link drawSilent} to draw from one without printing it.
    */
-  draw<T>(generator: Generator<T>, name?: string): T {
+  draw<T>(generator: PrintableGenerator<T>, name?: string): T {
+    requirePrintable(generator);
     if (this.shared.explicit === null && (this.spanDepth > 0 || this.printingDepth > 0)) {
       return generator.doDraw(this);
     }
@@ -280,31 +298,32 @@ export class TestCase {
     if (display === null) return this.drawSilent(generator);
     this.printingDepth++;
     const printer = this.printer();
-    printer.beginSpeculative();
+    const speculation = printer.speculate();
     try {
       printer.text(`const ${display} = `);
-      const value =
-        this.shared.explicit === null
-          ? generator.doDraw(this)
-          : (this.shared.explicit.take(display) as T);
-      printValue(printer, value);
+      let value: T;
+      if (this.shared.explicit === null) {
+        value = generator.doDrawAndPrint(this, printer);
+      } else {
+        value = this.shared.explicit.take(display) as T;
+        printer.value(value);
+      }
       printer.text(";");
       printer.hardBreak();
-      printer.commitSpeculative();
+      speculation.commit();
       return value;
-    } catch (error) {
-      printer.abortSpeculative();
-      throw error;
     } finally {
+      speculation.abort();
       this.printingDepth--;
     }
   }
 
   /**
    * Draw a value from a generator without printing it in the report of a
-   * failing example. Use it for values that would only clutter the report.
-   * It cannot be used in an explicit example, whose values are matched to
-   * draws by the names they are printed under.
+   * failing example. Use it for values that would only clutter the report,
+   * or from a generator that cannot print. It cannot be used in an explicit
+   * example, whose values are matched to draws by the names they are printed
+   * under.
    */
   drawSilent<T>(generator: Generator<T>): T {
     if (this.shared.explicit !== null) {
@@ -316,6 +335,24 @@ export class TestCase {
     } finally {
       this.printingDepth--;
     }
+  }
+
+  /**
+   * Draw a value from `generator`, printing it to `printer`: how a
+   * {@link generators.PrintableGenerator} draws the generators it is built
+   * from, so that each prints in place inside its own output. With
+   * {@link PrettyPrinter.noop} it draws silently, from any generator.
+   */
+  drawAndPrint<T>(generator: PrintableGenerator<T>, printer: PrettyPrinter): T {
+    if (this.shared.explicit !== null && this.printingDepth === 0) {
+      throw new ExplicitExampleError("drawAndPrint is not supported in explicit examples");
+    }
+    const printable = generator as Generator<T> & Partial<PrintableGenerator<T>>;
+    if (typeof printable.doDrawAndPrint === "function") {
+      return printable.doDrawAndPrint(this, printer);
+    }
+    if (printer.region === null) return generator.doDraw(this);
+    return requirePrintable(generator).doDrawAndPrint(this, printer);
   }
 
   private allocateDisplayName(name: string, repeatable: boolean): string | null {

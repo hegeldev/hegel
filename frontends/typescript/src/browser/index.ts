@@ -31,4 +31,11 @@ export {
   DidNotReproduceError,
 } from "../errors.js";
 export { Hegel } from "../runnerCore.js";
-export { PrettyPrinter, prettyPrint, type PrettyPrintable } from "../pretty.js";
+export {
+  Document,
+  PrettyPrinter,
+  Speculation,
+  prettyPrint,
+  type DocumentOptions,
+  type PrettyPrintable,
+} from "../pretty.js";

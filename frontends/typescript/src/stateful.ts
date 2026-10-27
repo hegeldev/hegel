@@ -67,7 +67,7 @@
  * carries on with another rule. Rejection is not transactional — anything the
  * rule did before the assumption failed has already happened — so place
  * assumptions at the start of the rule, before mutating the state or the
- * system under test. A {@link HegelGenerator.filter | filtered} generator that
+ * system under test. A {@link PrintableGenerator.filter | filtered} generator that
  * runs out of retries rejects the step the same way.
  *
  * # Pools
@@ -83,7 +83,7 @@
 
 import { TestCase, AssumeError, StopTestError, type DataSource } from "./testCase.js";
 import { FILTER_ATTEMPT, LabelNames, STATEFUL_RULE, labelSpec, type LabelSpec } from "./labels.js";
-import { Generator as HegelGenerator } from "./generators/core.js";
+import { ValueGenerator, type PrintableGenerator } from "./generators/core.js";
 import { FILTER_ATTEMPTS } from "./engine.js";
 
 /**
@@ -217,12 +217,12 @@ export class Pool<T> {
   }
 
   /** A generator over the values in the pool; drawing does not remove them. */
-  valuesReusable(): HegelGenerator<T> {
+  valuesReusable(): PrintableGenerator<T> {
     return new PoolValues(this, false);
   }
 
   /** A generator that removes each value it yields from the pool. */
-  valuesConsumed(): HegelGenerator<T> {
+  valuesConsumed(): PrintableGenerator<T> {
     return new PoolValues(this, true);
   }
 
@@ -285,7 +285,7 @@ export class Pool<T> {
 const VALUES_REUSABLE = labelSpec(LabelNames.POOL_VALUES_REUSABLE);
 const VALUES_CONSUMED = labelSpec(LabelNames.POOL_VALUES_CONSUMED);
 
-class PoolValues<T> extends HegelGenerator<T> {
+class PoolValues<T> extends ValueGenerator<T> {
   constructor(
     private readonly pool: Pool<T>,
     private readonly consume: boolean,
@@ -297,7 +297,7 @@ class PoolValues<T> extends HegelGenerator<T> {
     return this.pool.take(tc, this.consume);
   }
 
-  override filter(predicate: (value: T) => boolean): HegelGenerator<T> {
+  override filter(predicate: (value: T) => boolean): PrintableGenerator<T> {
     return this.consume ? new FilteredPoolValues(this.pool, [predicate]) : super.filter(predicate);
   }
 
@@ -307,7 +307,7 @@ class PoolValues<T> extends HegelGenerator<T> {
   }
 }
 
-class FilteredPoolValues<T> extends HegelGenerator<T> {
+class FilteredPoolValues<T> extends ValueGenerator<T> {
   constructor(
     private readonly pool: Pool<T>,
     private readonly predicates: readonly ((value: T) => boolean)[],
@@ -319,7 +319,7 @@ class FilteredPoolValues<T> extends HegelGenerator<T> {
     return this.pool.takeFiltered(tc, (value) => this.predicates.every((p) => p(value)));
   }
 
-  override filter(predicate: (value: T) => boolean): HegelGenerator<T> {
+  override filter(predicate: (value: T) => boolean): PrintableGenerator<T> {
     return new FilteredPoolValues(this.pool, [...this.predicates, predicate]);
   }
 

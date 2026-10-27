@@ -168,6 +168,11 @@ function fakeBindings(overrides: Partial<Bindings>): Bindings {
     printerBeginSpeculative: () => 0,
     printerCommitSpeculative: () => 0,
     printerAbortSpeculative: () => 0,
+    printerDeferred: (_ctx, _p, out) => {
+      out[0] = {} as Ptr;
+      return 0;
+    },
+    printerIsLive: () => 0,
     printerResolve: () => 0,
     printerValue: () => 0,
     printerValueResultFree: noop,
@@ -554,6 +559,8 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
     lib.printerBeginSpeculative(h, printer);
     lib.printerCommitSpeculative(h, printer);
     lib.printerAbortSpeculative(h, printer);
+    lib.freePrinter(lib.printerDeferred(h, printer));
+    expect(lib.printerIsLive(h, printer)).toBe(false);
     lib.printerResolve(h, printer);
     expect(lib.printerValue(h, printer)).toBe("");
     lib.freePrinter(printer);
