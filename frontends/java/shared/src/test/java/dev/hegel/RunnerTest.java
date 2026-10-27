@@ -25,6 +25,11 @@ class RunnerTest {
         return new PrintStream(buf, true, StandardCharsets.UTF_8);
     }
 
+    /** The captured output with platform line endings normalised, so multi-line assertions hold on Windows. */
+    private static String normalizedOutput(ByteArrayOutputStream buf) {
+        return buf.toString(StandardCharsets.UTF_8).replace("\r\n", "\n");
+    }
+
     private static void run(FakeLibhegel fake, Settings s, Consumer<TestCase> body) {
         Runner.run(fake, s, body, Reporter.printing(capture(new ByteArrayOutputStream())))
                 .throwIfFailed();
@@ -189,7 +194,7 @@ class RunnerTest {
         assertSame(err, report.failures().get(0).exception());
         assertTrue(report.failures().get(0).draws().isEmpty());
         assertTrue(report.failures().get(0).output().isEmpty());
-        assertEquals("", buf.toString(StandardCharsets.UTF_8));
+        assertEquals("", normalizedOutput(buf));
     }
 
     @Test
@@ -218,7 +223,7 @@ class RunnerTest {
         assertTrue(e.getMessage().contains("bug one"), e.getMessage());
         assertTrue(e.getMessage().contains("bug two"), e.getMessage());
         assertEquals(2, e.getSuppressed().length);
-        assertTrue(buf.toString(StandardCharsets.UTF_8).contains("2 distinct failures"), buf.toString());
+        assertTrue(normalizedOutput(buf).contains("2 distinct failures"), normalizedOutput(buf));
     }
 
     @Test
@@ -246,7 +251,7 @@ class RunnerTest {
                                 },
                                 Reporter.printing(capture(buf)))
                         .throwIfFailed());
-        assertEquals("", buf.toString(StandardCharsets.UTF_8));
+        assertEquals("", normalizedOutput(buf));
     }
 
     @Test
@@ -285,7 +290,7 @@ class RunnerTest {
                                 },
                                 Reporter.printing(capture(buf)))
                         .throwIfFailed());
-        String out = buf.toString(StandardCharsets.UTF_8);
+        String out = normalizedOutput(buf);
         assertTrue(
                 out.contains("To reproduce this failure, call this on the test's Settings:\n"
                         + "    .reproduceFailure(\"blob-b64\")"),
@@ -305,7 +310,7 @@ class RunnerTest {
                     throw new AssertionError("always");
                 },
                 Reporter.printing(capture(buf)));
-        String out = buf.toString(StandardCharsets.UTF_8);
+        String out = normalizedOutput(buf);
         assertTrue(
                 out.contains("To reproduce this failure, add this to the test's @HegelTest annotation:\n"
                         + "    reproduceFailure = \"blob-b64\""),
@@ -619,7 +624,7 @@ class RunnerTest {
                 },
                 Reporter.printing(capture(buf)));
         assertTrue(report.failures().get(0).nondeterministic());
-        String out = buf.toString(StandardCharsets.UTF_8).replace("\r\n", "\n");
+        String out = normalizedOutput(buf);
         assertEquals("var x = 0;\nnote: nondeterministic failure, unconfirmed: failed 0 of 20 replays\n", out);
     }
 
@@ -637,7 +642,7 @@ class RunnerTest {
                     throw new AssertionError("sometimes");
                 },
                 Reporter.printing(capture(buf)));
-        String out = buf.toString(StandardCharsets.UTF_8);
+        String out = normalizedOutput(buf);
         assertTrue(!out.contains("note:"), out);
         assertTrue(out.contains(".reproduceFailure(\"nd-blob\")"), out);
     }
