@@ -190,9 +190,9 @@ TEST(Loop, RepetitionsPrintIndented) {
                                      .database = hegel::Database::disabled()}),
                  std::runtime_error);
     std::string out = testing::internal::GetCapturedStderr();
-    EXPECT_NE(out.find("// Repetition #1\n  auto n = "), std::string::npos)
+    EXPECT_NE(out.find("// Repetition #1\n  auto n_1 = "), std::string::npos)
         << out;
-    EXPECT_NE(out.find("// Repetition #2\n  auto n = "), std::string::npos)
+    EXPECT_NE(out.find("// Repetition #2\n  auto n_2 = "), std::string::npos)
         << out;
 }
 

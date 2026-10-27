@@ -1,8 +1,8 @@
 Step 1: add {
-  auto amount = 3;
+  auto amount_1 = 3;
 }
 Step 2: add {
-  auto amount = 9;
+  auto amount_2 = 9;
 }
 Rule add failed:
 

@@ -304,7 +304,8 @@ TEST(Explicit, CloneSharesTheValuesAndTheNamingScope) {
                          throw std::runtime_error("boom");
                      },
                      hegel::Settings{.database = hegel::Database::disabled()},
-                     {}, {hegel::ExplicitTestCase(hegel::named("a_1", 1), 2, 3)}),
+                     {},
+                     {hegel::ExplicitTestCase(hegel::named("a_1", 1), 2, 3)}),
                  std::runtime_error);
     EXPECT_EQ(seen, (std::vector<int>{1, 2, 3}));
     EXPECT_EQ(testing::internal::GetCapturedStderr(),
@@ -402,11 +403,12 @@ TEST(Explicit, FailuresAreCollectedWithTheGeneratedOnes) {
     EXPECT_EQ(explicit_calls, 3);
     EXPECT_EQ(messages,
               (std::vector<std::string>{"x is one", "x is two", "x is large"}));
-    EXPECT_EQ(output.rfind("Property-based test failed with 3 distinct "
-                           "failures.\n\nauto x_1 = 1;\n\nauto x_1 = 2;\n\nauto "
-                           "x_1 = 10;\n",
-                           0),
-              0u)
+    EXPECT_EQ(
+        output.rfind("Property-based test failed with 3 distinct "
+                     "failures.\n\nauto x_1 = 1;\n\nauto x_1 = 2;\n\nauto "
+                     "x_1 = 10;\n",
+                     0),
+        0u)
         << output;
     EXPECT_NE(output.find("To reproduce"), std::string::npos) << output;
 }
@@ -450,7 +452,7 @@ TEST(Explicit, ARunErrorIsReportedAfterTheFailures) {
     EXPECT_EQ(messages[1].rfind("Unsatisfiable: unable to satisfy", 0), 0u)
         << messages[1];
     EXPECT_EQ(output.rfind("Property-based test failed with 2 distinct "
-                           "failures.\n\nauto x = -1;\n\nUnsatisfiable: "
+                           "failures.\n\nauto x_1 = -1;\n\nUnsatisfiable: "
                            "unable to satisfy",
                            0),
               0u)
