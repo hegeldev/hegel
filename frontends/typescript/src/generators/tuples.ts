@@ -39,7 +39,6 @@ class TuplesGenerator extends PrintableGenerator<unknown[]> {
 
   doDrawAndPrint(tc: TestCase, printer: PrettyPrinter): unknown[] {
     if (this.basic) return this.basic.doDrawAndPrint(tc, printer);
-    tc.startSpan(this.label);
     const block = new Block(printer, "[", "]");
     const result: unknown[] = [];
     for (const generator of this.generators) {
@@ -48,7 +47,6 @@ class TuplesGenerator extends PrintableGenerator<unknown[]> {
       block.accept();
     }
     block.end();
-    tc.stopSpan();
     return result;
   }
 

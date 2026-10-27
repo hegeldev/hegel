@@ -4,7 +4,7 @@
  * @packageDocumentation
  */
 
-import type { TestCase } from "../testCase.js";
+import { isPrintable, unprintable, type TestCase } from "../testCase.js";
 import type { PrettyPrinter } from "../pretty.js";
 import { LabelNames, labelSpec, type LabelSpec } from "../labels.js";
 import { Generator, PrintableGenerator } from "./core.js";
@@ -59,10 +59,7 @@ class SubtreeGenerator<T> extends PrintableGenerator<T> {
   }
 
   doDrawAndPrint(tc: TestCase, printer: PrettyPrinter): T {
-    tc.startSpan(this.label);
-    const value = this.drawSubtree(tc, printer);
-    tc.stopSpan();
-    return value;
+    return this.drawSubtree(tc, printer);
   }
 
   /** @internal */
@@ -95,7 +92,6 @@ class RecursiveGenerator<T> extends PrintableGenerator<T> {
   }
 
   doDrawAndPrint(tc: TestCase, printer: PrettyPrinter): T {
-    tc.startSpan(this.label);
     const baseDepth = tc.openSpanDepth;
     const recursionId = tc.dataSource().newRecursion(this.maxDepth, this.maxLeaves);
     for (;;) {
@@ -103,7 +99,6 @@ class RecursiveGenerator<T> extends PrintableGenerator<T> {
       try {
         const value = new SubtreeGenerator(this, recursionId, 0).drawSubtree(tc, printer);
         speculation.commit();
-        tc.stopSpan();
         return value;
       } catch (error) {
         if (error instanceof LeafBudgetExceeded && error.recursionId === recursionId) {
@@ -229,8 +224,15 @@ class DeferredGenerator<T> extends PrintableGenerator<T> {
     return this.resolvedLabel;
   }
 
+  override doDraw(tc: TestCase): T {
+    return this.resolve().doDraw(tc);
+  }
+
   doDrawAndPrint(tc: TestCase, printer: PrettyPrinter): T {
-    return tc.drawAndPrint(this.resolve() as PrintableGenerator<T>, printer);
+    const generator = this.resolve();
+    if (isPrintable(generator)) return generator.doDrawAndPrint(tc, printer);
+    if (printer.region === null) return generator.doDraw(tc);
+    throw unprintable(generator);
   }
 }
 

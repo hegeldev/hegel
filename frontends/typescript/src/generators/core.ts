@@ -40,10 +40,12 @@ export abstract class Generator<T> {
   abstract doDraw(tc: TestCase): T;
 
   /**
-   * What identifies this generator to the shrinker: the label of the spans
-   * it opens, derived by the engine from the generator's kind and its
-   * components'. A generator with a schema form is labelled by its schema, so
-   * that it has the same label however it is drawn.
+   * What identifies this generator to the shrinker: the label of the span
+   * every draw from it runs in, derived by the engine from the generator's
+   * kind and its components'. A generator with a schema form is labelled by
+   * its schema, so that it has the same label however it is drawn; a
+   * hand-written generator by the name of its class, or as a plain
+   * `hegel.generator` when the class has none.
    *
    * @internal
    */
@@ -57,7 +59,7 @@ export abstract class Generator<T> {
 
   /** @internal */
   protected makeLabel(): LabelSpec {
-    return labelSpec(LabelNames.GENERATOR);
+    return labelSpec(this.constructor.name || LabelNames.GENERATOR);
   }
 
   /**
@@ -278,10 +280,7 @@ export class Mapped<
     if (sourceBasic) {
       return this.f(sourceBasic.doDraw(tc));
     }
-    tc.startSpan(this.label);
-    const result = this.f(this.source.doDraw(tc));
-    tc.stopSpan();
-    return result;
+    return this.f(tc.drawSilent(this.source));
   }
 
   doDrawAndPrint(tc: TestCase, printer: PrettyPrinter): U {
@@ -337,10 +336,7 @@ class PrintedAsCall<T, U> extends PrintableGenerator<U> {
   doDrawAndPrint(tc: TestCase, printer: PrettyPrinter): U {
     const sourceBasic = this.source.asBasic();
     if (sourceBasic) return this.call(printer, () => sourceBasic.doDrawAndPrint(tc, printer));
-    tc.startSpan(this.label);
-    const result = this.call(printer, () => tc.drawAndPrint(this.source, printer));
-    tc.stopSpan();
-    return result;
+    return this.call(printer, () => tc.drawAndPrint(this.source, printer));
   }
 
   private call(printer: PrettyPrinter, input: () => T): U {
@@ -435,12 +431,9 @@ class FlatMappedGenerator<T, U> extends PrintableGenerator<U> {
   }
 
   doDrawAndPrint(tc: TestCase, printer: PrettyPrinter): U {
-    tc.startSpan(this.label);
-    const intermediate = this.source.doDraw(tc);
+    const intermediate = tc.drawSilent(this.source);
     const next = this.f(intermediate) as PrintableGenerator<U>;
-    const result = tc.drawAndPrint(next, printer);
-    tc.stopSpan();
-    return result;
+    return tc.drawAndPrint(next, printer);
   }
 
   /** @internal */

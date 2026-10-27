@@ -207,7 +207,8 @@
  * ```
  *
  * Pass a name to `draw` to print a value under it (`tc.draw(gs.integers(),
- * "x")` prints `const x = ...;`), and use {@link TestCase.drawSilent |
+ * "x")` prints `const x_1 = ...;`, a second draw under the name `const x_2 =
+ * ...;`), and use {@link TestCase.drawSilent |
  * drawSilent} for a value not worth printing. Notes and drawn values are
  * only printed for the failing example (and for every test case of a
  * verbose run), so they cost nothing while Hegel searches.

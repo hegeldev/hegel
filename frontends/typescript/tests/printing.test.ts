@@ -107,16 +107,16 @@ describe("a custom-printed element prints inside its container", () => {
       "[Digit(0)]",
     ],
   ])("in %s", (_name, generator, expected) => {
-    expect(line(generator)).toBe(`const x = ${expected};`);
+    expect(line(generator)).toBe(`const x_1 = ${expected};`);
   });
 
   it("prints an absent optional as null", () => {
-    expect(line(gs.optional(digit))).toBe("const x = null;");
-    expect(line(gs.optional(unschema(digit)))).toBe("const x = null;");
+    expect(line(gs.optional(digit))).toBe("const x_1 = null;");
+    expect(line(gs.optional(unschema(digit)))).toBe("const x_1 = null;");
   });
 
   it("prints a map over a container by the mapped value", () => {
-    expect(line(gs.arrays(digit, { minSize: 1 }).map((ds) => ds.length))).toBe("const x = 1;");
+    expect(line(gs.arrays(digit, { minSize: 1 }).map((ds) => ds.length))).toBe("const x_1 = 1;");
   });
 });
 
@@ -183,19 +183,21 @@ describe("value-producing generators print the finished value", () => {
   const zero = gs.integers({ minValue: 0, maxValue: 0 });
 
   it("prints a map's result, not its input", () => {
-    expect(line(zero.map((n) => new Point(n, n)))).toBe("const x = Point { x: 0, y: 0 };");
-    expect(line(digit.map((d) => d))).toBe("const x = 0;");
+    expect(line(zero.map((n) => new Point(n, n)))).toBe("const x_1 = Point { x: 0, y: 0 };");
+    expect(line(digit.map((d) => d))).toBe("const x_1 = 0;");
   });
 
   it("prints a map's input as a call with printAsCall", () => {
     const make = (n: number) => new Point(n, n);
-    expect(line(zero.map(make).printAsCall("makePoint"))).toBe("const x = makePoint(0);");
-    expect(line(unschema(zero).map(make).printAsCall("makePoint"))).toBe("const x = makePoint(0);");
+    expect(line(zero.map(make).printAsCall("makePoint"))).toBe("const x_1 = makePoint(0);");
+    expect(line(unschema(zero).map(make).printAsCall("makePoint"))).toBe(
+      "const x_1 = makePoint(0);",
+    );
     expect(line(gs.arrays(digit.map(make).printAsCall("pt"), { minSize: 1 }))).toBe(
-      "const x = [pt(Digit(0))];",
+      "const x_1 = [pt(Digit(0))];",
     );
     expect(line(gs.arrays(unschema(digit).map(make).printAsCall("pt"), { minSize: 1 }))).toBe(
-      "const x = [pt(Digit(0))];",
+      "const x_1 = [pt(Digit(0))];",
     );
     expect(() => zero.map(make).printAsCall("")).toThrow(
       "printAsCall requires a non-empty function name",
@@ -213,7 +215,7 @@ describe("value-producing generators print the finished value", () => {
       );
       throw new Error("fail");
     });
-    expect(lines).toEqual(['const x = "done";']);
+    expect(lines).toEqual(['const x_1 = "done";']);
   });
 });
 
@@ -243,7 +245,11 @@ describe("printing matches Rust's report structure", () => {
       tc.draw(gs.integers(), "n");
       throw new Error("fail");
     });
-    expect(lines).toEqual(["const ps = [Point(0, 0), Point(0, 0)];", "between", "const n = 0;"]);
+    expect(lines).toEqual([
+      "const ps_1 = [Point(0, 0), Point(0, 0)];",
+      "between",
+      "const n_1 = 0;",
+    ]);
   });
 
   it("breaks a custom-printed value with the same primitives", () => {
@@ -254,30 +260,30 @@ describe("printing matches Rust's report structure", () => {
         tc.draw(points(long), "p");
         throw new Error("fail");
       }),
-    ).toEqual([`const p = Point(${zeros},`, `      ${zeros});`]);
+    ).toEqual([`const p_1 = Point(${zeros},`, `      ${zeros});`]);
   });
 });
 
 describe("speculative printing leaves nothing behind", () => {
   it("prints only the accepted attempt of a filter", () => {
     expect(line(gs.integers({ minValue: 0, maxValue: 9 }).filter((n) => n >= 5))).toBe(
-      "const x = 5;",
+      "const x_1 = 5;",
     );
   });
 
   it("prints only the kept elements of a unique collection", () => {
     const bit = unschema(gs.integers({ minValue: 0, maxValue: 1 }));
-    expect(line(gs.arrays(bit, { minSize: 2, unique: true }))).toBe("const x = [0, 1];");
-    expect(line(gs.sets(bit, { minSize: 2 }))).toBe("const x = new Set([0, 1]);");
-    expect(line(gs.maps(bit, bit, { minSize: 2 }))).toBe("const x = new Map([[0, 0], [1, 0]]);");
+    expect(line(gs.arrays(bit, { minSize: 2, unique: true }))).toBe("const x_1 = [0, 1];");
+    expect(line(gs.sets(bit, { minSize: 2 }))).toBe("const x_1 = new Set([0, 1]);");
+    expect(line(gs.maps(bit, bit, { minSize: 2 }))).toBe("const x_1 = new Map([[0, 0], [1, 0]]);");
   });
 
   it("keeps the first entry of a map whose mapped keys collide", () => {
     const key = gs.integers({ minValue: 0, maxValue: 9 }).map(() => "k");
     expect(line(gs.maps(key, gs.integers({ minValue: 0, maxValue: 9 }), { minSize: 2 }))).toBe(
-      'const x = new Map([["k", 0]]);',
+      'const x_1 = new Map([["k", 0]]);',
     );
-    expect(line(gs.sets(key, { minSize: 2 }))).toBe('const x = new Set(["k"]);');
+    expect(line(gs.sets(key, { minSize: 2 }))).toBe('const x_1 = new Set(["k"]);');
   });
 
   it("prints only the attempt a recursive generator keeps", () => {
@@ -290,7 +296,7 @@ describe("speculative printing leaves nothing behind", () => {
       const value = tc.draw(tree, "x");
       if (Array.isArray(value)) throw new Error("fail");
     });
-    expect(lines).toEqual(["const x = [0, 0];"]);
+    expect(lines).toEqual(["const x_1 = [0, 0];"]);
   });
 
   it.each<
@@ -302,18 +308,18 @@ describe("speculative printing leaves nothing behind", () => {
         gs.recursive<unknown>(leaf, (children) => gs.arrays(children, { minSize: 2, maxSize: 2 }), {
           maxLeaves: 1,
         }),
-      "const x = 0;",
+      "const x_1 = 0;",
     ],
     [
       "a unique array rejects",
       (leaf) => gs.arrays(leaf, { minSize: 1, unique: true }),
-      "const x = [0];",
+      "const x_1 = [0];",
     ],
-    ["a set rejects", (leaf) => gs.sets(leaf, { minSize: 1 }), "const x = new Set([0]);"],
+    ["a set rejects", (leaf) => gs.sets(leaf, { minSize: 1 }), "const x_1 = new Set([0]);"],
     [
       "a map rejects",
       (leaf) => gs.maps(leaf, gs.integers({ minValue: 0, maxValue: 0 }), { minSize: 1 }),
-      "const x = new Map([[0, 0]]);",
+      "const x_1 = new Map([[0, 0]]);",
     ],
   ])("prints nothing of the draws %s", (_name, make, expected) => {
     let draws = 0;
@@ -336,7 +342,7 @@ describe("speculative printing leaves nothing behind", () => {
     });
     expect(lines).toHaveLength(2);
     expect(lines[0]).toBe(expected);
-    expect(lines[1]).toMatch(/^const n = -?\d+;$/);
+    expect(lines[1]).toMatch(/^const n_1 = -?\d+;$/);
   });
 
   it("drops the binding a throwing printer started", () => {
@@ -388,7 +394,7 @@ describe("deferred printing", () => {
       f(3);
       throw new Error("fail");
     });
-    expect(lines).toEqual(["const f = recorder(1, 2, 3);"]);
+    expect(lines).toEqual(["const f_1 = recorder(1, 2, 3);"]);
   });
 
   it.each<[string, (g: Recorders) => gs.PrintableGenerator<Recorder[]>]>([
@@ -403,7 +409,7 @@ describe("deferred printing", () => {
       g(3);
       throw new Error("fail");
     });
-    expect(lines).toEqual(["const fs = [recorder(1), recorder(2, 3)];"]);
+    expect(lines).toEqual(["const fs_1 = [recorder(1), recorder(2, 3)];"]);
   });
 
   it("lays a deferred value out as if it were printed inline", () => {
@@ -426,7 +432,7 @@ describe("deferred printing", () => {
     });
     expect(lines.length).toBeGreaterThan(2);
     const half = lines.length / 2;
-    expect(lines.slice(0, half).join("\n").replace("const f =", "const f_2 =")).toBe(
+    expect(lines.slice(0, half).join("\n").replace("const f_1 =", "const f_2 =")).toBe(
       lines.slice(half).join("\n"),
     );
   });
@@ -447,7 +453,7 @@ describe("deferred printing", () => {
       f(1);
       throw new Error("fail");
     });
-    expect(lines).toEqual(["const f = recorder(1);"]);
+    expect(lines).toEqual(["const f_1 = recorder(1);"]);
   });
 
   it("needs no deferred region to survive a rejected attempt", () => {
@@ -464,7 +470,7 @@ describe("deferred printing", () => {
       );
       throw new Error("fail");
     });
-    expect(lines).toEqual(["const x = kept;"]);
+    expect(lines).toEqual(["const x_1 = kept;"]);
   });
 
   it("ignores writes once the test case is over", () => {
@@ -490,7 +496,7 @@ describe("deferred printing", () => {
       outer.text("]");
       inner.text("x");
     });
-    expect(line(nested)).toBe("const x = o([x]);");
+    expect(line(nested)).toBe("const x_1 = o([x]);");
   });
 
   it("resolves a deferred region an explicit example's value opened", () => {
@@ -512,7 +518,7 @@ describe("deferred printing", () => {
         .example(lazy)
         .runSync(),
     ).toThrow("fail");
-    expect(lines[0]).toBe("const lazy = described later;");
+    expect(lines[0]).toBe("const lazy_1 = described later;");
   });
 });
 
@@ -559,16 +565,20 @@ describe("generators that cannot print", () => {
     new (capturing().runner.Hegel)((tc) => {
       expect(tc.drawSilent(new Evens()) % 2).toBe(0);
       expect(tc.drawSilent(gs.arrays(new Evens())).every((n) => n % 2 === 0)).toBe(true);
+      const forward = asPrintable(gs.deferred(() => new Evens()));
+      expect(tc.drawAndPrint(forward, PrettyPrinter.noop()) % 2).toBe(0);
     })
       .settings({ ...settings, testCases: 5 })
       .runSync();
   });
 
   it("prints through printAsValue or printWith", () => {
-    expect(line(new Evens().printAsValue())).toBe("const x = 0;");
-    expect(line(gs.arrays(new Evens().printAsValue(), { minSize: 1 }))).toBe("const x = [0];");
-    expect(line(new Evens().filter((n) => n > 0).printAsValue())).toBe("const x = 2;");
-    expect(line(new Evens().printWith((n, p) => p.text(`even(${n})`)))).toBe("const x = even(0);");
+    expect(line(new Evens().printAsValue())).toBe("const x_1 = 0;");
+    expect(line(gs.arrays(new Evens().printAsValue(), { minSize: 1 }))).toBe("const x_1 = [0];");
+    expect(line(new Evens().filter((n) => n > 0).printAsValue())).toBe("const x_1 = 2;");
+    expect(line(new Evens().printWith((n, p) => p.text(`even(${n})`)))).toBe(
+      "const x_1 = even(0);",
+    );
   });
 });
 
@@ -585,8 +595,8 @@ describe("TestCase.drawAndPrint", () => {
   }
 
   it("prints a hand-written printable generator's components in place", () => {
-    expect(line(new Pairs())).toBe("const x = Pair(0, Digit(0));");
-    expect(line(gs.arrays(new Pairs(), { minSize: 1 }))).toBe("const x = [Pair(0, Digit(0))];");
+    expect(line(new Pairs())).toBe("const x_1 = Pair(0, Digit(0));");
+    expect(line(gs.arrays(new Pairs(), { minSize: 1 }))).toBe("const x_1 = [Pair(0, Digit(0))];");
   });
 
   it("draws the same values silently", () => {

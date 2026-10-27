@@ -79,12 +79,8 @@ class LarkGenerator extends ValueGenerator<string> {
   }
 
   doDraw(tc: TestCase): string {
-    tc.startSpan(this.label);
-    const value = tc.dataSource().drawGrammar(this.spec, (index) => {
-      const generator = this.terminals[index];
-      tc.startSpan(generator.label);
-      const terminal = generator.doDraw(tc);
-      tc.stopSpan();
+    return tc.dataSource().drawGrammar(this.spec, (index) => {
+      const terminal = tc.drawSilent(this.terminals[index]);
       if (typeof terminal !== "string") {
         throw new TypeError(
           `explicit terminal ${this.spec.explicitNames[index]} must generate strings, got ${typeof terminal}`,
@@ -92,8 +88,6 @@ class LarkGenerator extends ValueGenerator<string> {
       }
       return terminal;
     });
-    tc.stopSpan();
-    return value;
   }
 
   /** @internal */

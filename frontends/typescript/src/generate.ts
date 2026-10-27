@@ -24,7 +24,7 @@
  */
 
 import { AssumeError, StopTestError } from "./testCase.js";
-import { dictEntryLabelSpec, resolveLabel, schemaLabelSpec, type LabelSpec } from "./labels.js";
+import { resolveLabel, schemaLabelSpec, type LabelSpec } from "./labels.js";
 import {
   EngineError,
   type Engine,
@@ -463,36 +463,32 @@ function drawList(
 ): unknown[] {
   const elementSchema = schema["elements"] as Record<string, unknown>;
   const unique = schema["unique"] as boolean;
-  return withSpan(lib, ctx, tc, schemaLabelSpec(schema), () => {
-    const collection = lib.newCollection(
-      ctx,
-      tc,
-      schema["min_size"] as number,
-      schema["max_size"] as number | undefined,
-    );
-    return withCleanup(
-      () => {
-        const values: unknown[] = [];
-        const seen = new Set<string>();
-        while (lib.collectionMore(ctx, tc, collection)) {
-          const value = withSpan(lib, ctx, tc, schemaLabelSpec(elementSchema), () =>
-            generateValue(lib, ctx, tc, elementSchema, cache),
-          );
-          if (unique) {
-            const key = valueKey(value);
-            if (seen.has(key)) {
-              lib.collectionReject(ctx, tc, collection, "duplicate element");
-              continue;
-            }
-            seen.add(key);
+  const collection = lib.newCollection(
+    ctx,
+    tc,
+    schema["min_size"] as number,
+    schema["max_size"] as number | undefined,
+  );
+  return withCleanup(
+    () => {
+      const values: unknown[] = [];
+      const seen = new Set<string>();
+      while (lib.collectionMore(ctx, tc, collection)) {
+        const value = drawChild(lib, ctx, tc, elementSchema, cache);
+        if (unique) {
+          const key = valueKey(value);
+          if (seen.has(key)) {
+            lib.collectionReject(ctx, tc, collection, "duplicate element");
+            continue;
           }
-          values.push(value);
+          seen.add(key);
         }
-        return values;
-      },
-      () => lib.freeCollection(collection),
-    );
-  });
+        values.push(value);
+      }
+      return values;
+    },
+    () => lib.freeCollection(collection),
+  );
 }
 
 function drawDict(
@@ -504,35 +500,47 @@ function drawDict(
 ): unknown[] {
   const keySchema = schema["keys"] as Record<string, unknown>;
   const valueSchema = schema["values"] as Record<string, unknown>;
-  return withSpan(lib, ctx, tc, schemaLabelSpec(schema), () => {
-    const collection = lib.newCollection(
-      ctx,
-      tc,
-      schema["min_size"] as number,
-      schema["max_size"] as number | undefined,
-    );
-    return withCleanup(
-      () => {
-        const entries: unknown[] = [];
-        const seen = new Set<string>();
-        while (lib.collectionMore(ctx, tc, collection)) {
-          const [key, value] = withSpan(lib, ctx, tc, dictEntryLabelSpec(schema), () => [
-            generateValue(lib, ctx, tc, keySchema, cache),
-            generateValue(lib, ctx, tc, valueSchema, cache),
-          ]);
-          const identity = valueKey(key);
-          if (seen.has(identity)) {
-            lib.collectionReject(ctx, tc, collection, "duplicate key");
-            continue;
-          }
-          seen.add(identity);
-          entries.push([key, value]);
+  const collection = lib.newCollection(
+    ctx,
+    tc,
+    schema["min_size"] as number,
+    schema["max_size"] as number | undefined,
+  );
+  return withCleanup(
+    () => {
+      const entries: unknown[] = [];
+      const seen = new Set<string>();
+      while (lib.collectionMore(ctx, tc, collection)) {
+        const key = drawChild(lib, ctx, tc, keySchema, cache);
+        const value = drawChild(lib, ctx, tc, valueSchema, cache);
+        const identity = valueKey(key);
+        if (seen.has(identity)) {
+          lib.collectionReject(ctx, tc, collection, "duplicate key");
+          continue;
         }
-        return entries;
-      },
-      () => lib.freeCollection(collection),
-    );
-  });
+        seen.add(identity);
+        entries.push([key, value]);
+      }
+      return entries;
+    },
+    () => lib.freeCollection(collection),
+  );
+}
+
+/**
+ * Draw the component `schema` of a compound schema, inside its own span, as
+ * a generator drawing a component through the test case would.
+ */
+function drawChild(
+  lib: Engine,
+  ctx: ContextHandle,
+  tc: TestCaseHandle,
+  schema: Record<string, unknown>,
+  cache: StringGeneratorCache,
+): unknown {
+  return withSpan(lib, ctx, tc, schemaLabelSpec(schema), () =>
+    generateValue(lib, ctx, tc, schema, cache),
+  );
 }
 
 /**
@@ -598,17 +606,12 @@ export function generateValue(
       return schema["value"];
     case "one_of": {
       const options = schema["generators"] as Record<string, unknown>[];
-      return withSpan(lib, ctx, tc, schemaLabelSpec(schema), () => {
-        const index = Number(lib.generateInteger(ctx, tc, 0n, BigInt(options.length - 1)));
-        const value = generateValue(lib, ctx, tc, options[index], cache);
-        return [index, value];
-      });
+      const index = Number(lib.generateInteger(ctx, tc, 0n, BigInt(options.length - 1)));
+      return [index, drawChild(lib, ctx, tc, options[index], cache)];
     }
     case "tuple": {
       const elements = schema["elements"] as Record<string, unknown>[];
-      return withSpan(lib, ctx, tc, schemaLabelSpec(schema), () =>
-        elements.map((element) => generateValue(lib, ctx, tc, element, cache)),
-      );
+      return elements.map((element) => drawChild(lib, ctx, tc, element, cache));
     }
     case "list":
       return drawList(lib, ctx, tc, schema, cache);

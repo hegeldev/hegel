@@ -29,7 +29,7 @@ describe("generateValue compound cleanup", () => {
   }
 
   it.each([compoundSchemas[2], compoundSchemas[3]])(
-    "closes $type span when collection allocation fails",
+    "leaves no $type span open when collection allocation fails",
     (schema) => {
       const engine = fakeEngine();
       engine.newCollection.mockImplementation(() => {
@@ -38,7 +38,8 @@ describe("generateValue compound cleanup", () => {
       expect(() => generateValue(engine, context, testCase, schema)).toThrow(
         "collection allocation",
       );
-      expect(engine.stopSpan).toHaveBeenCalledTimes(1);
+      expect(engine.startSpan).not.toHaveBeenCalled();
+      expect(engine.stopSpan).not.toHaveBeenCalled();
       expect(engine.freeCollection).not.toHaveBeenCalled();
     },
   );

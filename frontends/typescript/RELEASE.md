@@ -64,14 +64,16 @@ A `gs.maps` whose keys collide after a `map` now keeps the first of the collidin
 
 **New `TestCase` methods.**
 
-- `tc.draw(generator, name)` prints the value as `const name = …;` (`name_2`, `name_3`, … when drawn again), and `tc.drawSilent(generator)` draws a value without printing it.
+- `tc.draw(generator, name)` prints the value as `const name_1 = …;` (`name_2`, `name_3`, … when drawn again under the same name), and `tc.drawSilent(generator)` draws a value without printing it. Each name counts on its own, and an unnamed draw counts under `draw`, so the first draw under a name is always `_1` and `.namedExample` gives its value to that printed name (`{ name_1: value }`).
 - `tc.reject()` rejects the test case, like `tc.assume(false)`.
 - `tc.target(score, label?)` guides generation toward test cases that maximise `score`.
 - `tc.event(label)` and `tc.eventValue(label, value)` record what happened in a test case; the `showStatistics` setting reports them at the end of the run.
 - `tc.repeat(body)` (and `tc.repeatAsync(body)`) runs `body` an engine-chosen number of times and then ends the test case, each repetition reported under `// Repetition #N`.
 - `tc.clone()` returns a handle drawing from an independent choice stream of the same test case, for concurrent tasks (using one after the test body has returned throws, on Node as in browsers), and `tc.setWorker(index)` attributes its output to a worker (`[worker 1 +0.116ms] …`).
 
-Shrinking labels are now derived by the engine from each generator's kind and its components, replacing a fixed table of sixteen numbers that gave every generator of a kind the same label.
+Shrinking labels are now derived by the engine from each generator's kind and its components, replacing a fixed table of sixteen numbers that gave every generator of a kind the same label. A generator you write by extending `gs.Generator` or `gs.PrintableGenerator` is labelled by the name of its class (`Evens` above), so two such generators shrink apart; an anonymous class keeps the shared `hegel.generator` label.
+
+**Spans.** Every draw made through the test case, with `tc.draw`, `tc.drawSilent` or `tc.drawAndPrint`, now runs the generator inside a span labelled with the generator's label, and the generators themselves open none of their own: `gs.arrays`, `gs.maps`, `gs.tuples`, `gs.record`, `gs.oneOf`, `gs.optional`, `gs.recursive`, `gs.fromLark` and a `composite` used to open a span of their own around their draws, and `gs.maps` one more around each entry. The engine now sees the same shape of spans for the same draws in every Hegel frontend, which is what its shrinker groups and reorders. A generator of your own that draws its component generators through `tc.drawSilent` or `tc.drawAndPrint` gets a span for each of them with no code of its own. The spans a test case records are part of its failure blob, so a `.reproduceFailure(blob)` printed by an earlier version, or a failure the database saved under one, no longer replays.
 
 **New generators and options.**
 

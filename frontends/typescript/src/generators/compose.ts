@@ -86,12 +86,9 @@ class RecordGenerator<T extends Record<string, unknown>> extends PrintableGenera
 
   doDrawAndPrint(tc: TestCase, printer: PrettyPrinter): T {
     if (this.basic) return this.basic.doDrawAndPrint(tc, printer);
-    tc.startSpan(this.label);
-    const obj = printFields<T>(printer, this.keys, (i) =>
+    return printFields<T>(printer, this.keys, (i) =>
       tc.drawAndPrint(this.generators[i] as PrintableGenerator<unknown>, printer),
     );
-    tc.stopSpan();
-    return obj;
   }
 
   override asBasic(): BasicGenerator<T> | null {
@@ -107,7 +104,7 @@ class RecordGenerator<T extends Record<string, unknown>> extends PrintableGenera
 /**
  * Generate plain objects by drawing each field from its generator.
  * Uses the schema-based path (tuple schema) when all fields have asBasic(),
- * otherwise falls back to composite draws with a FIXED_DICT span.
+ * otherwise draws each field through the test case.
  *
  * @example
  * ```ts

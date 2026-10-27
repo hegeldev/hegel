@@ -151,11 +151,13 @@ export interface DataSource {
   printer(): Printer;
 }
 
-function isPrintable<T>(generator: Generator<T>): generator is PrintableGenerator<T> {
+/** @internal */
+export function isPrintable<T>(generator: Generator<T>): generator is PrintableGenerator<T> {
   return typeof (generator as { doDrawAndPrint?: unknown }).doDrawAndPrint === "function";
 }
 
-function unprintable(generator: Generator<unknown>): TypeError {
+/** @internal */
+export function unprintable(generator: Generator<unknown>): TypeError {
   return new TypeError(
     `${generator.constructor.name} cannot print the values it draws. Make it printable with ` +
       ".printWith((value, printer) => …) or .printAsValue(); declare helpers as returning " +
@@ -163,10 +165,9 @@ function unprintable(generator: Generator<unknown>): TypeError {
   );
 }
 
-/** A name a draw is reported under; see {@link TestCase.draw}. */
+/** How often each name has been drawn under; see {@link TestCase.draw}. */
 interface DrawState {
   readonly counts: Map<string, number>;
-  readonly allocated: Set<string>;
 }
 
 /**
@@ -256,7 +257,7 @@ export class TestCase {
   ) {
     this._dataSource = dataSource;
     this.shared = { emit: emit || explicit !== null, explicit };
-    this.drawState = drawState ?? { counts: new Map(), allocated: new Set() };
+    this.drawState = drawState ?? { counts: new Map() };
   }
 
   private derive(dataSource: DataSource, drawState?: DrawState): TestCase {
@@ -279,9 +280,10 @@ export class TestCase {
    * When this test case is reported (the failing example, or every test case
    * of a verbose run), the generator prints the value as it draws it, as
    * `const draw_1 = <value>;`, numbered in the order of the test's draws.
-   * Pass `name` to report it as `const <name> = <value>;` instead (a name
-   * drawn again is numbered: `<name>_2`, `<name>_3`, …). Draws made while
-   * another is in progress — inside a {@link generators.composite | composite}
+   * Pass `name` to report it as `const <name>_1 = <value>;` instead: each
+   * use of a name is numbered in turn (`<name>_1`, `<name>_2`, …). Draws
+   * made while another is
+   * in progress — inside a {@link generators.composite | composite}
    * generator, say — are part of the outer value and are not printed
    * separately.
    *
@@ -292,9 +294,9 @@ export class TestCase {
   draw<T>(generator: PrintableGenerator<T>, name?: string): T {
     if (!isPrintable(generator)) throw unprintable(generator);
     if (this.shared.explicit === null && (this.spanDepth > 0 || this.printingDepth > 0)) {
-      return generator.doDraw(this);
+      return this.drawSilent(generator);
     }
-    const display = this.allocateDisplayName(name ?? "draw", name === undefined);
+    const display = this.allocateDisplayName(name ?? "draw");
     if (display === null) return this.drawSilent(generator);
     this.printingDepth++;
     const printer = this.printer();
@@ -303,7 +305,7 @@ export class TestCase {
       printer.text(`const ${display} = `);
       let value: T;
       if (this.shared.explicit === null) {
-        value = generator.doDrawAndPrint(this, printer);
+        value = this.drawAndPrint(generator, printer);
       } else {
         value = this.shared.explicit.take(display) as T;
         printer.value(value);
@@ -324,50 +326,49 @@ export class TestCase {
    * or from a generator that cannot print. It cannot be used in an explicit
    * example, whose values are matched to draws by the names they are printed
    * under.
+   *
+   * Like every draw, this runs the generator inside a shrinking span
+   * labelled with the generator's label, so a
+   * generator drawing from component generators should draw them through
+   * this (or {@link drawAndPrint}) rather than calling their `doDraw`
+   * directly: that is what groups each component's choices for the shrinker.
    */
   drawSilent<T>(generator: Generator<T>): T {
     if (this.shared.explicit !== null) {
       throw new ExplicitExampleError("drawSilent is not supported in explicit examples");
     }
-    this.printingDepth++;
-    try {
-      return generator.doDraw(this);
-    } finally {
-      this.printingDepth--;
-    }
+    this.startSpan(generator.label);
+    const value = generator.doDraw(this);
+    this.stopSpan();
+    return value;
   }
 
   /**
    * Draw a value from `generator`, printing it to `printer`: how a
    * {@link generators.PrintableGenerator} draws the generators it is built
-   * from, so that each prints in place inside its own output. With
+   * from, so that each prints in place inside its own output, and inside its
+   * own shrinking span, as {@link drawSilent} describes. With
    * {@link PrettyPrinter.noop} it draws silently, from any generator.
    */
   drawAndPrint<T>(generator: PrintableGenerator<T>, printer: PrettyPrinter): T {
     if (this.shared.explicit !== null && this.printingDepth === 0) {
       throw new ExplicitExampleError("drawAndPrint is not supported in explicit examples");
     }
-    if (isPrintable(generator)) return generator.doDrawAndPrint(this, printer);
-    if (printer.region === null) return (generator as Generator<T>).doDraw(this);
-    throw unprintable(generator);
+    if (!isPrintable(generator)) {
+      if (printer.region === null) return this.drawSilent(generator);
+      throw unprintable(generator);
+    }
+    this.startSpan(generator.label);
+    const value = generator.doDrawAndPrint(this, printer);
+    this.stopSpan();
+    return value;
   }
 
-  private allocateDisplayName(name: string, repeatable: boolean): string | null {
-    const { counts, allocated } = this.drawState;
+  private allocateDisplayName(name: string): string | null {
+    const { counts } = this.drawState;
     const count = (counts.get(name) ?? 0) + 1;
     counts.set(name, count);
-    if (!this.shared.emit) return null;
-    let candidate = name;
-    if (repeatable || count > 1 || allocated.has(name)) {
-      let suffix = count;
-      candidate = `${name}_${suffix}`;
-      while (allocated.has(candidate)) {
-        suffix++;
-        candidate = `${name}_${suffix}`;
-      }
-    }
-    allocated.add(candidate);
-    return candidate;
+    return this.shared.emit ? `${name}_${count}` : null;
   }
 
   /**

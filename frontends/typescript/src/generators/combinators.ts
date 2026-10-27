@@ -98,15 +98,12 @@ class OneOfGenerator<T> extends PrintableGenerator<T> {
 
   doDrawAndPrint(tc: TestCase, printer: PrettyPrinter): T {
     if (this.basic) return this.basic.doDrawAndPrint(tc, printer);
-    tc.startSpan(this.label);
     const index = generateRaw(tc, {
       type: "integer",
       min_value: 0,
       max_value: this.sources.length - 1,
     }) as number;
-    const result = tc.drawAndPrint(this.sources[index] as PrintableGenerator<T>, printer);
-    tc.stopSpan();
-    return result;
+    return tc.drawAndPrint(this.sources[index] as PrintableGenerator<T>, printer);
   }
 
   override asBasic(): BasicGenerator<T> | null {
@@ -135,13 +132,10 @@ class OptionalGenerator<T> extends PrintableGenerator<T | null> {
   }
 
   doDrawAndPrint(tc: TestCase, printer: PrettyPrinter): T | null {
-    tc.startSpan(this.label);
     const isSome = generateRaw(tc, { type: "boolean" }) as boolean;
-    const result = isSome
+    return isSome
       ? tc.drawAndPrint(this.inner as PrintableGenerator<T>, printer)
       : printNull(printer);
-    tc.stopSpan();
-    return result;
   }
 
   /** @internal */

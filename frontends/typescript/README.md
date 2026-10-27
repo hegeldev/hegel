@@ -124,7 +124,7 @@ Arrays, objects, `Map`s and `Set`s break one item per line when they are too lon
 
 ```typescript
 const digits = gs.integers({ minValue: 0, maxValue: 9 }).printWith((d, p) => p.text(`Digit(${d})`));
-tc.draw(gs.arrays(digits), "ds"); // const ds = [Digit(3), Digit(0)];
+tc.draw(gs.arrays(digits), "ds"); // const ds_1 = [Digit(3), Digit(0)];
 ```
 
 `printWith` is also how to print values with no useful JavaScript representation, such as functions, or to hide a secret. On a `map`, `printAsCall(name)` prints the input draw as an argument instead of the output: `gs.integers().map(makeKey).printAsCall("makeKey")` prints `makeKey(3)`.

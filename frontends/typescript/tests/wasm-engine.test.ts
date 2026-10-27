@@ -501,7 +501,7 @@ describe("WasmEngine real run lifecycle", () => {
       "[worker 2 +TIME] const draw_1 = false;",
       "first line",
       "second line",
-      'const values = [""];',
+      'const values_1 = [""];',
       "// Repetition #1",
       "  const draw_2 = 3;",
     ]);
@@ -552,13 +552,13 @@ describe("WasmEngine real run lifecycle", () => {
     }
     expect(reports[0]).toEqual(reports[1]);
     expect(reports[0]).toEqual([
-      'const error = new RangeError("bad");',
-      "const interval = Interval(1, 2);  // half-open",
-      "const plain = -100000000000000000000;",
-      "const long = [",
+      'const error_1 = new RangeError("bad");',
+      "const interval_1 = Interval(1, 2);  // half-open",
+      "const plain_1 = -100000000000000000000;",
+      "const long_1 = [",
       ...Array.from({ length: 20 }, (_, i) => `    ${i * 1000},`),
       "];",
-      "const record = {",
+      "const record_1 = {",
       `    name: "${"x".repeat(60)}",`,
       '    tags: new Set(["a"]),',
       "    at: new Map([[1, [2]]]),",

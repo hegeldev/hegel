@@ -60,7 +60,7 @@ describe("the report of a failing example", () => {
     expect(lines.slice(0, 7)).toEqual([
       "const draw_1 = [0];",
       "after the list",
-      "const flag = false;",
+      "const flag_1 = false;",
       "const flag_2 = false;",
       'const draw_2 = "";',
       "",
@@ -69,7 +69,7 @@ describe("the report of a failing example", () => {
     expect(lines).toHaveLength(8);
   });
 
-  it("numbers a draw around names already taken", () => {
+  it("numbers every name on its own, from its first use", () => {
     const { lines, runner } = capturing();
     thrownBy(() =>
       runner.test(
@@ -85,11 +85,11 @@ describe("the report of a failing example", () => {
       ),
     );
     expect(lines).toEqual([
-      "const draw_1 = 1;",
-      "const x_2 = 2;",
-      "const draw_2 = 3;",
-      "const x = 4;",
-      "const x_3 = 5;",
+      "const draw_1_1 = 1;",
+      "const x_2_1 = 2;",
+      "const draw_1 = 3;",
+      "const x_1 = 4;",
+      "const x_2 = 5;",
     ]);
   });
 
@@ -289,7 +289,7 @@ describe("clones and workers", () => {
     );
     expect((error as Error).message).toBe("worker drew too much");
     expect(lines).toHaveLength(2);
-    expect(lines[0]).toMatch(/^\[worker 1 \+\d+\.\d{3}ms\] const w = 4;$/);
+    expect(lines[0]).toMatch(/^\[worker 1 \+\d+\.\d{3}ms\] const w_1 = 4;$/);
     expect(lines[1]).toBe("main");
   });
 
@@ -337,13 +337,13 @@ describe("explicit examples", () => {
       new runner.Hegel(body)
         .settings(deterministic)
         .example([], "a")
-        .namedExample({ name: "c", draw_1: [] })
+        .namedExample({ name_1: "c", draw_1: [] })
         .example([1, 2, 3], "b")
         .example([1, 2, 3, 4], "never run")
         .runSync(),
     );
     expect((error as Error).message).toBe("long b");
-    expect(lines).toEqual(["const draw_1 = [1, 2, 3];", 'const name = "b";', "checking b"]);
+    expect(lines).toEqual(["const draw_1 = [1, 2, 3];", 'const name_1 = "b";', "checking b"]);
   });
 
   it("reports an explicit failure along with the generated ones", () => {
@@ -359,7 +359,11 @@ describe("explicit examples", () => {
       "long b",
       "long ",
     ]);
-    expect(lines.slice(3)).toEqual(["const draw_1 = [0, 0, 0];", 'const name = "";', "checking "]);
+    expect(lines.slice(3)).toEqual([
+      "const draw_1 = [0, 0, 0];",
+      'const name_1 = "";',
+      "checking ",
+    ]);
   });
 
   it("reports an explicit failure along with a run error", () => {
@@ -411,10 +415,10 @@ describe("explicit examples", () => {
         tc.assume(tc.draw(gs.integers(), "x") > 5);
       })
         .settings(deterministic)
-        .namedExample({ x: 1 })
+        .namedExample({ x_1: 1 })
         .run(),
     ).rejects.toThrow(
-      /^Explicit test cases must not be rejected, but namedExample\(\{ x: 1 \}\) was rejected by tc\.assume or tc\.reject$/,
+      /^Explicit test cases must not be rejected, but namedExample\(\{ x_1: 1 \}\) was rejected by tc\.assume or tc\.reject$/,
     );
   });
 
@@ -423,10 +427,10 @@ describe("explicit examples", () => {
     expect(() =>
       new runner.Hegel(body)
         .settings(deterministic)
-        .namedExample({ draw_1: [], name: "", unused: 1 })
+        .namedExample({ draw_1: [], name_1: "", unused: 1 })
         .runSync(),
     ).toThrow(
-      'Explicit example namedExample({ draw_1: [], name: "", unused: 1 }) was not fully used: named values not drawn: "unused"',
+      'Explicit example namedExample({ draw_1: [], name_1: "", unused: 1 }) was not fully used: named values not drawn: "unused"',
     );
     expect(() =>
       new runner.Hegel(body).settings(deterministic).example([], "", 1, 2).runSync(),
@@ -438,7 +442,7 @@ describe("explicit examples", () => {
         .runSync(),
     ).toThrow(
       new ExplicitExampleError(
-        'Explicit example example([]) has no value for draw "name": pass it by name, or add a positional value',
+        'Explicit example example([]) has no value for draw "name_1": pass it by name, or add a positional value',
       ),
     );
     expect(lines).toEqual([]);
@@ -481,7 +485,7 @@ describe("explicit examples", () => {
         .run(),
     );
     expect((error as Error).message).toBe("five");
-    expect(lines).toEqual(["// Repetition #1", "  const n = 5;"]);
+    expect(lines).toEqual(["// Repetition #1", "  const n_1 = 5;"]);
     expect(() =>
       new runner.Hegel((tc) =>
         tc.repeat(() => {
@@ -507,7 +511,7 @@ describe("explicit examples", () => {
         .runSync(),
     );
     expect((error as Error).message).toBe("explicit");
-    expect(lines).toEqual(["const xs = [", ...values.map((value) => `    ${value},`), "];"]);
+    expect(lines).toEqual(["const xs_1 = [", ...values.map((value) => `    ${value},`), "];"]);
   });
 
   it("indents a block's draws and notes in an explicit example's report", () => {
@@ -528,10 +532,10 @@ describe("explicit examples", () => {
     expect((error as Error).message).toBe("explicit");
     expect(lines).toEqual([
       "Step 1",
-      "  const n = 1;",
+      "  const n_1 = 1;",
       "  saw 1",
       "  and more",
-      "const after = 2;",
+      "const after_1 = 2;",
     ]);
   });
 });

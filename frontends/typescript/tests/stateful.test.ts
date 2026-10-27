@@ -209,8 +209,8 @@ describe("stateful.run", () => {
     expect(output).toBe(
       [
         "Step 1: pick {",
-        '  const any = "a";',
-        '  const taken = "b";',
+        '  const any_1 = "a";',
+        '  const taken_1 = "b";',
         "}",
         "Rule pick failed:",
         "Thrown: picked",

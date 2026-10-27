@@ -44,15 +44,25 @@ describe("generator labels", () => {
     expect(names(unschema.label)).toEqual([LabelNames.MAP, [LabelNames.FILTER, "hegel.integer"]]);
   });
 
-  it("label a generator of no known kind as a plain generator", () => {
+  it("label a hand-written generator by its class name", () => {
     class Custom extends Generator<number> {
       doDraw(): number {
         return 1;
       }
     }
     const custom = new Custom();
-    expect(custom.label).toEqual(labelSpec(LabelNames.GENERATOR));
+    expect(custom.label).toEqual(labelSpec("Custom"));
     expect(custom.label).toBe(custom.label);
+  });
+
+  it("label a hand-written generator of an anonymous class as a plain generator", () => {
+    const custom = new (class extends Generator<number> {
+      doDraw(): number {
+        return 1;
+      }
+    })();
+    expect(custom.constructor.name).toBe("");
+    expect(custom.label).toEqual(labelSpec(LabelNames.GENERATOR));
   });
 });
 

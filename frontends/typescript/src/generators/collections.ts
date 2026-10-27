@@ -128,7 +128,6 @@ class ArraysGenerator<T> extends PrintableGenerator<T[]> {
 
   doDrawAndPrint(tc: TestCase, printer: PrettyPrinter): T[] {
     if (this.basic) return this.basic.doDrawAndPrint(tc, printer);
-    tc.startSpan(this.label);
     const collection = new Collection(tc, this.minSize, this.maxSize ?? undefined);
     const result: T[] = [];
     const structural = new StructuralKeys();
@@ -149,7 +148,6 @@ class ArraysGenerator<T> extends PrintableGenerator<T[]> {
       });
     }
     block.end();
-    tc.stopSpan();
     return result;
   }
 
@@ -236,7 +234,6 @@ class SetsGenerator<T> extends PrintableGenerator<Set<T>> {
 
   doDrawAndPrint(tc: TestCase, printer: PrettyPrinter): Set<T> {
     if (this.basic) return this.basic.doDrawAndPrint(tc, printer);
-    tc.startSpan(this.label);
     const collection = new Collection(tc, this.minSize, this.maxSize ?? undefined);
     const result = new Set<T>();
     const block = new Block(printer, "new Set([", "])");
@@ -252,7 +249,6 @@ class SetsGenerator<T> extends PrintableGenerator<Set<T>> {
       });
     }
     block.end();
-    tc.stopSpan();
     return result;
   }
 
@@ -280,7 +276,6 @@ export function sets<T>(elements: Generator<T>, options?: CollectionOptions): Ge
 }
 
 class MapsGenerator<K, V> extends PrintableGenerator<Map<K, V>> {
-  private _entryLabel: LabelSpec | undefined;
   private readonly keys: Generator<K>;
   private readonly values: Generator<V>;
   private readonly minSize: number;
@@ -340,26 +335,18 @@ class MapsGenerator<K, V> extends PrintableGenerator<Map<K, V>> {
     }
   }
 
-  private get entryLabel(): LabelSpec {
-    this._entryLabel ??= labelSpec(LabelNames.DICT_ENTRY, this.keys.label, this.values.label);
-    return this._entryLabel;
-  }
-
   doDrawAndPrint(tc: TestCase, printer: PrettyPrinter): Map<K, V> {
     if (this.basic) return this.basic.doDrawAndPrint(tc, printer);
-    tc.startSpan(this.label);
     const collection = new Collection(tc, this.minSize, this.maxSize ?? undefined);
     const result = new Map<K, V>();
     const block = new Block(printer, "new Map([", "])");
     while (collection.more()) {
       speculateItem(printer, block, () => {
-        tc.startSpan(this.entryLabel);
         const [key, value] = printEntry(
           printer,
           () => tc.drawAndPrint(this.keys as PrintableGenerator<K>, printer),
           () => tc.drawAndPrint(this.values as PrintableGenerator<V>, printer),
         );
-        tc.stopSpan();
         if (result.has(key)) {
           collection.reject("duplicate key");
           return false;
@@ -369,7 +356,6 @@ class MapsGenerator<K, V> extends PrintableGenerator<Map<K, V>> {
       });
     }
     block.end();
-    tc.stopSpan();
     return result;
   }
 
@@ -415,7 +401,6 @@ class PermutationsGenerator<T> extends ValueGenerator<T[]> {
   }
 
   doDraw(tc: TestCase): T[] {
-    tc.startSpan(this.label);
     const remaining = [...this.elements];
     const result: T[] = [];
     const collection = new Collection(tc, remaining.length, remaining.length);
@@ -427,7 +412,6 @@ class PermutationsGenerator<T> extends ValueGenerator<T[]> {
       }) as number;
       result.push(remaining.splice(index, 1)[0]);
     }
-    tc.stopSpan();
     return result;
   }
 

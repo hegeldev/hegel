@@ -30,7 +30,6 @@ export const LabelNames = {
   LISTS: "hegel.lists",
   SETS: "hegel.sets",
   DICTS: "hegel.dicts",
-  DICT_ENTRY: "hegel.dicts.entry",
   TUPLES: "hegel.tuples",
   ONE_OF: "hegel.one_of",
   OPTIONAL: "hegel.optional",
@@ -78,7 +77,6 @@ export function resolveLabel(lib: Engine, ctx: ContextHandle, spec: LabelSpec): 
 }
 
 const schemaSpecs = new WeakMap<object, LabelSpec>();
-const entrySpecs = new WeakMap<object, LabelSpec>();
 
 const SCHEMA_NAMES: Record<string, string> = {
   list: LabelNames.LISTS,
@@ -105,16 +103,6 @@ export function schemaLabelSpec(schema: Record<string, unknown>): LabelSpec {
               : [];
     spec = labelSpec(name, ...children.map(schemaLabelSpec));
     schemaSpecs.set(schema, spec);
-  }
-  return spec;
-}
-
-/** The spec of one entry of a dict schema: its key and value drawn together. */
-export function dictEntryLabelSpec(schema: Record<string, unknown>): LabelSpec {
-  let spec = entrySpecs.get(schema);
-  if (spec === undefined) {
-    spec = labelSpec(LabelNames.DICT_ENTRY, ...schemaLabelSpec(schema).parts);
-    entrySpecs.set(schema, spec);
   }
   return spec;
 }
