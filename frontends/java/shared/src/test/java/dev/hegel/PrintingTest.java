@@ -396,10 +396,15 @@ class PrintingTest {
                 InvalidArgument.class, () -> Hegel.run(tc -> tc.draw(lists(silent)), SETTINGS, Reporter.silent()));
         assertTrue(nested.getMessage().startsWith(silent.getClass().getName()), nested.getMessage());
         PrintableGenerator<Integer> inside = (tc, p) -> tc.drawAndPrint(silent, p);
+        PrintableGenerator<Integer> seven = (tc, p) -> {
+            p.text("seven");
+            return 7;
+        };
         assertThrows(InvalidArgument.class, () -> Hegel.run(tc -> tc.draw(inside), SETTINGS, Reporter.silent()));
         reports.add(Hegel.run(
                 tc -> {
                     assertEquals(1, tc.drawSilent(silent));
+                    assertEquals(7, (int) tc.drawSilent(seven));
                     assertEquals(
                             List.of(1), tc.drawSilent(lists(silent).minSize(1).maxSize(1)));
                     assertEquals(Optional.of(1), tc.drawSilent(optional(silent).filter(Optional::isPresent)));
