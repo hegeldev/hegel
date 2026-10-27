@@ -104,7 +104,7 @@ public final class Generators {
      * @return a float generator
      */
     public static FloatGenerator floats() {
-        return new FloatGenerator(null, null, null, null, false, false);
+        return new FloatGenerator();
     }
 
     /**
@@ -114,7 +114,7 @@ public final class Generators {
      * @return a double generator
      */
     public static DoubleGenerator doubles() {
-        return new DoubleGenerator(null, null, null, null, false, false);
+        return new DoubleGenerator();
     }
 
     // --- booleans ---

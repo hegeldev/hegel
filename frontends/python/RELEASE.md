@@ -68,3 +68,15 @@ class Coords(gs.Generator[tuple[int, int]]):
 The notes a failing test's exception carries no longer begin with a `Falsifying example:` line. The first note is now the drawn values and notes themselves, one per line, as the other Hegel frontends print them; it is followed, as before, by a `note:` line with the engine's caveat when there is one and by the `reproduce_failure` reproducer when there is one. A test that matched the notes on that heading needs updating.
 
 Under `verbosity="verbose"`, a test case that stops short now says why in the same words as the other Hegel frontends: `Test case stopped: failed assumption` or `Test case stopped: out of data`. Cases that pass or fail print no line of their own after their drawn values (a failing one still prints its traceback), where they printed `Test case passed` and `Test case failed: <origin>`, and an explicit test case is no longer introduced with a `Running explicit test case:` line.
+
+This release also replaces the `exclude_min` and `exclude_max` flags of `gs.floats()` with `min_value_exclusive` and `max_value_exclusive`, which take the bound directly, as the other Hegel frontends do:
+
+```python
+# before
+gs.floats(min_value=0.0, max_value=1.0, exclude_min=True, exclude_max=True)
+
+# after
+gs.floats(min_value_exclusive=0.0, max_value_exclusive=1.0)
+```
+
+Giving both `min_value` and `min_value_exclusive` (or both `max_value` and `max_value_exclusive`) is an `InvalidArgument`. An exclusive bound can no longer be set without a bound value, so that error no longer exists; the remaining validation (an exclusive `inf` minimum, an exclusive `-inf` maximum, or exclusive bounds on a single-point range) is unchanged, and its messages now name the new arguments. The `repr` of such a generator shows the exclusive form, `floats(min_value_exclusive=0.0)`.

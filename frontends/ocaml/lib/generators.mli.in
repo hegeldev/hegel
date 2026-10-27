@@ -282,8 +282,13 @@ val booleans : ?p:float -> unit -> (bool, printable) generator MODE(portable)
     ]} *)
 val integers : ?min_value:int -> ?max_value:int -> unit -> (int, printable) generator MODE(portable)
 
-(** [floats ?width ?min_value ?max_value ?exclude_min ?exclude_max ?allow_nan
-     ?allow_infinity ()] creates a generator for floating-point values.
+(** [floats ?width ?min_value ?max_value ?min_value_exclusive
+     ?max_value_exclusive ?allow_nan ?allow_infinity ?allow_subnormal ()]
+    creates a generator for floating-point values.
+
+    A bound is inclusive ([min_value], [max_value]) or exclusive
+    ([min_value_exclusive], [max_value_exclusive]: the bound itself is never
+    drawn). Giving both forms of one bound raises [Usage_error].
 
     With [~width:`W32], every drawn value is exactly representable as a 32-bit
     float ([Int32.float_of_bits (Int32.bits_of_float f) = f] for finite [f]),
@@ -293,10 +298,14 @@ val integers : ?min_value:int -> ?max_value:int -> unit -> (int, printable) gene
     - [width]: [`W64]
     - [min_value] / [max_value]: unbounded. With [allow_infinity = false] the
       range is [[-max_float, max_float]].
-    - [exclude_min]: [false]
-    - [exclude_max]: [false]
     - [allow_nan]: [true] only when no bounds are set
     - [allow_infinity]: [true] when at most one bound is set
+    - [allow_subnormal]: [true] when the bounds admit a subnormal
+      ("denormalised") value. Pass [false] when the code under test may run
+      with flush-to-zero floating point, where a subnormal input silently
+      becomes zero. Asking for subnormals with bounds that exclude them all,
+      or excluding them from a range that holds nothing else, raises
+      [Usage_error].
 
     Bounds that only allow infinity to be generated while [allow_infinity] is [false], 
     such as [~min_value:infinity], raise [Usage_error].
@@ -304,17 +313,19 @@ val integers : ?min_value:int -> ?max_value:int -> unit -> (int, printable) gene
     {[
       let%hegel_test floats_example tc =
         let f = draw tc (floats ~min_value:0.0 ~max_value:1.0 ()) in
-        assert (Float.compare f 0.0 >= 0)
+        let p = draw tc (floats ~min_value_exclusive:0.0 ()) in
+        assert (Float.compare f 0.0 >= 0 && p > 0.0)
       ;;
     ]} *)
 val floats
   :  ?width:[ `W32 | `W64 ]
   -> ?min_value:float
   -> ?max_value:float
-  -> ?exclude_min:bool
-  -> ?exclude_max:bool
+  -> ?min_value_exclusive:float
+  -> ?max_value_exclusive:float
   -> ?allow_nan:bool
   -> ?allow_infinity:bool
+  -> ?allow_subnormal:bool
   -> unit
   -> (float, printable) generator MODE(portable)
 

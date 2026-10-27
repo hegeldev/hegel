@@ -63,24 +63,36 @@ class GeneratorValidationTest {
     }
 
     @Test
+    void subnormalDefaultsFollowTheBounds() {
+        doubles().max(1.0);
+        doubles().max(-1.0);
+        doubles().min(1.0).allowSubnormal(false);
+        doubles().allowSubnormal(false);
+    }
+
+    @Test
     void floatExclusiveBoundEdges() {
-        assertThrows(IllegalArgumentException.class, () -> doubles().excludeMin(true));
-        assertThrows(IllegalArgumentException.class, () -> doubles().excludeMax(true));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> doubles().min(1.0).max(1.0).excludeMin(true));
+                () -> doubles().minValueExclusive(1.0).max(1.0));
+        assertThrows(IllegalArgumentException.class, () -> doubles().min(1.0).maxValueExclusive(1.0));
+        assertThrows(IllegalArgumentException.class, () -> doubles().minValueExclusive(Double.POSITIVE_INFINITY));
+        assertThrows(IllegalArgumentException.class, () -> doubles().maxValueExclusive(Double.NEGATIVE_INFINITY));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> doubles().min(1.0).max(1.0).excludeMax(true));
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> doubles().min(Double.POSITIVE_INFINITY).excludeMin(true));
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> doubles().max(Double.NEGATIVE_INFINITY).excludeMax(true));
+                () -> floats().minValueExclusive(1.0f).max(1.0f));
+        assertThrows(IllegalArgumentException.class, () -> floats().min(1.0f).maxValueExclusive(1.0f));
         assertThrows(IllegalArgumentException.class, () -> doubles().min(0.0).max(-0.0));
         // The mirror direction (-0.0 to +0.0) is legal.
         doubles().min(-0.0).max(0.0);
+        doubles().minValueExclusive(1.0).min(1.0).max(1.0);
+        doubles().maxValueExclusive(1.0).max(1.0).min(1.0);
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> doubles().min(1.0).max(1.0).minValueExclusive(1.0));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> doubles().min(1.0).max(1.0).maxValueExclusive(1.0));
     }
 
     @Test

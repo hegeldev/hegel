@@ -110,6 +110,10 @@ describe("a custom-printed element prints inside its container", () => {
     expect(line(generator)).toBe(`const x = ${expected};`);
   });
 
+  it("prints binary as a Uint8Array on every host", () => {
+    expect(line(gs.binary({ minSize: 2, maxSize: 2 }))).toBe("const x = Uint8Array.from([0, 0]);");
+  });
+
   it("prints an absent optional as null", () => {
     expect(line(gs.optional(digit))).toBe("const x = null;");
     expect(line(gs.optional(unschema(digit)))).toBe("const x = null;");

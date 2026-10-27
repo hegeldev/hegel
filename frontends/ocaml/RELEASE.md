@@ -181,3 +181,15 @@ let%hegel_test greets tc =
 ```
 
 With `Settings.Verbose` or `Settings.Debug`, a test case that stops short now says why, as the other Hegel frontends do: `Test case stopped: failed assumption` or `Test case stopped: out of data`.
+
+This release also replaces the `?exclude_min` and `?exclude_max` flags of `floats` with `?min_value_exclusive` and `?max_value_exclusive`, which take the bound directly, as the other Hegel frontends do:
+
+```ocaml
+(* before *)
+floats ~min_value:0.0 ~max_value:1.0 ~exclude_min:true ~exclude_max:true ()
+
+(* after *)
+floats ~min_value_exclusive:0.0 ~max_value_exclusive:1.0 ()
+```
+
+Giving both `~min_value` and `~min_value_exclusive` (or both `~max_value` and `~max_value_exclusive`) raises `Usage_error`. `floats` also gains `?allow_subnormal`: subnormal ("denormalised") values are drawn whenever the bounds admit any, as before, and `~allow_subnormal:false` keeps them out, for code that may run with flush-to-zero floating point. Asking for subnormals with bounds that exclude them all, or excluding them from a range that holds nothing else, raises `Usage_error`.

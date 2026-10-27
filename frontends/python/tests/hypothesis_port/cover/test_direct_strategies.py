@@ -94,10 +94,10 @@ def fn_ktest(*fnkwargs):
     (gs.floats, {"max_value": math.nan}),
     (gs.floats, {"min_value": complex(1, 2)}),
     (gs.floats, {"max_value": complex(1, 2)}),
-    (gs.floats, {"exclude_min": None}),
-    (gs.floats, {"exclude_max": None}),
-    (gs.floats, {"exclude_min": True}),  # because min_value=None
-    (gs.floats, {"exclude_max": True}),  # because max_value=None
+    (gs.floats, {"min_value_exclusive": math.nan}),
+    (gs.floats, {"max_value_exclusive": math.nan}),
+    (gs.floats, {"min_value": 0.0, "min_value_exclusive": 0.0}),
+    (gs.floats, {"max_value": 0.0, "max_value_exclusive": 0.0}),
     (gs.floats, {"min_value": 1.8, "width": 32}),
     (gs.floats, {"max_value": 1.8, "width": 32}),
     (gs.lists, {"elements": gs.integers(), "min_size": 10, "max_size": 9}),

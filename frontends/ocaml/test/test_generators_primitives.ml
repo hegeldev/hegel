@@ -94,6 +94,79 @@ let test_floats_infinity_with_both_bounds () =
     "Cannot have allow_infinity=true with both min_value and max_value"
 ;;
 
+let expect_construction_usage_error make substring =
+  match make () with
+  | exception Hegel.Usage_error msg ->
+    Alcotest.(check bool)
+      (Printf.sprintf "diagnostic %S contains %S" msg substring)
+      true
+      (Test_helpers.contains_substring msg substring)
+  | _ -> Alcotest.fail "expected Usage_error"
+;;
+
+(** Test: floats raises when both forms of one bound are given. *)
+let test_floats_both_forms_of_one_bound () =
+  expect_construction_usage_error
+    (fun () -> floats ~min_value:0.0 ~min_value_exclusive:0.0 ())
+    "min_value and min_value_exclusive are mutually exclusive";
+  expect_construction_usage_error
+    (fun () -> floats ~max_value:1.0 ~max_value_exclusive:1.0 ())
+    "max_value and max_value_exclusive are mutually exclusive"
+;;
+
+(** Test: exclusive bounds exclude the bound itself. *)
+let test_floats_exclusive_bounds () =
+  Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:200 ()) (fun tc ->
+    let f = Hegel.draw tc (floats ~min_value_exclusive:0.0 ~max_value_exclusive:1.0 ()) in
+    assert (f > 0.0 && f < 1.0);
+    let above = Hegel.draw tc (floats ~min_value_exclusive:(-1.0) ~max_value:0.0 ()) in
+    assert (above > -1.0 && above <= 0.0);
+    let below = Hegel.draw tc (floats ~min_value:0.0 ~max_value_exclusive:1.0 ()) in
+    assert (below >= 0.0 && below < 1.0))
+;;
+
+(** Test: allow_subnormal:false keeps subnormal values out. *)
+let test_floats_allow_subnormal_false () =
+  Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:300 ()) (fun tc ->
+    let f =
+      Hegel.draw tc (floats ~min_value:(-1.0) ~max_value:1.0 ~allow_subnormal:false ())
+    in
+    assert (f = 0.0 || Float.abs f >= Float.min_float);
+    let g =
+      Hegel.draw
+        tc
+        (floats ~width:`W32 ~min_value_exclusive:0.0 ~allow_subnormal:false ())
+    in
+    assert (g >= Float.ldexp 1.0 (-126));
+    let any = Hegel.draw tc (floats ~allow_subnormal:false ()) in
+    assert (any = 0.0 || Float.is_nan any || Float.abs any >= Float.min_float))
+;;
+
+(** Test: subnormals are allowed by default exactly when the bounds admit any. *)
+let test_floats_subnormal_default () =
+  Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:20 ()) (fun tc ->
+    assert (Hegel.draw tc (floats ~min_value:1e-310 ~max_value:1e-310 ()) = 1e-310);
+    assert (Hegel.draw tc (floats ~min_value:1.0 ~max_value:1.0 ()) = 1.0);
+    assert (Hegel.draw tc (floats ~min_value:(-1e-310) ~max_value:1.0 ()) >= -1e-310);
+    assert (Hegel.draw tc (floats ~min_value:1.0 ()) >= 1.0);
+    assert (Hegel.draw tc (floats ~max_value:(-1.0) ()) <= -1.0))
+;;
+
+(** Test: allow_subnormal is checked against the bounds. *)
+let test_floats_allow_subnormal_validation () =
+  expect_construction_usage_error
+    (fun () -> floats ~min_value:1.0 ~allow_subnormal:true ())
+    "allow_subnormal=true, but min_value excludes";
+  expect_construction_usage_error
+    (fun () -> floats ~max_value:(-1.0) ~allow_subnormal:true ())
+    "allow_subnormal=true, but max_value excludes";
+  expect_construction_usage_error
+    (fun () -> floats ~min_value:1e-310 ~max_value:2e-310 ~allow_subnormal:false ())
+    "allow_subnormal=false leaves no floating-point values";
+  ignore (floats ~min_value:(-1e-310) ~max_value:0.0 ~allow_subnormal:false ());
+  ignore (floats ~min_value:1e-310 ~max_value:1.0 ~allow_subnormal:false ())
+;;
+
 (** Test: text raises when min_size is negative. *)
 let test_text_negative_min_size () =
   match text ~min_size:(-1) () with
@@ -555,6 +628,20 @@ let tests =
       "floats infinity with both bounds"
       `Quick
       test_floats_infinity_with_both_bounds
+  ; Alcotest.test_case
+      "floats both forms of one bound"
+      `Quick
+      test_floats_both_forms_of_one_bound
+  ; Alcotest.test_case "floats exclusive bounds" `Quick test_floats_exclusive_bounds
+  ; Alcotest.test_case
+      "floats allow_subnormal false"
+      `Quick
+      test_floats_allow_subnormal_false
+  ; Alcotest.test_case "floats subnormal default" `Quick test_floats_subnormal_default
+  ; Alcotest.test_case
+      "floats allow_subnormal validation"
+      `Quick
+      test_floats_allow_subnormal_validation
   ; Alcotest.test_case "text negative min_size" `Quick test_text_negative_min_size
   ; Alcotest.test_case "text negative max_size" `Quick test_text_negative_max_size
   ; Alcotest.test_case "text min > max" `Quick test_text_min_greater_than_max

@@ -19,6 +19,8 @@ import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
+import java.util.Set;
+import java.util.UUID;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
 
@@ -86,7 +88,11 @@ class PrinterTest {
         assertEquals("[\"a\", null]", render(new String[] {"a", null}));
         assertEquals("[1, \"x\"]", render(List.of(1, "x")));
         assertEquals("[]", render(List.of()));
-        assertEquals("[\"s\"]", render(new LinkedHashSet<>(List.of("s"))));
+        assertEquals("Set.of(\"s\")", render(new LinkedHashSet<>(List.of("s"))));
+        assertEquals("Set.of()", render(Set.of()));
+        assertEquals(
+                "UUID.fromString(\"f47ac10b-58cc-4372-a567-0e02b2c3d479\")",
+                render(UUID.fromString("f47ac10b-58cc-4372-a567-0e02b2c3d479")));
         assertEquals("{1: 2}", render(Map.of(1, 2)));
         assertEquals("{}", render(Map.of()));
         Map<String, Object> m = new LinkedHashMap<>();
