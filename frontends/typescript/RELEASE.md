@@ -8,6 +8,7 @@ This release makes the engine the source of every setting a TypeScript test does
 - New settings: `profile`, `phases` (with the new `Phase` enum), `printBlob`, `stopOnFirstFailure`, `nondeterminismStrictness` (`NondeterminismStrictness`), `backend` (`Backend`), `showStatistics` and `unboundedChoices`.
 - `seed` accepts a `bigint`, so the whole 64-bit range, and `null` clears a seed set by a profile.
 - New `hegel.registerProfile(name, settings)` and `hegel.setDefaultProfile(name)`.
+- New `hegel.resolveSettings(settings)` resolves a `Settings` now, as a test given it would when it runs, and returns every setting as the engine resolved it (a `ResolvedSettings`, a plain object with every field present). A test given one runs with exactly those values whatever `registerProfile` or `setDefaultProfile` do afterwards: neither is retroactive. An unknown profile or a malformed `hegel.toml` or `HEGEL_*` variable throws from `resolveSettings` instead of from the test.
 - `Database.unset` is replaced by `Database.default`, which resets the database to the engine's default location over whatever the profile says. Leave `database` out to keep the profile's choice.
 - `suppressHealthCheck: []` now turns every health check back on, where before it changed nothing.
 - `testCases` must be a non-negative safe integer, and `seed` an integer in `[0, 2^64)`: anything else throws a `RangeError` before the run starts, the same on Node as in browsers. Previously Node wrapped a negative `testCases` around to 2^64 − 1 and truncated a fractional one.
@@ -112,3 +113,7 @@ const expressions = gs.fromLark(`
   %import common.NUMBER
 `);
 ```
+
+New `hegel.engineVersion()` returns the version of the libhegel engine the package ships, and `hegel.EngineError`, the error thrown when the engine or its bindings fault, is now exported so it can be caught by type.
+
+A `hegel.Document` that is never finished now releases its engine document when it is garbage collected, instead of keeping it for the life of the process.

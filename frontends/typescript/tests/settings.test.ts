@@ -11,7 +11,7 @@ import {
   type Engine,
   type SettingsHandle,
 } from "../src/engine.js";
-import { applySettings, resolveSettings } from "../src/settings.js";
+import { applySettings, newSettingsHandle } from "../src/settings.js";
 import { getLibhegel } from "../src/session.js";
 import { browserRuntime } from "../src/browser/runtime.js";
 import { wasmFixture } from "./wasmFixture.js";
@@ -139,7 +139,7 @@ function readBack(lib: Engine, handle: SettingsHandle) {
 function applied(lib: Engine, given: hegel.Settings): ReturnType<typeof readBack> {
   const ctx = lib.newContext();
   try {
-    const handle = resolveSettings(lib, ctx, given);
+    const handle = newSettingsHandle(lib, ctx, given);
     try {
       applySettings(lib, ctx, handle, given);
       return readBack(lib, handle);
@@ -232,6 +232,97 @@ it("maps a database path to the native engine's", () => {
   expect(applied(getLibhegel(), { database: hegel.Database.fromPath("/tmp/db") }).database).toBe(
     "/tmp/db",
   );
+});
+
+describe("resolved settings", () => {
+  const disabled = { database: hegel.Database.disabled };
+
+  it("resolves every field when made and keeps it", () => {
+    hegel.registerProfile("ts-snapshot", { testCases: 2, ...disabled });
+    const snapshot = hegel.resolveSettings({ profile: "ts-snapshot" });
+    expect(snapshot.testCases).toBe(2);
+    expect(snapshot.database).toEqual(hegel.Database.disabled);
+    expect(snapshot.phases).toEqual(Object.values(hegel.Phase));
+    expect(snapshot.suppressHealthCheck).toEqual([]);
+    hegel.registerProfile("ts-snapshot", { testCases: 9, ...disabled });
+    expect(snapshot.testCases).toBe(2);
+    expect(countCases(snapshot)).toBe(2);
+    expect(countCases({ ...snapshot, testCases: 3 })).toBe(3);
+    expect(hegel.resolveSettings({ profile: "ts-snapshot" }).testCases).toBe(9);
+  });
+
+  it("keeps its values when the default profile changes afterwards", () => {
+    hegel.registerProfile("ts-snapshot-tiny", { testCases: 1, ...disabled });
+    const snapshot = hegel.resolveSettings({ testCases: 4, ...disabled });
+    hegel.setDefaultProfile("ts-snapshot-tiny");
+    try {
+      expect(countCases(snapshot)).toBe(4);
+      expect(countCases()).toBe(1);
+      expect(hegel.resolveSettings().testCases).toBe(1);
+    } finally {
+      hegel.setDefaultProfile(null);
+    }
+  });
+
+  it("fails when made for an unknown profile, a malformed variable or an invalid value", () => {
+    expect(() => hegel.resolveSettings({ profile: "no-such-profile-ts" })).toThrow(
+      /no-such-profile-ts/,
+    );
+    vi.stubEnv("HEGEL_TEST_CASES", "lots");
+    try {
+      expect(() => hegel.resolveSettings()).toThrow(/HEGEL_TEST_CASES/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(() => hegel.resolveSettings({ seed: -1 })).toThrow(RangeError);
+  });
+
+  it("reads every value back as the setting's own type", () => {
+    expect(
+      hegel.resolveSettings({
+        profile: "base",
+        testCases: 3,
+        seed: 5,
+        verbosity: hegel.Verbosity.Debug,
+        derandomize: true,
+        database: hegel.Database.fromPath("/tmp/db"),
+        suppressHealthCheck: [hegel.HealthCheck.TooSlow, hegel.HealthCheck.LargeInitialTestCase],
+        reportMultipleFailures: true,
+        stopOnFirstFailure: false,
+        phases: [hegel.Phase.Target, hegel.Phase.Shrink],
+        printBlob: false,
+        showStatistics: true,
+        unboundedChoices: true,
+        nondeterminismStrictness: hegel.NondeterminismStrictness.Error,
+        backend: hegel.Backend.Urandom,
+      }),
+    ).toEqual({
+      testCases: 3,
+      seed: 5n,
+      verbosity: hegel.Verbosity.Debug,
+      derandomize: true,
+      database: hegel.Database.fromPath("/tmp/db"),
+      suppressHealthCheck: [hegel.HealthCheck.TooSlow, hegel.HealthCheck.LargeInitialTestCase],
+      reportMultipleFailures: true,
+      stopOnFirstFailure: false,
+      phases: [hegel.Phase.Target, hegel.Phase.Shrink],
+      printBlob: false,
+      showStatistics: true,
+      unboundedChoices: true,
+      nondeterminismStrictness: hegel.NondeterminismStrictness.Error,
+      backend: hegel.Backend.Urandom,
+    });
+    expect(hegel.resolveSettings({ profile: "base" }).database).toEqual(hegel.Database.default);
+    expect(hegel.resolveSettings({ profile: "base", seed: null }).seed).toBeNull();
+  });
+
+  it("is validated by the browser runtime too", () => {
+    const browser = createRunner(browserRuntime(wasmFixture().engine));
+    expect(() => browser.resolveSettings({ database: hegel.Database.fromPath("db") })).toThrow(
+      /Filesystem/,
+    );
+    expect(browser.resolveSettings({ profile: "base" }).database).toEqual(hegel.Database.disabled);
+  });
 });
 
 describe("settings applied through a runner", () => {

@@ -275,6 +275,18 @@
  * hegel.setDefaultProfile(process.env.NIGHTLY ? "nightly" : null);
  * ```
  *
+ * A test resolves the profile when it runs. To resolve it once, ahead of the
+ * tests, {@link resolveSettings} returns every setting as the engine resolves
+ * it now, as a plain object to pass to {@link test} or spread into another:
+ *
+ * ```ts
+ * const nightly = hegel.resolveSettings({ profile: "nightly" });
+ * test("deep", () => hegel.test(property, { ...nightly, seed: 42n }));
+ * ```
+ *
+ * Neither {@link registerProfile} nor {@link setDefaultProfile} changes
+ * settings resolved before it was called.
+ *
  * {@link Hegel} configures a test with builder methods instead, including the
  * key its failures are saved under (by default its file and name) and its
  * location for Antithesis (by default where it was defined).
@@ -343,7 +355,8 @@ export {
   NondeterminismStrictness,
   Database,
 } from "./settings.js";
-export type { Settings, TestLocation } from "./settings.js";
+export type { ResolvedSettings, Settings, TestLocation } from "./settings.js";
+export { EngineError } from "./engine.js";
 export {
   RunError,
   FailedHealthCheckError,
@@ -364,11 +377,13 @@ export {
 import {
   test as nodeTest,
   testAsync as nodeTestAsync,
+  resolveSettings as nodeResolveSettings,
+  engineVersion as nodeEngineVersion,
   registerProfile as nodeRegisterProfile,
   setDefaultProfile as nodeSetDefaultProfile,
 } from "./runner.js";
 import type { TestCase } from "./testCase.js";
-import type { Settings } from "./settings.js";
+import type { ResolvedSettings, Settings } from "./settings.js";
 
 // Explicit public types keep the shared declaration graph independent of Node services.
 export const test: (testFn: (tc: TestCase) => void, settings?: Settings) => void = nodeTest;
@@ -376,5 +391,7 @@ export const testAsync: (
   testFn: (tc: TestCase) => void | Promise<void>,
   settings?: Settings,
 ) => Promise<void> = nodeTestAsync;
+export const resolveSettings: (settings?: Settings) => ResolvedSettings = nodeResolveSettings;
+export const engineVersion: () => string = nodeEngineVersion;
 export const registerProfile: (name: string, settings?: Settings) => void = nodeRegisterProfile;
 export const setDefaultProfile: (name: string | null) => void = nodeSetDefaultProfile;

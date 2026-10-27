@@ -35,7 +35,14 @@ import {
   type PrinterHandle,
 } from "./engine.js";
 import type { RuntimeServices } from "./runtime.js";
-import { applySettings, resolveSettings, type Settings, type TestLocation } from "./settings.js";
+import {
+  applySettings,
+  newSettingsHandle,
+  snapshotSettings,
+  type ResolvedSettings,
+  type Settings,
+  type TestLocation,
+} from "./settings.js";
 import { runError, DidNotReproduceError } from "./errors.js";
 import { resolveLabel, type LabelSpec } from "./labels.js";
 import {
@@ -810,7 +817,7 @@ export class Hegel {
     const ctx = lib.newContext();
     const contextErrors: unknown[] = [];
     try {
-      const settings = resolveSettings(lib, ctx, this._settings);
+      const settings = newSettingsHandle(lib, ctx, this._settings);
       const cache = new StringGeneratorCache(lib, this.runtime.readGrammarFile);
       const settingsErrors: unknown[] = [];
       try {
@@ -1061,6 +1068,8 @@ export class Hegel {
 export interface Runner {
   test(testFn: (tc: TestCase) => void, settings?: Settings): void;
   testAsync(testFn: (tc: TestCase) => void | Promise<void>, settings?: Settings): Promise<void>;
+  resolveSettings(settings?: Settings): ResolvedSettings;
+  engineVersion(): string;
   registerProfile(name: string, settings?: Settings): void;
   setDefaultProfile(name: string | null): void;
   Hegel: new (testFn: (tc: TestCase) => void | Promise<void>) => Hegel;
@@ -1076,17 +1085,40 @@ export function createRunner(runtime: RuntimeServices): Runner {
     }
   }
 
-  function withContext(body: (lib: Engine, ctx: ContextHandle) => void): void {
+  function withContext<R>(body: (lib: Engine, ctx: ContextHandle) => R): R {
     const lib = runtime.getEngine();
     const ctx = lib.newContext();
     const errors: unknown[] = [];
+    let result: R | undefined;
     try {
-      body(lib, ctx);
+      result = body(lib, ctx);
     } catch (error) {
       errors.push(error);
     } finally {
       finishCleanup(errors, () => lib.freeContext(ctx));
     }
+    return result as R;
+  }
+
+  /**
+   * Resolve `settings` now, as a run of a test given them would: the engine
+   * resolves their `profile` (else the default profile), `hegel.toml` and the
+   * `HEGEL_*` environment variables, and the fields given are set over the
+   * result. Every field of the returned object is present, so a test given
+   * it runs with exactly those values, whatever {@link registerProfile} and
+   * {@link setDefaultProfile} do afterwards; an unknown profile or a
+   * malformed `hegel.toml` or variable throws here rather than when the test
+   * runs.
+   *
+   * @example
+   * ```ts
+   * const nightly = hegel.resolveSettings({ profile: "ci", testCases: 10_000 });
+   * hegel.test(property, { ...nightly, seed: 42n });
+   * ```
+   */
+  function resolveSettings(settings: Settings = {}): ResolvedSettings {
+    runtime.validateSettings(settings);
+    return withContext((lib, ctx) => snapshotSettings(lib, ctx, settings));
   }
 
   /**
@@ -1096,7 +1128,7 @@ export function createRunner(runtime: RuntimeServices): Runner {
    *
    * @example
    * ```ts
-   * import { test } from 'vitest';
+   * import { expect, test } from 'vitest';
    * import * as hegel from '@hegeldev/hegel';
    * import * as gs from '@hegeldev/hegel/generators';
    *
@@ -1126,7 +1158,7 @@ export function createRunner(runtime: RuntimeServices): Runner {
    *
    * @example
    * ```ts
-   * import { test } from 'vitest';
+   * import { expect, test } from 'vitest';
    * import * as hegel from '@hegeldev/hegel';
    * import * as gs from '@hegeldev/hegel/generators';
    *
@@ -1148,17 +1180,23 @@ export function createRunner(runtime: RuntimeServices): Runner {
     await h.run();
   }
 
+  /** The version of the libhegel engine this package runs on, such as `"0.48.0"`. */
+  function engineVersion(): string {
+    return runtime.getEngine().version();
+  }
+
   /**
    * Register `settings` as the profile `name`, process-wide, replacing any
    * earlier registration. The profile snapshots the settings the engine
    * resolves for `settings` (its `profile`, else the default one) with the
    * given fields set over them. Select it with the `profile` setting, or make
    * it the default with {@link setDefaultProfile}; a `hegel.toml` section for
-   * `name` still applies over it.
+   * `name` still applies over it. Not retroactive: a {@link ResolvedSettings}
+   * made earlier keeps its values.
    */
   function registerProfile(name: string, settings: Settings = {}): void {
     withContext((lib, ctx) => {
-      const handle = resolveSettings(lib, ctx, settings);
+      const handle = newSettingsHandle(lib, ctx, settings);
       const errors: unknown[] = [];
       try {
         applySettings(lib, ctx, handle, settings);
@@ -1174,11 +1212,21 @@ export function createRunner(runtime: RuntimeServices): Runner {
   /**
    * Make `name` the default profile for the whole process, over
    * `HEGEL_DEFAULT_PROFILE`, `hegel.toml` and environment detection; `null`
-   * clears an earlier call.
+   * clears an earlier call. Not retroactive: a {@link ResolvedSettings} made
+   * earlier keeps its values, while a test given a plain {@link Settings}
+   * resolves the default profile when it runs.
    */
   function setDefaultProfile(name: string | null): void {
     withContext((lib, ctx) => lib.setDefaultProfile(ctx, name ?? ""));
   }
 
-  return { test, testAsync, registerProfile, setDefaultProfile, Hegel: RuntimeHegel };
+  return {
+    test,
+    testAsync,
+    resolveSettings,
+    engineVersion,
+    registerProfile,
+    setDefaultProfile,
+    Hegel: RuntimeHegel,
+  };
 }

@@ -9,6 +9,8 @@ const runner = createRunner(runtime);
 
 export const test = runner.test;
 export const testAsync = runner.testAsync;
+export const resolveSettings = runner.resolveSettings;
+export const engineVersion = runner.engineVersion;
 export const registerProfile = runner.registerProfile;
 export const setDefaultProfile = runner.setDefaultProfile;
 export * as generators from "../generators/index.js";
@@ -22,7 +24,8 @@ export {
   NondeterminismStrictness,
   Database,
 } from "../settings.js";
-export type { Settings, TestLocation } from "../settings.js";
+export type { ResolvedSettings, Settings, TestLocation } from "../settings.js";
+export { EngineError } from "../engine.js";
 export {
   RunError,
   FailedHealthCheckError,
