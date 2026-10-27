@@ -54,6 +54,11 @@ below it set and leaves the rest alone:
    | `HEGEL_STOP_ON_FIRST_FAILURE` | Sets `stop_on_first_failure`, with the same vocabulary. |
    | `HEGEL_UNBOUNDED_CHOICES` | Sets `unbounded_choices`, with the same vocabulary. |
    | `HEGEL_NONDETERMINISM_STRICTNESS` | Sets `nondeterminism_strictness`: `quiet`, `warn` or `error`. |
+   | `HEGEL_VERBOSITY` | Sets `verbosity`: `quiet`, `normal`, `verbose` or `debug`. |
+   | `HEGEL_PHASES` | Sets `phases`: comma-separated phase names, such as `generate,shrink`. |
+   | `HEGEL_SUPPRESS_HEALTH_CHECK` | Sets `suppress_health_check`: comma-separated health check names, or `all`. |
+   | `HEGEL_REPORT_MULTIPLE_FAILURES` | Sets `report_multiple_failures`, with the boolean vocabulary. |
+   | `HEGEL_BACKEND` | Sets `backend`: `default` or `urandom`. |
 
    An empty variable is ignored; any other malformed value is an error,
    raised when a `Settings` value is created. A fixed `seed`, wherever it
@@ -305,5 +310,10 @@ and so sees them whenever they are made before it runs.
 | `HEGEL_STOP_ON_FIRST_FAILURE` | Sets `stop_on_first_failure` over the resolved profile. |
 | `HEGEL_UNBOUNDED_CHOICES` | Sets `unbounded_choices` over the resolved profile. |
 | `HEGEL_NONDETERMINISM_STRICTNESS` | Sets `nondeterminism_strictness` over the resolved profile. |
+| `HEGEL_VERBOSITY` | Sets `verbosity` over the resolved profile. |
+| `HEGEL_PHASES` | Sets `phases` over the resolved profile. |
+| `HEGEL_SUPPRESS_HEALTH_CHECK` | Sets `suppress_health_check` over the resolved profile. |
+| `HEGEL_REPORT_MULTIPLE_FAILURES` | Sets `report_multiple_failures` over the resolved profile. |
+| `HEGEL_BACKEND` | Sets `backend` over the resolved profile. |
 | `ANTITHESIS_OUTPUT_DIR` | Selects the `workload` profile, and each test's verdict is reported to Antithesis. Must name an existing directory. |
 | `CI`, `GITHUB_ACTIONS`, ... | Selects the `ci` profile. |

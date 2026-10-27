@@ -5,11 +5,14 @@ type error =
 exception Cli_error of error
 
 let single_test_case (settings : Settings.t) =
-  { settings with
-    test_cases = 1
-  ; suppress_health_check = Too_slow :: settings.suppress_health_check
-  ; unbounded_choices = true
-  }
+  let suppress_health_check =
+    List.fold_left
+      (fun suppressed check ->
+         if List.mem check suppressed then suppressed else check :: suppressed)
+      settings.suppress_health_check
+      [ Settings.Test_cases_too_large; Too_slow ]
+  in
+  { settings with test_cases = 1; suppress_health_check }
 ;;
 
 let usage =
@@ -37,6 +40,8 @@ Options:
                                          large_initial_test_case), or 'all'
   --report-multiple-failures <BOOL>      Report every distinct failure found
   --stop-on-first-failure <BOOL>         End generation once a failure is found
+  --unbounded-choices <BOOL>             Let the test case make any number of
+                                         choices
   --show-statistics <BOOL>               Print the run's statistics
   --print-blob <BOOL>                    Print the failure's reproduce blob
   --backend <default|urandom>            Randomness source
@@ -44,18 +49,13 @@ Options:
   -h, --help                             Show this help and exit
 
 Every setting in hegel.toml has a flag, named after its key with '-' for
-'_', except test_cases and unbounded_choices: the binary runs exactly one
-test case, with no limit on its choices. Every flag also takes the form
---flag=VALUE. A BOOL is true, false, 1, 0, yes or no. Values use the
-vocabulary of the matching hegel.toml key.
+'_', except test_cases: the binary runs exactly one test case. Every flag
+also takes the form --flag=VALUE. A BOOL is true, false, 1, 0, yes or no.
+Values use the vocabulary of the matching hegel.toml key.
 |}
 ;;
 
-let fixed_settings =
-  [ "test-cases", "a Hegel.main binary runs exactly one test case"
-  ; "unbounded-choices", "a Hegel.main binary always allows unbounded choices"
-  ]
-;;
+let fixed_settings = [ "test-cases", "a Hegel.main binary runs exactly one test case" ]
 
 let without_function_name message =
   let prefix = "hegel_settings_set_from_string: " in

@@ -66,7 +66,7 @@ let%hegel_test integer_under_fifty tc =
 
 This test asserts that any integer is less than 50, which is obviously incorrect.
 Hegel will find a test case that makes this assertion fail, and then shrink it
-to find the smallest counterexample (`n = 50`). Add it to the Alcotest list
+to find the smallest counterexample (`let n = 50 in`). Add it to the Alcotest list
 alongside the first test:
 
 ```ocaml
@@ -82,7 +82,7 @@ let () =
 ```
 
 `dune runtest` will now report `integer under fifty` as failed, print the
-drawn value as `n = 50` (named after the `let` binding), and exit non-zero.
+drawn value as `let n = 50 in` (named after the `let` binding), and exit non-zero.
 
 To fix this test, you can constrain the integers you generate with `min_value`
 and `max_value`:
