@@ -48,3 +48,19 @@ Stacked `@hegel.reproduce_failure` decorators now replay every blob, where only 
 A `tc.assume(False)` or `tc.reject()` in an explicit test case (`@hegel.explicit_test_case`) still raises `InvalidArgument`, now with the message `Explicit test cases must not be rejected`, shared with the other Hegel libraries. `tc.repeat()` in an explicit test case now runs its body once, as in the other Hegel libraries, where it used to raise `InvalidArgument` saying `draw_silent` is not supported, so a rejection inside it gets that message too.
 
 A failure's caveat (such as `unconfirmed failure ...` for a failure that did not reproduce on every replay) is now attached to the exception as a note starting `note: `, as the other Hegel libraries print it.
+
+Printing a drawn value is now a capability of the generator that drew it, as in the Rust library, rather than a `repr` applied to whatever value comes out. `Generator.do_draw_and_print` no longer defaults to drawing with `do_draw` and printing the value's `repr`: a `Generator` subclass that implements only `do_draw` cannot print, and drawing it with `tc.draw`, directly or inside a structure such as `gs.lists(...)`, raises the new `hegel.NotPrintable` (an `InvalidArgument`, so it ends the run as a usage error). `tc.draw` now runs the generator's printing on every test case, not only on the replay of a failure, so this is raised on the first test case that draws one, and a draw nested inside a composite needs a printable generator too. To fix such a generator, implement `do_draw_and_print` (a subclass that does gets `do_draw` for free), append `.print_as_repr()` for the old behaviour, use `.print_with(...)`, or draw it with `tc.draw_silent`, which still accepts any generator:
+
+```python
+class Coords(gs.Generator[tuple[int, int]]):
+    def do_draw_and_print(self, tc, printer):
+        with printer.group("Coord(", ")"):
+            x = tc.draw_and_print(gs.integers(0, 9), printer)
+            printer.separator()
+            y = tc.draw_and_print(gs.integers(0, 9), printer)
+        return (x, y)
+```
+
+`tc.draw(gs.lists(Coords(), min_size=1))` reports `xs = [Coord(0, 0)]`. Every built-in generator is printable and prints as before. When a draw raises, the draws made inside it are now listed as their generators print them, so a `print_with` inner draw shows its custom text there.
+
+`PrettyPrinter` gains `repr(value)` (the preferred spelling of `pretty_print(value, printer)`), a `group(open, close)` context manager, `seq`, `separator`, and `deferred()`, which opens a region anchored at the current position that can be printed into later, from any thread, so a generator can describe a value that is only known after it is drawn. `PrettyPrinter.comment(text)` now renders `  # text`, where it used to render the text with no comment marker. `PrettyPrinter.value()` is no longer public: render a `Document` with `Document.finish()`. `Document` and `Speculation` are now exported from `hegel`.
