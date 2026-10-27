@@ -372,6 +372,130 @@ class CoverageTest {
         assertEquals(0, fake.rejectedRules);
     }
 
+    static class BaseMachine {
+        final List<String> applied = new java.util.ArrayList<>();
+
+        @Rule
+        void inherited(TestCase tc) {
+            applied.add("inherited");
+        }
+
+        @Rule
+        void overridden(TestCase tc) {
+            applied.add("base");
+        }
+
+        @Rule
+        void dropped(TestCase tc) {
+            applied.add("dropped");
+        }
+
+        @Invariant
+        void inheritedCheck(TestCase tc) {}
+    }
+
+    static final class DerivedMachine extends BaseMachine {
+        @Rule
+        void own(TestCase tc) {
+            applied.add("own");
+        }
+
+        @Override
+        @Rule
+        void overridden(TestCase tc) {
+            applied.add("derived");
+        }
+
+        @Override
+        void dropped(TestCase tc) {
+            applied.add("not a rule");
+        }
+
+        void helper() {}
+    }
+
+    @Test
+    void statefulRulesAreDiscoveredOnSuperclasses() {
+        FakeLibhegel fake = new FakeLibhegel();
+        fake.ruleSequence = new long[] {0, 1, 2};
+        DerivedMachine machine = new DerivedMachine();
+        Stateful.run(machine, fakeTestCase(fake));
+        assertEquals(List.of("inherited", "overridden", "own"), fake.stateMachineRules);
+        assertEquals(List.of("inheritedCheck"), fake.stateMachineInvariants);
+        assertEquals(List.of("inherited", "derived", "own"), machine.applied);
+    }
+
+    static final class Breaking {
+        boolean broken;
+
+        @Rule
+        void crash(TestCase tc) {
+            throw new IllegalStateException("crashed");
+        }
+
+        @Rule
+        void settle(TestCase tc) {
+            broken = true;
+        }
+
+        @Invariant
+        void intact(TestCase tc) {
+            tc.note("checking");
+            if (broken) {
+                throw new AssertionError("broken");
+            }
+        }
+    }
+
+    @Test
+    void statefulFailuresNameTheRuleOrInvariantTheyEscapedFrom() {
+        FakeLibhegel fake = new FakeLibhegel();
+        fake.ruleSequence = new long[] {0};
+        TestCase tc = capturedTestCase(fake);
+        assertThrows(IllegalStateException.class, () -> Stateful.run(new Breaking(), tc));
+        assertEquals(
+                List.of(
+                        "Checking invariants on the initial state.",
+                        "  checking",
+                        "Step 1: crash {",
+                        "}",
+                        "Rule crash failed:"),
+                tc.output());
+
+        FakeLibhegel invariantFake = new FakeLibhegel();
+        invariantFake.ruleSequence = new long[] {1};
+        TestCase invariantTc = capturedTestCase(invariantFake);
+        assertThrows(AssertionError.class, () -> Stateful.run(new Breaking(), invariantTc));
+        assertEquals(
+                List.of(
+                        "Checking invariants on the initial state.",
+                        "  checking",
+                        "Step 1: settle {",
+                        "}",
+                        "  checking",
+                        "Invariant intact failed:"),
+                invariantTc.output());
+    }
+
+    static final class Picky {
+        @Rule
+        void noop(TestCase tc) {}
+
+        @Invariant
+        void satisfiable(TestCase tc) {
+            tc.assume(false);
+        }
+    }
+
+    @Test
+    void statefulInvariantRejectionIsNotReportedAsAFailure() {
+        FakeLibhegel fake = new FakeLibhegel();
+        fake.ruleSequence = new long[] {0};
+        TestCase tc = capturedTestCase(fake);
+        assertThrows(AssumeRejected.class, () -> Stateful.run(new Picky(), tc));
+        assertEquals(List.of("Checking invariants on the initial state."), tc.output());
+    }
+
     @Test
     void statefulDriverRethrowsAnEngineLevelRejection() {
         // A draw inside a rule that the engine itself rejects concludes the whole case invalid: the
@@ -427,6 +551,10 @@ class CoverageTest {
 
     private static TestCase fakeTestCase(FakeLibhegel fake) {
         return new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), false);
+    }
+
+    private static TestCase capturedTestCase(FakeLibhegel fake) {
+        return new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), true);
     }
 
     @Test

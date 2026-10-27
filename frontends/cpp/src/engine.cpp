@@ -9,6 +9,7 @@
 #include <hegel.h>
 #include <test_case.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -19,6 +20,7 @@
 #include <ios>
 #include <iterator>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -1178,8 +1180,10 @@ namespace hegel::internal {
     StateMachineHandle::StateMachineHandle(
         const TestCase& tc, const std::vector<std::string>& rule_names,
         const std::vector<int64_t>& rule_groups,
+        const std::vector<double>& rule_weights,
         const std::vector<std::string>& invariant_names,
-        int64_t min_concurrency, int64_t max_concurrency) {
+        const std::vector<bool>& invariant_always_check,
+        int64_t min_concurrency, int64_t max_concurrency, int64_t step_count) {
         impl::DrawScope scope(tc);
 
         auto to_strings = [](const std::vector<std::string>& names) {
@@ -1195,17 +1199,17 @@ namespace hegel::internal {
         std::vector<hegel_string_t> invariant_name_strings =
             to_strings(invariant_names);
 
-        // A NULL `rule_weights` array gives every rule the same weight and a
-        // NULL `invariant_always_check` array leaves every invariant sampled
-        // at its default probability; the public API exposes neither. The
-        // step budget is Settings::stateful_step_count, carried on the test
-        // case.
+        auto always_check =
+            std::make_unique<bool[]>(invariant_always_check.size());
+        std::copy(invariant_always_check.begin(), invariant_always_check.end(),
+                  always_check.get());
+
         scope.raise_for_rc(hegel_new_state_machine(
                                scope.ctx, scope.tc, rule_name_strings.data(),
-                               rule_groups.data(), nullptr, rule_names.size(),
-                               invariant_name_strings.data(), nullptr,
-                               invariant_names.size(), min_concurrency,
-                               max_concurrency, tc.data()->stateful_step_count,
+                               rule_groups.data(), rule_weights.data(),
+                               rule_names.size(), invariant_name_strings.data(),
+                               always_check.get(), invariant_names.size(),
+                               min_concurrency, max_concurrency, step_count,
                                &handle_, &concurrency_),
                            "hegel_new_state_machine");
     }

@@ -6,7 +6,9 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 
@@ -240,8 +242,9 @@ public final class Stateful {
      * #DEFAULT_STEP_COUNT} steps, sequentially.
      *
      * <p>The machine's {@code @Rule}/{@code @Invariant} methods are discovered reflectively from
-     * its class (superclass methods are not considered) and ordered by name, so rule numbering is
-     * stable across JVMs.
+     * its class and every superclass, and ordered by name, so rule numbering is stable across
+     * JVMs. A method taking a {@code TestCase} hides a method of the same name declared in a
+     * superclass, so an override keeps its superclass's annotation only if it repeats it.
      *
      * @param machine the state machine to drive
      * @param tc the current test case
@@ -340,6 +343,7 @@ public final class Stateful {
                 step++;
                 tc.note("Step " + step + ": " + rule.getName() + " {");
                 TestCase ruleTc = tc.block(2);
+                Throwable failure = null;
                 try {
                     invokeMachineMethod(machine, rule, ruleTc);
                 } catch (AssumeRejected e) {
@@ -360,10 +364,12 @@ public final class Stateful {
                     // through the caller. stopSpan is a no-op when the case is already being torn
                     // down.
                     tc.stopSpan(false);
+                    failure = e;
                     throw e;
                 } finally {
                     ruleTc.endBlock();
                     tc.note("}");
+                    noteFailure(tc, "Rule " + rule.getName() + " failed:", failure);
                 }
             }
             tc.stopSpan(roundRejected);
@@ -595,6 +601,7 @@ public final class Stateful {
                     Method rule = rules.get(ruleIndex(index, rules));
                     wtc.note("Rule: " + rule.getName() + " {");
                     TestCase ruleTc = wtc.block(2);
+                    Throwable failure = null;
                     try {
                         invokeMachineMethod(machine, rule, ruleTc);
                     } catch (AssumeRejected e) {
@@ -606,9 +613,13 @@ public final class Stateful {
                         // The engine does not count the slot; the next next_rule retries it.
                         wtc.stateMachineRuleRejected(machineId, this.index);
                         ruleTc.note("Rule stopped early due to violated assumption.");
+                    } catch (RuntimeException | Error e) {
+                        failure = e;
+                        throw e;
                     } finally {
                         ruleTc.endBlock();
                         wtc.note("}");
+                        noteFailure(wtc, "Rule " + rule.getName() + " failed:", failure);
                     }
                 }
             } catch (AssumeRejected e) {
@@ -657,7 +668,28 @@ public final class Stateful {
             if (sampled && !tc.stateMachineShouldCheckInvariant(machineId, i)) {
                 continue;
             }
-            invokeMachineMethod(machine, invariants.get(i), tc);
+            Method invariant = invariants.get(i);
+            TestCase invariantTc = tc.block(2);
+            Throwable failure = null;
+            try {
+                invokeMachineMethod(machine, invariant, invariantTc);
+            } catch (RuntimeException | Error e) {
+                failure = e;
+                throw e;
+            } finally {
+                invariantTc.endBlock();
+                noteFailure(tc, "Invariant " + invariant.getName() + " failed:", failure);
+            }
+        }
+    }
+
+    /**
+     * Name the rule or invariant a failure escaped from, right before the failure's own report. A
+     * rejected assumption or exhausted data is not a failure of the method, so it gets no trailer.
+     */
+    private static void noteFailure(TestCase tc, String trailer, Throwable failure) {
+        if (failure != null && !(failure instanceof AssumeRejected) && !(failure instanceof StopTest)) {
+            tc.note(trailer);
         }
     }
 
@@ -697,18 +729,32 @@ public final class Stateful {
         }
     }
 
+    /**
+     * The {@code kind}-annotated methods of the machine's class and its superclasses, ordered by
+     * name. A method taking a {@code TestCase} hides any method of the same name declared further up
+     * the hierarchy, annotated or not, so an override without the annotation removes the rule.
+     */
     private static List<Method> annotated(Object machine, Class<? extends java.lang.annotation.Annotation> kind) {
         List<Method> methods = new ArrayList<>();
-        for (Method m : machine.getClass().getDeclaredMethods()) {
-            if (!m.isAnnotationPresent(kind)) {
-                continue;
+        Set<String> seen = new HashSet<>();
+        for (Class<?> c = machine.getClass(); c != Object.class; c = c.getSuperclass()) {
+            for (Method m : c.getDeclaredMethods()) {
+                boolean takesTestCase = m.getParameterCount() == 1 && m.getParameterTypes()[0] == TestCase.class;
+                if (!m.isAnnotationPresent(kind)) {
+                    if (takesTestCase) {
+                        seen.add(m.getName());
+                    }
+                    continue;
+                }
+                if (!takesTestCase) {
+                    throw new IllegalArgumentException(
+                            "@" + kind.getSimpleName() + " method " + m + " must take a single TestCase parameter");
+                }
+                if (seen.add(m.getName())) {
+                    m.setAccessible(true);
+                    methods.add(m);
+                }
             }
-            if (m.getParameterCount() != 1 || m.getParameterTypes()[0] != TestCase.class) {
-                throw new IllegalArgumentException(
-                        "@" + kind.getSimpleName() + " method " + m + " must take a single TestCase parameter");
-            }
-            m.setAccessible(true);
-            methods.add(m);
         }
         // getDeclaredMethods order is unspecified; sort so rule numbering is deterministic.
         methods.sort(Comparator.comparing(Method::getName));

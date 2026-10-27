@@ -198,12 +198,13 @@ export interface NativeFloatOptions {
 }
 
 /**
- * Options for `hegel_new_state_machine`. `ruleGroups` and
- * `invariantAlwaysCheck` are parallel to `ruleNames` / `invariantNames`.
+ * Options for `hegel_new_state_machine`. `ruleGroups` and `ruleWeights` are
+ * parallel to `ruleNames`, `invariantAlwaysCheck` to `invariantNames`.
  */
 export interface StateMachineOptions {
   ruleNames: readonly string[];
   ruleGroups: readonly number[];
+  ruleWeights: readonly number[];
   invariantNames: readonly string[];
   invariantAlwaysCheck: readonly boolean[];
   minConcurrency: number;

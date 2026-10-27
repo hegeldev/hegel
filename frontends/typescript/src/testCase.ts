@@ -59,6 +59,8 @@ export class ExplicitExampleError extends Error {
 /** The registration for a state machine, see {@link DataSource.newStateMachine}. */
 export interface StateMachineSpec {
   ruleNames: readonly string[];
+  /** Parallel to `ruleNames`: each rule's selection weight, finite and positive. */
+  ruleWeights: readonly number[];
   invariantNames: readonly string[];
   /** Parallel to `invariantNames`: whether the invariant is exempt from sampling. */
   invariantAlwaysCheck: readonly boolean[];

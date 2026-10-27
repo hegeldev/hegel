@@ -130,3 +130,5 @@ Giving both `minValue` and `minValueExclusive` (or both `maxValue` and `maxValue
 `gs.binary()` now returns a plain `Uint8Array` on Node too, where it returned a `Buffer`, so a drawn byte string prints as `Uint8Array.from([…])` on every host, as the README said.
 
 - `tc.repeat` and `tc.repeatAsync` now have the engine decide how many repetitions run and which one failed, through libhegel's new `hegel_repeat_t` functions, rather than drawing those choices in TypeScript. The choices are the same, so an existing reproduce blob still replays.
+
+**Stateful testing.** A rule can now carry a weight, as in the other Hegel frontends: write it as `{ apply: (tc, state) => …, weight: 3 }` instead of a bare function, and the engine offers it that many times as often as a rule of weight 1 (every rule's weight is 1 by default). A weight must be finite and positive; any other value throws before the run starts. Concurrent state machines, which the Rust, Java, C++ and OCaml frontends offer, are not supported in JavaScript, because the host is single-threaded; the 0.4.10 changelog entry and `BROWSER.md` said they were waiting on a newer libhegel, which was never the reason.

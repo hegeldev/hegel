@@ -379,7 +379,9 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   JUnit 5 `TestTemplateInvocationContextProvider` that drives the engine loop
   and invokes the user method per case).
 - **Stateful testing** — `Stateful.run(machine, tc[, options])` reflects
-  `@Rule`/`@Invariant` methods (sorted by name for determinism) and registers
+  `@Rule`/`@Invariant` methods on the machine's class and its superclasses (a
+  `TestCase`-taking method hides a same-named one further up, so an override
+  must repeat the annotation; sorted by name for determinism) and registers
   them via `hegel_new_state_machine`: `@Rule(group = "g")` names become
   `rule_groups` ids (0.. in first-appearance order; rules that name none share
   `Stateful.ANONYMOUS_GROUP`, so a plain machine is all-zeros),

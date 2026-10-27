@@ -70,7 +70,7 @@ namespace hegel {
         hegel_test_case_t* handle =
             impl::test_case_clone(impl::thread_context(), data_->tc);
         auto cloned = std::make_unique<impl::test_case::TestCaseData>(
-            handle, data_->emit, data_->stateful_step_count);
+            handle, data_->emit);
         cloned->draw_names = data_->draw_names;
         return TestCase(std::move(cloned));
     }
@@ -281,7 +281,7 @@ namespace hegel {
             hegel_test_case_t* handle =
                 impl::test_case_block(impl::thread_context(), data->tc, indent);
             auto block = std::make_unique<impl::test_case::TestCaseData>(
-                handle, data->emit, data->stateful_step_count);
+                handle, data->emit);
             block->draw_names = data->draw_names;
             return TestCase(std::move(block));
         }

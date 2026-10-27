@@ -490,7 +490,7 @@ def _run_concurrent(
                 raise InternalError(f"state_machine_next_group returned unknown group id {group}")
             round_number += 1
             name = group_names[group]
-            tc.note(f"---------------- Round {round_number}: group {name!r} ----------------")
+            tc.note(f'---------------- Round {round_number}: group "{name}" ----------------')
             for worker, rounds in enumerate(round_queues):
                 worker_tc = tc.clone()
                 worker_tc.set_worker(worker)
@@ -605,8 +605,7 @@ class StateMachine:
     methods of the same names do; with ``max_concurrency > 1`` the rules
     run on worker threads against the shared instance. A fresh instance is
     made for every test case: ``__init__`` takes either no arguments or
-    just the test case, to draw the initial state from, and
-    :meth:`teardown` runs at the end of each.
+    just the test case, to draw the initial state from.
 
     ::
 
@@ -665,9 +664,6 @@ class StateMachine:
         machine.max_concurrency(self.max_concurrency)
         return machine
 
-    def teardown(self) -> None:
-        """Called after each test case, whether or not it failed."""
-
 
 def run_state_machine(
     tc: TestCase, machine: type[StateMachine] | StateMachine | Machine, **overrides: Any
@@ -689,13 +685,7 @@ def run_state_machine(
         instance = _instantiate(machine, tc) if isinstance(machine, type) else machine
         if not isinstance(instance, StateMachine):
             raise InvalidArgument(f"{machine!r} is not a StateMachine")
-        try:
-            built = instance.build_machine(tc)
-            _apply_overrides(built, overrides)
-            built.run()
-        finally:
-            instance.teardown()
-        return
+        built = instance.build_machine(tc)
     _apply_overrides(built, overrides)
     built.run()
 

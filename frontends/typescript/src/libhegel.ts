@@ -348,10 +348,6 @@ export interface Bindings {
   recursionFinish: (ctx: Ptr, tc: Ptr, recursion: Ptr) => number;
   recursionFree: (recursion: Ptr) => void;
 
-  /**
-   * The `rule_weights` array of `hegel_new_state_machine` is absorbed as NULL
-   * (all rules equally likely): this client does not expose rule weights.
-   */
   newStateMachine: (
     ctx: Ptr,
     tc: Ptr,
@@ -1152,7 +1148,7 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
         tc,
         opts.ruleNames.map(nativeString),
         opts.ruleGroups,
-        null,
+        opts.ruleWeights,
         opts.ruleNames.length,
         opts.invariantNames.map(nativeString),
         opts.invariantAlwaysCheck,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import threading
 import time
 
@@ -23,7 +24,6 @@ from tests.helpers import failing, notes, run_test
 class Counter(hegel.StateMachine):
     def __init__(self):
         self.count = 0
-        self.torn_down = False
 
     @hegel.rule()
     def incr(self, tc):
@@ -43,9 +43,6 @@ class Counter(hegel.StateMachine):
     @hegel.invariant(always_run=True)
     def is_int(self, tc):
         assert isinstance(self.count, int)
-
-    def teardown(self):
-        self.torn_down = True
 
 
 def test_sequential_machine_runs_and_shrinks():
@@ -74,7 +71,6 @@ def test_sequential_machine_runs_and_shrinks():
     assert "Invariant small failed:" in text
     increments = [int(line.split("= ")[1]) for line in text.splitlines() if "step = " in line]
     assert sum(increments) == 15  # shrunk to exactly the boundary
-    assert all(i.torn_down for i in instances)
 
 
 def test_passing_machine_and_final_invariants(output):
@@ -462,7 +458,9 @@ def test_concurrent_machine_finds_race(output):
         hegel.state_machine_test(Bank, test_cases=300)()
     text = notes(info.value)[0]
     assert text.startswith("Concurrency level: ")
-    assert "Round 1: group" in text
+    assert re.search(
+        r'^---------------- Round 1: group "(deposit|withdraw)" ----------------$', text, re.M
+    )
     assert "[worker " in text
     assert "Invariant non_negative failed:" in text
 

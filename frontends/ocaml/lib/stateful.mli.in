@@ -17,9 +17,7 @@
     [module%hegel_state_machine M = struct … end]. Mark rules with [[@@rule]]
     and invariants with [[@@invariant]]. See {!Rule} and {!Invariant}
     for valid options. The PPX generates the [run] function for the state
-    machine. If the module defines [print_state] (a [state -> Printer.doc]),
-    [run] uses it to print the state after each step as OCaml syntax; if it
-    defines [sexp_of_state] instead, as an s-expression.
+    machine.
 
     Without the PPX, create rules with {!Rule.create} and the invariants
     with {!Invariant.create}, put them in a module of type {!State_machine},
@@ -35,8 +33,6 @@
     {[
     module%hegel_state_machine Stack = struct
       type state = int list ref
-
-      let sexp_of_state stack = sexp_of_list sexp_of_int !stack
 
       let push tc stack =
         let n = draw tc (integers ~min_value:0 ~max_value:100 ()) in
@@ -84,9 +80,7 @@
     With the [ppx_hegel_test] PPX, a concurrent state machine is a module written as
     [module%hegel_concurrent_state_machine M = struct … end]. Mark rules with [[@@rule]]
     and invariants with [[@@invariant]]. See {!Concurrent_rule} and {!Invariant} for
-    valid options. The PPX generates the [run] function for the state machine. If the
-    module defines [print_state] or [sexp_of_state], [run] uses it to print the state
-    after each round, as {!run} does.
+    valid options. The PPX generates the [run] function for the state machine.
 
     The example store below has a bug. The store locks individual reads and writes,
     but releases the lock between reading a counter and writing its incremented value.
@@ -524,26 +518,22 @@ end
     A [module%hegel_state_machine M] has an [M.run tc ~init], which
     calls this function on [M].
 
-    On a failing replay, each applied rule prints as [Step N: <name>], with the
-    printed draws and notes nested under it. When [print_state] or
-    [sexp_of_state] is supplied, the state is also printed after the initial
-    state and after every step: as the {!Printer.doc} [print_state] gives, or
-    as the s-expression [sexp_of_state] gives when [print_state] is omitted.
+    On a failing replay, each applied rule prints as [Step N: <name> {], with
+    the printed draws and notes nested under it and a closing [}], and the
+    rule or invariant the failure escaped from is named right before it.
 
     {v
-      state = 0
-      Step 1: add
+      Checking invariants on the initial state.
+      Step 1: add {
         let by = 3 in
-      state = 3
-      Step 2: add
+      }
+      Step 2: add {
         let by = 7 in
-      state = 10
-      Invariant small violated after step 2.
+      }
+      Invariant small failed:
     v} *)
 val run
   :  ?step_count:int
-  -> ?print_state:('state -> Printer.doc)
-  -> ?sexp_of_state:('state -> Sexplib0.Sexp.t)
   -> Internal.test_case
   -> (module State_machine with type state = 'state)
   -> init:'state
@@ -558,8 +548,6 @@ val run_internal
   :  init:'state
   -> rules:'state Rule.t list
   -> invariants:'state Invariant.t list
-  -> ?print_state:('state -> Printer.doc)
-  -> ?sexp_of_state:('state -> Sexplib0.Sexp.t)
   -> ?step_count:int
   -> Internal.test_case
   -> unit
@@ -584,9 +572,10 @@ end
     See {!Concurrency}. A [module%hegel_concurrent_state_machine] that does not
     declare [type ctx] defaults to using threads.
 
-    If [print_state] or [sexp_of_state] is provided, the state is printed
-    before the first round and after each completed round, as {!run} prints
-    it.
+    On a failing replay, the output shows the concurrency level, each round
+    with its group, and each rule a worker applied as [Rule: <name> {] with
+    the worker's draws and notes nested under it, every line stamped with
+    the worker and the time since the case started.
 
     [step_count] defaults to 50 and bounds the number of rounds per test case.
     Each worker may execute multiple rules in a round.
@@ -601,8 +590,6 @@ val run_concurrent
   -> ?min_concurrency:int
   -> ?max_concurrency:int
   -> ?step_count:int
-  -> ?print_state:('state -> Printer.doc)
-  -> ?sexp_of_state:('state -> Sexplib0.Sexp.t)
   -> Internal.test_case
   -> (module Concurrent_state_machine with type ctx = 'ctx and type state = 'state)
   -> init:'state MODE(portable)
@@ -620,19 +607,16 @@ val run_concurrent_internal
   -> concurrency:'ctx Concurrency.t MODE(local)
   -> ?min_concurrency:int
   -> ?max_concurrency:int
-  -> ?print_state:('state -> Printer.doc)
-  -> ?sexp_of_state:('state -> Sexplib0.Sexp.t)
   -> ?step_count:int
   -> Internal.test_case
   -> unit
 
 (** [run_concurrent_core] is the concurrent runner with the rules passed as
     their fields and the round supplied by the caller. [run_round] runs one
-    round on [num_workers] workers and returns their outcomes. 
+    round on [num_workers] workers and returns their outcomes.
     [check_invariant i tc] checks invariant [i]. *)
 val run_concurrent_core
-  :  init:'state
-  -> rule_names:string list
+  :  rule_names:string list
   -> rule_groups:string list
   -> rule_weights:float list
   -> invariant_names:string list
@@ -643,8 +627,6 @@ val run_concurrent_core
        MODE(local)
   -> ?min_concurrency:int
   -> ?max_concurrency:int
-  -> ?print_state:('state -> Printer.doc)
-  -> ?sexp_of_state:('state -> Sexplib0.Sexp.t)
   -> ?step_count:int
   -> Internal.test_case
   -> unit
