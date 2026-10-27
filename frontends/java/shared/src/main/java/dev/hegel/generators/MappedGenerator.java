@@ -75,6 +75,11 @@ public final class MappedGenerator<T, U> extends ValueGenerator<U> {
             }
 
             @Override
+            public U doDraw(TestCase tc) {
+                return MappedGenerator.this.doDraw(tc);
+            }
+
+            @Override
             public U doDrawAndPrint(TestCase tc, Printer printer) {
                 tc.startSpan(label());
                 try {

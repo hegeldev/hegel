@@ -407,6 +407,13 @@ class PrintingTest {
                     assertEquals(
                             List.of(1, 1),
                             tc.drawSilent(tuples(silent, silent).map(t -> List.of(t.value1(), t.value2()))));
+                    assertEquals(
+                            List.of(1),
+                            tc.drawSilent(lists(silent)
+                                    .minSize(1)
+                                    .maxSize(1)
+                                    .map(l -> l)
+                                    .printAsCall("f")));
                     assertEquals(1, (int) tc.drawSilent(oneOf(silent)));
                     assertEquals(1, (int) tc.drawSilent(booleans().flatMap(b -> silent)));
                     assertEquals(
