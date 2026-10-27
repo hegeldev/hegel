@@ -267,7 +267,6 @@ namespace hegel {
         /// Randomness backend. The base value is Backend::Default; the
         /// `workload` profile selects Backend::Urandom.
         Backend backend = resolved_.backend;
-
     };
 
     /**
