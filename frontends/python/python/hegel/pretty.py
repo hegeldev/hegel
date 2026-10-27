@@ -66,14 +66,19 @@ class PrettyPrinter:
     draws.
     """
 
-    __slots__ = ("_handle",)
+    __slots__ = ("_handle", "_silent")
 
-    def __init__(self, _handle: _native.Printer | None = None) -> None:
+    def __init__(self, _handle: _native.Printer | None = None, _silent: bool = False) -> None:
         self._handle = _handle
+        self._silent = _silent
 
     @classmethod
     def noop(cls) -> PrettyPrinter:
-        """A printer that discards everything written to it."""
+        """A printer that discards everything written to it. Drawing
+        through it with :meth:`TestCase.draw_and_print
+        <hegel.TestCase.draw_and_print>` still needs a printable generator;
+        only :meth:`TestCase.draw_silent <hegel.TestCase.draw_silent>`
+        makes a draw silent."""
         return cls(None)
 
     @property
@@ -223,7 +228,7 @@ class PrettyPrinter:
         no-ops and its :attr:`should_print` is ``False``. A deferred
         region of a no-op printer is a no-op printer."""
         if self._handle is None:
-            return PrettyPrinter.noop()
+            return PrettyPrinter(None, self._silent)
         return PrettyPrinter(self._handle.deferred())
 
     def _value(self) -> str:
@@ -294,7 +299,7 @@ class Document:
         return self.printer._value()
 
 
-SILENT_PRINTER = PrettyPrinter.noop()
+_SILENT_PRINTER = PrettyPrinter(None, _silent=True)
 
 
 def pretty_repr(value: Any, max_width: int = DEFAULT_MAX_WIDTH) -> str:

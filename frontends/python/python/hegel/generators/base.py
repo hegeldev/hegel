@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar
 from hegel import _native
 from hegel._labels import combine_labels, label_from_name
 from hegel.errors import InvalidArgument, NotPrintable
-from hegel.pretty import SILENT_PRINTER, PrettyPrinter
+from hegel.pretty import _SILENT_PRINTER, PrettyPrinter
 
 if TYPE_CHECKING:
     from hegel.test_case import TestCase
@@ -27,8 +27,6 @@ T = TypeVar("T")
 
 
 U = TypeVar("U")
-
-NOOP_PRINTER = SILENT_PRINTER
 
 MAP_LABEL = label_from_name("hegel.map")
 FLAT_MAP_LABEL = label_from_name("hegel.flat_map")
@@ -89,7 +87,7 @@ class Generator(Generic[T]):
         The default runs :meth:`do_draw_and_print` with a no-op printer, so
         a printable generator writes its drawing logic once."""
         if _prints_itself(type(self)):
-            return self.do_draw_and_print(tc, NOOP_PRINTER)
+            return self.do_draw_and_print(tc, _SILENT_PRINTER)
         raise NotImplementedError(
             f"{type(self).__name__} must implement do_draw or do_draw_and_print"
         )
@@ -354,7 +352,7 @@ class Filtered(Generator[T]):
         raise AssertionError("unreachable")  # nocov
 
     def do_draw(self, tc: TestCase) -> T:
-        return self._draw(tc, NOOP_PRINTER, True)
+        return self._draw(tc, _SILENT_PRINTER, True)
 
     def do_draw_and_print(self, tc: TestCase, printer: PrettyPrinter) -> T:
         return self._draw(tc, printer, False)

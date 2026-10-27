@@ -292,6 +292,26 @@ def test_draw_only_generators_can_be_drawn_silently_or_made_printable():
     assert report_of(Bare().map(lambda n: n + 1)) == ["draw_1 = 1"]
 
 
+class DeferringToBare(gs.Generator):
+    def do_draw_and_print(self, tc, printer):
+        return tc.draw_and_print(Bare(), printer.deferred())
+
+
+def test_silence_reaches_deferred_regions_of_a_silent_draw():
+    def body(tc):
+        assert 0 <= tc.draw_silent(DeferringToBare()) <= 3
+
+    run_test(body, test_cases=5)
+
+
+def test_a_no_op_printer_still_needs_a_printable_generator():
+    def body(tc):
+        tc.draw_and_print(Bare(), PrettyPrinter.noop())
+
+    with pytest.raises(NotPrintable):
+        run_test(body)
+
+
 def test_print_only_generators_draw_silently_with_the_same_choices():
     def printed(tc):
         x, y = tc.draw(Coords())

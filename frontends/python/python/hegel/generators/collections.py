@@ -7,10 +7,10 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from hegel._labels import combine_labels, label_from_name
 from hegel.errors import InvalidArgument
-from hegel.generators.base import NOOP_PRINTER, Filtered, Generator, Mapped, _PrintsValue
+from hegel.generators.base import Filtered, Generator, Mapped, _PrintsValue
 from hegel.generators.combinators import FilteredSample, Just, SampledFrom, as_generator
 from hegel.generators.numeric import Booleans, Integers
-from hegel.pretty import PrettyPrinter
+from hegel.pretty import _SILENT_PRINTER, PrettyPrinter
 from hegel.test_case import Collection
 
 if TYPE_CHECKING:
@@ -202,7 +202,7 @@ class Lists(Generator[list[T]]):
         return result
 
     def do_draw(self, tc: TestCase) -> list[T]:
-        return self._draw(tc, NOOP_PRINTER)
+        return self._draw(tc, _SILENT_PRINTER)
 
     def do_draw_and_print(self, tc: TestCase, printer: PrettyPrinter) -> list[T]:
         return self._draw(tc, printer)
@@ -305,7 +305,7 @@ class Sets(Generator[Any]):
         return frozenset(result) if self.frozen else result
 
     def do_draw(self, tc: TestCase) -> Any:
-        return self._draw(tc, NOOP_PRINTER)
+        return self._draw(tc, _SILENT_PRINTER)
 
     def do_draw_and_print(self, tc: TestCase, printer: PrettyPrinter) -> Any:
         return self._draw(tc, printer)
@@ -426,7 +426,7 @@ class Dicts(Generator[dict[Any, Any]]):
         return result
 
     def do_draw(self, tc: TestCase) -> dict[Any, Any]:
-        return self._draw(tc, NOOP_PRINTER)
+        return self._draw(tc, _SILENT_PRINTER)
 
     def do_draw_and_print(self, tc: TestCase, printer: PrettyPrinter) -> dict[Any, Any]:
         return self._draw(tc, printer)
@@ -501,7 +501,7 @@ class FixedDicts(Generator[dict[Any, Any]]):
         return result
 
     def do_draw(self, tc: TestCase) -> dict[Any, Any]:
-        return self._draw(tc, NOOP_PRINTER)
+        return self._draw(tc, _SILENT_PRINTER)
 
     def do_draw_and_print(self, tc: TestCase, printer: PrettyPrinter) -> dict[Any, Any]:
         return self._draw(tc, printer)
@@ -556,7 +556,7 @@ class Tuples(Generator[tuple[Any, ...]]):
         return tuple(result)
 
     def do_draw(self, tc: TestCase) -> tuple[Any, ...]:
-        return self._draw(tc, NOOP_PRINTER)
+        return self._draw(tc, _SILENT_PRINTER)
 
     def do_draw_and_print(self, tc: TestCase, printer: PrettyPrinter) -> tuple[Any, ...]:
         return self._draw(tc, printer)

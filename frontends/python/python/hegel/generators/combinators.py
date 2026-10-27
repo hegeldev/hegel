@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from hegel._labels import combine_labels, label_from_name
 from hegel.errors import InvalidArgument
-from hegel.generators.base import FILTER_LABEL, NOOP_PRINTER, Generator, _name, _PrintsValue
-from hegel.pretty import PrettyPrinter
+from hegel.generators.base import FILTER_LABEL, Generator, _name, _PrintsValue
+from hegel.pretty import _SILENT_PRINTER, PrettyPrinter
 
 if TYPE_CHECKING:
     from hegel.test_case import TestCase
@@ -298,7 +298,7 @@ class Optional(Generator[Any]):
         return None
 
     def do_draw(self, tc: TestCase) -> T | None:
-        return self._draw(tc, NOOP_PRINTER)
+        return self._draw(tc, _SILENT_PRINTER)
 
     def do_draw_and_print(self, tc: TestCase, printer: PrettyPrinter) -> T | None:
         return self._draw(tc, printer)

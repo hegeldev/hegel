@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, NoReturn, TypeVar
 from hegel import _native
 from hegel._draw_names import DrawName, name_for_call
 from hegel.errors import AssumeFailed, InternalError, InvalidArgument, LoopDone, StopTest
-from hegel.pretty import DEFAULT_MAX_WIDTH, SILENT_PRINTER, Document, PrettyPrinter
+from hegel.pretty import _SILENT_PRINTER, DEFAULT_MAX_WIDTH, Document, PrettyPrinter
 
 if TYPE_CHECKING:
     from hegel.generators.base import Generator
@@ -283,7 +283,7 @@ class TestCase:
         explicit = self._global.explicit
         if explicit is not None:
             return explicit.draw_silent(self, generator)
-        return self.draw_and_print(generator, SILENT_PRINTER)
+        return self.draw_and_print(generator, _SILENT_PRINTER)
 
     def draw_and_print(self, generator: Generator[T], printer: PrettyPrinter) -> T:
         """Draw a value, printing its representation through ``printer``.
@@ -293,7 +293,7 @@ class TestCase:
         When the enclosing generator is itself being drawn silently, so is
         ``generator``."""
         self.start_span(generator.label)
-        if printer is SILENT_PRINTER:
+        if printer._silent:
             value = generator.do_draw(self)
         else:
             value = generator.do_draw_and_print(self, printer)
