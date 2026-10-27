@@ -1258,7 +1258,12 @@ let run_test
                  (fun () -> run_case handle)
              in
              (match settings.verbosity with
-              | Verbose | Debug -> Printf.eprintf "%s%!" outcome.output
+              | Verbose | Debug ->
+                Printf.eprintf "%s%!" outcome.output;
+                (match outcome.result with
+                 | Invalid -> Printf.eprintf "Test case stopped: failed assumption\n%!"
+                 | Overrun -> Printf.eprintf "Test case stopped: out of data\n%!"
+                 | Valid | Failed _ -> ())
               | Quiet | Normal -> ());
              (match outcome.result with
               | Failed failure -> update_captured failure outcome

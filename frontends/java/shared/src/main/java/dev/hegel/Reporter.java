@@ -103,7 +103,9 @@ public interface Reporter {
      * engine's caveat for a nondeterministic failure, and a copy-pasteable reproducer when {@link
      * Settings#printBlob(boolean)} is on and the failure has a blob. Honours {@link
      * Settings#verbosity}: {@link Verbosity#QUIET} prints no draws, notes or caveats at all, {@link
-     * Verbosity#VERBOSE} prints draws and notes for every case.
+     * Verbosity#VERBOSE} prints draws and notes for every case, and why a case stopped short of
+     * its end ({@code Test case stopped: failed assumption}, {@code Test case stopped: out of
+     * data}).
      *
      * @param out where to print
      * @return a printing reporter

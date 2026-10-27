@@ -391,7 +391,6 @@ def test_invariant_failling_present_in_falsifying_example():
     assert (
         _failure_text(err.value)
         == """
-Falsifying example:
 Checking invariants on the initial state.
 Invariant invariant_1 failed:
 """.strip()
@@ -426,7 +425,6 @@ def test_invariant_present_in_falsifying_example():
 
     # Passing invariants are not part of the printed run; the steps are.
     expected = """
-Falsifying example:
 Checking invariants on the initial state.
 Step 1: rule_1 {
 }
@@ -587,7 +585,6 @@ def test_steps_printed_despite_pytest_fail():
     assert (
         _failure_text(err.value)
         == """
-Falsifying example:
 Step 1: oops {
 }
 Rule oops failed:""".strip()
@@ -603,7 +600,6 @@ def test_steps_not_printed_with_pytest_skip():
     with capture_out() as out, pytest.raises(Skipped):
         _run(RaisesProblem)
     assert "Step" not in out.getvalue()
-    assert "Falsifying" not in out.getvalue()
 
 
 def _failing_blob():

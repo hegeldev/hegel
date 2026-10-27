@@ -75,8 +75,7 @@ class ExplicitExampleTest {
                 tc -> tc.draw(integers(), "x"),
                 SETTINGS.testCases(1).verbosity(Verbosity.VERBOSE).examples(Example.of("a\nb")),
                 recorder);
-        assertEquals("live: Running explicit Example(\"a\\nb\")", recorder.events.get(0));
-        assertEquals("live: var x = \"a\\nb\";", recorder.events.get(1));
+        assertEquals("live: var x = \"a\\nb\";", recorder.events.get(0));
 
         Recorder failing = new Recorder();
         Hegel.run(
@@ -85,7 +84,7 @@ class ExplicitExampleTest {
                 },
                 SETTINGS.verbosity(Verbosity.VERBOSE).examples(Example.of()),
                 failing);
-        assertEquals("live: Running explicit Example()", failing.events.get(0));
+        assertEquals(List.of("failures: 1"), failing.events);
     }
 
     @Test

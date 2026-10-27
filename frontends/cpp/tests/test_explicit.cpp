@@ -178,10 +178,7 @@ TEST(Explicit, VerboseRunsPrintEachCase) {
         hegel::Settings{.test_cases = 1,
                         .verbosity = hegel::Verbosity::Verbose,
                         .database = hegel::Database::disabled()});
-    EXPECT_NE(output.find("Running explicit test case (true)\n"
-                          "auto draw_1 = true;\n"),
-              std::string::npos)
-        << output;
+    EXPECT_EQ(output.rfind("auto draw_1 = true;\n", 0), 0u) << output;
 }
 
 TEST(Explicit, SkippedWithoutTheExplicitPhase) {

@@ -239,7 +239,11 @@ let verbose_lines ?(test_cases = 100) output body =
     not
       (List.mem
          ~equal:String.equal
-         [ "Starting phase: Generate"; "Running test case"; "Ending phase: Generate" ]
+         [ "Starting phase: Generate"
+         ; "Running test case"
+         ; "Test case stopped: failed assumption"
+         ; "Ending phase: Generate"
+         ]
          line))
 ;;
 

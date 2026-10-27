@@ -179,3 +179,5 @@ let%hegel_test greets tc =
   in
   assert (String.starts_with ~prefix:"hello " s)
 ```
+
+With `Settings.Verbose` or `Settings.Debug`, a test case that stops short now says why, as the other Hegel frontends do: `Test case stopped: failed assumption` or `Test case stopped: out of data`.

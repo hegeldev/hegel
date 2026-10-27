@@ -120,3 +120,5 @@ A `filter()` on `hegel::stateful::values_consumed()` now removes only the value 
 The undocumented `hegel::verbosity_to_string()` and `hegel::health_check_to_string()` are removed.
 
 The 0.13.2 changelog entry says the Nix flake was removed. That is not correct: `nix/flake.nix` is still available and still exports `lib.mkHegelCppProject`. It now builds the in-tree libhegel instead of downloading one.
+
+With `Verbosity::Verbose` or `Verbosity::Debug`, a test case that stops short now says why, as the other Hegel frontends do: `Test case stopped: failed assumption` or `Test case stopped: out of data`. An explicit test case is no longer introduced with a `Running explicit test case` line: it prints its drawn values and notes like a generated one.

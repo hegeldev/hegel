@@ -77,6 +77,27 @@ class ReporterTest {
     }
 
     @Test
+    void printingReporterSaysWhyALiveCaseStoppedShortWhenVerbose() {
+        ByteArrayOutputStream verboseBuf = new ByteArrayOutputStream();
+        Reporter verbose = Reporter.printing(new PrintStream(verboseBuf, true, StandardCharsets.UTF_8));
+        verbose.runStarted(new Settings().verbosity(Verbosity.DEBUG));
+        verbose.caseFinished(CaseOutcome.INVALID, false);
+        verbose.caseFinished(CaseOutcome.OVERRUN, false);
+        verbose.caseFinished(CaseOutcome.VALID, false);
+        verbose.caseFinished(CaseOutcome.INTERESTING, false);
+        verbose.caseFinished(CaseOutcome.INVALID, true);
+        assertEquals(
+                "Test case stopped: failed assumption\nTest case stopped: out of data\n", normalizedOutput(verboseBuf));
+
+        ByteArrayOutputStream normalBuf = new ByteArrayOutputStream();
+        Reporter normal = Reporter.printing(new PrintStream(normalBuf, true, StandardCharsets.UTF_8));
+        normal.runStarted(new Settings());
+        normal.caseFinished(CaseOutcome.INVALID, false);
+        normal.caseFinished(CaseOutcome.OVERRUN, false);
+        assertEquals("", normalizedOutput(normalBuf));
+    }
+
+    @Test
     void labelsMatchTheEngineConstants() {
         assertEquals(Label.of("hegel.lists"), Label.LIST);
         assertEquals(Label.of("hegel.sets"), Label.SET);

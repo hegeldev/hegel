@@ -354,6 +354,16 @@ namespace hegel {
             }
         }
 
+        // The verbose line saying why a test case stopped short of its
+        // end, for one that did.
+        void print_stop_reason(hegel_status_t status) {
+            if (status == HEGEL_STATUS_INVALID) {
+                std::fprintf(stderr, "Test case stopped: failed assumption\n");
+            } else if (status == HEGEL_STATUS_OVERRUN) {
+                std::fprintf(stderr, "Test case stopped: out of data\n");
+            }
+        }
+
         void print_reproducer(RerunForm rerun_form,
                               const std::optional<TestLocation>& location,
                               const std::string& blob) {
@@ -599,6 +609,7 @@ namespace hegel {
                 }
                 if (verbose) {
                     print_lines(lines);
+                    print_stop_reason(outcome.status);
                 }
                 if (outcome.status == HEGEL_STATUS_INTERESTING) {
                     if (!stamped) {
@@ -730,10 +741,6 @@ namespace hegel {
                     std::make_shared<impl::test_case::ExplicitState>(test_case);
                 data->explicit_state = state;
                 TestCase tc(std::move(data));
-                if (verbose) {
-                    std::fprintf(stderr, "Running explicit test case %s\n",
-                                 describe(test_case).c_str());
-                }
                 BodyOutcome outcome = run_body(test_fn, tc);
                 if (verbose) {
                     print_lines(state->lines);

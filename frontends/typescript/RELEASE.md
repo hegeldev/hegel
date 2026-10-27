@@ -112,3 +112,5 @@ const expressions = gs.fromLark(`
   %import common.NUMBER
 `);
 ```
+
+With `verbosity: Verbosity.Verbose` or `Verbosity.Debug`, a test case that stops short now says why, as the other Hegel frontends do: `Test case stopped: failed assumption` or `Test case stopped: out of data`.

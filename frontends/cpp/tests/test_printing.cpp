@@ -392,6 +392,40 @@ TEST(Diagnostics, DebugPrintsNotesAndValues) {
     EXPECT_TRUE(contains(out, "auto draw_1 = "));
 }
 
+// Verbose says why a case stopped short: a failed assumption, or running
+// out of data (here, while shrinking the failing list).
+TEST(Diagnostics, VerbosePrintsWhyACaseStoppedShort) {
+    testing::internal::CaptureStderr();
+    hegel::test(
+        [](hegel::TestCase& tc) {
+            tc.assume(tc.draw(gs::integers<int>(
+                          {.min_value = 0, .max_value = 1})) == 0);
+        },
+        hegel::Settings{.test_cases = 20,
+                        .verbosity = hegel::Verbosity::Verbose,
+                        .database = hegel::Database::disabled()});
+    std::string out = testing::internal::GetCapturedStderr();
+    EXPECT_TRUE(contains(out, "Test case stopped: failed assumption\n")) << out;
+    EXPECT_FALSE(contains(out, "Test case stopped: out of data"));
+
+    testing::internal::CaptureStderr();
+    EXPECT_THROW(hegel::test(
+                     [](hegel::TestCase& tc) {
+                         std::vector<int64_t> xs = tc.draw(gs::vectors(
+                             gs::integers<int64_t>(), {.min_size = 10}));
+                         for (int64_t x : xs) {
+                             if (x >= 1000 || x <= -1000) {
+                                 throw std::runtime_error("large");
+                             }
+                         }
+                     },
+                     hegel::Settings{.verbosity = hegel::Verbosity::Verbose,
+                                     .database = hegel::Database::disabled()}),
+                 std::runtime_error);
+    EXPECT_TRUE(contains(testing::internal::GetCapturedStderr(),
+                         "Test case stopped: out of data\n"));
+}
+
 // A throw that isn't a std::exception exercises the catch(...) fallback,
 // which records the exception's type name as the failure origin; the
 // single-failure re-raise then surfaces the original exception, not a

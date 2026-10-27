@@ -149,7 +149,6 @@ Hegel prints a failing input as the draws it made, one per line, and attaches
 the same text to the exception as a note:
 
 ```
-Falsifying example:
 xs = [0, 0]
 ```
 

@@ -66,7 +66,6 @@ would read:
 
 ```
 E       assert 9 == 10
-E       Falsifying example:
 E       [worker 0 +0.054ms] adds_1 = 0
 E       [worker 1 +0.109ms] adds_2 = 1
 E       [worker 1 +0.122ms] n_1 = 10
