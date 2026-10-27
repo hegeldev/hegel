@@ -71,8 +71,10 @@ module%hegel_concurrent_state_machine Bank_test = struct
   ;;
 
   let accounts_gen = Stateful.Concurrent_pool.values_reusable
+  let max_accounts = 10
 
   let open_account tc (_ : ctx) (state : t) =
+    assume tc (List.length (Atomic.get state.all) < max_accounts);
     let deposit = draw tc (integers ~min_value:0 ~max_value:1_000 ()) in
     let id = Bank.open_account state.bank ~deposit in
     push state.all id;
@@ -92,22 +94,28 @@ module%hegel_concurrent_state_machine Bank_test = struct
   ;;
 
   let transfer tc (_ : ctx) (state : t) =
-    let source = draw_silent tc (accounts_gen state.accounts) in
-    let available = Bank.balance state.bank source in
-    assume tc (available > 0);
+    let source, balance =
+      draw_silent
+        tc
+        (filter
+           (fun (_, balance) -> balance > 0)
+           (map (fun id -> id, Bank.balance state.bank id) (accounts_gen state.accounts)))
+    in
     let dest =
       draw_silent tc (filter (fun id -> id <> source) (accounts_gen state.accounts))
     in
-    let amount = draw tc (integers ~min_value:1 ~max_value:available ()) in
+    let amount = draw tc (integers ~min_value:1 ~max_value:balance ()) in
     note tc (Printf.sprintf "from #%d to #%d" source dest);
     Bank.transfer state.bank ~source ~dest ~amount
   [@@rule { group = "transfers"; weight = 6 }]
   ;;
 
-  let check_balance tc (_ : ctx) (state : t) =
-    let id = draw_silent tc (accounts_gen state.accounts) in
-    note tc (Printf.sprintf "#%d" id);
-    assert (Bank.balance state.bank id >= 0)
+  let check_bal (state : t) =
+    assert (
+      List.for_all (fun id -> Bank.balance state.bank id >= 0) (Atomic.get state.all))
+  ;;
+
+  let no_negative_balance _tc (_ : ctx) state = check_bal state
   [@@rule { group = "transfers" }]
   ;;
 
@@ -122,9 +130,7 @@ module%hegel_concurrent_state_machine Bank_test = struct
   [@@invariant { always_check = true }]
   ;;
 
-  let no_negative_balance _tc (state : t) =
-    assert (
-      List.for_all (fun id -> Bank.balance state.bank id >= 0) (Atomic.get state.all))
+  let no_negative_balance_inv _tc state = check_bal state
   [@@invariant { always_check = true }]
   ;;
 end
