@@ -148,7 +148,13 @@ class Pairs extends gs.PrintableGenerator<[number, number]> {
 
 A group prints on one line when it fits, each `breakable` as its separator, and otherwise breaks at every `breakable`, indenting the next line by the group's indentation. The printer also has `seq` (a delimited list laid out like the built-in containers), `ifBreak`, `hardBreak`, `comment`, `shiftIndent`, `reflow`, `value` (a value as JavaScript), `speculate` (output a rejected draw can retract) and `deferred`, a hole at the current position that can be written later: what a value prints when the test only learns how to describe it after drawing it, such as a stub function recording its calls. `hegel.Document` is a standalone document for trying printing code out outside a test.
 
-When a value is printed as JavaScript (by `value`, `map`, `just`, `composite` or `printAsValue`), instances of your own classes print as their class name and properties. To print one differently, give the class a `hegel.prettyPrint` method:
+When a value is printed as JavaScript (by `value`, `map`, `just`, `composite` or `printAsValue`), an instance of one of your own classes prints as an expression that recreates it without calling its constructor: an object with the class's prototype and the instance's own enumerable properties.
+
+```typescript
+Object.assign(Object.create(Point.prototype), { x: 1, y: 2 });
+```
+
+An instance with no own properties prints as `Object.create(Point.prototype)`. Symbol-keyed and non-enumerable properties and private fields are left out, and an instance of an anonymous class prints as an object literal. To print one differently, give the class a `hegel.prettyPrint` method:
 
 ```typescript
 class Interval {

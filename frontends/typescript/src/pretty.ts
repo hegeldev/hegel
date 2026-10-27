@@ -300,6 +300,7 @@ const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
 
 /** A plain object's key as it is written in an object literal. */
 export function propertyKey(name: string): string {
+  if (name === "__proto__") return '["__proto__"]';
   return IDENTIFIER.test(name) ? name : JSON.stringify(name);
 }
 
@@ -308,8 +309,8 @@ const INDENT = 4;
 
 /**
  * The method a class defines to print its instances when they are printed
- * as values (by {@link PrettyPrinter.value}), in place of its class name and
- * own enumerable properties. It is called with a {@link PrettyPrinter}
+ * as values (by {@link PrettyPrinter.value}), in place of
+ * `Object.assign(Object.create(Class.prototype), { ...properties })`. It is called with a {@link PrettyPrinter}
  * positioned where the value goes. It plays the part of a custom `Debug`
  * implementation in Rust: to print a generator's values some other way,
  * give the generator a printer with
@@ -482,11 +483,19 @@ export class PrettyPrinter {
   /**
    * Print `value` as JavaScript syntax: strings double-quoted with JSON
    * escapes, bigints with their `n` suffix, `-0` kept, and arrays, plain
-   * objects, `Map`s, `Set`s, typed arrays and `Date`s as the expressions
-   * that construct them. Instances of other classes print through their
-   * {@link prettyPrint} method, or else as their class name and own
-   * enumerable properties, and a value that contains itself prints the
-   * repeated reference as `[Circular]`.
+   * objects, `Map`s, `Set`s, typed arrays, `DataView`s, `Date`s, `RegExp`s
+   * and `Error`s as the expressions that construct them. An instance of
+   * another class prints through its {@link prettyPrint} method, or else as
+   * an expression creating an object with the same prototype and own
+   * enumerable string-keyed properties, without calling the constructor:
+   * `Object.assign(Object.create(Point.prototype), { x: 1, y: 2 })`, or
+   * `Object.create(Point.prototype)` when it has none. Symbol-keyed and
+   * non-enumerable properties, private fields and getters are left out (a
+   * getter defined by the class still works on the created object, through
+   * its prototype). An instance of a class without a usable name (an
+   * anonymous class, or one whose name is not an identifier) and an object
+   * with a `null` or plain-object prototype print as object literals. A value
+   * that contains itself prints the repeated reference as `[Circular]`.
    */
   value(value: unknown): void {
     if (this.shouldPrint()) printValueIn(this, value, this.enclosing);
@@ -744,14 +753,31 @@ function printObject(printer: PrettyPrinter, value: object, enclosing: Set<objec
   if (value instanceof Error) {
     return printer.reflow(`new ${value.name}(${JSON.stringify(value.message)})`);
   }
-  const prototype: unknown = Object.getPrototypeOf(value);
+  if (value instanceof RegExp) return printer.text(String(value));
+  if (value instanceof DataView) {
+    const bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    return block(printer, "new DataView(Uint8Array.from([", "]).buffer)", "", each(bytes));
+  }
   const fields = Object.keys(value).map((name) => () => {
     printer.text(`${propertyKey(name)}: `);
     inner((value as Record<string, unknown>)[name]);
   });
-  const name =
-    prototype === null || prototype === Object.prototype
-      ? undefined
-      : (prototype as { constructor?: { name?: string } }).constructor?.name;
-  block(printer, name ? `${name} {` : "{", "}", " ", fields);
+  const name = className(value);
+  if (name === undefined) return block(printer, "{", "}", " ", fields);
+  const created = `Object.create(${name}.prototype)`;
+  if (fields.length === 0) return printer.text(created);
+  printer.text(`Object.assign(${created}, `);
+  block(printer, "{", "}", " ", fields);
+  printer.text(")");
+}
+
+function className(value: object): string | undefined {
+  const prototype = Object.getPrototypeOf(value) as {
+    constructor?: { name?: unknown; prototype?: unknown };
+  } | null;
+  if (prototype === null || prototype === Object.prototype) return undefined;
+  const constructor = prototype.constructor;
+  if (typeof constructor !== "function" || constructor.prototype !== prototype) return undefined;
+  const name = constructor.name;
+  return typeof name === "string" && IDENTIFIER.test(name) ? name : undefined;
 }

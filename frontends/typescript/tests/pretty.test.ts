@@ -23,6 +23,27 @@ function repr(value: unknown): string {
   return printedLine(lib, ctx, (printer) => printer.value(value));
 }
 
+class Point {
+  constructor(
+    readonly x: unknown,
+    readonly y: unknown,
+  ) {}
+  get sum(): unknown {
+    return (this.x as number) + (this.y as number);
+  }
+}
+class Empty {}
+
+class Point3 extends Point {}
+
+function evaluate(text: string): unknown {
+  return new Function("Point", "Point3", "Empty", `return ${text};`)(
+    Point,
+    Point3,
+    Empty,
+  ) as unknown;
+}
+
 function document(body: (document: EngineDocument) => void): string[] {
   const doc = new EngineDocument(lib, ctx);
   try {
@@ -75,21 +96,79 @@ describe("repr", () => {
     expect(repr(value)).toBe(expected);
   });
 
-  it("prints a DataView as an object rather than a typed array", () => {
-    expect(repr(new DataView(new ArrayBuffer(2)))).toBe("DataView {}");
+  it("prints a DataView as one over a copy of its bytes", () => {
+    const view = new DataView(Uint8Array.from([9, 1, 2, 9]).buffer, 1, 2);
+    const text = repr(view);
+    expect(text).toBe("new DataView(Uint8Array.from([1, 2]).buffer)");
+    expect(evaluate(text)).toEqual(new DataView(Uint8Array.from([1, 2]).buffer));
   });
 
-  it("prints class instances with their class name", () => {
-    class Point {
-      constructor(
-        readonly x: number,
-        readonly y: number,
-      ) {}
-    }
-    expect(repr(new Point(1, 2))).toBe("Point { x: 1, y: 2 }");
+  it("prints a RegExp as a literal", () => {
+    expect(repr(/a b\//giu)).toBe("/a b\\//giu");
+    expect(repr(new RegExp(""))).toBe("/(?:)/");
+  });
+
+  it("writes a __proto__ key as a computed key, so that it stays an own property", () => {
+    const value = JSON.parse('{"__proto__": 1}') as object;
+    const text = repr(value);
+    expect(text).toBe('{ ["__proto__"]: 1 }');
+    expect(evaluate(text)).toStrictEqual(value);
+  });
+
+  it("prints a class instance as an object created from its class's prototype", () => {
+    expect(repr(new Point(1, 2))).toBe(
+      "Object.assign(Object.create(Point.prototype), { x: 1, y: 2 })",
+    );
+    expect(repr(new Empty())).toBe("Object.create(Empty.prototype)");
+    expect(repr([new Point(new Empty(), [new Point(0, "")])])).toBe(
+      "[Object.assign(Object.create(Point.prototype), { x: Object.create(Empty.prototype), " +
+        'y: [Object.assign(Object.create(Point.prototype), { x: 0, y: "" })] })]',
+    );
+  });
+
+  it.each([
+    ["an instance", () => new Point(1, -0)],
+    ["an instance with no properties", () => new Empty()],
+    [
+      "nested instances",
+      () => new Point(new Point(1n, "a"), [new Empty(), new Map([[1, new Point(2, 3)]])]),
+    ],
+    ["a subclass instance", () => new Point3(1, 2)],
+  ])("prints %s as an expression that evaluates to an equivalent instance", (_name, make) => {
+    const value = make();
+    const copy = evaluate(repr(value));
+    expect(copy).toStrictEqual(value);
+    expect(Object.getPrototypeOf(copy)).toBe(Object.getPrototypeOf(value));
+  });
+
+  it("leaves out symbol-keyed, non-enumerable and inherited properties", () => {
+    const point = new Point(1, 2);
+    Object.defineProperty(point, "hidden", { value: 3, enumerable: false });
+    Object.assign(point, { [Symbol.for("s")]: 4 });
+    const copy = evaluate(repr(point)) as Point;
+    expect(repr(point)).toBe("Object.assign(Object.create(Point.prototype), { x: 1, y: 2 })");
+    expect(copy.sum).toBe(3);
+  });
+
+  it("prints an instance containing itself with [Circular]", () => {
+    const point = new Point(1, null);
+    (point as { y: unknown }).y = [point];
+    expect(repr(point)).toBe(
+      "Object.assign(Object.create(Point.prototype), { x: 1, y: [[Circular]] })",
+    );
+  });
+
+  it("prints an object whose class it cannot name as an object literal", () => {
     const Anonymous = (() => class {})();
     Object.defineProperty(Anonymous, "name", { value: "" });
-    expect(repr(new Anonymous())).toBe("{}");
+    expect(repr(Object.assign(new Anonymous(), { a: 1 }))).toBe("{ a: 1 }");
+    class Spaced {}
+    Object.defineProperty(Spaced, "name", { value: "not an identifier" });
+    expect(repr(new Spaced())).toBe("{}");
+    class Numbered {}
+    Object.defineProperty(Numbered, "name", { value: 1 });
+    expect(repr(new Numbered())).toBe("{}");
+    expect(repr(Object.create(new Point(1, 2)))).toBe("{}");
     expect(repr(Object.create(Object.create(null)))).toBe("{}");
   });
 
@@ -399,6 +478,24 @@ describe("Document", () => {
     const narrow = new Document({ maxWidth: 8 });
     narrow.printer.seq("[", "]", [1, 2, 3], (p, n) => p.value(n));
     expect(narrow.finish()).toBe("[\n    1,\n    2,\n    3,\n]");
+  });
+
+  it("wraps a class instance's properties like an object literal's", () => {
+    const point = new Point("a".repeat(30), [1, 2, 3]);
+    const doc = new Document({ maxWidth: 40 });
+    doc.printer.value([point]);
+    const text = doc.finish();
+    expect(text).toBe(
+      [
+        "[",
+        "    Object.assign(Object.create(Point.prototype), {",
+        `        x: "${"a".repeat(30)}",`,
+        "        y: [1, 2, 3],",
+        "    }),",
+        "]",
+      ].join("\n"),
+    );
+    expect(evaluate(text)).toStrictEqual([point]);
   });
 
   it("can only be finished once", () => {
