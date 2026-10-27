@@ -9,16 +9,14 @@ import java.util.function.Function;
 
 /**
  * Generates an optional value: empty, or wrapping a value from an inner generator, inside a {@link
- * Label#OPTIONAL} span. Shrinks toward empty. An {@code OptionalGenerator} draws silently; {@link
- * Printable}, what {@link dev.hegel.Generators#optional} returns for a printable inner generator,
- * prints as {@code Optional.of(x)}, the inner value printed by the inner generator as it is drawn,
- * or {@code Optional.empty()} (with the name of the optional type it makes, such as {@code
- * OptionalInt}).
+ * Label#OPTIONAL} span. Shrinks toward empty. It prints as {@code Optional.of(x)}, the inner value
+ * printed by the inner generator as it is drawn, or {@code Optional.empty()} (with the name of the
+ * optional type it makes, such as {@code OptionalInt}).
  *
  * @param <T> the inner value type
  * @param <R> the optional type, such as {@code Optional<T>} or {@code OptionalInt}
  */
-public class OptionalGenerator<T, R> implements Generator<R> {
+public final class OptionalGenerator<T, R> implements PrintableGenerator<R> {
     private final String name;
     private final Generator<T> inner;
     private final Function<? super T, ? extends R> present;
@@ -50,7 +48,13 @@ public class OptionalGenerator<T, R> implements Generator<R> {
         return draw(tc, null);
     }
 
-    final R draw(TestCase tc, Printer printer) {
+    /** @hidden */
+    @Override
+    public R doDrawAndPrint(TestCase tc, Printer printer) {
+        return draw(tc, printer);
+    }
+
+    private R draw(TestCase tc, Printer printer) {
         Printer p = Components.out(printer);
         tc.startSpan(label());
         try {
@@ -64,31 +68,6 @@ public class OptionalGenerator<T, R> implements Generator<R> {
             return empty;
         } finally {
             tc.stopSpan(false);
-        }
-    }
-
-    /**
-     * An optional generator over a printable inner generator: it prints as {@code Optional.of(x)},
-     * the inner value printed by the inner generator as it is drawn, or {@code Optional.empty()}.
-     *
-     * @param <T> the inner value type
-     * @param <R> the optional type, such as {@code Optional<T>} or {@code OptionalInt}
-     */
-    public static final class Printable<T, R> extends OptionalGenerator<T, R> implements PrintableGenerator<R> {
-        /**
-         * @param name the simple name of the optional type, such as {@code Optional}
-         * @param inner the printable generator of present values
-         * @param present wraps a present value
-         * @param empty the empty value
-         */
-        public Printable(String name, PrintableGenerator<T> inner, Function<? super T, ? extends R> present, R empty) {
-            super(name, inner, present, empty);
-        }
-
-        /** @hidden */
-        @Override
-        public R doDrawAndPrint(TestCase tc, Printer printer) {
-            return draw(tc, printer);
         }
     }
 }

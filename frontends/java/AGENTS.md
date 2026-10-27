@@ -200,36 +200,16 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   throws; the engine holds back notes made mid-draw until the region closes).
   Printing is the generator's job, modelled on the Rust frontend (`pretty.rs`):
   `PrintableGenerator.doDrawAndPrint(tc, printer)` draws and prints in one step,
-  and `TestCase.draw` and `drawAndPrint` take only a `PrintableGenerator`, so
-  printability is checked at compile time (there is no runtime check), while
+  and `TestCase.draw` requires one (`requirePrintable`, an `InvalidArgument`
+  checked before anything is drawn, explicit examples included), while
   `drawSilent` takes any `Generator` and calls its silent `doDraw`. A
   non-emitting or nested `draw` still runs the printing path, into
-  `Printer.noop()`. Structural generators (`dev.hegel.generators`) are
-  printable exactly when their parts are, as Rust's conditional
-  `PrintableGenerator` impls are: each is a plain `Generator` class (`ListGenerator`,
-  `SetGenerator`, `MapGenerator`, `ArrayGenerator`, `TupleGenerator`,
-  `OptionalGenerator`, `OneOfGenerator`, `FilteredGenerator`,
-  `RecursiveGenerator`) with a nested `Printable` subclass whose constructor
-  takes printable parts and whose builder methods return `Printable`
-  covariantly; the `Generators` factories are overloaded on `Generator` and
-  `PrintableGenerator` arguments (implicitly typed lambdas pick by arity:
-  `tc -> ...` is a `Generator`, `(tc, p) -> ...` a `PrintableGenerator`), and
-  `PrintableGenerator` overrides `map` (to `MappedGenerator.Printable`, which
-  has `printAsCall`) and `filter`. `map` is printable either way (it prints
-  `repr`). Where printability would depend on a lambda's return type,
-  which Java cannot overload on, the printable form is the only one:
-  `flatMap`'s function, `Deferred.set` and `RecordGenerator.with` take
-  `PrintableGenerator`s, and `recursive` over a printable base needs `extend`
-  to return printable generators (a silent `RecursiveGenerator` still hands
-  `extend` a printable sub-value generator, which prints with `repr`). Each
-  structural generator has one body taking a nullable printer: `null` on the
-  silent path, where each part is drawn with `drawSilent`, and the printer on
-  the printing path, which only the `Printable` subclass takes, where each
-  part is drawn with `TestCase.drawAndPrint` (which raises `drawDepth`, so a
-  `draw` inside a generator prints nothing) and so prints itself in place
-  (`Components`, whose cast to `PrintableGenerator` is safe by construction).
-  `PrintabilityCompilationTest` compiles snippets with `javax.tools` to check
-  that unprintable draws are rejected by javac.
+  `Printer.noop()`, so an unprintable generator fails on the first case.
+  Structural generators (`dev.hegel.generators`) have one body taking a
+  nullable printer: `null` on the silent path, where each part is drawn with
+  `drawSilent`, and the printer on the printing path, where each part is drawn
+  with `TestCase.drawAndPrint` (which raises `drawDepth`, so a `draw` inside a
+  generator prints nothing) and so prints itself in place (`Components`).
   Collections, filter attempts and recursion attempts print each attempt in a
   `Printer.speculate()` region and commit only the accepted one. Leaf and
   value-producing generators (`ValueGenerator`: the leaves, `map`, `just`,
@@ -239,7 +219,7 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   `[a, b]`, maps as `{k: v}`, records as `new Name(x)`, optionals as `Optional.of(x)` — as groups
   with breakables, and hands anything else's `toString()` to
   `hegel_printer_reflow`. `printWith`/`printAsRepr` (`PrintedGenerator`) and
-  `MappedGenerator.Printable.printAsCall` are the value-printing escape hatches.
+  `MappedGenerator.printAsCall` are the value-printing escape hatches.
   `Printer` is public and binds the whole printer ABI (`if_break`, `comment`,
   `shift_indent`, `deferred`, `is_live`, speculation); a write to a dead
   region (`E_INVALID_HANDLE`) or through the no-op or a freed printer is

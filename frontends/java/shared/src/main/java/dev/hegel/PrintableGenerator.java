@@ -1,10 +1,5 @@
 package dev.hegel;
 
-import dev.hegel.generators.FilteredGenerator;
-import dev.hegel.generators.MappedGenerator;
-import java.util.function.Function;
-import java.util.function.Predicate;
-
 /**
  * A {@link Generator} that can describe the values it draws: what {@link TestCase#draw} needs to
  * print a draw in the failure report. It draws and prints in one step, writing to the printer as
@@ -26,11 +21,6 @@ import java.util.function.Predicate;
  *
  * Point point = tc.draw(points, "point");   // var point = Point.of(3, -1);
  * }</pre>
- *
- * <p>{@link TestCase#draw} accepts only a {@code PrintableGenerator}, so drawing a generator that
- * cannot print is a compile-time error. The combinators keep printability: {@link #map} and
- * {@link #filter} of a printable generator are printable, and so are the structural generators of
- * {@link Generators}, such as {@link Generators#lists}, over printable parts.
  *
  * <p>The silent {@link #doDraw} draws through {@link #doDrawAndPrint} with the {@link
  * Printer#noop()} printer, so both draw the same values from the same choices. A generator whose
@@ -62,31 +52,5 @@ public interface PrintableGenerator<T> extends Generator<T> {
     @Override
     default T doDraw(TestCase tc) {
         return doDrawAndPrint(tc, Printer.noop());
-    }
-
-    /**
-     * Transform each generated value with {@code f}. The result prints the transformed value with
-     * {@link Printer#repr}, or, with {@link MappedGenerator.Printable#printAsCall}, the call that
-     * made it from this generator's printing of its value.
-     *
-     * @param f the mapping function
-     * @param <U> the result type
-     * @return a generator of mapped values
-     */
-    @Override
-    default <U> MappedGenerator.Printable<T, U> map(Function<? super T, ? extends U> f) {
-        return new MappedGenerator.Printable<>(this, f);
-    }
-
-    /**
-     * Keep only values satisfying {@code predicate}. The result prints an accepted value as this
-     * generator does, and nothing of a rejected one.
-     *
-     * @param predicate the acceptance test
-     * @return a printable filtered generator
-     */
-    @Override
-    default PrintableGenerator<T> filter(Predicate<? super T> predicate) {
-        return new FilteredGenerator.Printable<>(this, predicate);
     }
 }

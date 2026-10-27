@@ -24,12 +24,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.hegel.generators.Deferred;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.OptionalDouble;
 import java.util.OptionalInt;
-import java.util.OptionalLong;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.IntSupplier;
@@ -204,15 +203,11 @@ class PrintingTest {
     }
 
     @Test
-    void printAsCallNeedsAFunctionName() {
+    void printAsCallNeedsANamedPrintableSource() {
+        Generator<Integer> silent = tc -> 1;
+        assertThrows(IllegalArgumentException.class, () -> silent.map(Key::of).printAsCall("Key.of"));
         assertThrows(
                 IllegalArgumentException.class, () -> integers().map(Key::of).printAsCall(""));
-    }
-
-    @Test
-    void theMapOfAnUnprintableGeneratorPrintsItsValue() {
-        Generator<Integer> silent = tc -> 1;
-        assertEquals(List.of("var k = new Key(1);"), failingOutput(tc -> tc.draw(silent.map(Key::of), "k")));
     }
 
     @Test
@@ -300,9 +295,8 @@ class PrintingTest {
     @SuppressWarnings("unchecked")
     void recursiveBranchesPrintTheirSubtreesInPlaceAndRetriesLeaveNothing() {
         Generator<Object> zero = tc -> tc.drawSilent(integers().min(0).max(0));
-        PrintableGenerator<Object> trees = recursive(
-                        zero.printWith((v, p) -> p.text("L")), sub -> (PrintableGenerator<Object>)
-                                (PrintableGenerator<?>) lists(sub).minSize(2).maxSize(2))
+        PrintableGenerator<Object> trees = recursive(zero.printWith((v, p) -> p.text("L")), sub ->
+                        (Generator<Object>) (Generator<?>) lists(sub).minSize(2).maxSize(2))
                 .maxLeaves(2);
         RunReport report = Hegel.run(
                 tc -> {
@@ -343,7 +337,7 @@ class PrintingTest {
                 }));
         assertEquals(List.of("var t = new Tuple2(pt(0), \"\");", "var u = [pt(0), false];"), failingOutput(tc -> {
             tc.draw(tuples(POINTS, text()), "t");
-            tc.draw(tuples(new PrintableGenerator<?>[] {POINTS, booleans()}), "u");
+            tc.draw(tuples(new Generator<?>[] {POINTS, booleans()}), "u");
         }));
         assertEquals(
                 List.of("var a = [pt(0), pt(0)];"),
@@ -355,6 +349,12 @@ class PrintingTest {
         Deferred<Integer> forward = deferred();
         forward.set(POINTS);
         assertEquals(List.of("var x = pt(0);"), failingOutput(tc -> tc.draw(forward, "x")));
+    }
+
+    @Test
+    void upcastingKeepsAGeneratorsOwnPrinting() {
+        Generator<Integer> g = POINTS;
+        assertEquals(List.of("var x = pt(0);"), failingOutput(tc -> tc.draw(g, "x")));
     }
 
     @Test
@@ -378,98 +378,77 @@ class PrintingTest {
     }
 
     @Test
-    void structuralGeneratorsOverUnprintablePartsDrawSilently() {
+    void anUnprintableGeneratorCannotBeDrawnButCanBeDrawnSilently() {
         Generator<Integer> silent = tc -> 1;
+        List<RunReport> reports = new ArrayList<>();
+        int[] cases = {0};
+        InvalidArgument e = assertThrows(
+                InvalidArgument.class,
+                () -> Hegel.run(
+                        tc -> {
+                            cases[0]++;
+                            tc.draw(silent);
+                        },
+                        SETTINGS,
+                        Reporter.silent()));
+        assertEquals(1, cases[0]);
+        assertTrue(e.getMessage().contains("cannot print the values it draws"), e.getMessage());
+        assertTrue(e.getMessage().contains(".printAsRepr()"), e.getMessage());
+        InvalidArgument nested = assertThrows(
+                InvalidArgument.class, () -> Hegel.run(tc -> tc.draw(lists(silent)), SETTINGS, Reporter.silent()));
+        assertTrue(nested.getMessage().startsWith(silent.getClass().getName()), nested.getMessage());
+        PrintableGenerator<Integer> inside = (tc, p) -> tc.drawAndPrint(silent, p);
         PrintableGenerator<Integer> seven = (tc, p) -> {
             p.text("seven");
             return 7;
         };
-        RunReport report = Hegel.run(
+        assertThrows(InvalidArgument.class, () -> Hegel.run(tc -> tc.draw(inside), SETTINGS, Reporter.silent()));
+        reports.add(Hegel.run(
                 tc -> {
                     assertEquals(1, tc.drawSilent(silent));
                     assertEquals(7, (int) tc.drawSilent(seven));
                     assertEquals(
                             List.of(1), tc.drawSilent(lists(silent).minSize(1).maxSize(1)));
-                    assertEquals(
-                            List.of(1),
-                            tc.drawSilent(lists(silent).unique().minSize(1).maxSize(1)));
-                    assertEquals(
-                            List.of(1),
-                            tc.drawSilent(
-                                    lists(silent).uniqueBy(x -> x).minSize(1).maxSize(1)));
                     assertEquals(Optional.of(1), tc.drawSilent(optional(silent).filter(Optional::isPresent)));
-                    assertEquals(
-                            OptionalInt.of(1),
-                            tc.drawSilent(optionalInts(silent).filter(OptionalInt::isPresent)));
-                    assertEquals(
-                            OptionalLong.of(1),
-                            tc.drawSilent(optionalLongs(t -> 1L).filter(OptionalLong::isPresent)));
-                    assertEquals(
-                            OptionalDouble.of(1),
-                            tc.drawSilent(optionalDoubles(t -> 1.0).filter(OptionalDouble::isPresent)));
                     assertEquals(new Tuple2<>(1, 1), tc.drawSilent(tuples(silent, silent)));
                     assertEquals(
                             List.of(1, 1),
                             tc.drawSilent(tuples(silent, silent).map(t -> List.of(t.value1(), t.value2()))));
-                    assertEquals(List.of(1, 7), tc.drawSilent(tuples(new Generator<?>[] {silent, seven})));
-                    assertEquals(new Tuple3<>(1, 1, 1), tc.drawSilent(tuples(silent, silent, silent)));
-                    assertEquals(new Tuple4<>(1, 1, 1, 1), tc.drawSilent(tuples(silent, silent, silent, silent)));
                     assertEquals(
-                            new Tuple5<>(1, 1, 1, 1, 1), tc.drawSilent(tuples(silent, silent, silent, silent, silent)));
-                    assertEquals(
-                            new Tuple6<>(1, 1, 1, 1, 1, 1),
-                            tc.drawSilent(tuples(silent, silent, silent, silent, silent, silent)));
-                    assertEquals(
-                            new Tuple7<>(1, 1, 1, 1, 1, 1, 1),
-                            tc.drawSilent(tuples(silent, silent, silent, silent, silent, silent, silent)));
-                    assertEquals(
-                            new Tuple8<>(1, 1, 1, 1, 1, 1, 1, 1),
-                            tc.drawSilent(tuples(silent, silent, silent, silent, silent, silent, silent, silent)));
+                            List.of(1),
+                            tc.drawSilent(lists(silent)
+                                    .minSize(1)
+                                    .maxSize(1)
+                                    .map(l -> l)
+                                    .printAsCall("f")));
                     assertEquals(1, (int) tc.drawSilent(oneOf(silent)));
-                    assertEquals(7, (int) tc.drawSilent(booleans().flatMap(b -> seven)));
-                    assertEquals(
-                            new Point(1, 7),
-                            tc.drawSilent(records(Point.class)
-                                    .with("x", silent.printAsRepr())
-                                    .with("y", seven)));
+                    assertEquals(1, (int) tc.drawSilent(booleans().flatMap(b -> silent)));
                     assertEquals(
                             Set.of(1), tc.drawSilent(sets(silent).minSize(1).maxSize(1)));
                     assertEquals(
                             Map.of(1, 1),
                             tc.drawSilent(maps(silent, silent).minSize(1).maxSize(1)));
-                    assertEquals(
-                            Map.of(1, 7),
-                            tc.drawSilent(maps(silent, seven).maxSize(1).minSize(1)));
                     assertEquals(1, tc.drawSilent(arrays(silent, 1, Integer[]::new))[0]);
+                    assertEquals(
+                            new Point(1, 1),
+                            tc.drawSilent(records(Point.class).with("x", silent).with("y", silent)));
                     assertEquals(
                             1,
                             tc.drawSilent(recursive(
-                                            silent,
-                                            sub -> lists(sub)
-                                                    .minSize(1)
-                                                    .maxSize(1)
-                                                    .map(l -> l.get(0)))
-                                    .maxDepth(2)
-                                    .maxLeaves(4)));
+                                    silent,
+                                    sub -> lists(sub).minSize(1).maxSize(1).map(l -> l.get(0)))));
                 },
                 SETTINGS.testCases(50),
-                Reporter.silent());
-        assertSame(RunStatus.PASSED, report.status(), String.valueOf(report.error()));
+                Reporter.silent()));
+        assertSame(RunStatus.PASSED, reports.get(0).status());
     }
 
     @Test
-    void anUnprintableRecursiveGeneratorPrintsASubtreeDrawnWithDrawAsItsValue() {
-        Generator<Object> silent = tc -> 1;
-        Generator<Object> trees =
-                recursive(silent, sub -> tc -> List.of(tc.draw(sub, "inner"))).maxDepth(1);
-        RunReport report = Hegel.run(
-                tc -> {
-                    Object tree = tc.drawSilent(trees);
-                    assertTrue(tree.equals(1) || tree.equals(List.of(1)), tree.toString());
-                },
-                SETTINGS.testCases(50),
-                Reporter.silent());
-        assertSame(RunStatus.PASSED, report.status(), String.valueOf(report.error()));
+    void anUnprintableGeneratorCannotBeDrawnInAnExplicitExample() {
+        Generator<Integer> silent = tc -> 1;
+        assertThrows(
+                InvalidArgument.class,
+                () -> Hegel.run(tc -> tc.draw(silent, "x"), SETTINGS.examples(Example.of(1)), Reporter.silent()));
     }
 
     @Test

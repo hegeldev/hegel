@@ -207,9 +207,7 @@ public final class Generators {
     }
 
     /**
-     * Chooses among alternative generators of a common type. When every alternative is printable
-     * the overload taking {@link PrintableGenerator} is chosen, and the choice prints; this one
-     * draws silently.
+     * Chooses among alternative generators of a common type.
      *
      * @param options the alternative generators
      * @param <T> the value type
@@ -217,7 +215,7 @@ public final class Generators {
      */
     @SafeVarargs
     @SuppressWarnings("unchecked")
-    public static <T> Generator<T> oneOf(Generator<? extends T>... options) {
+    public static <T> PrintableGenerator<T> oneOf(Generator<? extends T>... options) {
         List<Generator<T>> list = new ArrayList<>(options.length);
         for (Generator<? extends T> g : options) {
             list.add((Generator<T>) g);
@@ -226,125 +224,50 @@ public final class Generators {
     }
 
     /**
-     * Chooses among printable alternative generators of a common type. It prints what the chosen
-     * alternative prints.
-     *
-     * @param options the printable alternative generators
-     * @param <T> the value type
-     * @return a one-of generator
-     */
-    @SafeVarargs
-    @SuppressWarnings("unchecked")
-    public static <T> PrintableGenerator<T> oneOf(PrintableGenerator<? extends T>... options) {
-        List<PrintableGenerator<T>> list = new ArrayList<>(options.length);
-        for (PrintableGenerator<? extends T> g : options) {
-            list.add((PrintableGenerator<T>) g);
-        }
-        return new OneOfGenerator.Printable<>(list);
-    }
-
-    /**
-     * Generates an {@link Optional} that is empty or wraps a value from {@code generator}. When
-     * {@code generator} is printable the overload taking {@link PrintableGenerator} is chosen, and
-     * the optional prints; this one draws silently.
+     * Generates an {@link Optional} that is empty or wraps a value from {@code generator}.
      *
      * @param generator the value generator
      * @param <T> the value type
      * @return an optional generator
      */
-    public static <T> Generator<Optional<T>> optional(Generator<T> generator) {
+    public static <T> PrintableGenerator<Optional<T>> optional(Generator<T> generator) {
         return new OptionalGenerator<>("Optional", generator, Optional::of, Optional.empty());
     }
 
     /**
-     * Generates an {@link Optional} that is empty or wraps a value from {@code generator}. It prints
-     * as {@code Optional.of(x)}, with {@code x} printed by {@code generator}, or {@code
-     * Optional.empty()}.
-     *
-     * @param generator the printable value generator
-     * @param <T> the value type
-     * @return an optional generator
-     */
-    public static <T> PrintableGenerator<Optional<T>> optional(PrintableGenerator<T> generator) {
-        return new OptionalGenerator.Printable<>("Optional", generator, Optional::of, Optional.empty());
-    }
-
-    /**
-     * Generates an {@link OptionalInt} that is empty or wraps a value from {@code generator}. When
-     * {@code generator} is printable the overload taking {@link PrintableGenerator} is chosen, and
-     * the optional prints; this one draws silently.
+     * Generates an {@link OptionalInt} that is empty or wraps a value from {@code generator}.
      *
      * @param generator the value generator
      * @return an optional-int generator
      */
-    public static Generator<OptionalInt> optionalInts(Generator<Integer> generator) {
+    public static PrintableGenerator<OptionalInt> optionalInts(Generator<Integer> generator) {
         return new OptionalGenerator<>("OptionalInt", generator, OptionalInt::of, OptionalInt.empty());
     }
 
     /**
-     * Generates an {@link OptionalInt} that is empty or wraps a value from {@code generator}. It
-     * prints as {@code OptionalInt.of(x)} or {@code OptionalInt.empty()}.
-     *
-     * @param generator the printable value generator
-     * @return an optional-int generator
-     */
-    public static PrintableGenerator<OptionalInt> optionalInts(PrintableGenerator<Integer> generator) {
-        return new OptionalGenerator.Printable<>("OptionalInt", generator, OptionalInt::of, OptionalInt.empty());
-    }
-
-    /**
-     * Generates an {@link OptionalLong} that is empty or wraps a value from {@code generator}. When
-     * {@code generator} is printable the overload taking {@link PrintableGenerator} is chosen, and
-     * the optional prints; this one draws silently.
+     * Generates an {@link OptionalLong} that is empty or wraps a value from {@code generator}.
      *
      * @param generator the value generator
      * @return an optional-long generator
      */
-    public static Generator<OptionalLong> optionalLongs(Generator<Long> generator) {
+    public static PrintableGenerator<OptionalLong> optionalLongs(Generator<Long> generator) {
         return new OptionalGenerator<>("OptionalLong", generator, OptionalLong::of, OptionalLong.empty());
     }
 
     /**
-     * Generates an {@link OptionalLong} that is empty or wraps a value from {@code generator}. It
-     * prints as {@code OptionalLong.of(x)} or {@code OptionalLong.empty()}.
-     *
-     * @param generator the printable value generator
-     * @return an optional-long generator
-     */
-    public static PrintableGenerator<OptionalLong> optionalLongs(PrintableGenerator<Long> generator) {
-        return new OptionalGenerator.Printable<>("OptionalLong", generator, OptionalLong::of, OptionalLong.empty());
-    }
-
-    /**
      * Generates an {@link OptionalDouble} that is empty or wraps a value from {@code generator}.
-     * When {@code generator} is printable the overload taking {@link PrintableGenerator} is chosen,
-     * and the optional prints; this one draws silently.
      *
      * @param generator the value generator
      * @return an optional-double generator
      */
-    public static Generator<OptionalDouble> optionalDoubles(Generator<Double> generator) {
+    public static PrintableGenerator<OptionalDouble> optionalDoubles(Generator<Double> generator) {
         return new OptionalGenerator<>("OptionalDouble", generator, OptionalDouble::of, OptionalDouble.empty());
-    }
-
-    /**
-     * Generates an {@link OptionalDouble} that is empty or wraps a value from {@code generator}. It
-     * prints as {@code OptionalDouble.of(x)} or {@code OptionalDouble.empty()}.
-     *
-     * @param generator the printable value generator
-     * @return an optional-double generator
-     */
-    public static PrintableGenerator<OptionalDouble> optionalDoubles(PrintableGenerator<Double> generator) {
-        return new OptionalGenerator.Printable<>(
-                "OptionalDouble", generator, OptionalDouble::of, OptionalDouble.empty());
     }
 
     // --- collections ---
 
     /**
-     * Generates lists of any length with elements drawn from {@code element}. When {@code element}
-     * is printable the overload taking {@link PrintableGenerator} is chosen, and the list prints;
-     * this one draws silently.
+     * Generates lists of any length with elements drawn from {@code element}.
      *
      * @param element the element generator
      * @param <T> the element type
@@ -352,18 +275,6 @@ public final class Generators {
      */
     public static <T> ListGenerator<T> lists(Generator<T> element) {
         return new ListGenerator<>(element, 0, Abi.UNBOUNDED);
-    }
-
-    /**
-     * Generates lists of any length with elements drawn from {@code element}. It prints as {@code
-     * [a, b]}, each element printed by {@code element}.
-     *
-     * @param element the printable element generator
-     * @param <T> the element type
-     * @return a printable list generator
-     */
-    public static <T> ListGenerator.Printable<T> lists(PrintableGenerator<T> element) {
-        return new ListGenerator.Printable<>(element, 0, Abi.UNBOUNDED);
     }
 
     /**
@@ -393,8 +304,7 @@ public final class Generators {
 
     /**
      * Generates arrays of exactly {@code length} elements drawn from {@code element}, such as
-     * {@code arrays(integers(), 3, Integer[]::new)}. When {@code element} is printable the overload
-     * taking {@link PrintableGenerator} is chosen, and the array prints; this one draws silently.
+     * {@code arrays(integers(), 3, Integer[]::new)}.
      *
      * @param element the element generator
      * @param length the array length
@@ -402,29 +312,12 @@ public final class Generators {
      * @param <T> the element type
      * @return an array generator
      */
-    public static <T> Generator<T[]> arrays(Generator<T> element, int length, IntFunction<T[]> newArray) {
+    public static <T> PrintableGenerator<T[]> arrays(Generator<T> element, int length, IntFunction<T[]> newArray) {
         return new ArrayGenerator<>(element, length, newArray);
     }
 
     /**
-     * Generates arrays of exactly {@code length} elements drawn from {@code element}, such as
-     * {@code arrays(integers(), 3, Integer[]::new)}. It prints as {@code [a, b]}, each element
-     * printed by {@code element}.
-     *
-     * @param element the printable element generator
-     * @param length the array length
-     * @param newArray creates an array of the given length
-     * @param <T> the element type
-     * @return an array generator
-     */
-    public static <T> PrintableGenerator<T[]> arrays(
-            PrintableGenerator<T> element, int length, IntFunction<T[]> newArray) {
-        return new ArrayGenerator.Printable<>(element, length, newArray);
-    }
-
-    /**
-     * Generates sets of distinct elements. When {@code element} is printable the overload taking
-     * {@link PrintableGenerator} is chosen, and the set prints; this one draws silently.
+     * Generates sets of distinct elements.
      *
      * @param element the element generator
      * @param <T> the element type
@@ -435,20 +328,7 @@ public final class Generators {
     }
 
     /**
-     * Generates sets of distinct elements. It prints as {@code [a, b]}, each element printed by
-     * {@code element}.
-     *
-     * @param element the printable element generator
-     * @param <T> the element type
-     * @return a printable set generator
-     */
-    public static <T> SetGenerator.Printable<T> sets(PrintableGenerator<T> element) {
-        return new SetGenerator.Printable<>(element, 0, Abi.UNBOUNDED);
-    }
-
-    /**
-     * Generates maps from {@code keys} to {@code values}. When both are printable the overload
-     * taking {@link PrintableGenerator}s is chosen, and the map prints; this one draws silently.
+     * Generates maps from {@code keys} to {@code values}.
      *
      * @param keys the key generator
      * @param values the value generator
@@ -461,23 +341,7 @@ public final class Generators {
     }
 
     /**
-     * Generates maps from {@code keys} to {@code values}. It prints as {@code {k: v}}, each key and
-     * value printed by its generator.
-     *
-     * @param keys the printable key generator
-     * @param values the printable value generator
-     * @param <K> the key type
-     * @param <V> the value type
-     * @return a printable map generator
-     */
-    public static <K, V> MapGenerator.Printable<K, V> maps(PrintableGenerator<K> keys, PrintableGenerator<V> values) {
-        return new MapGenerator.Printable<>(keys, values, 0, Abi.UNBOUNDED);
-    }
-
-    /**
      * Generates a typed pair, drawing each element from its generator.
-     * When every element generator is printable the overload taking {@link PrintableGenerator}
-     * is chosen, and the tuple prints; this one draws silently.
      *
      * @param a the first-element generator
      * @param b the second-element generator
@@ -486,31 +350,12 @@ public final class Generators {
      * @return a generator of {@link Tuple2}
      */
     @SuppressWarnings("unchecked")
-    public static <A, B> Generator<Tuple2<A, B>> tuples(Generator<A> a, Generator<B> b) {
+    public static <A, B> PrintableGenerator<Tuple2<A, B>> tuples(Generator<A> a, Generator<B> b) {
         return new TupleGenerator<>("Tuple2", List.of(a, b), parts -> new Tuple2<>((A) parts.get(0), (B) parts.get(1)));
     }
 
     /**
-     * Generates a typed pair, drawing each element from its generator.
-     * It prints as a call of the constructor, {@code new Tuple2(a, b, ...)}, each element
-     * printed by its generator as it is drawn.
-     *
-     * @param a the first-element printable generator
-     * @param b the second-element printable generator
-     * @param <A> the first-element type
-     * @param <B> the second-element type
-     * @return a generator of {@link Tuple2}
-     */
-    @SuppressWarnings("unchecked")
-    public static <A, B> PrintableGenerator<Tuple2<A, B>> tuples(PrintableGenerator<A> a, PrintableGenerator<B> b) {
-        return new TupleGenerator.Printable<>(
-                "Tuple2", List.of(a, b), parts -> new Tuple2<>((A) parts.get(0), (B) parts.get(1)));
-    }
-
-    /**
      * Generates a typed triple, drawing each element from its generator.
-     * When every element generator is printable the overload taking {@link PrintableGenerator}
-     * is chosen, and the tuple prints; this one draws silently.
      *
      * @param a the first-element generator
      * @param b the second-element generator
@@ -521,7 +366,7 @@ public final class Generators {
      * @return a generator of {@link Tuple3}
      */
     @SuppressWarnings("unchecked")
-    public static <A, B, C> Generator<Tuple3<A, B, C>> tuples(Generator<A> a, Generator<B> b, Generator<C> c) {
+    public static <A, B, C> PrintableGenerator<Tuple3<A, B, C>> tuples(Generator<A> a, Generator<B> b, Generator<C> c) {
         return new TupleGenerator<>(
                 "Tuple3",
                 List.of(a, b, c),
@@ -529,31 +374,7 @@ public final class Generators {
     }
 
     /**
-     * Generates a typed triple, drawing each element from its generator.
-     * It prints as a call of the constructor, {@code new Tuple3(a, b, ...)}, each element
-     * printed by its generator as it is drawn.
-     *
-     * @param a the first-element printable generator
-     * @param b the second-element printable generator
-     * @param c the third-element printable generator
-     * @param <A> the first-element type
-     * @param <B> the second-element type
-     * @param <C> the third-element type
-     * @return a generator of {@link Tuple3}
-     */
-    @SuppressWarnings("unchecked")
-    public static <A, B, C> PrintableGenerator<Tuple3<A, B, C>> tuples(
-            PrintableGenerator<A> a, PrintableGenerator<B> b, PrintableGenerator<C> c) {
-        return new TupleGenerator.Printable<>(
-                "Tuple3",
-                List.of(a, b, c),
-                parts -> new Tuple3<>((A) parts.get(0), (B) parts.get(1), (C) parts.get(2)));
-    }
-
-    /**
      * Generates a typed 4-tuple, drawing each element from its generator.
-     * When every element generator is printable the overload taking {@link PrintableGenerator}
-     * is chosen, and the tuple prints; this one draws silently.
      *
      * @param a the first-element generator
      * @param b the second-element generator
@@ -566,7 +387,7 @@ public final class Generators {
      * @return a generator of {@link Tuple4}
      */
     @SuppressWarnings("unchecked")
-    public static <A, B, C, D> Generator<Tuple4<A, B, C, D>> tuples(
+    public static <A, B, C, D> PrintableGenerator<Tuple4<A, B, C, D>> tuples(
             Generator<A> a, Generator<B> b, Generator<C> c, Generator<D> d) {
         return new TupleGenerator<>(
                 "Tuple4",
@@ -575,33 +396,7 @@ public final class Generators {
     }
 
     /**
-     * Generates a typed 4-tuple, drawing each element from its generator.
-     * It prints as a call of the constructor, {@code new Tuple4(a, b, ...)}, each element
-     * printed by its generator as it is drawn.
-     *
-     * @param a the first-element printable generator
-     * @param b the second-element printable generator
-     * @param c the third-element printable generator
-     * @param d the fourth-element printable generator
-     * @param <A> the first-element type
-     * @param <B> the second-element type
-     * @param <C> the third-element type
-     * @param <D> the fourth-element type
-     * @return a generator of {@link Tuple4}
-     */
-    @SuppressWarnings("unchecked")
-    public static <A, B, C, D> PrintableGenerator<Tuple4<A, B, C, D>> tuples(
-            PrintableGenerator<A> a, PrintableGenerator<B> b, PrintableGenerator<C> c, PrintableGenerator<D> d) {
-        return new TupleGenerator.Printable<>(
-                "Tuple4",
-                List.of(a, b, c, d),
-                parts -> new Tuple4<>((A) parts.get(0), (B) parts.get(1), (C) parts.get(2), (D) parts.get(3)));
-    }
-
-    /**
      * Generates a typed 5-tuple, drawing each element from its generator.
-     * When every element generator is printable the overload taking {@link PrintableGenerator}
-     * is chosen, and the tuple prints; this one draws silently.
      *
      * @param a the first-element generator
      * @param b the second-element generator
@@ -616,7 +411,7 @@ public final class Generators {
      * @return a generator of {@link Tuple5}
      */
     @SuppressWarnings("unchecked")
-    public static <A, B, C, D, E> Generator<Tuple5<A, B, C, D, E>> tuples(
+    public static <A, B, C, D, E> PrintableGenerator<Tuple5<A, B, C, D, E>> tuples(
             Generator<A> a, Generator<B> b, Generator<C> c, Generator<D> d, Generator<E> e) {
         return new TupleGenerator<>(
                 "Tuple5",
@@ -626,40 +421,7 @@ public final class Generators {
     }
 
     /**
-     * Generates a typed 5-tuple, drawing each element from its generator.
-     * It prints as a call of the constructor, {@code new Tuple5(a, b, ...)}, each element
-     * printed by its generator as it is drawn.
-     *
-     * @param a the first-element printable generator
-     * @param b the second-element printable generator
-     * @param c the third-element printable generator
-     * @param d the fourth-element printable generator
-     * @param e the fifth-element printable generator
-     * @param <A> the first-element type
-     * @param <B> the second-element type
-     * @param <C> the third-element type
-     * @param <D> the fourth-element type
-     * @param <E> the fifth-element type
-     * @return a generator of {@link Tuple5}
-     */
-    @SuppressWarnings("unchecked")
-    public static <A, B, C, D, E> PrintableGenerator<Tuple5<A, B, C, D, E>> tuples(
-            PrintableGenerator<A> a,
-            PrintableGenerator<B> b,
-            PrintableGenerator<C> c,
-            PrintableGenerator<D> d,
-            PrintableGenerator<E> e) {
-        return new TupleGenerator.Printable<>(
-                "Tuple5",
-                List.of(a, b, c, d, e),
-                parts -> new Tuple5<>(
-                        (A) parts.get(0), (B) parts.get(1), (C) parts.get(2), (D) parts.get(3), (E) parts.get(4)));
-    }
-
-    /**
      * Generates a typed 6-tuple, drawing each element from its generator.
-     * When every element generator is printable the overload taking {@link PrintableGenerator}
-     * is chosen, and the tuple prints; this one draws silently.
      *
      * @param a the first-element generator
      * @param b the second-element generator
@@ -676,7 +438,7 @@ public final class Generators {
      * @return a generator of {@link Tuple6}
      */
     @SuppressWarnings("unchecked")
-    public static <A, B, C, D, E, F> Generator<Tuple6<A, B, C, D, E, F>> tuples(
+    public static <A, B, C, D, E, F> PrintableGenerator<Tuple6<A, B, C, D, E, F>> tuples(
             Generator<A> a, Generator<B> b, Generator<C> c, Generator<D> d, Generator<E> e, Generator<F> f) {
         return new TupleGenerator<>(
                 "Tuple6",
@@ -687,44 +449,7 @@ public final class Generators {
     }
 
     /**
-     * Generates a typed 6-tuple, drawing each element from its generator.
-     * It prints as a call of the constructor, {@code new Tuple6(a, b, ...)}, each element
-     * printed by its generator as it is drawn.
-     *
-     * @param a the first-element printable generator
-     * @param b the second-element printable generator
-     * @param c the third-element printable generator
-     * @param d the fourth-element printable generator
-     * @param e the fifth-element printable generator
-     * @param f the sixth-element printable generator
-     * @param <A> the first-element type
-     * @param <B> the second-element type
-     * @param <C> the third-element type
-     * @param <D> the fourth-element type
-     * @param <E> the fifth-element type
-     * @param <F> the sixth-element type
-     * @return a generator of {@link Tuple6}
-     */
-    @SuppressWarnings("unchecked")
-    public static <A, B, C, D, E, F> PrintableGenerator<Tuple6<A, B, C, D, E, F>> tuples(
-            PrintableGenerator<A> a,
-            PrintableGenerator<B> b,
-            PrintableGenerator<C> c,
-            PrintableGenerator<D> d,
-            PrintableGenerator<E> e,
-            PrintableGenerator<F> f) {
-        return new TupleGenerator.Printable<>(
-                "Tuple6",
-                List.of(a, b, c, d, e, f),
-                parts -> new Tuple6<>(
-                        (A) parts.get(0), (B) parts.get(1), (C) parts.get(2), (D) parts.get(3), (E) parts.get(4), (F)
-                                parts.get(5)));
-    }
-
-    /**
      * Generates a typed 7-tuple, drawing each element from its generator.
-     * When every element generator is printable the overload taking {@link PrintableGenerator}
-     * is chosen, and the tuple prints; this one draws silently.
      *
      * @param a the first-element generator
      * @param b the second-element generator
@@ -743,7 +468,7 @@ public final class Generators {
      * @return a generator of {@link Tuple7}
      */
     @SuppressWarnings("unchecked")
-    public static <A, B, C, D, E, F, G> Generator<Tuple7<A, B, C, D, E, F, G>> tuples(
+    public static <A, B, C, D, E, F, G> PrintableGenerator<Tuple7<A, B, C, D, E, F, G>> tuples(
             Generator<A> a,
             Generator<B> b,
             Generator<C> c,
@@ -765,52 +490,7 @@ public final class Generators {
     }
 
     /**
-     * Generates a typed 7-tuple, drawing each element from its generator.
-     * It prints as a call of the constructor, {@code new Tuple7(a, b, ...)}, each element
-     * printed by its generator as it is drawn.
-     *
-     * @param a the first-element printable generator
-     * @param b the second-element printable generator
-     * @param c the third-element printable generator
-     * @param d the fourth-element printable generator
-     * @param e the fifth-element printable generator
-     * @param f the sixth-element printable generator
-     * @param g the seventh-element printable generator
-     * @param <A> the first-element type
-     * @param <B> the second-element type
-     * @param <C> the third-element type
-     * @param <D> the fourth-element type
-     * @param <E> the fifth-element type
-     * @param <F> the sixth-element type
-     * @param <G> the seventh-element type
-     * @return a generator of {@link Tuple7}
-     */
-    @SuppressWarnings("unchecked")
-    public static <A, B, C, D, E, F, G> PrintableGenerator<Tuple7<A, B, C, D, E, F, G>> tuples(
-            PrintableGenerator<A> a,
-            PrintableGenerator<B> b,
-            PrintableGenerator<C> c,
-            PrintableGenerator<D> d,
-            PrintableGenerator<E> e,
-            PrintableGenerator<F> f,
-            PrintableGenerator<G> g) {
-        return new TupleGenerator.Printable<>(
-                "Tuple7",
-                List.of(a, b, c, d, e, f, g),
-                parts -> new Tuple7<>(
-                        (A) parts.get(0),
-                        (B) parts.get(1),
-                        (C) parts.get(2),
-                        (D) parts.get(3),
-                        (E) parts.get(4),
-                        (F) parts.get(5),
-                        (G) parts.get(6)));
-    }
-
-    /**
      * Generates a typed 8-tuple, drawing each element from its generator.
-     * When every element generator is printable the overload taking {@link PrintableGenerator}
-     * is chosen, and the tuple prints; this one draws silently.
      *
      * @param a the first-element generator
      * @param b the second-element generator
@@ -831,7 +511,7 @@ public final class Generators {
      * @return a generator of {@link Tuple8}
      */
     @SuppressWarnings("unchecked")
-    public static <A, B, C, D, E, F, G, H> Generator<Tuple8<A, B, C, D, E, F, G, H>> tuples(
+    public static <A, B, C, D, E, F, G, H> PrintableGenerator<Tuple8<A, B, C, D, E, F, G, H>> tuples(
             Generator<A> a,
             Generator<B> b,
             Generator<C> c,
@@ -855,76 +535,15 @@ public final class Generators {
     }
 
     /**
-     * Generates a typed 8-tuple, drawing each element from its generator.
-     * It prints as a call of the constructor, {@code new Tuple8(a, b, ...)}, each element
-     * printed by its generator as it is drawn.
-     *
-     * @param a the first-element printable generator
-     * @param b the second-element printable generator
-     * @param c the third-element printable generator
-     * @param d the fourth-element printable generator
-     * @param e the fifth-element printable generator
-     * @param f the sixth-element printable generator
-     * @param g the seventh-element printable generator
-     * @param h the eighth-element printable generator
-     * @param <A> the first-element type
-     * @param <B> the second-element type
-     * @param <C> the third-element type
-     * @param <D> the fourth-element type
-     * @param <E> the fifth-element type
-     * @param <F> the sixth-element type
-     * @param <G> the seventh-element type
-     * @param <H> the eighth-element type
-     * @return a generator of {@link Tuple8}
-     */
-    @SuppressWarnings("unchecked")
-    public static <A, B, C, D, E, F, G, H> PrintableGenerator<Tuple8<A, B, C, D, E, F, G, H>> tuples(
-            PrintableGenerator<A> a,
-            PrintableGenerator<B> b,
-            PrintableGenerator<C> c,
-            PrintableGenerator<D> d,
-            PrintableGenerator<E> e,
-            PrintableGenerator<F> f,
-            PrintableGenerator<G> g,
-            PrintableGenerator<H> h) {
-        return new TupleGenerator.Printable<>(
-                "Tuple8",
-                List.of(a, b, c, d, e, f, g, h),
-                parts -> new Tuple8<>(
-                        (A) parts.get(0),
-                        (B) parts.get(1),
-                        (C) parts.get(2),
-                        (D) parts.get(3),
-                        (E) parts.get(4),
-                        (F) parts.get(5),
-                        (G) parts.get(6),
-                        (H) parts.get(7)));
-    }
-
-    /**
      * Generates fixed-length heterogeneous tuples as {@code List<Object>}. This variadic form is the
      * fallback for arities above {@link Tuple8 eight}; for two to eight elements prefer the typed
      * {@code tuples} overloads, which return a {@code TupleN} record with statically-typed accessors.
-     * When every generator is printable the overload taking {@link PrintableGenerator}s is chosen,
-     * and the tuple prints; this one draws silently.
      *
      * @param generators one generator per position
      * @return a tuple generator
      */
-    public static Generator<List<Object>> tuples(Generator<?>... generators) {
+    public static PrintableGenerator<List<Object>> tuples(Generator<?>... generators) {
         return new TupleGenerator<>(List.of(generators), parts -> parts);
-    }
-
-    /**
-     * Generates fixed-length heterogeneous tuples as {@code List<Object>}, printed as {@code [a,
-     * b]}, each element printed by its generator. This variadic form is the fallback for arities
-     * above {@link Tuple8 eight}.
-     *
-     * @param generators one printable generator per position
-     * @return a tuple generator
-     */
-    public static PrintableGenerator<List<Object>> tuples(PrintableGenerator<?>... generators) {
-        return new TupleGenerator.Printable<>(List.of(generators), parts -> parts);
     }
 
     // --- imperative composition ---
@@ -947,7 +566,7 @@ public final class Generators {
      * print it in place, or with {@link TestCase#drawSilent} to leave it out:
      *
      * <pre>{@code
-     * PrintableGenerator<Point> points = composite((tc, p) -> {
+     * Generator<Point> points = composite((tc, p) -> {
      *     p.beginGroup("Point.of(");
      *     int x = tc.drawAndPrint(integers(), p);
      *     p.separator();
@@ -968,7 +587,7 @@ public final class Generators {
     /**
      * Creates a forward reference for building self-recursive or mutually recursive generators. Pass
      * the returned {@link Deferred} into other generators, then call {@link Deferred#set} once with
-     * the real implementation, a printable generator.
+     * the real implementation.
      *
      * @param <T> the value type
      * @return a deferred generator reference
@@ -983,29 +602,8 @@ public final class Generators {
      * the same type, it returns a generator that combines some number of them into a compound
      * value. It is called afresh for each branch.
      *
-     * <p>This overload draws silently. When {@code base} is printable the overload taking a {@link
-     * PrintableGenerator} is chosen, and {@code extend} must then return printable generators;
-     * pass {@code base} as a plain {@link Generator} to build a silent recursive generator from it.
-     *
-     * @param base the leaf generator
-     * @param extend builds a branch from a generator of sub-values
-     * @param <T> the value type
-     * @return a recursive generator
-     */
-    public static <T> RecursiveGenerator<T> recursive(
-            Generator<T> base, Function<PrintableGenerator<T>, ? extends Generator<T>> extend) {
-        return new RecursiveGenerator<>(
-                base, extend, RecursiveGenerator.DEFAULT_MAX_DEPTH, RecursiveGenerator.DEFAULT_MAX_LEAVES);
-    }
-
-    /**
-     * Generates recursively defined data, such as trees or JSON documents. {@code base} generates
-     * the leaves; {@code extend} builds one level of structure: given a generator of sub-values of
-     * the same type, it returns a generator that combines some number of them into a compound
-     * value. It is called afresh for each branch. It prints what its leaves and branches print.
-     *
      * <pre>{@code
-     * PrintableGenerator<Tree> trees = recursive(
+     * Generator<Tree> trees = recursive(
      *         integers().map(Leaf::new),
      *         subtrees -> lists(subtrees).maxSize(3).map(Node::new));
      * }</pre>
@@ -1014,14 +612,14 @@ public final class Generators {
      * and {@link RecursiveGenerator#maxLeaves}. For mutually recursive generators, use {@link
      * #deferred()}.
      *
-     * @param base the printable leaf generator
-     * @param extend builds a printable branch from a generator of sub-values
+     * @param base the leaf generator
+     * @param extend builds a branch from a generator of sub-values
      * @param <T> the value type
-     * @return a printable recursive generator
+     * @return a recursive generator
      */
-    public static <T> RecursiveGenerator.Printable<T> recursive(
-            PrintableGenerator<T> base, Function<PrintableGenerator<T>, ? extends PrintableGenerator<T>> extend) {
-        return new RecursiveGenerator.Printable<>(
+    public static <T> RecursiveGenerator<T> recursive(
+            Generator<T> base, Function<Generator<T>, ? extends Generator<T>> extend) {
+        return new RecursiveGenerator<>(
                 base, extend, RecursiveGenerator.DEFAULT_MAX_DEPTH, RecursiveGenerator.DEFAULT_MAX_LEAVES);
     }
 
@@ -1046,8 +644,7 @@ public final class Generators {
 
     /**
      * Begin deriving a generator for a record type, allowing per-component overrides via {@link
-     * RecordGenerator#with}, which take printable generators: a record prints as a call of its
-     * constructor, each component printed by its generator.
+     * RecordGenerator#with}.
      *
      * @param type the record type
      * @param <T> the record type

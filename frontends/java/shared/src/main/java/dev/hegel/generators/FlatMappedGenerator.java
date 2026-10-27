@@ -10,17 +10,17 @@ import java.util.function.Function;
 /**
  * Result of {@link Generator#flatMap}. Always uses the composite draw path: it draws a value
  * silently, asks {@code f} for the next generator, and draws from it, bracketing the pair in a
- * {@code flat_map} span. It prints what the second generator, which is printable, prints.
+ * {@code flat_map} span. It prints what the second generator prints.
  *
  * @param <T> the source value type
  * @param <U> the dependent value type
  */
 public final class FlatMappedGenerator<T, U> implements PrintableGenerator<U> {
     private final Generator<T> source;
-    private final Function<? super T, ? extends PrintableGenerator<U>> f;
+    private final Function<? super T, ? extends Generator<U>> f;
     private final CachedLabel label = new CachedLabel();
 
-    public FlatMappedGenerator(Generator<T> source, Function<? super T, ? extends PrintableGenerator<U>> f) {
+    public FlatMappedGenerator(Generator<T> source, Function<? super T, ? extends Generator<U>> f) {
         this.source = source;
         this.f = f;
     }

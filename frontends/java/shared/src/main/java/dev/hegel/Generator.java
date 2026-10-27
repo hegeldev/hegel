@@ -18,11 +18,9 @@ import java.util.function.Predicate;
  * <p>A {@code Generator} draws silently: it can be drawn with {@link TestCase#drawSilent}, and used
  * anywhere a value is drawn without being reported. Drawing with {@link TestCase#draw}, which
  * prints the value in the failure report, needs a {@link PrintableGenerator}, which describes the
- * value as it draws it, and this is checked when the test compiles. Every built-in leaf generator
- * is printable, and a structural one, such as {@link Generators#lists}, is printable when its parts
- * are; a hand-written one is made printable by implementing {@link PrintableGenerator}, or by
- * {@link #printWith} or {@link #printAsRepr()}. See the {@linkplain dev.hegel package
- * documentation} for the printing model.
+ * value as it draws it. Every built-in generator is printable; a hand-written one is made
+ * printable by implementing {@link PrintableGenerator}, or by {@link #printWith} or {@link
+ * #printAsRepr()}. See the {@linkplain dev.hegel package documentation} for the printing model.
  *
  * <p>A hand-written generator is a lambda over the test case, drawing its parts through it:
  *
@@ -57,10 +55,8 @@ public interface Generator<T> {
     }
 
     /**
-     * Transform each generated value with {@code f}. The result is printable whether or not this
-     * generator is: it prints the transformed value with {@link Printer#repr}. Mapping a {@link
-     * PrintableGenerator} gives a {@link MappedGenerator.Printable}, whose {@link
-     * MappedGenerator.Printable#printAsCall printAsCall} prints the call that made the value
+     * Transform each generated value with {@code f}. The result prints the transformed value with
+     * {@link Printer#repr}; {@link MappedGenerator#printAsCall} prints the call that made it
      * instead.
      *
      * @param f the mapping function
@@ -73,28 +69,25 @@ public interface Generator<T> {
 
     /**
      * Keep only values satisfying {@code predicate}. Prefer constraining a generator at
-     * construction time (e.g. bounds) over filtering when possible. The result is printable when
-     * this generator is ({@link PrintableGenerator#filter}), printing an accepted value as this
-     * generator does and nothing of a rejected one.
+     * construction time (e.g. bounds) over filtering when possible. The result prints an accepted
+     * value as this generator does, and nothing of a rejected one.
      *
      * @param predicate the acceptance test
      * @return a filtered generator
      */
-    default Generator<T> filter(Predicate<? super T> predicate) {
+    default PrintableGenerator<T> filter(Predicate<? super T> predicate) {
         return new FilteredGenerator<>(this, predicate);
     }
 
     /**
-     * Dependent generation: draw a value silently, then draw from the generator {@code f} returns
-     * for it. The result prints what that second generator prints, so {@code f} returns a {@link
-     * PrintableGenerator}; make a hand-written one printable with {@link #printWith} or {@link
-     * #printAsRepr()}.
+     * Dependent generation: draw a value, then draw from the generator {@code f} returns for it.
+     * The result prints what that second generator prints.
      *
      * @param f maps a drawn value to the next generator
      * @param <U> the result type
      * @return a generator of dependent values
      */
-    default <U> PrintableGenerator<U> flatMap(Function<? super T, ? extends PrintableGenerator<U>> f) {
+    default <U> PrintableGenerator<U> flatMap(Function<? super T, ? extends Generator<U>> f) {
         return new FlatMappedGenerator<>(this, f);
     }
 

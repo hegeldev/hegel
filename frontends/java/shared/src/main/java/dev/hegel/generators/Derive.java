@@ -1,5 +1,6 @@
 package dev.hegel.generators;
 
+import dev.hegel.Generator;
 import dev.hegel.Generators;
 import dev.hegel.HegelException;
 import dev.hegel.PrintableGenerator;
@@ -19,7 +20,7 @@ public final class Derive {
 
     /** Erase a generator's element type; the derived value is consumed as {@code Object}. */
     @SuppressWarnings("unchecked")
-    private static PrintableGenerator<Object> erase(PrintableGenerator<?> g) {
+    private static PrintableGenerator<Object> erase(Generator<?> g) {
         return (PrintableGenerator<Object>) g;
     }
 
@@ -34,7 +35,7 @@ public final class Derive {
     }
 
     private static PrintableGenerator<Object> fromClass(Class<?> cls) {
-        PrintableGenerator<?> g = scalar(cls);
+        Generator<?> g = scalar(cls);
         if (g != null) {
             return erase(g);
         }
@@ -49,7 +50,7 @@ public final class Derive {
                 + "; supply one explicitly (e.g. a Generator parameter or a record override).");
     }
 
-    private static PrintableGenerator<?> scalar(Class<?> cls) {
+    private static Generator<?> scalar(Class<?> cls) {
         if (cls == int.class || cls == Integer.class) {
             return Generators.integers();
         }

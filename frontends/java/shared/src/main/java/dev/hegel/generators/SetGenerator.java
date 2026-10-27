@@ -15,24 +15,15 @@ import java.util.Set;
  * <p>The size range defaults to any size; narrow it with the fluent {@link #minSize(int)} / {@link
  * #maxSize(int)} methods.
  *
- * <p>A {@code SetGenerator} draws silently; {@link Printable}, what {@link
- * dev.hegel.Generators#sets} returns for a printable element generator, prints as {@code [a, b]},
- * each element printed by the element generator as it is drawn; a rejected duplicate prints
- * nothing.
- *
- * @param <T> the element type
+ * <p>It prints as {@code [a, b]}, each element printed by the element generator as it is drawn;
+ * a rejected duplicate prints nothing.
  */
-public class SetGenerator<T> implements Generator<Set<T>> {
+public final class SetGenerator<T> implements PrintableGenerator<Set<T>> {
     private final Generator<T> element;
     private final long minSize;
     private final long maxSize;
     private final CachedLabel label = new CachedLabel();
 
-    /**
-     * @param element the element generator
-     * @param minSize the minimum size (inclusive)
-     * @param maxSize the maximum size (inclusive), or {@link dev.hegel.lowlevel.Abi#UNBOUNDED}
-     */
     public SetGenerator(Generator<T> element, long minSize, long maxSize) {
         Sizes.validate(minSize, maxSize, "sets");
         this.element = element;
@@ -68,7 +59,13 @@ public class SetGenerator<T> implements Generator<Set<T>> {
         return draw(tc, null);
     }
 
-    final Set<T> draw(TestCase tc, Printer printer) {
+    /** @hidden */
+    @Override
+    public Set<T> doDrawAndPrint(TestCase tc, Printer printer) {
+        return draw(tc, printer);
+    }
+
+    private Set<T> draw(TestCase tc, Printer printer) {
         Printer p = Components.out(printer);
         tc.startSpan(label());
         try {
@@ -97,43 +94,6 @@ public class SetGenerator<T> implements Generator<Set<T>> {
             }
         } finally {
             tc.stopSpan(false);
-        }
-    }
-
-    /**
-     * A set generator over a printable element generator: it prints as {@code [a, b]}, each
-     * element printed by the element generator as it is drawn, and a rejected duplicate prints
-     * nothing. Its builder methods keep it printable.
-     *
-     * @param <T> the element type
-     */
-    public static final class Printable<T> extends SetGenerator<T> implements PrintableGenerator<Set<T>> {
-        private final PrintableGenerator<T> element;
-
-        /**
-         * @param element the printable element generator
-         * @param minSize the minimum size (inclusive)
-         * @param maxSize the maximum size (inclusive), or {@link dev.hegel.lowlevel.Abi#UNBOUNDED}
-         */
-        public Printable(PrintableGenerator<T> element, long minSize, long maxSize) {
-            super(element, minSize, maxSize);
-            this.element = element;
-        }
-
-        @Override
-        public Printable<T> minSize(int minSize) {
-            return new Printable<>(element, minSize, super.maxSize);
-        }
-
-        @Override
-        public Printable<T> maxSize(int maxSize) {
-            return new Printable<>(element, super.minSize, maxSize);
-        }
-
-        /** @hidden */
-        @Override
-        public Set<T> doDrawAndPrint(TestCase tc, Printer printer) {
-            return draw(tc, printer);
         }
     }
 }

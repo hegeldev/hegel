@@ -9,7 +9,7 @@ final class Utils {
     private Utils() {}
 
     /** Assert that every generated value satisfies {@code predicate}. */
-    static <T> void assertAllExamples(PrintableGenerator<T> gen, Predicate<T> predicate) {
+    static <T> void assertAllExamples(Generator<T> gen, Predicate<T> predicate) {
         Hegel.test(
                 tc -> {
                     T value = tc.draw(gen);
@@ -21,7 +21,7 @@ final class Utils {
     }
 
     /** Assert that no generated value satisfies {@code condition}. */
-    static <T> void assertNoExamples(PrintableGenerator<T> gen, Predicate<T> condition) {
+    static <T> void assertNoExamples(Generator<T> gen, Predicate<T> condition) {
         Hegel.test(
                 tc -> {
                     T value = tc.draw(gen);
@@ -33,7 +33,7 @@ final class Utils {
     }
 
     /** Find the minimal generated value satisfying {@code condition} (exercises shrinking). */
-    static <T> T minimal(PrintableGenerator<T> gen, Predicate<T> condition) {
+    static <T> T minimal(Generator<T> gen, Predicate<T> condition) {
         return minimal(gen, condition, new Settings().testCases(500));
     }
 
@@ -64,7 +64,7 @@ final class Utils {
      * under the calling test's name, so callers only need to set what they care about (typically a
      * larger {@code testCases} budget for harder shrink targets).
      */
-    static <T> T minimal(PrintableGenerator<T> gen, Predicate<T> condition, Settings settings) {
+    static <T> T minimal(Generator<T> gen, Predicate<T> condition, Settings settings) {
         AtomicReference<T> found = new AtomicReference<>();
         AtomicBoolean any = new AtomicBoolean(false);
         try {
@@ -88,7 +88,7 @@ final class Utils {
     }
 
     /** Find any generated value satisfying {@code condition}. */
-    static <T> T findAny(PrintableGenerator<T> gen, Predicate<T> condition) {
+    static <T> T findAny(Generator<T> gen, Predicate<T> condition) {
         return minimal(gen, condition);
     }
 }

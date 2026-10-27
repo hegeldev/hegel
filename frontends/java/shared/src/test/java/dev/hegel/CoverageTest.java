@@ -216,7 +216,7 @@ class CoverageTest {
         assertThrows(IllegalArgumentException.class, () -> drawWith(third, emailGen));
     }
 
-    private static <T> T drawWith(FakeLibhegel fake, PrintableGenerator<T> gen) {
+    private static <T> T drawWith(FakeLibhegel fake, Generator<T> gen) {
         TestCase tc = new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), false);
         return tc.draw(gen);
     }

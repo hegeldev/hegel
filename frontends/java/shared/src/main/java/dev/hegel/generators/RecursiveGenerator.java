@@ -18,19 +18,13 @@ import java.util.function.Function;
  * #maxDepth(int)} (default {@value #DEFAULT_MAX_DEPTH}) and {@link #maxLeaves(int)} (default
  * {@value #DEFAULT_MAX_LEAVES}).
  *
- * <p>A {@code RecursiveGenerator} draws silently. {@link Printable}, what {@link
- * dev.hegel.Generators#recursive} returns for a printable base generator and an {@code extend}
- * returning printable generators, prints what its leaves and branches print: the base generator
- * for a leaf, and the generator {@code extend} returns for a branch, whose sub-values print in
- * place. An attempt that is discarded and retried prints nothing.
- *
- * <p>The generator of sub-values {@code extend} is given is printable either way; in a {@code
- * RecursiveGenerator} that is not {@link Printable}, it prints a sub-value with {@link
- * Printer#repr}.
+ * <p>It prints what its leaves and branches print: the base generator for a leaf, and the
+ * generator {@code extend} returns for a branch, whose sub-values print in place. An attempt that
+ * is discarded and retried prints nothing.
  *
  * @param <T> the value type
  */
-public class RecursiveGenerator<T> implements Generator<T> {
+public final class RecursiveGenerator<T> implements PrintableGenerator<T> {
     /** The default maximum nesting depth of branches. */
     public static final int DEFAULT_MAX_DEPTH = 32;
 
@@ -38,22 +32,13 @@ public class RecursiveGenerator<T> implements Generator<T> {
     public static final int DEFAULT_MAX_LEAVES = 100;
 
     private final Generator<T> base;
-    private final Function<PrintableGenerator<T>, ? extends Generator<T>> extend;
+    private final Function<Generator<T>, ? extends Generator<T>> extend;
     private final int maxDepth;
     private final int maxLeaves;
     private final CachedLabel label = new CachedLabel();
 
-    /**
-     * @param base the leaf generator
-     * @param extend builds a branch from a generator of sub-values
-     * @param maxDepth the maximum nesting depth
-     * @param maxLeaves the maximum number of leaves
-     */
     public RecursiveGenerator(
-            Generator<T> base,
-            Function<PrintableGenerator<T>, ? extends Generator<T>> extend,
-            int maxDepth,
-            int maxLeaves) {
+            Generator<T> base, Function<Generator<T>, ? extends Generator<T>> extend, int maxDepth, int maxLeaves) {
         if (maxDepth < 0) {
             throw new IllegalArgumentException("recursive: maxDepth must be >= 0, got " + maxDepth);
         }
@@ -108,7 +93,13 @@ public class RecursiveGenerator<T> implements Generator<T> {
         return draw(tc, null);
     }
 
-    final T draw(TestCase tc, Printer printer) {
+    /** @hidden */
+    @Override
+    public T doDrawAndPrint(TestCase tc, Printer printer) {
+        return draw(tc, printer);
+    }
+
+    private T draw(TestCase tc, Printer printer) {
         Printer p = Components.out(printer);
         tc.startSpan(label());
         try {
@@ -150,7 +141,7 @@ public class RecursiveGenerator<T> implements Generator<T> {
 
                 @Override
                 public T doDrawAndPrint(TestCase inner, Printer innerPrinter) {
-                    return drawAndPrintSubtree(inner, recursion, depth + 1, innerPrinter);
+                    return drawSubtreeInSpan(inner, recursion, depth + 1, innerPrinter);
                 }
             };
             return Components.draw(tc, extend.apply(subtrees), printer);
@@ -161,69 +152,12 @@ public class RecursiveGenerator<T> implements Generator<T> {
         return Components.draw(tc, base, printer);
     }
 
-    T drawAndPrintSubtree(TestCase tc, long recursion, long depth, Printer printer) {
-        T value = drawSubtreeInSpan(tc, recursion, depth, null);
-        printer.repr(value);
-        return value;
-    }
-
-    final T drawSubtreeInSpan(TestCase tc, long recursion, long depth, Printer printer) {
+    private T drawSubtreeInSpan(TestCase tc, long recursion, long depth, Printer printer) {
         tc.startSpan(label());
         try {
             return drawSubtree(tc, recursion, depth, printer);
         } finally {
             tc.stopSpan(false);
-        }
-    }
-
-    /**
-     * A recursive generator over a printable base generator and an {@code extend} returning
-     * printable generators: it prints what its leaves and branches print, the base generator for
-     * a leaf and the generator {@code extend} returns for a branch, whose sub-values print in
-     * place. An attempt that is discarded and retried prints nothing. Its builder methods keep it
-     * printable.
-     *
-     * @param <T> the value type
-     */
-    public static final class Printable<T> extends RecursiveGenerator<T> implements PrintableGenerator<T> {
-        private final PrintableGenerator<T> base;
-        private final Function<PrintableGenerator<T>, ? extends PrintableGenerator<T>> extend;
-
-        /**
-         * @param base the printable leaf generator
-         * @param extend builds a printable branch from a generator of sub-values
-         * @param maxDepth the maximum nesting depth
-         * @param maxLeaves the maximum number of leaves
-         */
-        public Printable(
-                PrintableGenerator<T> base,
-                Function<PrintableGenerator<T>, ? extends PrintableGenerator<T>> extend,
-                int maxDepth,
-                int maxLeaves) {
-            super(base, extend, maxDepth, maxLeaves);
-            this.base = base;
-            this.extend = extend;
-        }
-
-        @Override
-        public Printable<T> maxDepth(int maxDepth) {
-            return new Printable<>(base, extend, maxDepth, super.maxLeaves);
-        }
-
-        @Override
-        public Printable<T> maxLeaves(int maxLeaves) {
-            return new Printable<>(base, extend, super.maxDepth, maxLeaves);
-        }
-
-        /** @hidden */
-        @Override
-        public T doDrawAndPrint(TestCase tc, Printer printer) {
-            return draw(tc, printer);
-        }
-
-        @Override
-        T drawAndPrintSubtree(TestCase tc, long recursion, long depth, Printer printer) {
-            return drawSubtreeInSpan(tc, recursion, depth, printer);
         }
     }
 }

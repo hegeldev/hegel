@@ -16,7 +16,7 @@ class RecursiveGeneratorTest {
     private static final Settings SETTINGS = new Settings().database(Database.disabled());
 
     /** A tree: an {@code Integer} leaf or a {@code List} of trees. */
-    private static PrintableGenerator<Object> trees(int maxDepth, int maxLeaves) {
+    private static Generator<Object> trees(int maxDepth, int maxLeaves) {
         return recursive(
                         integers().min(0).max(10).map(x -> (Object) x),
                         subtrees -> lists(subtrees).maxSize(3).map(xs -> (Object) xs))
@@ -75,7 +75,7 @@ class RecursiveGeneratorTest {
 
     @Test
     void oversizedAttemptsAreRetried() {
-        PrintableGenerator<Object> bushy = recursive(
+        Generator<Object> bushy = recursive(
                         integers().min(0).max(10).map(x -> (Object) x),
                         subtrees -> lists(subtrees).minSize(3).map(xs -> (Object) xs))
                 .maxLeaves(2);

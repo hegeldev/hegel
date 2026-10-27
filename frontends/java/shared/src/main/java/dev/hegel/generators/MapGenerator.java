@@ -15,27 +15,16 @@ import java.util.Map;
  * <p>The entry-count range defaults to any size; narrow it with the fluent {@link #minSize(int)} /
  * {@link #maxSize(int)} methods.
  *
- * <p>A {@code MapGenerator} draws silently; {@link Printable}, what {@link
- * dev.hegel.Generators#maps} returns for printable key and value generators, prints as {@code {k:
- * v}}, each key and value printed by its generator as it is drawn; an entry with a rejected
- * duplicate key prints nothing.
- *
- * @param <K> the key type
- * @param <V> the value type
+ * <p>It prints as {@code {k: v}}, each key and value printed by its generator as it is drawn; an
+ * entry with a rejected duplicate key prints nothing.
  */
-public class MapGenerator<K, V> implements Generator<Map<K, V>> {
+public final class MapGenerator<K, V> implements PrintableGenerator<Map<K, V>> {
     private final Generator<K> keys;
     private final Generator<V> values;
     private final long minSize;
     private final long maxSize;
     private final CachedLabel label = new CachedLabel();
 
-    /**
-     * @param keys the key generator
-     * @param values the value generator
-     * @param minSize the minimum entry count (inclusive)
-     * @param maxSize the maximum entry count (inclusive), or {@link dev.hegel.lowlevel.Abi#UNBOUNDED}
-     */
     public MapGenerator(Generator<K> keys, Generator<V> values, long minSize, long maxSize) {
         Sizes.validate(minSize, maxSize, "maps");
         this.keys = keys;
@@ -72,7 +61,13 @@ public class MapGenerator<K, V> implements Generator<Map<K, V>> {
         return draw(tc, null);
     }
 
-    final Map<K, V> draw(TestCase tc, Printer printer) {
+    /** @hidden */
+    @Override
+    public Map<K, V> doDrawAndPrint(TestCase tc, Printer printer) {
+        return draw(tc, printer);
+    }
+
+    private Map<K, V> draw(TestCase tc, Printer printer) {
         Printer p = Components.out(printer);
         tc.startSpan(label());
         try {
@@ -103,48 +98,6 @@ public class MapGenerator<K, V> implements Generator<Map<K, V>> {
             }
         } finally {
             tc.stopSpan(false);
-        }
-    }
-
-    /**
-     * A map generator over printable key and value generators: it prints as {@code {k: v}}, each
-     * key and value printed by its generator as it is drawn, and an entry with a rejected
-     * duplicate key prints nothing. Its builder methods keep it printable.
-     *
-     * @param <K> the key type
-     * @param <V> the value type
-     */
-    public static final class Printable<K, V> extends MapGenerator<K, V> implements PrintableGenerator<Map<K, V>> {
-        private final PrintableGenerator<K> keys;
-        private final PrintableGenerator<V> values;
-
-        /**
-         * @param keys the printable key generator
-         * @param values the printable value generator
-         * @param minSize the minimum entry count (inclusive)
-         * @param maxSize the maximum entry count (inclusive), or {@link
-         *     dev.hegel.lowlevel.Abi#UNBOUNDED}
-         */
-        public Printable(PrintableGenerator<K> keys, PrintableGenerator<V> values, long minSize, long maxSize) {
-            super(keys, values, minSize, maxSize);
-            this.keys = keys;
-            this.values = values;
-        }
-
-        @Override
-        public Printable<K, V> minSize(int minSize) {
-            return new Printable<>(keys, values, minSize, super.maxSize);
-        }
-
-        @Override
-        public Printable<K, V> maxSize(int maxSize) {
-            return new Printable<>(keys, values, super.minSize, maxSize);
-        }
-
-        /** @hidden */
-        @Override
-        public Map<K, V> doDrawAndPrint(TestCase tc, Printer printer) {
-            return draw(tc, printer);
         }
     }
 }

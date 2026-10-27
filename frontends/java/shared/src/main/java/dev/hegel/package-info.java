@@ -32,7 +32,7 @@
  * }</pre>
  *
  * <p>{@code @HegelTest} runs the method many times (100 by default). Each run receives a
- * {@link dev.hegel.TestCase}, whose {@link dev.hegel.TestCase#draw(dev.hegel.PrintableGenerator) draw} method
+ * {@link dev.hegel.TestCase}, whose {@link dev.hegel.TestCase#draw(dev.hegel.Generator) draw} method
  * produces a value from a generator.
  *
  * <p>When you need a setting that can't be a compile-time constant, or want to run a property
@@ -84,13 +84,11 @@
  * The generator that made a value can always describe it, so printing is a capability of the
  * generator, not the value: a {@link dev.hegel.PrintableGenerator} draws and prints in one step,
  * writing to the engine's {@link dev.hegel.Printer} as it draws. {@link
- * dev.hegel.TestCase#draw(dev.hegel.PrintableGenerator) draw} takes only a printable generator,
- * so that the report can say what was drawn, and drawing one that cannot print is a compile-time
- * error; {@link dev.hegel.TestCase#drawSilent(dev.hegel.Generator) drawSilent} draws from any
- * generator and prints nothing.
+ * dev.hegel.TestCase#draw(dev.hegel.Generator) draw} needs a printable generator, so that the
+ * report can say what was drawn; {@link dev.hegel.TestCase#drawSilent(dev.hegel.Generator)
+ * drawSilent} draws from any generator and prints nothing.
  *
- * <p>Every built-in leaf generator is printable, and so is every structural generator over
- * printable parts:
+ * <p>Every built-in generator is printable:
  *
  * <ul>
  *   <li>The leaf generators print the value they draw: integers, floats, booleans, strings,
@@ -101,12 +99,7 @@
  *       {@code optional}, {@code records} and {@code forType}, {@code oneOf}, {@code filter},
  *       {@code flatMap}, {@code recursive} and {@code deferred}. An element's own printing (a
  *       {@link dev.hegel.Generator#printWith printWith} callback, a deferred description) therefore
- *       appears inside its container. Each is printable exactly when its parts are: {@code
- *       lists(integers())} is a {@link dev.hegel.generators.ListGenerator.Printable}, which its
- *       builder methods keep printable, while {@code lists} of a hand-written {@code Generator} is
- *       a plain {@link dev.hegel.generators.ListGenerator} that draws silently. {@code flatMap},
- *       {@code deferred} and the overrides of {@code records} take printable generators only, as
- *       does {@code recursive} over a printable base.
+ *       appears inside its container.
  *   <li>The value-producing generators print the value they produce with {@link
  *       dev.hegel.Printer#repr}, in Java syntax: {@code map}, {@code just}, {@code sampledFrom}
  *       and {@code composite}. A composite's own draws are not printed, only what it returns.
@@ -121,17 +114,18 @@
  *       unhelpful.
  *   <li>{@link dev.hegel.Generator#printAsRepr() printAsRepr} prints each value with {@link
  *       dev.hegel.Printer#repr}.
- *   <li>{@link dev.hegel.generators.MappedGenerator.Printable#printAsCall printAsCall}, on a
- *       {@code map} whose source is printable, prints the call that made the value instead of the value:
+ *   <li>{@link dev.hegel.generators.MappedGenerator#printAsCall printAsCall}, on a {@code map}
+ *       whose source is printable, prints the call that made the value instead of the value:
  *       {@code integers().map(Key::of).printAsCall("Key.of")} reports {@code Key.of(3)}.
  *   <li>Implement {@link dev.hegel.PrintableGenerator}, drawing each part with {@link
  *       dev.hegel.TestCase#drawAndPrint} so that it prints itself in place, or build one with
  *       {@link dev.hegel.Generators#composite(java.util.function.BiFunction)}.
  * </ul>
  *
- * <p>Printability is part of a generator's static type, so declaring a printable generator as a
- * {@code Generator<T>} loses it: declare it as a {@code PrintableGenerator<T>}, or the builder type
- * a factory returns.
+ * <p>Drawing a generator that cannot print with {@code draw}, or a structural generator with a
+ * part that cannot, fails the run with an {@link IllegalArgumentException} naming the generator.
+ * Printability belongs to the generator object, so declaring it as a {@code Generator<T>} does not
+ * lose it.
  *
  * <p>The {@link dev.hegel.Printer} is the engine's layout engine: text, break points that become
  * newlines only when their group does not fit, and groups. A generator that may reject an attempt
@@ -204,28 +198,27 @@
  *
  * <h2>Combinators</h2>
  *
- * <p>Build new generators from existing ones (see {@link dev.hegel.Generator}). Each combinator of a
- * {@link dev.hegel.PrintableGenerator} is printable too:
+ * <p>Build new generators from existing ones (see {@link dev.hegel.Generator}):
  *
  * <ul>
  *   <li>{@link dev.hegel.Generator#map map} transforms each value (and keeps the efficient
  *       single-draw path when possible):
  *       <pre>{@code
- * PrintableGenerator<Integer> evens = integers().min(0).max(50).map(x -> x * 2);
+ * Generator<Integer> evens = integers().min(0).max(50).map(x -> x * 2);
  * }</pre>
  *   <li>{@link dev.hegel.Generator#filter filter} keeps values matching a predicate (prefer
  *       constraining over filtering when you can):
  *       <pre>{@code
- * PrintableGenerator<Integer> big = integers().filter(x -> x > 1000);
+ * Generator<Integer> big = integers().filter(x -> x > 1000);
  * }</pre>
  *   <li>{@link dev.hegel.Generator#flatMap flatMap} makes one draw depend on another:
  *       <pre>{@code
- * PrintableGenerator<List<Boolean>> sized = integers().min(0).max(10).flatMap(n -> lists(booleans()).minSize(n).maxSize(n));
+ * Generator<List<Boolean>> sized = integers().min(0).max(10).flatMap(n -> lists(booleans()).minSize(n).maxSize(n));
  * }</pre>
  *   <li>{@link dev.hegel.Generators#composite(java.util.function.Function) composite} builds a
  *       value imperatively from several draws, and prints the value it returns:
  *       <pre>{@code
- * PrintableGenerator<int[]> pair = Generators.composite(tc -> new int[] {
+ * Generator<int[]> pair = Generators.composite(tc -> new int[] {
  *     tc.draw(integers()), tc.draw(integers())
  * });
  * }</pre>
@@ -233,13 +226,13 @@
  *
  * <h2>Recursive generators</h2>
  *
- * <p>{@link dev.hegel.Generators#recursive(dev.hegel.PrintableGenerator, java.util.function.Function)
+ * <p>{@link dev.hegel.Generators#recursive(dev.hegel.Generator, java.util.function.Function)
  * recursive} builds recursive data such as trees from a generator of leaves and a function that
  * builds a branch from a generator of sub-values. The engine decides where the value branches,
  * within {@code maxDepth} and {@code maxLeaves}, and shrinks a tree toward its subtrees:
  *
  * <pre>{@code
- * PrintableGenerator<Object> trees = Generators.recursive(
+ * Generator<Object> trees = Generators.recursive(
  *     integers().map(n -> (Object) n),
  *     children -> lists(children).maxSize(3).map(xs -> (Object) xs));
  * }</pre>
@@ -251,8 +244,8 @@
  * record Tree(Integer leaf, Tree left, Tree right) {} // leaf != null XOR children != null
  *
  * Deferred<Tree> tree = Generators.deferred();
- * PrintableGenerator<Tree> leaf = integers().map(n -> new Tree(n, null, null));
- * PrintableGenerator<Tree> branch =
+ * Generator<Tree> leaf = integers().map(n -> new Tree(n, null, null));
+ * Generator<Tree> branch =
  *     tuples(tree, tree).map(t -> new Tree(null, t.value1(), t.value2()));
  * tree.set(oneOf(leaf, branch)); // wire up the self-reference
  * Tree t = tc.draw(tree);
@@ -367,8 +360,7 @@
  * anything fails it, and nothing is JUnit-specific. Hegel distinguishes bugs by the exception's
  * type and the first stack frame outside Hegel, the JDK, and JUnit; a frontend lists its own
  * packages in {@link dev.hegel.Settings#infrastructurePackages(String...)} so they are skipped
- * too. Custom composite generators implement {@link dev.hegel.PrintableGenerator} (or {@link
- * dev.hegel.Generator}, to draw silently) and enclose their draws
+ * too. Custom composite generators implement {@link dev.hegel.Generator} and enclose their draws
  * in {@link dev.hegel.TestCase#span(long, java.util.function.Supplier) tc.span} with a
  * {@link dev.hegel.Label} so the engine shrinks the structure as a unit.
  *

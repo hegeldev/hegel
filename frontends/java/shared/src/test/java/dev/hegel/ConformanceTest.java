@@ -321,8 +321,8 @@ class ConformanceTest {
     void deferredBuildsRecursiveGenerators() {
         // A binary tree: a leaf integer, or a branch holding two subtrees.
         Deferred<Object> tree = deferred();
-        PrintableGenerator<Object> leaf = integers().min(0).max(9).map(i -> (Object) i);
-        PrintableGenerator<Object> branch = tuples(tree, tree).map(pair -> (Object) pair);
+        Generator<Object> leaf = integers().min(0).max(9).map(i -> (Object) i);
+        Generator<Object> branch = tuples(tree, tree).map(pair -> (Object) pair);
         // `branch` produces a Tuple2<Object, Object>; isTree/depth deconstruct it via record patterns.
         tree.set(oneOf(leaf, branch));
 
