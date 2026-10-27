@@ -398,3 +398,121 @@ TEST(Recursive, SubtreesShareTheLabelOfTheWholeValue) {
                 recursive_settings(50));
     EXPECT_EQ(seen, expected);
 }
+
+namespace {
+    class Sealed {
+      public:
+        explicit Sealed(int v) : v_(v) {}
+        int value() const { return v_; }
+
+      private:
+        int v_;
+    };
+
+    template <typename H, typename T>
+    constexpr bool is_printable_handle =
+        std::is_base_of_v<gs::Generator<T>, H>;
+
+    template <typename H, typename T>
+    constexpr bool is_silent_handle =
+        std::is_base_of_v<gs::AnyGenerator<T>, H> && !is_printable_handle<H, T>;
+
+    const gs::Generator<int> printable = gs::integers<int>();
+    const gs::AnyGenerator<int> silent = gs::AnyGenerator<int>(printable);
+    const auto doubled = printable.map([](int v) { return v * 2; });
+    const auto sealed = printable.map([](int v) { return Sealed(v); });
+} // namespace
+
+TEST(HandleTypes, BuiltInGeneratorsArePrintable) {
+    static_assert(std::is_same_v<decltype(gs::integers<int>()),
+                                 gs::Generator<int>>);
+    static_assert(std::is_same_v<decltype(gs::booleans()),
+                                 gs::Generator<bool>>);
+    static_assert(std::is_same_v<decltype(gs::vectors(printable)),
+                                 gs::Generator<std::vector<int>>>);
+    static_assert(is_printable_handle<decltype(gs::just(1)), int>);
+    static_assert(is_printable_handle<decltype(doubled), int>);
+}
+
+TEST(HandleTypes, ASilentElementGivesASilentContainer) {
+    static_assert(std::is_same_v<decltype(gs::vectors(silent)),
+                                 gs::AnyGenerator<std::vector<int>>>);
+    static_assert(std::is_same_v<decltype(gs::optional(silent)),
+                                 gs::AnyGenerator<std::optional<int>>>);
+    static_assert(
+        std::is_same_v<decltype(gs::tuples(silent, silent)),
+                       gs::AnyGenerator<std::tuple<int, int>>>);
+    static_assert(std::is_same_v<decltype(gs::one_of<int>({printable, silent})),
+                                 gs::AnyGenerator<int>>);
+    static_assert(std::is_same_v<decltype(gs::one_of({printable, printable})),
+                                 gs::Generator<int>>);
+}
+
+TEST(HandleTypes, AValueWithNoRepresentationIsSilent) {
+    static_assert(is_silent_handle<decltype(sealed), Sealed>);
+    static_assert(is_silent_handle<decltype(gs::just(Sealed(1))), Sealed>);
+    static_assert(
+        is_silent_handle<decltype(gs::deferred_silent<int>().generator()),
+                         int>);
+    static_assert(is_printable_handle<
+                  decltype(sealed.print_with([](const Sealed&,
+                                                hegel::Printer&) {})),
+                  Sealed>);
+    static_assert(
+        is_printable_handle<decltype(silent.print_as_repr()), int>);
+}
+
+TEST(HandleTypes, FlatMapFollowsTheHandleItsFunctionReturns) {
+    auto to_printable = printable.flat_map([](int) { return printable; });
+    auto to_mapped = printable.flat_map([](int) { return doubled; });
+    auto to_silent = printable.flat_map([](int) { return silent; });
+    auto to_sealed = silent.flat_map([](int) { return sealed; });
+    static_assert(std::is_same_v<decltype(to_printable), gs::Generator<int>>);
+    static_assert(std::is_same_v<decltype(to_mapped), gs::Generator<int>>);
+    static_assert(std::is_same_v<decltype(to_silent), gs::AnyGenerator<int>>);
+    static_assert(
+        std::is_same_v<decltype(to_sealed), gs::AnyGenerator<Sealed>>);
+}
+
+TEST(HandleTypes, AMappedHandleWorksWhereverAGeneratorDoes) {
+    auto mapped_vectors = gs::vectors(doubled, {.min_size = 1});
+    auto mixed = gs::one_of({printable, doubled});
+    auto sealed_vectors = gs::vectors(sealed);
+    static_assert(std::is_same_v<decltype(mapped_vectors),
+                                 gs::Generator<std::vector<int>>>);
+    static_assert(std::is_same_v<decltype(mixed), gs::Generator<int>>);
+    static_assert(std::is_same_v<decltype(sealed_vectors),
+                                 gs::AnyGenerator<std::vector<Sealed>>>);
+    hegel::test(
+        [&](hegel::TestCase& tc) {
+            int n = tc.draw(doubled);
+            EXPECT_EQ(n % 2, 0);
+            std::vector<int> v = tc.draw(mapped_vectors);
+            EXPECT_FALSE(v.empty());
+            (void)tc.draw(mixed);
+            (void)tc.draw_silent(sealed_vectors);
+        },
+        hegel::Settings{.test_cases = 10,
+                        .database = hegel::Database::disabled()});
+}
+
+#if HEGEL_HAS_REFLECTION
+TEST(HandleTypes, AFieldOverrideKeepsPrintabilityOnlyIfItsGeneratorHasIt) {
+    auto printed = gs::default_generator<Point>().override(
+        gs::field<&Point::x>(printable));
+    auto silenced = gs::default_generator<Point>().override(
+        gs::field<&Point::x>(silent));
+    auto still_silenced =
+        silenced.override(gs::field<&Point::y>(printable));
+    static_assert(is_printable_handle<decltype(printed), Point>);
+    static_assert(is_silent_handle<decltype(silenced), Point>);
+    static_assert(is_silent_handle<decltype(still_silenced), Point>);
+    hegel::test(
+        [&](hegel::TestCase& tc) {
+            (void)tc.draw(printed);
+            (void)tc.draw_silent(still_silenced);
+        },
+        hegel::Settings{.test_cases = 10,
+                        .database = hegel::Database::disabled()});
+}
+#endif

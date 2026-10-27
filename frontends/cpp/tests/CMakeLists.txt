@@ -145,6 +145,8 @@ hegel_add_test(NAME test_guiding SOURCE test_guiding.cpp)
 # Value printer for draw output.
 hegel_add_test(NAME test_repr SOURCE test_repr.cpp)
 hegel_add_test(NAME test_printer SOURCE test_printer.cpp)
+hegel_add_test(NAME test_printable_generators
+    SOURCE test_printable_generators.cpp)
 # GoogleTest assertion macros inside a property body.
 hegel_add_test(NAME test_gtest_macros SOURCE test_gtest_macros.cpp)
 # Test-case cloning: clone(), spawn()/join(), and clone output approval.
@@ -186,3 +188,44 @@ add_test(NAME test_gtest COMMAND test_gtest)
 set_tests_properties(test_gtest PROPERTIES
     PASS_REGULAR_EXPRESSION "actual:"
 )
+
+# Misuses of printability that must not compile. Each case runs the compiler
+# on one source and passes when the diagnostic matches.
+set(HEGEL_COMPILE_FAIL_INCLUDES
+    "$<TARGET_PROPERTY:hegel,INTERFACE_INCLUDE_DIRECTORIES>")
+set(HEGEL_COMPILE_FAIL_SYSROOT "")
+if(CMAKE_OSX_SYSROOT)
+    set(HEGEL_COMPILE_FAIL_SYSROOT -isysroot ${CMAKE_OSX_SYSROOT})
+endif()
+set(HEGEL_COMPILE_FAIL_STANDARDS 17)
+if(HEGEL_REFLECTION)
+    list(APPEND HEGEL_COMPILE_FAIL_STANDARDS 20)
+endif()
+set(HEGEL_UNPRINTABLE_DRAW "tc.draw\\(\\) needs a printable generator")
+set(HEGEL_COMPILE_FAIL_CASES
+    "draw_any_generator|${HEGEL_UNPRINTABLE_DRAW}"
+    "draw_map_to_opaque|${HEGEL_UNPRINTABLE_DRAW}"
+    "print_as_call_on_silent_source|print_as_call\\(\\) needs a printable mapped generator"
+    "print_as_repr_without_representation|print_as_repr\\(\\) needs a type with a C\\+\\+ representation"
+    "return_silent_as_generator|[Cc]onver")
+foreach(standard IN LISTS HEGEL_COMPILE_FAIL_STANDARDS)
+    if(standard EQUAL 17)
+        set(reflection 0)
+    else()
+        set(reflection 1)
+    endif()
+    foreach(case IN LISTS HEGEL_COMPILE_FAIL_CASES)
+        string(REPLACE "|" ";" parts "${case}")
+        list(GET parts 0 source)
+        list(GET parts 1 diagnostic)
+        add_test(NAME compile_fail_${source}_cxx${standard}
+            COMMAND ${CMAKE_CXX_COMPILER} -fsyntax-only -std=c++${standard}
+                ${HEGEL_COMPILE_FAIL_SYSROOT}
+                -DHEGEL_HAS_REFLECTION=${reflection}
+                "-I$<JOIN:${HEGEL_COMPILE_FAIL_INCLUDES},;-I>"
+                ${CMAKE_CURRENT_SOURCE_DIR}/compile_fail/${source}.cpp
+            COMMAND_EXPAND_LISTS)
+        set_tests_properties(compile_fail_${source}_cxx${standard}
+            PROPERTIES PASS_REGULAR_EXPRESSION "${diagnostic}")
+    endforeach()
+endforeach()
