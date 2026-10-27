@@ -358,9 +358,10 @@ def iterables(
     arguments. Iterating once exhausts it, which tests code that must not
     iterate its input twice. The failure report prints the values it
     started with."""
-    return lists(
+    one_shot: Generator[Iterable[T]] = lists(
         elements, min_size=min_size, max_size=max_size, unique=unique, unique_by=unique_by
     ).map(_OneShot)
+    return one_shot.print_as_call("iter")
 
 
 class _OneShot:

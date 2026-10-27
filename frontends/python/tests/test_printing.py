@@ -73,6 +73,7 @@ def test_custom_printed_elements_print_inside_their_containers():
         "draw_1 = {<0>: Coord(0, 0)}"
     ]
     assert report_of(gs.fixed_dicts({"a": ANGLED})) == ["draw_1 = {'a': <0>}"]
+    assert report_of(gs.iterables(ANGLED, min_size=1, max_size=1)) == ["draw_1 = iter([<0>])"]
     assert report_of(gs.one_of(ANGLED, Coords())) == ["draw_1 = <0>"]
     assert report_of(gs.just(0).flat_map(lambda _: Coords())) == ["draw_1 = Coord(0, 0)"]
     assert report_of(Coords().filter(lambda c: c[0] == 0)) == ["draw_1 = Coord(0, 0)"]
