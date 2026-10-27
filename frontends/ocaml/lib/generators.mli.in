@@ -201,7 +201,7 @@ val%template with_printer
         let pairs =
           map (fun x -> x, x * 2) (integers ~min_value:0 ~max_value:9 ())
         in
-        (* prints as: draw_1 = (3, 6) *)
+        (* prints as: let draw_1 = (3, 6) in *)
         let x, y =
           draw tc (with_ocaml_printer Printer.(pair int int) pairs)
         in
@@ -1160,8 +1160,9 @@ val uuids : ?version:int -> unit -> (string, printable) generator MODE(portable)
     {!Printer.Out.noop}, so both make the same choices; guard work done only
     for printing with {!Printer.Out.should_print}.
 
-    [label] names the generator to the engine (see {!Hegel.Labels}).
-    [sexp_of] is what {!printer} returns, [<abstr>] by default.
+    [label] names the generator to the engine, which shrinks the values of
+    generators with the same label alike. [sexp_of] is what [printer]
+    returns, [<abstr>] by default.
 
     {[
       let stacks elements =
@@ -1237,7 +1238,7 @@ val%template map
     ]}
 
     A draw prints as [Key.of_int 3], or [Key.of_int (-3)], and inside a list
-    as [\[Key.of_int 0; Key.of_int 7\]]. {!printer} of the result gives
+    as [\[Key.of_int 0; Key.of_int 7\]]. [printer] of the result gives
     [<abstr>]. *)
 val%template map_as_call
   :  string
@@ -1276,7 +1277,7 @@ val%template flat_map
 
 (** [flat_map_printable f gen] is {!flat_map} for an [f] returning printable
     generators: a draw prints as the generator [f] returned prints it. The
-    value drawn from [gen] is not printed. {!printer} of the result gives
+    value drawn from [gen] is not printed. [printer] of the result gives
     [<abstr>].
 
     {[

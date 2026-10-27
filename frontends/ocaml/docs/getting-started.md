@@ -156,8 +156,9 @@ let%hegel_test people_are_generatable tc =
 
 `composite` carries no printer (the value type is yours), so draw it with
 `draw_silent`. To print it on a failing replay or to feed it into combinators
-like `lists` that expect a *printable* element generator, attach a printer with
-`with_printer` (see [Debugging failures](#debug-your-failing-test-cases)).
+like `lists` that expect a *printable* element generator, write it with
+`printable_composite` instead, which prints the value as it draws it (see
+[Debugging failures](#debug-your-failing-test-cases)).
 
 ## Debug your failing test cases
 
@@ -176,7 +177,7 @@ let%hegel_test reverse_is_identity tc =
 On failure this prints:
 
 ```
-xs = [0; 1]
+let xs = [0; 1] in
 Exception: File "test/my_tests.ml", line 3, characters 2-8: Assertion failed
 
 To reproduce this failure, add this attribute to the let%hegel_test:
@@ -203,9 +204,9 @@ let%hegel_test all_draws_below_ten tc =
 ;;
 
 (* On failure, prints:
-     x_1 = …
-     x_2 = …
-     x_3 = 10  *)
+     let x_1 = … in
+     let x_2 = … in
+     let x_3 = 10 in  *)
 ```
 
 The same `let x` runs on each iteration, so Hegel disambiguates the draws as
@@ -216,31 +217,42 @@ Values print as OCaml syntax: lists as `[1; 2; 3]`, tuples as `(1, "a")`,
 options as `Some 3`, records and variants of derived types as
 `{ x = 1; y = 2 }` and `Circle 1.5`, and strings always quoted.
 
+Printing is the generator's job: a generator prints each value as it draws
+it, so a list prints element by element, each element as its own generator
+prints it, and a value a `filter` rejects is never printed.
+
 Some combinators hand the result type to your own code and so carry no printer:
-`map`, `flat_map`, `sampled_from`, and `just`. Either draw it with `draw_silent` (which prints nothing):
+`map`, `flat_map`, `sampled_from`, `just` and `composite`. Either draw it with
+`draw_silent` (which prints nothing):
 
 ```ocaml
 let parity = draw_silent tc (map (fun n -> n mod 2) (integers ()))
 ```
-or attach a printer with `with_printer`. A printer is a function of type
-`'a -> Sexplib0.Sexp.t`, and values drawn through it print as the
-s-expressions it returns.
+
+or make it printable. `map_as_call` prints a mapped value as a call on its
+printed input, and `printable_composite` writes a generator that prints its
+value as it draws its parts, through `Printer.Out`:
+
 ```ocaml
-let parity =
-  draw
-    tc
-    (with_printer
-       (fun n -> Sexplib0.Sexp.Atom (string_of_int n))
-       (map (fun n -> n mod 2) (integers ())))
+let key = draw tc (map_as_call "Key.of_int" Key.of_int (integers ()))
+(* prints: let key = Key.of_int 3 in *)
+
+let bags =
+  printable_composite (fun tc printer ->
+    Printer.Out.parens_if_argument printer (fun printer ->
+      Printer.Out.group printer ~indent:2 "" "" (fun printer ->
+        Printer.Out.text printer "Bag.of_list";
+        Printer.Out.breakable printer " ";
+        let items = draw_and_print tc printer (lists (integers ()) ()) in
+        Bag.of_list items)))
+(* a list of bags prints as: [Bag.of_list [1; 2]; Bag.of_list []] *)
 ```
-If you have [`ppx_sexp_conv`](https://github.com/janestreet/ppx_sexp_conv) in your
-`(preprocess (pps ...))`, `[%sexp_of: int]` is a shorthand for that printer:
-```ocaml
-let parity =
-  draw tc (with_printer [%sexp_of: int] (map (fun n -> n mod 2) (integers ())))
-```
-To print the value as OCaml syntax instead, attach a `Printer` with
-`with_ocaml_printer`:
+
+When the value is easier to describe once it is built, attach a printer for
+the finished value: `with_ocaml_printer` takes a `Printer` (OCaml syntax), and
+`with_printer` takes an `'a -> Sexplib0.Sexp.t` and prints the s-expressions it
+returns.
+
 ```ocaml
 let pair =
   draw
@@ -248,6 +260,9 @@ let pair =
     (with_ocaml_printer
        Printer.(pair int string)
        (map (fun n -> n, string_of_int n) (integers ())))
+
+let parity =
+  draw tc (with_printer [%sexp_of: int] (map (fun n -> n mod 2) (integers ())))
 ```
 
 You can also attach your own debug information with `note`:
@@ -306,13 +321,13 @@ after it, and which step broke the invariant:
 ```
 state = ()
 Step 1: push
-  n = 0
+  let n = 0 in
 state = (0)
 Step 2: push
-  n = 0
+  let n = 0 in
 state = (0 0)
 Step 3: push
-  n = 0
+  let n = 0 in
 state = (0 0 0)
 Invariant stack_stays_small violated after step 3.
 ```

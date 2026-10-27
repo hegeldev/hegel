@@ -112,13 +112,15 @@ lib/                         # Library source
                              #   default ()/from_profile/create materialized from
                              #   the engine's settings profiles (to_ffi/of_ffi)
   internal.ml.in/.mli.in     # Test runner + run lifecycle + typed-draw wrappers on
-                             #   top of Hegel_ffi.Ffi; note/print_line +
+                             #   top of Hegel_ffi.Ffi; note/print_line/printer +
                              #   capture_document (engine-side output, see Pretty
                              #   printing); events (cppo → internal.ml)
-  printer.ml / printer.mli.in # Hegel.Printer: the OCaml-syntax document type
+  printer.ml.in / .mli.in    # Hegel.Printer: the OCaml-syntax document type
                              #   (doc), value printers (int, string, list, …),
                              #   structural builders (record, constructor, tuple,
-                             #   apply), render (doc → engine printer) and to_string
+                             #   apply), to_string, and Out: the streaming handle
+                             #   on an engine printer region that generators print
+                             #   to as they draw (cppo → printer.ml)
   generators.ml.in           # Re-export shim: include the five generators_* modules
                              #   (cppo → generators.ml; generators.mli.in likewise)
   generators_core.ml.in      # generator type; draw/draw_silent, map/flat_map/filter,
@@ -326,7 +328,7 @@ container or renderer a Jane Street type used to provide, the dependency is
 refunctionalized — the code takes the operations as closures/parameters, and
 each side instantiates them:
 - pools: `Int_pool` (an `Int_table` of values, no lock: a sequential machine runs its rules one at a time) and `Int_pool_concurrent` (the same table behind a `Locked`) are the client-side pools; `resolve_pool_draw` (find/remove closures) is the shared id-resolution step
-- hash tables: `make_hash_tables ~of_pairs ~sexp_of_t` ← `hash_tables` (Stdlib.Hashtbl) / `Hegel_jane.hash_tables` (Hashtbl.Poly); both go through the doc-hidden `make_hash_tables_printed`, whose extra `~print_of_pairs` displays a drawn table as OCaml syntax (`make_hash_tables` itself displays the `sexp_of_t` s-expression)
+- hash tables: `make_hash_tables ~of_pairs ~sexp_of_t` ← `hash_tables` (Stdlib.Hashtbl) / `Hegel_jane.hash_tables` (Hashtbl.Poly); both go through the doc-hidden `make_hash_tables_printed`, whose extra `~wrap` (function names, outermost first) prints a drawn table as its association list wrapped in those calls (`Hashtbl.of_seq (List.to_seq [(1, true)])`); `make_hash_tables` itself prints the `sexp_of_t` s-expression
 - dates/times: `make_dates ~of_date`/`make_times ~of_time`/`make_datetimes ~of_datetime` (+ `~sexp_of`) (+ `?min_date`/`?min_time`/`?min_datetime` and `max_*` bounds) ← `dates`/`times`/`datetimes` (ISO 8601 strings) / `Hegel_jane.dates`/`ofdays` (Core values)
 - chars: `make_characters ~of_char ~sexp_of` is the representation-agnostic builder (it displays the `sexp_of` s-expression); `chars` is a leaf of its own that displays a character literal (`Printer.char`). `Core.Char.t = char` and `Core.Char.sexp_of_t` prints as `sexp_of_char` does, so `Hegel_jane.chars` is `chars`
 
@@ -367,7 +369,7 @@ name the same value, and the templated portable instances come along. A new
 constructor goes in `Public` only; `Generators` stays the documented reference. Project code prefers the unqualified form
 wherever `open Hegel` is already in scope.
 
-A generator is `('a, 'p) generator = Printable of { core; sexp_of } | Unprintable of { core }`: the phantom `'p` (`printable`/`unprintable`, private polymorphic variants) is what makes `draw` require a printer, and `sexp_of` is what `printer` returns. The display a draw prints comes from the core, not from `sexp_of`: printable built-in generators display as OCaml syntax, and `with_printer sexp_of` replaces the core's display with `Printer.of_sexp sexp_of` (`with_display`), so a user's printer prints exactly the s-expression it returns. `rewrap` keeps a generator's printability across `filter`/`recursive`.
+A generator is `('a, 'p) generator = Printable of { core; sexp_of } | Unprintable of { core }`: the phantom `'p` (`printable`/`unprintable`, private polymorphic variants) is what makes `draw` require a printer, and `sexp_of` is what `printer` returns. What a draw prints comes from the core, not from `sexp_of`: the core prints as it draws (`do_draw core tc printer`, see Pretty printing), so a container prints element by element and each element as its own generator prints it. Value printing is the escape hatch: `with_ocaml_printer print` and `with_printer sexp_of` wrap the core in a `Printed` core that draws its source silently and prints the finished value, so a user's `with_printer` prints exactly the s-expression it returns. `map_as_call name f` prints a mapped value as `name <source as it prints>`, and `printable_composite` is a hand-written printable core (a `Composite` whose `generate_fn` gets the printer). `flat_map` stays `unprintable` (its result's printability is only known once `f` runs); `flat_map_printable` takes an `f` returning printable generators and prints the inner draw. `rewrap` keeps a generator's printability across `filter`/`recursive`.
 
 Cores are a discriminated union:
 - **Leaf** — holds a `draw : test_case -> 'a` closure that performs a single typed engine draw (via one of the `Internal.generate_*` primitives). Calling `map` on a Leaf composes the closure in place (no extra span), since the engine already wraps every primitive draw in its own span.
@@ -375,7 +377,7 @@ Cores are a discriminated union:
 - **FlatMapped** — wraps source + a function returning a generator. Evaluated recursively inside a `flat_map` span.
 - **Filtered** — wraps source + predicate. Up to `max_filter_attempts` (`Ffi.filter_attempts`, the header's `HEGEL_FILTER_ATTEMPTS`) attempts before `assume false`; see **Values** for a consuming pool source.
 - **CompositeList** — lists of any element core. Uses the collection protocol (with_collection / collection_more) to generate elements one at a time.
-- **Composite** — a `generate_fn` thunk run inside a labeled span; used by tuples, one_of, `lists ~unique`, and hash tables (all of which now always drive the collection protocol / draw sub-values directly — there is no schema fast path).
+- **Composite** — a `generate_fn : test_case -> Printer.Out.t -> 'a` run inside a labeled span; used by tuples, one_of, `lists ~unique`, and hash tables (all of which now always drive the collection protocol / draw sub-values directly — there is no schema fast path).
 - **Values** — the engine-pool core behind `Stateful.Pool` and `Concurrent_pool`: `{ pool; consume; select : test_case -> filter:(label * predicate) option -> 'a }`, where `select ~filter:None` draws an id from the engine pool and resolves it against the client table. On a consuming pool, `filter` calls `select ~filter:(Some _)`, which runs the attempts itself (`filter_consumed`, given the pool's `size`/`take`/`keep`; the concurrent pool runs the predicate between lock sections): every id an attempt takes stays consumed until the attempts end, then all but the accepted one go back through `hegel_pool_restore` (libhegel 0.45.13), on every exit including a raising predicate, so filtering consumes only the value the test receives. A filter over a filter folds both predicates into one round of attempts (`do_draw_filtered`), as hegel-rust does. `Generators.Int_pool_concurrent` does that under the pool's `Locked`, so the table never disagrees with the engine about which ids exist while workers share it; the sequential `Generators.Int_pool` needs no lock. Both are doc-hidden client sides over `Int_table`; `resolve_pool_draw` is the shared id-resolution step. `hash_tables` is refunctionalized at the API level: `make_hash_tables ~of_pairs ~sexp_of_t` is table-agnostic, `hash_tables` closes it over `Stdlib.Hashtbl`, `Hegel_jane.hash_tables` over `Core.Hashtbl.Poly`.
 - **Span labels** (libhegel 0.39.0) — a label identifies the generator that opened a span; the engine treats two spans with the same label as coming from the same generator when it shrinks and mutates, and does nothing else with it. There are no predefined label constants in the ABI. A label is an `Internal.Label.t`: a description (`Label.of_name name` or `Label.combine [labels…]`) with an atomic cache, computed by libhegel's `hegel_label_from_name`/`hegel_label_combine` (through the `Ffi.label_*` bindings, with the test case's context) the first time a span uses it, and reused afterwards. Building a generator never calls the engine, so it doesn't load libhegel (`test_lazy_load`). `Internal.start_span ~label` resolves it. Every core stores its `label`, fixed at construction: a `Leaf` from its primitive's name (`leaf ~name:"integers"` → `hegel.integers`), and everything built from other generators as `combine [own kind; components' labels…]` (`lists (integers ())` ≠ `lists (text ())`; `map` on a leaf stays a leaf but combines `Labels.mapped` in; `with_printer` leaves the label alone; `Values` is the constant `Labels.pool`). `Generators.Private.label_of` reads it back. The deriver emits `combine [fixed_dict|enum_variant; from_name "<type name>"]` so two derived types of the same shape stay distinct. Names are `hegel.<kind>`, the names the other frontends use for the same generator: `hegel.lists` (unique lists too), `hegel.sets`, `hegel.dicts` (assoc lists and hash tables), `hegel.fixed_dicts`, `hegel.one_of`, `hegel.optional` as in Python, TypeScript and Java, `hegel.tuple`, `hegel.array`, `hegel.permutation` as in Rust. A filter draws inside its own `combine [hegel.filter; source]` span, and each attempt inside a `hegel.filter.attempt` span (discarded when rejected), as Rust and Python do.
 - **Function** — a generated function (`functions`/`functions2`/`functions3`). `build ~name` returns a fresh per-test-case memoized function that draws each result from `returns` on first application (memoized on the argument via structural hash/equality — a polymorphic `Stdlib.Hashtbl` — so `print_arg`/`sexp_of_arg` are display-only and with neither the argument shows as `<abstr>`, `Printer.opaque`, without collapsing the key) and shows applied pairs as `name arg = result` (the argument as `print_arg` renders it, else as its s-expression; curried for `functions2`/`functions3` as `name a b = result`; and the result as `returns` displays it) in the print region of a printing case. Only *top-level* applications print — a pair applied at draw depth > 0 (inside a span) is suppressed, like a nested draw. A distinct core so `draw_silent_named` / `draw_named` can thread the draw-site binding name into the function (see the PPX note below); the name threads even when the function is drawn nested. Result draws are wrapped in a span labelled `combine [Labels.function_result; label of returns]`.
@@ -517,15 +519,17 @@ the base_quickcheck conventions:
    for un-sexpable fields. `Hegel.Derive` re-exports the `Sexplib0.Sexp_conv`
    primitive converters because ppx_sexp_conv resolves builtins by
    unqualified name.
-   **Prints as OCaml syntax**: a derived generator builds its display as it
-   draws, from its components' draws (`Ppx_internal.draw tc gen ~sexp_of`
-   returns the value and a lazy `show`): a record shows `{ x = 1; y = 2 }`
-   (`Printer.record`), a constructor `C (a, b)` (`Printer.constructor`), a
-   tuple `(a, b)`. A component whose generator has no printer (a `map`, an
-   override) shows as the s-expression of its type (the `~sexp_of` the
-   deriver passes, `Ppx_compat.sexp_of_core_type`). An all-nullary variant is
-   a `sampled_from` given `with_printers`, whose display names the
-   constructor.
+   **Prints as OCaml syntax, as it draws**: a derived generator is a
+   `composite_with_label` whose body takes `tc` and a `Printer.Out.t` and
+   prints its punctuation around each component's draw
+   (`Ppx_internal.draw_and_print tc printer gen ~sexp_of`, which has the
+   component's generator print itself): a record prints `{ x = 1; y = 2 }`, a
+   constructor `C (a, b)` (parenthesized in argument position), a tuple
+   `(a, b)`. A component whose generator has no printer (a `map`, an
+   override) is drawn silently and printed as the s-expression of its type
+   (the `~sexp_of` the deriver passes, `Ppx_compat.sexp_of_core_type`), the
+   one place a value is printed implicitly. An all-nullary variant is a
+   `sampled_from` given `with_printers`, which prints the constructor name.
 4. **Attributes**: `[@hegel.generator EXPR]` on any type occurrence (record
    field, constructor argument, tuple component) replaces that occurrence's
    generator with `EXPR` — the quickcheck idiom for ranges and custom
@@ -595,7 +599,7 @@ type entity =
 [@@deriving hegel_generator]
 
 (* Derived generators print what they drew as OCaml syntax on a failing
-   replay ([p = { x = 0; y = 0 }]); [draw_silent] prints nothing. *)
+   replay ([let p = { x = 0; y = 0 } in]); [draw_silent] prints nothing. *)
 let%hegel_test derived_types_smoke tc =
   let p = Hegel.draw tc hegel_generator_point in
   let c = Hegel.draw_silent tc hegel_generator_color in
@@ -671,14 +675,31 @@ checkout, not the published reference at <https://hegel.dev/reference/libhegel>.
 All user-visible test output — notes, drawn values, stateful traces — is assembled in libhegel's per-test-case *document*
 (`hegel_test_case_printer` / `hegel_note`), not streamed to stderr as it
 happens. `Internal.note` appends verbatim (pre-indented, possibly multi-line)
-lines; `Internal.print_line` writes a `Printer.doc` (built OCaml-side as a tree of
-text, breakables, groups and reflowed text) through `Printer.render`, which
-replays it onto the engine printer (`hegel_printer_text`/`breakable`/
-`begin_group`/`end_group`/`hard_break`/`reflow`): a group either fits on the
-line or breaks at every breakable directly inside it, one element per line, at
-the document's default width 79. Draws build their doc lazily: `do_draw`
-returns `(value, show)`, and `show ()` is only forced when the line is printed,
-so a non-printing case never formats anything. After `mark_complete`,
+lines. Drawn values are printed by their generators, as Rust's are
+(`frontends/rust/src/pretty.rs` is the model): `Printer.Out.t` is a thin
+handle on an engine printer region (`hegel_printer_text`/`breakable`/
+`if_break`/`comment`/`shift_indent`/`begin_group`/`end_group`/`hard_break`/
+`reflow`/speculation/`deferred`), or `Out.noop`, which ignores every write.
+`do_draw core tc printer` draws and prints in one step: a leaf prints its
+value, a container prints its punctuation around each element's draw, a
+mapped generator draws its source silently and prints through its
+`with_ocaml_printer`/`with_printer`, and each `filter` attempt and each
+rejected collection element runs in an `Out.speculate` that is aborted on
+rejection, so a rejected value is never printed. `draw` (`draw_named`) prints
+`let name = … in` (plus a `(* file:line *)` comment when it has a location)
+inside a speculation on `Internal.printer tc`, the test case's own region; a
+non-printing case (`should_print` false) draws with `Out.noop` and formats
+nothing. A group either fits on the line or breaks at every breakable directly
+inside it, at the document's default width 79; the layout is all the
+engine's. Every region has its own `Ffi.context`; liveness is behind a
+`Locked`, so a write after the case ended (a deferred region filled in late)
+is a no-op, and `HEGEL_E_INVALID_HANDLE` on a printer call
+(`Ffi.Printer_dead_region`, a region whose speculation was aborted) is
+ignored. Deferred regions are owned by the test case family's `printers`
+owner and freed with it. `Printer.Out.with_document` lays a sub-document out
+to a string (generated functions use it for their result text, and
+`Printer.to_string` for a `doc`). `Internal.print_line tc print` writes one
+line through a `Printer.Out.t` (stateful `state = …`). After `mark_complete`,
 `run_case` reads the document back (`capture_document`:
 `printer_resolve` — required when clone regions exist, an argument error
 otherwise, hence the catch — then `printer_value`); the runner keeps it with

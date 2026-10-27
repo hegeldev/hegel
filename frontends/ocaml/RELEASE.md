@@ -1,6 +1,6 @@
 RELEASE_TYPE: minor
 
-This release changes how failing test cases print drawn values: a value drawn from a printable generator now prints as OCaml syntax instead of as an s-expression.
+This release changes how failing test cases print drawn values. A drawn value now prints as a `let` binding in OCaml syntax, instead of as `name = <s-expression>`, with the location of the draw as a `(* file:line *)` comment when it has one (always on OxCaml, and with `~loc` elsewhere):
 
 ```
 (* before *)
@@ -9,35 +9,59 @@ pair = (7 hello)
 p = ((x 1) (y 2))
 
 (* after *)
-xs = [1; 2; 3]
-pair = (7, "hello")
-p = { x = 1; y = 2 }
+let xs = [1; 2; 3] in
+let pair = (7, "hello") in
+let p = { x = 1; y = 2 } in
 ```
 
-Strings are always quoted, options print as `Some x`, derived records and variants print as `{ x = 1 }` and `Node (Leaf 1, Leaf 2)`, and a value too long for one line wraps one element per line. Structural generators (`lists`, `tuples2`, `optional`, `one_of`, `filter`, derived generators, ...) print what they drew, each part as its own generator prints it.
+Printing is now the generator's job: a printable generator prints each value while it draws it, through the engine's printer. A container prints element by element, each element as its own generator prints it, so a custom-printed element prints the same inside a list, an option, a tuple or a derived record as it does alone. A value that `filter`, a unique list, a set or an association list rejects is never printed, and neither is anything a draw printed before it raised. Strings are always quoted, options print as `Some x`, derived records and variants print as `{ x = 1 }` and `Node (Leaf 1, Leaf 2)`, and a value too long for one line wraps one element per line. Steps of a state machine print their draws the same way, indented under `Step N: name`.
+
+New ways to make a generator printable:
+
+- `map_as_call name f gen` maps `gen` with `f` and prints the result as a call on the value `gen` drew, `Key.of_int 3`, parenthesized where it is an argument: `Some (Key.of_int 3)`.
+- `printable_composite ?label ?sexp_of body` is a hand-written printable generator: `body tc printer` draws the value's parts and prints it to `printer` as it goes, drawing a part that should appear in the output with the new `draw_and_print tc printer gen`.
+- `flat_map_printable f gen` is a `flat_map` whose `f` returns printable generators, and prints the value the inner generator draws. `flat_map` itself still returns an `unprintable` generator.
+
+The new `Printer.Out` module is the printer these generators print to, a handle on the engine's printer for the value being drawn: `text`, `breakable`, `if_break`, `hard_break`, `begin_group` / `end_group` and the scoped `group`, `separator` and `seq`, `shift_indent`, `comment`, `reflow`, `doc` and `value` to print a `Printer.doc`, `sexp`, `argument` / `parens_if_argument` for argument position, speculation (`speculate`, `begin_speculation`, `commit_speculation`, `abort_speculation`) to discard output, `deferred` for a region filled in later (such as a value that draws as it is used), `should_print`, `noop`, and `with_document` to lay a sub-document out to a string. A write to a region whose test case has ended does nothing. `Printer` also gains the `if_break`, `hard_break`, `comment` and `shift_indent` documents.
+
+```ocaml
+let keys = map_as_call "Key.of_int" Key.of_int (integers ~min_value:0 ())
+(* draw tc (lists keys ()) prints: let draw_1 = [Key.of_int 3; Key.of_int 0] in *)
+
+let bags =
+  printable_composite (fun tc printer ->
+    Printer.Out.parens_if_argument printer (fun printer ->
+      Printer.Out.group printer ~indent:2 "" "" (fun printer ->
+        Printer.Out.text printer "Bag.of_list";
+        Printer.Out.breakable printer " ";
+        Bag.of_list (draw_and_print tc printer (lists (integers ()) ())))))
+(* prints: let draw_2 = Bag.of_list [1; -2] in *)
+```
+
+Printing the finished value remains available as an escape hatch for a generator whose value is easier to describe once it is built: `with_ocaml_printer` attaches a printer that returns a `Printer.doc`, printed as OCaml syntax, and `with_printer` (or `~sexp_of_state` for a state machine's state) prints the s-expressions it returns, as before. A state machine run takes `?print_state` to print its state as a `Printer.doc` instead; a `module%hegel_state_machine` that binds `print_state` uses it.
+
+```ocaml
+draw tc (with_ocaml_printer Printer.(list int) (map (fun n -> [ n ]) (integers ())))
+(* prints: let draw_1 = [3] in *)
+
+draw tc (with_printer [%sexp_of: int list] (map (fun n -> [ n ]) (integers ())))
+(* prints: let draw_1 = (3) in *)
+```
+
+Generators keep their `printable` / `unprintable` parameter, `Generators.printer` still returns a generator's s-expression printer (`<abstr>` for a `map_as_call`, `flat_map_printable` or `printable_composite` without `~sexp_of`), and `[@@deriving hegel_generator]` still defines `sexp_of_<t>`. A field of a derived type whose generator has no printer (an `[@hegel.generator]` override built with `map`, say) is drawn silently and prints as that s-expression, inside the OCaml syntax of the rest of the value. `Printer.to_string` lays a `Printer.doc` out to a string.
+
+A few lower-level interfaces change with this. The doc-hidden `make_hash_tables_printed` takes `~wrap`, the names of the functions a drawn table's association list is wrapped in (`~wrap:[ "Hashtbl.of_seq"; "List.to_seq" ]`), instead of `~print_of_pairs`. The doc-hidden `Generators.Ppx_internal.draw` is replaced by `draw_and_print`, and the body given to `Ppx_internal.composite_with_label` takes the printer after the test case, so code generated by an older `ppx_hegel_generator` needs rebuilding.
 
 Floats print as the shortest literal that reads back as the same float, without an exponent from `1e-5` up to `1e16` (`100.`, `1000000.`), and with one beyond (`1e+16`). Strings escape ASCII control characters as `%S` does (`"\b"`), and print the characters Rust's `Debug` escapes as `\u{...}`: control and format characters such as the bidirectional override U+202E, line and paragraph separators, combining marks, and unassigned code points. A negative atom of an s-expression, or a `Printer.of_to_string` text that is not a single token, is parenthesized as an argument (`Some (-5)`), and a single token is not (`Some 42`).
 
 An application of a generated function prints its arguments, followed by its result as `returns` prints it: `f 3 = [1; 2]`, or `f 3 = <fun>` when the result is itself a function. The new `?print_arg` (`?print_arg1`, ... for `functions2` and `functions3`) prints an argument as a `Printer.doc`; `~sexp_of_arg` still prints it as an s-expression, and an argument with neither prints as `<abstr>`, as every value without a printer does (it used to be `<opaque>`). The arguments of `functions2` and `functions3` print curried, `g 3 true = 10`, rather than as one list, `g (3 true) = 10`.
-
-The new `with_ocaml_printer` attaches a printer that returns a `Printer.doc`, so a `map`, `flat_map`, `just`, `sampled_from`, `composite` or `permutations` generator can print what it draws as OCaml syntax. A printer you give with `with_printer` or `~sexp_of_state` prints the s-expressions it returns, as before, and a state machine run takes `?print_state` to print its state as a `Printer.doc` instead; a `module%hegel_state_machine` that binds `print_state` uses it.
-
-```ocaml
-draw tc (with_ocaml_printer Printer.(list int) (map (fun n -> [ n ]) (integers ())))
-(* prints: draw_1 = [3] *)
-
-draw tc (with_printer [%sexp_of: int list] (map (fun n -> [ n ]) (integers ())))
-(* prints: draw_1 = (3) *)
-```
-
-Beyond these additions, the printing API is unchanged: generators keep their `printable` / `unprintable` parameter, `Generators.printer` still returns a generator's s-expression printer, and `[@@deriving hegel_generator]` still defines `sexp_of_<t>`. A field of a derived type whose generator has no printer (an `[@hegel.generator]` override built with `map`, say) prints as that s-expression, inside the OCaml syntax of the rest of the value. The new `Hegel.Printer` module has the documents these values print as, and `Printer.to_string` to lay one out.
 
 `text` and `characters` now leave character-set validation to the engine. `~categories` may name a category that contains the surrogates, such as `"C"`, and the engine drops the surrogates from it; constraints that leave no characters at all (`~categories:["Cs"]`) raise `Usage_error` when the generator is drawn from rather than when it is built.
 
 The failure report is laid out as in hegel-rust: the drawn values and notes, the exception, `note: <caveat>` when the engine attaches one, and how to replay the failure, with no `--- Failure ---` frame and no color:
 
 ```
-n = 50
+let n = 50 in
 Exception: File "my_tests.ml", line 5, characters 2-8: Assertion failed
 
 To reproduce this failure, add this attribute to the let%hegel_test:
@@ -100,13 +124,11 @@ New generators for recursive data:
 type tree =
   | Leaf of int
   | Node of tree list
-[@@deriving sexp_of]
 
 let trees =
   recursive
-    (with_printer sexp_of_tree (map (fun n -> Leaf n) (integers ())))
-    (fun subtrees ->
-      with_printer sexp_of_tree (map (fun children -> Node children) (lists subtrees ())))
+    (map_as_call "Leaf" (fun n -> Leaf n) (integers ()))
+    (fun subtrees -> map_as_call "Node" (fun children -> Node children) (lists subtrees ()))
 ```
 
 `[@@deriving hegel_generator]` now supports recursive and mutually recursive types. A variant whose constructors refer to the type itself, such as `type tree = Leaf of int | Node of tree * tree`, is generated with `recursive`, its non-recursive constructors as the leaves; other recursive types are generated through `deferred`.

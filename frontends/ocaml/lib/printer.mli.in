@@ -7,8 +7,8 @@
     each drawn value as an OCaml [let] binding:
 
     {v
-let xs = [1; 2; 3] in
-let p = { x = 1; label = "a" } in
+    let xs = [1; 2; 3] in
+    let p = { x = 1; label = "a" } in
     v}
 
     Lists print as [\[1; 2; 3\]], tuples as [(1, "a")], options as [Some 3],
@@ -206,12 +206,12 @@ val to_string : ?max_width:int -> doc -> string
 
     A printable generator receives one and prints to it as it draws (see
     {!Hegel.printable_composite}). A silent draw hands the same code
-    {!noop}, which discards everything, so one body serves both paths; guard
-    work done only for printing with {!should_print}.
+    {!Out.noop}, which discards everything, so one body serves both paths;
+    guard work done only for printing with {!Out.should_print}.
 
     Writing to a region that has died — the document was read, the test case
     finished, or a speculation its anchor sat in was aborted — does nothing.
-    Unbalanced use ({!end_group} with no open group) raises
+    Unbalanced use ({!Out.end_group} with no open group) raises
     {!Hegel.Usage_error}. *)
 module Out : sig
 #ifdef OXCAML
@@ -301,7 +301,7 @@ module Out : sig
       when it is not atomic: [Some 5] and [Some \[1; 2\]], but [Some (-5)]
       and [Some (Some 1)]. A printer passed to an argument's generator is
       marked with {!argument}; something that prints a non-atomic form wraps
-      itself in {!parens_if_argument}. {!doc} and {!value} do this on their
+      itself in {!parens_if_argument}. {!val-doc} and {!value} do this on their
       own. *)
 
   (** [argument t] is [t] marked as printing a constructor or function

@@ -86,7 +86,7 @@
 
     In a test body and in a marked rule or invariant body, a
     [let x = draw tc gen] binding has its name injected so the drawn value
-    prints as [x = value]. *)
+    prints as [let x = value in]. *)
 
 open Ppxlib
 
@@ -439,7 +439,7 @@ let inject_labels ~tc_name (flags : (string, bool) Stdlib.Hashtbl.t) =
 
 (** [inject_labels fn] is the lambda [fn] ([fun tc <args> -> body]) with
     [~label]/[~repeatable] injected into the draws on its own [tc] parameter, so
-    the counterexample replay prints [name = value]. *)
+    the counterexample replay prints [let name = value in]. *)
 let inject_labels (fn : expression) : expression =
   match test_case_name fn with
   | None -> fn
