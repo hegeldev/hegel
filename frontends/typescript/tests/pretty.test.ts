@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import v8 from "node:v8";
+import vm from "node:vm";
 import {
   Document,
   EngineDocument,
@@ -270,6 +272,31 @@ describe("printing through a class's own prettyPrint method", () => {
     } finally {
       doc.dispose();
     }
+  });
+});
+
+describe("Document", () => {
+  it("releases an unfinished document when it is garbage collected", async () => {
+    v8.setFlagsFromString("--expose-gc");
+    const gc = vm.runInNewContext("gc") as () => void;
+    const { engine } = wasmFixture();
+    const freeContext = vi.spyOn(engine, "freeContext");
+    const freePrinter = vi.spyOn(engine, "freePrinter");
+    installRuntime(browserRuntime(engine));
+    try {
+      const leak = (): void => {
+        new Document().printer.text("never finished");
+      };
+      leak();
+      for (let attempt = 0; attempt < 200 && freeContext.mock.calls.length === 0; attempt++) {
+        gc();
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+    } finally {
+      installRuntime(nodeRuntime);
+    }
+    expect(freePrinter).toHaveBeenCalledTimes(1);
+    expect(freeContext).toHaveBeenCalledTimes(1);
   });
 });
 

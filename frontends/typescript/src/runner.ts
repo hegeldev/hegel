@@ -17,4 +17,11 @@ export {
 export type { Settings, TestLocation, TestCaseResult } from "./runnerCore.js";
 installRuntime(nodeRuntime);
 const runner = createRunner(nodeRuntime);
-export const { test, testAsync, registerProfile, setDefaultProfile } = runner;
+export const {
+  test,
+  testAsync,
+  resolveSettings,
+  engineVersion,
+  registerProfile,
+  setDefaultProfile,
+} = runner;

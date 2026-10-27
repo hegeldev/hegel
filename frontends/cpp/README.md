@@ -14,7 +14,7 @@ Hegel is a property-based testing library for C++. Hegel is based on [Hypothesis
 
 ## Installation
 
-Hegel requires C++20.
+Hegel builds with a C++20 compiler, and a project using it needs C++20 too, unless the library is configured with `-DHEGEL_REFLECTION=OFF`: that drops `hegel::generators::default_generator`, and a C++17 project can then use it.
 
 To install with CMake, add this to your `CMakeLists.txt` (CMake 3.14+ required):
 

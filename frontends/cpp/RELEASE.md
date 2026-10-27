@@ -4,13 +4,21 @@ This release brings Hegel for C++ into line with the other Hegel frontends: `heg
 
 ### Settings
 
-A `Settings` field that you leave unset now keeps the value of the settings profile (`hegel.toml`, `HEGEL_DEFAULT_PROFILE`, the `HEGEL_*` variables, or the `ci`, `workload` and `development` profiles the engine picks itself). Before, `verbosity`, `derandomize`, `report_multiple_failures`, `stop_on_first_failure`, `nondeterminism_strictness`, `phases` and the seed were always set to Hegel for C++'s own defaults, which overrode the profile, and `print_blob` was never sent to the engine at all. Hegel for C++ no longer detects CI itself; the engine's `ci` profile does it. To support this:
+A `Settings` now holds a value for every setting, resolved by the engine when the `Settings` is created: from its settings profile (`hegel.toml`, `HEGEL_DEFAULT_PROFILE`, or the `ci`, `workload` and `development` profiles the engine picks itself) with the `HEGEL_*` variables applied over it. A field you set replaces the resolved value, and a field you leave alone keeps it. Before, `verbosity`, `derandomize`, `report_multiple_failures`, `stop_on_first_failure`, `nondeterminism_strictness`, `phases` and the seed were always set to Hegel for C++'s own defaults, which overrode the profile, and `print_blob` was never sent to the engine at all. Hegel for C++ no longer detects CI itself; the engine's `ci` profile does it. To support this:
 
-- `verbosity`, `derandomize`, `report_multiple_failures`, `stop_on_first_failure`, `nondeterminism_strictness` and `print_blob` are now `std::optional`. Code that reads these fields from a `Settings` must handle the unset case; code that sets them does not change.
-- `suppress_health_check` and `phases` are now `hegel::ListSetting`, which is unset by default. A braced list sets them as before, and an empty list (`.suppress_health_check = {}`) now suppresses no health checks instead of keeping the profile's set.
-- `Database::unset()` (the default) now keeps the profile's database, and the new `Database::default_location()` selects `.hegel/examples` even where the profile disables the database.
+- `Settings::from_profile(name)` resolves the named profile instead of the default one, and replaces the `profile` field. Adjust the result field by field. A designated initializer always resolves the default profile.
+- `suppress_health_check` and `phases` are `std::vector`s holding the resolved lists. A braced list sets them as before, and an empty list (`.suppress_health_check = {}`) now suppresses no health checks instead of keeping the profile's set.
+- `database` holds the resolved database, so `Database::unset()` is gone; the new `Database::default_location()` selects `.hegel/examples` even where the profile disables the database. `Backend::Auto` is gone too: `backend` holds the resolved backend.
+- The values are fixed when the `Settings` is created. `hegel::register_profile()` and `hegel::set_default_profile()` do not change a `Settings` created before them, and an unknown profile or a malformed `hegel.toml` or `HEGEL_*` variable throws `std::invalid_argument` from the creation rather than from `hegel::test()`.
 
-The new `Settings::show_statistics` and `Settings::unbounded_choices` reach the engine's settings of those names, `Settings::profile`, `hegel::register_profile()` and `hegel::set_default_profile()` select and define settings profiles from C++, and `hegel::engine_version()` returns the version of the bundled libhegel.
+```cpp
+hegel::Settings nightly = hegel::Settings::from_profile("ci");
+nightly.test_cases = 10000;
+hegel::register_profile("nightly", nightly);
+hegel::test(body, hegel::Settings::from_profile("nightly"));
+```
+
+The new `Settings::show_statistics` and `Settings::unbounded_choices` reach the engine's settings of those names, `Settings::from_profile()`, `hegel::register_profile()` and `hegel::set_default_profile()` select and define settings profiles from C++, and `hegel::engine_version()` returns the version of the bundled libhegel.
 
 `hegel::test()` now derives its database key (`<file>::<name>`) also when the database is disabled, as `HEGEL_TEST` already did, because a derandomized run derives its seed from the key. Without it, every derandomized test under the `ci` profile saw the same inputs.
 

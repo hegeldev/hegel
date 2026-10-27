@@ -6,6 +6,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Iterator;
 import java.util.List;
+import java.util.OptionalLong;
 import java.util.ServiceLoader;
 import java.util.function.Consumer;
 
@@ -97,8 +98,11 @@ public interface Libhegel {
      * (a {@code hegel.toml} in the working directory or an ancestor, {@code HEGEL_DEFAULT_PROFILE},
      * and the shipped {@code development}/{@code ci}/{@code workload} profiles) with the {@code
      * HEGEL_TEST_CASES}, {@code HEGEL_DATABASE}, {@code HEGEL_STATISTICS}, {@code HEGEL_SEED},
-     * {@code HEGEL_DERANDOMIZE}, {@code HEGEL_PRINT_BLOB} and {@code HEGEL_NONDETERMINISM_STRICTNESS}
-     * environment variables applied over it.
+     * {@code HEGEL_DERANDOMIZE}, {@code HEGEL_PRINT_BLOB}, {@code HEGEL_NONDETERMINISM_STRICTNESS},
+     * {@code HEGEL_STOP_ON_FIRST_FAILURE}, {@code HEGEL_UNBOUNDED_CHOICES}, {@code HEGEL_VERBOSITY},
+     * {@code HEGEL_PHASES}, {@code HEGEL_SUPPRESS_HEALTH_CHECK}, {@code
+     * HEGEL_REPORT_MULTIPLE_FAILURES} and {@code HEGEL_BACKEND} environment variables applied over
+     * it.
      * Returns {@link Abi#E_INVALID_ARG} (with the message in {@link #lastErrorMessage()}) when a
      * {@code hegel.toml} or one of those variables is malformed; {@code out[0]} receives the handle
      * on {@link Abi#OK} and {@code 0} otherwise.
@@ -161,6 +165,39 @@ public interface Libhegel {
 
     /** {@code hegel_settings_get_report_multiple_failures}: whether every distinct failure is reported. */
     boolean settingsGetReportMultipleFailures(long s);
+
+    /**
+     * {@code hegel_settings_get_seed}: the fixed seed, the engine's unsigned 64-bit value read as a
+     * {@code long}, or empty when none is fixed.
+     */
+    OptionalLong settingsGetSeed(long s);
+
+    /** {@code hegel_settings_get_derandomize}: whether the resolved settings derandomize. */
+    boolean settingsGetDerandomize(long s);
+
+    /**
+     * {@code hegel_settings_get_database}: the resolved example database: {@code null} for the
+     * default location, {@code ""} for disabled, else the root directory.
+     */
+    String settingsGetDatabase(long s);
+
+    /**
+     * {@code hegel_settings_get_suppress_health_check}: the suppressed health checks, as a mask of
+     * {@code Abi.HC_*} bits.
+     */
+    int settingsGetSuppressHealthCheck(long s);
+
+    /** {@code hegel_settings_get_stop_on_first_failure}: whether the run stops at its first failure. */
+    boolean settingsGetStopOnFirstFailure(long s);
+
+    /** {@code hegel_settings_get_show_statistics}: whether the run prints its statistics. */
+    boolean settingsGetShowStatistics(long s);
+
+    /** {@code hegel_settings_get_unbounded_choices}: whether the per-test-case choice limit is lifted. */
+    boolean settingsGetUnboundedChoices(long s);
+
+    /** {@code hegel_settings_get_backend}: the resolved randomness backend (an {@code Abi.BACKEND_*} value). */
+    int settingsGetBackend(long s);
 
     void settingsBackend(long s, int backend);
 

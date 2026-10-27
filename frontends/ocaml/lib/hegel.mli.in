@@ -37,7 +37,7 @@
 
     Hegel for OCaml supports {b Linux} (amd64/arm64) and {b macOS} (Apple Silicon).
     macOS amd64 (Intel) has no published [libhegel] artifact, so on that platform point
-    [HEGEL_LIBHEGEL_PATH] at a locally built [libhegel.dylib].
+    [HEGEL_LIBHEGEL_PATH] at a locally built [libhegel_c.dylib].
 
     Hegel works with whatever test framework your project already uses. The
     examples below use {{:https://github.com/mirage/alcotest} Alcotest}.
@@ -393,6 +393,10 @@
 (** The current version of Hegel for OCaml. *)
 val version : string
 
+(** [engine_version ()] is the version of the libhegel engine this library
+    drives, such as ["0.47.1"]. *)
+val engine_version : unit -> string
+
 (** An opaque handle for the current test case, passed to your test function and
     threaded to {!draw} and the other drawing primitives. *)
 type test_case = Internal.test_case
@@ -568,9 +572,10 @@ val run_hegel_test_ppx
       let () = workload ()
     ]}
 
-    The run's [test_cases] is always 1, the [Too_slow] health check is always
-    suppressed, and [unbounded_choices] is set, so the test case may make any
-    number of choices.
+    The run's [test_cases] is always 1, and the [Too_slow] and
+    [Test_cases_too_large] health checks are always suppressed, as in
+    hegel-rust's [#[hegel::main]] binaries. The test case is still bounded
+    to 2{^20} choices unless [--unbounded-choices true] lifts the limit.
 
     If you run a stateful test this way, you probably want a very 
     large [step_count].
@@ -579,10 +584,10 @@ val run_hegel_test_ppx
     dashes for underscores and taking the values [hegel.toml] takes:
     [--seed], [--verbosity], [--derandomize], [--database], [--database-key],
     [--phases], [--suppress-health-check], [--report-multiple-failures],
-    [--stop-on-first-failure], [--show-statistics], [--print-blob],
-    [--backend], [--nondeterminism-strictness], and any setting libhegel
-    adds later. [--test-cases] and [--unbounded-choices] are rejected, as the
-    binary fixes them. Lists such as [--phases]
+    [--stop-on-first-failure], [--show-statistics], [--unbounded-choices],
+    [--print-blob], [--backend], [--nondeterminism-strictness], and any
+    setting libhegel adds later. [--test-cases] is rejected, as the binary
+    fixes it. Lists such as [--phases]
     are comma-separated, and booleans are [true]/[false], [1]/[0] or
     [yes]/[no]. The engine reads each value, as it reads [hegel.toml], so a
     value it does not accept is reported as a usage error. [--profile]
@@ -783,9 +788,10 @@ val event_value : test_case -> label:string -> value:float -> unit
 
 (** {3 Debugging tests} *)
 
-(** [note tc message] prints [message] to stderr subject to the run's verbosity:
-    never under [Quiet], only on the final (failing) replay under [Normal], and
-    on every test case under [Verbose] or [Debug].
+(** [note tc message] adds [message] to the test case's output, printed with
+    its drawn values subject to the run's verbosity: never under [Quiet], for
+    the failing test case under [Normal], and for every test case under
+    [Verbose] or [Debug].
 
     {[
       let%hegel_test note_value tc =

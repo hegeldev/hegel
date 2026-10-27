@@ -437,9 +437,37 @@ namespace hegel {
             }
         }
 
-        uint32_t to_engine(const ListSetting<HealthCheck>& checks) {
+        NondeterminismStrictness
+        from_engine(hegel_nondeterminism_strictness_t strictness) {
+            switch (strictness) {
+            case HEGEL_NONDETERMINISM_WARN:
+                return NondeterminismStrictness::Warn;
+            case HEGEL_NONDETERMINISM_ERROR:
+                return NondeterminismStrictness::Error;
+            case HEGEL_NONDETERMINISM_QUIET:
+            default:
+                return NondeterminismStrictness::Quiet;
+            }
+        }
+
+        Backend from_engine(hegel_backend_t backend) {
+            return backend == HEGEL_BACKEND_URANDOM ? Backend::Urandom
+                                                    : Backend::Default;
+        }
+
+        Database from_engine(const std::optional<std::string>& database) {
+            if (!database.has_value()) {
+                return Database::default_location();
+            }
+            if (database->empty()) {
+                return Database::disabled();
+            }
+            return Database::from_path(*database);
+        }
+
+        uint32_t to_engine(const std::vector<HealthCheck>& checks) {
             uint32_t mask = 0;
-            for (HealthCheck c : checks.values()) {
+            for (HealthCheck c : checks) {
                 switch (c) {
                 case HealthCheck::FilterTooMuch:
                     mask |= HEGEL_HC_FILTER_TOO_MUCH;
@@ -458,9 +486,26 @@ namespace hegel {
             return mask;
         }
 
-        uint32_t to_engine(const ListSetting<Phase>& phases) {
+        std::vector<HealthCheck> health_checks_from_engine(uint32_t mask) {
+            std::vector<HealthCheck> checks;
+            if ((mask & HEGEL_HC_FILTER_TOO_MUCH) != 0) {
+                checks.push_back(HealthCheck::FilterTooMuch);
+            }
+            if ((mask & HEGEL_HC_TOO_SLOW) != 0) {
+                checks.push_back(HealthCheck::TooSlow);
+            }
+            if ((mask & HEGEL_HC_TEST_CASES_TOO_LARGE) != 0) {
+                checks.push_back(HealthCheck::TestCasesTooLarge);
+            }
+            if ((mask & HEGEL_HC_LARGE_INITIAL_TEST_CASE) != 0) {
+                checks.push_back(HealthCheck::LargeInitialTestCase);
+            }
+            return checks;
+        }
+
+        uint32_t to_engine(const std::vector<Phase>& phases) {
             uint32_t mask = 0;
-            for (Phase p : phases.values()) {
+            for (Phase p : phases) {
                 switch (p) {
                 case Phase::Explicit:
                     mask |= HEGEL_PHASE_EXPLICIT;
@@ -482,50 +527,48 @@ namespace hegel {
             return mask;
         }
 
-        // Set each field the caller gave onto a handle resolved from a
-        // settings profile. Every other field keeps the profile's value.
+        std::vector<Phase> phases_from_engine(uint32_t mask) {
+            std::vector<Phase> phases;
+            if ((mask & HEGEL_PHASE_EXPLICIT) != 0) {
+                phases.push_back(Phase::Explicit);
+            }
+            if ((mask & HEGEL_PHASE_REUSE) != 0) {
+                phases.push_back(Phase::Reuse);
+            }
+            if ((mask & HEGEL_PHASE_GENERATE) != 0) {
+                phases.push_back(Phase::Generate);
+            }
+            if ((mask & HEGEL_PHASE_TARGET) != 0) {
+                phases.push_back(Phase::Target);
+            }
+            if ((mask & HEGEL_PHASE_SHRINK) != 0) {
+                phases.push_back(Phase::Shrink);
+            }
+            return phases;
+        }
+
+        // Set every field of `settings`, resolved when it was created, onto
+        // a fresh handle.
         void apply_settings(hegel_context_t* ctx, hegel_settings_t* s,
                             const Settings& settings) {
-            if (settings.test_cases.has_value()) {
-                impl::settings_set_test_cases(ctx, s, *settings.test_cases);
-            }
-            if (settings.verbosity.has_value()) {
-                impl::settings_set_verbosity(ctx, s,
-                                             to_engine(*settings.verbosity));
-            }
-            if (settings.seed.has_value()) {
-                impl::settings_set_seed(ctx, s, *settings.seed, true);
-            }
-            if (settings.derandomize.has_value()) {
-                impl::settings_set_derandomize(ctx, s, *settings.derandomize);
-            }
-            if (settings.report_multiple_failures.has_value()) {
-                impl::settings_set_report_multiple_failures(
-                    ctx, s, *settings.report_multiple_failures);
-            }
-            if (settings.stop_on_first_failure.has_value()) {
-                impl::settings_set_stop_on_first_failure(
-                    ctx, s, *settings.stop_on_first_failure);
-            }
-            if (settings.nondeterminism_strictness.has_value()) {
-                impl::settings_set_nondeterminism_strictness(
-                    ctx, s, to_engine(*settings.nondeterminism_strictness));
-            }
-            if (settings.print_blob.has_value()) {
-                impl::settings_set_print_blob(ctx, s, *settings.print_blob);
-            }
-            if (settings.show_statistics.has_value()) {
-                impl::settings_set_show_statistics(ctx, s,
-                                                   *settings.show_statistics);
-            }
-            if (settings.unbounded_choices.has_value()) {
-                impl::settings_set_unbounded_choices(
-                    ctx, s, *settings.unbounded_choices);
-            }
+            impl::settings_set_test_cases(ctx, s, settings.test_cases);
+            impl::settings_set_verbosity(ctx, s, to_engine(settings.verbosity));
+            impl::settings_set_seed(ctx, s, settings.seed.value_or(0),
+                                    settings.seed.has_value());
+            impl::settings_set_derandomize(ctx, s, settings.derandomize);
+            impl::settings_set_report_multiple_failures(
+                ctx, s, settings.report_multiple_failures);
+            impl::settings_set_stop_on_first_failure(
+                ctx, s, settings.stop_on_first_failure);
+            impl::settings_set_nondeterminism_strictness(
+                ctx, s, to_engine(settings.nondeterminism_strictness));
+            impl::settings_set_print_blob(ctx, s, settings.print_blob);
+            impl::settings_set_show_statistics(ctx, s,
+                                               settings.show_statistics);
+            impl::settings_set_unbounded_choices(ctx, s,
+                                                 settings.unbounded_choices);
 
             switch (settings.database.kind()) {
-            case Database::Kind::Unset:
-                break;
             case Database::Kind::Default:
                 impl::settings_set_default_database(ctx, s);
                 break;
@@ -537,34 +580,19 @@ namespace hegel {
                 break;
             }
 
-            if (settings.suppress_health_check.is_set()) {
-                impl::settings_set_suppress_health_check(
-                    ctx, s, to_engine(settings.suppress_health_check));
-            }
-            if (settings.phases.is_set()) {
-                impl::settings_set_phases(ctx, s, to_engine(settings.phases));
-            }
-
-            switch (settings.backend) {
-            case Backend::Auto:
-                break;
-            case Backend::Default:
-                impl::settings_set_backend(ctx, s, HEGEL_BACKEND_DEFAULT);
-                break;
-            case Backend::Urandom:
-                impl::settings_set_backend(ctx, s, HEGEL_BACKEND_URANDOM);
-                break;
-            }
+            impl::settings_set_suppress_health_check(
+                ctx, s, to_engine(settings.suppress_health_check));
+            impl::settings_set_phases(ctx, s, to_engine(settings.phases));
+            impl::settings_set_backend(ctx, s,
+                                       settings.backend == Backend::Urandom
+                                           ? HEGEL_BACKEND_URANDOM
+                                           : HEGEL_BACKEND_DEFAULT);
         }
 
-        // A handle resolved from the settings profile that `settings` name,
-        // with the fields they set applied over it.
+        // A handle holding every field of `settings`.
         void resolve_settings(hegel_context_t* ctx, SettingsGuard& guard,
                               const Settings& settings) {
-            guard.s =
-                settings.profile.has_value()
-                    ? impl::settings_new_for_profile(ctx, *settings.profile)
-                    : impl::settings_new(ctx);
+            guard.s = impl::settings_new(ctx);
             apply_settings(ctx, guard.s, settings);
         }
 
@@ -1063,6 +1091,40 @@ namespace hegel {
     std::string engine_version() {
         return impl::engine_version(impl::thread_context());
     }
+
+    Settings Settings::from_profile(const std::string& name) {
+        return Settings{detail::resolve_settings(name)};
+    }
+
+    namespace detail {
+        ResolvedSettings
+        resolve_settings(const std::optional<std::string>& profile) {
+            hegel_context_t* ctx = impl::thread_context();
+            SettingsGuard guard{ctx};
+            guard.s = profile.has_value()
+                          ? impl::settings_new_for_profile(ctx, *profile)
+                          : impl::settings_new(ctx);
+            const hegel_settings_t* s = guard.s;
+            return ResolvedSettings{
+                impl::settings_get_test_cases(ctx, s),
+                from_engine(impl::settings_get_verbosity(ctx, s)),
+                impl::settings_get_seed(ctx, s),
+                impl::settings_get_derandomize(ctx, s),
+                impl::settings_get_report_multiple_failures(ctx, s),
+                impl::settings_get_stop_on_first_failure(ctx, s),
+                from_engine(
+                    impl::settings_get_nondeterminism_strictness(ctx, s)),
+                impl::settings_get_print_blob(ctx, s),
+                impl::settings_get_show_statistics(ctx, s),
+                impl::settings_get_unbounded_choices(ctx, s),
+                from_engine(impl::settings_get_database(ctx, s)),
+                health_checks_from_engine(
+                    impl::settings_get_suppress_health_check(ctx, s)),
+                phases_from_engine(impl::settings_get_phases(ctx, s)),
+                from_engine(impl::settings_get_backend(ctx, s)),
+            };
+        }
+    } // namespace detail
 
     namespace internal {
         void

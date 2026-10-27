@@ -451,7 +451,7 @@ TEST(Diagnostics, InternalExceptionMessages) {
 namespace {
     // Runs one Verbose test case in-process and returns its stderr.
     std::string run_verbose(const std::function<void(hegel::TestCase&)>& body,
-                            int64_t test_cases = 1) {
+                            uint64_t test_cases = 1) {
         testing::internal::CaptureStderr();
         hegel::test(body,
                     hegel::Settings{.test_cases = test_cases,

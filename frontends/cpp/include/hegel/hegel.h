@@ -517,7 +517,7 @@ namespace hegel {
      * @throws DidNotReproduce if no blob in @p failure_blobs makes the test
      *         fail.
      * @throws std::invalid_argument for invalid settings, an unknown
-     *         Settings::profile, or a blob that is not valid.
+     *         Settings::from_profile(), or a blob that is not valid.
      * @see Settings for configuration settings
      */
     void test(const std::function<void(TestCase&)>& test_fn,

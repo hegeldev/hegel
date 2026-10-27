@@ -43,7 +43,9 @@
 //! variables (`HEGEL_TEST_CASES`, `HEGEL_DATABASE`, `HEGEL_STATISTICS`,
 //! `HEGEL_SEED`, `HEGEL_DERANDOMIZE`, `HEGEL_PRINT_BLOB`,
 //! `HEGEL_STOP_ON_FIRST_FAILURE`, `HEGEL_UNBOUNDED_CHOICES`,
-//! `HEGEL_NONDETERMINISM_STRICTNESS`; see
+//! `HEGEL_REPORT_MULTIPLE_FAILURES`, `HEGEL_NONDETERMINISM_STRICTNESS`,
+//! `HEGEL_VERBOSITY`, `HEGEL_BACKEND`, `HEGEL_PHASES`,
+//! `HEGEL_SUPPRESS_HEALTH_CHECK`; see
 //! [`Settings::with_env_overrides_from`]) are applied over the result, so
 //! a settings handle starts from the profile as the environment adjusts
 //! it, and the setters called on it afterwards have the last word.

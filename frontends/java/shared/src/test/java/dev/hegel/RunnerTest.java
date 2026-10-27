@@ -2,6 +2,7 @@ package dev.hegel;
 
 import static dev.hegel.Generators.integers;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -242,6 +243,7 @@ class RunnerTest {
                                 new Settings()
                                         .database(Database.disabled())
                                         .reportMultipleFailures(true)
+                                        .printBlob(false)
                                         .verbosity(Verbosity.QUIET),
                                 tc -> {
                                     if (replay.incrementAndGet() % 2 == 1) {
@@ -440,10 +442,11 @@ class RunnerTest {
     }
 
     @Test
-    void nondeterminismStrictnessIsSentOnlyWhenSet() {
+    void nondeterminismStrictnessIsAlwaysSent() {
         FakeLibhegel fake = new FakeLibhegel();
-        run(fake, new Settings().database(Database.disabled()), tc -> {});
-        assertNull(fake.strictness);
+        fake.resolvedStrictness = Abi.NONDETERMINISM_ERROR;
+        run(fake, Settings.resolved(fake, null).database(Database.disabled()), tc -> {});
+        assertEquals(Integer.valueOf(Abi.NONDETERMINISM_ERROR), fake.strictness);
         run(
                 fake,
                 new Settings().database(Database.disabled()).nondeterminismStrictness(NondeterminismStrictness.WARN),
@@ -452,34 +455,44 @@ class RunnerTest {
     }
 
     @Test
-    void effectiveStrictnessIsReadBackFromTheEngine() {
+    void resolvedStrictnessIsReadFromTheEngine() {
         FakeLibhegel fake = new FakeLibhegel();
         fake.resolvedStrictness = Abi.NONDETERMINISM_ERROR;
-        Settings[] seen = new Settings[1];
-        Reporter reporter = new Reporter() {
-            @Override
-            public void runStarted(Settings settings) {
-                seen[0] = settings;
-            }
-        };
-        Runner.run(fake, new Settings().database(Database.disabled()), tc -> {}, reporter);
-        assertEquals(NondeterminismStrictness.ERROR, seen[0].nondeterminismStrictness);
-        assertEquals(NondeterminismStrictness.DEFAULT, new Settings().nondeterminismStrictness);
+        assertEquals(NondeterminismStrictness.ERROR, Settings.resolved(fake, null).nondeterminismStrictness);
+        assertEquals(
+                NondeterminismStrictness.QUIET, Settings.resolved(new FakeLibhegel(), null).nondeterminismStrictness);
 
         FakeLibhegel unknown = new FakeLibhegel();
         unknown.resolvedStrictness = 99;
-        HegelException e = assertThrows(HegelException.class, () -> run(unknown, new Settings(), tc -> {}));
+        HegelException e = assertThrows(HegelException.class, () -> Settings.resolved(unknown, null));
         assertTrue(e.getMessage().contains("99"), e.getMessage());
     }
 
     @Test
-    void autoBackendLeavesTheChoiceToTheEngineProfile() {
+    void theResolvedBackendIsSentUnlessReplaced() {
         FakeLibhegel fake = new FakeLibhegel();
-        run(fake, new Settings().backend(Backend.AUTO), tc -> {});
-        assertNull(fake.backendCode);
+        fake.resolvedBackend = Abi.BACKEND_URANDOM;
+        Settings resolved = Settings.resolved(fake, null);
+        assertEquals(Backend.URANDOM, resolved.backend);
+        run(fake, resolved, tc -> {});
+        assertEquals(Abi.BACKEND_URANDOM, fake.backendCode);
         FakeLibhegel explicit = new FakeLibhegel();
         run(explicit, new Settings().backend(Backend.DEFAULT), tc -> {});
         assertEquals(Abi.BACKEND_DEFAULT, explicit.backendCode);
+
+        FakeLibhegel unknown = new FakeLibhegel();
+        unknown.resolvedBackend = 99;
+        HegelException e = assertThrows(HegelException.class, () -> Settings.resolved(unknown, null));
+        assertTrue(e.getMessage().contains("99"), e.getMessage());
+    }
+
+    @Test
+    void theAnnotationSentinelsAreRejected() {
+        assertThrows(IllegalArgumentException.class, () -> new Settings().backend(Backend.AUTO));
+        assertThrows(IllegalArgumentException.class, () -> new Settings().verbosity(Verbosity.DEFAULT));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new Settings().nondeterminismStrictness(NondeterminismStrictness.DEFAULT));
     }
 
     @Test
@@ -507,9 +520,10 @@ class RunnerTest {
 
     @Test
     void suppressingNoHealthChecksIsSentAndReplacesEarlierSuppressions() {
-        FakeLibhegel unset = new FakeLibhegel();
-        run(unset, new Settings(), tc -> {});
-        assertEquals(-1, unset.suppressMask);
+        FakeLibhegel resolved = new FakeLibhegel();
+        resolved.resolvedSuppressMask = Abi.HC_TOO_SLOW;
+        run(resolved, Settings.resolved(resolved, null), tc -> {});
+        assertEquals(Abi.HC_TOO_SLOW, resolved.suppressMask);
 
         FakeLibhegel none = new FakeLibhegel();
         run(none, new Settings().suppressHealthCheck(HealthCheck.TOO_SLOW).suppressHealthCheck(), tc -> {});
@@ -528,13 +542,20 @@ class RunnerTest {
         run(defaultLocation, new Settings().database(Database.defaultLocation()), tc -> {});
         assertNull(defaultLocation.databasePath);
 
-        // Unset settings are not sent at all: the engine's profile (which disables the database
-        // and derandomizes in CI) and the HEGEL_* variables stand. A name still derives a key.
+        // What the settings resolved from the engine's profile (which disables the database and
+        // derandomizes in CI) is sent back as it was read. A name derives a key.
         FakeLibhegel named = new FakeLibhegel();
-        Runner.run(named, new Settings().name("t"), tc -> {}, Reporter.printing(capture(new ByteArrayOutputStream())));
-        assertEquals("unset", named.databasePath);
-        assertNull(named.derandomize);
-        assertNull(named.testCases);
+        named.resolvedDatabase = "";
+        named.resolvedDerandomize = true;
+        named.resolvedTestCases = 7;
+        Runner.run(
+                named,
+                Settings.resolved(named, null).name("t"),
+                tc -> {},
+                Reporter.printing(capture(new ByteArrayOutputStream())));
+        assertEquals("", named.databasePath);
+        assertEquals(Boolean.TRUE, named.derandomize);
+        assertEquals(Long.valueOf(7), named.testCases);
         assertEquals("t", named.databaseKey);
     }
 
@@ -565,13 +586,13 @@ class RunnerTest {
                 seen[0] = settings;
             }
         };
-        // Unset: the values the engine resolved (profile + HEGEL_* variables) are reported.
+        // The values the engine resolved (profile + HEGEL_* variables) are reported.
         FakeLibhegel fromEngine = new FakeLibhegel();
         fromEngine.resolvedTestCases = 250;
         fromEngine.resolvedPrintBlob = true;
-        Runner.run(fromEngine, new Settings(), tc -> {}, recording);
-        assertEquals(Long.valueOf(250), seen[0].testCases);
-        assertEquals(Boolean.TRUE, seen[0].printBlob);
+        Runner.run(fromEngine, Settings.resolved(fromEngine, null), tc -> {}, recording);
+        assertEquals(250L, seen[0].testCases);
+        assertTrue(seen[0].printBlob);
 
         // Explicit: the caller's values win, and the test-case budget reaches the engine.
         FakeLibhegel explicit = new FakeLibhegel();
@@ -579,8 +600,8 @@ class RunnerTest {
         Runner.run(explicit, new Settings().testCases(3).printBlob(false), tc -> {}, recording);
         assertEquals(Long.valueOf(3), explicit.testCases);
         assertEquals(Boolean.FALSE, explicit.printBlob);
-        assertEquals(Long.valueOf(3), seen[0].testCases);
-        assertEquals(Boolean.FALSE, seen[0].printBlob);
+        assertEquals(3L, seen[0].testCases);
+        assertFalse(seen[0].printBlob);
     }
 
     @Test

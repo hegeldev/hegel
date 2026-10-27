@@ -603,7 +603,7 @@ def run(
         # Explicit failures, by origin: the first explicit case failing ends
         # the run, unless every distinct failure is to be reported.
         failures: dict[str, BaseException] = {}
-        values = resolved._values()
+        values = resolved._values
         if Phase.explicit in values["phases"]:
             output = RunOutput.resolve()
             for case in explicit_cases:

@@ -134,9 +134,11 @@ the test rejects with `assume` or `reject`, is a usage error: explicit test case
 
 ## Settings and profiles
 
-Every setting has an `@HegelTest` attribute and a `Settings` method, and anything a test leaves
-unset comes from the engine's settings profile: a `hegel.toml` file, the `HEGEL_*` environment
-variables, or the shipped `development`, `ci` and `workload` profiles, picked automatically. Reach
+Every engine setting has an `@HegelTest` attribute and a `Settings` method (a test's location, its
+infrastructure packages and string-form settings are `Settings`-only). A `Settings` resolves every
+setting through the engine when it is created, so anything a test does not set comes from the
+engine's settings profile: a `hegel.toml` file, the `HEGEL_*` environment variables, or the shipped
+`development`, `ci` and `workload` profiles, picked automatically. Reach
 any engine setting by its `hegel.toml` key with `Settings.set`, and name, register and select
 profiles from Java:
 

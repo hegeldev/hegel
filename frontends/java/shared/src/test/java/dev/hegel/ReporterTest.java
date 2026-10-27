@@ -35,7 +35,7 @@ class ReporterTest {
     void printingReporterPrintsCaseOutputAndEngineOutput() {
         ByteArrayOutputStream buf = new ByteArrayOutputStream();
         Reporter printing = Reporter.printing(new PrintStream(buf, true, StandardCharsets.UTF_8));
-        printing.runStarted(new Settings());
+        printing.runStarted(new Settings().printBlob(false));
         printing.engineOutput("engine line");
         printing.caseStarted(true); // a lone failure: no separating blank line
         printing.caseOutput("var xs = [1, 2];", true);

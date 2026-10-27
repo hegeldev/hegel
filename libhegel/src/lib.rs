@@ -1175,10 +1175,21 @@ fn cstring_lossy(s: &str) -> CString {
 /// - `HEGEL_STATISTICS`: anything but `0` turns `show_statistics` on.
 /// - `HEGEL_SEED`: an integer fixes the seed; `none` clears one.
 /// - `HEGEL_DERANDOMIZE`, `HEGEL_PRINT_BLOB`,
-///   `HEGEL_STOP_ON_FIRST_FAILURE` and `HEGEL_UNBOUNDED_CHOICES`: `true`,
-///   `1` or `yes`, or `false`, `0` or `no`.
+///   `HEGEL_STOP_ON_FIRST_FAILURE`, `HEGEL_UNBOUNDED_CHOICES` and
+///   `HEGEL_REPORT_MULTIPLE_FAILURES`: `true`, `1` or `yes`, or `false`,
+///   `0` or `no`.
 /// - `HEGEL_NONDETERMINISM_STRICTNESS`: `quiet`, `warn` or `error`, the
 ///   `nondeterminism_strictness` value.
+/// - `HEGEL_VERBOSITY`: `quiet`, `normal`, `verbose` or `debug`, the
+///   `verbosity` value.
+/// - `HEGEL_BACKEND`: `default` or `urandom`, the `backend` value.
+/// - `HEGEL_PHASES`: the `phases` value as comma-separated phase names
+///   (`explicit`, `reuse`, `generate`, `target`, `shrink`), or `none` for
+///   no phases.
+/// - `HEGEL_SUPPRESS_HEALTH_CHECK`: the `suppress_health_check` value as
+///   comma-separated check names (`filter_too_much`, `too_slow`,
+///   `test_cases_too_large`, `large_initial_test_case`), `all` for every
+///   check, or `none` for no checks.
 ///
 /// An empty variable is ignored. A malformed one makes this function (and
 /// `hegel_settings_new_for_profile`) fail with `HEGEL_E_INVALID_ARG` and a

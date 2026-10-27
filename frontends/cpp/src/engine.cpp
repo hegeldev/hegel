@@ -150,12 +150,6 @@ namespace hegel::impl {
         check_rc(ctx, hegel_settings_set_backend(ctx, s, backend));
     }
 
-    hegel_settings_t* settings_new(hegel_context_t* ctx) {
-        hegel_settings_t* s = nullptr;
-        check_rc(ctx, hegel_settings_new(ctx, &s));
-        return s;
-    }
-
     hegel_run_t* run_start(hegel_context_t* ctx, hegel_settings_t* s) {
         hegel_run_t* run = nullptr;
         // A NULL output callback (and user data) keeps engine output on
@@ -273,6 +267,12 @@ namespace hegel::impl {
 
     } // namespace
 
+    hegel_settings_t* settings_new(hegel_context_t* ctx) {
+        hegel_settings_t* s = nullptr;
+        check_arg(ctx, hegel_settings_new(ctx, &s));
+        return s;
+    }
+
     hegel_settings_t* settings_new_for_profile(hegel_context_t* ctx,
                                                std::string_view name) {
         hegel_settings_t* s = nullptr;
@@ -342,6 +342,91 @@ namespace hegel::impl {
         uint32_t phases = 0;
         check_rc(ctx, hegel_settings_get_phases(ctx, s, &phases));
         return phases;
+    }
+
+    uint64_t settings_get_test_cases(hegel_context_t* ctx,
+                                     const hegel_settings_t* s) {
+        uint64_t test_cases = 0;
+        check_rc(ctx, hegel_settings_get_test_cases(ctx, s, &test_cases));
+        return test_cases;
+    }
+
+    std::optional<uint64_t> settings_get_seed(hegel_context_t* ctx,
+                                              const hegel_settings_t* s) {
+        uint64_t seed = 0;
+        bool has_seed = false;
+        check_rc(ctx, hegel_settings_get_seed(ctx, s, &seed, &has_seed));
+        if (!has_seed) {
+            return std::nullopt;
+        }
+        return seed;
+    }
+
+    bool settings_get_derandomize(hegel_context_t* ctx,
+                                  const hegel_settings_t* s) {
+        bool yes = false;
+        check_rc(ctx, hegel_settings_get_derandomize(ctx, s, &yes));
+        return yes;
+    }
+
+    std::optional<std::string>
+    settings_get_database(hegel_context_t* ctx, const hegel_settings_t* s) {
+        const hegel_string_t* database = nullptr;
+        check_rc(ctx, hegel_settings_get_database(ctx, s, &database));
+        return copy_optional(database);
+    }
+
+    uint32_t settings_get_suppress_health_check(hegel_context_t* ctx,
+                                                const hegel_settings_t* s) {
+        uint32_t mask = 0;
+        check_rc(ctx, hegel_settings_get_suppress_health_check(ctx, s, &mask));
+        return mask;
+    }
+
+    bool settings_get_report_multiple_failures(hegel_context_t* ctx,
+                                               const hegel_settings_t* s) {
+        bool yes = false;
+        check_rc(ctx,
+                 hegel_settings_get_report_multiple_failures(ctx, s, &yes));
+        return yes;
+    }
+
+    bool settings_get_stop_on_first_failure(hegel_context_t* ctx,
+                                            const hegel_settings_t* s) {
+        bool yes = false;
+        check_rc(ctx, hegel_settings_get_stop_on_first_failure(ctx, s, &yes));
+        return yes;
+    }
+
+    bool settings_get_show_statistics(hegel_context_t* ctx,
+                                      const hegel_settings_t* s) {
+        bool yes = false;
+        check_rc(ctx, hegel_settings_get_show_statistics(ctx, s, &yes));
+        return yes;
+    }
+
+    bool settings_get_unbounded_choices(hegel_context_t* ctx,
+                                        const hegel_settings_t* s) {
+        bool yes = false;
+        check_rc(ctx, hegel_settings_get_unbounded_choices(ctx, s, &yes));
+        return yes;
+    }
+
+    hegel_backend_t settings_get_backend(hegel_context_t* ctx,
+                                         const hegel_settings_t* s) {
+        hegel_backend_t backend = HEGEL_BACKEND_DEFAULT;
+        check_rc(ctx, hegel_settings_get_backend(ctx, s, &backend));
+        return backend;
+    }
+
+    hegel_nondeterminism_strictness_t
+    settings_get_nondeterminism_strictness(hegel_context_t* ctx,
+                                           const hegel_settings_t* s) {
+        hegel_nondeterminism_strictness_t strictness =
+            HEGEL_NONDETERMINISM_QUIET;
+        check_rc(ctx, hegel_settings_get_nondeterminism_strictness(
+                          ctx, s, &strictness));
+        return strictness;
     }
 
     hegel_run_t* run_start_blob(hegel_context_t* ctx, hegel_settings_t* s,
