@@ -183,9 +183,7 @@ describe("value-producing generators print the finished value", () => {
   const zero = gs.integers({ minValue: 0, maxValue: 0 });
 
   it("prints a map's result, not its input", () => {
-    expect(line(zero.map((n) => new Point(n, n)))).toBe(
-      "const x = Object.assign(Object.create(Point.prototype), { x: 0, y: 0 });",
-    );
+    expect(line(zero.map((n) => new Point(n, n)))).toBe("const x = Point { x: 0, y: 0 };");
     expect(line(digit.map((d) => d))).toBe("const x = 0;");
   });
 

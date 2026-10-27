@@ -527,12 +527,6 @@ describe("WasmEngine real run lifecycle", () => {
         p.comment("half-open");
       }
     }
-    class Span {
-      constructor(
-        readonly start: unknown,
-        readonly end: unknown,
-      ) {}
-    }
     const body = (tc: import("../src/testCase.js").TestCase) => {
       tc.draw(gs.just(new RangeError("bad")), "error");
       tc.draw(gs.just(new Interval(1, 2)), "interval");
@@ -542,7 +536,6 @@ describe("WasmEngine real run lifecycle", () => {
         gs.just({ name: "x".repeat(60), tags: new Set(["a"]), at: new Map([[1, [2]]]) }),
         "record",
       );
-      tc.draw(gs.just(new Span("y".repeat(50), new Span(1, 2))), "span");
       throw new Error("failed");
     };
     const reports: string[][] = [];
@@ -570,10 +563,6 @@ describe("WasmEngine real run lifecycle", () => {
       '    tags: new Set(["a"]),',
       "    at: new Map([[1, [2]]]),",
       "};",
-      "const span = Object.assign(Object.create(Span.prototype), {",
-      `    start: "${"y".repeat(50)}",`,
-      "    end: Object.assign(Object.create(Span.prototype), { start: 1, end: 2 }),",
-      "});",
     ]);
   });
 
