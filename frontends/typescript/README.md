@@ -112,9 +112,43 @@ test("stack", () =>
 
 Hegel picks the rules to run at each step, shrinks a failing sequence down to a minimal one, and reports it step by step (`Step 1: push {`, with the step's draws indented beneath it, then `}`). See the `stateful` module in the documentation for invariants, step counts, asynchronous rules and `Pool`, which lets rules act on values that earlier rules produced.
 
-## Printing your own classes
+## How failing examples print
 
-A failing example prints each drawn value as JavaScript, laid out to fit the line: arrays, objects, `Map`s and `Set`s break one item per line when they are too long. Instances of your own classes print as their class name and properties; to print one differently, give the class a `hegel.prettyPrint` method, which writes through a `hegel.PrettyPrinter`:
+Printing is the generator's job: each generator prints the values it draws, as it draws them, laid out by the engine to fit the line. Every built-in generator prints:
+
+- Leaves (`integers`, `text`, `binary`, …) print their value as JavaScript: `-0`, `12n`, `"a"`, `Uint8Array.from([0])`.
+- Structural generators (`arrays`, `sets`, `maps`, `tuples`, `record`, `optional`, `oneOf`, `filter`, `flatMap`, `recursive`, `deferred`) print element by element through the generators they are built from, so an element's own printing shows up inside its container.
+- Value-producing generators (`map`, `just`, `sampledFrom`, `composite`) print the value they produce, as JavaScript. A `composite`'s inner draws are not printed.
+
+Arrays, objects, `Map`s and `Set`s break one item per line when they are too long. To print a generator's values some other way, give it a printer with `printWith`:
+
+```typescript
+const digits = gs.integers({ minValue: 0, maxValue: 9 }).printWith((d, p) => p.text(`Digit(${d})`));
+tc.draw(gs.arrays(digits), "ds"); // const ds = [Digit(3), Digit(0)];
+```
+
+`printWith` is also how to print values with no useful JavaScript representation, such as functions, or to hide a secret. On a `map`, `printAsCall(name)` prints the input draw as an argument instead of the output: `gs.integers().map(makeKey).printAsCall("makeKey")` prints `makeKey(3)`.
+
+`tc.draw` takes a `PrintableGenerator`. A generator you write by extending `gs.Generator` and implementing only `doDraw` draws silently, with `tc.drawSilent`; make it printable with `.printAsValue()` (print each value as JavaScript) or `.printWith(...)`, or extend `gs.PrintableGenerator` and print as you draw:
+
+```typescript
+class Pairs extends gs.PrintableGenerator<[number, number]> {
+  doDrawAndPrint(tc: hegel.TestCase, p: hegel.PrettyPrinter): [number, number] {
+    return p.group(5, "Pair(", ")", () => {
+      const a = tc.drawAndPrint(gs.integers(), p);
+      p.separator();
+      const b = tc.drawAndPrint(gs.integers(), p);
+      return [a, b];
+    });
+  }
+}
+```
+
+`tc.drawAndPrint` draws an inner generator printing in place. Leave `doDraw` to its default, which runs `doDrawAndPrint` with a printer that discards everything, so that both make the same draws. Declare helper functions that return generators as returning `PrintableGenerator<T>`, not `Generator<T>`, so that their results can be drawn with `tc.draw`.
+
+A group prints on one line when it fits, each `breakable` as its separator, and otherwise breaks at every `breakable`, indenting the next line by the group's indentation. The printer also has `seq` (a delimited list laid out like the built-in containers), `ifBreak`, `hardBreak`, `comment`, `shiftIndent`, `reflow`, `value` (a value as JavaScript), `speculate` (output a rejected draw can retract) and `deferred`, a hole at the current position that can be written later: what a value prints when the test only learns how to describe it after drawing it, such as a stub function recording its calls. `hegel.Document` is a standalone document for trying printing code out outside a test.
+
+When a value is printed as JavaScript (by `value`, `map`, `just`, `composite` or `printAsValue`), instances of your own classes print as their class name and properties. To print one differently, give the class a `hegel.prettyPrint` method:
 
 ```typescript
 class Interval {
@@ -124,14 +158,11 @@ class Interval {
   ) {}
 
   [hegel.prettyPrint](p: hegel.PrettyPrinter): void {
-    p.group(4, "Interval(", ")", () => {
+    p.group(9, "Interval(", ")", () => {
       p.value(this.lo);
-      p.text(",");
-      p.breakable(" ");
+      p.separator();
       p.value(this.hi);
     });
   }
 }
 ```
-
-A group prints on one line when it fits, each `breakable` as its separator, and otherwise breaks at every `breakable`, indenting the next line by the group's indentation.
