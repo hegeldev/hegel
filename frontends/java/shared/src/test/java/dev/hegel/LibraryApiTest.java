@@ -67,8 +67,8 @@ class LibraryApiTest {
                 Reporter.silent());
         assertEquals(
                 List.of(
-                        "var pair = Tuple2[value1=\"\", value2=\"\"];",
-                        "var nested = Tuple2[value1=\"a b\\nc\", value2=Optional.empty];"),
+                        "var pair = new Tuple2(\"\", \"\");",
+                        "var nested = new Tuple2(\"a b\\nc\", Optional.empty());"),
                 report.failures().get(0).output());
     }
 

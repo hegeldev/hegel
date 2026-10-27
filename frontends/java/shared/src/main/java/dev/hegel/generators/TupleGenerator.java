@@ -13,8 +13,8 @@ import java.util.function.Function;
  * Generates fixed-length heterogeneous tuples. The element values are drawn in order inside a
  * TUPLE span and handed to an {@code assembler} that packs them into the user-facing type {@code
  * T} (a {@code TupleN} record, or the raw {@code List<Object>} for the variadic factory). Each
- * element prints itself as it is drawn: a tuple record as {@code Tuple2[value1=a, value2=b]}, a list
- * as {@code [a, b]}.
+ * element prints itself as it is drawn: a tuple record as its constructor call, {@code new Tuple2(a,
+ * b)}, a list as {@code [a, b]}.
  *
  * @param <T> the assembled tuple type
  */
@@ -35,8 +35,8 @@ public final class TupleGenerator<T> implements PrintableGenerator<T> {
     }
 
     /**
-     * A generator of tuples that print as the record {@code record}, {@code
-     * record[value1=a, value2=b]}.
+     * A generator of tuples that print as a call of the constructor of the record {@code record},
+     * {@code new record(a, b)}.
      *
      * @param record the simple name of the record the tuple is, such as {@code Tuple2}
      * @param elements one generator per position
@@ -71,17 +71,14 @@ public final class TupleGenerator<T> implements PrintableGenerator<T> {
         tc.startSpan(label());
         try {
             List<Object> out = new ArrayList<>(elements.size());
-            p.beginGroup(record == null ? "[" : record + "[");
+            p.beginGroup(record == null ? "[" : "new " + record + "(");
             for (Generator<?> g : elements) {
                 if (!out.isEmpty()) {
                     p.separator();
                 }
-                if (record != null) {
-                    p.text("value" + (out.size() + 1) + "=");
-                }
                 out.add(Components.draw(tc, g, printer));
             }
-            p.endGroup("]");
+            p.endGroup(record == null ? "]" : ")");
             return assembler.apply(out);
         } finally {
             tc.stopSpan(false);

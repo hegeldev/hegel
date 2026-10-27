@@ -58,14 +58,14 @@ All output a test case prints now goes through the engine, as in the other Hegel
 The generator describes each value as it draws it. The new `PrintableGenerator` interface draws and prints in one step, and every built-in generator implements it:
 
 - Lists, sets, maps, arrays, tuples, optionals, records (`records` and `forType`), `oneOf`, `filter`, `flatMap`, `recursive` and `deferred` print as they draw, element by element and component by component, so an element's own printing shows up inside its container. A rejected filter attempt or duplicate element prints nothing.
-- The leaf generators, and `map`, `just`, `sampledFrom` and `composite`, print the value they produce in Java syntax: strings and characters as escaped literals, so a drawn string containing a newline stays on its line, collections as `[a, b]`, maps as `{k: v}`, records (including `Tuple2` to `Tuple8`) as `Tuple2[value1="a b", value2=""]`, and optionals as `Optional["a b"]` or `Optional.empty`. A composite's own draws are not printed, only what it returns.
+- The leaf generators, and `map`, `just`, `sampledFrom` and `composite`, print the value they produce as Java: strings and characters as escaped literals, so a drawn string containing a newline stays on its line, records (including `Tuple2` to `Tuple8`) as a call of their constructor, `new Tuple2("a b", "")`, and optionals as `Optional.of("a b")` or `Optional.empty()`, rather than as their `toString()`; collections print as `[a, b]` and maps as `{k: v}`. Generated records, tuples and optionals print the same way, each component as its own generator prints it. A composite's own draws are not printed, only what it returns.
 
 `TestCase.draw` now needs a printable generator. A hand-written `Generator`, such as `tc -> 1`, draws silently: drawing it with `draw`, or drawing a list, record override or other structure containing it, now fails the run with an `IllegalArgumentException` explaining how to fix it, where before its value was printed through `toString()`. Make it printable, or draw it with `drawSilent`:
 
 ```java
 Generator<Point> points = tc -> new Point(tc.drawSilent(integers()), tc.drawSilent(integers()));
 
-tc.draw(points.printAsRepr(), "p");                                         // var p = Point[x=0, y=0];
+tc.draw(points.printAsRepr(), "p");                                         // var p = new Point(0, 0);
 tc.draw(points.printWith((p, printer) -> printer.text("origin()")), "p");   // var p = origin();
 tc.draw(integers().map(Key::of).printAsCall("Key.of"), "k");                // var k = Key.of(3);
 ```

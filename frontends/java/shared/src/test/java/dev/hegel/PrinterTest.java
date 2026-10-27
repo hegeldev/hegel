@@ -96,20 +96,18 @@ class PrinterTest {
     }
 
     @Test
-    void recordsRenderStructurallyWithTheirComponentsAsLiterals() {
-        assertEquals("Point[x=1, y=2]", render(new Point(1, 2)));
-        assertEquals("Empty[]", render(new Empty()));
-        assertEquals("Tuple2[value1=\"a b\", value2=\"\"]", render(new Tuple2<>("a b", "")));
-        assertEquals("Named[name=\"x\\ny\", tags=[\"p, q\", \"]\"]]", render(new Named("x\ny", List.of("p, q", "]"))));
-        assertEquals(
-                "Tuple3[value1='c', value2=null, value3=Point[x=0, y=0]]",
-                render(new Tuple3<>('c', null, new Point(0, 0))));
+    void recordsRenderAsTheirConstructorCallWithTheirComponentsAsLiterals() {
+        assertEquals("new Point(1, 2)", render(new Point(1, 2)));
+        assertEquals("new Empty()", render(new Empty()));
+        assertEquals("new Tuple2(\"a b\", \"\")", render(new Tuple2<>("a b", "")));
+        assertEquals("new Named(\"x\\ny\", [\"p, q\", \"]\"])", render(new Named("x\ny", List.of("p, q", "]"))));
+        assertEquals("new Tuple3('c', null, new Point(0, 0))", render(new Tuple3<>('c', null, new Point(0, 0))));
     }
 
     @Test
-    void longRecordsBreakOneComponentPerLineAlignedPastTheirName() {
+    void longRecordsBreakOneComponentPerLineAlignedInsideTheParenthesis() {
         String out = render(new Tuple2<>("a".repeat(50), "b".repeat(50)));
-        assertEquals("Tuple2[value1=\"" + "a".repeat(50) + "\",\n       value2=\"" + "b".repeat(50) + "\"]", out);
+        assertEquals("new Tuple2(\"" + "a".repeat(50) + "\",\n           \"" + "b".repeat(50) + "\")", out);
     }
 
     @Test
@@ -118,17 +116,17 @@ class PrinterTest {
     }
 
     @Test
-    void optionalsRenderStructurally() {
-        assertEquals("Optional[\"a b\"]", render(Optional.of("a b")));
-        assertEquals("Optional[\"\\\"x\\\"\"]", render(Optional.of("\"x\"")));
-        assertEquals("Optional.empty", render(Optional.empty()));
-        assertEquals("OptionalInt[3]", render(OptionalInt.of(3)));
-        assertEquals("OptionalInt.empty", render(OptionalInt.empty()));
-        assertEquals("OptionalLong[4]", render(OptionalLong.of(4)));
-        assertEquals("OptionalLong.empty", render(OptionalLong.empty()));
-        assertEquals("OptionalDouble[0.5]", render(OptionalDouble.of(0.5)));
-        assertEquals("OptionalDouble.empty", render(OptionalDouble.empty()));
-        assertEquals("[Optional[Point[x=1, y=2]]]", render(List.of(Optional.of(new Point(1, 2)))));
+    void optionalsRenderAsTheirFactoryCalls() {
+        assertEquals("Optional.of(\"a b\")", render(Optional.of("a b")));
+        assertEquals("Optional.of(\"\\\"x\\\"\")", render(Optional.of("\"x\"")));
+        assertEquals("Optional.empty()", render(Optional.empty()));
+        assertEquals("OptionalInt.of(3)", render(OptionalInt.of(3)));
+        assertEquals("OptionalInt.empty()", render(OptionalInt.empty()));
+        assertEquals("OptionalLong.of(4)", render(OptionalLong.of(4)));
+        assertEquals("OptionalLong.empty()", render(OptionalLong.empty()));
+        assertEquals("OptionalDouble.of(0.5)", render(OptionalDouble.of(0.5)));
+        assertEquals("OptionalDouble.empty()", render(OptionalDouble.empty()));
+        assertEquals("[Optional.of(new Point(1, 2))]", render(List.of(Optional.of(new Point(1, 2)))));
     }
 
     @Test

@@ -93,7 +93,7 @@ class PrintingTest {
                 List.of("var xs = [pt(0), pt(0)];"),
                 failingOutput(tc -> tc.draw(lists(POINTS).minSize(2).maxSize(2), "xs")));
         assertEquals(
-                List.of("var p = Point[x=pt(0), y=0];"),
+                List.of("var p = new Point(pt(0), 0);"),
                 failingOutput(tc -> tc.draw(records(Point.class).with("x", POINTS), "p")));
     }
 
@@ -316,27 +316,29 @@ class PrintingTest {
                 integers().min(1).max(1).map(Leaf::new),
                 lists(tree).minSize(1).maxSize(1).map(Node::new)));
         List<String> out = failingOutput(tc -> tc.draw(tree, "t"));
-        assertEquals(List.of("var t = Leaf[value=1];"), out);
+        assertEquals(List.of("var t = new Leaf(1);"), out);
     }
 
     @Test
     void structuralGeneratorsPrintAsTheyDraw() {
         assertEquals(
-                List.of("var o = Optional[pt(0)];"),
+                List.of("var o = Optional.of(pt(0));"),
                 failingOutput(tc -> tc.draw(optional(POINTS).filter(Optional::isPresent), "o")));
-        assertEquals(List.of("var o = Optional.empty;"), failingOutput(tc -> tc.draw(optional(POINTS), "o")));
+        assertEquals(List.of("var o = Optional.empty();"), failingOutput(tc -> tc.draw(optional(POINTS), "o")));
         assertEquals(
-                List.of("var i = OptionalInt[0];", "var l = OptionalLong.empty;", "var d = OptionalDouble.empty;"),
+                List.of(
+                        "var i = OptionalInt.of(0);",
+                        "var l = OptionalLong.empty();",
+                        "var d = OptionalDouble.empty();"),
                 failingOutput(tc -> {
                     tc.draw(optionalInts(integers().min(0).max(0)).filter(OptionalInt::isPresent), "i");
                     tc.draw(optionalLongs(Generators.longs()), "l");
                     tc.draw(optionalDoubles(Generators.doubles()), "d");
                 }));
-        assertEquals(
-                List.of("var t = Tuple2[value1=pt(0), value2=\"\"];", "var u = [pt(0), false];"), failingOutput(tc -> {
-                    tc.draw(tuples(POINTS, text()), "t");
-                    tc.draw(tuples(new Generator<?>[] {POINTS, booleans()}), "u");
-                }));
+        assertEquals(List.of("var t = new Tuple2(pt(0), \"\");", "var u = [pt(0), false];"), failingOutput(tc -> {
+            tc.draw(tuples(POINTS, text()), "t");
+            tc.draw(tuples(new Generator<?>[] {POINTS, booleans()}), "u");
+        }));
         assertEquals(
                 List.of("var a = [pt(0), pt(0)];"),
                 failingOutput(tc -> tc.draw(arrays(POINTS, 2, Integer[]::new), "a")));

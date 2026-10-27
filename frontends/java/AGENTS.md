@@ -216,7 +216,7 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   `sampledFrom`, the one-argument `composite`; `PoolGenerator` for pool draws)
   draw silently and print the value with `Printer.repr`, which renders Java
   syntax — quoted, escaped strings and chars, arrays and collections as
-  `[a, b]`, maps as `{k: v}`, records as `Name[a=x]`, optionals — as groups
+  `[a, b]`, maps as `{k: v}`, records as `new Name(x)`, optionals as `Optional.of(x)` — as groups
   with breakables, and hands anything else's `toString()` to
   `hegel_printer_reflow`. `printWith`/`printAsRepr` (`PrintedGenerator`) and
   `MappedGenerator.printAsCall` are the value-printing escape hatches.

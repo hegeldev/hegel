@@ -133,11 +133,11 @@ public final class Printer {
     }
 
     /**
-     * Print {@code value} in Java syntax: strings and characters quoted and escaped, arrays and
-     * collections as {@code [a, b]}, maps as {@code {k: v}}, records as {@code Name[a=x, b=y]} (as
-     * their default {@code toString()} does) and optionals as {@code Optional[x]} or {@code
-     * Optional.empty}, each a group that breaks one element per line when it does not fit, with every
-     * element printed the same way. Anything else is its {@code toString()}, laid out by {@link
+     * Print {@code value} as Java: strings and characters as escaped literals, records as a call
+     * of their canonical constructor, {@code new Name(x, y)}, and optionals as {@code
+     * Optional.of(x)} or {@code Optional.empty()}; arrays and collections print as {@code [a, b]}
+     * and maps as {@code {k: v}}. Each is a group that breaks one element per line when it does not
+     * fit, with every element printed the same way. Anything else is its {@code toString()}, laid out by {@link
      * #reflow}; so is a record whose components cannot be read, such as one whose accessor throws.
      * Nothing is formatted when {@link #shouldPrint()} is false.
      *
@@ -476,24 +476,23 @@ public final class Printer {
             reflow(String.valueOf(record));
             return;
         }
-        beginGroup(record.getClass().getSimpleName() + "[");
+        beginGroup("new " + record.getClass().getSimpleName() + "(");
         for (int i = 0; i < components.length; i++) {
             if (i > 0) {
                 separator();
             }
-            text(components[i].getName() + "=");
             render(values[i]);
         }
-        endGroup("]");
+        endGroup(")");
     }
 
     private void optional(String name, boolean present, Object contents) {
         if (present) {
-            beginGroup(name + "[");
+            beginGroup(name + ".of(");
             render(contents);
-            endGroup("]");
+            endGroup(")");
         } else {
-            text(name + ".empty");
+            text(name + ".empty()");
         }
     }
 

@@ -9,8 +9,8 @@ import java.util.function.Function;
 
 /**
  * Generates an optional value: empty, or wrapping a value from an inner generator, inside a {@link
- * Label#OPTIONAL} span. Shrinks toward empty. It prints as {@code Optional[x]}, the inner value
- * printed by the inner generator as it is drawn, or {@code Optional.empty} (with the name of the
+ * Label#OPTIONAL} span. Shrinks toward empty. It prints as {@code Optional.of(x)}, the inner value
+ * printed by the inner generator as it is drawn, or {@code Optional.empty()} (with the name of the
  * optional type it makes, such as {@code OptionalInt}).
  *
  * @param <T> the inner value type
@@ -59,12 +59,12 @@ public final class OptionalGenerator<T, R> implements PrintableGenerator<R> {
         tc.startSpan(label());
         try {
             if (tc.generateBoolean(0.5)) {
-                p.beginGroup(name + "[");
+                p.beginGroup(name + ".of(");
                 R value = present.apply(Components.draw(tc, inner, printer));
-                p.endGroup("]");
+                p.endGroup(")");
                 return value;
             }
-            p.text(name + ".empty");
+            p.text(name + ".empty()");
             return empty;
         } finally {
             tc.stopSpan(false);

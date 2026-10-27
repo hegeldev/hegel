@@ -12,9 +12,9 @@ import java.util.Map;
 
 /**
  * Generates instances of a record type by drawing each component from its derived (or overridden)
- * generator and invoking the canonical constructor. It prints as the record's default {@code
- * toString()} does, {@code Name[a=x, b=y]}, each component printed by its generator as it is drawn,
- * so an override's own printing appears inside it.
+ * generator and invoking the canonical constructor. It prints as that constructor call, {@code
+ * new Name(x, y)}, each component printed by its generator as it is drawn, so an override's own
+ * printing appears inside it.
  *
  * @param <T> the record type
  */
@@ -79,7 +79,7 @@ public final class RecordGenerator<T> implements PrintableGenerator<T> {
         Class<?>[] paramTypes = new Class<?>[components.length];
         tc.startSpan(label());
         try {
-            p.beginGroup(type.getSimpleName() + "[");
+            p.beginGroup("new " + type.getSimpleName() + "(");
             for (int i = 0; i < components.length; i++) {
                 RecordComponent rc = components[i];
                 paramTypes[i] = rc.getType();
@@ -90,10 +90,9 @@ public final class RecordGenerator<T> implements PrintableGenerator<T> {
                 if (i > 0) {
                     p.separator();
                 }
-                p.text(rc.getName() + "=");
                 values[i] = Components.draw(tc, g, printer);
             }
-            p.endGroup("]");
+            p.endGroup(")");
         } finally {
             tc.stopSpan(false);
         }
