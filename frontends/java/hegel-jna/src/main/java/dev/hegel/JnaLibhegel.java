@@ -334,6 +334,14 @@ final class JnaLibhegel implements Libhegel {
 
         int hegel_collection_free(Pointer ctx, long id);
 
+        int hegel_new_repeat(Pointer ctx, Pointer tc, LongByReference out);
+
+        int hegel_repeat_more(Pointer ctx, Pointer tc, long id, ByteByReference out);
+
+        int hegel_repeat_failed(Pointer ctx, Pointer tc, long id);
+
+        int hegel_repeat_free(Pointer ctx, long id);
+
         int hegel_new_pool(Pointer ctx, Pointer tc, LongByReference out);
 
         int hegel_pool_add(Pointer ctx, Pointer tc, long poolId, LongByReference out);
@@ -1460,6 +1468,34 @@ final class JnaLibhegel implements Libhegel {
     @Override
     public void collectionFree(long id) {
         check("hegel_collection_free", lib.hegel_collection_free(ctx(), id));
+    }
+
+    @Override
+    public int newRepeat(long tc, long[] outId) {
+        LongByReference ref = new LongByReference();
+        int code = lib.hegel_new_repeat(ctx(), pointer(tc), ref);
+        outId[0] = ref.getValue();
+        return code;
+    }
+
+    @Override
+    public int repeatMore(long tc, long id, boolean[] outMore) {
+        ByteByReference ref = new ByteByReference();
+        int code = lib.hegel_repeat_more(ctx(), pointer(tc), id, ref);
+        if (code == Abi.OK) {
+            outMore[0] = ref.getValue() != 0;
+        }
+        return code;
+    }
+
+    @Override
+    public int repeatFailed(long tc, long id) {
+        return lib.hegel_repeat_failed(ctx(), pointer(tc), id);
+    }
+
+    @Override
+    public void repeatFree(long id) {
+        check("hegel_repeat_free", lib.hegel_repeat_free(ctx(), id));
     }
 
     @Override

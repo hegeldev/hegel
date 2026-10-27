@@ -1062,6 +1062,34 @@ impl CTestCase {
         }))
     }
 
+    /// Start a repeat loop (`hegel_new_repeat`): the engine draws its
+    /// minimum length from this handle's stream.
+    pub(crate) fn new_repeat(&self) -> Result<RepeatHandle, hegel_result_t> {
+        let mut raw: *mut hegel_c::HegelRepeat = ptr::null_mut();
+        let rc = with_context(|ctx| unsafe { hegel_c::hegel_new_repeat(ctx, self.raw, &mut raw) });
+        if rc != hegel_result_t::HEGEL_OK {
+            return Err(rc);
+        }
+        Ok(RepeatHandle { raw })
+    }
+
+    /// Whether the engine wants another iteration of the loop.
+    pub(crate) fn repeat_more(&self, repeat: &RepeatHandle) -> Result<bool, hegel_result_t> {
+        let mut more = false;
+        let rc = with_context(|ctx| unsafe {
+            hegel_c::hegel_repeat_more(ctx, self.raw, repeat.raw, &mut more)
+        });
+        rc_to_value(rc, more)
+    }
+
+    /// Tell the engine the iteration just run failed, before the failure
+    /// is rethrown.
+    pub(crate) fn repeat_failed(&self, repeat: &RepeatHandle) -> Result<(), hegel_result_t> {
+        rc_to_unit(with_context(|ctx| unsafe {
+            hegel_c::hegel_repeat_failed(ctx, self.raw, repeat.raw)
+        }))
+    }
+
     pub(crate) fn new_recursion(
         &self,
         max_depth: u64,
@@ -1392,6 +1420,31 @@ impl Drop for CollectionHandle {
         // SAFETY: `raw` came from a successful hegel_new_collection call and
         // is freed exactly once here.
         free_on_drop(|ctx| unsafe { hegel_c::hegel_collection_free(ctx, self.raw) });
+    }
+}
+
+/// An owned libhegel repeat-loop handle (`hegel_repeat_t`), freed on drop.
+///
+/// Built by [`CTestCase::new_repeat`] and driven through
+/// [`CTestCase::repeat_more`] / [`CTestCase::repeat_failed`] with any
+/// handle of the same test-case family. The handle is independent of the
+/// test case and run it was created under, so dropping it is safe in any
+/// order.
+pub(crate) struct RepeatHandle {
+    raw: *mut hegel_c::HegelRepeat,
+}
+
+// SAFETY: libhegel guards the loop's state with its own lock (rejecting
+// concurrent use with `HEGEL_E_CONCURRENT_USE`), so moving or sharing the
+// handle across threads is sound.
+unsafe impl Send for RepeatHandle {}
+unsafe impl Sync for RepeatHandle {}
+
+impl Drop for RepeatHandle {
+    fn drop(&mut self) {
+        // SAFETY: `raw` came from a successful hegel_new_repeat call and is
+        // freed exactly once here.
+        free_on_drop(|ctx| unsafe { hegel_c::hegel_repeat_free(ctx, self.raw) });
     }
 }
 

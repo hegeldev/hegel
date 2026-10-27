@@ -150,9 +150,10 @@ let clone = Internal.clone
     worker. See {!Internal.set_worker_index}. *)
 let set_worker = Internal.set_worker_index
 
-(** [run_iteration tc body] runs one iteration of {!repeat}: [body] on a
-    block of [tc]. A rejected iteration is skipped. *)
-let run_iteration tc body =
+(** [run_iteration tc ~repeat body] runs one iteration of {!repeat}: [body]
+    on a block of [tc]. A rejected iteration is skipped; any other failure is
+    reported to the engine before it propagates. *)
+let run_iteration tc ~repeat body =
   match Internal.with_block tc ~indent:2 body with
   | () | (exception Assume_rejected) -> ()
   | exception
@@ -160,32 +161,32 @@ let run_iteration tc body =
     raise control
   | exception exn ->
     let backtrace = Printexc.get_raw_backtrace () in
-    ignore (Generators.draw_silent tc (Generators.booleans ()) : bool);
+    Internal.repeat_failed tc ~repeat;
     Printexc.raise_with_backtrace exn backtrace
 ;;
 
 (** [repeat_generated tc body] runs [body] on a block of [tc] until the
     engine ends the loop, then ends the test case. *)
 let repeat_generated tc body =
-  let min_size =
-    Generators.draw_silent tc (Generators.integers ~min_value:0 ~max_value:(1 lsl 40) ())
-  in
-  Generators.Private.with_collection ~min_size tc (fun coll ->
-    let rec loop iteration =
-      if Generators.Private.collection_more coll tc
-      then (
-        note tc (Printf.sprintf "// Repetition #%d" iteration);
-        run_iteration tc body;
-        loop (iteration + 1))
-    in
-    loop 1);
+  let repeat = Internal.new_repeat tc in
+  Fun.protect
+    ~finally:(fun () -> Internal.repeat_free tc ~repeat)
+    (fun () ->
+       let rec loop iteration =
+         if Internal.repeat_more tc ~repeat
+         then (
+           note tc (Printf.sprintf "(* Repetition #%d *)" iteration);
+           run_iteration tc ~repeat body;
+           loop (iteration + 1))
+       in
+       loop 1);
   raise Internal.Repeat_done
 ;;
 
 (** [repeat_explicit tc body] is {!repeat} in an explicit example: [body]
     runs once, as an explicit value can be drawn only once. *)
 let repeat_explicit tc body =
-  note tc "// Repetition #1";
+  note tc "(* Repetition #1 *)";
   body tc;
   raise Internal.Repeat_done
 ;;

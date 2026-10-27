@@ -134,3 +134,7 @@ gs::floats<double>({.min_value_exclusive = 0.0, .max_value_exclusive = 1.0})
 ```
 
 Giving both `min_value` and `min_value_exclusive` (or both `max_value` and `max_value_exclusive`) is a `std::invalid_argument`. `FloatsParams` also gains `allow_subnormal`: subnormal ("denormalised") values are drawn whenever the bounds admit any, as before, and `.allow_subnormal = false` keeps them out, for code that may run with flush-to-zero floating point (compiled with `-ffast-math`, say). Asking for subnormals with bounds that exclude them all, or excluding them from a range that holds nothing else, is a `std::invalid_argument`.
+
+### `TestCase::repeat()`
+
+`TestCase::repeat()` now has the engine decide how many repetitions run and which one failed, through libhegel's new `hegel_repeat_t` functions, as the other Hegel frontends do, rather than drawing a loop length of its own. Each repetition's draws and notes now print indented under its `// Repetition #N` note, and a failing repetition is marked for the engine before its exception propagates, so a failure shrinks to the fewest repetitions. The loop makes different choices from before (its minimum length is drawn from a larger range), so a reproduce blob from an earlier release that went through `repeat()` no longer replays.

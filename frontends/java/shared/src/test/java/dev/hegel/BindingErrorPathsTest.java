@@ -282,6 +282,28 @@ class BindingErrorPathsTest {
     }
 
     @Test
+    void repeatErrorsPropagate() {
+        FakeLibhegel newRepeat = new FakeLibhegel();
+        newRepeat.newRepeatRc = Abi.E_STOP_TEST;
+        assertThrows(StopTest.class, () -> source(newRepeat).newRepeat());
+
+        FakeLibhegel more = new FakeLibhegel();
+        more.moreSequence = new boolean[] {true, false};
+        LiveDataSource ds = source(more);
+        assertEquals(more.repeatId, ds.newRepeat());
+        assertTrue(ds.repeatMore(more.repeatId));
+        assertFalse(ds.repeatMore(more.repeatId));
+
+        FakeLibhegel moreError = new FakeLibhegel();
+        moreError.repeatMoreRc = Abi.E_BACKEND;
+        assertThrows(HegelException.class, () -> source(moreError).repeatMore(1));
+
+        FakeLibhegel failed = new FakeLibhegel();
+        failed.repeatFailedRc = Abi.E_STOP_TEST;
+        assertThrows(StopTest.class, () -> source(failed).repeatFailed(1));
+    }
+
+    @Test
     void poolAndStateMachineErrorsPropagate() {
         FakeLibhegel pool = new FakeLibhegel();
         pool.newPoolRc = Abi.E_BACKEND;

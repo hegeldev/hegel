@@ -338,7 +338,7 @@ def test_explicit_case_runs_repeat_body_once():
 
     with pytest.raises(pytest.fail.Exception) as info:
         fails()
-    assert info.value.__notes__[0] == "// Repetition #1\nx_1 = 3"
+    assert info.value.__notes__[0] == "# Repetition #1\nx_1 = 3"
 
 
 def test_explicit_cases_skipped_without_explicit_phase():

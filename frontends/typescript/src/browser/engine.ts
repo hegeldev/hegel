@@ -10,6 +10,7 @@ import {
   type TestCaseHandle,
   type FailureHandle,
   type CollectionHandle,
+  type RepeatHandle,
   type StringGeneratorHandle,
   type PoolHandle,
   type RecursionHandle,
@@ -938,6 +939,29 @@ export class WasmEngine implements Engine {
   }
   freeCollection(collection: CollectionHandle): void {
     this.free("collection_free", collection);
+  }
+  newRepeat(ctx: ContextHandle, tc: TestCaseHandle): RepeatHandle {
+    const c = this.ptr(ctx);
+    return this.handle(c, "new_repeat", [c, this.ptr(tc)], true);
+  }
+  repeatMore(ctx: ContextHandle, tc: TestCaseHandle, repeat: RepeatHandle): boolean {
+    const c = this.ptr(ctx);
+    return this.output(
+      c,
+      "repeat_more",
+      [c, this.ptr(tc), this.ptr(repeat)],
+      1,
+      1,
+      (a, p) => a.boolean(p),
+      true,
+    );
+  }
+  repeatFailed(ctx: ContextHandle, tc: TestCaseHandle, repeat: RepeatHandle): void {
+    const c = this.ptr(ctx);
+    this.check(c, "repeat_failed", [c, this.ptr(tc), this.ptr(repeat)], true);
+  }
+  freeRepeat(repeat: RepeatHandle): void {
+    this.free("repeat_free", repeat);
   }
   markComplete(
     ctx: ContextHandle,

@@ -167,6 +167,50 @@ TEST(Loop, FailureInsideIsReported) {
     }
 }
 
+// Each repetition's draws print indented under its `// Repetition #N` note,
+// and a rejected repetition still counts as one.
+TEST(Loop, RepetitionsPrintIndented) {
+    testing::internal::CaptureStderr();
+    EXPECT_THROW(hegel::test(
+                     [](hegel::TestCase& tc) {
+                         int total = 0;
+                         tc.repeat([&] {
+                             int n = tc.draw(
+                                 "n", gs::integers<int>(
+                                          {.min_value = 0, .max_value = 5}));
+                             tc.assume(n != 1);
+                             total += n;
+                             if (total > 5) {
+                                 throw std::runtime_error("boom");
+                             }
+                         });
+                     },
+                     hegel::Settings{.test_cases = 200,
+                                     .derandomize = true,
+                                     .database = hegel::Database::disabled()}),
+                 std::runtime_error);
+    std::string out = testing::internal::GetCapturedStderr();
+    EXPECT_NE(out.find("// Repetition #1\n  auto n = "), std::string::npos)
+        << out;
+    EXPECT_NE(out.find("// Repetition #2\n  auto n = "), std::string::npos)
+        << out;
+}
+
+// A usage error inside a repetition propagates untouched.
+TEST(Loop, UsageErrorInsideIsReraised) {
+    EXPECT_THROW(hegel::test(
+                     [](hegel::TestCase& tc) {
+                         tc.repeat([&] {
+                             (void)tc.draw(gs::integers<int>(
+                                 {.min_value = 1, .max_value = 0}));
+                         });
+                     },
+                     hegel::Settings{.test_cases = 5,
+                                     .derandomize = true,
+                                     .database = hegel::Database::disabled()}),
+                 std::invalid_argument);
+}
+
 // reject() inside an iteration discards that iteration and the loop continues;
 // the run completes without reporting a failure.
 TEST(Loop, RejectInsideContinues) {

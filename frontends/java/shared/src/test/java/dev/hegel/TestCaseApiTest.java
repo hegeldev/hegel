@@ -95,7 +95,7 @@ class TestCaseApiTest {
         assertSame(error, repeatOnceThrowing(fake, () -> {
             throw error;
         }));
-        assertTrue(fake.booleanDrawn);
+        assertTrue(fake.repeatFailed);
     }
 
     @Test
@@ -192,7 +192,7 @@ class TestCaseApiTest {
             assertSame(control, repeatOnceThrowing(fake, () -> {
                 throw control;
             }));
-            assertFalse(fake.booleanDrawn, control.toString());
+            assertFalse(fake.repeatFailed, control.toString());
         }
     }
 
@@ -207,7 +207,7 @@ class TestCaseApiTest {
                     fake.generateIntegerRc = Abi.E_ASSUME;
                     tc.draw(integers());
                 }));
-        assertFalse(fake.booleanDrawn);
+        assertFalse(fake.repeatFailed);
     }
 
     @Test
@@ -217,7 +217,8 @@ class TestCaseApiTest {
         assertSame(error, repeatOnceThrowing(fake, () -> {
             throw error;
         }));
-        assertTrue(fake.booleanDrawn);
+        assertTrue(fake.repeatFailed);
+        assertEquals(List.of(fake.repeatId), fake.freedRepeats);
     }
 
     @Test

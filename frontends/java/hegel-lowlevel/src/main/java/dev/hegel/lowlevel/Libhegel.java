@@ -575,6 +575,28 @@ public interface Libhegel {
      */
     void collectionFree(long id);
 
+    /**
+     * {@code hegel_new_repeat}: start the engine-driven loop behind {@code TestCase.repeat} on
+     * {@code tc}, writing its handle to {@code outId}; release it with {@link #repeatFree}.
+     */
+    int newRepeat(long tc, long[] outId);
+
+    /** {@code hegel_repeat_more}: whether the engine wants another repetition of the loop. */
+    int repeatMore(long tc, long id, boolean[] outMore);
+
+    /**
+     * {@code hegel_repeat_failed}: report that the repetition just run failed, before the failure
+     * propagates out of the loop.
+     */
+    int repeatFailed(long tc, long id);
+
+    /**
+     * {@code hegel_repeat_free}: release a repeat handle from {@link #newRepeat}. The handle is
+     * independent of its test case and run, so this is safe at any point; each handle must be freed
+     * exactly once. {@code 0} is a no-op.
+     */
+    void repeatFree(long id);
+
     int newPool(long tc, long[] outId);
 
     int poolAdd(long tc, long poolId, long[] outVariableId);

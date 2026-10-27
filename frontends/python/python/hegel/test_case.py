@@ -438,7 +438,7 @@ class TestCase:
         :meth:`assume`) is skipped and the next one runs. A failure in any
         repetition fails the test case, and shrinking reduces the number of
         repetitions along with the values each drew. Each repetition is
-        reported under a ``// Repetition #N`` heading. In an explicit test
+        reported under a ``# Repetition #N`` heading. In an explicit test
         case, ``body`` runs once.
 
         ``repeat`` never returns normally: it raises an internal
@@ -457,18 +457,15 @@ class TestCase:
 
                 tc.repeat(step)
         """
-        from hegel.generators import booleans, integers
-
         if self._global.explicit is not None:
-            self.note("// Repetition #1")
+            self.note("# Repetition #1")
             body()
             raise LoopDone()
-        min_size = self.draw_silent(integers(min_value=0, max_value=1 << 40))
-        collection = Collection(self, min_size, None)
+        repeat = self._handle.new_repeat()
         iteration = 0
-        while collection.more():
+        while repeat.more(self._handle):
             iteration += 1
-            self.note(f"// Repetition #{iteration}")
+            self.note(f"# Repetition #{iteration}")
             outer = self._enter_block(2)
             try:
                 body()
@@ -477,10 +474,8 @@ class TestCase:
             except (StopTest, InvalidArgument, InternalError, LoopDone):
                 raise
             except BaseException:
-                # Back on the test's own handle before the draw that marks
-                # the failing repetition.
                 self._restore_handle(outer)
-                self.draw_silent(booleans())
+                repeat.failed(self._handle)
                 raise
             finally:
                 self._restore_handle(outer)

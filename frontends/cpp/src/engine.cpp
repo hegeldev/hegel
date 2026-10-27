@@ -1063,6 +1063,31 @@ namespace hegel::internal {
             "hegel_collection_reject");
     }
 
+    RepeatHandle::RepeatHandle(const TestCase& tc) {
+        impl::DrawScope scope(tc);
+        scope.raise_for_rc(hegel_new_repeat(scope.ctx, scope.tc, &handle_),
+                           "hegel_new_repeat");
+    }
+
+    RepeatHandle::~RepeatHandle() {
+        hegel_repeat_free(impl::thread_context(), handle_);
+    }
+
+    bool RepeatHandle::more(const TestCase& tc) {
+        impl::DrawScope scope(tc);
+        bool more = false;
+        scope.raise_for_rc(
+            hegel_repeat_more(scope.ctx, scope.tc, handle_, &more),
+            "hegel_repeat_more");
+        return more;
+    }
+
+    void RepeatHandle::failed(const TestCase& tc) {
+        impl::DrawScope scope(tc);
+        scope.raise_for_rc(hegel_repeat_failed(scope.ctx, scope.tc, handle_),
+                           "hegel_repeat_failed");
+    }
+
     PoolHandle::PoolHandle(const TestCase& tc) {
         impl::DrawScope scope(tc);
         scope.raise_for_rc(hegel_new_pool(scope.ctx, scope.tc, &handle_),

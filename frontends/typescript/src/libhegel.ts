@@ -40,6 +40,7 @@ import {
   type TestCaseHandle,
   type FailureHandle,
   type CollectionHandle,
+  type RepeatHandle,
   type StringGeneratorHandle,
   type PoolHandle,
   type RecursionHandle,
@@ -322,6 +323,10 @@ export interface Bindings {
   collectionMore: (ctx: Ptr, tc: Ptr, collection: Ptr, out: boolean[]) => number;
   collectionReject: (ctx: Ptr, tc: Ptr, collection: Ptr, why: string | null) => number;
   collectionFree: (collection: Ptr) => void;
+  newRepeat: (ctx: Ptr, tc: Ptr, out: Ptr[]) => number;
+  repeatMore: (ctx: Ptr, tc: Ptr, repeat: Ptr, out: boolean[]) => number;
+  repeatFailed: (ctx: Ptr, tc: Ptr, repeat: Ptr) => number;
+  repeatFree: (repeat: Ptr) => void;
   markComplete: (ctx: Ptr, tc: Ptr, status: number, origin: string | null) => number;
 
   newPool: (ctx: Ptr, tc: Ptr, out: Ptr[]) => number;
@@ -750,6 +755,10 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     koffi.pointer(stringType),
   ]);
   const collectionFree = f("int hegel_collection_free(void* ctx, void* collection)");
+  const newRepeat = f("int hegel_new_repeat(void* ctx, void* tc, _Out_ void** out_repeat)");
+  const repeatMore = f("int hegel_repeat_more(void* ctx, void* tc, void* repeat, _Out_ bool* out)");
+  const repeatFailed = f("int hegel_repeat_failed(void* ctx, void* tc, void* repeat)");
+  const repeatFree = f("int hegel_repeat_free(void* ctx, void* repeat)");
   const markComplete = fs("hegel_mark_complete", [
     "void*",
     "void*",
@@ -1118,6 +1127,10 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     collectionReject: (ctx, tc, collection, why) =>
       collectionReject(ctx, tc, collection, optionalString(why)),
     collectionFree: (collection) => checked(collectionFree(null, collection), "collectionFree"),
+    newRepeat: (ctx, tc, out) => newRepeat(ctx, tc, out),
+    repeatMore: (ctx, tc, repeat, out) => repeatMore(ctx, tc, repeat, out),
+    repeatFailed: (ctx, tc, repeat) => repeatFailed(ctx, tc, repeat),
+    repeatFree: (repeat) => checked(repeatFree(null, repeat), "repeatFree"),
     markComplete: (ctx, tc, status, origin) =>
       markComplete(ctx, tc, status, optionalString(origin)),
     newPool: (ctx, tc, out) => newPool(ctx, tc, out),
@@ -2125,6 +2138,38 @@ export class Libhegel implements Engine {
 
   freeCollection(collection: Ptr): void {
     this.release(collection, (pointer) => this.fns.collectionFree(pointer));
+  }
+
+  /**
+   * Start a repeat loop. The returned handle is owned by the caller — release
+   * it with {@link freeRepeat}.
+   */
+  newRepeat(ctx: Ptr, tc: Ptr): RepeatHandle {
+    const out: Ptr[] = [null];
+    this.check(ctx, this.fns.newRepeat(this.ptr(ctx), this.ptr(tc), out), "hegel_new_repeat");
+    return this.requireHandle<RepeatHandle>(out[0], "newRepeat");
+  }
+
+  repeatMore(ctx: Ptr, tc: Ptr, repeat: Ptr): boolean {
+    const out: boolean[] = [false];
+    this.check(
+      ctx,
+      this.fns.repeatMore(this.ptr(ctx), this.ptr(tc), this.ptr(repeat), out),
+      "hegel_repeat_more",
+    );
+    return out[0];
+  }
+
+  repeatFailed(ctx: Ptr, tc: Ptr, repeat: Ptr): void {
+    this.check(
+      ctx,
+      this.fns.repeatFailed(this.ptr(ctx), this.ptr(tc), this.ptr(repeat)),
+      "hegel_repeat_failed",
+    );
+  }
+
+  freeRepeat(repeat: Ptr): void {
+    this.release(repeat, (pointer) => this.fns.repeatFree(pointer));
   }
 
   markComplete(ctx: Ptr, tc: Ptr, status: number, origin: string | null): void {

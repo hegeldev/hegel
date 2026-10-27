@@ -128,3 +128,5 @@ gs.floats({ minValueExclusive: 0, maxValueExclusive: 1 });
 Giving both `minValue` and `minValueExclusive` (or both `maxValue` and `maxValueExclusive`) is an error. `gs.floats()` also gains `allowSubnormal`: subnormal ("denormalised") values are drawn whenever the bounds admit any, as before, and `allowSubnormal: false` keeps them out, for code that may run with flush-to-zero floating point. Asking for subnormals with bounds that exclude them all, or excluding them from a range that holds nothing else, is an error.
 
 `gs.binary()` now returns a plain `Uint8Array` on Node too, where it returned a `Buffer`, so a drawn byte string prints as `Uint8Array.from([…])` on every host, as the README said.
+
+- `tc.repeat` and `tc.repeatAsync` now have the engine decide how many repetitions run and which one failed, through libhegel's new `hegel_repeat_t` functions, rather than drawing those choices in TypeScript. The choices are the same, so an existing reproduce blob still replays.

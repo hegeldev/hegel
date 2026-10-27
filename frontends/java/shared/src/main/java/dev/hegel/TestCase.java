@@ -1,6 +1,5 @@
 package dev.hegel;
 
-import dev.hegel.lowlevel.Abi;
 import dev.hegel.lowlevel.LibhegelException;
 import java.math.BigInteger;
 import java.time.LocalDate;
@@ -492,22 +491,21 @@ public final class TestCase {
             body.run();
             throw new LoopDone();
         }
-        long minSize = drawSilent(Generators.longs().min(0).max(1L << 40));
-        long id = newCollection(minSize, Abi.UNBOUNDED);
+        long id = source.newRepeat();
         try {
             long repetition = 0;
-            while (collectionMore(id)) {
+            while (source.repeatMore(id)) {
                 repetition++;
                 note("// Repetition #" + repetition);
-                repeatOnce(body);
+                repeatOnce(id, body);
             }
         } finally {
-            collectionFree(id);
+            source.repeatFree(id);
         }
         throw new LoopDone();
     }
 
-    private void repeatOnce(Runnable body) {
+    private void repeatOnce(long id, Runnable body) {
         Throwable failure;
         DataSource outer = source;
         Names outerNames = names;
@@ -528,7 +526,7 @@ public final class TestCase {
             return;
         }
         if (!isControl(failure)) {
-            drawSilent(Generators.booleans());
+            source.repeatFailed(id);
         }
         throw rethrow(failure);
     }

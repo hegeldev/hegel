@@ -29,6 +29,7 @@ import {
   type TestCaseHandle,
   type FailureHandle,
   type CollectionHandle,
+  type RepeatHandle,
   type PoolHandle,
   type RecursionHandle,
   type StateMachineHandle,
@@ -74,6 +75,7 @@ interface Family {
   readonly cache: StringGeneratorCache;
   readonly ownsCache: boolean;
   readonly collections: CollectionHandle[];
+  readonly repeats: RepeatHandle[];
   readonly pools: PoolHandle[];
   readonly recursions: RecursionHandle[];
   readonly machines: StateMachineHandle[];
@@ -111,6 +113,7 @@ export class EngineDataSource implements DataSource {
       cache,
       ownsCache,
       collections: [],
+      repeats: [],
       pools: [],
       recursions: [],
       machines: [],
@@ -160,6 +163,19 @@ export class EngineDataSource implements DataSource {
         why ?? null,
       ),
     );
+  }
+
+  newRepeat(): number {
+    this.family.repeats.push(this.call(() => this.lib.newRepeat(this.ctx, this.tc)));
+    return this.family.repeats.length - 1;
+  }
+
+  repeatMore(repeatId: number): boolean {
+    return this.call(() => this.lib.repeatMore(this.ctx, this.tc, this.family.repeats[repeatId]));
+  }
+
+  repeatFailed(repeatId: number): void {
+    this.call(() => this.lib.repeatFailed(this.ctx, this.tc, this.family.repeats[repeatId]));
   }
 
   markComplete(status: number, origin: string | null): void {
@@ -399,6 +415,7 @@ export class EngineDataSource implements DataSource {
     release(family.printers, (printer) => this.lib.freePrinter(printer));
     release(family.derived, (tc) => this.lib.freeTestCase(tc));
     release(family.collections, (collection) => this.lib.freeCollection(collection));
+    release(family.repeats, (repeat) => this.lib.freeRepeat(repeat));
     release(family.pools, (pool) => this.lib.freePool(pool));
     release(family.recursions, (recursion) => this.lib.freeRecursion(recursion));
     release(family.machines, (machine) => this.lib.freeStateMachine(machine));

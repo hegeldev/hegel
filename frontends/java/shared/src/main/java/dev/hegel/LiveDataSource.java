@@ -423,6 +423,33 @@ final class LiveDataSource implements DataSource {
     }
 
     @Override
+    public long newRepeat() {
+        checkLive();
+        long[] id = new long[1];
+        translate(lib.newRepeat(tc, id), "new_repeat");
+        return id[0];
+    }
+
+    @Override
+    public boolean repeatMore(long id) {
+        checkLive();
+        boolean[] more = new boolean[1];
+        translate(lib.repeatMore(tc, id, more), "repeat_more");
+        return more[0];
+    }
+
+    @Override
+    public void repeatFailed(long id) {
+        checkLive();
+        translate(lib.repeatFailed(tc, id), "repeat_failed");
+    }
+
+    @Override
+    public void repeatFree(long id) {
+        lib.repeatFree(id);
+    }
+
+    @Override
     public long newPool() {
         checkLive();
         long[] id = new long[1];

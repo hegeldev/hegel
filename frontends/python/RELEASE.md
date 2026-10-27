@@ -80,3 +80,5 @@ gs.floats(min_value_exclusive=0.0, max_value_exclusive=1.0)
 ```
 
 Giving both `min_value` and `min_value_exclusive` (or both `max_value` and `max_value_exclusive`) is an `InvalidArgument`. An exclusive bound can no longer be set without a bound value, so that error no longer exists; the remaining validation (an exclusive `inf` minimum, an exclusive `-inf` maximum, or exclusive bounds on a single-point range) is unchanged, and its messages now name the new arguments. The `repr` of such a generator shows the exclusive form, `floats(min_value_exclusive=0.0)`.
+
+`tc.repeat()` now introduces each repetition with a `# Repetition #N` note, a Python comment, where it used to print `// Repetition #N`. The engine now also decides how many repetitions run and is told which one failed (libhegel's new `hegel_repeat_t` functions) rather than the frontend drawing those choices itself; the choices are the same, so an existing reproduce blob still replays.

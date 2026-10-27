@@ -855,7 +855,7 @@ val%template with_ocaml_printer
     shrink a failure to the fewest.
 
     Each iteration runs [body] on a test case whose output is indented under a
-    [// Repetition #n] note. An iteration that rejects itself (with {!assume}
+    [(* Repetition #n *)] note. An iteration that rejects itself (with {!assume}
     or {!reject}) is skipped, and the loop continues; any other exception
     fails the test case. In an explicit example, [body] runs once, on the
     example's own test case, and rejecting it raises {!Usage_error}, as

@@ -84,6 +84,7 @@
  *     hegel_grammar_new          ->  hegel_grammar_free
  *     hegel_grammar_draw_new     ->  hegel_grammar_draw_free
  *     hegel_new_collection       ->  hegel_collection_free
+ *     hegel_new_repeat           ->  hegel_repeat_free
  *     hegel_new_pool             ->  hegel_pool_free
  *     hegel_new_recursion        ->  hegel_recursion_free
  *     hegel_new_state_machine    ->  hegel_state_machine_free
@@ -139,6 +140,16 @@
  uses this number, so a filter rejects equally often in every language.
  */
 #define HEGEL_FILTER_ATTEMPTS 3
+
+/*
+ How many attempts one recursive value (`hegel_new_recursion`) gets
+ before libhegel gives up on it: an attempt that outgrows its leaf
+ budget is discarded and retried steering toward a smaller value, and
+ once this many attempts in a row have failed to fit the test case is
+ rejected as a failed assumption is. The limit lives in the engine, so
+ a recursive generator gives up equally often in every language.
+ */
+#define HEGEL_RECURSION_ATTEMPTS 9
 
 /*
  Value written to `*out_rule_index` by `hegel_state_machine_next_rule`
@@ -238,25 +249,34 @@ typedef enum {
 } hegel_result_t;
 
 /*
- Verbosity of engine-emitted output (logs, per-case traces). Set via
- `hegel_settings_set_verbosity`.
+ How much libhegel says about a run through the output callback of
+ `hegel_run_start`. Set via `hegel_settings_set_verbosity`. The setting
+ is also the frontend's to read back (`hegel_settings_get_verbosity`)
+ for the output it produces itself — which test cases it prints and
+ how it reports a failure — so each level names the engine's own
+ output and leaves the frontend's to the frontend.
  */
 typedef enum {
     /*
-     A short summary line per run. The default.
+     The run's notices only: the statistics report when
+     `show_statistics` is on, a warning when shrinking ran out of time,
+     the nondeterminism notice under `HEGEL_ND_WARN`, and where a blob
+     replay first diverged from its recording. The default.
      */
     HEGEL_VERBOSITY_NORMAL = 0,
     /*
-     Nothing besides the final result.
+     None of those notices; libhegel emits nothing.
      */
     HEGEL_VERBOSITY_QUIET = 1,
     /*
-     Per-test-case progress and drawn values, plus panic diagnostics as
-     they happen.
+     As normal, plus a line as each phase starts and ends and one as
+     each test case starts.
      */
     HEGEL_VERBOSITY_VERBOSE = 2,
     /*
-     As verbose, plus shrinker trace output.
+     As verbose, plus the engine's own trace: the configuration it
+     loaded, the shrinker's progress and profile, and the replay and
+     nondeterminism bookkeeping.
      */
     HEGEL_VERBOSITY_DEBUG = 3,
 } hegel_verbosity_t;
@@ -439,8 +459,8 @@ typedef enum {
      */
     HEGEL_HC_TEST_CASES_TOO_LARGE = (1 << 2),
     /*
-     Warns if the first generated test case is already disproportionately
-     large.
+     Aborts the run if the first generated test case is already
+     disproportionately large.
      */
     HEGEL_HC_LARGE_INITIAL_TEST_CASE = (1 << 3),
 } hegel_health_check_t;
@@ -711,7 +731,7 @@ typedef struct hegel_printer_options_t hegel_printer_options_t;
  or after the test case or run is freed, in any order relative to other
  frees.
  */
-typedef struct HegelRecursion HegelRecursion;
+typedef struct hegel_recursion_t hegel_recursion_t;
 
 /*
  Options for `hegel_printer_reflow`.
@@ -723,6 +743,37 @@ typedef struct HegelRecursion HegelRecursion;
  default, and a NULL options pointer means "all defaults".
  */
 typedef struct hegel_reflow_options_t hegel_reflow_options_t;
+
+/*
+ Opaque handle to an engine-managed *repeat loop*: a test body that runs
+ again and again, each run an *iteration*, for as long as libhegel wants
+ another one. It is what a frontend's `repeat` is made of, so that every
+ language runs the same number of iterations from the same choices and
+ shrinks a failing loop the same way.
+
+ Created by `hegel_new_repeat` on a test case; driven by
+ `hegel_repeat_more` / `hegel_repeat_failed` through any handle of the
+ *same* test-case family (the root or any clone) — the decisions are
+ drawn from whichever handle makes the call. A loop must not be used from
+ two threads at once: the operations take an internal non-blocking lock
+ and return `HEGEL_E_CONCURRENT_USE` on contention.
+
+ The protocol: call `hegel_repeat_more`; on `true` run the body once,
+ then call `hegel_repeat_more` again. An iteration that ends on a failed
+ assumption is simply over — the loop goes on, and the iteration still
+ counts. An iteration that ends on any other failure ends the loop: call
+ `hegel_repeat_failed`, then complete the test case as interesting. On
+ `false` the loop is over and the body must not run again; what the
+ caller does then (typically end the test case as valid) is its own. The
+ caller prints each iteration's heading and indents its output itself;
+ libhegel prints nothing.
+
+ The handle is independent of the test case and run it was created under:
+ free it with `hegel_repeat_free` exactly once, at any point — before or
+ after the test case or run is freed, in any order relative to other
+ frees.
+ */
+typedef struct hegel_repeat_t hegel_repeat_t;
 
 /*
  In-flight property-test run.
@@ -1905,6 +1956,60 @@ hegel_result_t hegel_collection_reject(hegel_context_t *ctx,
 hegel_result_t hegel_collection_free(hegel_context_t *ctx, hegel_collection_t *collection);
 
 /*
+ Start a repeat loop: libhegel decides how many times the body runs, so
+ that the count shrinks like the length of a collection. Draws the
+ loop's minimum number of iterations from `tc`'s stream, so it must be
+ called at the point in the draw sequence where the loop begins. See
+ `hegel_repeat_t` for the protocol.
+
+ Parameters:
+ `out_repeat`: Receives a caller-owned handle to pass to the calls below
+   (through any handle of the same test-case family). Release it with
+   `hegel_repeat_free` exactly once.
+
+ Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`.
+ */
+hegel_result_t hegel_new_repeat(hegel_context_t *ctx,
+                                hegel_test_case_t *tc,
+                                hegel_repeat_t **out_repeat);
+
+/*
+ Parameters:
+ `out_more`: Receives whether libhegel wants another iteration, drawn
+   from `tc`'s stream. Call before each iteration and run the body only
+   on `true`; on `false` the loop is over.
+
+ Returns `HEGEL_OK`, `HEGEL_E_STOP_TEST`, or `HEGEL_E_CONCURRENT_USE`
+ when another thread is mid-operation on the loop.
+ */
+hegel_result_t hegel_repeat_more(hegel_context_t *ctx,
+                                 hegel_test_case_t *tc,
+                                 hegel_repeat_t *repeat,
+                                 bool *out_more);
+
+/*
+ Tells libhegel the iteration just run failed — the body raised anything
+ other than a failed assumption — and so ends the loop. Call it before
+ completing the test case as interesting: it draws from `tc`'s stream
+ what marks the failing iteration, so that the shrinker can tell the
+ iterations before the failure from the one that failed.
+
+ Returns `HEGEL_OK`, `HEGEL_E_STOP_TEST`, or `HEGEL_E_CONCURRENT_USE`
+ when another thread is mid-operation on the loop.
+ */
+hegel_result_t hegel_repeat_failed(hegel_context_t *ctx,
+                                   hegel_test_case_t *tc,
+                                   hegel_repeat_t *repeat);
+
+/*
+ Release a repeat handle from `hegel_new_repeat`. Safe to call with NULL
+ (a no-op that returns `HEGEL_OK`), and safe at any point in any order
+ relative to freeing the test case or the run. Each handle must be freed
+ exactly once; freeing the same handle twice is undefined behaviour.
+ */
+hegel_result_t hegel_repeat_free(hegel_context_t *ctx, hegel_repeat_t *repeat);
+
+/*
  Open a recursive generation scope: libhegel decides where the value
  branches, where it bottoms out in leaves, and when an attempt has grown
  too large and must be retried. See `hegel_recursion_t` for the protocol.
@@ -1918,8 +2023,9 @@ hegel_result_t hegel_collection_free(hegel_context_t *ctx, hegel_collection_t *c
  `max_leaves`: The most leaves one generated value may contain. Each
    value steers toward a target size drawn from this range. Attempts
    that outgrow the budget are discarded and retried steering toward a
-   smaller target, and the test case is rejected as invalid when several
-   attempts in a row fail to fit.
+   smaller target, and the test case is rejected as invalid (as a failed
+   assumption is) once `HEGEL_RECURSION_ATTEMPTS` attempts in a row fail
+   to fit.
  `out_recursion`: Receives a caller-owned handle to pass to the calls
    below (through any handle of the same test-case family). Release it
    with `hegel_recursion_free` exactly once.
@@ -1930,7 +2036,7 @@ hegel_result_t hegel_new_recursion(hegel_context_t *ctx,
                                    hegel_test_case_t *tc,
                                    uint64_t max_depth,
                                    uint64_t max_leaves,
-                                   HegelRecursion **out_recursion);
+                                   hegel_recursion_t **out_recursion);
 
 /*
  Parameters:
@@ -1944,7 +2050,7 @@ hegel_result_t hegel_new_recursion(hegel_context_t *ctx,
  */
 hegel_result_t hegel_recursion_branch(hegel_context_t *ctx,
                                       hegel_test_case_t *tc,
-                                      HegelRecursion *recursion,
+                                      hegel_recursion_t *recursion,
                                       uint64_t depth,
                                       bool *out_branch);
 
@@ -1958,7 +2064,7 @@ hegel_result_t hegel_recursion_branch(hegel_context_t *ctx,
  */
 hegel_result_t hegel_recursion_leaf(hegel_context_t *ctx,
                                     hegel_test_case_t *tc,
-                                    HegelRecursion *recursion);
+                                    hegel_recursion_t *recursion);
 
 /*
  Discard a generation attempt that returned `HEGEL_E_RETRY`: the spans it
@@ -1974,7 +2080,7 @@ hegel_result_t hegel_recursion_leaf(hegel_context_t *ctx,
  */
 hegel_result_t hegel_recursion_retry(hegel_context_t *ctx,
                                      hegel_test_case_t *tc,
-                                     HegelRecursion *recursion);
+                                     hegel_recursion_t *recursion);
 
 /*
  Report that the recursive value has finished generating: its root
@@ -1990,7 +2096,7 @@ hegel_result_t hegel_recursion_retry(hegel_context_t *ctx,
  */
 hegel_result_t hegel_recursion_finish(hegel_context_t *ctx,
                                       hegel_test_case_t *tc,
-                                      HegelRecursion *recursion);
+                                      hegel_recursion_t *recursion);
 
 /*
  Release a recursion handle from `hegel_new_recursion`. Safe to call with
@@ -1998,7 +2104,7 @@ hegel_result_t hegel_recursion_finish(hegel_context_t *ctx,
  order relative to freeing the test case or the run. Each handle must be
  freed exactly once; freeing the same handle twice is undefined behaviour.
  */
-hegel_result_t hegel_recursion_free(hegel_context_t *ctx, HegelRecursion *recursion);
+hegel_result_t hegel_recursion_free(hegel_context_t *ctx, hegel_recursion_t *recursion);
 
 /*
  A pool tracks a set of variable ids libhegel can draw from and shrink

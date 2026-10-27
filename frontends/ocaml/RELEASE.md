@@ -193,3 +193,5 @@ floats ~min_value_exclusive:0.0 ~max_value_exclusive:1.0 ()
 ```
 
 Giving both `~min_value` and `~min_value_exclusive` (or both `~max_value` and `~max_value_exclusive`) raises `Usage_error`. `floats` also gains `?allow_subnormal`: subnormal ("denormalised") values are drawn whenever the bounds admit any, as before, and `~allow_subnormal:false` keeps them out, for code that may run with flush-to-zero floating point. Asking for subnormals with bounds that exclude them all, or excluding them from a range that holds nothing else, raises `Usage_error`.
+
+`repeat` now introduces each iteration with a `(* Repetition #n *)` note, an OCaml comment, where it used to print `// Repetition #n`. The engine now also decides how many iterations run and is told which one failed (libhegel's new `hegel_repeat_t` functions) rather than the frontend drawing those choices itself; the choices are the same, so an existing failure blob still replays.
