@@ -2,6 +2,7 @@ package dev.hegel.generators;
 
 import dev.hegel.Generator;
 import dev.hegel.Generators;
+import dev.hegel.PrintableGenerator;
 import dev.hegel.TestCase;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
@@ -80,7 +81,7 @@ public final class DateTimeGenerator extends ValueGenerator<LocalDateTime> {
      * @param zones the zone generator
      * @return a generator of zone-aware datetimes
      */
-    public Generator<ZonedDateTime> timezones(Generator<? extends ZoneId> zones) {
+    public PrintableGenerator<ZonedDateTime> timezones(Generator<? extends ZoneId> zones) {
         return Generators.tuples(this, zones).map(parts -> ZonedDateTime.of(parts.value1(), parts.value2()));
     }
 
@@ -92,7 +93,7 @@ public final class DateTimeGenerator extends ValueGenerator<LocalDateTime> {
      * @param offsets the offset generator
      * @return a generator of offset-aware datetimes
      */
-    public Generator<OffsetDateTime> offsets(Generator<ZoneOffset> offsets) {
+    public PrintableGenerator<OffsetDateTime> offsets(Generator<ZoneOffset> offsets) {
         return Generators.tuples(this, offsets).map(parts -> OffsetDateTime.of(parts.value1(), parts.value2()));
     }
 }

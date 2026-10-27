@@ -22,16 +22,25 @@ import java.util.function.Function;
  * {@link #maxSize(int)} methods. {@link #unique()} and {@link #uniqueBy(Function)} make the
  * elements distinct: a drawn duplicate is rejected and the engine draws another in its place.
  *
- * <p>It prints as {@code [a, b]}, each element printed by the element generator as it is drawn;
- * a rejected duplicate prints nothing.
+ * <p>A {@code ListGenerator} draws silently; {@link Printable}, what {@link
+ * dev.hegel.Generators#lists} returns for a printable element generator, prints as {@code [a, b]},
+ * each element printed by the element generator as it is drawn; a rejected duplicate prints
+ * nothing.
+ *
+ * @param <T> the element type
  */
-public final class ListGenerator<T> implements PrintableGenerator<List<T>> {
+public class ListGenerator<T> implements Generator<List<T>> {
     private final Generator<T> element;
     private final long minSize;
     private final long maxSize;
     private final Function<? super T, ?> uniqueKey;
     private final CachedLabel label = new CachedLabel();
 
+    /**
+     * @param element the element generator
+     * @param minSize the minimum length (inclusive)
+     * @param maxSize the maximum length (inclusive), or {@link dev.hegel.lowlevel.Abi#UNBOUNDED}
+     */
     public ListGenerator(Generator<T> element, long minSize, long maxSize) {
         this(element, minSize, maxSize, null);
     }
@@ -93,13 +102,7 @@ public final class ListGenerator<T> implements PrintableGenerator<List<T>> {
         return draw(tc, null);
     }
 
-    /** @hidden */
-    @Override
-    public List<T> doDrawAndPrint(TestCase tc, Printer printer) {
-        return draw(tc, printer);
-    }
-
-    private List<T> draw(TestCase tc, Printer printer) {
+    final List<T> draw(TestCase tc, Printer printer) {
         Printer p = Components.out(printer);
         tc.startSpan(label());
         try {
@@ -130,6 +133,57 @@ public final class ListGenerator<T> implements PrintableGenerator<List<T>> {
             }
         } finally {
             tc.stopSpan(false);
+        }
+    }
+
+    /**
+     * A list generator over a printable element generator: it prints as {@code [a, b]}, each
+     * element printed by the element generator as it is drawn, and a rejected duplicate prints
+     * nothing. Its builder methods keep it printable.
+     *
+     * @param <T> the element type
+     */
+    public static final class Printable<T> extends ListGenerator<T> implements PrintableGenerator<List<T>> {
+        private final PrintableGenerator<T> element;
+
+        /**
+         * @param element the printable element generator
+         * @param minSize the minimum length (inclusive)
+         * @param maxSize the maximum length (inclusive), or {@link dev.hegel.lowlevel.Abi#UNBOUNDED}
+         */
+        public Printable(PrintableGenerator<T> element, long minSize, long maxSize) {
+            this(element, minSize, maxSize, null);
+        }
+
+        private Printable(PrintableGenerator<T> element, long minSize, long maxSize, Function<? super T, ?> uniqueKey) {
+            super(element, minSize, maxSize, uniqueKey);
+            this.element = element;
+        }
+
+        @Override
+        public Printable<T> minSize(int minSize) {
+            return new Printable<>(element, minSize, super.maxSize, super.uniqueKey);
+        }
+
+        @Override
+        public Printable<T> maxSize(int maxSize) {
+            return new Printable<>(element, super.minSize, maxSize, super.uniqueKey);
+        }
+
+        @Override
+        public Printable<T> unique() {
+            return uniqueBy(Function.identity());
+        }
+
+        @Override
+        public Printable<T> uniqueBy(Function<? super T, ?> key) {
+            return new Printable<>(element, super.minSize, super.maxSize, key);
+        }
+
+        /** @hidden */
+        @Override
+        public List<T> doDrawAndPrint(TestCase tc, Printer printer) {
+            return draw(tc, printer);
         }
     }
 

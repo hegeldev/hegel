@@ -49,7 +49,8 @@ public final class EnvironmentFixture {
                     System.out.println("strictness=" + effective[0].nondeterminismStrictness);
                     break;
                 case "no-engine":
-                    Generator<?> generator = Generators.lists(integers()).unique();
+                    PrintableGenerator<?> generator =
+                            Generators.lists(integers()).unique();
                     System.out.println("labels=" + Long.toHexString(Label.LIST) + " generator=" + (generator != null));
                     try {
                         Hegel.test(tc -> tc.draw(generator));

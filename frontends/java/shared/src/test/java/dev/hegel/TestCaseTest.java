@@ -253,7 +253,7 @@ class TestCaseTest {
         assertThrows(StopTest.class, () -> tc.target(1.0));
     }
 
-    private static Generator<Integer> constant(int v) {
+    private static PrintableGenerator<Integer> constant(int v) {
         return Generators.just(v);
     }
 }

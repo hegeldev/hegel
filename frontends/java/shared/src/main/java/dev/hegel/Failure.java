@@ -99,7 +99,7 @@ public final class Failure {
 
     /**
      * Every top-level draw of the captured execution, in draw order, keyed by the label passed to
-     * {@link TestCase#draw(Generator, String)} — numbered from its second use in the case ({@code
+     * {@link TestCase#draw(PrintableGenerator, String)} — numbered from its second use in the case ({@code
      * x}, {@code x_2}, ...) so repeated draws are all kept — or {@code draw_N} for the N-th
      * unlabelled draw. Empty when the engine reported the failure without a stamped failing
      * execution to capture — an unconfirmed nondeterministic failure that never failed again after

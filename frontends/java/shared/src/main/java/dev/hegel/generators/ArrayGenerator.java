@@ -8,12 +8,14 @@ import dev.hegel.TestCase;
 import java.util.function.IntFunction;
 
 /**
- * Generates arrays of a fixed length, drawing each element from one generator. It prints as {@code
- * [a, b]}, each element printed by the element generator as it is drawn.
+ * Generates arrays of a fixed length, drawing each element from one generator. An {@code
+ * ArrayGenerator} draws silently; {@link Printable}, what {@link dev.hegel.Generators#arrays}
+ * returns for a printable element generator, prints as {@code [a, b]}, each element printed by the
+ * element generator as it is drawn.
  *
  * @param <T> the element type
  */
-public final class ArrayGenerator<T> implements PrintableGenerator<T[]> {
+public class ArrayGenerator<T> implements Generator<T[]> {
     private final Generator<T> element;
     private final int length;
     private final IntFunction<T[]> newArray;
@@ -45,13 +47,7 @@ public final class ArrayGenerator<T> implements PrintableGenerator<T[]> {
         return draw(tc, null);
     }
 
-    /** @hidden */
-    @Override
-    public T[] doDrawAndPrint(TestCase tc, Printer printer) {
-        return draw(tc, printer);
-    }
-
-    private T[] draw(TestCase tc, Printer printer) {
+    final T[] draw(TestCase tc, Printer printer) {
         Printer p = Components.out(printer);
         tc.startSpan(label());
         try {
@@ -67,6 +63,29 @@ public final class ArrayGenerator<T> implements PrintableGenerator<T[]> {
             return out;
         } finally {
             tc.stopSpan(false);
+        }
+    }
+
+    /**
+     * An array generator over a printable element generator: it prints as {@code [a, b]}, each
+     * element printed by the element generator as it is drawn.
+     *
+     * @param <T> the element type
+     */
+    public static final class Printable<T> extends ArrayGenerator<T> implements PrintableGenerator<T[]> {
+        /**
+         * @param element the printable element generator
+         * @param length the array length
+         * @param newArray creates an array of the given length, such as {@code Integer[]::new}
+         */
+        public Printable(PrintableGenerator<T> element, int length, IntFunction<T[]> newArray) {
+            super(element, length, newArray);
+        }
+
+        /** @hidden */
+        @Override
+        public T[] doDrawAndPrint(TestCase tc, Printer printer) {
+            return draw(tc, printer);
         }
     }
 }

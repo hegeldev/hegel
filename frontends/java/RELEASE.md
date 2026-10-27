@@ -55,12 +55,12 @@ An errored run now raises an exception typed by the engine's classification of t
 
 All output a test case prints now goes through the engine, as in the other Hegel frontends, and printing a drawn value is now the generator's job rather than the value's. `TestCase.note` hands the note to the engine, and a top-level draw prints as a declaration, `var x = 11;` rather than `x = 11;`, into the engine's document for the case, which lays out a long list, map, array or record over several lines, one element per line, instead of on one long line. In a stateful test each rule's draws and notes are indented under its `Step N: rule {` line and closed by `}`, and each rule, like each repetition of `repeat`, names its draws afresh, so a rule that draws `x` prints `var x = ...;` every time it runs rather than `x_2`, `x_3` and so on; and in a concurrent one the engine stamps each worker's lines with `[worker N +X.XXXms]`, timed from the start of the test case rather than of the machine.
 
-The generator describes each value as it draws it. The new `PrintableGenerator` interface draws and prints in one step, and every built-in generator implements it:
+The generator describes each value as it draws it. The new `PrintableGenerator` interface draws and prints in one step, and every built-in leaf generator implements it, as does every structural one over printable parts:
 
 - Lists, sets, maps, arrays, tuples, optionals, records (`records` and `forType`), `oneOf`, `filter`, `flatMap`, `recursive` and `deferred` print as they draw, element by element and component by component, so an element's own printing shows up inside its container. A rejected filter attempt or duplicate element prints nothing.
 - The leaf generators, and `map`, `just`, `sampledFrom` and `composite`, print the value they produce as Java: strings and characters as escaped literals, so a drawn string containing a newline stays on its line, records (including `Tuple2` to `Tuple8`) as a call of their constructor, `new Tuple2("a b", "")`, and optionals as `Optional.of("a b")` or `Optional.empty()`, rather than as their `toString()`; collections print as `[a, b]` and maps as `{k: v}`. Generated records, tuples and optionals print the same way, each component as its own generator prints it. A composite's own draws are not printed, only what it returns.
 
-`TestCase.draw` now needs a printable generator. A hand-written `Generator`, such as `tc -> 1`, draws silently: drawing it with `draw`, or drawing a list, record override or other structure containing it, now fails the run with an `IllegalArgumentException` explaining how to fix it, where before its value was printed through `toString()`. Make it printable, or draw it with `drawSilent`:
+**Breaking:** `TestCase.draw` now takes a `PrintableGenerator` rather than any `Generator`, so drawing a generator that cannot print its values is a compile-time error. Before, a hand-written `Generator`, such as `tc -> 1`, was drawn and its value printed through `toString()`. Every built-in leaf generator is printable, and so is `map` (which prints the mapped value), `just`, `sampledFrom` and `composite`. A structural generator is printable exactly when its parts are: `lists`, `sets`, `maps`, `arrays`, `tuples`, `optional` (and `optionalInts`, `optionalLongs`, `optionalDoubles`), `oneOf`, `filter` and `recursive` are overloaded so that over printable parts they return a printable generator, and over any other `Generator` a plain one that can only be drawn with `drawSilent`. `flatMap`'s function, `Deferred.set` and `RecordGenerator.with` take printable generators only. To draw a hand-written generator, make it printable, or draw it silently:
 
 ```java
 Generator<Point> points = tc -> new Point(tc.drawSilent(integers()), tc.drawSilent(integers()));
@@ -68,7 +68,10 @@ Generator<Point> points = tc -> new Point(tc.drawSilent(integers()), tc.drawSile
 tc.draw(points.printAsRepr(), "p");                                         // var p = new Point(0, 0);
 tc.draw(points.printWith((p, printer) -> printer.text("origin()")), "p");   // var p = origin();
 tc.draw(integers().map(Key::of).printAsCall("Key.of"), "k");                // var k = Key.of(3);
+Point p = tc.drawSilent(points);                                            // not printed
 ```
+
+Printability is part of the static type, so a built-in generator kept in a variable declared as `Generator<T>` can no longer be drawn: declare it as `PrintableGenerator<T>`, or as the type its factory returns. The structural generators that have builder methods return a nested `Printable` type for printable parts, `ListGenerator.Printable`, `SetGenerator.Printable`, `MapGenerator.Printable` and `RecursiveGenerator.Printable`, whose builder methods keep them printable; `PrintableGenerator.map` returns `MappedGenerator.Printable`, which is where `printAsCall` now lives, so `printAsCall` needs a printable source at compile time too. `recursive` over a printable base needs `extend` to return printable generators; to build a silent recursive generator from a printable base, pass the base as a `Generator`.
 
 To print a value as it is built, implement `PrintableGenerator` and draw each part with the new `TestCase.drawAndPrint`, so that it prints itself in place, or use the new `Generators.composite((tc, printer) -> ...)`:
 
@@ -89,9 +92,10 @@ Point point = tc.draw(points, "point");   // var point = Point.of(3, -1);
 
 Other API changes that come with this:
 
-- `Generator.doDraw` is now public API, the silent draw a hand-written generator implements, and `Generator` is a functional interface.
-- `Generator.map` returns `MappedGenerator`, and `filter` and `flatMap` return `PrintableGenerator`. The `Generators` factories that returned `Generator`, and `Pool.reusable()`, `Pool.consuming()` and their `ConcurrentPool` counterparts, now return `PrintableGenerator`. Code is source-compatible but must be recompiled.
-- The constructors of `OptionalGenerator` and the typed-tuple form of `TupleGenerator` take the name of the type they print.
+- `Generator.doDraw` is now public API, the silent draw a hand-written generator implements, and `Generator` and `PrintableGenerator` are functional interfaces: a one-argument lambda `tc -> ...` is a `Generator`, and a two-argument one `(tc, printer) -> ...` a `PrintableGenerator`.
+- `Generator.flatMap` takes a function returning a `PrintableGenerator`.
+- `Generator.map` returns `MappedGenerator`, `Generator.filter` returns `Generator` and `PrintableGenerator.filter` `PrintableGenerator`, and `flatMap`, `Pool.reusable()`, `Pool.consuming()` and their `ConcurrentPool` counterparts, and the leaf factories of `Generators` that returned `Generator`, return `PrintableGenerator`, as do `DateTimeGenerator.timezones` and `offsets`.
+- `OptionalGenerator`, `TupleGenerator`, `ArrayGenerator`, `OneOfGenerator`, `FilteredGenerator`, `ListGenerator`, `SetGenerator`, `MapGenerator`, `RecursiveGenerator` and `MappedGenerator` are no longer final, each with a nested `Printable` subclass over printable parts. The constructors of `OptionalGenerator` and the typed-tuple form of `TupleGenerator` take the name of the type they print.
 - A draw that throws now uses up its name, so the next draw with the same label is numbered as if it had succeeded.
 
 With several distinct failures, the `AssertionError` that aggregates them now begins `Property-based test failed with N distinct failures.`, the wording of the header printed above them and of the other Hegel frontends, rather than `Hegel found N distinct failing examples:`. Under `Verbosity.QUIET` that header, and the blank line between failures, are no longer printed.

@@ -157,7 +157,7 @@ class DerivationTest {
 
     @Test
     void pointGeneratesIntegers() {
-        Generator<Point> g = forType(Point.class);
+        PrintableGenerator<Point> g = forType(Point.class);
         assertNotNull(g);
         assertAllExamples(g, p -> p.x() >= Integer.MIN_VALUE && p.y() <= Integer.MAX_VALUE);
     }

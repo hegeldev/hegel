@@ -20,10 +20,14 @@ import java.util.Map;
  */
 public final class RecordGenerator<T> implements PrintableGenerator<T> {
     private final Class<T> type;
-    private final Map<String, Generator<?>> overrides;
+    private final Map<String, PrintableGenerator<?>> overrides;
     private final CachedLabel label = new CachedLabel();
 
-    public RecordGenerator(Class<T> type, Map<String, Generator<?>> overrides) {
+    /**
+     * @param type the record type
+     * @param overrides printable generators for some of its components, by name
+     */
+    public RecordGenerator(Class<T> type, Map<String, PrintableGenerator<?>> overrides) {
         if (!type.isRecord()) {
             throw new IllegalArgumentException(type.getName() + " is not a record");
         }
@@ -32,13 +36,15 @@ public final class RecordGenerator<T> implements PrintableGenerator<T> {
     }
 
     /**
-     * Override the generator used for one component.
+     * Override the generator used for one component. The record prints each component as its
+     * generator does, so the override is printable; make a hand-written one printable with {@link
+     * Generator#printWith} or {@link Generator#printAsRepr()}.
      *
      * @param component the component (field) name
-     * @param generator the generator to use for it
+     * @param generator the printable generator to use for it
      * @return a new record generator with the override applied
      */
-    public RecordGenerator<T> with(String component, Generator<?> generator) {
+    public RecordGenerator<T> with(String component, PrintableGenerator<?> generator) {
         boolean known = false;
         for (RecordComponent rc : type.getRecordComponents()) {
             if (rc.getName().equals(component)) {
@@ -49,7 +55,7 @@ public final class RecordGenerator<T> implements PrintableGenerator<T> {
         if (!known) {
             throw new IllegalArgumentException(type.getName() + " has no record component named '" + component + "'");
         }
-        Map<String, Generator<?>> next = new HashMap<>(overrides);
+        Map<String, PrintableGenerator<?>> next = new HashMap<>(overrides);
         next.put(component, generator);
         return new RecordGenerator<>(type, next);
     }
@@ -83,7 +89,7 @@ public final class RecordGenerator<T> implements PrintableGenerator<T> {
             for (int i = 0; i < components.length; i++) {
                 RecordComponent rc = components[i];
                 paramTypes[i] = rc.getType();
-                Generator<?> g = overrides.get(rc.getName());
+                PrintableGenerator<?> g = overrides.get(rc.getName());
                 if (g == null) {
                     g = Derive.fromType(rc.getGenericType());
                 }

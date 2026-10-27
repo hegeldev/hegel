@@ -51,7 +51,7 @@ public interface Reporter {
     default void caseStarted(boolean finalReplay) {}
 
     /**
-     * One line of a case's rendered output: its top-level {@link TestCase#draw(Generator, String)
+     * One line of a case's rendered output: its top-level {@link TestCase#draw(PrintableGenerator, String)
      * draws} as {@code label = value;} (labels numbered from their second use in a case: {@code x},
      * {@code x_2}, ...; {@code draw_N} for the N-th unlabelled draw), its {@link
      * TestCase#note(String) notes}, and a stateful machine's steps, laid out by the engine — long
