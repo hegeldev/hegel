@@ -850,27 +850,11 @@ let expand_state_machine ~concurrent ~loc (mb : module_binding) : structure_item
       in
       if async
       then
-        [%stri
-          let run
-                ?min_concurrency
-                ?max_concurrency
-                ?step_count
-                tc
-                ~init
-            =
-            [%e call]
-          ;;]
+        [%stri let run ?min_concurrency ?max_concurrency ?step_count tc ~init = [%e call]]
       else if declares_ctx
       then
         [%stri
-          let run
-                ~concurrency
-                ?min_concurrency
-                ?max_concurrency
-                ?step_count
-                tc
-                ~init
-            =
+          let run ~concurrency ?min_concurrency ?max_concurrency ?step_count tc ~init =
             [%e call]
           ;;]
       else
