@@ -1025,6 +1025,10 @@ export class WasmEngine implements Engine {
       opts.ruleGroups.forEach((group, index) => {
         a.view(groups + index * 8, 8).setBigInt64(0, BigInt(group), true);
       });
+      const weights = a.alloc(Math.max(8, opts.ruleWeights.length * 8), 8);
+      opts.ruleWeights.forEach((weight, index) => {
+        a.view(weights + index * 8, 8).setFloat64(0, weight, true);
+      });
       const c = this.ptr(ctx);
       // The machine handle is not the trailing out-parameter here: the drawn
       // concurrency level follows it (and is discarded, the bounds being 1).
@@ -1038,9 +1042,7 @@ export class WasmEngine implements Engine {
           this.ptr(tc),
           a.stringList(opts.ruleNames),
           groups,
-          // `rule_weights`: NULL for all-equal weights, which this client
-          // does not expose.
-          0,
+          weights,
           u32(opts.ruleNames.length),
           a.stringList(opts.invariantNames),
           a.input(Uint8Array.from(opts.invariantAlwaysCheck, Number)),

@@ -247,6 +247,7 @@ export class EngineDataSource implements DataSource {
           ruleNames: spec.ruleNames,
           // One concurrency group, so rules never need to be kept apart.
           ruleGroups: spec.ruleNames.map(() => 0),
+          ruleWeights: spec.ruleWeights,
           invariantNames: spec.invariantNames,
           invariantAlwaysCheck: spec.invariantAlwaysCheck,
           minConcurrency: 1,

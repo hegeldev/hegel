@@ -52,6 +52,19 @@
  * failure report shows each step as `Step N: <rule> {`, with the draws the
  * rule made indented beneath it.
  *
+ * A rule that should run more often than the others can be given a weight,
+ * `{ weight: 5, apply: (tc, state) => ... }`: the engine then offers it about
+ * five times as often as a plain rule. Weights are a hint for advanced use,
+ * not a distributional guarantee; see {@link RuleOptions.weight}.
+ *
+ * # Concurrency
+ *
+ * Rules always run one at a time. The engine's concurrent state machines
+ * (several workers applying rules at once, in concurrency groups) are not
+ * supported in JavaScript: the host is single-threaded, so two rules cannot
+ * overlap in time, and the Rust, Python, C++, Java and OCaml frontends are
+ * where concurrency bugs are hunted.
+ *
  * Every invariant is checked on the initial state and on the final state. In
  * between, invariants are *sampled*: each is checked after any given step
  * with probability `1 / stepCount`, so its expected cost per test case stays
@@ -87,14 +100,35 @@ import { ValueGenerator, type PrintableGenerator } from "./generators/core.js";
 import { FILTER_ATTEMPTS } from "./engine.js";
 
 /**
- * A rule of a {@link StateMachine}: one action applied to the state. It
- * receives the test case, to draw the data it needs, and the state to act on.
+ * The body of a rule of a {@link StateMachine}: one action applied to the
+ * state. It receives the test case, to draw the data it needs, and the state
+ * to act on.
  *
  * Rules run by {@link run} must be synchronous; rules run by
  * {@link runAsync} may return a `Promise`, which is awaited before the next
  * step.
  */
-export type Rule<S> = (tc: TestCase, state: S) => void | Promise<void>;
+export type RuleFn<S> = (tc: TestCase, state: S) => void | Promise<void>;
+
+/** A rule with options; see {@link Rule}. */
+export interface RuleOptions<S> {
+  apply: RuleFn<S>;
+  /**
+   * How often the engine should pick this rule relative to the machine's
+   * other rules (default `1`): a rule of weight 5 is offered about five
+   * times as often as a rule of weight 1. The weight is a hint, not a
+   * distributional guarantee — each test case enables a random subset of the
+   * rules, and a rule's realized frequency depends on which others are
+   * enabled alongside it. Must be finite and positive.
+   */
+  weight?: number;
+}
+
+/**
+ * A rule of a {@link StateMachine}: either a bare {@link RuleFn} (at weight 1)
+ * or a {@link RuleOptions} object.
+ */
+export type Rule<S> = RuleFn<S> | RuleOptions<S>;
 
 /**
  * The body of an invariant: throws (or, under {@link runAsync}, rejects) when
@@ -339,10 +373,28 @@ type Outcome = { ok: true } | { ok: false; error: unknown };
 /** A rule or invariant invocation for the driver to run. */
 type Action = () => void | Promise<void>;
 
+interface NamedRule<S> {
+  name: string;
+  apply: RuleFn<S>;
+  weight: number;
+}
+
 interface NamedInvariant<S> {
   name: string;
   check: InvariantCheck<S>;
   alwaysCheck: boolean;
+}
+
+function namedRules<S>(rules: Record<string, Rule<S>>): NamedRule<S>[] {
+  return Object.entries(rules).map(([name, rule]) => {
+    const { apply, weight = 1 } = typeof rule === "function" ? { apply: rule } : rule;
+    if (!Number.isFinite(weight) || weight <= 0) {
+      throw new Error(
+        `the weight of rule ${name} must be finite and positive, got ${String(weight)}`,
+      );
+    }
+    return { name, apply, weight };
+  });
 }
 
 function namedInvariants<S>(
@@ -368,20 +420,20 @@ function* machineSteps<S>(
   state: S,
   options: RunOptions | undefined,
 ): IterableIterator<Action, void, Outcome> {
-  const ruleNames = Object.keys(machine.rules);
-  if (ruleNames.length === 0) {
+  const rules = namedRules(machine.rules);
+  if (rules.length === 0) {
     throw new Error("cannot run a state machine with no rules");
   }
   const stepCount = options?.stepCount ?? DEFAULT_STEP_COUNT;
   if (!Number.isInteger(stepCount) || stepCount < 1) {
     throw new Error(`stepCount must be a positive integer, got ${String(stepCount)}`);
   }
-  const rules = ruleNames.map((name) => machine.rules[name]);
   const invariants = namedInvariants(machine.invariants);
 
   const dataSource = tc.dataSource();
   const machineId = dataSource.newStateMachine({
-    ruleNames,
+    ruleNames: rules.map((rule) => rule.name),
+    ruleWeights: rules.map((rule) => rule.weight),
     invariantNames: invariants.map((invariant) => invariant.name),
     invariantAlwaysCheck: invariants.map((invariant) => invariant.alwaysCheck),
     stepCount,
@@ -431,11 +483,11 @@ function* machineSteps<S>(
       if (ruleIndex === null) {
         break;
       }
-      const name = ruleNames[ruleIndex];
+      const { name, apply } = rules[ruleIndex];
       step++;
       tc.note(`Step ${step}: ${name} {`);
       const ruleTc = tc.child(2);
-      const outcome = yield () => rules[ruleIndex](ruleTc, state);
+      const outcome = yield () => apply(ruleTc, state);
       if (outcome.ok) {
         tc.note("}");
         continue;

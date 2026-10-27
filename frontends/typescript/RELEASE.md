@@ -112,3 +112,5 @@ const expressions = gs.fromLark(`
   %import common.NUMBER
 `);
 ```
+
+**Stateful testing.** A rule can now carry a weight, as in the other Hegel frontends: write it as `{ apply: (tc, state) => …, weight: 3 }` instead of a bare function, and the engine offers it that many times as often as a rule of weight 1 (every rule's weight is 1 by default). A weight must be finite and positive; any other value throws before the run starts. Concurrent state machines, which the Rust, Java, C++ and OCaml frontends offer, are not supported in JavaScript, because the host is single-threaded; the 0.4.10 changelog entry and `BROWSER.md` said they were waiting on a newer libhegel, which was never the reason.

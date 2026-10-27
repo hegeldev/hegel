@@ -519,6 +519,7 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
       lib.newStateMachine(h, h, {
         ruleNames: ["a"],
         ruleGroups: [0],
+        ruleWeights: [1],
         invariantNames: [],
         invariantAlwaysCheck: [],
         minConcurrency: 1,
