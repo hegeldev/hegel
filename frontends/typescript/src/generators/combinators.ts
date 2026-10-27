@@ -130,34 +130,11 @@ export function oneOf<T>(...generators: Generator<T>[]): Generator<T> {
 }
 
 class OptionalGenerator<T> extends PrintableGenerator<T | null> {
-  private readonly inner: Generator<T>;
-  private readonly basic: BasicGenerator<T | null> | null;
-
-  constructor(inner: Generator<T>) {
+  constructor(private readonly inner: Generator<T>) {
     super();
-    this.inner = inner;
-
-    const innerBasic = inner.asBasic();
-    if (innerBasic) {
-      this.basic = composedBasic(
-        {
-          type: "one_of",
-          generators: [{ type: "constant", value: null }, innerBasic.schema],
-        },
-        (raw, printer) => {
-          if (!Array.isArray(raw)) throw new Error(`Expected array, got ${typeof raw}`);
-          const index = raw[0] as number;
-          if (index === 0) return printNull(printer);
-          return innerBasic.parseAndPrint(raw[1], printer);
-        },
-      );
-    } else {
-      this.basic = null;
-    }
   }
 
   doDrawAndPrint(tc: TestCase, printer: PrettyPrinter): T | null {
-    if (this.basic) return this.basic.doDrawAndPrint(tc, printer);
     tc.startSpan(this.label);
     const isSome = generateRaw(tc, { type: "boolean" }) as boolean;
     const result = isSome
@@ -165,10 +142,6 @@ class OptionalGenerator<T> extends PrintableGenerator<T | null> {
       : printNull(printer);
     tc.stopSpan();
     return result;
-  }
-
-  override asBasic(): BasicGenerator<T | null> | null {
-    return this.basic;
   }
 
   /** @internal */

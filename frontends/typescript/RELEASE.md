@@ -53,6 +53,8 @@ tc.draw(new Evens()); // TypeError: Evens cannot print the values it draws. …
 tc.draw(new Evens().printAsValue()); // const draw_1 = 0;
 ```
 
+`gs.optional` now chooses between `null` and a value with one boolean choice, as every other Hegel frontend does, instead of picking one of two branches. A failure blob for a test that draws an `optional` is now the same blob the other frontends print for the same draws, and failures saved before this release that involve an `optional` no longer replay as they did.
+
 A `gs.maps` whose keys collide after a `map` now keeps the first of the colliding entries, where it kept the last value under the first key's position.
 
 **Replaying and explicit examples.** New builder methods on `Hegel`:

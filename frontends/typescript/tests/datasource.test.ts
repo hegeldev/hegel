@@ -349,12 +349,6 @@ describe("Generator parse error paths", () => {
     expect(() => tc.draw(gs.oneOf(gs.integers(), gs.booleans()))).toThrow("Expected array");
   });
 
-  it("optional parse throws on non-array", () => {
-    const ds = new FakeDataSource({ generates: ["not array"] });
-    const tc = new TestCase(ds, false);
-    expect(() => tc.draw(gs.optional(gs.integers()))).toThrow("Expected array");
-  });
-
   it("tuples parse throws on non-array", () => {
     const ds = new FakeDataSource({ generates: ["not array"] });
     const tc = new TestCase(ds, false);
@@ -464,29 +458,19 @@ describe("runTestCase with non-Error throws", () => {
 // ---------------------------------------------------------------------------
 
 describe("optional parse paths", () => {
-  it("optional emits an unwrapped one_of schema with null and inner branches", () => {
-    const innerGen = gs.integers({ minValue: 0, maxValue: 10 });
-    const basic = gs.optional(innerGen).asBasic();
-    expect(basic).not.toBeNull();
-    expect(basic!.schema).toEqual({
-      type: "one_of",
-      generators: [{ type: "constant", value: null }, innerGen.asBasic()!.schema],
-    });
-    // Guard against re-introducing the legacy tagged-tuple wrapping.
-    const generators = (basic!.schema as { generators: Record<string, unknown>[] }).generators;
-    expect(generators[0]["type"]).not.toBe("tuple");
-    expect(generators[1]["type"]).not.toBe("tuple");
+  it("optional has no schema, so it draws a boolean choice as the other frontends do", () => {
+    expect(gs.optional(gs.integers({ minValue: 0, maxValue: 10 })).asBasic()).toBeNull();
   });
 
-  it("optional returns null when index is 0", () => {
-    const ds = new FakeDataSource({ generates: [[0, null]] });
+  it("optional returns null when the choice is false", () => {
+    const ds = new FakeDataSource({ generates: [false] });
     const tc = new TestCase(ds, false);
     const result = tc.draw(gs.optional(gs.integers()));
     expect(result).toBeNull();
   });
 
-  it("optional returns value when index is 1", () => {
-    const ds = new FakeDataSource({ generates: [[1, 42]] });
+  it("optional returns value when the choice is true", () => {
+    const ds = new FakeDataSource({ generates: [true, 42] });
     const tc = new TestCase(ds, false);
     const result = tc.draw(gs.optional(gs.integers()));
     expect(result).toBe(42);
