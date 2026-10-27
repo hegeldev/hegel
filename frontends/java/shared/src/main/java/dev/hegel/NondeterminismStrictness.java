@@ -15,8 +15,9 @@ import dev.hegel.lowlevel.Abi;
  */
 public enum NondeterminismStrictness {
     /**
-     * Leave the choice to the engine's settings profile and the {@code HEGEL_NONDETERMINISM_STRICTNESS}
-     * environment variable ({@code quiet} unless configured otherwise).
+     * The {@link HegelTest} default: leave the resolved choice in place ({@code quiet} unless the
+     * engine's settings profile or {@code HEGEL_NONDETERMINISM_STRICTNESS} says otherwise). {@link
+     * Settings#nondeterminismStrictness(NondeterminismStrictness)} rejects it.
      */
     DEFAULT(null),
     /** Switch to nondeterministic handling silently. The engine's default. */

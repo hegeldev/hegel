@@ -20,7 +20,7 @@ final class PrintingReporter implements Reporter {
 
     @Override
     public void runStarted(Settings settings) {
-        printBlob = Boolean.TRUE.equals(settings.printBlob);
+        printBlob = settings.printBlob;
         annotated = settings.annotated;
         quiet = settings.verbosity == Verbosity.QUIET;
         verbose = settings.verbosity == Verbosity.VERBOSE || settings.verbosity == Verbosity.DEBUG;

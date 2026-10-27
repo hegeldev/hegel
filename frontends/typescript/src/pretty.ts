@@ -572,12 +572,16 @@ export interface DocumentOptions {
   maxWidth?: number;
 }
 
+/** Releases the engine document and context of a {@link Document} never finished. */
+const unfinishedDocuments = new FinalizationRegistry<() => void>((release) => release());
+
 /**
  * A standalone document laid out by the engine, for printing outside a
  * test: to check what a {@link generators.Generator.printWith | printWith}
  * callback or a {@link generators.PrintableGenerator} prints, say. Print
  * into {@link printer}, then call {@link finish} once to read the result
- * and release the document.
+ * and release the document. A document never finished is released when it
+ * is garbage collected.
  *
  * @example
  * ```ts
@@ -607,6 +611,15 @@ export class Document {
       maxWidth === undefined ? null : BigInt(maxWidth),
     );
     this.printer = new PrettyPrinter(this.document.view());
+    const { lib, ctx, document } = this;
+    unfinishedDocuments.register(
+      this,
+      () => {
+        document.dispose();
+        lib.freeContext(ctx);
+      },
+      this,
+    );
   }
 
   /**
@@ -616,6 +629,7 @@ export class Document {
   finish(): string {
     if (this.finished) throw new Error("Document.finish was already called");
     this.finished = true;
+    unfinishedDocuments.unregister(this);
     try {
       return this.document.value();
     } finally {

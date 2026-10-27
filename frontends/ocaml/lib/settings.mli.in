@@ -189,6 +189,11 @@
       | [HEGEL_PRINT_BLOB]                | settings              | [print_blob]: the same values as [HEGEL_DERANDOMIZE].                          |
       | [HEGEL_NONDETERMINISM_STRICTNESS] | settings              | [nondeterminism_strictness]: [quiet], [warn], or [error].                      |
       | [HEGEL_STOP_ON_FIRST_FAILURE]     | settings              | [stop_on_first_failure]: the same values as [HEGEL_DERANDOMIZE].               |
+      | [HEGEL_VERBOSITY]                 | settings              | [verbosity]: [quiet], [normal], [verbose], or [debug].                         |
+      | [HEGEL_PHASES]                    | settings              | [phases]: comma-separated phase names, such as [generate,shrink].              |
+      | [HEGEL_SUPPRESS_HEALTH_CHECK]     | settings              | [suppress_health_check]: comma-separated health check names, or [all].         |
+      | [HEGEL_REPORT_MULTIPLE_FAILURES]  | settings              | [report_multiple_failures]: the same values as [HEGEL_DERANDOMIZE].            |
+      | [HEGEL_BACKEND]                   | settings              | [backend]: [default] or [urandom].                                             |
     }
 
     An empty variable is ignored. A malformed variable makes {!default} and {!from_profile}

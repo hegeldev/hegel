@@ -445,10 +445,10 @@ TEST(Settings, DefaultBackendRuns) {
     EXPECT_EQ(count, 10);
 }
 
-// With Database::unset() the run keeps the profile's database, which is
-// `.hegel` outside CI. Run inside a temporary working directory so the database
-// artifacts don't leak into the build tree.
-TEST(Settings, UnsetDatabaseUsesEngineDefault) {
+// A Settings resolves the profile's database, which is `.hegel` outside CI.
+// Run inside a temporary working directory so the database artifacts don't
+// leak into the build tree.
+TEST(Settings, ResolvedDatabaseIsTheProfiles) {
     namespace fs = std::filesystem;
 
     fs::path work = fs::temp_directory_path() /
@@ -464,7 +464,7 @@ TEST(Settings, UnsetDatabaseUsesEngineDefault) {
             tc.draw(gs::integers<int>());
             count++;
         },
-        Settings{.test_cases = 5, .database = Database::unset()});
+        Settings{.test_cases = 5});
 
     fs::current_path(prev);
     fs::remove_all(work);
@@ -638,6 +638,13 @@ TEST(RunErrors, NoValidTestCaseIsUnsatisfiable) {
 // ---------------------------------------------------------------------------
 
 namespace {
+    template <typename Adjust>
+    Settings profiled(const std::string& name, Adjust adjust) {
+        Settings settings = Settings::from_profile(name);
+        adjust(settings);
+        return settings;
+    }
+
     int count_cases(const Settings& settings) {
         int count = 0;
         hegel::test(
@@ -655,16 +662,131 @@ TEST(Profiles, UnsetFieldsKeepTheProfile) {
                             {.test_cases = 20,
                              .database = Database::disabled(),
                              .phases = {hegel::Phase::Generate}});
-    EXPECT_EQ(count_cases({.profile = "cpp_unset_fields"}), 20);
-    EXPECT_EQ(count_cases({.test_cases = 7, .profile = "cpp_unset_fields"}), 7);
+    EXPECT_EQ(count_cases(Settings::from_profile("cpp_unset_fields")), 20);
+    EXPECT_EQ(count_cases(profiled("cpp_unset_fields",
+                                   [](Settings& s) { s.test_cases = 7; })),
+              7);
+}
+
+TEST(Profiles, CreatingSettingsResolvesTheProfile) {
+    hegel::register_profile("cpp_resolved",
+                            {.test_cases = 20,
+                             .seed = 7,
+                             .database = Database::from_path("cpp_resolved_db"),
+                             .suppress_health_check = {HealthCheck::TooSlow},
+                             .phases = {hegel::Phase::Generate}});
+    Settings settings = Settings::from_profile("cpp_resolved");
+    EXPECT_EQ(settings.test_cases, 20);
+    EXPECT_EQ(settings.seed, 7);
+    EXPECT_EQ(settings.database.kind(), Database::Kind::Path);
+    EXPECT_EQ(settings.database.path(), "cpp_resolved_db");
+    EXPECT_EQ(settings.suppress_health_check,
+              std::vector<HealthCheck>{HealthCheck::TooSlow});
+    EXPECT_EQ(settings.phases,
+              std::vector<hegel::Phase>{hegel::Phase::Generate});
+
+    Settings base = Settings::from_profile("base");
+    EXPECT_EQ(base.test_cases, 100);
+    EXPECT_FALSE(base.seed.has_value());
+    EXPECT_EQ(base.verbosity, hegel::Verbosity::Normal);
+    EXPECT_FALSE(base.derandomize);
+    EXPECT_EQ(base.database.kind(), Database::Kind::Default);
+    EXPECT_TRUE(base.suppress_health_check.empty());
+    EXPECT_EQ(base.phases, hegel::all_phases());
+    EXPECT_EQ(base.backend, hegel::Backend::Default);
+    EXPECT_EQ(base.nondeterminism_strictness, NondeterminismStrictness::Quiet);
+    EXPECT_FALSE(base.report_multiple_failures);
+    EXPECT_TRUE(base.stop_on_first_failure);
+    EXPECT_TRUE(base.print_blob);
+    EXPECT_FALSE(base.show_statistics);
+    EXPECT_FALSE(base.unbounded_choices);
+
+    Settings ci = Settings::from_profile("ci");
+    EXPECT_TRUE(ci.derandomize);
+    EXPECT_EQ(ci.database.kind(), Database::Kind::Disabled);
+}
+
+TEST(Profiles, EveryFieldRoundTripsThroughAProfile) {
+    for (auto strictness :
+         {NondeterminismStrictness::Warn, NondeterminismStrictness::Error}) {
+        hegel::register_profile(
+            "cpp_round_trip", profiled("base", [&](Settings& s) {
+                s.test_cases = 3;
+                s.verbosity = hegel::Verbosity::Debug;
+                s.seed = 5;
+                s.derandomize = true;
+                s.report_multiple_failures = true;
+                s.stop_on_first_failure = false;
+                s.nondeterminism_strictness = strictness;
+                s.print_blob = false;
+                s.show_statistics = true;
+                s.unbounded_choices = true;
+                s.database = Database::disabled();
+                s.suppress_health_check = hegel::all_health_checks();
+                s.phases = {hegel::Phase::Target, hegel::Phase::Shrink};
+                s.backend = hegel::Backend::Urandom;
+            }));
+        Settings settings = Settings::from_profile("cpp_round_trip");
+        EXPECT_EQ(settings.test_cases, 3);
+        EXPECT_EQ(settings.verbosity, hegel::Verbosity::Debug);
+        EXPECT_EQ(settings.seed, 5);
+        EXPECT_TRUE(settings.derandomize);
+        EXPECT_TRUE(settings.report_multiple_failures);
+        EXPECT_FALSE(settings.stop_on_first_failure);
+        EXPECT_EQ(settings.nondeterminism_strictness, strictness);
+        EXPECT_FALSE(settings.print_blob);
+        EXPECT_TRUE(settings.show_statistics);
+        EXPECT_TRUE(settings.unbounded_choices);
+        EXPECT_EQ(settings.database.kind(), Database::Kind::Disabled);
+        EXPECT_EQ(settings.suppress_health_check, hegel::all_health_checks());
+        EXPECT_EQ(settings.phases,
+                  (std::vector<hegel::Phase>{hegel::Phase::Target,
+                                             hegel::Phase::Shrink}));
+        EXPECT_EQ(settings.backend, hegel::Backend::Urandom);
+    }
+}
+
+TEST(Profiles, RegistrationIsNotRetroactive) {
+    hegel::register_profile("cpp_snapshot",
+                            {.test_cases = 3,
+                             .database = Database::disabled(),
+                             .phases = {hegel::Phase::Generate}});
+    Settings settings = Settings::from_profile("cpp_snapshot");
+    hegel::register_profile("cpp_snapshot",
+                            {.test_cases = 9,
+                             .database = Database::disabled(),
+                             .phases = {hegel::Phase::Generate}});
+    EXPECT_EQ(count_cases(settings), 3);
+    EXPECT_EQ(count_cases(Settings::from_profile("cpp_snapshot")), 9);
+}
+
+TEST(Profiles, DefaultProfileChangeIsNotRetroactive) {
+    hegel::register_profile("cpp_default_two",
+                            {.test_cases = 2,
+                             .database = Database::disabled(),
+                             .phases = {hegel::Phase::Generate}});
+    Settings settings{.test_cases = 4, .database = Database::disabled()};
+    hegel::set_default_profile("cpp_default_two");
+    int kept = count_cases(settings);
+    int fresh = count_cases({});
+    hegel::set_default_profile("");
+    EXPECT_EQ(kept, 4);
+    EXPECT_EQ(fresh, 2);
+}
+
+TEST(Settings, MalformedVariableFailsWhenSettingsAreCreated) {
+    setenv("HEGEL_TEST_CASES", "lots", 1);
+    EXPECT_THROW(Settings{}, std::invalid_argument);
+    unsetenv("HEGEL_TEST_CASES");
 }
 
 TEST(Profiles, ProfilePhasesAreKept) {
     hegel::register_profile("cpp_no_phases",
                             {.database = Database::disabled(), .phases = {}});
-    EXPECT_EQ(count_cases({.profile = "cpp_no_phases"}), 0);
-    EXPECT_EQ(count_cases({.phases = {hegel::Phase::Generate},
-                           .profile = "cpp_no_phases"}),
+    EXPECT_EQ(count_cases(Settings::from_profile("cpp_no_phases")), 0);
+    EXPECT_EQ(count_cases(profiled(
+                  "cpp_no_phases",
+                  [](Settings& s) { s.phases = {hegel::Phase::Generate}; })),
               100);
 }
 
@@ -678,7 +800,7 @@ TEST(Profiles, ProfileVerbosityAndPrintBlobAreKept) {
     hegel::register_profile("cpp_quiet", {.verbosity = hegel::Verbosity::Quiet,
                                           .database = Database::disabled()});
     testing::internal::CaptureStderr();
-    EXPECT_THROW(hegel::test(failing, {.profile = "cpp_quiet"}),
+    EXPECT_THROW(hegel::test(failing, Settings::from_profile("cpp_quiet")),
                  std::runtime_error);
     std::string quiet = testing::internal::GetCapturedStderr();
     EXPECT_EQ(quiet.find("auto draw_1"), std::string::npos) << quiet;
@@ -687,7 +809,7 @@ TEST(Profiles, ProfileVerbosityAndPrintBlobAreKept) {
     hegel::register_profile(
         "cpp_no_blob", {.print_blob = false, .database = Database::disabled()});
     testing::internal::CaptureStderr();
-    EXPECT_THROW(hegel::test(failing, {.profile = "cpp_no_blob"}),
+    EXPECT_THROW(hegel::test(failing, Settings::from_profile("cpp_no_blob")),
                  std::runtime_error);
     std::string output = testing::internal::GetCapturedStderr();
     EXPECT_NE(output.find("auto draw_1 = 11;"), std::string::npos) << output;
@@ -704,10 +826,14 @@ TEST(Profiles, ProfileHealthChecksCanBeCleared) {
         int n = tc.draw(gs::integers<int>({.min_value = 0, .max_value = 100}));
         tc.assume(n < 5);
     };
-    EXPECT_NO_THROW(hegel::test(filtering, {.profile = "cpp_suppress_all"}));
-    EXPECT_THROW(hegel::test(filtering, {.suppress_health_check = {},
-                                         .profile = "cpp_suppress_all"}),
-                 hegel::FailedHealthCheck);
+    EXPECT_NO_THROW(
+        hegel::test(filtering, Settings::from_profile("cpp_suppress_all")));
+    EXPECT_THROW(
+        hegel::test(filtering, profiled("cpp_suppress_all",
+                                        [](Settings& s) {
+                                            s.suppress_health_check = {};
+                                        })),
+        hegel::FailedHealthCheck);
 }
 
 TEST(Profiles, DefaultProfileCanBeSet) {
@@ -722,7 +848,7 @@ TEST(Profiles, DefaultProfileCanBeSet) {
 }
 
 TEST(Profiles, UnknownProfileIsRejected) {
-    EXPECT_THROW(count_cases({.profile = "cpp_no_such_profile"}),
+    EXPECT_THROW(Settings::from_profile("cpp_no_such_profile"),
                  std::invalid_argument);
 }
 
@@ -766,9 +892,10 @@ TEST(Settings, DefaultLocationDatabaseOverridesTheProfile) {
                     throw std::runtime_error("too big");
                 }
             },
-            {.verbosity = hegel::Verbosity::Quiet,
-             .database = Database::default_location(),
-             .profile = "ci"});
+            profiled("ci", [](Settings& s) {
+                s.verbosity = hegel::Verbosity::Quiet;
+                s.database = Database::default_location();
+            }));
     } catch (const std::runtime_error&) { // NOLINT(bugprone-empty-catch)
     }
     bool exists = fs::exists(work / ".hegel");

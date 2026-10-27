@@ -1,7 +1,9 @@
 /**
- * Run settings. Every field is optional: a run starts from the engine's
- * resolved settings (the selected profile, `hegel.toml` and the `HEGEL_*`
- * environment variables) and only the fields given here are set over them.
+ * Run settings. Every field of a {@link Settings} is optional: a run starts
+ * from the engine's resolved settings (the selected profile, `hegel.toml` and
+ * the `HEGEL_*` environment variables) and sets the fields given here over
+ * them. {@link ResolvedSettings} is that resolution made ahead of a run and
+ * kept as a plain object.
  *
  * @packageDocumentation
  */
@@ -89,6 +91,10 @@ export const Database = {
  * Settings for a run. Every field is optional; a field left out keeps the
  * value the engine resolved from the settings profile (see {@link profile}),
  * `hegel.toml` and the `HEGEL_*` environment variables.
+ *
+ * The profile is resolved when the settings are used: when a test given them
+ * runs, when `registerProfile` snapshots them, or when `resolveSettings`
+ * turns them into a {@link ResolvedSettings}.
  */
 export interface Settings {
   /**
@@ -141,6 +147,44 @@ export interface Settings {
   nondeterminismStrictness?: NondeterminismStrictness;
   /** The source of randomness. */
   backend?: Backend;
+}
+
+/**
+ * Every setting of a run, as the engine resolved it: what `resolveSettings`
+ * returns. A plain object, so `{ ...resolved, testCases: 500 }` changes one
+ * field of a copy. It is a {@link Settings} whose fields are all present, so
+ * a test given one runs with exactly these values, whatever the default
+ * profile is by then.
+ */
+export interface ResolvedSettings {
+  /** The number of valid test cases to run. */
+  testCases: number;
+  /** The fixed seed, or `null` when the engine picks one per run. */
+  seed: bigint | null;
+  /** How much the engine prints. */
+  verbosity: Verbosity;
+  /** Whether the seed is derived from the test's identity when none is set. */
+  derandomize: boolean;
+  /** Where failing examples are stored between runs. */
+  database: Database;
+  /** The health checks turned off. */
+  suppressHealthCheck: HealthCheck[];
+  /** Whether every distinct failure is reported. */
+  reportMultipleFailures: boolean;
+  /** Whether generation stops at the first failure. */
+  stopOnFirstFailure: boolean;
+  /** The phases that run. */
+  phases: Phase[];
+  /** Whether a failure prints its reproduction blob. */
+  printBlob: boolean;
+  /** Whether the test's events are reported at the end of the run. */
+  showStatistics: boolean;
+  /** Whether a test case may make any number of choices. */
+  unboundedChoices: boolean;
+  /** How the run reacts to a nondeterministic test. */
+  nondeterminismStrictness: NondeterminismStrictness;
+  /** The source of randomness. */
+  backend: Backend;
 }
 
 /**
@@ -218,8 +262,60 @@ function testCaseCount(n: number): number {
 }
 
 /** Create a settings handle from the engine's resolved profile. */
-export function resolveSettings(lib: Engine, ctx: ContextHandle, s: Settings): SettingsHandle {
+export function newSettingsHandle(lib: Engine, ctx: ContextHandle, s: Settings): SettingsHandle {
   return s.profile === undefined ? lib.newSettings(ctx) : lib.newSettingsForProfile(ctx, s.profile);
+}
+
+function fromNative<K extends string>(table: Record<K, number>, native: number): K {
+  return (Object.keys(table) as K[]).find((key) => table[key] === native)!;
+}
+
+function unmask<K extends string>(table: Record<K, number>, bits: number): K[] {
+  return (Object.keys(table) as K[]).filter((key) => (bits & table[key]) !== 0);
+}
+
+/** Every field of `handle`, read back through the engine's getters. */
+export function readSettings(lib: Engine, handle: SettingsHandle): ResolvedSettings {
+  const database = lib.getDatabase(handle);
+  return {
+    testCases: lib.getTestCases(handle),
+    seed: lib.getSeed(handle),
+    verbosity: fromNative(VERBOSITY_TO_NATIVE, lib.getVerbosity(handle)),
+    derandomize: lib.getDerandomize(handle),
+    database:
+      database === null
+        ? Database.default
+        : database === ""
+          ? Database.disabled
+          : Database.fromPath(database),
+    suppressHealthCheck: unmask(HEALTH_CHECK_TO_NATIVE, lib.getSuppressHealthCheck(handle)),
+    reportMultipleFailures: lib.getReportMultipleFailures(handle),
+    stopOnFirstFailure: lib.getStopOnFirstFailure(handle),
+    phases: unmask(PHASE_TO_NATIVE, lib.getPhases(handle)),
+    printBlob: lib.getPrintBlob(handle),
+    showStatistics: lib.getShowStatistics(handle),
+    unboundedChoices: lib.getUnboundedChoices(handle),
+    nondeterminismStrictness: fromNative(
+      STRICTNESS_TO_NATIVE,
+      lib.getNondeterminismStrictness(handle),
+    ),
+    backend: fromNative(BACKEND_TO_NATIVE, lib.getBackend(handle)),
+  };
+}
+
+/**
+ * Resolve `s` now: its profile (else the default one) with its fields set
+ * over it, read back field by field. Throws for an invalid value, an unknown
+ * profile, or a malformed `hegel.toml` or `HEGEL_*` variable.
+ */
+export function snapshotSettings(lib: Engine, ctx: ContextHandle, s: Settings): ResolvedSettings {
+  const handle = newSettingsHandle(lib, ctx, s);
+  try {
+    applySettings(lib, ctx, handle, s);
+    return readSettings(lib, handle);
+  } finally {
+    lib.freeSettings(handle);
+  }
 }
 
 /**

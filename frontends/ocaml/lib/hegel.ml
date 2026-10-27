@@ -1,6 +1,13 @@
 (** The current version of Hegel for OCaml. *)
 let version = Hegel_version.version
 
+let engine_version () =
+  let ctx = Hegel_ffi.Ffi.context_new () in
+  Fun.protect
+    ~finally:(fun () -> Hegel_ffi.Ffi.context_free ctx)
+    (fun () -> Hegel_ffi.Ffi.version ctx)
+;;
+
 (** Generators for composable test data generation. *)
 module Generators = Generators
 

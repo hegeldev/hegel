@@ -90,10 +90,36 @@ namespace hegel::impl {
                                        hegel_settings_t* s);
     hegel_verbosity_t settings_get_verbosity(hegel_context_t* ctx,
                                              const hegel_settings_t* s);
-    bool settings_get_print_blob(hegel_context_t* ctx,
-                                 const hegel_settings_t* s);
+    uint64_t settings_get_test_cases(hegel_context_t* ctx,
+                                     const hegel_settings_t* s);
+    /// The configured seed, or nullopt when each run picks a fresh one.
+    std::optional<uint64_t> settings_get_seed(hegel_context_t* ctx,
+                                              const hegel_settings_t* s);
+    bool settings_get_derandomize(hegel_context_t* ctx,
+                                  const hegel_settings_t* s);
+    /// The database: nullopt for the engine's default location, an empty
+    /// string for a disabled database, else its directory.
+    std::optional<std::string> settings_get_database(hegel_context_t* ctx,
+                                                     const hegel_settings_t* s);
+    /// The suppressed health checks, as a bitwise OR of hegel_health_check_t
+    /// values.
+    uint32_t settings_get_suppress_health_check(hegel_context_t* ctx,
+                                                const hegel_settings_t* s);
     bool settings_get_report_multiple_failures(hegel_context_t* ctx,
                                                const hegel_settings_t* s);
+    bool settings_get_stop_on_first_failure(hegel_context_t* ctx,
+                                            const hegel_settings_t* s);
+    bool settings_get_show_statistics(hegel_context_t* ctx,
+                                      const hegel_settings_t* s);
+    bool settings_get_unbounded_choices(hegel_context_t* ctx,
+                                        const hegel_settings_t* s);
+    hegel_backend_t settings_get_backend(hegel_context_t* ctx,
+                                         const hegel_settings_t* s);
+    hegel_nondeterminism_strictness_t
+    settings_get_nondeterminism_strictness(hegel_context_t* ctx,
+                                           const hegel_settings_t* s);
+    bool settings_get_print_blob(hegel_context_t* ctx,
+                                 const hegel_settings_t* s);
     /// The enabled phases, as a bitwise OR of hegel_phase_t values.
     uint32_t settings_get_phases(hegel_context_t* ctx,
                                  const hegel_settings_t* s);

@@ -21,6 +21,7 @@ import java.lang.invoke.MethodType;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.OptionalLong;
 import org.junit.jupiter.api.Test;
 
 /** Covers {@link RealLibhegel} edge branches that the normal engine path does not reach. */
@@ -428,6 +429,32 @@ class RealLibhegelTest {
         assertEquals(Abi.NONDETERMINISM_ERROR, lib.settingsGetNondeterminismStrictness(s));
         lib.settingsNondeterminismStrictness(s, Abi.NONDETERMINISM_WARN);
         assertEquals(Abi.NONDETERMINISM_WARN, lib.settingsGetNondeterminismStrictness(s));
+        lib.settingsSeed(s, -1L, true);
+        assertEquals(OptionalLong.of(-1L), lib.settingsGetSeed(s));
+        lib.settingsSeed(s, 0L, false);
+        assertEquals(OptionalLong.empty(), lib.settingsGetSeed(s));
+        lib.settingsDerandomize(s, true);
+        assertTrue(lib.settingsGetDerandomize(s));
+        lib.settingsDerandomize(s, false);
+        assertFalse(lib.settingsGetDerandomize(s));
+        lib.settingsDatabase(s, "/tmp/hegel-db");
+        assertEquals("/tmp/hegel-db", lib.settingsGetDatabase(s));
+        lib.settingsDatabase(s, "");
+        assertEquals("", lib.settingsGetDatabase(s));
+        lib.settingsDatabase(s, null);
+        assertNull(lib.settingsGetDatabase(s));
+        lib.settingsSuppressHealthCheck(s, Abi.HC_TOO_SLOW | Abi.HC_FILTER_TOO_MUCH);
+        assertEquals(Abi.HC_TOO_SLOW | Abi.HC_FILTER_TOO_MUCH, lib.settingsGetSuppressHealthCheck(s));
+        lib.settingsStopOnFirstFailure(s, false);
+        assertFalse(lib.settingsGetStopOnFirstFailure(s));
+        lib.settingsStopOnFirstFailure(s, true);
+        assertTrue(lib.settingsGetStopOnFirstFailure(s));
+        lib.settingsShowStatistics(s, true);
+        assertTrue(lib.settingsGetShowStatistics(s));
+        lib.settingsUnboundedChoices(s, true);
+        assertTrue(lib.settingsGetUnboundedChoices(s));
+        lib.settingsBackend(s, Abi.BACKEND_URANDOM);
+        assertEquals(Abi.BACKEND_URANDOM, lib.settingsGetBackend(s));
         lib.settingsFree(s);
     }
 

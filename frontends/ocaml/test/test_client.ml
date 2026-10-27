@@ -863,8 +863,17 @@ let test_stop_test_does_not_fail_run () =
          raise Internal.Stop_test))
 ;;
 
+let test_engine_version () =
+  let version = Hegel.engine_version () in
+  Alcotest.(check bool)
+    "looks like a version"
+    true
+    (String.length version > 0 && Char.is_digit version.[0] && String.mem version '.')
+;;
+
 let tests =
-  [ Alcotest.test_case "default settings non-ci" `Quick test_default_settings_not_ci
+  [ Alcotest.test_case "engine_version" `Quick test_engine_version
+  ; Alcotest.test_case "default settings non-ci" `Quick test_default_settings_not_ci
   ; Alcotest.test_case "default settings ci" `Quick test_default_settings_ci
   ; Alcotest.test_case "from_profile unknown" `Quick test_from_profile_unknown
   ; Alcotest.test_case

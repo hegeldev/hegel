@@ -202,19 +202,23 @@ def _check_profile_name(name: Any) -> None:
 class Settings:
     """Configuration for a run. Immutable.
 
-    A ``Settings`` value holds only the fields given to it as keyword
-    arguments. Every other field comes from the default profile, resolved
-    by the engine each time the settings are used (a test runs, or a field
-    is read): the ``default`` set with :meth:`set_default_profile`,
-    ``HEGEL_DEFAULT_PROFILE``, the ``default`` entry in ``hegel.toml``, or
-    the environment: ``workload`` under Antithesis, ``ci`` on a CI server,
-    ``development`` otherwise. The ``HEGEL_*`` environment variables
-    (``HEGEL_TEST_CASES``, ``HEGEL_SEED``, ...) apply over the profile, and
-    the given fields over both. So a ``Settings`` made before the default
-    profile changes, at import time in a ``conftest.py`` say, follows the
-    change, pytest's ``--hegel-*`` options included.
-    ``Settings(parent, **overrides)`` keeps ``parent``'s fields and profile
-    and adds ``overrides``.
+    A ``Settings`` value holds every field. ``Settings(**overrides)``
+    resolves the default profile when it is created and keeps a copy of
+    the result, with the given fields set over it: the ``default`` set with
+    :meth:`set_default_profile`, ``HEGEL_DEFAULT_PROFILE``, the ``default``
+    entry in ``hegel.toml``, or the environment: ``workload`` under
+    Antithesis, ``ci`` on a CI server, ``development`` otherwise. The
+    ``HEGEL_*`` environment variables (``HEGEL_TEST_CASES``, ``HEGEL_SEED``,
+    ...) apply over the profile, and the given fields over both. A
+    malformed ``hegel.toml`` or variable, or an unknown default profile,
+    is an :class:`~hegel.InvalidArgument` raised here. The copy does not
+    change afterwards: a ``Settings`` made before the default profile
+    changes, at import time in a ``conftest.py`` say, keeps the values it
+    was made with, so make it after :meth:`register_profile` and
+    :meth:`set_default_profile`, or give :func:`hegel.test` its fields as
+    keywords, which it resolves each time the test runs.
+    ``Settings(parent, **overrides)`` copies ``parent``'s fields and sets
+    ``overrides`` over them.
 
     Usually settings are given to :func:`hegel.test` as keywords
     (``@hegel.test(test_cases=500)``), which override the same fields.
@@ -290,7 +294,7 @@ class Settings:
         def test_something(tc): ...
     """
 
-    __slots__ = ("_overrides", "_profile")
+    __slots__ = ("_values",)
 
     test_cases: int
     verbosity: Verbosity
@@ -307,25 +311,22 @@ class Settings:
     backend: Backend
     nondeterminism_strictness: NondeterminismStrictness
 
-    _profile: str | None
-    _overrides: dict[str, Any]
+    _values: dict[str, Any]
 
     def __init__(self, parent: Settings | None = None, **overrides: Any) -> None:
         if parent is not None and not isinstance(parent, Settings):
             raise InvalidArgument(f"parent={parent!r} must be a Settings object or None")
-        values = {} if parent is None else dict(parent._overrides)
+        values = _read_native(_native.Settings.new()) if parent is None else dict(parent._values)
         for name, value in overrides.items():
             if name not in _FIELDS:
                 raise TypeError(f"Settings() got an unexpected keyword argument {name!r}")
             values[name] = _VALIDATORS[name](name, value)
-        object.__setattr__(self, "_profile", None if parent is None else parent._profile)
-        object.__setattr__(self, "_overrides", values)
-        self._build()
+        object.__setattr__(self, "_values", values)
 
     def __getattr__(self, name: str) -> Any:
         if name not in _FIELDS:
             raise AttributeError(f"'Settings' object has no attribute {name!r}")
-        return self._values()[name]
+        return self._values[name]
 
     def __setattr__(self, name: str, value: Any) -> None:
         raise AttributeError(f"Settings are immutable: use replace() to change {name!r}")
@@ -334,10 +335,10 @@ class Settings:
         raise AttributeError(f"Settings are immutable: cannot delete {name!r}")
 
     def __reduce__(self) -> tuple[Any, ...]:
-        return (_restore_settings, (self._profile, dict(self._overrides)))
+        return (_restore_settings, (dict(self._values),))
 
     def _key(self) -> tuple[Any, ...]:
-        return (self._profile, tuple(sorted(self._overrides.items())))
+        return tuple(self._values[name] for name in _FIELDS)
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Settings):
@@ -348,14 +349,12 @@ class Settings:
         return hash(self._key())
 
     def __repr__(self) -> str:
-        fields = ", ".join(f"{name}={value!r}" for name, value in self._overrides.items())
-        if self._profile is None:
-            return f"Settings({fields})"
-        return f"Settings.from_profile({', '.join(filter(None, [repr(self._profile), fields]))})"
+        fields = ", ".join(f"{name}={self._values[name]!r}" for name in _FIELDS)
+        return f"Settings({fields})"
 
     @classmethod
     def from_profile(cls, name: str, **overrides: Any) -> Settings:
-        """Settings resolved from the named profile rather than the
+        """Settings resolved, now, from the named profile rather than the
         default one, with ``overrides`` applied. The profile is one of the
         engine's (``development``, ``ci``, ``workload``, or ``base`` for
         the plain defaults), one defined in ``hegel.toml``, or one
@@ -363,7 +362,7 @@ class Settings:
         error. Unlike ``Settings()``, this ignores which profile is the
         default."""
         _check_profile_name(name)
-        return cls(_restore_settings(name, {}), **overrides)
+        return cls(_restore_settings(_read_native(_native.Settings.for_profile(name))), **overrides)
 
     @staticmethod
     def register_profile(name: str, settings: Settings | None = None, **overrides: Any) -> None:
@@ -378,10 +377,10 @@ class Settings:
             hegel.Settings.register_profile("nightly", test_cases=10_000)
             hegel.Settings.set_default_profile("nightly")
 
-        A ``Settings`` value resolves its profile each time it is used, so
-        registering a profile, or making it the default, reaches existing
-        values that rely on it. The reserved names ``base`` and ``default``
-        cannot be registered.
+        Registering a profile is not retroactive: a ``Settings`` value
+        already made keeps its fields, so register profiles before making
+        the settings that should start from them. The reserved names
+        ``base`` and ``default`` cannot be registered.
         """
         _check_profile_name(name)
         if settings is not None and not isinstance(settings, Settings):
@@ -394,7 +393,8 @@ class Settings:
         """Make the named (already registered) profile the one
         ``Settings()`` resolves, for the whole process. ``None`` restores
         the engine's own choice (see :class:`Settings`). An unknown
-        profile name is an error."""
+        profile name is an error. Not retroactive: a ``Settings`` value
+        already made keeps its fields."""
         if name is not None:
             _check_profile_name(name)
             _native.Settings.for_profile(name)
@@ -404,23 +404,16 @@ class Settings:
         """A copy of these settings with ``overrides`` applied."""
         return Settings(self, **overrides)
 
-    def _values(self) -> dict[str, Any]:
-        """Every field, as the engine resolves these settings now."""
-        return _read_native(self._build())
-
     def _build(
         self,
         database_key: str | None = None,
         test_location: TestLocation | None = None,
     ) -> _native.Settings:
-        """A native settings handle: the profile as the engine resolves it
-        now, with only the fields given to these settings set over it."""
-        if self._profile is None:
-            native = _native.Settings.new()
-        else:
-            native = _native.Settings.for_profile(self._profile)
-        for name, value in self._overrides.items():
-            _SETTERS[name](native, value)
+        """A native settings handle with every field of these settings set
+        on it."""
+        native = _native.Settings.new()
+        for name in _FIELDS:
+            _SETTERS[name](native, self._values[name])
         if database_key is not None:
             native.set_database_key(database_key)
         if test_location is not None:
@@ -459,7 +452,10 @@ def _check_test_cases(field: str, value: Any) -> int:
 def _check_seed(field: str, value: Any) -> int | None:
     if value is None:
         return None
-    return _check_int(field, value) & ((1 << 64) - 1)
+    seed = _check_int(field, value)
+    if not 0 <= seed < 1 << 64:
+        raise InvalidArgument(f"seed={seed} must be between 0 and 2**64 - 1")
+    return seed
 
 
 def _check_database(field: str, value: Any) -> str | None:
@@ -542,8 +538,7 @@ def _read_native(native: _native.Settings) -> dict[str, Any]:
 _FIELDS = tuple(name for name in Settings.__annotations__ if not name.startswith("_"))
 
 
-def _restore_settings(profile: str | None, overrides: dict[str, Any]) -> Settings:
+def _restore_settings(values: dict[str, Any]) -> Settings:
     settings = object.__new__(Settings)
-    object.__setattr__(settings, "_profile", profile)
-    object.__setattr__(settings, "_overrides", overrides)
+    object.__setattr__(settings, "_values", values)
     return settings

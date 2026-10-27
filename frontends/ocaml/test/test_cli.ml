@@ -122,6 +122,7 @@ let flags : (test_case -> string * (parsed -> parsed)) list =
   ; boolean "stop-on-first-failure" (fun s stop_on_first_failure ->
       { s with stop_on_first_failure })
   ; boolean "show-statistics" (fun s show_statistics -> { s with show_statistics })
+  ; boolean "unbounded-choices" (fun s unbounded_choices -> { s with unbounded_choices })
   ; boolean "print-blob" (fun s print_blob -> { s with print_blob })
   ; (fun tc ->
       let name, backend = choose tc [ "default", Settings.Default; "urandom", Urandom ] in
@@ -178,11 +179,7 @@ let test_unknown_flag () =
 let test_fixed_settings_are_rejected () =
   expect_error
     [ "--test-cases"; "5" ]
-    "--test-cases cannot be set: a Hegel.main binary runs exactly one test case";
-  expect_error
-    [ "--unbounded-choices=false" ]
-    "--unbounded-choices cannot be set: a Hegel.main binary always allows unbounded \
-     choices"
+    "--test-cases cannot be set: a Hegel.main binary runs exactly one test case"
 ;;
 
 let test_flag_forms () =
@@ -255,11 +252,23 @@ let test_single_test_case () =
       }
   in
   Alcotest.(check int) "one test case" 1 settings.test_cases;
-  Alcotest.(check bool) "unbounded choices" true settings.unbounded_choices;
+  Alcotest.(check bool) "choices stay bounded" false settings.unbounded_choices;
   Alcotest.(check bool)
     "suppressions added"
     true
-    (Poly.equal settings.suppress_health_check [ Settings.Too_slow; Filter_too_much ])
+    (Poly.equal
+       settings.suppress_health_check
+       [ Settings.Too_slow; Test_cases_too_large; Filter_too_much ]);
+  let already =
+    Cli.single_test_case
+      { (Settings.create ()) with
+        suppress_health_check = [ Settings.Too_slow; Test_cases_too_large ]
+      }
+  in
+  Alcotest.(check bool)
+    "suppressions not repeated"
+    true
+    (Poly.equal already.suppress_health_check [ Settings.Too_slow; Test_cases_too_large ])
 ;;
 
 (* [Hegel.main] exits, so it runs in a child: this binary re-executed with
