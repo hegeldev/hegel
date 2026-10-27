@@ -408,6 +408,14 @@ let test_example_usage_errors () =
   expect "unused value" unused_example_value "never drawn: n";
   expect "missing value" missing_example_value "no value for the draw b";
   expect "draw_silent" silent_draw_in_example "draw_silent";
+  expect
+    "block in an example"
+    (fun () ->
+       Hegel.run_hegel_test_ppx
+         ~examples:
+           [ ([], fun tc -> Hegel.Internal.with_block tc ~indent:2 (fun _ -> ())) ]
+         (fun _ -> ()))
+    "generated data";
   expect "silently drawn function" function_in_example "no value for the draw f";
   expect
     "explicit_draw outside an example"
