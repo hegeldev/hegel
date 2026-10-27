@@ -103,6 +103,15 @@ function openDeferred(owner: PrinterOwner, handle: PrinterHandle): Printer {
   return enginePrinter(owner, child, true);
 }
 
+/**
+ * Whether any of the deferred regions `handles` is still live, so that the
+ * document has a deferred session to resolve: regions opened inside an
+ * aborted speculation have died with it.
+ */
+export function anyLive(lib: Engine, ctx: ContextHandle, handles: PrinterHandle[]): boolean {
+  return handles.some((handle) => lib.printerIsLive(ctx, handle));
+}
+
 interface LineState {
   atLineStart: boolean;
   owesBreak: boolean;
@@ -220,7 +229,9 @@ export class EngineDocument {
 
   /** Everything printed to the document, with its deferred regions spliced in. Seals it. */
   value(): string {
-    if (this.regions.length > 0) this.lib.printerResolve(this.ctx, this.handle);
+    if (!this.sealed && anyLive(this.lib, this.ctx, this.regions)) {
+      this.lib.printerResolve(this.ctx, this.handle);
+    }
     this.sealed = true;
     return this.lib.printerValue(this.ctx, this.handle);
   }
@@ -663,11 +674,6 @@ export class Block {
     }
     printer.endGroup(this.close);
   }
-}
-
-/** Print `value` to `printer` as {@link PrettyPrinter.value} does. */
-export function printValue(printer: Printer, value: unknown): void {
-  new PrettyPrinter(printer).value(value);
 }
 
 function printValueIn(printer: PrettyPrinter, value: unknown, enclosing: Set<object>): void {

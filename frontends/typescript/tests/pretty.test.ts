@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  Document,
   EngineDocument,
   prettyPrint,
   PrettyPrinter,
-  printValue,
+  Speculation,
   printedLine,
   splitLines,
 } from "../src/pretty.js";
@@ -157,7 +158,7 @@ describe("EngineDocument", () => {
     const lines = document((doc) => {
       const printer = doc.view(2);
       printer.text("const xs = ");
-      printValue(printer, long);
+      new PrettyPrinter(printer).value(long);
       printer.text(";");
     });
     expect(lines).toEqual(["  const xs = [", ...long.map((item) => `      "${item}",`), "  ];"]);
@@ -266,5 +267,152 @@ describe("printing through a class's own prettyPrint method", () => {
     } finally {
       doc.dispose();
     }
+  });
+});
+
+describe("PrettyPrinter", () => {
+  function render(body: (p: PrettyPrinter) => void, maxWidth?: number): string {
+    const doc = new Document(maxWidth === undefined ? {} : { maxWidth });
+    body(doc.printer);
+    return doc.finish();
+  }
+
+  it.each([79, 20, 8, 1])("lays out seq as an array value prints at width %i", (width) => {
+    const items = [1000, "two", [3, 4], null];
+    expect(render((p) => p.seq("[", "]", items, (q, item) => q.value(item)), width)).toBe(
+      render((p) => p.value(items), width),
+    );
+    expect(render((p) => p.seq("[", "]", [], (q, item) => q.value(item)), width)).toBe("[]");
+  });
+
+  it("separates group items with a comma and a break point", () => {
+    const pair = (p: PrettyPrinter) =>
+      p.group(1, "(", ")", () => {
+        p.text("first");
+        p.separator();
+        p.text("second");
+      });
+    expect(render(pair)).toBe("(first, second)");
+    expect(render(pair, 8)).toBe("(first,\n second)");
+  });
+
+  it("returns the group body's result and passes it the printer", () => {
+    let seen: PrettyPrinter | null = null;
+    expect(
+      render((p) => {
+        expect(
+          p.group(1, "<", ">", (q) => {
+            seen = q;
+            return 7;
+          }),
+        ).toBe(7);
+        expect(seen).toBe(p);
+      }),
+    ).toBe("<>");
+  });
+
+  it("keeps a committed speculation and drops an aborted one", () => {
+    expect(
+      render((p) => {
+        const dropped = p.speculate();
+        dropped.printer.text("dropped");
+        dropped.abort();
+        dropped.commit();
+        const kept = p.speculate();
+        kept.printer.text("kept");
+        kept.commit();
+        kept.abort();
+      }),
+    ).toBe("kept");
+  });
+
+  it("prefixes a comment and keeps text's newlines", () => {
+    expect(render((p) => (p.text("a\nb"), p.comment("why")))).toBe("a\nb  // why");
+  });
+
+  it("splices deferred regions, nested ones included, in where they were opened", () => {
+    expect(
+      render((p) => {
+        p.text("f(");
+        const outer = p.deferred();
+        p.text(")");
+        outer.value(1);
+        const inner = outer.deferred();
+        outer.text("!");
+        inner.text(" and 2");
+        expect(inner.shouldPrint()).toBe(true);
+      }),
+    ).toBe("f(1 and 2!)");
+  });
+
+  it("discards everything printed to the no-op printer", () => {
+    const p = PrettyPrinter.noop();
+    expect(p.shouldPrint()).toBe(false);
+    p.text("a\nb");
+    p.breakable();
+    p.ifBreak(",");
+    p.comment("c");
+    p.hardBreak();
+    p.shiftIndent(2);
+    p.reflow("r");
+    p.value([1]);
+    p.seq("[", "]", [1], (q, n) => q.value(n));
+    expect(p.group(1, "(", ")", () => 3)).toBe(3);
+    const speculation = p.speculate();
+    speculation.commit();
+    p.speculate().abort();
+    expect(p.deferred().shouldPrint()).toBe(false);
+  });
+
+  it("stops printing once its document is read", () => {
+    const doc = new EngineDocument(lib, ctx);
+    try {
+      const view = doc.view();
+      const p = new PrettyPrinter(view);
+      p.text("kept");
+      const slot = p.deferred();
+      expect(doc.lines()).toEqual(["kept"]);
+      expect(p.shouldPrint()).toBe(false);
+      expect(slot.shouldPrint()).toBe(false);
+      p.text("late");
+      p.hardBreak();
+      p.shiftIndent(1);
+      slot.text("late");
+      expect(p.deferred().shouldPrint()).toBe(false);
+      expect(view.deferred()).toBeNull();
+      expect(doc.lines()).toEqual(["kept"]);
+    } finally {
+      doc.dispose();
+    }
+  });
+});
+
+describe("Document", () => {
+  it("is laid out to its width, 79 by default", () => {
+    const long = Array.from({ length: 20 }, (_, i) => i);
+    const doc = new Document();
+    doc.printer.value(long);
+    expect(doc.finish()).toBe(`[${long.join(", ")}]`);
+    const narrow = new Document({ maxWidth: 8 });
+    narrow.printer.seq("[", "]", [1, 2, 3], (p, n) => p.value(n));
+    expect(narrow.finish()).toBe("[\n    1,\n    2,\n    3,\n]");
+  });
+
+  it("can only be finished once", () => {
+    const doc = new Document();
+    expect(doc.finish()).toBe("");
+    expect(() => doc.finish()).toThrow("Document.finish was already called");
+    expect(doc.printer.shouldPrint()).toBe(false);
+  });
+
+  it.each([0, -1, 1.5, NaN])("rejects a width of %s", (maxWidth) => {
+    expect(() => new Document({ maxWidth })).toThrow(
+      `maxWidth must be a positive integer, got ${String(maxWidth)}`,
+    );
+  });
+
+  it("is exported from the package", () => {
+    expect(hegel.Document).toBe(Document);
+    expect(hegel.Speculation).toBe(Speculation);
   });
 });

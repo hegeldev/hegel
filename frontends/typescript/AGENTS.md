@@ -16,7 +16,7 @@ in the root `AGENTS.md`.
 just typescript::setup            # npm ci
 just typescript::build-libhegel   # cargo-build the engine natively and for wasm32-unknown-unknown
 just typescript::check-test       # vitest with coverage against both builds (fails if < 100%)
-just typescript::check-lint       # prettier --check + libhegel-version check + eslint + tsc + typecheck:portable
+just typescript::check-lint       # prettier --check + libhegel-version check + eslint + tsc + typecheck:portable + typecheck:tests
 just typescript::format           # prettier --write
 just typescript::check-docs       # typedoc (treatWarningsAsErrors)
 just typescript::check-packaging  # node --test scripts/packaging.test.mjs

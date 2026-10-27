@@ -151,16 +151,16 @@ export interface DataSource {
   printer(): Printer;
 }
 
-function requirePrintable<T>(generator: Generator<T>): PrintableGenerator<T> {
-  const printable = generator as Generator<T> & Partial<PrintableGenerator<T>>;
-  if (typeof printable.doDrawAndPrint !== "function") {
-    throw new TypeError(
-      `${generator.constructor.name} cannot print the values it draws. Make it printable with ` +
-        ".printWith((value, printer) => …) or .printAsValue(); declare helpers as returning " +
-        "PrintableGenerator<T> rather than Generator<T>; or draw it with tc.drawSilent(…).",
-    );
-  }
-  return generator as PrintableGenerator<T>;
+function isPrintable<T>(generator: Generator<T>): generator is PrintableGenerator<T> {
+  return typeof (generator as { doDrawAndPrint?: unknown }).doDrawAndPrint === "function";
+}
+
+function unprintable(generator: Generator<unknown>): TypeError {
+  return new TypeError(
+    `${generator.constructor.name} cannot print the values it draws. Make it printable with ` +
+      ".printWith((value, printer) => …) or .printAsValue(); declare helpers as returning " +
+      "PrintableGenerator<T> rather than Generator<T>; or draw it with tc.drawSilent(…).",
+  );
 }
 
 /** A name a draw is reported under; see {@link TestCase.draw}. */
@@ -290,7 +290,7 @@ export class TestCase {
    * {@link drawSilent} to draw from one without printing it.
    */
   draw<T>(generator: PrintableGenerator<T>, name?: string): T {
-    requirePrintable(generator);
+    if (!isPrintable(generator)) throw unprintable(generator);
     if (this.shared.explicit === null && (this.spanDepth > 0 || this.printingDepth > 0)) {
       return generator.doDraw(this);
     }
@@ -347,12 +347,9 @@ export class TestCase {
     if (this.shared.explicit !== null && this.printingDepth === 0) {
       throw new ExplicitExampleError("drawAndPrint is not supported in explicit examples");
     }
-    const printable = generator as Generator<T> & Partial<PrintableGenerator<T>>;
-    if (typeof printable.doDrawAndPrint === "function") {
-      return printable.doDrawAndPrint(this, printer);
-    }
-    if (printer.region === null) return generator.doDraw(this);
-    return requirePrintable(generator).doDrawAndPrint(this, printer);
+    if (isPrintable(generator)) return generator.doDrawAndPrint(this, printer);
+    if (printer.region === null) return (generator as Generator<T>).doDraw(this);
+    throw unprintable(generator);
   }
 
   private allocateDisplayName(name: string, repeatable: boolean): string | null {

@@ -40,6 +40,7 @@ import { runError, DidNotReproduceError } from "./errors.js";
 import { resolveLabel, type LabelSpec } from "./labels.js";
 import {
   EngineDocument,
+  anyLive,
   enginePrinter,
   installDocumentEngine,
   printedLine,
@@ -79,8 +80,8 @@ interface Family {
   readonly derived: TestCaseHandle[];
   readonly printers: PrinterHandle[];
   fault: EngineError | undefined;
-  /** Whether a deferred printer region was opened, so the document needs resolving. */
-  deferred: boolean;
+  /** The deferred printer regions opened in the test case's document. */
+  readonly regions: PrinterHandle[];
   /** Whether the document has been read or released: printing then does nothing. */
   released: boolean;
 }
@@ -116,7 +117,7 @@ export class EngineDataSource implements DataSource {
       derived: [],
       printers: [],
       fault: undefined,
-      deferred: false,
+      regions: [],
       released: false,
     };
   }
@@ -335,10 +336,7 @@ export class EngineDataSource implements DataSource {
         lib: this.lib,
         ctx: this.ctx,
         released: () => family.released,
-        adopt: (handle) => {
-          family.printers.push(handle);
-          family.deferred = true;
-        },
+        adopt: (handle) => family.regions.push(handle),
         run: (operation) => this.call(operation),
       },
       this.newPrinter(),
@@ -360,7 +358,7 @@ export class EngineDataSource implements DataSource {
     const handle = this.newPrinter();
     this.family.released = true;
     return this.call(() => {
-      if (this.family.derived.length > 0 || this.family.deferred) {
+      if (this.family.derived.length > 0 || anyLive(this.lib, this.ctx, this.family.regions)) {
         this.lib.printerResolve(this.ctx, handle);
       }
       return splitLines(this.lib.printerValue(this.ctx, handle));
@@ -397,6 +395,7 @@ export class EngineDataSource implements DataSource {
     };
     const family = this.family;
     family.released = true;
+    release(family.regions, (printer) => this.lib.freePrinter(printer));
     release(family.printers, (printer) => this.lib.freePrinter(printer));
     release(family.derived, (tc) => this.lib.freeTestCase(tc));
     release(family.collections, (collection) => this.lib.freeCollection(collection));

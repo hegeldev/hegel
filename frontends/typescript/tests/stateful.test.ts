@@ -185,6 +185,39 @@ describe("stateful.run", () => {
     );
   });
 
+  test("the replay prints a pool's values, and only the value a filtered draw accepts", () => {
+    const output = captureReplay((tc) => {
+      const pool = new Pool<string>(tc);
+      for (const name of ["a", "b", "c"]) pool.add(name);
+      run(
+        tc,
+        {
+          rules: {
+            pick: (tc) => {
+              tc.draw(pool.valuesReusable(), "any");
+              tc.draw(
+                pool.valuesConsumed().filter((name) => name !== "a"),
+                "taken",
+              );
+              throw new Error("picked");
+            },
+          },
+        },
+        {},
+      );
+    });
+    expect(output).toBe(
+      [
+        "Step 1: pick {",
+        '  const any = "a";',
+        '  const taken = "b";',
+        "}",
+        "Rule pick failed:",
+        "Thrown: picked",
+      ].join("\n"),
+    );
+  });
+
   test("a rejected step is reported as a violated assumption in the replay", () => {
     // Rejection is not transactional: `mark` has already flipped the flag
     // when its assumption fails, so the minimal failing case keeps the
