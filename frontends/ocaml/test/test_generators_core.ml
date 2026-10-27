@@ -538,10 +538,7 @@ let test_print_as_drawn_printers () =
     "map_as_call"
     "<abstr>"
     (sexp (map_as_call "f" Fun.id (int_gen 0)) 0);
-  Alcotest.(check string)
-    "flat_map_printable"
-    "<abstr>"
-    (sexp (flat_map_printable int_gen (int_gen 0)) 0);
+  Alcotest.(check string) "flat_map" "<abstr>" (sexp (flat_map int_gen (int_gen 0)) 0);
   check_shown
     "composite"
     (printable_composite ~label:"x" (fun _ p -> Printer.Out.text p "x"))

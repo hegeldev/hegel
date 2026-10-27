@@ -53,7 +53,7 @@ type ('a, 'p) generator
 
     The primitive generators print the value of their engine draw. The
     structural generators ({!lists}, {!tuples2}, {!optional}, {!one_of},
-    {!filter}, {!flat_map_printable}, {!recursive}, ...) and derived
+    {!filter}, {!flat_map}, {!recursive}, ...) and derived
     generators print as they draw, element by element, so an element's own
     printing shows up inside its container. {!printable_composite} writes
     one by hand. *)
@@ -63,7 +63,7 @@ type printable
 
     A generator is [unprintable] whenever the result type is the caller's rather
     than the engine's, and OCaml has no universal printer to fall back on.
-    This covers {!map}, {!flat_map}, {!sampled_from}, {!just}, {!composite},
+    This covers {!map}, {!sampled_from}, {!just}, {!composite},
     {!permutations} and {!functions}. An [unprintable] generator cannot be
     drawn with {!Hegel.draw}. The ways to use one, in order of preference:
 
@@ -1249,14 +1249,16 @@ val%template map_as_call
 
 (** [flat_map f gen] creates a dependent generator. [f] receives the generated
     value and returns a generator whose value is the final result. The result
-    does not print; use {!flat_map_printable} when [f] returns printable
-    generators.
+    is printable when the generators [f] returns are, and a draw prints as the
+    generator [f] returned prints it; the value drawn from [gen] is not
+    printed. [printer] of a printable result gives [<abstr>].
 
     {[
       let%hegel_test flat_map_example tc =
         let len_gen = integers ~min_value:0 ~max_value:5 () in
         let xs =
-          draw_silent tc
+          draw
+            tc
             (flat_map
                (fun n ->
                   lists
@@ -1272,30 +1274,7 @@ val%template map_as_call
 val%template flat_map
   :  ('a -> ('b, 'q) generator) MODE(m)
   -> ('a, 'p) generator MODE(m)
-  -> ('b, unprintable) generator MODE(m)
-[@@mode m = (nonportable, portable)]
-
-(** [flat_map_printable f gen] is {!flat_map} for an [f] returning printable
-    generators: a draw prints as the generator [f] returned prints it. The
-    value drawn from [gen] is not printed. [printer] of the result gives
-    [<abstr>].
-
-    {[
-      let%hegel_test flat_map_printable_example tc =
-        let xs =
-          draw
-            tc
-            (flat_map_printable
-               (fun n -> lists (integers ()) ~min_size:n ~max_size:n ())
-               (integers ~min_value:0 ~max_value:5 ()))
-        in
-        assert (List.length xs <= 5)
-      ;;
-    ]} *)
-val%template flat_map_printable
-  :  ('a -> ('b, printable) generator) MODE(m)
-  -> ('a, 'p) generator MODE(m)
-  -> ('b, printable) generator MODE(m)
+  -> ('b, 'q) generator MODE(m)
 [@@mode m = (nonportable, portable)]
 
 (** [filter predicate gen] filters values from [gen] using [predicate], keeping

@@ -343,18 +343,24 @@ let%expect_test "combinators print what their components print" =
   run_failing (fun tc ->
     let either = draw tc (one_of [ hex ]) in
     let dependent =
+      draw tc (flat_map (fun n -> lists (int n) ~min_size:n ~max_size:n ()) (int 2))
+    in
+    let nested =
       draw
         tc
-        (flat_map_printable (fun n -> lists (int n) ~min_size:n ~max_size:n ()) (int 2))
+        (flat_map
+           (fun n -> flat_map (fun m -> lists (int m) ~min_size:1 ()) (int n))
+           (int 3))
     in
-    let silent = draw_silent tc (flat_map (fun n -> int n) (int 2)) in
-    ignore (either, dependent, silent);
+    let silent = draw_silent tc (flat_map (fun n -> map Fn.id (int n)) (int 2)) in
+    ignore (either, dependent, nested, silent);
     assert false);
   print_report (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
     let draw_1 = 0xff in
     let draw_2 = [2; 2] in
+    let draw_3 = [3] in
     |}]
 ;;
 

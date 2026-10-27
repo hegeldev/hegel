@@ -40,7 +40,7 @@ let%template make
   fun explicit_name print_args returns adapt ->
   let placeholder =
     match returns with
-    | Printable _ -> None
+    | Printable _ | Dependent _ -> None
     | Unprintable { core = Function _ } -> Some "<fun>"
     | Unprintable _ -> Some "<abstr>"
   in

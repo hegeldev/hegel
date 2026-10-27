@@ -803,10 +803,11 @@ val note : test_case -> string -> unit
     ]} *)
 val require : test_case -> ?msg:string -> bool -> unit
 
-(** [with_printer sexp_of gen] attaches (or replaces) [gen]'s printer, yielding a
-    printable generator that {!draw} accepts. This is how a
-    [map]/[flat_map]/[sampled_from]/[just] result is made drawable with {!draw}.
-    Its drawn values print as the s-expressions [sexp_of] gives.
+(** [with_printer sexp_of gen] is [gen] printing its finished values as the
+    s-expressions [sexp_of] gives, yielding a printable generator that
+    {!draw} accepts. Like {!with_ocaml_printer}, it is value printing, an
+    escape hatch: [gen] draws without printing, and the value it produces is
+    printed afterwards, replacing whatever [gen] would have printed.
 
     {[
       let%hegel_test with_printer_example tc =
@@ -820,14 +821,22 @@ val%template with_printer
   -> ('a, printable) generator MODE(m)
 [@@mode m = (nonportable, portable)]
 
-(** [with_ocaml_printer print gen] attaches [print] as [gen]'s printer,
-    yielding a printable generator that {!draw} accepts. Its drawn values
-    print as the {!Printer.doc} documents [print] gives, so a [map] result can
-    print as OCaml syntax rather than as an s-expression.
+(** [with_ocaml_printer print gen] is [gen] printing its finished values as
+    the {!Printer.doc} documents [print] gives, yielding a printable
+    generator that {!draw} accepts.
+
+    This is value printing, the escape hatch for a generator that cannot
+    print as it draws: [gen] draws without printing, and the value it
+    produces is then described by [print], replacing whatever [gen] would
+    have printed. Use it to print a [map]/[just]/[sampled_from]/[composite]/
+    [permutations] result as OCaml syntax, to mask a secret, or to print a
+    type in a custom form. Prefer {!map_as_call} or {!printable_composite}
+    when the value's parts can print themselves.
 
     {[
       let%hegel_test with_ocaml_printer_example tc =
         let pairs = map (fun x -> x, x * 2) (integers ~min_value:0 ~max_value:9 ()) in
+        (* prints as: let draw_1 = (3, 6) in *)
         let x, y = draw tc (with_ocaml_printer Printer.(pair int int) pairs) in
         assert (y = 2 * x)
     ]} *)

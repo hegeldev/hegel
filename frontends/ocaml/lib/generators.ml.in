@@ -60,6 +60,8 @@ module Ppx_internal = struct
       let value = Generators_core.do_draw core tc Printer.Out.noop in
       Printer.Out.sexp printer sexp_of value;
       value
+    | Generators_core.Dependent { core } ->
+      Generators_core.do_draw (Generators_core.with_sexp_fallback sexp_of core) tc printer
   ;;
 
   let explicit_draw tc ~name ~source value (_ : _ Generators_core.generator) =

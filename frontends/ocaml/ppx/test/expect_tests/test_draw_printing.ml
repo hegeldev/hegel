@@ -708,6 +708,68 @@ let%expect_test "a negative fallback s-expression is parenthesized" =
     |}]
 ;;
 
+type dependent =
+  { unprinted :
+      (int
+      [@hegel.generator
+        Hegel.flat_map
+          (fun n ->
+             Hegel.map (fun m -> m + 1) (Hegel.integers ~min_value:n ~max_value:n ()))
+          (Hegel.integers ~min_value:4 ~max_value:4 ())])
+  ; filtered :
+      (int
+      [@hegel.generator
+        Hegel.filter
+          (fun _ -> true)
+          (Hegel.flat_map
+             (fun n ->
+                Hegel.map (fun m -> -m) (Hegel.integers ~min_value:n ~max_value:n ()))
+             (Hegel.integers ~min_value:6 ~max_value:6 ()))])
+  ; printed :
+      (int list
+      [@hegel.generator
+        Hegel.flat_map
+          (fun n ->
+             Hegel.lists
+               (Hegel.integers ~min_value:n ~max_value:n ())
+               ~min_size:1
+               ~max_size:1
+               ())
+          (Hegel.integers ~min_value:2 ~max_value:2 ())])
+  }
+[@@deriving hegel_generator]
+
+type dependent_alias =
+  (int
+  [@hegel.generator
+    Hegel.flat_map
+      (fun n -> Hegel.map (fun m -> m * 10) (Hegel.integers ~min_value:n ~max_value:n ()))
+      (Hegel.integers ~min_value:7 ~max_value:7 ())])
+[@@deriving hegel_generator]
+
+let%expect_test "a flat_map field with no printer prints its value as an s-expression" =
+  run_failing (fun tc ->
+    let _ = Hegel.draw tc hegel_generator_dependent in
+    let _ = Hegel.draw tc hegel_generator_dependent_alias in
+    let _ =
+      Hegel.draw
+        tc
+        (Hegel.lists hegel_generator_dependent_alias ~min_size:1 ~max_size:1 ())
+    in
+    assert false);
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    let draw_1 = { unprinted = 5; filtered = -6; printed = [2] } in
+    let draw_2 = 70 in
+    let draw_3 = [70] in
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;
+
 let%expect_test "with_ocaml_printer prints a mapped value as OCaml syntax" =
   let pair =
     with_ocaml_printer

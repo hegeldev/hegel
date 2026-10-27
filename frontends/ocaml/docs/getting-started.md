@@ -222,7 +222,8 @@ it, so a list prints element by element, each element as its own generator
 prints it, and a value a `filter` rejects is never printed.
 
 Some combinators hand the result type to your own code and so carry no printer:
-`map`, `flat_map`, `sampled_from`, `just` and `composite`. Either draw it with
+`map`, `sampled_from`, `just` and `composite`. (`flat_map` prints whenever the
+generators its function returns do.) Either draw it with
 `draw_silent` (which prints nothing):
 
 ```ocaml

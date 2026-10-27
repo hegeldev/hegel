@@ -59,8 +59,8 @@ module Out = Printer.Out
       span), because the engine already wraps each primitive draw in its own
       span.
     - [Mapped] wraps a source and a transform function, and prints nothing.
-    - [FlatMapped] wraps a source and a function returning a core, and prints
-      the second draw.
+    - [FlatMapped] wraps a source and a function returning the {!inner} core
+      to draw next, and prints that second draw.
     - [Filtered] wraps a source and a predicate, and prints the accepted draw.
     - [CompositeList] uses the collection protocol to generate lists, creating
       a fresh collection per draw, and prints the elements as it draws them.
@@ -73,6 +73,9 @@ module Out = Printer.Out
     - [Printed] draws its source silently, then prints the finished value
       with [print]: value printing, behind {!with_printer} and
       {!with_ocaml_printer}.
+    - [Sexp_fallback] draws its source with each [Silent] inner core in it
+      printing its value as the s-expression [sexp_of] gives: how a derived
+      type prints a {!flat_map} whose generators have no printer.
     - [Deferred] draws from the core [get] returns, which is defined after
       the [Deferred] is built, so a definition can refer to itself.
 
@@ -93,7 +96,7 @@ type 'a core CROSSING =
       -> 'a core
   | FlatMapped :
       { source : 'b core
-      ; f : ('b -> 'a core)
+      ; f : ('b -> 'a inner)
       ; label : Internal.Label.t
       }
       -> 'a core
@@ -131,11 +134,23 @@ type 'a core CROSSING =
       ; print : ('a -> Printer.doc)
       }
       -> 'a core
+  | Sexp_fallback :
+      { source : 'a core
+      ; sexp_of : ('a -> Sexp.t)
+      }
+      -> 'a core
   | Deferred :
       { get : (unit -> 'a core option)
       ; label : Internal.Label.t
       }
       -> 'a core
+
+(** The core a [FlatMapped] draws second: [Printing] when the generator its
+    function returned is printable, [Silent] when it is not, which draws
+    silently and prints [<abstr>]. *)
+and 'a inner CROSSING =
+  | Printing of 'a core
+  | Silent of 'a core
 
 
 (** [label_of_core core] is the span label of [core]. *)
@@ -148,7 +163,8 @@ let rec label_of_core : type a. a core -> Internal.Label.t = function
   | Composite { label; _ } -> label
   | Values _ -> Labels.pool
   | Function { label; _ } -> label
-  | Printed { source; _ } -> label_of_core source
+  | Printed { source; _ } | Sexp_fallback { source; _ } ->
+    label_of_core source
   | Deferred { label; _ } -> label
 ;;
 
@@ -168,7 +184,8 @@ type unprintable = private [ `Unprintable ]
 (** A generator: a {!core} (how to generate and display) plus a phantom ['p]
     recording whether a printer is present. [Printable] carries the
     s-expression printer {!printer} returns; its drawn values display through
-    its core, as OCaml syntax. [Unprintable] carries none.
+    its core, as OCaml syntax. [Unprintable] carries none. [Dependent] is a
+    {!flat_map}, printable when the generators its function returns are.
 
     The phantom is what makes {!draw} require a printer at compile time while
     {!draw_silent} accepts any generator. *)
@@ -179,11 +196,11 @@ type ('a, 'p) generator CROSSING =
       }
       -> ('a, printable) generator
   | Unprintable : { core : 'a core } -> ('a, unprintable) generator
+  | Dependent : { core : 'a core } -> ('a, 'p) generator
 
 (** [core_of gen] is the generation structure of [gen], discarding printability. *)
 let%template core_of : type a p. (a, p) generator MODE(m) -> a core MODE(m) = function
-  | Printable { core; _ } -> core
-  | Unprintable { core } -> core
+  | Printable { core; _ } | Unprintable { core } | Dependent { core } -> core
 [@@mode m = (nonportable, portable)]
 ;;
 
@@ -194,6 +211,7 @@ let%template rewrap : type a p. (a, p) generator MODE(m) -> a core MODE(m) -> (a
   match gen with
   | Printable { sexp_of; _ } -> Printable { core; sexp_of }
   | Unprintable _ -> Unprintable { core }
+  | Dependent _ -> Dependent { core }
 [@@mode m = (nonportable, portable)]
 ;;
 
@@ -248,8 +266,8 @@ let%template with_display
 
 (** [with_printer sexp_of gen] attaches (or replaces) [gen]'s printer, yielding
     a printable generator that {!draw} accepts. Its drawn values print as the
-    s-expressions [sexp_of] gives. This is the explicit way to make a
-    [map]/[flat_map]/[sampled_from]/[just] result printable. *)
+    s-expressions [sexp_of] gives: value printing, the escape hatch for a
+    generator that cannot print as it draws. *)
 let%template with_printer
   : type a p.
     (a -> Sexp.t) MODE(m) -> (a, p) generator MODE(m) -> (a, printable) generator MODE(m)
@@ -302,13 +320,18 @@ let%template with_sexp_of
   match gen with
   | Printable { core; _ } -> Printable { core; sexp_of }
   | Unprintable _ -> (with_printer [@mode m]) sexp_of gen
+  | Dependent { core } -> Printable { core = Sexp_fallback { source = core; sexp_of }; sexp_of }
 [@@mode m = (nonportable, portable)]
 ;;
+
+(** [abstract_sexp] is the printer of a printable generator given none. *)
+let abstract_sexp : _ -> Sexp.t = fun _ -> Sexp.Atom "<abstr>"
 
 (** [printer gen] is the printer carried by the printable generator [gen]. *)
 let%template printer : type a. (a, printable) generator MODE(m) -> (a -> Sexp.t) MODE(m) =
   function
   | Printable { sexp_of; _ } -> sexp_of
+  | Dependent _ -> abstract_sexp
   | _ -> .
 [@@mode m = (nonportable, portable)]
 ;;
@@ -327,9 +350,6 @@ let%template composite_with_label
   fun ~label ~sexp_of generate_fn -> Printable { core = Composite { label; generate_fn }; sexp_of }
 [@@mode m = (nonportable, portable)]
 ;;
-
-(** [abstract_sexp] is the printer of a printable generator given none. *)
-let abstract_sexp : _ -> Sexp.t = fun _ -> Sexp.Atom "<abstr>"
 
 (** [printable_composite ?label ?sexp_of body] is a printable generator that
     draws by running [body tc printer], which draws its parts and prints the
@@ -682,6 +702,24 @@ let rec flatten_filter (core : 'a core) (predicate : 'a -> bool) =
   | _ -> core, predicate
 ;;
 
+(** [with_sexp_fallback sexp_of core] is [core] with each [Silent] inner core
+    drawn inside its [FlatMapped]s printing its value as the s-expression
+    [sexp_of] gives, instead of [<abstr>]. *)
+let rec with_sexp_fallback : type a. (a -> Sexp.t) -> a core -> a core =
+  fun sexp_of core ->
+  match core with
+  | FlatMapped { source; f; label } ->
+    let f x =
+      match f x with
+      | Printing core -> Printing (with_sexp_fallback sexp_of core)
+      | Silent source -> Printing (Printed { source; print = Printer.of_sexp sexp_of })
+    in
+    FlatMapped { source; f; label }
+  | Filtered { source; predicate; label } ->
+    Filtered { source = with_sexp_fallback sexp_of source; predicate; label }
+  | core -> core
+;;
+
 (** [do_draw core data printer] produces a typed value from generation
     structure [core] using the given test case [data], printing it to
     [printer] as it draws. *)
@@ -695,8 +733,12 @@ let rec do_draw : type a. a core -> Internal.test_case -> Out.t -> a =
   | Mapped { source; f; label } -> group label data (fun () -> f (do_draw source data Out.noop))
   | FlatMapped { source; f; label } ->
     discardable_group label data (fun () ->
-      let first = do_draw source data Out.noop in
-      do_draw (f first) data printer)
+      match f (do_draw source data Out.noop) with
+      | Printing core -> do_draw core data printer
+      | Silent core ->
+        let value = do_draw core data Out.noop in
+        Out.doc printer Printer.opaque;
+        value)
   | Filtered { source; predicate; label } ->
     group label data (fun () ->
       match flatten_filter source predicate with
@@ -743,6 +785,7 @@ let rec do_draw : type a. a core -> Internal.test_case -> Out.t -> a =
     let value = do_draw source data Out.noop in
     Out.value printer print value;
     value
+  | Sexp_fallback { source; sexp_of } -> do_draw (with_sexp_fallback sexp_of source) data printer
   | Deferred { get; _ } ->
     (match get () with
      | None -> raise (Internal.Usage_error "deferred generator drawn from before it is defined")
@@ -904,40 +947,29 @@ let%template map_as_call
 ;;
 
 (** [flat_map f gen] creates a dependent generator. [f] receives the generated
-    value and returns a generator whose value is the final result. The result
-    carries no printer; use {!flat_map_printable} when [f] returns printable
-    generators. *)
+    value and returns a generator whose value is the final result, and whose
+    printability the result has: a draw prints as the generator [f] returned
+    prints its draw. *)
 let%template flat_map
   : type a b p q.
     (a -> (b, q) generator) MODE(m)
     -> (a, p) generator MODE(m)
-    -> (b, unprintable) generator MODE(m)
+    -> (b, q) generator MODE(m)
   =
   fun f gen ->
   let source = (core_of [@mode m]) gen in
-  Unprintable
+  let inner : (b, q) generator -> b inner = function
+    | Unprintable { core } -> Silent core
+    | Printable { core; _ } | Dependent { core } -> Printing core
+  in
+  Dependent
     { core =
         FlatMapped
           { source
-          ; f = (fun x -> core_of (f x))
+          ; f = (fun x -> inner (f x))
           ; label = Labels.combine [ Labels.flat_map; label_of_core source ]
           }
     }
-[@@mode m = (nonportable, portable)]
-;;
-
-(** [flat_map_printable f gen] is {!flat_map} for an [f] that returns
-    printable generators: a draw prints as the generator [f] returned prints
-    its draw. *)
-let%template flat_map_printable
-  : type a b p.
-    (a -> (b, printable) generator) MODE(m)
-    -> (a, p) generator MODE(m)
-    -> (b, printable) generator MODE(m)
-  =
-  fun f gen ->
-  match (flat_map [@mode m]) f gen with
-  | Unprintable { core } -> Printable { core; sexp_of = abstract_sexp }
 [@@mode m = (nonportable, portable)]
 ;;
 
