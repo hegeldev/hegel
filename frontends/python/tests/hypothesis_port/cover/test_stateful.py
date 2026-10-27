@@ -31,7 +31,8 @@
 # test_prints_mapped_bundle_values_directly (Hypothesis's printed program with bundle variable
 # names);
 # test_uses_seed (@seed);
-# test_min_steps_argument (minimum step count).
+# test_min_steps_argument (minimum step count);
+# test_minimizes_errors_in_teardown (teardown).
 # Rewritten: test_initialize_rule_in_state_machine_with_inheritance as
 # test_rules_in_state_machine_with_inheritance (rules instead of @initialize);
 # test_prints_equal_values_with_correct_variable_name as
@@ -236,28 +237,6 @@ def test_machine_with_no_terminals_fails_health_check():
         _run(NonTerminalMachine)
 
 
-def test_minimizes_errors_in_teardown():
-    counter = 0
-
-    class Foo(hegel.StateMachine):
-        def __init__(self):
-            nonlocal counter
-            counter = 0
-
-        @hegel.rule()
-        def increment(self, tc):
-            nonlocal counter
-            counter += 1
-
-        def teardown(self):
-            nonlocal counter
-            assert not counter
-
-    with raises(AssertionError):
-        _run(Foo)
-    assert counter == 1
-
-
 class RequiresInit(hegel.StateMachine):
     def __init__(self, threshold):
         self.threshold = threshold
@@ -438,18 +417,20 @@ Rule rule_1 failed:
 
 
 def test_always_runs_at_least_one_step():
+    counts = []
+
     class CountSteps(hegel.StateMachine):
         def __init__(self):
             self.count = 0
+            counts.append(self)
 
         @hegel.rule()
         def do_something(self, tc):
             self.count += 1
 
-        def teardown(self):
-            assert self.count > 0
-
     _run(CountSteps)
+    assert counts
+    assert all(machine.count > 0 for machine in counts)
 
 
 def test_removes_needless_steps():
