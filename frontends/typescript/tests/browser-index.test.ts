@@ -43,4 +43,10 @@ it("auto-initializes the browser composition root and preserves the public expor
     ),
   ).toThrow("browser failure");
   expect(error.mock.calls.slice(0, 2)).toEqual([["const draw_1 = 1;"], ["browser note"]]);
+  const doc = new browser.Document();
+  doc.printer.text("f(");
+  const slot = doc.printer.deferred();
+  doc.printer.text(")");
+  slot.value("described later");
+  expect(doc.finish()).toBe('f("described later")');
 });

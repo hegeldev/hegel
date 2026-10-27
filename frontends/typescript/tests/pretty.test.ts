@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   Document,
   EngineDocument,
@@ -9,6 +9,9 @@ import {
   splitLines,
 } from "../src/pretty.js";
 import { getLibhegel } from "../src/session.js";
+import { installRuntime } from "../src/runnerCore.js";
+import { nodeRuntime } from "../src/nodeRuntime.js";
+import { browserRuntime } from "../src/browser/runtime.js";
 import * as hegel from "@hegeldev/hegel";
 import type { Engine } from "../src/engine.js";
 import { wasmFixture } from "./wasmFixture.js";
@@ -409,6 +412,37 @@ describe("Document", () => {
     expect(() => new Document({ maxWidth })).toThrow(
       `maxWidth must be a positive integer, got ${String(maxWidth)}`,
     );
+  });
+
+  it.each([
+    ["native", () => nodeRuntime],
+    ["Wasm", () => browserRuntime(wasmFixture().engine)],
+  ])("is laid out by the installed %s engine, deferred regions included", (_, runtime) => {
+    const installed = runtime();
+    const engine = installed.getEngine();
+    const newContext = vi.spyOn(engine, "newContext");
+    installRuntime(installed);
+    try {
+      const doc = new Document({ maxWidth: 12 });
+      doc.printer.beginGroup(9, "recorder(");
+      const slot = doc.printer.deferred();
+      doc.printer.endGroup(")");
+      [1, 2].forEach((n, i) => {
+        if (i > 0) slot.separator();
+        slot.value(n);
+      });
+      expect(doc.finish()).toBe("recorder(1,\n         2)");
+      expect(newContext).toHaveBeenCalledOnce();
+      const narrow = new Document({ maxWidth: 8 });
+      narrow.printer.text("f(");
+      const hole = narrow.printer.deferred();
+      narrow.printer.text(")");
+      hole.seq("[", "]", [1, 2, 3], (p, n) => p.value(n));
+      expect(narrow.finish()).toBe("f([\n    1,\n    2,\n    3,\n])");
+    } finally {
+      newContext.mockRestore();
+      installRuntime(nodeRuntime);
+    }
   });
 
   it("is exported from the package", () => {

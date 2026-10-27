@@ -345,6 +345,21 @@ describe("deferred printing", () => {
     expect(lines).toEqual(["const f = recorder(1, 2, 3);"]);
   });
 
+  it.each<[string, (g: Recorders) => gs.PrintableGenerator<Recorder[]>]>([
+    ["an array", (g) => gs.arrays(g, { minSize: 2, maxSize: 2 })],
+    ["a unique array", (g) => gs.arrays(g, { minSize: 2, maxSize: 2, uniqueBy: (f) => f })],
+    ["a tuple", (g) => gs.tuples(g, g)],
+  ])("prints a value described after it was drawn inside %s", (_, container) => {
+    const lines = report((tc) => {
+      const [f, g] = tc.draw(container(new Recorders()), "fs");
+      f(1);
+      g(2);
+      g(3);
+      throw new Error("fail");
+    });
+    expect(lines).toEqual(["const fs = [recorder(1), recorder(2, 3)];"]);
+  });
+
   it("lays a deferred value out as if it were printed inline", () => {
     const calls = Array.from({ length: 12 }, (_, i) => 100000 + i);
     const lines = report((tc) => {
