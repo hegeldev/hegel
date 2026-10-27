@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.26.6 - 2026-10-27
+
+This patch fixes an OxCaml mode error in the `run` that `module%hegel_concurrent_state_machine` generates when it is passed a concurrency capability `@ local`.
+
 ## 0.26.5 - 2026-10-24
 
 This patch moves Hegel for OCaml into the [hegeldev/hegel](https://github.com/hegeldev/hegel) monorepo, next to the engine it drives, where it is built and tested against the in-tree libhegel. The opam packages are used exactly as before, and the bundled engine stays at libhegel 0.48.0.
