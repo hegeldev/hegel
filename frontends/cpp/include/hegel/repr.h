@@ -1,14 +1,5 @@
 #pragma once
 
-/**
- * @cond INTERNAL
- */
-
-// Prints drawn values as C++ expressions through the engine's printer, for
-// draw-output lines. Types the library cannot render as a compilable
-// expression fall back to the text of their stream operator, which the
-// engine reflows, then to an "<unprintable Type>" placeholder.
-
 #include "config.h"
 #include "printer.h"
 
@@ -34,10 +25,12 @@
 #include <rfl.hpp>
 #endif
 
+/// @cond INTERNAL
 namespace hegel::internal {
 
     template <typename T> std::string cpp_type_name();
-    template <typename T> void print_value(Printer& printer, const T& value);
+    template <typename T>
+    void print_value(hegel::Printer& printer, const T& value);
 
     // Best-effort type name sliced from the compiler's pretty function
     // string. Used for placeholder output and for types with no clean
@@ -127,7 +120,7 @@ namespace hegel::internal {
         template <typename T>
         struct prints_itself<
             T, std::void_t<decltype(std::declval<const T&>().print_to(
-                   std::declval<Printer&>()))>> : std::true_type {};
+                   std::declval<hegel::Printer&>()))>> : std::true_type {};
 
         template <typename T, typename = void>
         struct has_ostream_operator : std::false_type {};
@@ -288,66 +281,28 @@ namespace hegel::internal {
 
     namespace repr_detail {
 
-        // Separates the items of a group with a comma and a break point.
-        class ItemSeparator {
-          public:
-            explicit ItemSeparator(Printer& printer) : printer_(printer) {}
-
-            // Call before each item.
-            void operator()() {
-                if (!first_) {
-                    printer_.text(",");
-                    printer_.breakable(" ");
-                }
-                first_ = false;
-            }
-
-          private:
-            Printer& printer_;
-            bool first_ = true;
-        };
-
-        // Prints `open`, the items `body` prints, and `close`: on one line
-        // when they fit, else with one item per line, indented four columns,
-        // and `close` on a line of its own.
-        template <typename F>
-        void print_block(Printer& printer, const std::string& open,
-                         const std::string& close, F&& body) {
-            constexpr int64_t indent = 4;
-            printer.begin_group(static_cast<uint64_t>(indent), open);
-            printer.breakable("");
-            ItemSeparator separator(printer);
-            body(separator);
-            printer.shift_indent(-indent);
-            printer.breakable("");
-            printer.shift_indent(indent);
-            printer.end_group(close);
-        }
-
         template <typename Items>
-        void print_sequence(Printer& printer, const std::string& open,
+        void print_sequence(hegel::Printer& printer, const std::string& open,
                             const Items& items) {
-            print_block(printer, open, "}",
-                        [&printer, &items](ItemSeparator& separator) {
-                            for (const auto& item : items) {
-                                separator();
-                                print_value(printer, item);
-                            }
+            printer.seq(open, "}", items,
+                        [](hegel::Printer& p, const auto& item) {
+                            print_value(p, item);
                         });
         }
 
         template <typename Tuple>
-        void print_tuple(Printer& printer, const std::string& open,
+        void print_tuple(hegel::Printer& printer, const std::string& open,
                          const Tuple& value) {
-            print_block(printer, open, "}",
-                        [&printer, &value](ItemSeparator& separator) {
-                            std::apply(
-                                [&](const auto&... elems) {
-                                    ((separator(), print_value(printer, elems)),
-                                     ...);
-                                },
-                                value);
-                        });
+            printer.begin_block(open);
+            bool first = true;
+            std::apply(
+                [&](const auto&... elems) {
+                    ((first ? void(first = false) : printer.separator(),
+                      print_value(printer, elems)),
+                     ...);
+                },
+                value);
+            printer.end_block("}");
         }
 
         // Decimal digits of an integer of any width.
@@ -468,8 +423,8 @@ namespace hegel::internal {
     // Prints a value as one C++ expression, or as a pseudo-expression for
     // types with no renderable form. A compound value gives the printer its
     // structure, so the engine can lay it out across lines.
-    template <typename T> void print_value(Printer& printer, const T& value) {
-        using repr_detail::ItemSeparator;
+    template <typename T>
+    void print_value(hegel::Printer& printer, const T& value) {
         if constexpr (repr_detail::is_scalar_v<T>) {
             printer.text(repr_detail::scalar_text(value));
         } else if constexpr (repr_detail::prints_itself<T>::value) {
@@ -483,58 +438,48 @@ namespace hegel::internal {
                 printer.text(name + "{}");
                 return;
             }
-            repr_detail::print_block(printer, name + "{", "}",
-                                     [&printer, &value](ItemSeparator&) {
-                                         print_value(printer, *value);
-                                     });
+            printer.begin_block(name + "{");
+            print_value(printer, *value);
+            printer.end_block("}");
         } else if constexpr (repr_detail::is_variant<T>::value) {
             // in_place_index keeps variants with repeated alternative types
             // unambiguous.
-            repr_detail::print_block(
-                printer, cpp_type_name<T>() + "{", "}",
-                [&printer, &value](ItemSeparator& separator) {
-                    separator();
-                    printer.text("std::in_place_index<" +
-                                 std::to_string(value.index()) + ">");
-                    separator();
-                    std::visit(
-                        [&printer](const auto& v) { print_value(printer, v); },
-                        value);
-                });
+            printer.begin_block(cpp_type_name<T>() + "{");
+            printer.text("std::in_place_index<" +
+                         std::to_string(value.index()) + ">");
+            printer.separator();
+            std::visit([&printer](const auto& v) { print_value(printer, v); },
+                       value);
+            printer.end_block("}");
         } else if constexpr (repr_detail::is_vector<T>::value ||
                              repr_detail::is_set<T>::value ||
                              repr_detail::is_std_array<T>::value) {
             repr_detail::print_sequence(printer, cpp_type_name<T>() + "{",
                                         value);
         } else if constexpr (repr_detail::is_map<T>::value) {
-            repr_detail::print_block(
-                printer, cpp_type_name<T>() + "{", "}",
-                [&printer, &value](ItemSeparator& separator) {
-                    for (const auto& entry : value) {
-                        separator();
-                        repr_detail::print_block(
-                            printer, "{", "}",
-                            [&printer, &entry](ItemSeparator& inner) {
-                                inner();
-                                print_value(printer, entry.first);
-                                inner();
-                                print_value(printer, entry.second);
-                            });
-                    }
-                });
+            printer.seq(cpp_type_name<T>() + "{", "}", value,
+                        [](hegel::Printer& p, const auto& entry) {
+                            p.begin_block("{");
+                            print_value(p, entry.first);
+                            p.separator();
+                            print_value(p, entry.second);
+                            p.end_block("}");
+                        });
         }
 #if HEGEL_HAS_REFLECTION
         else if constexpr (repr_detail::is_reflectable<T>::value) {
-            repr_detail::print_block(
-                printer, cpp_type_name<T>() + "{", "}",
-                [&printer, &value](ItemSeparator& separator) {
-                    auto view = rfl::to_view(const_cast<T&>(value));
-                    view.apply([&printer, &separator](const auto& field) {
-                        separator();
-                        printer.text("." + std::string(field.name()) + " = ");
-                        print_value(printer, *field.value());
-                    });
-                });
+            printer.begin_block(cpp_type_name<T>() + "{");
+            bool first = true;
+            auto view = rfl::to_view(const_cast<T&>(value));
+            view.apply([&printer, &first](const auto& field) {
+                if (!first) {
+                    printer.separator();
+                }
+                first = false;
+                printer.text("." + std::string(field.name()) + " = ");
+                print_value(printer, *field.value());
+            });
+            printer.end_block("}");
         }
 #endif
         else if constexpr (repr_detail::has_ostream_operator<T>::value) {
@@ -549,11 +494,11 @@ namespace hegel::internal {
 
     // Renders a value as one C++ expression laid out within `width`
     // columns.
-    template <typename T> std::string render(const T& value, uint64_t width) {
-        Document document(width);
-        Printer printer = document.printer();
-        print_value(printer, value);
-        return document.finish();
+    template <typename T>
+    std::string render(const T& value, std::size_t width) {
+        hegel::Document document(width);
+        print_value(document.printer(), value);
+        return std::move(document).finish();
     }
 
     // Renders a value as one C++ expression on a single line.
@@ -561,6 +506,120 @@ namespace hegel::internal {
         return render(value, unbounded_width);
     }
 
+    namespace repr_detail {
+
+        template <typename T, typename = void>
+        struct is_representable : std::false_type {};
+
+        template <typename T>
+        struct is_representable<
+            T, std::enable_if_t<is_scalar_v<T> || prints_itself<T>::value>>
+            : std::true_type {};
+
+        template <typename A, typename B>
+        struct is_representable<
+            std::pair<A, B>,
+            std::enable_if_t<!prints_itself<std::pair<A, B>>::value>>
+            : std::conjunction<is_representable<A>, is_representable<B>> {};
+
+        template <typename... Ts>
+        struct is_representable<
+            std::tuple<Ts...>,
+            std::enable_if_t<!prints_itself<std::tuple<Ts...>>::value>>
+            : std::conjunction<is_representable<Ts>...> {};
+
+        template <typename... Ts>
+        struct is_representable<
+            std::variant<Ts...>,
+            std::enable_if_t<!prints_itself<std::variant<Ts...>>::value>>
+            : std::conjunction<is_representable<Ts>...> {};
+
+        template <typename T>
+        struct is_representable<
+            std::optional<T>,
+            std::enable_if_t<!prints_itself<std::optional<T>>::value>>
+            : is_representable<T> {};
+
+        template <typename T>
+        struct is_representable<
+            std::vector<T>,
+            std::enable_if_t<!prints_itself<std::vector<T>>::value>>
+            : is_representable<T> {};
+
+        template <typename T>
+        struct is_representable<
+            std::set<T>, std::enable_if_t<!prints_itself<std::set<T>>::value>>
+            : is_representable<T> {};
+
+        template <typename T, std::size_t N>
+        struct is_representable<
+            std::array<T, N>,
+            std::enable_if_t<!prints_itself<std::array<T, N>>::value>>
+            : is_representable<T> {};
+
+        template <typename K, typename V>
+        struct is_representable<
+            std::map<K, V>,
+            std::enable_if_t<!prints_itself<std::map<K, V>>::value>>
+            : std::conjunction<is_representable<K>, is_representable<V>> {};
+
+        template <typename T>
+        inline constexpr bool is_std_compound_v =
+            is_pair<T>::value || is_tuple<T>::value || is_variant<T>::value ||
+            is_optional<T>::value || is_vector<T>::value || is_set<T>::value ||
+            is_std_array<T>::value || is_map<T>::value;
+
+        template <typename T>
+        struct is_representable<
+            T, std::enable_if_t<!is_scalar_v<T> && !prints_itself<T>::value &&
+                                !is_std_compound_v<T> &&
+                                (has_ostream_operator<T>::value
+#if HEGEL_HAS_REFLECTION
+                                 || is_reflectable<T>::value
+#endif
+                                 )>> : std::true_type {
+        };
+
+    } // namespace repr_detail
+
 } // namespace hegel::internal
 
 /// @endcond
+
+namespace hegel {
+
+    /**
+     * @brief Whether Printer::repr() has a C++ representation for `T`.
+     *
+     * True for arithmetic types, enums, `std::string`, `std::monostate`,
+     * a type with a `void print_to(hegel::Printer&) const` member, the
+     * standard pairs, tuples, variants, optionals, vectors, sets, arrays and
+     * maps of such types, a reflectable aggregate (C++20), and a type with
+     * an `operator<<`. For a reflectable aggregate it does not look at the
+     * fields: a field with no representation prints as `<unprintable ...>`.
+     *
+     * A generator that prints the value it produced (`map`, `just`,
+     * `sampled_from`, `compose`) is printable only for such a type.
+     *
+     * @tparam T The type to check
+     */
+    template <typename T>
+    inline constexpr bool is_representable_v =
+        internal::repr_detail::is_representable<T>::value;
+
+#if defined(__cpp_concepts) && __cpp_concepts >= 201907L
+    /**
+     * @brief The concept form of is_representable_v.
+     * @tparam T The type to check
+     */
+    template <typename T>
+    concept Representable = is_representable_v<T>;
+#endif
+
+    template <typename T> void Printer::repr(const T& value) {
+        if (should_print()) {
+            internal::print_value(*this, value);
+        }
+    }
+
+} // namespace hegel

@@ -18,7 +18,9 @@ namespace hegel::generators {
     /// @cond INTERNAL
     // Concrete IGenerator for sampled_from(). Draws an index into the
     // captured `elements_` vector and returns that element.
-    template <typename T> class SampledFromGenerator : public IGenerator<T> {
+    template <typename T>
+    class SampledFromGenerator
+        : public detail::value_base_t<T, is_representable_v<T>> {
       public:
         explicit SampledFromGenerator(std::vector<T> elements)
             : elements_(std::move(elements)) {
@@ -45,9 +47,11 @@ namespace hegel::generators {
 
     // Concrete IGenerator for one_of(). Draws a branch index inside a
     // one_of span, then delegates to that branch.
-    template <typename T> class OneOfGenerator : public IGenerator<T> {
+    template <typename T, bool Printable>
+    class OneOfGenerator : public detail::Structural<T, Printable> {
       public:
-        explicit OneOfGenerator(std::vector<Generator<T>> gens)
+        explicit OneOfGenerator(
+            std::vector<detail::handle_t<Printable, T>> gens)
             : gens_(std::move(gens)) {
             if (gens_.empty()) {
                 throw std::invalid_argument(
@@ -55,7 +59,7 @@ namespace hegel::generators {
             }
             std::vector<uint64_t> branches;
             branches.reserve(gens_.size());
-            for (const Generator<T>& gen : gens_) {
+            for (const auto& gen : gens_) {
                 branches.push_back(gen.label());
             }
             namespace hi = hegel::internal;
@@ -63,20 +67,22 @@ namespace hegel::generators {
                                          hi::combine_labels(branches)});
         }
 
-        T do_draw(const TestCase& tc) const override {
+        uint64_t label() const override { return label_; }
+
+      protected:
+        T draw_printing(const TestCase& tc, Printer& printer) const override {
             namespace hi = hegel::internal;
             hi::start_span(tc, label_);
             int64_t index =
                 hi::draw_integer(tc, 0, static_cast<int64_t>(gens_.size() - 1));
-            T result = gens_[static_cast<size_t>(index)].do_draw(tc);
+            T result = detail::draw_component(
+                tc, gens_[static_cast<size_t>(index)], printer);
             hi::stop_span(tc);
             return result;
         }
 
-        uint64_t label() const override { return label_; }
-
       private:
-        std::vector<Generator<T>> gens_;
+        std::vector<detail::handle_t<Printable, T>> gens_;
         uint64_t label_;
     };
     /// @endcond
@@ -92,13 +98,16 @@ namespace hegel::generators {
      * auto digit = sampled_from({1, 2, 3, 4, 5});
      * @endcode
      *
+     * The result prints the chosen value by its C++ representation, so it
+     * is printable when hegel::is_representable_v is true for T.
+     *
      * @tparam T Element type
      * @param elements Vector of values to sample from (must not be empty)
      * @return Generator that picks from elements
      */
-    template <typename T>
-    Generator<T> sampled_from(const std::vector<T>& elements) {
-        return Generator<T>(new SampledFromGenerator<T>(elements));
+    template <typename T> auto sampled_from(const std::vector<T>& elements) {
+        return detail::handle_t<is_representable_v<T>, T>(
+            std::make_shared<SampledFromGenerator<T>>(elements));
     }
 
     /**
@@ -107,8 +116,7 @@ namespace hegel::generators {
      * @param elements Values to sample from (must not be empty)
      * @return Generator that picks from elements
      */
-    template <typename T>
-    Generator<T> sampled_from(std::initializer_list<T> elements) {
+    template <typename T> auto sampled_from(std::initializer_list<T> elements) {
         return sampled_from(std::vector<T>(elements));
     }
 
@@ -135,7 +143,9 @@ namespace hegel::generators {
     /**
      * @brief Choose from multiple generators of the same type.
      *
-     * Randomly selects one generator and uses it to produce a value.
+     * Randomly selects one generator and uses it to produce a value. The
+     * value prints as the chosen generator prints it, so the result is
+     * printable when every generator is.
      *
      * @code{.cpp}
      * auto range = one_of({
@@ -149,7 +159,18 @@ namespace hegel::generators {
      * @return Generator that delegates to a randomly chosen generator
      */
     template <typename T> Generator<T> one_of(std::vector<Generator<T>> gens) {
-        return Generator<T>(new OneOfGenerator<T>(std::move(gens)));
+        return Generator<T>(new OneOfGenerator<T, true>(std::move(gens)));
+    }
+
+    /**
+     * @brief Choose from generators that are not all printable.
+     * @tparam T Value type (all generators must produce this type)
+     * @param gens Vector of generators to choose from (must not be empty)
+     * @return AnyGenerator that delegates to a randomly chosen generator
+     */
+    template <typename T>
+    AnyGenerator<T> one_of(std::vector<AnyGenerator<T>> gens) {
+        return AnyGenerator<T>(new OneOfGenerator<T, false>(std::move(gens)));
     }
 
     /**
@@ -163,36 +184,45 @@ namespace hegel::generators {
         return one_of(std::vector<Generator<T>>(gens));
     }
 
+    /**
+     * @brief Choose from a list of generators that are not all printable
+     *        (initializer list).
+     * @tparam T Value type produced by each generator
+     * @param gens Generators to choose from (must not be empty)
+     * @return AnyGenerator that picks from gens and forwards do_draw
+     */
+    template <typename T>
+    AnyGenerator<T> one_of(std::initializer_list<AnyGenerator<T>> gens) {
+        return one_of(std::vector<AnyGenerator<T>>(gens));
+    }
+
     /// @cond INTERNAL
     namespace detail {
 
         template <typename Variant, typename GenTuple, size_t I = 0>
         Variant draw_variant_impl(const GenTuple& gens, size_t idx,
-                                  const TestCase& tc) {
-            if constexpr (I < std::tuple_size_v<GenTuple>) {
-                if (idx == I) {
-                    return Variant{std::in_place_index<I>,
-                                   std::get<I>(gens).do_draw(tc)};
+                                  const TestCase& tc, Printer& printer) {
+            if constexpr (I + 1 < std::tuple_size_v<GenTuple>) {
+                if (idx != I) {
+                    return draw_variant_impl<Variant, GenTuple, I + 1>(
+                        gens, idx, tc, printer);
                 }
-                return draw_variant_impl<Variant, GenTuple, I + 1>(gens, idx,
-                                                                   tc);
-            } else {
-                // Unreachable: idx is always in [0, N), so an earlier branch
-                // matches before the recursion bottoms out.
-                return Variant{}; // GCOVR_EXCL_LINE
             }
+            return Variant{std::in_place_index<I>,
+                           draw_component(tc, std::get<I>(gens), printer)};
         }
 
     } // namespace detail
 
     // Concrete IGenerator for variant(). Draws a branch index inside a
     // one_of span; branches can have heterogeneous types.
-    template <typename... Ts>
-    class VariantGenerator : public IGenerator<std::variant<Ts...>> {
+    template <bool Printable, typename... Ts>
+    class VariantGenerator
+        : public detail::Structural<std::variant<Ts...>, Printable> {
       public:
         using Result = std::variant<Ts...>;
 
-        explicit VariantGenerator(Generator<Ts>... gens)
+        explicit VariantGenerator(detail::handle_t<Printable, Ts>... gens)
             : gens_(std::move(gens)...) {
             namespace hi = hegel::internal;
             std::vector<uint64_t> branches = std::apply(
@@ -204,51 +234,69 @@ namespace hegel::generators {
                                          hi::combine_labels(branches)});
         }
 
-        Result do_draw(const TestCase& tc) const override {
+        uint64_t label() const override { return label_; }
+
+      protected:
+        Result draw_printing(const TestCase& tc,
+                             Printer& printer) const override {
             namespace hi = hegel::internal;
             constexpr size_t N = sizeof...(Ts);
             hi::start_span(tc, label_);
             int64_t index =
                 hi::draw_integer(tc, 0, static_cast<int64_t>(N - 1));
+            printer.begin_block(detail::open_text<Result>(printer, "{"));
+            if (printer.should_print()) {
+                printer.text("std::in_place_index<" + std::to_string(index) +
+                             ">");
+            }
+            printer.separator();
             Result result = detail::draw_variant_impl<Result, decltype(gens_)>(
-                gens_, static_cast<size_t>(index), tc);
+                gens_, static_cast<size_t>(index), tc, printer);
+            printer.end_block("}");
             hi::stop_span(tc);
             return result;
         }
 
-        uint64_t label() const override { return label_; }
-
       private:
-        std::tuple<Generator<Ts>...> gens_;
+        std::tuple<detail::handle_t<Printable, Ts>...> gens_;
         uint64_t label_;
     };
 
     // Concrete IGenerator for optional(). A boolean draw inside an
     // optional span gates presence; false shrinks toward nullopt.
-    template <typename T>
-    class OptionalGenerator : public IGenerator<std::optional<T>> {
+    template <typename T, bool Printable>
+    class OptionalGenerator
+        : public detail::Structural<std::optional<T>, Printable> {
       public:
-        explicit OptionalGenerator(Generator<T> gen)
+        explicit OptionalGenerator(detail::handle_t<Printable, T> gen)
             : gen_(std::move(gen)),
               label_(hegel::internal::combine_labels(
                   {hegel::internal::label(hegel::internal::LabelName::Optional),
                    gen_.label()})) {}
 
-        std::optional<T> do_draw(const TestCase& tc) const override {
+        uint64_t label() const override { return label_; }
+
+      protected:
+        std::optional<T> draw_printing(const TestCase& tc,
+                                       Printer& printer) const override {
             namespace hi = hegel::internal;
             hi::start_span(tc, label_);
             std::optional<T> result;
             if (hi::draw_boolean(tc, 0.5)) {
-                result = gen_.do_draw(tc);
+                printer.begin_block(
+                    detail::open_text<std::optional<T>>(printer, "{"));
+                result = detail::draw_component(tc, gen_, printer);
+                printer.end_block("}");
+            } else {
+                printer.text(
+                    detail::open_text<std::optional<T>>(printer, "{}"));
             }
             hi::stop_span(tc);
             return result;
         }
 
-        uint64_t label() const override { return label_; }
-
       private:
-        Generator<T> gen_;
+        detail::handle_t<Printable, T> gen_;
         uint64_t label_;
     };
     /// @endcond
@@ -256,7 +304,9 @@ namespace hegel::generators {
     /**
      * @brief Generate std::variant from heterogeneous generators.
      *
-     * Each generator produces one possible variant alternative.
+     * Each generator produces one possible variant alternative. The
+     * variant prints the alternative as its generator prints it, so it is
+     * printable when every generator is.
      *
      * @code{.cpp}
      * auto value = variant(integers<int>(), text(), booleans());
@@ -270,14 +320,28 @@ namespace hegel::generators {
     template <typename... Ts>
     Generator<std::variant<Ts...>> variant(Generator<Ts>... gens) {
         return Generator<std::variant<Ts...>>(
-            new VariantGenerator<Ts...>(std::move(gens)...));
+            new VariantGenerator<true, Ts...>(std::move(gens)...));
+    }
+
+    /**
+     * @brief Generate std::variant from generators that are not all
+     *        printable.
+     *
+     * @tparam Ts Variant alternative types
+     * @param gens Generators for each alternative
+     * @return AnyGenerator producing variant
+     */
+    template <typename... Ts>
+    AnyGenerator<std::variant<Ts...>> variant(AnyGenerator<Ts>... gens) {
+        return AnyGenerator<std::variant<Ts...>>(
+            new VariantGenerator<false, Ts...>(std::move(gens)...));
     }
 
     /**
      * @brief Generate optional values (present or absent).
      *
      * Randomly produces either a value from the given generator or
-     * std::nullopt.
+     * std::nullopt. It is printable when @p gen is.
      *
      * @code{.cpp}
      * auto maybe_int = optional(integers<int>());
@@ -291,7 +355,21 @@ namespace hegel::generators {
     template <typename T>
     Generator<std::optional<T>> optional(Generator<T> gen) {
         return Generator<std::optional<T>>(
-            new OptionalGenerator<T>(std::move(gen)));
+            new OptionalGenerator<T, true>(std::move(gen)));
+    }
+
+    /**
+     * @brief Generate optional values from a generator that is not
+     *        printable.
+     *
+     * @tparam T Value type
+     * @param gen Generator for the value when present
+     * @return AnyGenerator producing optional values
+     */
+    template <typename T>
+    AnyGenerator<std::optional<T>> optional(AnyGenerator<T> gen) {
+        return AnyGenerator<std::optional<T>>(
+            new OptionalGenerator<T, false>(std::move(gen)));
     }
 
     /// @}
@@ -299,26 +377,29 @@ namespace hegel::generators {
     /// @cond INTERNAL
     // Generator that delegates to an implementation supplied later through a
     // shared slot. Handed out by DeferredGeneratorDefinition::generator().
-    template <typename T> class DeferredGenerator : public IGenerator<T> {
+    template <typename T, bool Printable>
+    class DeferredGenerator : public detail::Structural<T, Printable> {
       public:
-        explicit DeferredGenerator(
-            std::shared_ptr<std::optional<Generator<T>>> slot)
-            : slot_(std::move(slot)) {}
+        using Slot = std::optional<detail::handle_t<Printable, T>>;
 
-        T do_draw(const TestCase& tc) const override {
-            if (!*slot_) {
-                throw std::runtime_error(
-                    "deferred generator drawn before set() was called");
-            }
-            return (*slot_)->do_draw(tc);
-        }
+        explicit DeferredGenerator(std::shared_ptr<Slot> slot)
+            : slot_(std::move(slot)) {}
 
         uint64_t label() const override {
             return hegel::internal::label(hegel::internal::LabelName::Deferred);
         }
 
+      protected:
+        T draw_printing(const TestCase& tc, Printer& printer) const override {
+            if (!*slot_) {
+                throw std::runtime_error(
+                    "deferred generator drawn before set() was called");
+            }
+            return detail::draw_component(tc, **slot_, printer);
+        }
+
       private:
-        std::shared_ptr<std::optional<Generator<T>>> slot_;
+        std::shared_ptr<Slot> slot_;
     };
     /// @endcond
 
@@ -326,28 +407,38 @@ namespace hegel::generators {
      * @brief A forward reference to a generator whose definition is provided
      *        later.
      *
-     * Created by deferred(). Call generator() to obtain handles that can be
-     * embedded in other generators before the implementation is known, then
-     * call set() to install it. This enables self-recursive and mutually
-     * recursive generators.
+     * Created by deferred() or deferred_silent(). Call generator() to obtain
+     * handles that can be embedded in other generators before the
+     * implementation is known, then call set() to install it. This enables
+     * self-recursive and mutually recursive generators.
      *
      * @tparam T Value type produced by the eventual generator.
+     * @tparam Printable Whether the generator is printable: true for
+     *   deferred(), false for deferred_silent().
      */
-    template <typename T> class DeferredGeneratorDefinition {
+    template <typename T, bool Printable = true>
+    class DeferredGeneratorDefinition {
       public:
+        /// The handle type of the generator.
+        using Handle = detail::handle_t<Printable, T>;
+
         DeferredGeneratorDefinition()
-            : slot_(std::make_shared<std::optional<Generator<T>>>()) {}
+            : slot_(std::make_shared<
+                    typename DeferredGenerator<T, Printable>::Slot>()) {}
 
         /**
          * @brief Return a handle that delegates to whatever is later passed to
          *        set(). May be called multiple times. Drawing from it before
          * set() is called throws.
          *
-         * @return A Generator that delegates to the implementation installed by
-         *   set().
+         * The handle prints what the installed generator prints.
+         *
+         * @return A Generator (an AnyGenerator for deferred_silent()) that
+         *   delegates to the implementation installed by set().
          */
-        Generator<T> generator() const {
-            return Generator<T>(new DeferredGenerator<T>(slot_));
+        Handle generator() const {
+            return Handle(
+                std::make_shared<DeferredGenerator<T, Printable>>(slot_));
         }
 
         /**
@@ -359,7 +450,7 @@ namespace hegel::generators {
          *
          * @param gen The generator to install as the implementation.
          */
-        void set(Generator<T> gen) {
+        void set(Handle gen) {
             if (*slot_) {
                 throw std::runtime_error(
                     "deferred generator set() called more than once");
@@ -368,11 +459,14 @@ namespace hegel::generators {
         }
 
       private:
-        std::shared_ptr<std::optional<Generator<T>>> slot_;
+        std::shared_ptr<typename DeferredGenerator<T, Printable>::Slot> slot_;
     };
 
     /**
      * @brief Create a deferred generator definition for forward references.
+     *
+     * The generator is printable: set() takes a Generator\<T\>. For a
+     * definition that is not printable, use deferred_silent().
      *
      * @tparam T Value type produced by the eventual generator.
      * @return A DeferredGeneratorDefinition whose generator() handles can be
@@ -389,8 +483,23 @@ namespace hegel::generators {
      * tree.set(gs::one_of<Tree>({leaf, branch}));
      * @endcode
      */
-    template <typename T> DeferredGeneratorDefinition<T> deferred() {
-        return DeferredGeneratorDefinition<T>();
+    template <typename T> DeferredGeneratorDefinition<T, true> deferred() {
+        return DeferredGeneratorDefinition<T, true>();
+    }
+
+    /**
+     * @brief Create a deferred generator definition that is not printable.
+     *
+     * As deferred(), but generator() returns an AnyGenerator\<T\> and set()
+     * takes one.
+     *
+     * @tparam T Value type produced by the eventual generator.
+     * @return A DeferredGeneratorDefinition whose generator() handles can be
+     *   used before set() supplies the implementation.
+     */
+    template <typename T>
+    DeferredGeneratorDefinition<T, false> deferred_silent() {
+        return DeferredGeneratorDefinition<T, false>();
     }
 
     /**
@@ -412,9 +521,10 @@ namespace hegel::generators {
 
         // What the generators of one recursive() share: its leaf generator,
         // its branch function and its label.
-        template <typename T> struct RecursiveDefinition {
-            Generator<T> leaf;
-            std::function<Generator<T>(Generator<T>)> branch;
+        template <typename T, typename Sub, typename Branch>
+        struct RecursiveDefinition {
+            Sub leaf;
+            std::function<Branch(Sub)> branch;
             uint64_t label;
         };
 
@@ -423,21 +533,18 @@ namespace hegel::generators {
     // The generator a recursive() branch function receives. Each value it
     // draws is a sub-value of the value under construction, one level
     // deeper: a leaf, or a further branch.
-    template <typename T> class SubtreeGenerator : public IGenerator<T> {
+    template <typename T, typename Sub, typename Branch>
+    class SubtreeGenerator
+        : public detail::Structural<T, detail::is_printable_handle_v<Sub>> {
       public:
+        using Definition = detail::RecursiveDefinition<T, Sub, Branch>;
+
         SubtreeGenerator(
-            std::shared_ptr<const detail::RecursiveDefinition<T>> definition,
+            std::shared_ptr<const Definition> definition,
             std::shared_ptr<hegel::internal::RecursionHandle> recursion,
             uint64_t depth)
             : definition_(std::move(definition)),
               recursion_(std::move(recursion)), depth_(depth) {}
-
-        T do_draw(const TestCase& tc) const override {
-            hegel::internal::start_span(tc, definition_->label);
-            T result = draw_subtree(tc);
-            hegel::internal::stop_span(tc);
-            return result;
-        }
 
         // Every sub-value has the label of the whole value, so the engine
         // can replace a value with one of its own sub-values when it
@@ -446,56 +553,73 @@ namespace hegel::generators {
 
         // Draws the sub-value without a span of its own. The root draws
         // this way, inside the span of the recursive generator.
-        T draw_subtree(const TestCase& tc) const {
+        T draw_subtree(const TestCase& tc, Printer& printer) const {
             T result = recursion_->branch(tc, depth_)
-                           ? definition_
-                                 ->branch(Generator<T>(new SubtreeGenerator<T>(
-                                     definition_, recursion_, depth_ + 1)))
-                                 .do_draw(tc)
-                           : draw_leaf(tc);
+                           ? detail::draw_component(
+                                 tc,
+                                 definition_->branch(
+                                     Sub(std::make_shared<SubtreeGenerator>(
+                                         definition_, recursion_, depth_ + 1))),
+                                 printer)
+                           : draw_leaf(tc, printer);
             if (depth_ == 0) {
                 recursion_->finish(tc);
             }
             return result;
         }
 
-      private:
-        T draw_leaf(const TestCase& tc) const {
-            recursion_->leaf(tc);
-            return definition_->leaf.do_draw(tc);
+      protected:
+        T draw_printing(const TestCase& tc, Printer& printer) const override {
+            hegel::internal::start_span(tc, definition_->label);
+            T result = draw_subtree(tc, printer);
+            hegel::internal::stop_span(tc);
+            return result;
         }
 
-        std::shared_ptr<const detail::RecursiveDefinition<T>> definition_;
+      private:
+        T draw_leaf(const TestCase& tc, Printer& printer) const {
+            recursion_->leaf(tc);
+            return detail::draw_component(tc, definition_->leaf, printer);
+        }
+
+        std::shared_ptr<const Definition> definition_;
         std::shared_ptr<hegel::internal::RecursionHandle> recursion_;
         uint64_t depth_;
     };
 
     // Concrete IGenerator for recursive(). Draws attempts at the whole value
     // until the engine accepts one.
-    template <typename T> class RecursiveGenerator : public IGenerator<T> {
+    template <typename T, typename Sub, typename Branch>
+    class RecursiveGenerator
+        : public detail::Structural<T, detail::is_printable_handle_v<Branch> &&
+                                           detail::is_printable_handle_v<Sub>> {
       public:
-        RecursiveGenerator(Generator<T> leaf,
-                           std::function<Generator<T>(Generator<T>)> branch,
+        using Definition = detail::RecursiveDefinition<T, Sub, Branch>;
+
+        RecursiveGenerator(Sub leaf, std::function<Branch(Sub)> branch,
                            RecursiveParams params)
             : params_(params) {
             namespace hi = hegel::internal;
             uint64_t label = hi::combine_labels(
                 {hi::label(hi::LabelName::Recursive), leaf.label()});
-            definition_ =
-                std::make_shared<const detail::RecursiveDefinition<T>>(
-                    detail::RecursiveDefinition<T>{std::move(leaf),
-                                                   std::move(branch), label});
+            definition_ = std::make_shared<const Definition>(
+                Definition{std::move(leaf), std::move(branch), label});
         }
 
-        T do_draw(const TestCase& tc) const override {
+        uint64_t label() const override { return definition_->label; }
+
+      protected:
+        T draw_printing(const TestCase& tc, Printer& printer) const override {
             namespace hi = hegel::internal;
             hi::start_span(tc, definition_->label);
             auto recursion = std::make_shared<hi::RecursionHandle>(
                 tc, params_.max_depth, params_.max_leaves);
-            SubtreeGenerator<T> root(definition_, recursion, 0);
+            SubtreeGenerator<T, Sub, Branch> root(definition_, recursion, 0);
             while (true) {
                 try {
-                    T result = root.draw_subtree(tc);
+                    Speculation attempt = printer.speculate();
+                    T result = root.draw_subtree(tc, printer);
+                    attempt.commit();
                     hi::stop_span(tc);
                     return result;
                 } catch (const hi::LeafBudgetExceeded&) {
@@ -507,10 +631,8 @@ namespace hegel::generators {
             }
         }
 
-        uint64_t label() const override { return definition_->label; }
-
       private:
-        std::shared_ptr<const detail::RecursiveDefinition<T>> definition_;
+        std::shared_ptr<const Definition> definition_;
         RecursiveParams params_;
     };
     /// @endcond
@@ -530,6 +652,10 @@ namespace hegel::generators {
      * structure is not a tree of one type, for example for mutually
      * recursive types, use deferred().
      *
+     * The value prints as @p leaf and the generators @p branch returns
+     * print it, so the result is printable when @p leaf is printable and
+     * @p branch returns a Generator\<T\>.
+     *
      * @code{.cpp}
      * struct Tree {
      *     int value;
@@ -547,7 +673,7 @@ namespace hegel::generators {
      *
      * @tparam T Value type
      * @tparam F Callable taking a `Generator<T>` of sub-values and returning
-     *   a `Generator<T>`
+     *   a generator of T
      * @param leaf Generator for the values that do not recurse
      * @param branch Function that builds a branch from a generator of
      *   sub-values
@@ -555,12 +681,42 @@ namespace hegel::generators {
      * @return Generator producing recursive values
      */
     template <typename T, typename F>
-    Generator<T> recursive(Generator<T> leaf, F branch,
-                           RecursiveParams params = {}) {
-        return Generator<T>(new RecursiveGenerator<T>(
-            std::move(leaf),
-            std::function<Generator<T>(Generator<T>)>(std::move(branch)),
-            params));
+    auto recursive(Generator<T> leaf, F branch, RecursiveParams params = {}) {
+        using Returned = std::decay_t<std::invoke_result_t<F, Generator<T>>>;
+        using Branch =
+            detail::handle_t<detail::is_printable_handle_v<Returned>, T>;
+        return Branch(
+            std::make_shared<RecursiveGenerator<T, Generator<T>, Branch>>(
+                std::move(leaf),
+                std::function<Branch(Generator<T>)>(std::move(branch)),
+                params));
+    }
+
+    /**
+     * @brief Generate recursively defined values from a leaf generator that
+     *        is not printable.
+     *
+     * As recursive(), but @p branch receives an AnyGenerator\<T\>.
+     *
+     * @tparam T Value type
+     * @tparam F Callable taking an `AnyGenerator<T>` of sub-values and
+     *   returning a generator of T
+     * @param leaf Generator for the values that do not recurse
+     * @param branch Function that builds a branch from a generator of
+     *   sub-values
+     * @param params Limits on the depth and the number of leaves
+     * @return AnyGenerator producing recursive values
+     */
+    template <typename T, typename F>
+    AnyGenerator<T> recursive(AnyGenerator<T> leaf, F branch,
+                              RecursiveParams params = {}) {
+        return AnyGenerator<T>(
+            std::make_shared<
+                RecursiveGenerator<T, AnyGenerator<T>, AnyGenerator<T>>>(
+                std::move(leaf),
+                std::function<AnyGenerator<T>(AnyGenerator<T>)>(
+                    std::move(branch)),
+                params));
     }
 
 } // namespace hegel::generators

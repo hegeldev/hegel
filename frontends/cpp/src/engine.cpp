@@ -24,6 +24,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 #include <arpa/inet.h>
@@ -956,114 +957,6 @@ namespace hegel::internal {
         return impl::label_combine(impl::thread_context(), labels);
     }
 
-    void Printer::text(std::string_view text) {
-        hegel_context_t* ctx = impl::thread_context();
-        impl::tolerate_dead_region(
-            ctx, hegel_printer_text(ctx, handle_, impl::borrow(text)));
-    }
-
-    void Printer::breakable(std::string_view separator) {
-        hegel_context_t* ctx = impl::thread_context();
-        impl::tolerate_dead_region(
-            ctx,
-            hegel_printer_breakable(ctx, handle_, impl::borrow(separator)));
-    }
-
-    void Printer::begin_group(uint64_t indent, std::string_view open) {
-        hegel_context_t* ctx = impl::thread_context();
-        impl::tolerate_dead_region(
-            ctx, hegel_printer_begin_group(ctx, handle_, indent,
-                                           impl::borrow(open)));
-    }
-
-    void Printer::end_group(std::string_view close) {
-        hegel_context_t* ctx = impl::thread_context();
-        impl::tolerate_dead_region(
-            ctx, hegel_printer_end_group(ctx, handle_, impl::borrow(close)));
-    }
-
-    void Printer::shift_indent(int64_t delta) {
-        hegel_context_t* ctx = impl::thread_context();
-        impl::tolerate_dead_region(
-            ctx, hegel_printer_shift_indent(ctx, handle_, delta));
-    }
-
-    void Printer::hard_break() {
-        hegel_context_t* ctx = impl::thread_context();
-        impl::tolerate_dead_region(ctx, hegel_printer_hard_break(ctx, handle_));
-    }
-
-    void Printer::reflow(std::string_view text) {
-        hegel_context_t* ctx = impl::thread_context();
-        impl::tolerate_dead_region(
-            ctx,
-            hegel_printer_reflow(ctx, handle_, nullptr, impl::borrow(text)));
-    }
-
-    void Printer::if_break(std::string_view text) {
-        hegel_context_t* ctx = impl::thread_context();
-        impl::tolerate_dead_region(
-            ctx, hegel_printer_if_break(ctx, handle_, impl::borrow(text)));
-    }
-
-    void Printer::comment(std::string_view text) {
-        hegel_context_t* ctx = impl::thread_context();
-        std::string rendered = "  // " + std::string(text);
-        impl::tolerate_dead_region(
-            ctx, hegel_printer_comment(ctx, handle_, impl::borrow(rendered)));
-    }
-
-    DeferredPrinter::DeferredPrinter(const Printer& at) {
-        hegel_context_t* ctx = impl::thread_context();
-        impl::tolerate_dead_region(
-            ctx, hegel_printer_deferred(ctx, at.handle(), &handle_));
-    }
-
-    DeferredPrinter::~DeferredPrinter() {
-        hegel_printer_free(impl::thread_context(), handle_);
-    }
-
-    Speculation::Speculation(const Printer& printer)
-        : handle_(printer.handle()) {
-        hegel_context_t* ctx = impl::thread_context();
-        impl::tolerate_dead_region(
-            ctx, hegel_printer_begin_speculative(ctx, handle_));
-    }
-
-    Speculation::~Speculation() {
-        if (!resolved_) {
-            hegel_printer_abort_speculative(impl::thread_context(), handle_);
-        }
-    }
-
-    void Speculation::commit() {
-        resolved_ = true;
-        hegel_context_t* ctx = impl::thread_context();
-        impl::tolerate_dead_region(
-            ctx, hegel_printer_commit_speculative(ctx, handle_));
-    }
-
-    Document::Document(uint64_t width) {
-        hegel_context_t* ctx = impl::thread_context();
-        hegel_printer_options_t* options = nullptr;
-        impl::check_rc(ctx, hegel_printer_options_new(ctx, &options));
-        hegel_result_t rc =
-            hegel_printer_options_set_max_width(ctx, options, width);
-        if (rc == HEGEL_OK) {
-            rc = hegel_printer_new(ctx, options, &handle_);
-        }
-        hegel_printer_options_free(ctx, options);
-        impl::check_rc(ctx, rc);
-    }
-
-    Document::~Document() {
-        hegel_printer_free(impl::thread_context(), handle_);
-    }
-
-    std::string Document::finish() {
-        return impl::read_document(impl::thread_context(), handle_);
-    }
-
     void start_span(const TestCase& tc, uint64_t label) {
         impl::DrawScope scope(tc);
         scope.raise_for_rc(hegel_start_span(scope.ctx, scope.tc, label),
@@ -1338,3 +1231,216 @@ namespace hegel::internal {
     }
 
 } // namespace hegel::internal
+
+namespace hegel {
+
+    namespace {
+
+        void printer_call(hegel_context_t* ctx, hegel_result_t rc) {
+            if (rc == HEGEL_E_INVALID_ARG) {
+                throw std::logic_error(impl::last_error(ctx));
+            }
+            impl::tolerate_dead_region(ctx, rc);
+        }
+
+    } // namespace
+
+    Printer Printer::noop() { return Printer(nullptr, false); }
+
+    Printer::Printer(Printer&& other) noexcept
+        : handle_(std::exchange(other.handle_, nullptr)),
+          owned_(std::exchange(other.owned_, false)) {}
+
+    Printer& Printer::operator=(Printer&& other) noexcept {
+        std::swap(handle_, other.handle_);
+        std::swap(owned_, other.owned_);
+        return *this;
+    }
+
+    Printer::~Printer() {
+        if (owned_) {
+            hegel_printer_free(impl::thread_context(), handle_);
+        }
+    }
+
+    bool Printer::should_print() const {
+        if (handle_ == nullptr) {
+            return false;
+        }
+        bool live = false;
+        hegel_printer_is_live(impl::thread_context(), handle_, &live);
+        return live;
+    }
+
+    void Printer::text(std::string_view text) {
+        if (handle_ == nullptr) {
+            return;
+        }
+        hegel_context_t* ctx = impl::thread_context();
+        std::size_t start = 0;
+        while (true) {
+            std::size_t end = text.find('\n', start);
+            std::string_view segment = text.substr(start, end - start);
+            if (!segment.empty()) {
+                printer_call(ctx, hegel_printer_text(ctx, handle_,
+                                                     impl::borrow(segment)));
+            }
+            if (end == std::string_view::npos) {
+                return;
+            }
+            printer_call(ctx, hegel_printer_hard_break(ctx, handle_));
+            start = end + 1;
+        }
+    }
+
+    void Printer::reflow(std::string_view text) {
+        if (handle_ == nullptr) {
+            return;
+        }
+        hegel_context_t* ctx = impl::thread_context();
+        printer_call(ctx, hegel_printer_reflow(ctx, handle_, nullptr,
+                                               impl::borrow(text)));
+    }
+
+    void Printer::breakable(std::string_view separator) {
+        if (handle_ == nullptr) {
+            return;
+        }
+        hegel_context_t* ctx = impl::thread_context();
+        printer_call(ctx, hegel_printer_breakable(ctx, handle_,
+                                                  impl::borrow(separator)));
+    }
+
+    void Printer::if_break(std::string_view text) {
+        if (handle_ == nullptr) {
+            return;
+        }
+        hegel_context_t* ctx = impl::thread_context();
+        printer_call(ctx,
+                     hegel_printer_if_break(ctx, handle_, impl::borrow(text)));
+    }
+
+    void Printer::hard_break() {
+        if (handle_ == nullptr) {
+            return;
+        }
+        hegel_context_t* ctx = impl::thread_context();
+        printer_call(ctx, hegel_printer_hard_break(ctx, handle_));
+    }
+
+    void Printer::begin_group(std::size_t indent, std::string_view open) {
+        if (handle_ == nullptr) {
+            return;
+        }
+        hegel_context_t* ctx = impl::thread_context();
+        printer_call(ctx, hegel_printer_begin_group(ctx, handle_, indent,
+                                                    impl::borrow(open)));
+    }
+
+    void Printer::end_group(std::string_view close) {
+        if (handle_ == nullptr) {
+            return;
+        }
+        hegel_context_t* ctx = impl::thread_context();
+        printer_call(
+            ctx, hegel_printer_end_group(ctx, handle_, impl::borrow(close)));
+    }
+
+    void Printer::separator() {
+        text(",");
+        breakable(" ");
+    }
+
+    void Printer::shift_indent(std::ptrdiff_t delta) {
+        if (handle_ == nullptr) {
+            return;
+        }
+        hegel_context_t* ctx = impl::thread_context();
+        printer_call(ctx, hegel_printer_shift_indent(
+                              ctx, handle_, static_cast<int64_t>(delta)));
+    }
+
+    void Printer::comment(std::string_view text) {
+        if (handle_ == nullptr) {
+            return;
+        }
+        hegel_context_t* ctx = impl::thread_context();
+        std::string rendered = "  // " + std::string(text);
+        printer_call(
+            ctx, hegel_printer_comment(ctx, handle_, impl::borrow(rendered)));
+    }
+
+    void Printer::begin_block(std::string_view open) {
+        begin_group(4, open);
+        breakable("");
+    }
+
+    void Printer::end_block(std::string_view close) {
+        shift_indent(-4);
+        breakable("");
+        shift_indent(4);
+        end_group(close);
+    }
+
+    Speculation Printer::speculate() {
+        if (handle_ != nullptr) {
+            hegel_context_t* ctx = impl::thread_context();
+            printer_call(ctx, hegel_printer_begin_speculative(ctx, handle_));
+        }
+        return Speculation(handle_);
+    }
+
+    Printer Printer::deferred() {
+        if (handle_ == nullptr) {
+            return noop();
+        }
+        hegel_printer_t* child = nullptr;
+        hegel_context_t* ctx = impl::thread_context();
+        printer_call(ctx, hegel_printer_deferred(ctx, handle_, &child));
+        return Printer(child, child != nullptr);
+    }
+
+    Speculation::Speculation(Speculation&& other) noexcept
+        : handle_(other.handle_),
+          resolved_(std::exchange(other.resolved_, true)) {}
+
+    Speculation::~Speculation() {
+        if (!resolved_ && handle_ != nullptr) {
+            hegel_printer_abort_speculative(impl::thread_context(), handle_);
+        }
+    }
+
+    void Speculation::commit() { close(true); }
+
+    void Speculation::abort() { close(false); }
+
+    void Speculation::close(bool keep) {
+        bool was_resolved = std::exchange(resolved_, true);
+        if (was_resolved || handle_ == nullptr) {
+            return;
+        }
+        hegel_context_t* ctx = impl::thread_context();
+        printer_call(ctx, keep ? hegel_printer_commit_speculative(ctx, handle_)
+                               : hegel_printer_abort_speculative(ctx, handle_));
+    }
+
+    Document::Document(std::size_t max_width) : printer_(Printer::noop()) {
+        hegel_context_t* ctx = impl::thread_context();
+        hegel_printer_options_t* options = nullptr;
+        impl::check_rc(ctx, hegel_printer_options_new(ctx, &options));
+        hegel_result_t rc =
+            hegel_printer_options_set_max_width(ctx, options, max_width);
+        hegel_printer_t* handle = nullptr;
+        if (rc == HEGEL_OK) {
+            rc = hegel_printer_new(ctx, options, &handle);
+        }
+        hegel_printer_options_free(ctx, options);
+        impl::check_rc(ctx, rc);
+        printer_ = Printer(handle, true);
+    }
+
+    std::string Document::finish() && {
+        return impl::read_document(impl::thread_context(), printer_.handle());
+    }
+
+} // namespace hegel

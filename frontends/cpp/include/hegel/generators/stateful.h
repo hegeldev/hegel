@@ -460,7 +460,9 @@ namespace hegel::stateful {
 
     /// @cond INTERNAL
     // Concrete IGenerator for variables.
-    template <typename T> class VariablesGenerator : public IGenerator<T> {
+    template <typename T>
+    class VariablesGenerator
+        : public generators::detail::value_base_t<T, is_representable_v<T>> {
       public:
         explicit VariablesGenerator(Pool<T>& p, bool consume)
             : p_(p), consume_(consume) {}
@@ -497,7 +499,7 @@ namespace hegel::stateful {
                 return IGenerator<T>::do_draw_filtered(tc, predicate);
             }
             return detail::draw_filtered_consumed(tc, p_.pool_handle_, p_.pool_,
-                                                  label(), predicate);
+                                                  this->label(), predicate);
         }
 
       private:
@@ -540,8 +542,9 @@ namespace hegel::stateful {
      * @param p The pool to draw from
      * @return An element of the pool
      */
-    template <typename T> Generator<T> values_consumed(Pool<T>& p) {
-        return Generator<T>(new VariablesGenerator<T>(p, true));
+    template <typename T> auto values_consumed(Pool<T>& p) {
+        return generators::detail::handle_t<is_representable_v<T>, T>(
+            std::make_shared<VariablesGenerator<T>>(p, true));
     }
 
     /**
@@ -571,8 +574,9 @@ namespace hegel::stateful {
      * @param p The pool to draw from
      * @return An element of the pool
      */
-    template <typename T> Generator<T> values_reusable(Pool<T>& p) {
-        return Generator<T>(new VariablesGenerator<T>(p, false));
+    template <typename T> auto values_reusable(Pool<T>& p) {
+        return generators::detail::handle_t<is_representable_v<T>, T>(
+            std::make_shared<VariablesGenerator<T>>(p, false));
     }
 
     /// @cond INTERNAL
@@ -649,7 +653,8 @@ namespace hegel::stateful {
 
     /// @cond INTERNAL
     template <typename T>
-    class ConcurrentVariablesGenerator : public IGenerator<T> {
+    class ConcurrentVariablesGenerator
+        : public generators::detail::value_base_t<T, is_representable_v<T>> {
       public:
         ConcurrentVariablesGenerator(ConcurrentPool<T>& pool, bool consume)
             : pool_(pool), consume_(consume) {}
@@ -679,8 +684,9 @@ namespace hegel::stateful {
                 return IGenerator<T>::do_draw_filtered(tc, predicate);
             }
             std::lock_guard<std::mutex> lock(pool_.mutex_);
-            return detail::draw_filtered_consumed(
-                tc, pool_.pool_handle_, pool_.values_, label(), predicate);
+            return detail::draw_filtered_consumed(tc, pool_.pool_handle_,
+                                                  pool_.values_, this->label(),
+                                                  predicate);
         }
 
       private:
@@ -700,9 +706,9 @@ namespace hegel::stateful {
      * @param pool The pool to draw from
      * @return A generator that consumes values from the pool
      */
-    template <typename T>
-    Generator<T> values_consumed(ConcurrentPool<T>& pool) {
-        return Generator<T>(new ConcurrentVariablesGenerator<T>(pool, true));
+    template <typename T> auto values_consumed(ConcurrentPool<T>& pool) {
+        return generators::detail::handle_t<is_representable_v<T>, T>(
+            std::make_shared<ConcurrentVariablesGenerator<T>>(pool, true));
     }
 
     /**
@@ -715,9 +721,9 @@ namespace hegel::stateful {
      * @param pool The pool to draw from
      * @return A generator that reuses values from the pool
      */
-    template <typename T>
-    Generator<T> values_reusable(ConcurrentPool<T>& pool) {
-        return Generator<T>(new ConcurrentVariablesGenerator<T>(pool, false));
+    template <typename T> auto values_reusable(ConcurrentPool<T>& pool) {
+        return generators::detail::handle_t<is_representable_v<T>, T>(
+            std::make_shared<ConcurrentVariablesGenerator<T>>(pool, false));
     }
 
     /**
@@ -908,9 +914,15 @@ namespace hegel::stateful {
     // prints the machine's state.
     template <typename M>
     void print_state(TestCase& tc, const M& machine, const RunParams& params) {
-        if (params.print_state) {
-            internal::print_line(tc, "state = ", machine.state);
+        if (!params.print_state || !internal::records_output(tc)) {
+            return;
         }
+        Printer printer = internal::test_case_printer(tc);
+        Speculation line = printer.speculate();
+        printer.text("state = ");
+        printer.repr(machine.state);
+        printer.hard_break();
+        line.commit();
     }
 
     template <typename T>

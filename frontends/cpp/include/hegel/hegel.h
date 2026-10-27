@@ -265,6 +265,27 @@
  * Notes and drawn values print on the failing replay only. Raise
  * Settings::verbosity to Verbosity::Verbose to see them for every case.
  *
+ * The generator prints each value as it draws it, so a container prints
+ * each element as the element's generator prints it. @tc{draw} takes a
+ * printable hegel::generators::Generator. A generator of a type with no C++
+ * representation (no `print_to(hegel::Printer&) const` member, no
+ * `operator<<`, and not a reflectable aggregate) is a
+ * hegel::generators::AnyGenerator. Give it a printer, or draw it with
+ * @tc{draw_silent}:
+ *
+ * @code{.cpp}
+ * auto ids = gs::integers<int>({.min_value = 0})
+ *                .map([](int raw) { return UserId(raw); })
+ *                .print_as_call("UserId");
+ * auto id = tc.draw("id", ids);  // auto id = UserId(0);
+ * auto secret = tc.draw("secret", gs::text().print_with(
+ *     [](const std::string&, hegel::Printer& p) { p.text("<secret>"); }));
+ * @endcode
+ *
+ * A generator of your own implements
+ * hegel::generators::IPrintableGenerator and writes its value to a
+ * hegel::Printer.
+ *
  * @subsection change_test_cases Change the number of test cases
  *
  * By default Hegel runs 100 test cases. To override this, write a

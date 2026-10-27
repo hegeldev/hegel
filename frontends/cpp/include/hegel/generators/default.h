@@ -28,7 +28,7 @@ namespace hegel::generators {
     /// @name Typing
     /// @{
 
-    template <typename T> class DerivedGenerator;
+    template <typename T, bool Printable = true> class DerivedGenerator;
 
     // Forward declaration — defined below after all specializations
     template <typename T> DerivedGenerator<T> default_generator();
@@ -79,25 +79,80 @@ namespace hegel::generators {
         // DefaultGenerator trait — primary template (struct fallback)
         // =================================================================
 
+        template <typename T>
+        using FieldOverride = std::function<bool(const TestCase&, T& result,
+                                                 const void* field, Printer&)>;
+
+        template <typename T>
+        using FieldOverrides = std::vector<FieldOverride<T>>;
+
+        template <typename T, bool Printable>
+        class StructGenerator : public Structural<T, Printable> {
+          public:
+            explicit StructGenerator(
+                std::shared_ptr<const FieldOverrides<T>> overrides)
+                : overrides_(std::move(overrides)),
+                  label_(internal::label(internal::LabelName::Composite)) {}
+
+            uint64_t label() const override { return label_; }
+
+          protected:
+            T draw_printing(const TestCase& tc,
+                            Printer& printer) const override {
+                internal::start_span(tc, label_);
+                T result{};
+                printer.begin_block(open_text<T>(printer, "{"));
+                bool first = true;
+                auto view = rfl::to_view(result);
+                view.apply([&](const auto& field) {
+                    using PtrType =
+                        typename std::remove_cvref_t<decltype(field)>::Type;
+                    using FieldType = std::remove_pointer_t<PtrType>;
+                    if (!first) {
+                        printer.separator();
+                    }
+                    first = false;
+                    if (printer.should_print()) {
+                        printer.text("." + std::string(field.name()) + " = ");
+                    }
+                    if (!draw_override(tc, result, field.value(), printer)) {
+                        *field.value() =
+                            default_generator<FieldType>().do_draw_and_print(
+                                tc, printer);
+                    }
+                });
+                printer.end_block("}");
+                internal::stop_span(tc);
+                return result;
+            }
+
+          private:
+            bool draw_override(const TestCase& tc, T& result, const void* field,
+                               Printer& printer) const {
+                for (auto it = overrides_->rbegin(); it != overrides_->rend();
+                     ++it) {
+                    if ((*it)(tc, result, field, printer)) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            std::shared_ptr<const FieldOverrides<T>> overrides_;
+            uint64_t label_;
+        };
+
         template <typename T, typename Enable = void> struct DefaultGenerator {
             static_assert(
                 is_reflectable_struct<T>::value,
                 "default_generator<T>(): T must be a supported primitive, "
                 "container, or reflectable struct");
 
+            static constexpr bool is_struct = true;
+
             static Generator<T> generator() {
-                return compose([](const TestCase& tc) -> T {
-                    T result{};
-                    auto view = rfl::to_view(result);
-                    view.apply([&tc](const auto& field) {
-                        using PtrType =
-                            typename std::remove_cvref_t<decltype(field)>::Type;
-                        using FieldType = std::remove_pointer_t<PtrType>;
-                        *field.value() =
-                            default_generator<FieldType>().do_draw(tc);
-                    });
-                    return result;
-                });
+                return Generator<T>(std::make_shared<StructGenerator<T, true>>(
+                    std::make_shared<const FieldOverrides<T>>()));
             }
         };
 
@@ -200,6 +255,13 @@ namespace hegel::generators {
             }
         };
 
+        template <typename T, typename = void>
+        struct is_struct_default : std::false_type {};
+        template <typename T>
+        struct is_struct_default<
+            T, std::void_t<decltype(DefaultGenerator<T>::is_struct)>>
+            : std::true_type {};
+
     } // namespace detail
     /// @endcond
 
@@ -214,17 +276,27 @@ namespace hegel::generators {
      * additionally exposes an override() method for supplying per-field
      * generator overrides on struct types.
      *
+     * A struct prints field by field, as `T{.a = <field>, .b = <field>}`,
+     * with each field as its generator prints it.
+     *
      * @code{.cpp}
      * auto gen = default_generator<Rectangle>()
      *     .override(field<&Rectangle::width>(integers<int>({.min_value = 1})));
      * @endcode
      *
      * @tparam T The type produced by the generator
+     * @tparam Printable Whether the generator is printable. It derives from
+     *   Generator<T> when true, else from AnyGenerator<T>.
      */
-    template <typename T> class DerivedGenerator : public Generator<T> {
+    template <typename T, bool Printable>
+    class DerivedGenerator : public detail::handle_t<Printable, T> {
       public:
         /// @cond INTERNAL
-        DerivedGenerator(Generator<T> base) : Generator<T>(std::move(base)) {}
+        DerivedGenerator(detail::handle_t<Printable, T> base,
+                         std::shared_ptr<const detail::FieldOverrides<T>>
+                             overrides = nullptr)
+            : detail::handle_t<Printable, T>(std::move(base)),
+              overrides_(std::move(overrides)) {}
         /// @endcond
 
         /**
@@ -232,7 +304,9 @@ namespace hegel::generators {
          *
          * Each field specification (from `field<&T::member>(gen)`) replaces
          * the default generator for that member. Other fields keep the
-         * defaults from default_generator<T>().
+         * defaults from default_generator<T>(). T must be a struct. The
+         * result is printable when this generator and every override
+         * generator are.
          *
          * @code{.cpp}
          * auto gen = default_generator<Person>()
@@ -244,24 +318,40 @@ namespace hegel::generators {
          * @param fields Field specifications for overridden members
          * @return A DerivedGenerator<T> with the overrides applied
          */
-        template <typename... Fields>
-        DerivedGenerator<T> override(Fields... fields) const {
-            Generator<T> base = *this;
-            auto fields_tuple = std::make_tuple(std::move(fields)...);
-            return DerivedGenerator<T>(
-                compose([base, fields_tuple](const TestCase& tc) mutable -> T {
-                    T result = base.do_draw(tc);
-                    std::apply(
-                        [&result, &tc](auto&... fs) {
-                            ((result.*(std::remove_reference_t<
-                                          decltype(fs)>::member_ptr) =
-                                  fs.generator.do_draw(tc)),
-                             ...);
-                        },
-                        fields_tuple);
-                    return result;
-                }));
+        template <typename... Fields> auto override(Fields... fields) const {
+            static_assert(detail::is_struct_default<T>::value,
+                          "override() needs default_generator<T>() of a "
+                          "reflectable struct T");
+            constexpr bool printable =
+                Printable &&
+                (detail::is_printable_handle_v<decltype(fields.generator)> &&
+                 ...);
+            auto overrides =
+                std::make_shared<detail::FieldOverrides<T>>(*overrides_);
+            (overrides->push_back(field_override(std::move(fields))), ...);
+            return DerivedGenerator<T, printable>(
+                detail::handle_t<printable, T>(
+                    std::make_shared<detail::StructGenerator<T, printable>>(
+                        overrides)),
+                overrides);
         }
+
+      private:
+        template <typename Field>
+        static detail::FieldOverride<T> field_override(Field field) {
+            return [generator = std::move(field.generator)](
+                       const TestCase& tc, T& result, const void* address,
+                       Printer& printer) {
+                auto& member = result.*(Field::member_ptr);
+                if (static_cast<const void*>(&member) != address) {
+                    return false;
+                }
+                member = detail::draw_component(tc, generator, printer);
+                return true;
+            };
+        }
+
+        std::shared_ptr<const detail::FieldOverrides<T>> overrides_;
     };
 
     /**
@@ -288,7 +378,14 @@ namespace hegel::generators {
      * @return A DerivedGenerator<T> (usable anywhere a Generator<T> is)
      */
     template <typename T> DerivedGenerator<T> default_generator() {
-        return DerivedGenerator<T>(detail::DefaultGenerator<T>::generator());
+        if constexpr (detail::is_struct_default<T>::value) {
+            return DerivedGenerator<T>(
+                detail::DefaultGenerator<T>::generator(),
+                std::make_shared<const detail::FieldOverrides<T>>());
+        } else {
+            return DerivedGenerator<T>(
+                detail::DefaultGenerator<T>::generator());
+        }
     }
 
     /// @}

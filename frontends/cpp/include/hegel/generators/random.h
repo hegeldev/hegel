@@ -29,6 +29,12 @@ namespace hegel::generators {
      * Satisfies the C++ UniformRandomBitGenerator named requirement, so it
      * can be used with any `<random>` distribution.
      *
+     * A drawn HegelRandom prints the values it gives the test, as
+     * `HegelRandom{.consumed = {...}}`: randoms() makes a child region of
+     * the printer (Printer::deferred()) where it is drawn, and the engine
+     * writes each value there when it is used. In true-random mode it
+     * prints its seed, `HegelRandom{.seed = N}`.
+     *
      * @code{.cpp}
      *  auto rng = tc.draw("rng", gs::randoms());
      *  std::uniform_real_distribution<double> dist(0.0, 10.0);
@@ -49,11 +55,13 @@ namespace hegel::generators {
          * @brief Construct in artificial (Hegel-backed) mode.
          *
          * Each call to `operator()` draws a value from the engine through
-         * the given test case, so the resulting values can be shrunk.
+         * the given test case, so the resulting values can be shrunk, and
+         * prints it to @p consumed.
          *
          * @param tc The active test case (non-owning).
+         * @param consumed Where to print the values.
          */
-        explicit HegelRandom(const TestCase& tc);
+        HegelRandom(const TestCase& tc, Printer consumed);
 
         /**
          * @brief Construct in true-random mode using a seeded local PRNG.
@@ -75,14 +83,11 @@ namespace hegel::generators {
 
         /// @brief Generate a random uint32_t value
         result_type operator()();
-
-        void print_to(internal::Printer& printer) const;
         /// @endcond
 
       private:
         struct Record {
-            std::optional<uint64_t> seed;
-            std::unique_ptr<internal::DeferredPrinter> consumed;
+            Printer consumed = Printer::noop();
             std::size_t count = 0;
         };
 

@@ -165,6 +165,13 @@ namespace hegel {
             return tc.data()->explicit_state != nullptr;
         }
 
+        void check_not_explicit(const TestCase& tc, const char* what) {
+            if (is_explicit(tc)) {
+                throw UsageError(std::string(what) +
+                                 " is not supported in an explicit test case");
+            }
+        }
+
         const std::any& take_explicit_value(const TestCase& tc,
                                             std::string_view name,
                                             bool repeatable,
@@ -204,13 +211,13 @@ namespace hegel {
             return value.value;
         }
 
-        Printer test_case_printer(const TestCase& tc) {
+        hegel::Printer test_case_printer(const TestCase& tc) {
             impl::test_case::TestCaseData* data = tc.data();
             if (data->printer == nullptr) {
                 data->printer =
                     impl::test_case_printer(impl::thread_context(), data->tc);
             }
-            return Printer(data->printer);
+            return hegel::Printer(data->printer, false);
         }
 
         std::string draw_display_name(const TestCase& tc, std::string_view name,

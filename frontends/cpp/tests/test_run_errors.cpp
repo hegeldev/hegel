@@ -6,6 +6,7 @@
 #include <hegel/settings.h>
 
 #include <hegel.h>
+#include <hegel/hegel.h>
 
 #include <optional>
 #include <string>
@@ -55,4 +56,23 @@ TEST(RunErrorKinds, EachKindRaisesItsError) {
     } catch (const hegel::RunError& e) {
         EXPECT_EQ(std::string(e.what()), "bug");
     }
+}
+
+TEST(RunErrorKinds, ARunThatRejectsEveryCaseRaisesARunError) {
+    namespace gs = hegel::generators;
+    hegel::Settings settings;
+    settings.test_cases = 5;
+    settings.verbosity = hegel::Verbosity::Verbose;
+    settings.database = hegel::Database::disabled();
+    testing::internal::CaptureStderr();
+    EXPECT_THROW(hegel::test(
+                     [](hegel::TestCase& tc) {
+                         (void)tc.draw(gs::text({.max_size = 1}));
+                         (void)tc.draw(gs::none());
+                         tc.reject();
+                     },
+                     settings),
+                 hegel::RunError);
+    EXPECT_NE(testing::internal::GetCapturedStderr().find("std::monostate"),
+              std::string::npos);
 }
