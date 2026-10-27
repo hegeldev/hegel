@@ -321,6 +321,180 @@ fn env_override_nondeterminism_strictness_accepts_quiet_warn_and_error() {
 }
 
 #[test]
+fn env_override_report_multiple_failures_replaces_the_setting() {
+    for value in ["true", "1", "yes"] {
+        assert!(
+            with_env(
+                Settings::base(false),
+                "HEGEL_REPORT_MULTIPLE_FAILURES",
+                value
+            )
+            .report_multiple_failures,
+            "{value:?}"
+        );
+    }
+    assert!(
+        !with_env(
+            Settings::base(false).report_multiple_failures(true),
+            "HEGEL_REPORT_MULTIPLE_FAILURES",
+            "no"
+        )
+        .report_multiple_failures
+    );
+    assert!(
+        with_env(
+            Settings::base(false).report_multiple_failures(true),
+            "HEGEL_REPORT_MULTIPLE_FAILURES",
+            ""
+        )
+        .report_multiple_failures
+    );
+    assert_eq!(
+        env_error("HEGEL_REPORT_MULTIPLE_FAILURES", "all"),
+        "HEGEL_REPORT_MULTIPLE_FAILURES must be true or false, got \"all\""
+    );
+}
+
+#[test]
+fn env_override_verbosity_accepts_the_four_levels() {
+    for (value, verbosity) in [
+        ("quiet", Verbosity::Quiet),
+        ("normal", Verbosity::Normal),
+        ("verbose", Verbosity::Verbose),
+        ("debug", Verbosity::Debug),
+    ] {
+        assert_eq!(
+            with_env(
+                Settings::base(false).verbosity(Verbosity::Verbose),
+                "HEGEL_VERBOSITY",
+                value
+            )
+            .verbosity,
+            verbosity,
+            "{value:?}"
+        );
+    }
+    assert_eq!(
+        with_env(
+            Settings::base(false).verbosity(Verbosity::Debug),
+            "HEGEL_VERBOSITY",
+            ""
+        )
+        .verbosity,
+        Verbosity::Debug
+    );
+    assert_eq!(
+        env_error("HEGEL_VERBOSITY", "loud"),
+        "HEGEL_VERBOSITY must be quiet, normal, verbose or debug, got \"loud\""
+    );
+}
+
+#[test]
+fn env_override_backend_accepts_default_and_urandom() {
+    assert_eq!(
+        with_env(Settings::base(false), "HEGEL_BACKEND", "urandom").backend,
+        Backend::Urandom
+    );
+    assert_eq!(
+        with_env(
+            Settings::base(false).backend(Backend::Urandom),
+            "HEGEL_BACKEND",
+            "default"
+        )
+        .backend,
+        Backend::Default
+    );
+    assert_eq!(
+        with_env(
+            Settings::base(false).backend(Backend::Urandom),
+            "HEGEL_BACKEND",
+            ""
+        )
+        .backend,
+        Backend::Urandom
+    );
+    assert_eq!(
+        env_error("HEGEL_BACKEND", "hypothesis"),
+        "HEGEL_BACKEND must be default or urandom, got \"hypothesis\""
+    );
+}
+
+#[test]
+fn env_override_phases_takes_a_comma_separated_list_or_none() {
+    assert_eq!(
+        with_env(Settings::base(false), "HEGEL_PHASES", "explicit,generate").phases,
+        vec![Phase::Explicit, Phase::Generate]
+    );
+    assert_eq!(
+        with_env(Settings::base(false), "HEGEL_PHASES", "shrink, target ,reuse").phases,
+        vec![Phase::Shrink, Phase::Target, Phase::Reuse]
+    );
+    assert_eq!(
+        with_env(Settings::base(false), "HEGEL_PHASES", "none").phases,
+        vec![]
+    );
+    assert_eq!(
+        with_env(Settings::base(false).phases([Phase::Shrink]), "HEGEL_PHASES", "").phases,
+        vec![Phase::Shrink]
+    );
+    assert_eq!(
+        env_error("HEGEL_PHASES", "generate,explain"),
+        "HEGEL_PHASES does not recognise \"explain\". \
+         Known names: explicit, reuse, generate, target, shrink"
+    );
+    assert_eq!(
+        env_error("HEGEL_PHASES", "none,shrink"),
+        "HEGEL_PHASES does not recognise \"none\". \
+         Known names: explicit, reuse, generate, target, shrink"
+    );
+}
+
+#[test]
+fn env_override_suppress_health_check_takes_a_list_all_or_none() {
+    assert_eq!(
+        with_env(
+            Settings::base(false),
+            "HEGEL_SUPPRESS_HEALTH_CHECK",
+            "too_slow,filter_too_much"
+        )
+        .suppress_health_check,
+        vec![HealthCheck::TooSlow, HealthCheck::FilterTooMuch]
+    );
+    assert_eq!(
+        with_env(Settings::base(false), "HEGEL_SUPPRESS_HEALTH_CHECK", "all").suppress_health_check,
+        ALL_HEALTH_CHECKS.to_vec()
+    );
+    assert_eq!(
+        with_env(
+            Settings::base(false).suppress_health_check([HealthCheck::TooSlow]),
+            "HEGEL_SUPPRESS_HEALTH_CHECK",
+            "none"
+        )
+        .suppress_health_check,
+        vec![]
+    );
+    assert_eq!(
+        with_env(
+            Settings::base(false).suppress_health_check([HealthCheck::TooSlow]),
+            "HEGEL_SUPPRESS_HEALTH_CHECK",
+            ""
+        )
+        .suppress_health_check,
+        vec![HealthCheck::TooSlow]
+    );
+    assert_eq!(
+        env_error("HEGEL_SUPPRESS_HEALTH_CHECK", "too_slow,slow"),
+        "HEGEL_SUPPRESS_HEALTH_CHECK does not recognise \"slow\". \
+         Known names: all, filter_too_much, too_slow, \
+         test_cases_too_large, large_initial_test_case"
+    );
+    assert_eq!(
+        env_error("HEGEL_SUPPRESS_HEALTH_CHECK", "all,too_slow"),
+        "\"all\" must be the only element of HEGEL_SUPPRESS_HEALTH_CHECK"
+    );
+}
+
+#[test]
 fn env_overrides_report_the_first_malformed_variable() {
     let env = |key: &str| match key {
         "HEGEL_TEST_CASES" => Some("17".to_string()),

@@ -364,26 +364,13 @@ fn assign(
 
 /// The `verbosity` vocabulary: `quiet`, `normal`, `verbose` or `debug`.
 fn parse_verbosity(s: &str) -> Result<Verbosity, String> {
-    match s {
-        "quiet" => Ok(Verbosity::Quiet),
-        "normal" => Ok(Verbosity::Normal),
-        "verbose" => Ok(Verbosity::Verbose),
-        "debug" => Ok(Verbosity::Debug),
-        other => Err(format!(
-            "`verbosity` expects one of quiet|normal|verbose|debug, got {other:?}"
-        )),
-    }
+    Verbosity::parse(s)
+        .ok_or_else(|| format!("`verbosity` expects one of quiet|normal|verbose|debug, got {s:?}"))
 }
 
 /// The `backend` vocabulary: `default` or `urandom`.
 fn parse_backend(s: &str) -> Result<Backend, String> {
-    match s {
-        "default" => Ok(Backend::Default),
-        "urandom" => Ok(Backend::Urandom),
-        other => Err(format!(
-            "`backend` expects one of default|urandom, got {other:?}"
-        )),
-    }
+    Backend::parse(s).ok_or_else(|| format!("`backend` expects one of default|urandom, got {s:?}"))
 }
 
 /// The `nondeterminism_strictness` vocabulary: `quiet`, `warn` or `error`.
@@ -408,49 +395,12 @@ fn parse_database(s: &str) -> Result<Database, String> {
 /// command-line flags: the four snake_case check names, or `"all"` as the
 /// only element.
 fn parse_health_checks(items: &[&str]) -> Result<Vec<HealthCheck>, String> {
-    if items.contains(&"all") {
-        if items.len() != 1 {
-            return Err("\"all\" must be the only element of `suppress_health_check`".to_string());
-        }
-        return Ok(alloc::vec![
-            HealthCheck::FilterTooMuch,
-            HealthCheck::TooSlow,
-            HealthCheck::TestCasesTooLarge,
-            HealthCheck::LargeInitialTestCase,
-        ]);
-    }
-    items
-        .iter()
-        .map(|item| match *item {
-            "filter_too_much" => Ok(HealthCheck::FilterTooMuch),
-            "too_slow" => Ok(HealthCheck::TooSlow),
-            "test_cases_too_large" => Ok(HealthCheck::TestCasesTooLarge),
-            "large_initial_test_case" => Ok(HealthCheck::LargeInitialTestCase),
-            other => Err(format!(
-                "`suppress_health_check` does not recognise {other:?}. \
-                 Known names: all, filter_too_much, too_slow, \
-                 test_cases_too_large, large_initial_test_case"
-            )),
-        })
-        .collect()
+    crate::settings::parse_health_checks(items, "`suppress_health_check`")
 }
 
 /// The phase name vocabulary.
 fn parse_phases(items: &[&str]) -> Result<Vec<Phase>, String> {
-    items
-        .iter()
-        .map(|item| match *item {
-            "explicit" => Ok(Phase::Explicit),
-            "reuse" => Ok(Phase::Reuse),
-            "generate" => Ok(Phase::Generate),
-            "target" => Ok(Phase::Target),
-            "shrink" => Ok(Phase::Shrink),
-            other => Err(format!(
-                "`phases` does not recognise {other:?}. \
-                 Known names: explicit, reuse, generate, target, shrink"
-            )),
-        })
-        .collect()
+    crate::settings::parse_phases(items, "`phases`")
 }
 
 /// The keys [`parse_setting`] accepts: every `hegel.toml` profile setting,

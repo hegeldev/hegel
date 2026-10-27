@@ -111,6 +111,97 @@ fn test_hegel_malformed_env_var_fails_settings_creation() {
         .run();
 }
 
+/// Fixture for the `test_hegel_*_env_sets_the_starting_value` tests below,
+/// run via self-exec: prints the settings the `default` profile resolves to
+/// under whatever variables the parent set, so the parent can read each
+/// resolved field back.
+#[test]
+#[ignore = "fixture: run via exec::self_test"]
+fn env_resolved_settings_fixture() {
+    println!("SETTINGS:{:?}", hegel::Settings::new());
+}
+
+fn resolved_settings_with(vars: &[(&str, &str)]) -> String {
+    let mut cmd = self_test("env_resolved_settings_fixture");
+    for (key, value) in vars {
+        cmd = cmd.env(key, value);
+    }
+    let output = cmd.run();
+    let line = output
+        .stdout
+        .lines()
+        .find(|line| line.starts_with("SETTINGS:"))
+        .unwrap_or_else(|| panic!("no settings line in {}", output.stdout));
+    line.to_string()
+}
+
+#[test]
+fn test_hegel_verbosity_env_sets_the_starting_value() {
+    let settings = resolved_settings_with(&[("HEGEL_VERBOSITY", "quiet")]);
+    assert!(settings.contains("verbosity: Quiet"), "{settings}");
+}
+
+#[test]
+fn test_hegel_backend_env_sets_the_starting_value() {
+    let settings = resolved_settings_with(&[("HEGEL_BACKEND", "urandom")]);
+    assert!(settings.contains("backend: Urandom"), "{settings}");
+}
+
+#[test]
+fn test_hegel_report_multiple_failures_env_sets_the_starting_value() {
+    let settings = resolved_settings_with(&[("HEGEL_REPORT_MULTIPLE_FAILURES", "yes")]);
+    assert!(
+        settings.contains("report_multiple_failures: true"),
+        "{settings}"
+    );
+}
+
+#[test]
+fn test_hegel_phases_env_sets_the_starting_value() {
+    let settings = resolved_settings_with(&[("HEGEL_PHASES", "explicit,generate")]);
+    assert!(
+        settings.contains("phases: [Explicit, Generate]"),
+        "{settings}"
+    );
+    let settings = resolved_settings_with(&[("HEGEL_PHASES", "none")]);
+    assert!(settings.contains("phases: []"), "{settings}");
+}
+
+#[test]
+fn test_hegel_suppress_health_check_env_sets_the_starting_value() {
+    let settings = resolved_settings_with(&[(
+        "HEGEL_SUPPRESS_HEALTH_CHECK",
+        "too_slow,filter_too_much",
+    )]);
+    assert!(
+        settings.contains("suppress_health_check: [TooSlow, FilterTooMuch]"),
+        "{settings}"
+    );
+    let settings = resolved_settings_with(&[("HEGEL_SUPPRESS_HEALTH_CHECK", "all")]);
+    assert!(
+        settings.contains(
+            "suppress_health_check: [FilterTooMuch, TooSlow, TestCasesTooLarge, LargeInitialTestCase]"
+        ),
+        "{settings}"
+    );
+}
+
+#[test]
+fn test_hegel_malformed_list_env_var_fails_settings_creation() {
+    self_test("env_resolved_settings_fixture")
+        .env("HEGEL_PHASES", "generate,explain")
+        .expect_failure(r#"HEGEL_PHASES does not recognise "explain""#)
+        .run();
+    self_test("env_resolved_settings_fixture")
+        .env("HEGEL_SUPPRESS_HEALTH_CHECK", "all,too_slow")
+        .expect_failure(r#""all" must be the only element of HEGEL_SUPPRESS_HEALTH_CHECK"#)
+        .run();
+    self_test("env_resolved_settings_fixture")
+        .env("HEGEL_VERBOSITY", "loud")
+        .expect_failure(r#"HEGEL_VERBOSITY must be quiet, normal, verbose or debug, got "loud""#)
+        .run();
+}
+
 fn run_failing_test_with_default_database(key: &str) {
     let result = std::panic::catch_unwind(|| {
         hegel::Hegel::new(|tc: hegel::TestCase| {

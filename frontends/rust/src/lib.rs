@@ -6,7 +6,7 @@
 //!
 //! ## Install Hegel
 //!
-//! Add `hegel-rust` to your `Cargo.toml` as a dev dependency using cargo:
+//! Add `hegeltest` to your `Cargo.toml` as a dev dependency using cargo:
 //!
 //! ```bash
 //! cargo add --dev hegeltest
@@ -340,6 +340,14 @@ pub use generators::Generator;
 pub use generators::PrintableGenerator;
 pub use pretty::{Document, PrettyPrinter};
 pub use test_case::TestCase;
+
+/// The version of the libhegel engine this crate drives, as
+/// `"major.minor.patch"` (`hegel_version`). The crate pins its engine
+/// exactly, so this is the version of the `hegeltest-c` crate it was built
+/// with.
+pub fn engine_version() -> String {
+    crate::ffi::engine_version()
+}
 
 /// The imports nearly every hegel test wants in scope.
 ///

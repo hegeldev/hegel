@@ -89,6 +89,17 @@ pub(crate) fn unicode_version() -> String {
     format!("{major}.{minor}.{patch}")
 }
 
+/// The engine's version string, from `hegel_version`.
+pub(crate) fn engine_version() -> String {
+    with_context(|ctx| {
+        let mut version = hegel_c::hegel_string_t::default();
+        // SAFETY: ctx is this thread's live context and `version` is a valid
+        // out-parameter; the engine's pointer is static.
+        require_ok(unsafe { hegel_c::hegel_version(ctx, &mut version) });
+        string_opt(version).unwrap_or_default()
+    })
+}
+
 thread_local! {
     /// This thread's libhegel error context.
     ///

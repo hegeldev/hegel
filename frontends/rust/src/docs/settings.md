@@ -59,7 +59,12 @@ layers below it set and leaves the rest alone:
    | `HEGEL_PRINT_BLOB` | Sets `print_blob`, with the same vocabulary. |
    | `HEGEL_STOP_ON_FIRST_FAILURE` | Sets `stop_on_first_failure`, with the same vocabulary. |
    | `HEGEL_UNBOUNDED_CHOICES` | Sets `unbounded_choices`, with the same vocabulary. |
+   | `HEGEL_REPORT_MULTIPLE_FAILURES` | Sets `report_multiple_failures`, with the same vocabulary. |
    | `HEGEL_NONDETERMINISM_STRICTNESS` | Sets `nondeterminism_strictness`: `quiet`, `warn` or `error`. |
+   | `HEGEL_VERBOSITY` | Sets `verbosity`: `quiet`, `normal`, `verbose` or `debug`. |
+   | `HEGEL_BACKEND` | Sets `backend`: `default` or `urandom`. |
+   | `HEGEL_PHASES` | Sets `phases`: comma-separated phase names (`HEGEL_PHASES=explicit,generate`), or `none` for no phases. |
+   | `HEGEL_SUPPRESS_HEALTH_CHECK` | Sets `suppress_health_check`: comma-separated check names, `all`, or `none` for no checks. |
 
    An empty variable is ignored; any other malformed value is an error,
    raised when the `Settings` value is created. The variables do not
@@ -345,6 +350,11 @@ run first.
 | `HEGEL_PRINT_BLOB` | profile resolution | Sets `print_blob` over the resolved profile. |
 | `HEGEL_STOP_ON_FIRST_FAILURE` | profile resolution | Sets `stop_on_first_failure` over the resolved profile. |
 | `HEGEL_UNBOUNDED_CHOICES` | profile resolution | Sets `unbounded_choices` over the resolved profile. |
+| `HEGEL_REPORT_MULTIPLE_FAILURES` | profile resolution | Sets `report_multiple_failures` over the resolved profile. |
 | `HEGEL_NONDETERMINISM_STRICTNESS` | profile resolution | Sets `nondeterminism_strictness` over the resolved profile. |
+| `HEGEL_VERBOSITY` | profile resolution | Sets `verbosity` over the resolved profile. |
+| `HEGEL_BACKEND` | profile resolution | Sets `backend` over the resolved profile. |
+| `HEGEL_PHASES` | profile resolution | Sets `phases` over the resolved profile. |
+| `HEGEL_SUPPRESS_HEALTH_CHECK` | profile resolution | Sets `suppress_health_check` over the resolved profile. |
 | `ANTITHESIS_OUTPUT_DIR` | environment detection | Selects the `workload` profile, and each test's verdict is reported to the `sdk.jsonl` inside it. Must name an existing directory. |
 | `CI`, `GITHUB_ACTIONS`, … | environment detection | Selects the `ci` profile. |
