@@ -102,8 +102,6 @@ module Make (B : S) : sig
         the next one starts. *)
     val run
       :  ?step_count:int
-      -> ?print_state:('state -> Printer.doc)
-      -> ?sexp_of_state:('state -> Sexplib0.Sexp.t)
       -> Internal.test_case
       -> (module State_machine with type state = 'state)
       -> init:'state
@@ -116,8 +114,6 @@ module Make (B : S) : sig
       :  init:'state
       -> rules:'state Rule.t list
       -> invariants:'state Invariant.t list
-      -> ?print_state:('state -> Printer.doc)
-      -> ?sexp_of_state:('state -> Sexplib0.Sexp.t)
       -> ?step_count:int
       -> Internal.test_case
       -> unit B.t

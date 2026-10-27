@@ -394,7 +394,7 @@ analogue of hegel-rust's `#[hegel::state_machine] impl`. At expansion time it
 collects the bindings marked `[@@rule]` or `[@@invariant]` into appended
 `rules` and `invariants` lists (`Rule.create ~name:"<binding>" ~weight
 ~step:<binding> ()` and the same for `Invariant.create`) plus a
-`run ?step_count ?sexp_of_state tc ~init`. A marker's options are a *record*
+`run ?step_count tc ~init`. A marker's options are a *record*
 payload and nothing else — `[@@rule { weight = 2.5 }]`,
 `[@@invariant { always_check = true }]`, bare `[@@rule]` for the defaults.
 `rule_attribute` spells out one `Ast_pattern` alternative per field
@@ -406,7 +406,7 @@ as the text of a float literal (an int payload gains a `.`) and defaults to
 also takes `group` (which the sequential form rejects). Its rule bodies take
 the worker's context between the test case and the state (`tc ctx state`).
 If the module declares `type ctx`, the generated `run ~concurrency
-?min_concurrency ?max_concurrency ?step_count ?sexp_of_state tc ~init` makes
+?min_concurrency ?max_concurrency ?step_count tc ~init` makes
 the capability required, since no default can supply that context; otherwise
 the PPX appends `type ctx = unit` and the `run` defaults `?concurrency` to
 `Hegel.Concurrency.threads` (`declares_type`). Both call
@@ -414,9 +414,7 @@ the PPX appends `type ctx = unit` and the `run` defaults `?concurrency` to
 is no registry and no runtime discovery. The generated `run` calls the
 doc-hidden `Stateful.run_internal`, which takes the lists directly, because
 the expanded module need not declare `type state` and the public
-`Stateful.run` takes a `State_machine` module. `sexp_of_state` defaults to
-the module's own when it binds one or derives it on `type state`
-(`has_sexp_of_state`). The markers are stripped from the emitted items,
+`Stateful.run` takes a `State_machine` module. The markers are stripped from the emitted items,
 every other item is kept, and a module with no `[@@rule]` is a compile error.
 `[@async]` before the name (`let%hegel_test [@async] t tc`,
 `module%hegel_state_machine [@async] M`; the trailing `[@@async]` is the same
@@ -701,7 +699,7 @@ ignored. Deferred regions are owned by the test case family's `printers`
 owner and freed with it. `Printer.Out.with_document` lays a sub-document out
 to a string (generated functions use it for their result text, and
 `Printer.to_string` for a `doc`). `Internal.print_line tc print` writes one
-line through a `Printer.Out.t` (stateful `state = …`). After `mark_complete`,
+line through a `Printer.Out.t`. After `mark_complete`,
 `run_case` reads the document back (`capture_document`:
 `printer_resolve` — required when clone regions exist, an argument error
 otherwise, hence the catch — then `printer_value`); the runner keeps it with
@@ -715,11 +713,16 @@ Indentation is engine-side too (libhegel 0.37.10 block handles):
 stream whose print region is a block nested in `tc`'s at the current position,
 every line `indent` columns further in, ending with the block; the block is
 freed when `f` returns. `Stateful.run` runs each rule's `step` and each invariant body with
-`with_block tc ~indent:2` so their draws nest under the `Step N: name` note.
+`with_block tc ~indent:2` so their draws nest under the `Step N: name {` note,
+which a `}` note closes.
 The rule loop is `Stateful.run_rules`, shared by both runners: it pulls rule
 indices from the engine until the worker's round ends, notes the heading
-(`Step N:` sequentially, `Rule:` concurrently), runs the body on the block,
-and on `Assume_rejected` reports the rejection to the engine. It only creates the
+(`Step N: name {` sequentially, `Rule: name {` concurrently), runs the body on
+the block, notes `}`, and on `Assume_rejected` reports the rejection to the
+engine (noting `Rule stopped early due to violated assumption.` indented
+under the heading); any other exception is preceded by a `Rule name failed:`
+note, and an invariant's by `Invariant name failed:`, unless it is
+`Assume_rejected` or `Stop_test`. It only creates the
 block when `should_print tc` holds; a non-printing case runs the body on `tc` itself, since
 a block per step costs a native handle and a context, which
 measured as 50% more wall time and 20x the major collections on a
@@ -920,7 +923,7 @@ outcome, while nested work through `ctx.concurrent` fails inside its rule's
 own outcome (findings from the standalone probe, 2026-09-22).
 The sequential `run` (`Rule`, no groups, concurrency fixed at 1) runs each
 round inline on `tc` inside a `stateful_rule` span (`stop_span
-~discard:rejected`), deterministic and shrinkable, with `Step N: name`
+~discard:rejected`), deterministic and shrinkable, with `Step N: name {`
 headings and no worker stamps; its rule bodies are ordinary functions, so on
 OxCaml they see the state uncontended and plain refs work. The concurrent
 `run_concurrent` (`Concurrent_rule` with `?group`, `?min_concurrency` default
@@ -929,7 +932,7 @@ count when it creates the machine) never runs a rule inline, even at one
 worker: each round notes a `Round N: group` header, clones the test case once
 per worker, tags the clone with `set_worker_index`, and makes one call to
 `concurrency.spawn_join_n ~n ~f`, where `f i` runs `run_rules` for worker
-`i` on clone `i` (heading `Rule: name`), returning an `outcome` (`None`, or
+`i` on clone `i` (heading `Rule: name {`), returning an `outcome` (`None`, or
 the exception with its backtrace; bodies never raise into the capability).
 `reraise_worker_failure` picks the highest-precedence failure (usage/internal
 error, then overrun, then invalidation, then a test failure; lowest worker
