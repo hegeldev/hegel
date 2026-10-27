@@ -15,6 +15,21 @@ namespace hegel::generators {
      */
     Generator<bool> booleans();
 
+    /**
+     * @brief Generate boolean values that are `true` with probability @p p.
+     *
+     * Shrinks toward `false`. `weighted_booleans(0.5)` is `booleans()`.
+     *
+     * @code{.cpp}
+     * auto mostly_true = weighted_booleans(0.9);
+     * @endcode
+     *
+     * @param p The probability of `true`, between 0 and 1 inclusive.
+     * @return Generator producing `true` or `false`.
+     * @throws std::invalid_argument if @p p is outside `[0, 1]` or NaN.
+     */
+    Generator<bool> weighted_booleans(double p);
+
     /// @cond INTERNAL
     // Concrete IGenerator<T> subclass produced by just(). A constant draws
     // zero entropy, so it returns the captured value without touching the

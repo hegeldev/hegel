@@ -646,6 +646,38 @@ namespace hegel::generators {
     }
 
     /// @cond INTERNAL
+    namespace detail {
+
+        inline std::vector<size_t> draw_index_sample(const TestCase& tc,
+                                                     size_t n,
+                                                     uint64_t min_size,
+                                                     uint64_t max_size) {
+            namespace hi = hegel::internal;
+            std::vector<size_t> remaining(n);
+            for (size_t i = 0; i < n; ++i) {
+                remaining[i] = i;
+            }
+            hi::CollectionHandle collection(tc, min_size, max_size);
+            std::vector<size_t> chosen;
+            while (!remaining.empty() && collection.more(tc)) {
+                auto index = static_cast<size_t>(hi::draw_integer(
+                    tc, 0, static_cast<int64_t>(remaining.size() - 1)));
+                chosen.push_back(remaining[index]);
+                remaining.erase(remaining.begin() +
+                                static_cast<std::ptrdiff_t>(index));
+            }
+            return chosen;
+        }
+
+        inline void check_sizes(uint64_t min_size,
+                                const std::optional<size_t>& max_size) {
+            if (max_size && min_size > *max_size) {
+                throw std::invalid_argument("Cannot have max_size < min_size");
+            }
+        }
+
+    } // namespace detail
+
     // Concrete IGenerator for permutations(). Draws, for each position, the
     // index of one of the values not yet placed, inside an engine-managed
     // collection of exactly that many elements.
@@ -659,19 +691,11 @@ namespace hegel::generators {
         std::vector<T> do_draw(const TestCase& tc) const override {
             namespace hi = hegel::internal;
             hi::start_span(tc, label());
-            std::vector<size_t> remaining(values_.size());
-            for (size_t i = 0; i < remaining.size(); ++i) {
-                remaining[i] = i;
-            }
-            hi::CollectionHandle collection(tc, values_.size(), values_.size());
             std::vector<T> result;
             result.reserve(values_.size());
-            while (!remaining.empty() && collection.more(tc)) {
-                auto index = static_cast<size_t>(hi::draw_integer(
-                    tc, 0, static_cast<int64_t>(remaining.size() - 1)));
-                result.push_back(values_[remaining[index]]);
-                remaining.erase(remaining.begin() +
-                                static_cast<std::ptrdiff_t>(index));
+            for (size_t index : detail::draw_index_sample(
+                     tc, values_.size(), values_.size(), values_.size())) {
+                result.push_back(values_[index]);
             }
             hi::stop_span(tc);
             return result;
@@ -719,6 +743,228 @@ namespace hegel::generators {
      */
     template <typename T> auto permutations(std::initializer_list<T> values) {
         return permutations(std::vector<T>(values));
+    }
+
+    /**
+     * @brief Parameters for subsequences().
+     */
+    struct SubsequencesParams {
+        size_t min_size = 0;            ///< Minimum subsequence length
+        std::optional<size_t> max_size; ///< Maximum subsequence length.
+                                        ///< Default: the number of values
+    };
+
+    /**
+     * @brief Parameters for samples().
+     */
+    struct SamplesParams {
+        size_t min_size = 0;            ///< Minimum sample length
+        std::optional<size_t> max_size; ///< Maximum sample length. Default:
+                                        ///< no limit (engine-chosen sizes),
+                                        ///< or the number of values without
+                                        ///< replacement
+        bool replacement = true; ///< Whether a value may be chosen more than
+                                 ///< once
+    };
+
+    /// @cond INTERNAL
+    template <typename T>
+    class SubsequencesGenerator
+        : public detail::value_base_t<std::vector<T>, is_representable_v<T>> {
+      public:
+        SubsequencesGenerator(std::vector<T> values, SubsequencesParams params)
+            : values_(std::move(values)), params_(params) {
+            detail::check_sizes(params_.min_size, params_.max_size);
+            if (params_.min_size > values_.size()) {
+                throw std::invalid_argument(
+                    "Cannot generate a subsequence: min_size " +
+                    std::to_string(params_.min_size) + " is larger than the " +
+                    std::to_string(values_.size()) +
+                    " elements in the sequence");
+            }
+        }
+
+        std::vector<T> do_draw(const TestCase& tc) const override {
+            namespace hi = hegel::internal;
+            hi::start_span(tc, label());
+            size_t max_size = params_.max_size
+                                  ? std::min(*params_.max_size, values_.size())
+                                  : values_.size();
+            std::vector<size_t> indices = detail::draw_index_sample(
+                tc, values_.size(), params_.min_size, max_size);
+            std::sort(indices.begin(), indices.end());
+            std::vector<T> result;
+            result.reserve(indices.size());
+            for (size_t index : indices) {
+                result.push_back(values_[index]);
+            }
+            hi::stop_span(tc);
+            return result;
+        }
+
+        uint64_t label() const override {
+            return hegel::internal::label(
+                hegel::internal::LabelName::Subsequence);
+        }
+
+      private:
+        std::vector<T> values_;
+        SubsequencesParams params_;
+    };
+
+    template <typename T>
+    class SamplesGenerator
+        : public detail::value_base_t<std::vector<T>, is_representable_v<T>> {
+      public:
+        SamplesGenerator(std::vector<T> values, SamplesParams params)
+            : values_(std::move(values)), params_(params) {
+            detail::check_sizes(params_.min_size, params_.max_size);
+            if (params_.replacement) {
+                if (values_.empty() && params_.min_size > 0) {
+                    throw std::invalid_argument(
+                        "Cannot generate a non-empty sample from an empty "
+                        "sequence");
+                }
+            } else if (params_.min_size > values_.size()) {
+                throw std::invalid_argument(
+                    "Cannot generate a sample without replacement: min_size " +
+                    std::to_string(params_.min_size) + " is larger than the " +
+                    std::to_string(values_.size()) +
+                    " elements in the sequence");
+            }
+        }
+
+        std::vector<T> do_draw(const TestCase& tc) const override {
+            namespace hi = hegel::internal;
+            hi::start_span(tc, label());
+            std::vector<T> result;
+            if (params_.replacement) {
+                uint64_t max_size =
+                    values_.empty()
+                        ? 0
+                        : detail::collection_max_size(params_.max_size);
+                hi::CollectionHandle collection(tc, params_.min_size, max_size);
+                while (collection.more(tc)) {
+                    auto index = static_cast<size_t>(hi::draw_integer(
+                        tc, 0, static_cast<int64_t>(values_.size() - 1)));
+                    result.push_back(values_[index]);
+                }
+            } else {
+                size_t max_size = params_.max_size ? std::min(*params_.max_size,
+                                                              values_.size())
+                                                   : values_.size();
+                for (size_t index : detail::draw_index_sample(
+                         tc, values_.size(), params_.min_size, max_size)) {
+                    result.push_back(values_[index]);
+                }
+            }
+            hi::stop_span(tc);
+            return result;
+        }
+
+        uint64_t label() const override {
+            return hegel::internal::label(hegel::internal::LabelName::Sample);
+        }
+
+      private:
+        std::vector<T> values_;
+        SamplesParams params_;
+    };
+    /// @endcond
+
+    /**
+     * @brief Generate subsequences of a fixed list of values.
+     *
+     * Each generated vector holds some of @p values, in their original
+     * order. It shrinks toward fewer values, taken from earlier in the list.
+     *
+     * @code{.cpp}
+     * auto some = subsequences(std::vector<int>{1, 2, 3, 4, 5},
+     *                          {.min_size = 1});
+     * // e.g. {2, 5}
+     * @endcode
+     *
+     * The result prints the vector by its C++ representation, so it is
+     * printable when hegel::is_representable_v is true for T.
+     *
+     * @tparam T Element type
+     * @param values The values to choose from
+     * @param params Length constraints
+     * @return Generator producing subsequences of @p values
+     * @throws std::invalid_argument if the size bounds are inconsistent or
+     *   `min_size` exceeds the number of values
+     */
+    template <typename T>
+    auto subsequences(std::vector<T> values, SubsequencesParams params = {}) {
+        return detail::handle_t<is_representable_v<T>, std::vector<T>>(
+            std::make_shared<SubsequencesGenerator<T>>(std::move(values),
+                                                       params));
+    }
+
+    /**
+     * @brief Generate subsequences of a fixed list of values (initializer
+     * list).
+     *
+     * @tparam T Element type
+     * @param values The values to choose from
+     * @param params Length constraints
+     * @return Generator producing subsequences of @p values
+     */
+    template <typename T>
+    auto subsequences(std::initializer_list<T> values,
+                      SubsequencesParams params = {}) {
+        return subsequences(std::vector<T>(values), params);
+    }
+
+    /**
+     * @brief Generate samples of a fixed list of values.
+     *
+     * With replacement (the default) each element of the generated vector is
+     * chosen independently from the whole of @p values, so a value can
+     * appear any number of times. With `replacement = false` each of
+     * @p values is used at most once, so the result is a reordered subset of
+     * them. Either way it shrinks toward fewer elements, taken from earlier
+     * in the list.
+     *
+     * @code{.cpp}
+     * auto rolls = samples(std::vector<int>{1, 2, 3, 4, 5, 6},
+     *                      {.min_size = 2, .max_size = 2});
+     * // e.g. {4, 4}
+     * auto picks = samples(std::vector<int>{1, 2, 3, 4, 5, 6},
+     *                      {.max_size = 3, .replacement = false});
+     * // e.g. {5, 1, 3}
+     * @endcode
+     *
+     * The result prints the vector by its C++ representation, so it is
+     * printable when hegel::is_representable_v is true for T.
+     *
+     * @tparam T Element type
+     * @param values The values to choose from
+     * @param params Length constraints and whether to sample with
+     *   replacement
+     * @return Generator producing samples of @p values
+     * @throws std::invalid_argument if the size bounds are inconsistent,
+     *   `min_size` is positive and @p values is empty, or, without
+     *   replacement, `min_size` exceeds the number of values
+     */
+    template <typename T>
+    auto samples(std::vector<T> values, SamplesParams params = {}) {
+        return detail::handle_t<is_representable_v<T>, std::vector<T>>(
+            std::make_shared<SamplesGenerator<T>>(std::move(values), params));
+    }
+
+    /**
+     * @brief Generate samples of a fixed list of values (initializer list).
+     *
+     * @tparam T Element type
+     * @param values The values to choose from
+     * @param params Length constraints and whether to sample with
+     *   replacement
+     * @return Generator producing samples of @p values
+     */
+    template <typename T>
+    auto samples(std::initializer_list<T> values, SamplesParams params = {}) {
+        return samples(std::vector<T>(values), params);
     }
 
     /// @}

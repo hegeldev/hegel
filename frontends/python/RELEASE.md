@@ -64,3 +64,13 @@ class Coords(gs.Generator[tuple[int, int]]):
 `tc.draw(gs.lists(Coords(), min_size=1))` reports `xs = [Coord(0, 0)]`. Every built-in generator is printable and prints as before, except that an empty set now prints as `set()` and an empty frozenset as `frozenset()`, where they printed as `{}` and `frozenset({})`, and the containers `from_type()` builds by converting a drawn value now print their elements with the elements' own generators, as a call: `tuple[Foo, ...]` prints as `tuple([...])`, `deque[Foo]` as `deque([...])`, `OrderedDict[str, Foo]` as `OrderedDict({...})`, and a `TypedDict` named `Movie` as `Movie({...})`, where they printed the `repr` of the finished value, losing a `print_with` registered for `Foo`. When a draw raises, the draws made inside it are now listed as their generators print them, so a `print_with` inner draw shows its custom text there.
 
 `PrettyPrinter` gains `repr(value)` (the preferred spelling of `pretty_print(value, printer)`), a `group(open, close)` context manager, `seq`, `separator`, and `deferred()`, which opens a region anchored at the current position that can be printed into later, from any thread, so a generator can describe a value that is only known after it is drawn. `PrettyPrinter.comment(text)` now renders `  # text`, where it used to render the text with no comment marker. `PrettyPrinter.value()` is no longer public: render a `Document` with `Document.finish()`. `Document` and `Speculation` are now exported from `hegel`.
+
+`text(alphabet=...)` now accepts only what the engine's string generator accepts: a string or sequence of characters, or a `characters()` generator. Passing any other generator, such as `gs.sampled_from("abc") | gs.just("d")`, used to build the string in Python one character at a time; it now raises `InvalidArgument`. To build text from an arbitrary generator of characters, draw a list of them and join it, which draws and shrinks the same way:
+
+```python
+# before
+gs.text(alphabet=gs.sampled_from("abc") | gs.just("d"))
+
+# after
+gs.lists(gs.sampled_from("abc") | gs.just("d")).map("".join)
+```

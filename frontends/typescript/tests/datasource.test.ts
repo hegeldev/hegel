@@ -487,7 +487,10 @@ describe("oneOf parse paths", () => {
     expect(basic).not.toBeNull();
     expect(basic!.schema).toEqual({
       type: "one_of",
-      generators: [{ type: "integer", min_value: 0n, max_value: 10n }, { type: "boolean" }],
+      generators: [
+        { type: "integer", min_value: 0n, max_value: 10n },
+        { type: "boolean", p: 0.5 },
+      ],
     });
     // Guard against accidental re-introduction of the legacy
     // [constant(i), child] tuple wrapping.

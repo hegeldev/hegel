@@ -79,6 +79,9 @@ namespace hegel::generators {
         // DefaultGenerator trait — primary template (struct fallback)
         // =================================================================
 
+        template <typename Needle, typename T, typename Seen = std::tuple<>>
+        struct mentions;
+
         template <typename T>
         using FieldOverride = std::function<bool(const TestCase&, T& result,
                                                  const void* field, Printer&)>;
@@ -116,9 +119,24 @@ namespace hegel::generators {
                         printer.text("." + std::string(field.name()) + " = ");
                     }
                     if (!draw_override(tc, result, field.value(), printer)) {
-                        *field.value() =
-                            default_generator<FieldType>().do_draw_and_print(
-                                tc, printer);
+                        if constexpr (mentions<T, FieldType>::value) {
+                            throw internal::UsageError(
+                                "default_generator<" +
+                                internal::cpp_type_name<T>() +
+                                ">(): the field " + std::string(field.name()) +
+                                " refers back to " +
+                                internal::cpp_type_name<T>() +
+                                ", so deriving its generator would recurse "
+                                "without bound. Build the generator with "
+                                "recursive() or deferred<T>(), or give the "
+                                "field a generator with .override(field<&" +
+                                internal::cpp_type_name<T>() +
+                                "::" + std::string(field.name()) + ">(...))");
+                        } else {
+                            *field.value() =
+                                default_generator<FieldType>()
+                                    .do_draw_and_print(tc, printer);
+                        }
                     }
                 });
                 printer.end_block("}");
@@ -261,6 +279,66 @@ namespace hegel::generators {
         struct is_struct_default<
             T, std::void_t<decltype(DefaultGenerator<T>::is_struct)>>
             : std::true_type {};
+
+        template <typename T, typename Seen> struct seen_contains;
+        template <typename T, typename... Ss>
+        struct seen_contains<T, std::tuple<Ss...>>
+            : std::bool_constant<(std::is_same_v<T, Ss> || ...)> {};
+
+        template <typename T, typename Seen> struct seen_with;
+        template <typename T, typename... Ss>
+        struct seen_with<T, std::tuple<Ss...>> {
+            using type = std::tuple<T, Ss...>;
+        };
+
+        template <typename Needle, typename Seen, typename Pack>
+        struct any_mentions;
+        template <typename Needle, typename Seen, typename... Ts>
+        struct any_mentions<Needle, Seen, std::tuple<Ts...>>
+            : std::bool_constant<(mentions<Needle, Ts, Seen>::value || ...)> {};
+        template <typename Needle, typename Seen, typename... Ts>
+        struct any_mentions<Needle, Seen, std::variant<Ts...>>
+            : std::bool_constant<(mentions<Needle, Ts, Seen>::value || ...)> {};
+        template <typename Needle, typename Seen, typename... Fields>
+        struct any_mentions<Needle, Seen, rfl::NamedTuple<Fields...>>
+            : std::bool_constant<(
+                  mentions<Needle, std::remove_pointer_t<typename Fields::Type>,
+                           Seen>::value ||
+                  ...)> {};
+
+        template <typename Needle, typename T, typename Seen, typename = void>
+        struct mentions_inside : std::false_type {};
+        template <typename Needle, typename E, typename Seen>
+        struct mentions_inside<Needle, std::vector<E>, Seen>
+            : mentions<Needle, E, Seen> {};
+        template <typename Needle, typename E, typename Seen>
+        struct mentions_inside<Needle, std::set<E>, Seen>
+            : mentions<Needle, E, Seen> {};
+        template <typename Needle, typename E, typename Seen>
+        struct mentions_inside<Needle, std::optional<E>, Seen>
+            : mentions<Needle, E, Seen> {};
+        template <typename Needle, typename K, typename V, typename Seen>
+        struct mentions_inside<Needle, std::map<K, V>, Seen>
+            : std::bool_constant<mentions<Needle, K, Seen>::value ||
+                                 mentions<Needle, V, Seen>::value> {};
+        template <typename Needle, typename... Ts, typename Seen>
+        struct mentions_inside<Needle, std::tuple<Ts...>, Seen>
+            : any_mentions<Needle, Seen, std::tuple<Ts...>> {};
+        template <typename Needle, typename... Ts, typename Seen>
+        struct mentions_inside<Needle, std::variant<Ts...>, Seen>
+            : any_mentions<Needle, Seen, std::variant<Ts...>> {};
+        template <typename Needle, typename T, typename Seen>
+        struct mentions_inside<Needle, T, Seen,
+                               std::enable_if_t<is_struct_default<T>::value>>
+            : std::conditional_t<
+                  seen_contains<T, Seen>::value, std::false_type,
+                  any_mentions<Needle, typename seen_with<T, Seen>::type,
+                               decltype(rfl::to_view(std::declval<T&>()))>> {};
+
+        template <typename Needle, typename T, typename Seen>
+        struct mentions
+            : std::conditional_t<std::is_same_v<Needle, T>, std::true_type,
+                                 mentions_inside<Needle, T, Seen>> {};
 
     } // namespace detail
     /// @endcond

@@ -152,6 +152,8 @@ New generators:
 - `arrays` generates arrays, which print as `[|1; 2|]`.
 - `sets (module S) elements` generates sets of a `Set.S` module. A drawn set prints as `Set.of_list [1; 2]`, or as `Int_set.of_list [1; 2]` given `~module_name:"Int_set"`, as a first-class module does not carry its name.
 - `permutations values` generates permutations of a list, shrinking toward its original order.
+- `subsequences ?min_size ?max_size values` generates sublists of a list that keep its order, and `samples ?min_size ?max_size ?replacement values` lists of elements chosen from it, with replacement by default or each element at most once with `~replacement:false`. Both shrink toward fewer elements from earlier in the list.
+- `unit ()` generates `()`, printed as `()`, and `[@@deriving hegel_generator]` now derives a `unit` field from it.
 - `tuples5` to `tuples8` generate tuples of 5 to 8 elements.
 - The new optional `hegel.zarith` library, built when zarith is installed, has `Hegel_zarith.integers` for zarith integers of any magnitude. A missing bound is taken to be 2^127 values beyond the other bound, or beyond zero when that is further.
 

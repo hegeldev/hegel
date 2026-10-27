@@ -28,8 +28,10 @@ import dev.hegel.generators.PrintingCompositeGenerator;
 import dev.hegel.generators.RecordGenerator;
 import dev.hegel.generators.RecursiveGenerator;
 import dev.hegel.generators.RegexGenerator;
+import dev.hegel.generators.SampleGenerator;
 import dev.hegel.generators.SampledFromGenerator;
 import dev.hegel.generators.SetGenerator;
+import dev.hegel.generators.SubsequenceGenerator;
 import dev.hegel.generators.TextGenerator;
 import dev.hegel.generators.TimeGenerator;
 import dev.hegel.generators.TupleGenerator;
@@ -125,7 +127,19 @@ public final class Generators {
      * @return a boolean generator
      */
     public static PrintableGenerator<Boolean> booleans() {
-        return new BooleanGenerator();
+        return new BooleanGenerator(0.5);
+    }
+
+    /**
+     * Generates {@code true} with probability {@code p} and {@code false} otherwise, shrinking toward
+     * {@code false}.
+     *
+     * @param p the probability of {@code true}, in {@code [0, 1]}
+     * @return a boolean generator
+     * @throws IllegalArgumentException if {@code p} is outside {@code [0, 1]}
+     */
+    public static PrintableGenerator<Boolean> weightedBooleans(double p) {
+        return new BooleanGenerator(p);
     }
 
     // --- strings & bytes ---
@@ -300,6 +314,64 @@ public final class Generators {
     @SafeVarargs
     public static <T> PrintableGenerator<List<T>> permutations(T... elements) {
         return permutations(List.of(elements));
+    }
+
+    /**
+     * Generates subsequences of {@code elements}: lists of some of the elements, each used at most
+     * once, in their original order, shrinking toward fewer elements taken from earlier in the list.
+     * Narrow the length with the fluent methods on {@link SubsequenceGenerator}; it is capped at the
+     * number of elements.
+     *
+     * @param elements the elements to pick from
+     * @param <T> the element type
+     * @return a subsequence generator
+     */
+    public static <T> SubsequenceGenerator<T> subsequences(List<T> elements) {
+        return new SubsequenceGenerator<>(elements, 0, Abi.UNBOUNDED);
+    }
+
+    /**
+     * Generates subsequences of {@code elements}: lists of some of the elements, each used at most
+     * once, in their original order, shrinking toward fewer elements taken from earlier in the list.
+     * Narrow the length with the fluent methods on {@link SubsequenceGenerator}; it is capped at the
+     * number of elements.
+     *
+     * @param elements the elements to pick from
+     * @param <T> the element type
+     * @return a subsequence generator
+     */
+    @SafeVarargs
+    public static <T> SubsequenceGenerator<T> subsequences(T... elements) {
+        return subsequences(List.of(elements));
+    }
+
+    /**
+     * Generates samples of {@code elements}: lists of elements chosen from it, with replacement
+     * unless {@link SampleGenerator#withoutReplacement()} is called, shrinking toward fewer elements
+     * taken from earlier in the list. Narrow the length with the fluent methods on {@link
+     * SampleGenerator}.
+     *
+     * @param elements the elements to sample from
+     * @param <T> the element type
+     * @return a sample generator
+     */
+    public static <T> SampleGenerator<T> samples(List<T> elements) {
+        return new SampleGenerator<>(elements, 0, Abi.UNBOUNDED, true);
+    }
+
+    /**
+     * Generates samples of {@code elements}: lists of elements chosen from it, with replacement
+     * unless {@link SampleGenerator#withoutReplacement()} is called, shrinking toward fewer elements
+     * taken from earlier in the list. Narrow the length with the fluent methods on {@link
+     * SampleGenerator}.
+     *
+     * @param elements the elements to sample from
+     * @param <T> the element type
+     * @return a sample generator
+     */
+    @SafeVarargs
+    public static <T> SampleGenerator<T> samples(T... elements) {
+        return samples(List.of(elements));
     }
 
     /**

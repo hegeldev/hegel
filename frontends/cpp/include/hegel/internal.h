@@ -74,6 +74,8 @@ namespace hegel::internal {
         Tuples,
         Array,
         Permutation,
+        Subsequence,
+        Sample,
         Recursive,
         StatefulRule,
         PoolValuesReusable,

@@ -194,8 +194,9 @@ namespace hegel::impl {
 
     hegel_string_generator_t*
     string_generator_text(const TextGeneratorParams& params);
-    hegel_string_generator_t* string_generator_regex(std::string_view pattern,
-                                                     bool fullmatch);
+    hegel_string_generator_t*
+    string_generator_regex(std::string_view pattern, bool fullmatch,
+                           const hegel_string_generator_t* alphabet);
     hegel_string_generator_t* string_generator_email();
     hegel_string_generator_t* string_generator_url();
     hegel_string_generator_t* string_generator_domain(uint64_t max_length);

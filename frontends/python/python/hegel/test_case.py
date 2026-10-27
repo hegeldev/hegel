@@ -802,13 +802,3 @@ class Collection:
         if self._finished:
             return
         self._ensure().reject(self._tc._handle, why)
-
-
-class TextCollection(Collection):
-    """A :class:`Collection` building text, whose ``max_size=None`` is the
-    engine's default maximum for text rather than no fixed limit."""
-
-    __slots__ = ()
-
-    def _new_handle(self) -> _native.Collection:
-        return self._tc._handle.new_collection(self._min_size, self._max_size, text_default=True)

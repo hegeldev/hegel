@@ -248,6 +248,87 @@ let test_permutations () =
   Alcotest.(check (list int)) "one swap" [ 1; 2; 3; 5; 4 ] shuffled
 ;;
 
+let test_unit () =
+  check_all (unit ()) (fun () -> ());
+  Alcotest.(check string) "printed" "()" (printed (unit ()) ());
+  Alcotest.(check string) "shown" "()" (shown (unit ()));
+  Alcotest.(check bool)
+    "labelled as just"
+    true
+    (Private.label_of (unit ()) = Private.label_of (just ()))
+;;
+
+let test_subsequences () =
+  let values = [ 1; 2; 3; 4; 5 ] in
+  check_all_silent (subsequences values) (fun xs ->
+    Alcotest.(check (list int)) "in order" (List.sort_uniq compare xs) xs;
+    Alcotest.(check bool) "a subset" true (List.for_all (fun x -> List.mem x values) xs));
+  check_all_silent (subsequences ~min_size:2 values) (fun xs ->
+    Alcotest.(check bool) "at least two" true (List.length xs >= 2));
+  check_all_silent (subsequences ~max_size:1 values) (fun xs ->
+    Alcotest.(check bool) "at most one" true (List.length xs <= 1));
+  check_all_silent (subsequences ~min_size:5 ~max_size:10 values) (fun xs ->
+    Alcotest.(check (list int)) "all of them" values xs);
+  check_all_silent (subsequences []) (fun xs -> Alcotest.(check (list int)) "empty" [] xs);
+  check_all_silent
+    (subsequences [ 1; 1; 2 ])
+    (fun xs ->
+       Alcotest.(check bool)
+         "duplicates stay distinct"
+         true
+         (List.length (List.filter (fun x -> x = 1) xs) <= 2));
+  Alcotest.(check (list int))
+    "minimal"
+    [ 1; 2 ]
+    (minimal (subsequences values) (fun xs -> List.length xs >= 2));
+  expect_usage_error ~substring:"larger than the 2 elements" (fun () ->
+    ignore (subsequences ~min_size:3 [ 1; 2 ]));
+  expect_usage_error ~substring:"non-negative" (fun () ->
+    ignore (subsequences ~min_size:(-1) [ 1; 2 ]));
+  expect_usage_error ~substring:"min_size <= max_size" (fun () ->
+    check_all_silent (subsequences ~min_size:2 ~max_size:1 values) ignore)
+;;
+
+let test_samples () =
+  let repeated = ref false in
+  check_all_silent
+    (samples ~min_size:4 ~max_size:6 [ 1; 2; 3 ])
+    (fun xs ->
+       Alcotest.(check bool) "size" true (List.length xs >= 4 && List.length xs <= 6);
+       Alcotest.(check bool)
+         "members"
+         true
+         (List.for_all (fun x -> List.mem x [ 1; 2; 3 ]) xs);
+       if List.length (List.sort_uniq compare xs) < List.length xs then repeated := true);
+  Alcotest.(check bool) "repeats" true !repeated;
+  check_all_silent (samples []) (fun xs -> Alcotest.(check (list int)) "empty" [] xs);
+  let values = [ 1; 2; 3; 4 ] in
+  check_all_silent (samples ~replacement:false values) (fun xs ->
+    Alcotest.(check int)
+      "distinct"
+      (List.length (List.sort_uniq compare xs))
+      (List.length xs);
+    Alcotest.(check bool) "a subset" true (List.for_all (fun x -> List.mem x values) xs));
+  check_all_silent (samples ~replacement:false ~min_size:4 ~max_size:10 values) (fun xs ->
+    Alcotest.(check int) "all four" 4 (List.length xs));
+  check_all_silent (samples ~replacement:false ~max_size:2 values) (fun xs ->
+    Alcotest.(check bool) "at most two" true (List.length xs <= 2));
+  Alcotest.(check (list int))
+    "minimal with replacement"
+    [ 5; 5 ]
+    (minimal (samples [ 5; 6; 7 ]) (fun xs -> List.length xs >= 2));
+  Alcotest.(check (list int))
+    "minimal without replacement"
+    [ 5; 6 ]
+    (minimal (samples ~replacement:false [ 5; 6; 7 ]) (fun xs -> List.length xs >= 2));
+  expect_usage_error ~substring:"non-empty sample" (fun () ->
+    ignore (samples ~min_size:1 ([] : int list)));
+  expect_usage_error ~substring:"without replacement" (fun () ->
+    ignore (samples ~replacement:false ~min_size:3 [ 1; 2 ]));
+  expect_usage_error ~substring:"non-negative" (fun () ->
+    ignore (samples ~max_size:(-1) [ 1; 2 ]))
+;;
+
 let test_tuples () =
   let i n = integers ~min_value:n ~max_value:n () in
   check_all
@@ -306,6 +387,9 @@ let tests =
   ; Alcotest.test_case "arrays" `Quick test_arrays
   ; Alcotest.test_case "sets" `Quick test_sets
   ; Alcotest.test_case "permutations" `Quick test_permutations
+  ; Alcotest.test_case "unit" `Quick test_unit
+  ; Alcotest.test_case "subsequences" `Quick test_subsequences
+  ; Alcotest.test_case "samples" `Quick test_samples
   ; Alcotest.test_case "tuples of 5 to 8" `Quick test_tuples
   ]
 ;;

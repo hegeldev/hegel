@@ -557,7 +557,7 @@ export function generateValue(
   const type = schema["type"] as string;
   switch (type) {
     case "boolean":
-      return lib.generateBoolean(ctx, tc, 0.5);
+      return lib.generateBoolean(ctx, tc, (schema["p"] as number | undefined) ?? 0.5);
     case "integer":
       return drawInteger(lib, ctx, tc, schema);
     case "float":

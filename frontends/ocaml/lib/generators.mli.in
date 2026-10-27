@@ -267,6 +267,19 @@ module Public : sig
     ]} *)
 val booleans : ?p:float -> unit -> (bool, printable) generator MODE(portable)
 
+(** [unit ()] creates a generator that always produces [()], printed as [()].
+    It is the printable form of [just ()], for a component that carries no
+    information: a record field of type [unit], or a [one_of] branch that
+    stands for "nothing".
+
+    {[
+      let%hegel_test unit_example tc =
+        let () = draw tc (unit ()) in
+        ()
+      ;;
+    ]} *)
+val unit : unit -> (unit, printable) generator MODE(portable)
+
 (** [integers ?min_value ?max_value ()] creates a generator for integers within
     the given bounds.
 
@@ -775,6 +788,54 @@ val%template tuples8
     ]} *)
 val%template permutations
   : ('a KIND(value mod c)) list MODE(m) -> ('a list, unprintable) generator MODE(m)
+[@@mode (m, c) = ((nonportable, uncontended), (portable, contended))]
+
+(** [subsequences ?min_size ?max_size values] creates a generator for
+    subsequences of [values]: between [min_size] (default [0]) and [max_size]
+    (default all) of its elements, in their original order. It shrinks toward
+    fewer elements, taken from earlier in the list. [min_size] larger than
+    the list raises [Usage_error]. The values are the caller's, so the result
+    carries no printer.
+
+    {[
+      let%hegel_test subsequences_example tc =
+        let xs = draw_silent tc (subsequences ~min_size:1 [ 1; 2; 3; 4 ]) in
+        assert (List.sort compare xs = xs)
+      ;;
+    ]} *)
+val%template subsequences
+  :  ?min_size:int
+  -> ?max_size:int
+  -> ('a KIND(value mod c)) list MODE(m)
+  -> ('a list, unprintable) generator MODE(m)
+[@@mode (m, c) = ((nonportable, uncontended), (portable, contended))]
+
+(** [samples ?min_size ?max_size ?replacement values] creates a generator for
+    samples of [values]: lists of between [min_size] (default [0]) and
+    [max_size] elements chosen from it. With [replacement] (the default) each
+    element is chosen independently from the whole list, so a value can appear
+    any number of times, and [max_size] defaults to the engine's usual list
+    maximum. With [~replacement:false] each element of [values] is used at
+    most once, so the result is a reordered subset of the list, and
+    [max_size] defaults to its length. It shrinks toward fewer elements,
+    taken from earlier in the list. A [min_size] that cannot be met raises
+    [Usage_error]. The values are the caller's, so the result carries no
+    printer.
+
+    {[
+      let%hegel_test samples_example tc =
+        let rolls = draw_silent tc (samples ~min_size:2 ~max_size:2 [ 1; 2; 3; 4; 5; 6 ]) in
+        let picks = draw_silent tc (samples ~replacement:false [ 1; 2; 3; 4; 5; 6 ]) in
+        assert (List.length rolls = 2);
+        assert (List.length (List.sort_uniq compare picks) = List.length picks)
+      ;;
+    ]} *)
+val%template samples
+  :  ?min_size:int
+  -> ?max_size:int
+  -> ?replacement:bool
+  -> ('a KIND(value mod c)) list MODE(m)
+  -> ('a list, unprintable) generator MODE(m)
 [@@mode (m, c) = ((nonportable, uncontended), (portable, contended))]
 
 (** {2 Function generators} *)
@@ -1446,6 +1507,8 @@ module Private : sig
     val set : Internal.Label.t
     val array : Internal.Label.t
     val permutation : Internal.Label.t
+    val subsequence : Internal.Label.t
+    val sample : Internal.Label.t
     val dict : Internal.Label.t
     val tuple : Internal.Label.t
     val one_of : Internal.Label.t

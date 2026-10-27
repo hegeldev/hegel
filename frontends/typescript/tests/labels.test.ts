@@ -22,6 +22,8 @@ describe("generator labels", () => {
       "hegel.boolean",
     ]);
     expect(names(gs.composite((tc) => tc.draw(gs.integers())).label)).toBe(LabelNames.COMPOSITE);
+    expect(names(gs.subsequences([1, 2]).label)).toBe(LabelNames.SUBSEQUENCE);
+    expect(names(gs.samples([1, 2]).label)).toBe(LabelNames.SAMPLE);
   });
 
   it("keep a generator's label when it is given a printer", () => {

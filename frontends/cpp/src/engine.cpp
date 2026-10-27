@@ -597,15 +597,16 @@ namespace hegel::impl {
             });
     }
 
-    hegel_string_generator_t* string_generator_regex(std::string_view pattern,
-                                                     bool fullmatch) {
+    hegel_string_generator_t*
+    string_generator_regex(std::string_view pattern, bool fullmatch,
+                           const hegel_string_generator_t* alphabet) {
         return make_string_generator(
             "from_regex",
             [&](hegel_context_t* ctx, hegel_string_generator_t** out) {
                 // A NULL alphabet lets padding and wildcards draw from all
-                // of Unicode; from_regex() exposes no alphabet.
+                // of Unicode.
                 return hegel_string_generator_regex(ctx, borrow(pattern),
-                                                    fullmatch, nullptr, out);
+                                                    fullmatch, alphabet, out);
             });
     }
 
@@ -908,6 +909,8 @@ namespace hegel::internal {
             "hegel.tuples",
             "hegel.array",
             "hegel.permutation",
+            "hegel.subsequence",
+            "hegel.sample",
             "hegel.recursive",
             "hegel.stateful.rule",
             "hegel.pool.values_reusable",
