@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from hegel._labels import label_from_name
 from hegel.errors import InvalidArgument
-from hegel.generators.base import Generator
+from hegel.generators.base import Generator, _PrintsValue
 
 if TYPE_CHECKING:
     from hegel.test_case import TestCase
@@ -35,7 +35,7 @@ def _check_int(name: str, value: object) -> int:
     return value
 
 
-class Integers(Generator[int]):
+class Integers(_PrintsValue[int]):
     def __init__(self, min_value: int | None, max_value: int | None) -> None:
         if min_value is not None and max_value is not None and min_value > max_value:
             raise InvalidArgument(f"Cannot have max_value={max_value!r} < min_value={min_value!r}")
@@ -95,7 +95,7 @@ def integers(min_value: int | None = None, max_value: int | None = None) -> Gene
     return Integers(min_value, max_value)
 
 
-class Booleans(Generator[bool]):
+class Booleans(_PrintsValue[bool]):
     def __init__(self, p: float = 0.5) -> None:
         if not (0.0 <= p <= 1.0):
             raise InvalidArgument(f"p={p!r} must be between 0 and 1")
@@ -162,7 +162,7 @@ def _next_down_normal(value: float, width: int, allow_subnormal: bool) -> float:
     return -_next_up_normal(-value, width, allow_subnormal)
 
 
-class Floats(Generator[float]):
+class Floats(_PrintsValue[float]):
     def __init__(
         self,
         min_value: float | None,

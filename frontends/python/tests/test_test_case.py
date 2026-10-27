@@ -65,7 +65,7 @@ def test_nested_draws_are_silent():
             return (a, b)
 
     def body(tc):
-        pair = tc.draw(Pair())
+        pair = tc.draw(Pair().print_as_repr())
         raise ValueError(pair)
 
     lines = notes(failing(body, ValueError))[0].splitlines()

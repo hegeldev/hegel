@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from hegel._labels import combine_labels, label_from_name
 from hegel.errors import InvalidArgument
-from hegel.generators.base import NOOP_PRINTER, Generator
+from hegel.generators.base import NOOP_PRINTER, Generator, _PrintsValue
 from hegel.generators.combinators import as_generator
 from hegel.pretty import PrettyPrinter
 
@@ -24,7 +24,7 @@ COMPOSITE_LABEL = label_from_name("hegel.composite")
 BUILDS_LABEL = label_from_name("hegel.builds")
 
 
-class Composite(Generator[T]):
+class Composite(_PrintsValue[T]):
     def __init__(
         self, function: Callable[..., T], args: tuple[Any, ...], kwargs: dict[str, Any]
     ) -> None:

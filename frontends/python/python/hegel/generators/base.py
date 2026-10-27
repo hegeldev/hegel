@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from hegel import _native
 from hegel._labels import combine_labels, label_from_name
-from hegel.errors import InvalidArgument
-from hegel.pretty import PrettyPrinter, pretty_print
+from hegel.errors import InvalidArgument, NotPrintable
+from hegel.pretty import SILENT_PRINTER, PrettyPrinter
 
 if TYPE_CHECKING:
     from hegel.test_case import TestCase
@@ -19,6 +19,7 @@ __all__ = [
     "Generator",
     "Mapped",
     "PrintedAsCall",
+    "PrintedAsRepr",
     "PrintedWith",
 ]
 
@@ -27,7 +28,7 @@ T = TypeVar("T")
 
 U = TypeVar("U")
 
-NOOP_PRINTER = PrettyPrinter.noop()
+NOOP_PRINTER = SILENT_PRINTER
 
 MAP_LABEL = label_from_name("hegel.map")
 FLAT_MAP_LABEL = label_from_name("hegel.flat_map")
@@ -53,10 +54,27 @@ class Generator(Generic[T]):
     Most custom generators are best written with
     :func:`~hegel.generators.composite`. Subclassing is for generators that
     need to control how their values are printed or how they are labelled.
-    Subclasses implement :meth:`do_draw` (and, when they draw component
-    generators whose output should be printed structurally,
-    :meth:`do_draw_and_print`; the default prints the drawn value with
-    :func:`hegel.pretty_print`). ``label`` identifies the generator
+
+    Printing is the generator's job. :meth:`TestCase.draw
+    <hegel.TestCase.draw>` reports the drawn value, so it needs a
+    *printable* generator: one that implements :meth:`do_draw_and_print`,
+    drawing its components with ``tc.draw_and_print(component, printer)``
+    and writing its own syntax to the printer as it goes. Such a subclass
+    gets :meth:`do_draw` for free::
+
+        class Coords(gs.Generator[tuple[int, int]]):
+            def do_draw_and_print(self, tc, printer):
+                with printer.group("Coord(", ")"):
+                    x = tc.draw_and_print(gs.integers(0, 9), printer)
+                    printer.separator()
+                    y = tc.draw_and_print(gs.integers(0, 9), printer)
+                return (x, y)
+
+    A subclass that implements only :meth:`do_draw` draws silently: it can
+    be drawn with :meth:`TestCase.draw_silent <hegel.TestCase.draw_silent>`
+    or used as the source of :meth:`map`, and :meth:`print_as_repr` or
+    :meth:`print_with` make it printable. Drawing it with ``tc.draw``
+    raises :class:`~hegel.NotPrintable`. ``label`` identifies the generator
     to the engine's shrinker: generators drawing the same shape of value
     share one.
     """
@@ -64,17 +82,31 @@ class Generator(Generic[T]):
     label: int = label_from_name("hegel.generator")
 
     def do_draw(self, tc: TestCase) -> T:
-        """Produce a value. Draw component generators with
-        ``tc.draw_silent`` (or ``tc.draw_and_print``), never by calling
-        their ``do_draw`` directly, so each gets a span of its own."""
-        raise NotImplementedError
+        """Produce a value without printing it. Draw component generators
+        with ``tc.draw_silent`` (or ``tc.draw_and_print``), never by calling
+        their ``do_draw`` directly, so each gets a span of its own.
+
+        The default runs :meth:`do_draw_and_print` with a no-op printer, so
+        a printable generator writes its drawing logic once."""
+        if _prints_itself(type(self)):
+            return self.do_draw_and_print(tc, NOOP_PRINTER)
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement do_draw or do_draw_and_print"
+        )
 
     def do_draw_and_print(self, tc: TestCase, printer: PrettyPrinter) -> T:
-        """Produce a value, printing its representation to ``printer``.
-        Must draw exactly the same choices as :meth:`do_draw`."""
-        value = self.do_draw(tc)
-        pretty_print(value, printer)
-        return value
+        """Produce a value, printing its representation to ``printer`` as
+        it is drawn. Must draw exactly the same choices as :meth:`do_draw`.
+
+        There is no default: a generator that does not implement it cannot
+        print what it draws, and drawing it with ``tc.draw`` raises
+        :class:`~hegel.NotPrintable`."""
+        raise NotPrintable(
+            f"{self!r} cannot print the values it draws, so tc.draw() cannot report it. "
+            f"Implement do_draw_and_print(tc, printer) on {type(self).__name__}, or make "
+            "it printable with .print_with(lambda value, printer: ...) or .print_as_repr(), "
+            "or draw it with tc.draw_silent() if it is not worth reporting."
+        )
 
     def map(self, f: Callable[[T], U]) -> Generator[U]:
         """A generator of ``f(value)`` for each ``value`` this one generates.
@@ -127,14 +159,26 @@ class Generator(Generic[T]):
         return Filtered(self, predicate)
 
     def print_with(self, print: Callable[[T, PrettyPrinter], None]) -> Generator[T]:
-        """Print each drawn value with ``print`` instead of its ``repr``.
+        """A generator of the same values that prints each one with
+        ``print``, in place of however this generator prints.
 
         ``print`` is called as ``print(value, printer)`` with a
         :class:`~hegel.PrettyPrinter` to write the value's representation
         into the failure report; it is only called when the output will be
-        shown. The values drawn are unchanged.
+        shown. It works on any generator, printable or not, and is the way
+        to print a custom representation or mask a secret::
+
+            tokens = gs.text().print_with(lambda value, printer: printer.text("<token>"))
         """
         return PrintedWith(self, print)
+
+    def print_as_repr(self) -> Generator[T]:
+        """A generator of the same values that prints each one as its
+        ``repr`` (through :meth:`PrettyPrinter.repr
+        <hegel.PrettyPrinter.repr>`), in place of however this generator
+        prints. This makes a subclass that implements only :meth:`do_draw`
+        printable."""
+        return PrintedAsRepr(self)
 
     def print_as_call(self, function: str) -> Generator[T]:
         """For a mapped generator: print ``function(input)`` around the
@@ -163,7 +207,37 @@ class Generator(Generic[T]):
         return f"{type(self).__name__}()"
 
 
-class Mapped(Generator[U]):
+def _prints_itself(cls: type[Generator[Any]]) -> bool:
+    return cls.do_draw_and_print not in (
+        Generator.do_draw_and_print,
+        _PrintsValue.do_draw_and_print,
+    )
+
+
+class _PrintsValue(Generator[T]):
+    """A generator that prints the value it draws as its ``repr``: the
+    leaves and the value-producing generators. Subclasses implement
+    :meth:`do_draw`."""
+
+    def do_draw_and_print(self, tc: TestCase, printer: PrettyPrinter) -> T:
+        value = self.do_draw(tc)
+        printer.repr(value)
+        return value
+
+
+class PrintedAsRepr(_PrintsValue[T]):
+    def __init__(self, source: Generator[T]) -> None:
+        self.source = source
+        self.label = source.label
+
+    def do_draw(self, tc: TestCase) -> T:
+        return self.source.do_draw(tc)
+
+    def __repr__(self) -> str:
+        return f"{self.source!r}.print_as_repr()"
+
+
+class Mapped(_PrintsValue[U]):
     def __init__(self, source: Generator[T], f: Callable[[T], U]) -> None:
         self.source = source
         self.f = f
@@ -190,17 +264,11 @@ class PrintedAsCall(Generator[U]):
         self.open = function + "("
         self.label = label
 
-    def _draw(self, tc: TestCase, printer: PrettyPrinter) -> U:
+    def do_draw_and_print(self, tc: TestCase, printer: PrettyPrinter) -> U:
         printer.begin_group(len(self.open), self.open)
         value = tc.draw_and_print(self.source, printer)
         printer.end_group(")")
         return self.f(value)
-
-    def do_draw(self, tc: TestCase) -> U:
-        return self._draw(tc, NOOP_PRINTER)
-
-    def do_draw_and_print(self, tc: TestCase, printer: PrettyPrinter) -> U:
-        return self._draw(tc, printer)
 
 
 class PrintedWith(Generator[T]):

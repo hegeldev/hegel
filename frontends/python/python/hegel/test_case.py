@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, NoReturn, TypeVar
 from hegel import _native
 from hegel._draw_names import DrawName, name_for_call
 from hegel.errors import AssumeFailed, InternalError, InvalidArgument, LoopDone, StopTest
-from hegel.pretty import DEFAULT_MAX_WIDTH, PrettyPrinter, pretty_repr
+from hegel.pretty import DEFAULT_MAX_WIDTH, SILENT_PRINTER, Document, PrettyPrinter
 
 if TYPE_CHECKING:
     from hegel.generators.base import Generator
@@ -41,6 +41,8 @@ MAX_DATETIME = MAX_DATE + LAST_NANOSECOND
 
 
 _UNNAMED = DrawName("draw", repeatable=True)
+
+_UNREPORTED = PrettyPrinter.noop()
 
 # Exceptions that end a draw as part of normal control flow (a rejection,
 # an abandoned test case, a misuse error) rather than as a failure of the
@@ -118,7 +120,7 @@ class TestCase:
         "_draw_state",
         "_global",
         "_handle",
-        "_nested_draws",
+        "_nested_capture",
         "_printer",
         "_printing_depth",
         "_span_depth",
@@ -139,7 +141,7 @@ class TestCase:
         self._printing_depth = 0
         self._printer: PrettyPrinter | None = None
         self._draw_state = _DrawState()
-        self._nested_draws: list[tuple[str, Any]] | None = None
+        self._nested_capture: Document | None = None
 
     @classmethod
     def _derive(
@@ -153,7 +155,7 @@ class TestCase:
         tc._printing_depth = 0
         tc._printer = None
         tc._draw_state = _DrawState() if draw_state is None else draw_state
-        tc._nested_draws = None
+        tc._nested_capture = None
         return tc
 
     # -- drawing ---------------------------------------------------------
@@ -175,9 +177,20 @@ class TestCase:
         Names are inferred from the test's source, so draws in code whose
         source is unavailable report as ``draw_N``.
 
+        The generator prints the value as it draws it, so it must be
+        printable: every built-in generator is, and so is a
+        :class:`~hegel.generators.Generator` subclass that implements
+        ``do_draw_and_print``. A subclass that implements only ``do_draw``
+        (or a structure containing one) raises
+        :class:`~hegel.NotPrintable` on the first test case that draws it.
+        Implement ``do_draw_and_print``, make it printable with
+        :meth:`~hegel.generators.Generator.print_with` or
+        :meth:`~hegel.generators.Generator.print_as_repr`, or draw it with
+        :meth:`draw_silent`.
+
         Draws made inside a :func:`~hegel.composite` generator, or while
         another draw is in progress, are not printed separately: they are
-        part of the outer value.
+        part of the outer value. They still need a printable generator.
         """
         if not isinstance(generator, _generator_class()):
             raise InvalidArgument(
@@ -187,15 +200,14 @@ class TestCase:
             )
         explicit = self._global.explicit
         if explicit is None and (self._span_depth > 0 or self._printing_depth > 0):
-            value = self.draw_silent(generator)
-            if self._nested_draws is not None:
-                # Kept in case the enclosing draw fails, to show what it drew.
-                if name is None:
-                    frame = sys._getframe(1)
-                    inferred = name_for_call(frame.f_code.co_filename, frame.f_lineno)
-                    name = "draw" if inferred is None else inferred.name
-                self._nested_draws.append((name, value))
-            return value
+            capture = self._nested_capture
+            if capture is None:
+                return self.draw_and_print(generator, _UNREPORTED)
+            if name is None:
+                frame = sys._getframe(1)
+                inferred = name_for_call(frame.f_code.co_filename, frame.f_lineno)
+                name = "draw" if inferred is None else inferred.name
+            return self._capture_nested(capture, generator, str(name))
         if name is not None:
             draw_name = DrawName(str(name), repeatable=True)
         else:
@@ -203,19 +215,36 @@ class TestCase:
             draw_name = name_for_call(frame.f_code.co_filename, frame.f_lineno) or _UNNAMED
         return self._draw_as(generator, draw_name)
 
+    def _capture_nested(self, capture: Document, generator: Generator[T], name: str) -> T:
+        """Draw a nested draw of a reported draw, printing it into
+        ``capture`` in case the enclosing draw fails, to show what it drew.
+        Draws nested inside this one are part of its value."""
+        self._nested_capture = None
+        try:
+            printer = capture.printer
+            with printer.speculate() as speculation:
+                printer.text(f"{name} = ")
+                value = self.draw_and_print(generator, printer)
+                printer.hard_break()
+                speculation.commit()
+            return value
+        finally:
+            self._nested_capture = capture
+
     def _draw_as(self, generator: Generator[T], draw_name: DrawName, separator: str = " = ") -> T:
         """Draw a value reported as ``<name><separator><value>``, under the
-        name allocated for ``draw_name``. Nested draws are silent: callers
-        check for them first."""
+        name allocated for ``draw_name``. Nested draws are not reported:
+        callers check for them first."""
         explicit = self._global.explicit
         if explicit is not None:
             return explicit.draw(self, generator, draw_name)
         display = self._allocate_display_name(draw_name)
         if display is None:
-            return self.draw_silent(generator)
+            return self.draw_and_print(generator, _UNREPORTED)
         self._printing_depth += 1
-        outer_capture = self._nested_draws
-        self._nested_draws = []
+        outer_capture = self._nested_capture
+        capture = Document(DEFAULT_MAX_WIDTH)
+        self._nested_capture = capture
         try:
             printer = self._with_printer()
             with printer.speculate() as speculation:
@@ -227,43 +256,47 @@ class TestCase:
         except _SIGNALS:
             raise
         except BaseException as error:
-            self._report_failed_draw(f"{display}{separator}", generator, error)
+            self._report_failed_draw(f"{display}{separator}", generator, error, capture)
             raise
         finally:
             self._printing_depth -= 1
-            self._nested_draws = outer_capture
+            self._nested_capture = outer_capture
 
     def _report_failed_draw(
-        self, prefix: str, generator: Generator[Any], error: BaseException
+        self, prefix: str, generator: Generator[Any], error: BaseException, capture: Document
     ) -> None:
-        """Report a draw that raised: the draw itself, then the values
-        drawn inside it (a composite's, say) before it did."""
+        """Report a draw that raised: the draw itself, then the draws
+        made inside it (a composite's, say) before it did, as their
+        generators printed them."""
         printer = self._with_printer()
         printer.text(f"{prefix}<{type(error).__name__} raised while drawing from {generator!r}>")
         printer.hard_break()
-        for name, value in self._nested_draws or ():
-            printer.text(f"  {name} = {pretty_repr(value)}")
+        for line in capture.finish().splitlines():
+            printer.text(f"  {line}")
             printer.hard_break()
 
     def draw_silent(self, generator: Generator[T]) -> T:
         """Draw a value from ``generator`` without printing it in the
-        failure report. Use it for values that would only clutter the
-        report, or in a custom :class:`~hegel.generators.Generator`'s
-        ``do_draw``."""
+        failure report. Any generator can be drawn silently, printable or
+        not. Use it for values that would only clutter the report, or in a
+        custom :class:`~hegel.generators.Generator`'s ``do_draw``."""
         explicit = self._global.explicit
         if explicit is not None:
             return explicit.draw_silent(self, generator)
-        self.start_span(generator.label)
-        value = generator.do_draw(self)
-        self.stop_span(False)
-        return value
+        return self.draw_and_print(generator, SILENT_PRINTER)
 
     def draw_and_print(self, generator: Generator[T], printer: PrettyPrinter) -> T:
         """Draw a value, printing its representation through ``printer``.
-        This is how a custom generator's ``do_draw_and_print`` draws its
-        components, so they print as part of its own value."""
+        This is how a printable generator's ``do_draw_and_print`` draws its
+        components, so they print as part of its own value: ``generator``
+        must be printable, or this raises :class:`~hegel.NotPrintable`.
+        When the enclosing generator is itself being drawn silently, so is
+        ``generator``."""
         self.start_span(generator.label)
-        value = generator.do_draw_and_print(self, printer)
+        if printer is SILENT_PRINTER:
+            value = generator.do_draw(self)
+        else:
+            value = generator.do_draw_and_print(self, printer)
         self.stop_span(False)
         return value
 
@@ -540,7 +573,7 @@ class TestCase:
         if not self._global.emit:
             return
         try:
-            output = PrettyPrinter(self._handle.printer(DEFAULT_MAX_WIDTH)).value()
+            output = PrettyPrinter(self._handle.printer(DEFAULT_MAX_WIDTH))._value()
         except Exception as error:  # nocov
             self._global.sink(
                 "Failed to render this test case's drawn values "

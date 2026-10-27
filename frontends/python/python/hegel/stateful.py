@@ -20,7 +20,7 @@ from hegel.errors import (
     LoopDone,
     StopTest,
 )
-from hegel.generators.base import FILTER_ATTEMPT_LABEL, FILTER_LABEL, Generator, _name
+from hegel.generators.base import FILTER_ATTEMPT_LABEL, FILTER_LABEL, Generator, _name, _PrintsValue
 
 if TYPE_CHECKING:
     from hegel._native import StateMachine as NativeMachine
@@ -756,7 +756,7 @@ def state_machine_test(machine: type[StateMachine], **settings: Any) -> Callable
 # -- pools ------------------------------------------------------------------
 
 
-class _PoolValues(Generator[Any]):
+class _PoolValues(_PrintsValue[Any]):
     def __init__(self, pool: Pool, consume: bool) -> None:
         self.pool = pool
         self.consume = consume
@@ -780,7 +780,7 @@ class _PoolValues(Generator[Any]):
 FILTER_ATTEMPTS = _native.FILTER_ATTEMPTS
 
 
-class _FilteredPoolValues(Generator[Any]):
+class _FilteredPoolValues(_PrintsValue[Any]):
     """``values_consumed().filter(...)``: each attempt consumes an
     engine-chosen value and tests it while it is still in the pool, so a
     rejected value never leaves the pool's map. Rejected values stay

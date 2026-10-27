@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from hegel import _native
 from hegel._labels import label_from_name
 from hegel.errors import InvalidArgument
-from hegel.generators.base import Generator
+from hegel.generators.base import Generator, _PrintsValue
 from hegel.test_case import TextCollection
 
 if TYPE_CHECKING:
@@ -198,7 +198,7 @@ def _pattern_alphabet(who: str, alphabet: Any) -> _native.StringGenerator | None
     return spec.build(0, 0)
 
 
-class Text(Generator[str]):
+class Text(_PrintsValue[str]):
     def __init__(
         self, spec: CharacterSpec, min_size: int, max_size: int | None, args: str = ""
     ) -> None:
@@ -217,7 +217,7 @@ class Text(Generator[str]):
         return f"text({prefix}{_sizes(self.min_size, self.max_size)})"
 
 
-class TextFromAlphabet(Generator[str]):
+class TextFromAlphabet(_PrintsValue[str]):
     """Text whose characters come from an arbitrary generator."""
 
     def __init__(self, alphabet: Generator[str], min_size: int, max_size: int | None) -> None:
@@ -358,7 +358,7 @@ def _default_spec(
     )
 
 
-class Characters(Generator[str]):
+class Characters(_PrintsValue[str]):
     def __init__(self, spec: CharacterSpec, args: str = "") -> None:
         self.spec = spec
         self._handle = spec.build(1, 1)
@@ -431,7 +431,7 @@ def characters(
     return Characters(spec, args)
 
 
-class Regex(Generator[str]):
+class Regex(_PrintsValue[str]):
     def __init__(self, pattern: str, fullmatch: bool, alphabet: Any) -> None:
         self.pattern = pattern
         self.fullmatch = fullmatch
@@ -500,7 +500,7 @@ def _inline_flags(flags: int) -> str:
     return f"(?{letters})" if letters else ""
 
 
-class Binary(Generator[bytes]):
+class Binary(_PrintsValue[bytes]):
     def __init__(self, min_size: int, max_size: int | None) -> None:
         self.min_size = min_size
         self.max_size = max_size
@@ -526,7 +526,7 @@ def binary(*, min_size: int = 0, max_size: int | None = None) -> Generator[bytes
     return Binary(min_size, _check_max_size(min_size, max_size))
 
 
-class EngineString(Generator[str]):
+class EngineString(_PrintsValue[str]):
     def __init__(self, handle: _native.StringGenerator, label: int, name: str) -> None:
         self._handle = handle
         self.label = label
@@ -569,7 +569,7 @@ def domains(*, max_length: int = 255) -> Generator[str]:
     )
 
 
-class IpAddresses(Generator[Any]):
+class IpAddresses(_PrintsValue[Any]):
     def __init__(self, v: int | None) -> None:
         self.v = v
         self.label = {None: IP_LABEL, 4: IPV4_LABEL, 6: IPV6_LABEL}[v]
@@ -619,7 +619,7 @@ def ip_addresses(*, v: int | None = None, network: Any = None) -> Generator[Any]
     return IpAddresses(v)
 
 
-class Uuids(Generator[_uuid.UUID]):
+class Uuids(_PrintsValue[_uuid.UUID]):
     def __init__(self, version: int | None, allow_nil: bool) -> None:
         self.version = version
         self.allow_nil = allow_nil

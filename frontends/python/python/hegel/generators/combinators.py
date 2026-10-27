@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from hegel._labels import combine_labels, label_from_name
 from hegel.errors import InvalidArgument
-from hegel.generators.base import FILTER_LABEL, NOOP_PRINTER, Generator, _name
-from hegel.pretty import PrettyPrinter, pretty_print
+from hegel.generators.base import FILTER_LABEL, NOOP_PRINTER, Generator, _name, _PrintsValue
+from hegel.pretty import PrettyPrinter
 
 if TYPE_CHECKING:
     from hegel.test_case import TestCase
@@ -33,7 +33,7 @@ def as_generator(value: Any) -> Generator[Any]:
     raise InvalidArgument(f"expected a Generator but got {value!r} of type {type(value).__name__}")
 
 
-class Just(Generator[T]):
+class Just(_PrintsValue[T]):
     def __init__(self, value: T) -> None:
         self.value = value
         self.label = JUST_LABEL
@@ -69,7 +69,7 @@ def none() -> Generator[None]:
     return NoneGenerator()
 
 
-class Nothing(Generator[Any]):
+class Nothing(_PrintsValue[Any]):
     label = NOTHING_LABEL
 
     def do_draw(self, tc: TestCase) -> Any:
@@ -89,7 +89,7 @@ def nothing() -> Generator[Any]:
     return Nothing()
 
 
-class SampledFrom(Generator[T]):
+class SampledFrom(_PrintsValue[T]):
     def __init__(self, elements: Sequence[T], repr_: str | None = None) -> None:
         self.elements = elements
         self.label = SAMPLED_FROM_LABEL
@@ -114,7 +114,7 @@ class SampledFrom(Generator[T]):
 FILTERED_SAMPLE_ATTEMPTS = 3
 
 
-class FilteredSample(Generator[T]):
+class FilteredSample(_PrintsValue[T]):
     """``sampled_from(...).filter(...)``: a few random draws, then the
     untried elements in an engine-chosen order until one is accepted, so
     a predicate accepting one element in thousands still finds it."""
@@ -189,7 +189,7 @@ def sampled_from(elements: Any) -> Generator[Any]:
     return SampledFrom(elements)
 
 
-class FlagCombinations(Generator[Any]):
+class FlagCombinations(_PrintsValue[Any]):
     """``sampled_from`` a flag enum: one of its named members, the empty
     flag, or any combination of the named members."""
 
@@ -294,7 +294,7 @@ class Optional(Generator[Any]):
     def _draw(self, tc: TestCase, printer: PrettyPrinter) -> Any:
         if tc._generate_boolean(0.5):
             return tc.draw_and_print(self.inner, printer)
-        pretty_print(None, printer)
+        printer.text("None")
         return None
 
     def do_draw(self, tc: TestCase) -> T | None:
