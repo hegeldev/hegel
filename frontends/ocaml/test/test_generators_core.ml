@@ -319,8 +319,7 @@ let test_printer_optional_none () =
 let shown ?(n = 1) gen =
   let out = ref [] in
   Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:n ()) (fun tc ->
-    let _, show = Ppx_internal.draw tc gen ~sexp_of:(printer gen) in
-    out := Printer.to_string (show ()) :: !out);
+    out := snd (Private.render_draw tc gen) :: !out);
   List.rev !out
 ;;
 
@@ -430,8 +429,13 @@ let test_make_generators () =
 
 let test_display_unprintable_parts () =
   Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:1 ()) (fun tc ->
-    let _, show = Ppx_internal.draw tc (just 3) ~sexp_of:Core.Int.sexp_of_t in
-    Alcotest.(check string) "falls back on sexp_of" "3" (Printer.to_string (show ())))
+    Alcotest.(check string)
+      "falls back on sexp_of"
+      "3"
+      (Printer.Out.with_document (fun printer ->
+         ignore
+           (Ppx_internal.draw_and_print tc printer (just 3) ~sexp_of:Core.Int.sexp_of_t
+            : int))))
 ;;
 
 let test_display_structures () =
@@ -520,6 +524,27 @@ let test_resolve_draw () =
   Alcotest.(check bool) "unknown id raises Flaky_strategy" true raised
 ;;
 
+(** Test: generators that print as they draw describe a value given to their
+    printer as abstract, unless given a printer. *)
+let test_print_as_drawn_printers () =
+  let sexp gen v = Sexplib0.Sexp.to_string (printer gen v) in
+  let composite = printable_composite (fun _ _ -> 0) in
+  Alcotest.(check string) "composite" "<abstr>" (sexp composite 0);
+  Alcotest.(check string)
+    "composite with a printer"
+    "0"
+    (sexp (printable_composite ~sexp_of:Sexplib0.Sexp_conv.sexp_of_int (fun _ _ -> 0)) 0);
+  Alcotest.(check string)
+    "map_as_call"
+    "<abstr>"
+    (sexp (map_as_call "f" Fun.id (int_gen 0)) 0);
+  Alcotest.(check string) "flat_map" "<abstr>" (sexp (flat_map int_gen (int_gen 0)) 0);
+  check_shown
+    "composite"
+    (printable_composite ~label:"x" (fun _ p -> Printer.Out.text p "x"))
+    "x"
+;;
+
 let tests =
   [ Alcotest.test_case "stateful: resolve_draw" `Quick test_resolve_draw
   ; Alcotest.test_case "labels match engine" `Quick test_labels_match_engine
@@ -574,5 +599,6 @@ let tests =
   ; Alcotest.test_case "display structures" `Quick test_display_structures
   ; Alcotest.test_case "display one_of" `Quick test_display_one_of
   ; Alcotest.test_case "display optional" `Quick test_display_optional
+  ; Alcotest.test_case "print-as-drawn printers" `Quick test_print_as_drawn_printers
   ]
 ;;

@@ -533,10 +533,10 @@ end
     {v
       state = 0
       Step 1: add
-        by = 3
+        let by = 3 in
       state = 3
       Step 2: add
-        by = 7
+        let by = 7 in
       state = 10
       Invariant small violated after step 2.
     v} *)

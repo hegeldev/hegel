@@ -8,7 +8,7 @@
 
     On the failing final replay each top-level application of the generated
     function is printed to the print region as [name arg = result] (see
-    {!functions}). Applications nested inside a span (draw depth > 0) are
+    {!functions}), the result as [returns] printed it when it was drawn. Applications nested inside a span (draw depth > 0) are
     suppressed, like any nested draw. [name] is the [?name] passed to the
     generator, else the draw-site binding name (via [let%hegel_test]), else
     ["function"]. *)
@@ -38,6 +38,12 @@ let%template make
     -> (c, unprintable) generator MODE(m)
   =
   fun explicit_name print_args returns adapt ->
+  let placeholder =
+    match returns with
+    | Printable _ | Dependent _ -> None
+    | Unprintable { core = Function _ } -> Some "<fun>"
+    | Unprintable _ -> Some "<abstr>"
+  in
   let returns = (core_of [@mode m]) returns in
   let result_label = Labels.combine [ Labels.function_result; label_of_core returns ] in
   let build ~name tc =
@@ -46,13 +52,24 @@ let%template make
       | Some n -> n
       | None -> Option.value name ~default:"function"
     in
-    let table : (a, b * show) Stdlib.Hashtbl.t = Stdlib.Hashtbl.create 16 in
+    let table : (a, b * string) Stdlib.Hashtbl.t = Stdlib.Hashtbl.create 16 in
+    let draw_result () =
+      if Internal.should_print tc
+      then (
+        let result = ref None in
+        let shown =
+          Printer.Out.with_document ~max_width:max_int (fun printer ->
+            result := Some (do_draw returns tc printer))
+        in
+        Option.get !result, shown)
+      else do_draw returns tc Printer.Out.noop, ""
+    in
     let base arg =
-      let (ret, show), is_fresh =
+      let (ret, shown), is_fresh =
         match Stdlib.Hashtbl.find_opt table arg with
         | Some drawn -> drawn, false
         | None ->
-          let drawn = group result_label tc (fun () -> do_draw returns tc) in
+          let drawn = group result_label tc draw_result in
           Stdlib.Hashtbl.replace table arg drawn;
           drawn, true
       in
@@ -60,13 +77,10 @@ let%template make
          first invocation in normal verbosity. *)
       if Internal.draw_depth tc = 0 && (is_fresh || Internal.is_high_verbosity tc)
       then
-        Internal.print_line
-          tc
-          (Printer.concat
-             [ Printer.apply (Printer.text display) (print_args arg)
-             ; Printer.text " = "
-             ; show ()
-             ]);
+        Internal.print_line tc (fun printer ->
+          Printer.Out.doc printer (Printer.apply (Printer.text display) (print_args arg));
+          Printer.Out.text printer " = ";
+          Printer.Out.reflow printer (Option.value placeholder ~default:shown));
       ret
     in
     adapt base

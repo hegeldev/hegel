@@ -79,7 +79,7 @@
     Hegel generates up to 100 random input pairs and reports the minimal
     counterexample if it finds one. When a test fails, Hegel prints each
     value you drew from the failing case, named after the [let] binding it was
-    bound to ([a = …], [b = …]).
+    bound to ([let a = … in], [let b = … in]).
 
     The rest of the examples in the documentation assume you have [open Hegel]
     at the top of the test file like in the example above.
@@ -94,11 +94,11 @@
 
     This test asserts that any integer is less than 50, which is obviously
     incorrect. Hegel finds a test case that makes the assertion fail, then shrinks
-    it to the smallest counterexample ([n = 50]). The failure report prints the
+    it to the smallest counterexample ([let n = 50 in]). The failure report prints the
     drawn values, the exception, and how to replay the exact case:
 
     {v
-      n = 50
+      let n = 50 in
       Exception: File "my_tests.ml", line 5, characters 2-8: Assertion failed
 
       To reproduce this failure, add this attribute to the let%hegel_test:
@@ -351,7 +351,7 @@
     ]}
 
     {v
-      n = 50
+      let n = 50 in
       Exception: File "my_tests.ml", line 5, characters 2-8: Assertion failed
 
       To reproduce this failure, add this attribute to the let%hegel_test:
@@ -602,22 +602,24 @@ val main
     [gen] using test case [tc].
 
     On the final replay of a failing test (or on every case under verbose
-    output), an outermost draw prints its value as OCaml syntax (see
-    {!Printer}) as [name = value] when no location is supplied. The [name] is
-    [label] when given, else ["draw"]. An unlabeled draw is numbered
-    ([draw_1], [draw_2], …). Draws nested inside a span (e.g. composite
-    elements) are suppressed so only the outermost value shows. A value whose
-    printer was attached with {!with_printer} prints as the s-expression that
-    printer gives. To draw a generator with no printer, use {!draw_silent} or
-    attach a printer with {!with_ocaml_printer} or {!with_printer}.
+    output), an outermost draw prints a [let name = value in] binding, the
+    value printed as OCaml syntax by [gen] itself as it draws it (see
+    {!Printer.Out}): a list prints element by element, each element as its
+    own generator prints it. The [name] is [label] when given, else
+    ["draw"]. An unlabeled draw is numbered ([draw_1], [draw_2], …). Draws
+    nested inside a span (e.g. composite elements) print nothing of their
+    own, so only the outermost value shows. A value whose printer was
+    attached with {!with_printer} prints as the s-expression that printer
+    gives. To draw a generator with no printer, use {!draw_silent}, or make
+    it printable (see {!unprintable}).
 
-    [?loc] adds the source filename and line to the printed draw. In OxCaml, the
-    compiler automatically supplies the caller's position when omitted. Providing
-    [loc] overrides that position. The draw is then printed as
-    [name @ filename:line = value].
+    [?loc] adds the source filename and line to the printed draw, as a
+    [(* filename:line *)] comment at the end of its line. In OxCaml, the
+    compiler automatically supplies the caller's position when omitted.
+    Providing [loc] overrides that position.
 
     Inside a [let%hegel_test], the PPX supplies the binding name as the label, so
-    [let x = draw tc gen] prints its value as [x = value]. When the same name is
+    [let x = draw tc gen] prints its value as [let x = value in]. When the same name is
     shadowed or drawn in a loop, its draws are numbered [x_1], [x_2], … in draw
     order. Pass [?label] to override the name (e.g. [draw ~label:"y" tc gen]).
 
@@ -801,10 +803,11 @@ val note : test_case -> string -> unit
     ]} *)
 val require : test_case -> ?msg:string -> bool -> unit
 
-(** [with_printer sexp_of gen] attaches (or replaces) [gen]'s printer, yielding a
-    printable generator that {!draw} accepts. This is how a
-    [map]/[flat_map]/[sampled_from]/[just] result is made drawable with {!draw}.
-    Its drawn values print as the s-expressions [sexp_of] gives.
+(** [with_printer sexp_of gen] is [gen] printing its finished values as the
+    s-expressions [sexp_of] gives, yielding a printable generator that
+    {!draw} accepts. Like {!with_ocaml_printer}, it is value printing, an
+    escape hatch: [gen] draws without printing, and the value it produces is
+    printed afterwards, replacing whatever [gen] would have printed.
 
     {[
       let%hegel_test with_printer_example tc =
@@ -818,14 +821,22 @@ val%template with_printer
   -> ('a, printable) generator MODE(m)
 [@@mode m = (nonportable, portable)]
 
-(** [with_ocaml_printer print gen] attaches [print] as [gen]'s printer,
-    yielding a printable generator that {!draw} accepts. Its drawn values
-    print as the {!Printer.doc} documents [print] gives, so a [map] result can
-    print as OCaml syntax rather than as an s-expression.
+(** [with_ocaml_printer print gen] is [gen] printing its finished values as
+    the {!Printer.doc} documents [print] gives, yielding a printable
+    generator that {!draw} accepts.
+
+    This is value printing, the escape hatch for a generator that cannot
+    print as it draws: [gen] draws without printing, and the value it
+    produces is then described by [print], replacing whatever [gen] would
+    have printed. Use it to print a [map]/[just]/[sampled_from]/[composite]/
+    [permutations] result as OCaml syntax, to mask a secret, or to print a
+    type in a custom form. Prefer {!map_as_call} or {!printable_composite}
+    when the value's parts can print themselves.
 
     {[
       let%hegel_test with_ocaml_printer_example tc =
         let pairs = map (fun x -> x, x * 2) (integers ~min_value:0 ~max_value:9 ()) in
+        (* prints as: let draw_1 = (3, 6) in *)
         let x, y = draw tc (with_ocaml_printer Printer.(pair int int) pairs) in
         assert (y = 2 * x)
     ]} *)

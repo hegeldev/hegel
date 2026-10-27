@@ -150,6 +150,16 @@
    %{dep:printer.mli.in})))
 
 (rule
+ (target printer.ml)
+ (action
+  (run
+   %{bin:cppo}
+   %{read-strings:cppo-flags}
+   -o
+   %{target}
+   %{dep:printer.ml.in})))
+
+(rule
  (target derive.mli)
  (action
   (run

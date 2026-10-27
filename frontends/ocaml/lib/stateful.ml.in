@@ -234,7 +234,9 @@ let run_machine
   let show_state () =
     Option.iter
       (fun print ->
-         Internal.print_line tc (Printer.concat [ Printer.text "state = "; print init ]))
+         Internal.print_line tc (fun printer ->
+           Printer.Out.text printer "state = ";
+           Printer.Out.value printer print init))
       print_state
   in
   let check_invariants ~where ~sample =

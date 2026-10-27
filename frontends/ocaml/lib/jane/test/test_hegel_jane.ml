@@ -8,16 +8,11 @@ let check_printer name gen value expected =
 ;;
 
 (** [check_shown name gen expected] draws from [gen] and checks that each drawn
-    value displays as [expected value] renders. *)
+    value prints as [expected value] renders. *)
 let check_shown name gen expected =
   run_hegel_test ~settings:(Settings.create ~test_cases:10 ~seed:0 ()) (fun tc ->
-    let value, show =
-      Generators.Ppx_internal.draw tc gen ~sexp_of:(Generators.printer gen)
-    in
-    Alcotest.(check string)
-      name
-      (Printer.to_string (expected value))
-      (Printer.to_string (show ())))
+    let value, shown = Generators.Private.render_draw tc gen in
+    Alcotest.(check string) name (Printer.to_string (expected value)) shown)
 ;;
 
 (** Test: chars draws [Core.Char.t] values across the full Latin-1 range
@@ -123,7 +118,11 @@ let test_ofdays_default_bounds () =
     if Ofday.equal t Ofday.start_of_next_day
     then saw_end_of_day := true
     else saw_within_day := true);
-  assert (!saw_end_of_day && !saw_within_day)
+  assert (!saw_end_of_day && !saw_within_day);
+  check_shown
+    "ofdays"
+    (Hegel_jane.ofdays ~max_ofday:(Ofday.of_string "12:00") ())
+    (Printer.of_sexp Ofday.sexp_of_t)
 ;;
 
 (** Test: lower bound to end of day always generates it *)

@@ -110,8 +110,7 @@ let%template hash_tables keys values ?min_size ?max_size () =
   (G.make_hash_tables_printed [@mode m])
     ~of_pairs:Hashtbl.Poly.of_alist_exn
     ~sexp_of_t:Hashtbl.Poly.sexp_of_t
-    ~print_of_pairs:(fun _ pairs ->
-      Hegel.Printer.apply (Hegel.Printer.text "Hashtbl.Poly.of_alist_exn") [ pairs ])
+    ~wrap:[ "Hashtbl.Poly.of_alist_exn" ]
     keys
     values
     ?min_size

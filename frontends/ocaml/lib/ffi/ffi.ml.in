@@ -1071,6 +1071,7 @@ exception Assume_rejected
 exception Internal_error of string
 exception Usage_error of string
 exception Retry
+exception Printer_dead_region
 
 (* Status codes returned by the C primitives [HEGEL_OK] / [HEGEL_E_*]. *)
 let ok = 0
@@ -1187,6 +1188,10 @@ let check_rc ctx rc =
     let msg = c_last_error_message ctx in
     let detail = if String.length msg = 0 then "" else ": " ^ msg in
     raise (Internal_error (label ^ detail)))
+;;
+
+let check_printer_rc ctx rc =
+  if rc = e_invalid_handle then raise Printer_dead_region else check_rc ctx rc
 ;;
 
 (* ------------------------------------------------------------------ *)
@@ -2045,36 +2050,36 @@ let printer_new ctx options =
 ;;
 
 let printer_free ctx printer = check_rc ctx (c_printer_free ctx printer)
-let printer_text ctx p s = check_rc ctx (c_printer_text ctx p s)
+let printer_text ctx p s = check_printer_rc ctx (c_printer_text ctx p s)
 
-let printer_breakable ctx p sep = check_rc ctx (c_printer_breakable ctx p sep)
+let printer_breakable ctx p sep = check_printer_rc ctx (c_printer_breakable ctx p sep)
 
-let printer_if_break ctx p s = check_rc ctx (c_printer_if_break ctx p s)
-let printer_comment ctx p s = check_rc ctx (c_printer_comment ctx p s)
-let printer_reflow ctx p s = check_rc ctx (c_printer_reflow ctx p null_handle s)
-let printer_hard_break ctx p = check_rc ctx (c_printer_hard_break ctx p)
+let printer_if_break ctx p s = check_printer_rc ctx (c_printer_if_break ctx p s)
+let printer_comment ctx p s = check_printer_rc ctx (c_printer_comment ctx p s)
+let printer_reflow ctx p s = check_printer_rc ctx (c_printer_reflow ctx p null_handle s)
+let printer_hard_break ctx p = check_printer_rc ctx (c_printer_hard_break ctx p)
 
 let printer_begin_group ctx p ~indent open_ =
-  check_rc
+  check_printer_rc
     ctx
     (c_printer_begin_group ctx p (Unsigned.UInt64.of_int indent) open_)
 ;;
 
-let printer_end_group ctx p close = check_rc ctx (c_printer_end_group ctx p close)
+let printer_end_group ctx p close = check_printer_rc ctx (c_printer_end_group ctx p close)
 
 let printer_shift_indent ctx p delta =
-  check_rc ctx (c_printer_shift_indent ctx p (Int64.of_int delta))
+  check_printer_rc ctx (c_printer_shift_indent ctx p (Int64.of_int delta))
 ;;
 
 let printer_deferred ctx p =
   let out = allocate handle_t null_handle in
-  check_rc ctx (c_printer_deferred ctx p out);
+  check_printer_rc ctx (c_printer_deferred ctx p out);
   !@out
 ;;
 
-let printer_begin_speculative ctx p = check_rc ctx (c_printer_begin_speculative ctx p)
-let printer_commit_speculative ctx p = check_rc ctx (c_printer_commit_speculative ctx p)
-let printer_abort_speculative ctx p = check_rc ctx (c_printer_abort_speculative ctx p)
+let printer_begin_speculative ctx p = check_printer_rc ctx (c_printer_begin_speculative ctx p)
+let printer_commit_speculative ctx p = check_printer_rc ctx (c_printer_commit_speculative ctx p)
+let printer_abort_speculative ctx p = check_printer_rc ctx (c_printer_abort_speculative ctx p)
 let printer_resolve ctx p = check_rc ctx (c_printer_resolve ctx p)
 
 let printer_is_live ctx p =

@@ -90,10 +90,8 @@ let test_invalid_bounds () =
 let test_prints_decimal () =
   Hegel.run_hegel_test ~settings:(settings ~test_cases:10 ()) (fun tc ->
     let gen = Hegel_zarith.integers ~min_value:(pow2 70) ~max_value:(pow2 70) () in
-    let n, show =
-      Hegel.Generators.Ppx_internal.draw tc gen ~sexp_of:(Hegel.Generators.printer gen)
-    in
-    Alcotest.(check string) "shown" (Z.to_string n) (Hegel.Printer.to_string (show ()));
+    let n, shown = Hegel.Generators.Private.render_draw tc gen in
+    Alcotest.(check string) "shown" (Z.to_string n) shown;
     Alcotest.(check string)
       "printer"
       (Z.to_string n)

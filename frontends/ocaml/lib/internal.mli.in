@@ -340,9 +340,12 @@ val draw_display_name : test_case -> label:string -> repeatable:bool -> string
     search engine toward higher values. *)
 val target : test_case -> label:string -> value:float -> unit
 
-(** [print_line tc doc] appends [doc] as one line to the test case's print
-    region, subject to the run's verbosity (like [note]). *)
-val print_line : test_case -> Printer.doc -> unit
+(** [print_line tc print] prints one line to the test case's print region
+    with [print], subject to the run's verbosity (like [note]). *)
+val print_line : test_case -> (Printer.Out.t -> unit) -> unit
+
+(** [printer tc] is the printer onto the test case's print region. *)
+val printer : test_case -> Printer.Out.t
 
 (** [event tc ~label] records [label] as observed on this test case for the
     end-of-run statistics report. *)

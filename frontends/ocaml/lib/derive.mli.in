@@ -20,10 +20,12 @@
     [@@deriving hegel_generator]
     ]}
 
-    A derived generator prints what it draws as OCaml syntax, built from the
-    printing of the generators of its parts: a record as [{ x = 1; y = 2 }], a
+    A derived generator prints what it draws as OCaml syntax as it draws it,
+    each part printed by its own generator: a record as [{ x = 1; y = 2 }], a
     variant as [Leaf] or [Node (l, r)], a tuple as [(1, "a")]. A part whose
-    generator has no printer prints as the s-expression its [sexp_of] gives.
+    generator has no printer is drawn silently and printed as the
+    s-expression its [sexp_of] gives, the one place a value is printed
+    implicitly.
 
     On OxCaml, [[@@deriving hegel_generator ~portable]] makes the generator
     portable, so a concurrent rule body can capture it. On upstream OCaml,

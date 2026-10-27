@@ -36,35 +36,45 @@
     - {!filter} keeps only values satisfying a predicate.
     - {!one_of} and {!sampled_from} choose among alternatives.
 
-    Every generator carries a phantom type ['p] recording whether it holds a printer.
-    Primitive generators are {!printable} and may be drawn with {!Hegel.draw},
-    which prints the drawn value as OCaml syntax on a failing replay (see
-    {!Printer}). *)
+    Every generator carries a phantom type ['p] recording whether it can
+    print what it draws. Printing is the generator's job: a {!printable}
+    generator prints its value as OCaml syntax while it draws it, which is
+    what {!Hegel.draw} reports on a failing replay (see {!Printer}). *)
 
 (** A generator producing values of type ['a]. The phantom ['p] is {!printable}
-    when the generator carries a printer (and so may be drawn with {!Hegel.draw})
-    and {!unprintable} otherwise. *)
+    when the generator prints what it draws (and so may be drawn with
+    {!Hegel.draw}) and {!unprintable} otherwise. *)
 type ('a, 'p) generator
 #ifdef OXCAML
   : value mod contended
 #endif
 
-(** Phantom witness that a generator carries a printer; see {!generator}. *)
+(** Phantom witness that a generator prints what it draws; see {!generator}.
+
+    The primitive generators print the value of their engine draw. The
+    structural generators ({!lists}, {!tuples2}, {!optional}, {!one_of},
+    {!filter}, {!flat_map}, {!recursive}, ...) and derived
+    generators print as they draw, element by element, so an element's own
+    printing shows up inside its container. {!printable_composite} writes
+    one by hand. *)
 type printable
 
 (** Phantom witness that a generator carries no printer; see {!generator}.
 
     A generator is [unprintable] whenever the result type is the caller's rather
-    than the engine's, so Hegel has no printer to attach. This covers {!map},
-    {!flat_map}, {!sampled_from}, {!just}, {!composite}, {!permutations} and
-    {!functions}. An [unprintable] generator cannot be drawn with {!Hegel.draw}.
-    There are two ways to use an [unprintable] generator:
+    than the engine's, and OCaml has no universal printer to fall back on.
+    This covers {!map}, {!sampled_from}, {!just}, {!composite},
+    {!permutations} and {!functions}. An [unprintable] generator cannot be
+    drawn with {!Hegel.draw}. The ways to use one, in order of preference:
 
-    - Draw it with {!Hegel.draw_silent}, which produces the value but records
-      nothing for the failing-replay output.
-    - Attach a printer with {!Hegel.with_ocaml_printer} (printing OCaml
-      syntax) or {!Hegel.with_printer} (printing s-expressions) to obtain a
-      {!printable} generator that can be drawn from with {!Hegel.draw} *)
+    - Write it as a {!printable_composite}, which prints as it draws.
+    - Print a mapped value as a call on its printed input with {!map_as_call}
+      ([Key.of_int 3]).
+    - Describe the finished value with {!Hegel.with_ocaml_printer} (OCaml
+      syntax) or {!Hegel.with_printer} (an s-expression): the value-printing
+      escape hatch.
+    - Draw it with {!Hegel.draw_silent}, which produces the value but prints
+      nothing. *)
 type unprintable
 
 (**/**)
@@ -73,22 +83,20 @@ type unprintable
     generator [gen] using test case [tc].
 
     On the final replay of a failing test (or on every case under verbose
-    output), an outermost draw prints its value as OCaml syntax (see
-    {!Printer}) as [name = value] when no location is supplied. The [name] is
-    [label] when given, else ["draw"]. An unlabeled draw is numbered
-    ([draw_1], [draw_2], …). Draws nested inside a span (e.g. composite
-    elements) are suppressed so only the outermost value shows. A value whose
-    printer was given with {!with_printer} prints as the s-expression that
-    printer gives. To draw a generator with no printer, use {!draw_silent} or
-    attach a printer with {!with_printer}.
+    output), an outermost draw prints the binding [let name = value in], with
+    the value printed as OCaml syntax by [gen] as it draws it (see
+    {!Printer}). The [name] is [label] when given, else ["draw"]. An
+    unlabeled draw is numbered ([draw_1], [draw_2], …). Draws nested inside a
+    span (e.g. inside a {!composite}) print nothing. To draw a generator that
+    does not print, use {!draw_silent}, or see {!unprintable}.
 
-    [?loc] adds the source filename and line to the printed draw. In OxCaml, the
-    compiler automatically supplies the caller's position when omitted. Providing
-    [loc] overrides that position. The draw is then printed as
-    [name @ filename:line = value].
+    [?loc] adds the source filename and line to the printed draw as a
+    comment: [let name = value in  (* filename:line *)]. In OxCaml, the
+    compiler automatically supplies the caller's position when omitted.
+    Providing [loc] overrides that position.
 
     Inside a [let%hegel_test], the PPX supplies the binding name as the label, so
-    [let x = draw tc gen] prints its value as [x = value]. When the same name is
+    [let x = draw tc gen] prints [let x = value in]. When the same name is
     shadowed or drawn in a loop, its draws are numbered [x_1], [x_2], … in draw
     order. Pass [?label] to override the name (e.g. [draw ~label:"y" tc gen]).
 
@@ -111,8 +119,8 @@ val draw
 
 (** [draw_named ~label ~repeatable tc gen] is the naming-aware draw the
     [let%hegel_test] PPX rewrites bindings to; not intended for direct use
-    (prefer {!draw}). It prints [label = value] (bare), or [label_1 = value],
-    [label_2 = value], … when [repeatable] is set. The PPX sets [repeatable = true]
+    (prefer {!draw}). It prints [let label = value in] (bare), or
+    [let label_1 = value in], … when [repeatable] is set. The PPX sets [repeatable = true]
     for a binding name that is reused or drawn in a loop. *)
 val draw_named
   :  label:string
@@ -127,9 +135,8 @@ val draw_named
   -> 'a
 
 (** [draw_silent tc gen] produces a typed value from any generator without
-    recording it for the final-replay output. Use it for draws whose value is
-    not a useful part of the printed counterexample, or for generators that
-    carry no printer.
+    printing it. Use it for draws whose value is not a useful part of the
+    printed counterexample, or for generators that do not print.
 
     {[
       let%hegel_test draw_silent_example tc =
@@ -148,12 +155,13 @@ val draw_silent : Internal.test_case -> ('a, 'p) generator -> 'a
     direct use (prefer {!draw_silent}). *)
 val draw_silent_named : name:string -> Internal.test_case -> ('a, 'p) generator -> 'a
 
-(** [with_printer sexp_of gen] attaches (or replaces) [gen]'s printer, yielding
-    a printable generator that {!draw} accepts. This is how a [map]/[flat_map]/
-    [sampled_from]/[just] result is made drawable with {!draw}.
+(** [with_printer sexp_of gen] is [gen] printing its finished values as the
+    s-expressions [sexp_of] gives, yielding a printable generator that
+    {!draw} accepts. Like {!with_ocaml_printer}, it is value printing, an
+    escape hatch: [gen] draws without printing, and the value it produces is
+    printed afterwards, replacing whatever [gen] would have printed.
 
-    The printer is any ['a -> Sexplib0.Sexp.t], and the drawn values print as
-    the s-expressions it gives.
+    The printer is any ['a -> Sexplib0.Sexp.t].
 
     With [ppx_sexp_conv] in your preprocessor, [\[%sexp_of: t\]] is the idiomatic
     shorthand for that function
@@ -174,20 +182,26 @@ val%template with_printer
   -> ('a, printable) generator MODE(m)
 [@@mode m = (nonportable, portable)]
 
-(** [with_ocaml_printer print gen] attaches [print] as [gen]'s printer,
-    yielding a printable generator that {!draw} accepts. Unlike
-    {!with_printer}, the drawn values print as the {!Printer.doc} documents
-    [print] gives, so a [map]/[flat_map]/[just]/[sampled_from]/[composite]/
-    [permutations] result can print as OCaml syntax, built from the printers
-    in {!Printer}. {!printer} of the result gives each value as a single
-    s-expression atom, its document laid out on one line.
+(** [with_ocaml_printer print gen] is [gen] printing its finished values as
+    the {!Printer.doc} documents [print] gives, yielding a printable
+    generator that {!draw} accepts.
+
+    This is value printing, the escape hatch for a generator that cannot
+    print as it draws: [gen] draws without printing, and the value it
+    produces is then described by [print], replacing whatever [gen] would
+    have printed. Use it to print a [map]/[just]/[sampled_from]/[composite]/
+    [permutations] result as OCaml syntax, to mask a secret, or to print a
+    type in a custom form. Prefer {!map_as_call} or {!printable_composite}
+    when the value's parts can print themselves. {!printer} of the result
+    gives each value as a single s-expression atom, its document laid out on
+    one line.
 
     {[
       let%hegel_test with_ocaml_printer_example tc =
         let pairs =
           map (fun x -> x, x * 2) (integers ~min_value:0 ~max_value:9 ())
         in
-        (* prints as: draw_1 = (3, 6) *)
+        (* prints as: let draw_1 = (3, 6) in *)
         let x, y =
           draw tc (with_ocaml_printer Printer.(pair int int) pairs)
         in
@@ -205,8 +219,9 @@ val%template printer : ('a, printable) generator MODE(m) -> ('a -> Sexplib0.Sexp
 [@@mode m = (nonportable, portable)]
 
 (** [leaf ~name ~draw ~sexp_of ~print] builds a printable generator from a
-    single typed engine draw, labeled from [name], whose values [print]
-    displays and whose printer is [sexp_of]. Not part of the public API. *)
+    single typed engine draw, labeled from [name], which prints its value as
+    [print] gives and whose printer is [sexp_of]. Not part of the public
+    API. *)
 val%template leaf
   :  name:string
   -> draw:(Internal.test_case -> 'a) MODE(m)
@@ -215,15 +230,16 @@ val%template leaf
   -> ('a, printable) generator MODE(m)
 [@@mode m = (nonportable, portable)]
 
-(** [make_hash_tables_printed ~of_pairs ~sexp_of_t ~print_of_pairs keys values
-    ?min_size ?max_size ()] is {!make_hash_tables}, its drawn tables displayed
-    by [print_of_pairs table pairs], from [pairs], the display of the drawn
-    association list. Not part of the public API. *)
+(** [make_hash_tables_printed ~of_pairs ~sexp_of_t ~wrap keys values
+    ?min_size ?max_size ()] is {!make_hash_tables}, its drawn tables printed
+    as their association list wrapped in calls to the functions [wrap],
+    outermost first: [~wrap:\["Hashtbl.of_seq"; "List.to_seq"\]] prints
+    [Hashtbl.of_seq (List.to_seq \[(k, v)\])]. Not part of the public API. *)
 val%template make_hash_tables_printed
   :  of_pairs:(('a * 'b) list -> 't) MODE(m)
   -> sexp_of_t:
        (('a -> Sexplib0.Sexp.t) -> ('b -> Sexplib0.Sexp.t) -> 't -> Sexplib0.Sexp.t) MODE(m)
-  -> print_of_pairs:('t -> Printer.doc -> Printer.doc) MODE(m)
+  -> wrap:string list
   -> ('a, printable) generator MODE(m)
   -> ('b, printable) generator MODE(m)
   -> ?min_size:int
@@ -1137,6 +1153,49 @@ val uuids : ?version:int -> unit -> (string, printable) generator MODE(portable)
 
 (** {2 Generator combinators} *)
 
+(** [printable_composite ?label ?sexp_of body] is a printable generator
+    written by hand: [body tc printer] draws the value's parts and prints the
+    value to [printer] as it goes, with the {!Printer.Out} primitives and
+    {!draw_and_print}. The same [body] serves a silent draw, given
+    {!Printer.Out.noop}, so both make the same choices; guard work done only
+    for printing with {!Printer.Out.should_print}.
+
+    [label] names the generator to the engine, which shrinks the values of
+    generators with the same label alike. [sexp_of] is what [printer]
+    returns, [<abstr>] by default.
+
+    {[
+      let stacks elements =
+        printable_composite ~label:"stack" (fun tc printer ->
+          Printer.Out.parens_if_argument printer (fun printer ->
+            Printer.Out.group printer ~indent:2 "" "" (fun printer ->
+              Printer.Out.text printer "Stack.of_list";
+              Printer.Out.breakable printer " ";
+              Printer.Out.group printer "[" "]" (fun printer ->
+                let n = draw_silent tc (integers ~min_value:0 ~max_value:3 ()) in
+                List.init n (fun i ->
+                  if i > 0 then Printer.Out.separator printer ";";
+                  draw_and_print tc printer elements)
+                |> List.to_seq
+                |> Stack.of_seq))))
+      ;;
+    ]}
+
+    A draw from [stacks (integers ())] prints as [Stack.of_list \[3; -1\]],
+    and inside a list as [\[Stack.of_list \[3\]; Stack.of_list \[\]\]]. *)
+val%template printable_composite
+  :  ?label:string
+  -> ?sexp_of:('a -> Sexplib0.Sexp.t) MODE(m)
+  -> (Internal.test_case -> Printer.Out.t -> 'a) MODE(m)
+  -> ('a, printable) generator MODE(m)
+[@@mode m = (nonportable, portable)]
+
+(** [draw_and_print tc printer gen] draws from [gen], printing the value to
+    [printer] as [gen] prints it, at [printer]'s position. This is how a
+    {!printable_composite} draws a part that should appear in its printed
+    value. *)
+val draw_and_print : Internal.test_case -> Printer.Out.t -> ('a, printable) generator -> 'a
+
 (** [composite generate_fn] builds a generator from an imperative [generate_fn]
     that draws sub-values from the test case and assembles a result, useful when
     a value is easiest to describe by drawing its parts in sequence. The
@@ -1154,7 +1213,8 @@ val%template composite : (Internal.test_case -> 'a) MODE(m) -> ('a, unprintable)
 [@@mode m = (nonportable, portable)]
 
 (** [map f gen] transforms values from [gen] using [f]. The output type is
-    the caller's, so the result carries no printer.
+    the caller's, so the result does not print; see {!map_as_call} and
+    {!with_ocaml_printer}.
 
     {[
       let%hegel_test map_example tc =
@@ -1170,15 +1230,35 @@ val%template map
   -> ('b, unprintable) generator MODE(m)
 [@@mode m = (nonportable, portable)]
 
+(** [map_as_call name f gen] is [map f gen] printed as the call [name x],
+    where [x] is the drawn input, printed by [gen] as a function argument.
+
+    {[
+      let keys = map_as_call "Key.of_int" Key.of_int (integers ~min_value:0 ())
+    ]}
+
+    A draw prints as [Key.of_int 3], or [Key.of_int (-3)], and inside a list
+    as [\[Key.of_int 0; Key.of_int 7\]]. [printer] of the result gives
+    [<abstr>]. *)
+val%template map_as_call
+  :  string
+  -> ('a -> 'b) MODE(m)
+  -> ('a, printable) generator MODE(m)
+  -> ('b, printable) generator MODE(m)
+[@@mode m = (nonportable, portable)]
+
 (** [flat_map f gen] creates a dependent generator. [f] receives the generated
     value and returns a generator whose value is the final result. The result
-    carries no printer.
+    is printable when the generators [f] returns are, and a draw prints as the
+    generator [f] returned prints it; the value drawn from [gen] is not
+    printed. [printer] of a printable result gives [<abstr>].
 
     {[
       let%hegel_test flat_map_example tc =
         let len_gen = integers ~min_value:0 ~max_value:5 () in
         let xs =
-          draw_silent tc
+          draw
+            tc
             (flat_map
                (fun n ->
                   lists
@@ -1194,7 +1274,7 @@ val%template map
 val%template flat_map
   :  ('a -> ('b, 'q) generator) MODE(m)
   -> ('a, 'p) generator MODE(m)
-  -> ('b, unprintable) generator MODE(m)
+  -> ('b, 'q) generator MODE(m)
 [@@mode m = (nonportable, portable)]
 
 (** [filter predicate gen] filters values from [gen] using [predicate], keeping
@@ -1236,17 +1316,16 @@ val%template filter
       type tree =
         | Leaf of int
         | Node of tree list
-      [@@deriving sexp_of]
 
       let trees =
         recursive
-          (with_printer sexp_of_tree (map (fun n -> Leaf n) (integers ())))
+          (map_as_call "Leaf" (fun n -> Leaf n) (integers ()))
           (fun subtrees ->
-             with_printer
-               sexp_of_tree
-               (map (fun children -> Node children) (lists subtrees ())))
+             map_as_call "Node" (fun children -> Node children) (lists subtrees ()))
       ;;
     ]}
+
+    A draw prints as, say, [Node \[Leaf 0; Node \[Leaf 3\]\]].
 
     A negative [max_depth], or a [max_leaves] below 1, raises
     {!Hegel.Usage_error}. For mutually recursive definitions, use
@@ -1386,6 +1465,10 @@ module Private : sig
   (** [label_of gen] is the span label of [gen]. *)
   val label_of : ('a, 'p) generator -> Internal.Label.t
 
+  (** [render_draw tc gen] draws from [gen] into a standalone document,
+      returning the value and the text [gen] printed. *)
+  val render_draw : Internal.test_case -> ('a, printable) generator -> 'a * string
+
   (** [group label data f] runs [f ()] inside a span with the given [label]. The
       span is stopped with [discard:false] regardless of whether [f] raises. *)
   val group : Internal.Label.t -> Internal.test_case -> (unit -> 'a) -> 'a
@@ -1431,17 +1514,15 @@ module Ppx_internal : sig
     val enum_variant : Internal.Label.t
   end
 
-  (** A drawn value's display, produced only when the draw is printed. *)
-  type show = unit -> Printer.doc
-
-  (** [draw tc gen ~sexp_of] draws from [gen], returning the value with its
-      display: [gen]'s, when [gen] is printable, else the s-expression
-      [sexp_of] gives. *)
-  val draw
+  (** [draw_and_print tc printer gen ~sexp_of] draws from [gen], printing
+      the value to [printer]: as [gen] prints it when [gen] is printable,
+      else, once drawn, as the s-expression [sexp_of] gives. *)
+  val draw_and_print
     :  Internal.test_case
+    -> Printer.Out.t
     -> ('a, 'p) generator
     -> sexp_of:('a -> Sexplib0.Sexp.t)
-    -> 'a * show
+    -> 'a
 
   (** [explicit_draw tc ~name ~source value gen] is [value], the value an
       [[@@example]] gives, written [source], for the binding [name] of a draw
@@ -1455,15 +1536,14 @@ module Ppx_internal : sig
     -> ('a, 'p) generator
     -> 'a
 
-  (** [composite_with_label ~label ~sexp_of generate_fn] is {!composite} but
-      tags the span with [label] instead of the fixed struct/record label,
-      [generate_fn] returns the value's display with it, and the generator is
-      printable with [sexp_of]. Used by the derive PPX to build derived
-      generators that print structurally. *)
+  (** [composite_with_label ~label ~sexp_of generate_fn] is
+      {!printable_composite} with the span label [label] and the printer
+      [sexp_of]. Used by the derive PPX to build derived generators that
+      print as they draw. *)
   val%template composite_with_label
     :  label:Internal.Label.t
     -> sexp_of:('a -> Sexplib0.Sexp.t) MODE(m)
-    -> (Internal.test_case -> 'a * show) MODE(m)
+    -> (Internal.test_case -> Printer.Out.t -> 'a) MODE(m)
     -> ('a, printable) generator MODE(m)
   [@@mode m = (nonportable, portable)]
 

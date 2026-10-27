@@ -64,7 +64,7 @@ let%expect_test "recording then replay round-trips the failure blob" =
   print_string (Expect_scrub.scrub_report recorded);
   [%expect
     {|
-    draw_1 = true
+    let draw_1 = true in
     Exception: Failure("deliberate failure")
 
     To reproduce this failure, pass this argument to run_hegel_test:
@@ -75,7 +75,7 @@ let%expect_test "recording then replay round-trips the failure blob" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    draw_1 = true
+    let draw_1 = true in
     Exception: Failure("deliberate failure")
     |}]
 ;;
@@ -133,7 +133,7 @@ let%expect_test "usage errors from a replayed body stay usage errors" =
   print_string (Expect_scrub.scrub_report recorded);
   [%expect
     {|
-    draw_1 = true
+    let draw_1 = true in
     Exception: Failure("deliberate failure")
 
     To reproduce this failure, pass this argument to run_hegel_test:
@@ -199,7 +199,7 @@ let%expect_test "every blob is replayed" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    draw_1 = true
+    let draw_1 = true in
     Exception: Failure("deliberate failure")
     |}];
   (match
@@ -211,9 +211,9 @@ let%expect_test "every blob is replayed" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    draw_1 = true
+    let draw_1 = true in
     Exception: Failure("deliberate failure")
-    draw_1 = true
+    let draw_1 = true in
     Exception: Failure("deliberate failure")
     2 failures
     |}]
@@ -248,13 +248,13 @@ let%expect_test "recording groups each failure's draws with its diagnostic" =
     {|
     Property-based test failed with 2 distinct failures.
 
-    v = 60
+    let v = 60 in
     Exception: Expect_tests.Test_failure_blobs_record.A
 
     To reproduce this failure, add this attribute to the let%hegel_test:
         [@@failure_blobs [ "<BLOB>" ]]
 
-    v = 0
+    let v = 0 in
     Exception: Expect_tests.Test_failure_blobs_record.B
 
     To reproduce this failure, add this attribute to the let%hegel_test:
@@ -281,10 +281,10 @@ let%expect_test "the multi-failure report omits blobs when print_blob is off" =
     {|
     Property-based test failed with 2 distinct failures.
 
-    draw_1 = 60
+    let draw_1 = 60 in
     Exception: Expect_tests.Test_failure_blobs_record.A
 
-    draw_1 = 0
+    let draw_1 = 0 in
     Exception: Expect_tests.Test_failure_blobs_record.B
     2 failures raised
     |}]

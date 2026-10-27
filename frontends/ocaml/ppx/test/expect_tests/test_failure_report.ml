@@ -35,7 +35,7 @@ let%expect_test "failure report prints the shrunk counterexample" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    draw_1 = 60
+    let draw_1 = 60 in
     Exception: Failure("large values are broken")
 
     To reproduce this failure, pass this argument to run_hegel_test:
@@ -94,7 +94,7 @@ let%expect_test "a multiline drawn value aligns under its name" =
   print_string (Expect_scrub.scrub_report ~hide_draw_positions:false [%expect.output]);
   [%expect
     {|
-    l @ draw.ml:<LINE> = ["00000";
+    let l = ["00000";  (* draw.ml:<LINE> *)
      "00000";
      "00000";
      "00000";
@@ -108,7 +108,7 @@ let%expect_test "a multiline drawn value aligns under its name" =
      "00000";
      "00000";
      "00000";
-     "00000"]
+     "00000"] in
     Exception: File "ppx/test/expect_tests/test_failure_report.ml", line LINE, characters C1-C2: Assertion failed
 
     To reproduce this failure, pass this argument to run_hegel_test:

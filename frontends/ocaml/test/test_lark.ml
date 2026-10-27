@@ -157,8 +157,7 @@ let test_prints_as_a_string () =
   let shown = ref "" in
   run_hegel_test ~settings:(settings ~test_cases:1 ()) (fun tc ->
     let gen = from_lark {|start: "hi"|} () in
-    let _, show = Generators.Ppx_internal.draw tc gen ~sexp_of:(Generators.printer gen) in
-    shown := Printer.to_string (show ()));
+    shown := snd (Generators.Private.render_draw tc gen));
   Alcotest.(check string) "quoted" {|"hi"|} !shown
 ;;
 

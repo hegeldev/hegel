@@ -4,24 +4,49 @@
 (** Printing drawn values as OCaml syntax.
 
     When a test fails, Hegel replays the minimal failing example and prints
-    each drawn value as OCaml source: lists as [\[1; 2; 3\]], tuples as
-    [(1, "a")], options as [Some 3], records as [{ x = 1; y = 2 }], and strings
-    always quoted. A value too long for one line wraps one element or field per
-    line, laid out by libhegel's pretty-printer.
+    each drawn value as an OCaml [let] binding:
 
-    Printable generators print what they draw this way: the primitives, the
-    structural generators ({!Hegel.lists}, {!Hegel.tuples2},
-    {!Hegel.optional}, {!Hegel.one_of}, {!Hegel.filter}, ...), and the
-    generators [\[@@deriving hegel_generator\]] produces, which print as
-    they draw. A generator given a printer with {!Hegel.with_ocaml_printer}
-    prints the documents that printer returns, so any generator's values can
-    print as OCaml syntax; one given a printer with {!Hegel.with_printer}
-    prints the s-expressions that printer returns instead ({!of_sexp}).
+    {v
+    let xs = [1; 2; 3] in
+    let p = { x = 1; label = "a" } in
+    v}
 
-    This module holds the documents those values print as. A document is
-    built from the value printers here ({!int}, {!string}, {!list}, …), the
-    structural builders ({!constructor}, {!record}, {!tuple}, {!apply}), or
-    {!of_to_string} and {!of_sexp}, and {!to_string} lays one out. *)
+    Lists print as [\[1; 2; 3\]], tuples as [(1, "a")], options as [Some 3],
+    records as [{ x = 1; y = 2 }], and strings always quoted. A value too long
+    for one line wraps one element or field per line, laid out by libhegel's
+    pretty-printer.
+
+    {2 Printing is the generator's job}
+
+    A drawn value cannot always print itself: OCaml has no universal printer,
+    a drawn function has no useful representation, and some values are best
+    described by what happens to them after they are drawn. The process that
+    drew a value can always describe it, so printing is a capability of the
+    {e generator}: a {!Hegel.printable} generator draws and prints in one
+    step, writing to the engine's printer ({!Out}) as it draws.
+
+    - The primitive generators print the value of their single engine draw.
+    - The structural generators ({!Hegel.lists}, {!Hegel.tuples2},
+      {!Hegel.optional}, {!Hegel.one_of}, {!Hegel.filter},
+      {!Hegel.flat_map}, {!Hegel.recursive}, ...) and the generators
+      [\[@@deriving hegel_generator\]] produces print as they draw, element
+      by element and field by field. An element's own printing therefore
+      shows up inside its container.
+    - Generators whose output is the caller's ({!Hegel.map}, {!Hegel.just},
+      {!Hegel.sampled_from}, {!Hegel.composite}) have no printer of their
+      own; OCaml has no [Debug] to fall back on.
+    - {!Hegel.with_ocaml_printer} (OCaml syntax from a {!doc}) and
+      {!Hegel.with_printer} (an s-expression) are the escape hatch: they make
+      any generator printable by describing the finished value.
+      {!Hegel.map_as_call} prints a mapped value as a call on its input
+      instead.
+    - {!Hegel.printable_composite} writes a printable generator by hand: its
+      body draws and prints through an {!Out.t}.
+
+    This module holds both halves: {!doc}, a value's representation built
+    from the value printers here ({!int}, {!string}, {!list}, …) and the
+    structural builders ({!constructor}, {!record}, {!tuple}, {!apply}), and
+    {!Out}, the write surface a printable generator prints to while it draws. *)
 
 (** A document: a value rendered as OCaml syntax, with the groups and break
     points that let the engine's layout wrap it. *)
@@ -118,6 +143,23 @@ val text : string -> doc
 (** [opaque] is [<abstr>], the placeholder for a value with no printer. *)
 val opaque : doc
 
+(** [if_break s] is [s] only when the enclosing group breaks across lines,
+    such as a trailing separator that only the multi-line form needs. *)
+val if_break : string -> doc
+
+(** [hard_break] is an unconditional newline at the current indentation. *)
+val hard_break : doc
+
+(** [comment s] is the comment [(* s *)] at the end of the current line.
+    Every group open at that point breaks, so nothing else shares the line.
+    This is the only comment form. Raises {!Hegel.Usage_error} if [s]
+    contains a newline or the comment terminator. *)
+val comment : string -> doc
+
+(** [shift_indent delta] changes the indentation of the break points that
+    follow by [delta] columns, which may be negative. *)
+val shift_indent : int -> doc
+
 (** [breakable sep] is a point where a group may break: [sep] when the
     enclosing group fits on one line, a newline plus indentation when it does
     not. *)
@@ -157,10 +199,180 @@ val apply : doc -> doc list -> doc
     columns (by default the engine's width) and returns the text. *)
 val to_string : ?max_width:int -> doc -> string
 
+(** {2 Printing while drawing} *)
+
+(** The write surface of a pretty-printed document: libhegel's engine
+    printer, positioned where the current draw prints.
+
+    A printable generator receives one and prints to it as it draws (see
+    {!Hegel.printable_composite}). A silent draw hands the same code
+    {!Out.noop}, which discards everything, so one body serves both paths;
+    guard work done only for printing with {!Out.should_print}.
+
+    Writing to a region that has died — the document was read, the test case
+    finished, or a speculation its anchor sat in was aborted — does nothing.
+    Unbalanced use ({!Out.end_group} with no open group) raises
+    {!Hegel.Usage_error}. *)
+module Out : sig
+#ifdef OXCAML
+  type t : value mod portable contended
+#else
+  type t
+#endif
+
+  (** [noop] discards everything printed to it. *)
+  val noop : t
+
+  (** [should_print t] is [false] for {!noop} and for a region that has died,
+      whose writes are discarded. *)
+  val should_print : t -> bool
+
+  (** {3 Primitives} *)
+
+  (** [text t s] emits [s] as literal, unbreakable text. A newline in [s] is
+      a {!hard_break}. *)
+  val text : t -> string -> unit
+
+  (** [breakable t sep] is a point where the enclosing group may break: [sep]
+      when the group fits on one line, else a newline plus indentation. *)
+  val breakable : t -> string -> unit
+
+  (** [if_break t s] emits [s] only when the innermost open group breaks. *)
+  val if_break : t -> string -> unit
+
+  (** [hard_break t] emits an unconditional newline plus the current
+      indentation. *)
+  val hard_break : t -> unit
+
+  (** [begin_group t ?indent open_] opens a group: emits [open_] and indents
+      the break points inside by [indent], by default the length of [open_].
+      A group either fits on one line or breaks at every breakable directly
+      inside it. *)
+  val begin_group : t -> ?indent:int -> string -> unit
+
+  (** [end_group t close] closes the innermost group, undoing its
+      indentation, and emits [close]. *)
+  val end_group : t -> string -> unit
+
+  (** [shift_indent t delta] changes the indentation of the break points that
+      follow by [delta] columns. *)
+  val shift_indent : t -> int -> unit
+
+  (** [comment t s] attaches [(* s *)] to the end of the current line, as
+      {!Printer.comment}. *)
+  val comment : t -> string -> unit
+
+  (** [reflow t s] emits the one-line representation [s], letting the engine
+      recover its [(…)], [\[…\]] and [{…}] groups (see {!Printer.reflow}). *)
+  val reflow : t -> string -> unit
+
+  (** {3 Conveniences} *)
+
+  (** [group t ?indent open_ close f] is [open_], whatever [f] prints, then
+      [close], as one group. The group is closed even if [f] raises. [f]
+      prints at top position (see {!argument}). *)
+  val group : t -> ?indent:int -> string -> string -> (t -> 'a) -> 'a
+
+  (** [separator t sep] is [sep] followed by a break point that renders as a
+      space when the group fits on one line. *)
+  val separator : t -> string -> unit
+
+  (** [seq t ?sep open_ close items print] prints [items] as a delimited
+      sequence, each as [print] prints it, separated by [sep] (default [";"],
+      as in [\[1; 2\]]): inline when it fits, else one item per line
+      aligned just inside [open_]. *)
+  val seq : t -> ?sep:string -> string -> string -> 'a list -> (t -> 'a -> unit) -> unit
+
+  (** [doc t d] prints the document [d], parenthesized when it is not atomic
+      and [t] is in argument position. *)
+  val doc : t -> doc -> unit
+
+  (** [value t print v] prints [print v]. Nothing is formatted when [t] is
+      not printing. *)
+  val value : t -> ('a -> doc) -> 'a -> unit
+
+  (** [sexp t sexp_of v] prints [v] as the s-expression [sexp_of] gives (see
+      {!of_sexp}). *)
+  val sexp : t -> ('a -> Sexplib0.Sexp.t) -> 'a -> unit
+
+  (** {3 Argument position}
+
+      OCaml syntax parenthesizes a constructor or function argument only
+      when it is not atomic: [Some 5] and [Some \[1; 2\]], but [Some (-5)]
+      and [Some (Some 1)]. A printer passed to an argument's generator is
+      marked with {!argument}; something that prints a non-atomic form wraps
+      itself in {!parens_if_argument}. {!val-doc} and {!value} do this on their
+      own. *)
+
+  (** [argument t] is [t] marked as printing a constructor or function
+      argument. *)
+  val argument : t -> t
+
+  (** [in_argument t] says whether [t] prints an argument. *)
+  val in_argument : t -> bool
+
+  (** [parens_if_argument t f] runs [f] inside parentheses when [t] is in
+      argument position, else as it is. [f] prints at top position. *)
+  val parens_if_argument : t -> (t -> 'a) -> 'a
+
+  (** {3 Speculation}
+
+      A draw that may be rejected (a filter attempt, a duplicate element)
+      prints into a speculative region, kept only if the draw is accepted. *)
+
+  (** [speculate t f] runs [f t] in a speculative region: what [f] prints is
+      kept when it returns [`Commit], and discarded when it returns [`Abort]
+      or raises. *)
+  val speculate : t -> (t -> 'a * [ `Commit | `Abort ]) -> 'a
+
+  (** [begin_speculation t] opens a speculative region. Regions nest. *)
+  val begin_speculation : t -> unit
+
+  (** [commit_speculation t] closes the innermost speculative region,
+      keeping its output. *)
+  val commit_speculation : t -> unit
+
+  (** [abort_speculation t] closes the innermost speculative region,
+      discarding its output. *)
+  val abort_speculation : t -> unit
+
+  (** {3 Deferred regions} *)
+
+  (** [deferred t] opens a hole at [t]'s current position and returns a
+      printer that writes into it: whatever it prints, later or from another
+      thread, appears at the hole when the document renders. This is how a
+      value is described after it is drawn, as it is used. It prints in
+      [t]'s position (see {!argument}). Each deferred printer has one writer
+      at a time. Its region dies when the test case finishes, after which
+      writes do nothing. *)
+  val deferred : t -> t
+
+  (** {3 Standalone documents} *)
+
+  (** [with_document ?max_width f] runs [f] on the printer of a fresh
+      document, laid out to lines of at most [max_width] columns (by default
+      the engine's width), and returns the text. *)
+  val with_document : ?max_width:int -> (t -> unit) -> string
+end
+
 (**/**)
 
-(** [render ctx printer doc] writes [doc] through the engine printer
-    [printer]. Not part of the public API. *)
-val render : Hegel_ffi.Ffi.context -> Hegel_ffi.Ffi.printer -> doc -> unit
+(** The owner of a family of printer regions, which frees them all at once.
+    Not part of the public API. *)
+#ifdef OXCAML
+type owner : value mod portable contended
+#else
+type owner
+#endif
+
+val create_owner : unit -> owner
+val free_owner : owner -> unit
+
+(** [of_handle owner context handle] is a printer onto [handle], used through
+    [context], both owned and freed by [owner] from now on. *)
+val of_handle : owner -> Hegel_ffi.Ffi.context -> Hegel_ffi.Ffi.printer -> Out.t
+
+(** [release t] frees [t]'s own region now, rather than with its owner. *)
+val release : Out.t -> unit
 
 (**/**)

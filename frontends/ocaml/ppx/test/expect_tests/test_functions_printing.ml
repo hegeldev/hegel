@@ -393,7 +393,7 @@ let%expect_test "a printable function generator prints with its sexp_of" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    f = <fun>
+    let f = <fun> in
     f 42 = 10
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
 
@@ -591,6 +591,37 @@ let%expect_test "print_arg renders arguments as OCaml syntax" =
     h 1 true (Some 2) = 0
     g (-1) "a" = 0
     f [1; 2] = 10
+    Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
+
+    To reproduce this failure, add this attribute to the let%hegel_test:
+        [@@failure_blobs [ "<BLOB>" ]]
+    |}]
+;;
+
+let%hegel_test function_of_flat_map tc =
+  let f =
+    draw_silent
+      tc
+      (functions
+         ~sexp_of_arg:sexp_of_int
+         ~returns:
+           (flat_map
+              (fun n -> map Fn.id (integers ~min_value:n ~max_value:n ()))
+              (integers ~min_value:5 ~max_value:5 ()))
+         ())
+  in
+  assert (f 1 < 5)
+[@@settings
+  { (Settings.create ~test_cases:100 ~seed:0 ()) with verbosity = Settings.Normal }]
+;;
+
+let%expect_test "a function returning an unprintable flat_map prints <abstr>" =
+  (try function_of_flat_map () with
+   | _ -> ());
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    f 1 = <abstr>
     Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
 
     To reproduce this failure, add this attribute to the let%hegel_test:
