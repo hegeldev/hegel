@@ -174,7 +174,7 @@ fn test_hegel_suppress_health_check_env_sets_the_starting_value() {
         "too_slow,filter_too_much",
     )]);
     assert!(
-        settings.contains("suppress_health_check: [TooSlow, FilterTooMuch]"),
+        settings.contains("suppress_health_check: [FilterTooMuch, TooSlow]"),
         "{settings}"
     );
     let settings = resolved_settings_with(&[("HEGEL_SUPPRESS_HEALTH_CHECK", "all")]);

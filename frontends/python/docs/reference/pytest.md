@@ -56,8 +56,10 @@ applied, the `--hegel-setting` options first and then the others, and makes it
 the default for the run. So settings written in a test, or given to a
 {class}`~hegel.Settings` object, still take precedence over the options, and so
 do the `HEGEL_*` environment variables in {doc}`settings`, which apply on top of
-whichever profile is the default. Everything a `Settings` object leaves unset
-follows the options, even for one created at import time in a `conftest.py`.
+whichever profile is the default. A `Settings` object resolves its profile when
+it is created, so one created at import time, in a `conftest.py` loaded before
+the options are applied, say, does not see them; the keyword arguments of
+`@hegel.test` are resolved when the test runs and do.
 
 ## Detecting Hegel tests
 

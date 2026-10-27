@@ -56,7 +56,7 @@ below it set and leaves the rest alone:
    | `HEGEL_NONDETERMINISM_STRICTNESS` | Sets `nondeterminism_strictness`: `quiet`, `warn` or `error`. |
 
    An empty variable is ignored; any other malformed value is an error,
-   raised when a `Settings` value is created or used. A fixed `seed`, wherever it
+   raised when a `Settings` value is created. A fixed `seed`, wherever it
    came from, still takes precedence over `derandomize`, so
    `HEGEL_DERANDOMIZE=true` has no effect on a profile with a seed unless
    `HEGEL_SEED=none` clears it.
@@ -72,14 +72,16 @@ below it set and leaves the rest alone:
    These are the settings the author of the test chose, so they take
    precedence over the environment variables: a variable adjusts a test suite,
    not a test that sets the same setting itself. A `Settings` object passed as
-   `settings=` belongs to this layer too: it holds only the settings it was
-   given, and everything else still comes from the layers below.
+   `settings=` belongs to this layer too: every field it holds, the ones it was
+   given and the ones it copied from the layers below when it was made, is set
+   for the run.
 
-Hegel resolves the settings each time a test runs, so changes to the
-environment or the default profile made before a test runs apply to it, even
-for a `Settings` object made earlier, at import time in a `conftest.py` say.
-Reading a field of a `Settings` object resolves it the same way, at the time of
-reading.
+A `Settings` object resolves the layers below it once, when it is created, and
+keeps a copy of every field. Changes to the environment or the default profile
+made later do not reach it, so a `Settings` object made at import time, in a
+`conftest.py` say, keeps the values it was made with. Keyword arguments to
+`@hegel.test` are different: they are resolved over the default profile each
+time the test runs, so they follow such changes.
 
 `HEGEL_DEFAULT_PROFILE` and `HEGEL_CONFIG` also come from the environment, but
 act on the second layer, choosing the default profile and the configuration
@@ -282,10 +284,11 @@ the earlier snapshot.
 {meth}`Settings.set_default_profile <hegel.Settings.set_default_profile>` makes
 a profile the default for the process. The profile must already exist.
 
-Make these calls before the tests they should affect run: in a `conftest.py`,
-for example. A `Settings` value created before them, without
-{meth}`~hegel.Settings.from_profile`, follows the new default profile, as it
-resolves its settings each time it is used.
+Neither call is retroactive: a `Settings` value created before them keeps its
+fields. Make them before the settings that should see them are made: in a
+`conftest.py`, for example, before any `Settings(...)` value, while a test
+declared `@hegel.test(test_cases=500)` resolves its profile each time it runs
+and so sees them whenever they are made before it runs.
 
 ## Environment variables
 

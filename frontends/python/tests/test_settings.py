@@ -40,7 +40,7 @@ def test_overrides_apply_and_validate():
 
 def test_coercions():
     settings = Settings(
-        seed=-1,
+        seed=(1 << 64) - 1,
         database=False,
         phases=[Phase.generate, Phase.shrink],
         suppress_health_check=HealthCheck.too_slow,
@@ -122,6 +122,8 @@ def test_clearing_the_default_profile_restores_the_engine_choice():
         ({"test_cases": True}, "test_cases=True must be an integer"),
         ({"test_cases": -1}, "test_cases=-1 must be non-negative"),
         ({"seed": 1.5}, "seed=1.5 must be an integer"),
+        ({"seed": -1}, r"seed=-1 must be between 0 and 2\*\*64 - 1"),
+        ({"seed": 1 << 64}, r"seed=18446744073709551616 must be between 0 and 2\*\*64 - 1"),
         ({"derandomize": 1}, "derandomize=1 must be True or False"),
         ({"database": 3}, "database=3 must be a directory path"),
         ({"verbosity": "loud"}, "verbosity='loud' must be one of Verbosity.quiet"),
@@ -273,21 +275,43 @@ def test_unbounded_choices_is_validated():
         Settings(unbounded_choices=1)
 
 
-def test_settings_follow_a_default_profile_set_after_they_were_made():
+def test_settings_keep_their_values_when_the_default_profile_changes_later():
     settings = Settings(test_cases=3)
     child = settings.replace(print_blob=True)
     Settings.register_profile("later", seed=5, verbosity=Verbosity.verbose, test_cases=50)
     try:
         Settings.set_default_profile("later")
-        assert settings.seed == 5
-        assert settings.verbosity is Verbosity.verbose
+        assert settings.seed is None
+        assert settings.verbosity is Verbosity.normal
         assert settings.test_cases == 3
-        assert child.seed == 5 and child.print_blob
+        assert child.seed is None and child.print_blob
         built = settings._build()
-        assert built.get_seed() == 5 and built.get_test_cases() == 3
+        assert built.get_seed() is None and built.get_test_cases() == 3
+        assert built.get_verbosity() == _native.VERBOSITY_NORMAL
+        assert Settings().seed == 5
     finally:
         Settings.set_default_profile("hegel-tests")
-    assert settings.seed is None
+
+
+def test_registering_a_profile_is_not_retroactive():
+    Settings.register_profile("evolving", test_cases=3)
+    settings = Settings.from_profile("evolving")
+    Settings.register_profile("evolving", test_cases=4)
+    assert settings.test_cases == 3
+    assert Settings.from_profile("evolving").test_cases == 4
+
+
+def test_a_malformed_settings_variable_fails_at_construction(monkeypatch):
+    monkeypatch.setenv("HEGEL_TEST_CASES", "lots")
+    with pytest.raises(hegel.InvalidArgument, match="HEGEL_TEST_CASES must be a positive integer"):
+        Settings()
+    with pytest.raises(hegel.InvalidArgument, match="HEGEL_TEST_CASES must be a positive integer"):
+        Settings.from_profile("base")
+    monkeypatch.setenv("HEGEL_TEST_CASES", "7")
+    settings = Settings()
+    assert settings.test_cases == 7
+    monkeypatch.setenv("HEGEL_TEST_CASES", "lots")
+    assert settings.test_cases == 7
 
 
 def test_settings_from_a_profile_do_not_follow_the_default():
@@ -306,13 +330,14 @@ def test_settings_equality_hash_and_repr():
     assert Settings(test_cases=3) != Settings(test_cases=4)
     assert Settings(test_cases=3) != Settings.from_profile("ci", test_cases=3)
     assert Settings() != object()
-    assert repr(Settings(test_cases=3, seed=1)) == "Settings(test_cases=3, seed=1)"
-    assert repr(Settings()) == "Settings()"
-    assert repr(Settings.from_profile("ci")) == "Settings.from_profile('ci')"
-    assert (
-        repr(Settings.from_profile("ci", test_cases=3))
-        == "Settings.from_profile('ci', test_cases=3)"
+    assert Settings.from_profile("ci", test_cases=3) == Settings(
+        Settings.from_profile("ci"), test_cases=3
     )
+    shown = repr(Settings(test_cases=3, seed=1))
+    assert shown.startswith("Settings(test_cases=3, verbosity=<Verbosity.normal")
+    assert "seed=1, derandomize=False, database=''" in shown
+    assert shown.endswith("nondeterminism_strictness=<NondeterminismStrictness.quiet: 0>)")
+    assert "derandomize=True" in repr(Settings.from_profile("ci"))
 
 
 def test_settings_cannot_be_changed_or_deleted():

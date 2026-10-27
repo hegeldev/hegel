@@ -11,7 +11,7 @@
 * [Documentation](https://hegel.readthedocs.io)
 * [Website](https://hegel.dev)
 
-`hegel-python` is a property-based testing library for Python. `hegel-python` is based on [Hypothesis](https://github.com/hypothesisworks/hypothesis), using the [Hegel](https://hegel.dev/) protocol. If you are coming from Hypothesis, [the documentation](https://hegel.readthedocs.io/en/latest/explanation/comparison-with-hypothesis.html) sets out how the two compare.
+`hegeltest` is a property-based testing library for Python. `hegeltest` is based on [Hypothesis](https://github.com/hypothesisworks/hypothesis), using the [Hegel](https://hegel.dev/) protocol. If you are coming from Hypothesis, [the documentation](https://hegel.readthedocs.io/en/latest/explanation/comparison-with-hypothesis.html) sets out how the two compare.
 
 ## Installation
 

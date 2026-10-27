@@ -134,7 +134,9 @@ def test_plugin_rejects_bad_settings(pytester: pytest.Pytester, option: str, mes
     result.stderr.fnmatch_lines([message])
 
 
-def test_settings_made_in_a_conftest_follow_the_options(pytester: pytest.Pytester):
+def test_settings_made_in_a_conftest_keep_their_values_but_keywords_follow_the_options(
+    pytester: pytest.Pytester,
+):
     pytester.makeconftest(
         """
 import hegel
@@ -148,17 +150,27 @@ from hegel import generators as gs
 from conftest import FAST
 
 SEEN = []
+SEEN_LATER = []
 
 @hegel.test(settings=FAST)
 def test_fast(tc):
     SEEN.append(tc.draw(gs.integers()))
 
+@hegel.test(test_cases=2, database="")
+def test_keywords(tc):
+    SEEN_LATER.append(tc.draw(gs.integers()))
+
 def test_report():
     print("SEED", FAST.seed, "VERBOSITY", FAST.verbosity.name, "CASES", FAST.test_cases)
-    print("SEEN", len(SEEN))
+    print("SEEN", len(SEEN), len(SEEN_LATER))
+    later = hegel.Settings()
+    print("LATER", later.seed, later.verbosity.name)
 """
     )
     result = pytester.runpytest("-s", "--hegel-seed=42", "--hegel-setting", "verbosity=verbose")
-    result.assert_outcomes(passed=2)
-    result.stdout.fnmatch_lines(["*SEED 42 VERBOSITY verbose CASES 3*", "*SEEN 3*"])
+    result.assert_outcomes(passed=3)
+    result.stdout.fnmatch_lines(
+        ["*SEED None VERBOSITY normal CASES 3*", "*SEEN 3 2*", "*LATER 42 verbose*"]
+    )
     result.stderr.fnmatch_lines(["Running test case", "draw_1 = *"])
+    assert result.stderr.str().count("Running test case") == 2
