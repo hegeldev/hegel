@@ -31,6 +31,7 @@ module Bank = struct
   ;;
 
   let balance account = Atomic.get account.balance
+  let deposit account ~amount = ignore (Atomic.fetch_and_add account.balance amount : int)
 
   let transfer ~source ~dest ~amount =
     let source_balance = Atomic.get source.balance in
@@ -75,13 +76,22 @@ module%hegel_concurrent_state_machine Bank_test = struct
     ignore (Atomic.fetch_and_add state.total deposit : int);
     Stateful.Concurrent_pool.add state.accounts tc account;
     note tc (Printf.sprintf "opened #%d" account.id)
-  [@@rule { group = "bank" }]
+  [@@rule { group = "accounts" }]
+  ;;
+
+  let deposit tc (_ : ctx) (state : t) =
+    let account = draw_silent tc (accounts_gen state.accounts) in
+    let amount = draw tc (integers ~min_value:1 ~max_value:1_000 ()) in
+    note tc (Printf.sprintf "into #%d" account.id);
+    Bank.deposit account ~amount;
+    ignore (Atomic.fetch_and_add state.total amount : int)
+  [@@rule { group = "accounts" }]
   ;;
 
   let transfer tc (_ : ctx) (state : t) =
-    let source =
-      draw_silent tc (accounts_gen state.accounts)
-    in
+    let source = draw_silent tc (accounts_gen state.accounts) in
+    let available = Bank.balance source in
+    assume tc (available > 0);
     let dest =
       draw_silent
         tc
@@ -89,19 +99,17 @@ module%hegel_concurrent_state_machine Bank_test = struct
            (fun (account : Bank.account) -> account.id <> source.id)
            (accounts_gen state.accounts))
     in
-    let amount = draw tc (integers ~min_value:1 ~max_value:500 ()) in
+    let amount = draw tc (integers ~min_value:1 ~max_value:available ()) in
     note tc (Printf.sprintf "from #%d to #%d" source.id dest.id);
     Bank.transfer ~source ~dest ~amount
-  [@@rule { group = "bank"; weight = 6 }]
+  [@@rule { group = "transfers"; weight = 6 }]
   ;;
 
   let check_balance tc (_ : ctx) (state : t) =
-    let account =
-      draw_silent tc (accounts_gen state.accounts)
-    in
+    let account = draw_silent tc (accounts_gen state.accounts) in
     note tc (Printf.sprintf "#%d" account.id);
     assert (Bank.balance account >= 0)
-  [@@rule { group = "bank" }]
+  [@@rule { group = "transfers" }]
   ;;
 
   let no_money_lost _tc (state : t) =
