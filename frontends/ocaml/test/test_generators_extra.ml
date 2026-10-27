@@ -63,7 +63,7 @@ let test_floats_width_32 () =
   check_all (floats ~width:`W32 ~min_value:0.0 ~max_value:1.0 ()) (fun f ->
     Alcotest.(check bool) "in range" true (f >= 0.0 && f <= 1.0 && is_float32 f));
   let tiny =
-    minimal (floats ~width:`W32 ~min_value:0.0 ~exclude_min:true ()) (fun f -> f < 1e-40)
+    minimal (floats ~width:`W32 ~min_value_exclusive:0.0 ()) (fun f -> f < 1e-40)
   in
   Alcotest.(check bool) "a subnormal" true (tiny > 0.0 && is_float32 tiny);
   expect_draw_usage_error (floats ~width:`W32 ~min_value:0.1 ())

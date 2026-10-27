@@ -1208,16 +1208,16 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
   };
 }
 
-/** Copy an engine-owned `{data, len}` buffer into a JS-owned Buffer. */
-function copyNativeBuffer(result: NativeBuffer): Buffer {
+/** Copy an engine-owned `{data, len}` buffer into a JS-owned Uint8Array. */
+function copyNativeBuffer(result: NativeBuffer): Uint8Array {
   const len = Number(result.len);
   if (!Number.isSafeInteger(len) || len < 0 || (len > 0 && result.data === null)) {
     throw new EngineError("Invalid native buffer result");
   }
   if (len === 0) {
-    return Buffer.alloc(0);
+    return new Uint8Array(0);
   }
-  return Buffer.from(koffi.decode(result.data, "uint8_t", len) as unknown as number[]);
+  return Uint8Array.from(koffi.decode(result.data, "uint8_t", len) as unknown as number[]);
 }
 
 /**
@@ -1827,7 +1827,7 @@ export class Libhegel implements Engine {
   }
 
   /** Draw a byte string with length in `[minSize, maxSize]` (see {@link Engine.generateBytes}). */
-  generateBytes(ctx: Ptr, tc: Ptr, minSize: number, maxSize: bigint): Buffer {
+  generateBytes(ctx: Ptr, tc: Ptr, minSize: number, maxSize: bigint): Uint8Array {
     const out: NativeBuffer[] = [{ data: null, len: 0 }];
     this.check(
       ctx,

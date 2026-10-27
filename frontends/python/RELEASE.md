@@ -64,3 +64,15 @@ class Coords(gs.Generator[tuple[int, int]]):
 `tc.draw(gs.lists(Coords(), min_size=1))` reports `xs = [Coord(0, 0)]`. Every built-in generator is printable and prints as before, except that an empty set now prints as `set()` and an empty frozenset as `frozenset()`, where they printed as `{}` and `frozenset({})`, and the containers `from_type()` builds by converting a drawn value now print their elements with the elements' own generators, as a call: `tuple[Foo, ...]` prints as `tuple([...])`, `deque[Foo]` as `deque([...])`, `OrderedDict[str, Foo]` as `OrderedDict({...})`, and a `TypedDict` named `Movie` as `Movie({...})`, where they printed the `repr` of the finished value, losing a `print_with` registered for `Foo`. When a draw raises, the draws made inside it are now listed as their generators print them, so a `print_with` inner draw shows its custom text there.
 
 `PrettyPrinter` gains `repr(value)` (the preferred spelling of `pretty_print(value, printer)`), a `group(open, close)` context manager, `seq`, `separator`, and `deferred()`, which opens a region anchored at the current position that can be printed into later, from any thread, so a generator can describe a value that is only known after it is drawn. `PrettyPrinter.comment(text)` now renders `  # text`, where it used to render the text with no comment marker. `PrettyPrinter.value()` is no longer public: render a `Document` with `Document.finish()`. `Document` and `Speculation` are now exported from `hegel`.
+
+This release also replaces the `exclude_min` and `exclude_max` flags of `gs.floats()` with `min_value_exclusive` and `max_value_exclusive`, which take the bound directly, as the other Hegel frontends do:
+
+```python
+# before
+gs.floats(min_value=0.0, max_value=1.0, exclude_min=True, exclude_max=True)
+
+# after
+gs.floats(min_value_exclusive=0.0, max_value_exclusive=1.0)
+```
+
+Giving both `min_value` and `min_value_exclusive` (or both `max_value` and `max_value_exclusive`) is an `InvalidArgument`. An exclusive bound can no longer be set without a bound value, so that error no longer exists; the remaining validation (an exclusive `inf` minimum, an exclusive `-inf` maximum, or exclusive bounds on a single-point range) is unchanged, and its messages now name the new arguments. The `repr` of such a generator shows the exclusive form, `floats(min_value_exclusive=0.0)`.

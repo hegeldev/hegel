@@ -455,9 +455,9 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
       }),
     );
     const h = lib.newContext();
-    expect(lib.generateBytes(h, h, 0, 0xffffffffffffffffn)).toEqual(Buffer.alloc(0));
+    expect(lib.generateBytes(h, h, 0, 0xffffffffffffffffn)).toEqual(new Uint8Array(0));
     expect(seenMax).toBe(0xffffffffffffffffn);
-    expect(lib.generateBytes(h, h, 0, 5n)).toEqual(Buffer.alloc(0));
+    expect(lib.generateBytes(h, h, 0, 5n)).toEqual(new Uint8Array(0));
     expect(seenMax).toBe(5n);
   });
 

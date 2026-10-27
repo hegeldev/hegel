@@ -181,18 +181,18 @@ class Floats(_PrintsValue[float]):
         self.width = width
         self.exclude_min = exclude_min
         self.exclude_max = exclude_max
+        min_name = "min_value_exclusive" if exclude_min else "min_value"
+        max_name = "max_value_exclusive" if exclude_max else "max_value"
         has_min = min_value is not None
         has_max = max_value is not None
         if has_min and has_max and not (min_value <= max_value):  # type: ignore[operator]
-            raise InvalidArgument(f"Cannot have max_value={max_value!r} < min_value={min_value!r}")
-        if exclude_min and not has_min:
-            raise InvalidArgument("Cannot exclude min_value=None")
-        if exclude_max and not has_max:
-            raise InvalidArgument("Cannot exclude max_value=None")
+            raise InvalidArgument(
+                f"Cannot have {max_name}={max_value!r} < {min_name}={min_value!r}"
+            )
         if exclude_min and min_value == math.inf:
-            raise InvalidArgument("exclude_min with min_value=inf leaves no values")
+            raise InvalidArgument("min_value_exclusive=inf leaves no values")
         if exclude_max and max_value == -math.inf:
-            raise InvalidArgument("exclude_max with max_value=-inf leaves no values")
+            raise InvalidArgument("max_value_exclusive=-inf leaves no values")
         if allow_nan is None:
             allow_nan = not has_min and not has_max
         if allow_nan and (has_min or has_max):
@@ -213,8 +213,8 @@ class Floats(_PrintsValue[float]):
         if bounded_lo and bounded_hi and not _sign_aware_lte(lo, hi):  # type: ignore[arg-type]
             if exclude_min or exclude_max:
                 raise InvalidArgument(
-                    f"exclude_min/exclude_max leave no {width}-bit floating-point "
-                    f"values in [{min_value!r}, {max_value!r}]"
+                    f"min_value_exclusive/max_value_exclusive leave no {width}-bit "
+                    f"floating-point values in [{min_value!r}, {max_value!r}]"
                 )
             raise InvalidArgument(
                 f"There are no {width}-bit floating-point values between "
@@ -231,14 +231,14 @@ class Floats(_PrintsValue[float]):
             if min_value == math.inf:
                 raise InvalidArgument("allow_infinity=False excludes min_value=inf")
             raise InvalidArgument(
-                f"exclude_min=True turns min_value={min_value!r} into inf, "
+                f"min_value_exclusive={min_value!r} leaves only inf, "
                 "but allow_infinity=False excludes it"
             )
         elif hi == -math.inf:
             if max_value == -math.inf:
                 raise InvalidArgument("allow_infinity=False excludes max_value=-inf")
             raise InvalidArgument(
-                f"exclude_max=True turns max_value={max_value!r} into -inf, "
+                f"max_value_exclusive={max_value!r} leaves only -inf, "
                 "but allow_infinity=False excludes it"
             )
         if allow_subnormal is None:
@@ -256,12 +256,12 @@ class Floats(_PrintsValue[float]):
         if allow_subnormal:
             if bounded_lo and lo >= smallest_normal:  # type: ignore[operator]
                 raise InvalidArgument(
-                    f"allow_subnormal=True, but min_value={min_value!r} excludes all "
+                    f"allow_subnormal=True, but {min_name}={min_value!r} excludes all "
                     f"values below the smallest positive normal {smallest_normal!r}"
                 )
             if bounded_hi and hi <= -smallest_normal:  # type: ignore[operator]
                 raise InvalidArgument(
-                    f"allow_subnormal=True, but max_value={max_value!r} excludes all "
+                    f"allow_subnormal=True, but {max_name}={max_value!r} excludes all "
                     f"values above the smallest negative normal {-smallest_normal!r}"
                 )
         elif bounded_lo and bounded_hi:
@@ -301,9 +301,11 @@ class Floats(_PrintsValue[float]):
     def __repr__(self) -> str:
         parts = []
         if self.min_value is not None:
-            parts.append(f"min_value={self.min_value!r}")
+            name = "min_value_exclusive" if self.exclude_min else "min_value"
+            parts.append(f"{name}={self.min_value!r}")
         if self.max_value is not None:
-            parts.append(f"max_value={self.max_value!r}")
+            name = "max_value_exclusive" if self.exclude_max else "max_value"
+            parts.append(f"{name}={self.max_value!r}")
         if self.width != 64:
             parts.append(f"width={self.width}")
         return f"floats({', '.join(parts)})"
@@ -332,15 +334,17 @@ def floats(
     allow_infinity: bool | None = None,
     allow_subnormal: bool | None = None,
     width: int = 64,
-    exclude_min: bool = False,
-    exclude_max: bool = False,
+    min_value_exclusive: float | None = None,
+    max_value_exclusive: float | None = None,
 ) -> Generator[float]:
     """Generate floating-point numbers in ``[min_value, max_value]``.
 
-    Either bound may be omitted. ``exclude_min`` and ``exclude_max`` make
-    the corresponding bound exclusive. Values shrink toward ``0.0``, and
-    toward simple values with few significant digits: integers before
-    fractions.
+    Either bound may be omitted. ``min_value_exclusive`` and
+    ``max_value_exclusive`` set a bound that is itself excluded, in place
+    of the inclusive ``min_value`` and ``max_value``; giving both forms of
+    one bound is an :class:`~hegel.InvalidArgument`. Values shrink toward
+    ``0.0``, and toward simple values with few significant digits: integers
+    before fractions.
 
     ``allow_nan``, ``allow_infinity`` and ``allow_subnormal`` default to
     whatever the bounds permit. Without bounds, NaN and the infinities are
@@ -353,24 +357,31 @@ def floats(
     ``width`` is 64 (the default) or 32, in which case every value is
     exactly representable as a 32-bit float and the bounds must be too.
 
-    Bounds that are NaN or not real numbers, ``min_value > max_value``,
-    an exclusive bound that is missing, and any combination that leaves no
-    values (``allow_infinity=False`` with ``min_value=math.inf``, say) are
-    each an :class:`~hegel.InvalidArgument`.
+    Bounds that are NaN or not real numbers, ``min_value > max_value``, and
+    any combination that leaves no values (``allow_infinity=False`` with
+    ``min_value=math.inf``, or ``min_value_exclusive=1.0`` with
+    ``max_value=1.0``, say) are each an :class:`~hegel.InvalidArgument`.
 
     ::
 
         probability = tc.draw(gs.floats(min_value=0.0, max_value=1.0))
+        positive = tc.draw(gs.floats(min_value_exclusive=0.0))
         finite = tc.draw(gs.floats(allow_nan=False, allow_infinity=False))
     """
-    if min_value is not None:
+    if min_value is not None and min_value_exclusive is not None:
+        raise InvalidArgument("Cannot give both min_value and min_value_exclusive")
+    if max_value is not None and max_value_exclusive is not None:
+        raise InvalidArgument("Cannot give both max_value and max_value_exclusive")
+    exclude_min = min_value_exclusive is not None
+    exclude_max = max_value_exclusive is not None
+    if exclude_min:
+        min_value = _check_float("min_value_exclusive", min_value_exclusive, width)
+    elif min_value is not None:
         min_value = _check_float("min_value", min_value, width)
-    if max_value is not None:
+    if exclude_max:
+        max_value = _check_float("max_value_exclusive", max_value_exclusive, width)
+    elif max_value is not None:
         max_value = _check_float("max_value", max_value, width)
-    if not isinstance(exclude_min, bool):
-        raise InvalidArgument(f"exclude_min={exclude_min!r} must be a bool")
-    if not isinstance(exclude_max, bool):
-        raise InvalidArgument(f"exclude_max={exclude_max!r} must be a bool")
     return Floats(
         min_value,
         max_value,

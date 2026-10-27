@@ -112,3 +112,17 @@ const expressions = gs.fromLark(`
   %import common.NUMBER
 `);
 ```
+
+This release also replaces the `excludeMin` and `excludeMax` flags of `gs.floats()` with `minValueExclusive` and `maxValueExclusive`, which take the bound directly, as the other Hegel frontends do:
+
+```ts
+// before
+gs.floats({ minValue: 0, maxValue: 1, excludeMin: true, excludeMax: true });
+
+// after
+gs.floats({ minValueExclusive: 0, maxValueExclusive: 1 });
+```
+
+Giving both `minValue` and `minValueExclusive` (or both `maxValue` and `maxValueExclusive`) is an error. `gs.floats()` also gains `allowSubnormal`: subnormal ("denormalised") values are drawn whenever the bounds admit any, as before, and `allowSubnormal: false` keeps them out, for code that may run with flush-to-zero floating point. Asking for subnormals with bounds that exclude them all, or excluding them from a range that holds nothing else, is an error.
+
+`gs.binary()` now returns a plain `Uint8Array` on Node too, where it returned a `Buffer`, so a drawn byte string prints as `Uint8Array.from([…])` on every host, as the README said.

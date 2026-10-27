@@ -120,3 +120,15 @@ A `filter()` on `hegel::stateful::values_consumed()` now removes only the value 
 The undocumented `hegel::verbosity_to_string()` and `hegel::health_check_to_string()` are removed.
 
 The 0.13.2 changelog entry says the Nix flake was removed. That is not correct: `nix/flake.nix` is still available and still exports `lib.mkHegelCppProject`. It now builds the in-tree libhegel instead of downloading one.
+
+This release also replaces the `exclude_min` and `exclude_max` flags of `FloatsParams` with `min_value_exclusive` and `max_value_exclusive`, which take the bound directly, as the other Hegel frontends do:
+
+```cpp
+// before
+gs::floats<double>({.min_value = 0.0, .max_value = 1.0, .exclude_min = true, .exclude_max = true})
+
+// after
+gs::floats<double>({.min_value_exclusive = 0.0, .max_value_exclusive = 1.0})
+```
+
+Giving both `min_value` and `min_value_exclusive` (or both `max_value` and `max_value_exclusive`) is a `std::invalid_argument`. `FloatsParams` also gains `allow_subnormal`: subnormal ("denormalised") values are drawn whenever the bounds admit any, as before, and `.allow_subnormal = false` keeps them out, for code that may run with flush-to-zero floating point (compiled with `-ffast-math`, say). Asking for subnormals with bounds that exclude them all, or excluding them from a range that holds nothing else, is a `std::invalid_argument`.

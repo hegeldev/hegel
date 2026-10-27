@@ -115,12 +115,33 @@ export interface FloatOptions {
    * With width 32, the bounds must be exactly representable too.
    */
   width?: 32 | 64;
+  /** The inclusive lower bound. Not together with `minValueExclusive`. */
   minValue?: number;
+  /** The inclusive upper bound. Not together with `maxValueExclusive`. */
   maxValue?: number;
-  excludeMin?: boolean;
-  excludeMax?: boolean;
+  /** A lower bound that is itself excluded: every value is above it. */
+  minValueExclusive?: number;
+  /** An upper bound that is itself excluded: every value is below it. */
+  maxValueExclusive?: number;
   allowNan?: boolean;
   allowInfinity?: boolean;
+  /**
+   * Whether subnormal ("denormalised") values may be drawn. By default they
+   * are whenever the bounds admit any; pass `false` when the code under test
+   * may run with flush-to-zero floating point, where a subnormal input
+   * silently becomes zero.
+   */
+  allowSubnormal?: boolean;
+}
+
+function subnormalDefault(min: number | undefined, max: number | undefined, normal: number) {
+  if (min !== undefined && max !== undefined) {
+    if (min === max) return -normal < min && min < normal;
+    return min < normal && max > -normal;
+  }
+  if (min !== undefined) return min < normal;
+  if (max !== undefined) return max > -normal;
+  return true;
 }
 
 class FloatsGenerator extends ValueGenerator<number> {
@@ -128,27 +149,66 @@ class FloatsGenerator extends ValueGenerator<number> {
 
   constructor(options?: FloatOptions) {
     super();
-    const hasMin = options?.minValue !== undefined;
-    const hasMax = options?.maxValue !== undefined;
+    if (options?.minValue !== undefined && options.minValueExclusive !== undefined) {
+      throw new Error("Cannot give both minValue and minValueExclusive");
+    }
+    if (options?.maxValue !== undefined && options.maxValueExclusive !== undefined) {
+      throw new Error("Cannot give both maxValue and maxValueExclusive");
+    }
+    const excludeMin = options?.minValueExclusive !== undefined;
+    const excludeMax = options?.maxValueExclusive !== undefined;
+    const min = excludeMin ? options.minValueExclusive : options?.minValue;
+    const max = excludeMax ? options.maxValueExclusive : options?.maxValue;
+    const hasMin = min !== undefined;
+    const hasMax = max !== undefined;
     const width = options?.width ?? 64;
     // NaN only when completely unbounded; infinity when at least one side is open
     const allowNan = options?.allowNan ?? (!hasMin && !hasMax);
     const allowInfinity = options?.allowInfinity ?? (!hasMin || !hasMax);
+
+    const normal = width === 32 ? 2 ** -126 : 2 ** -1022;
+    const allowSubnormal = options?.allowSubnormal ?? subnormalDefault(min, max, normal);
+    if (allowSubnormal) {
+      if (min !== undefined && min >= normal) {
+        throw new Error(
+          `allowSubnormal is true, but ${excludeMin ? "minValueExclusive" : "minValue"} excludes ` +
+            `all values below the smallest positive normal ${normal}`,
+        );
+      }
+      if (max !== undefined && max <= -normal) {
+        throw new Error(
+          `allowSubnormal is true, but ${excludeMax ? "maxValueExclusive" : "maxValue"} excludes ` +
+            `all values above the smallest negative normal ${-normal}`,
+        );
+      }
+    } else if (min !== undefined && max !== undefined) {
+      const containsZero = min <= 0 && max >= 0;
+      if (!containsZero && max < normal && min > -normal) {
+        throw new Error(
+          `allowSubnormal is false, but that leaves no ${width}-bit floating-point values in [${min}, ${max}]`,
+        );
+      }
+    }
 
     const schema: Record<string, unknown> = {
       type: "float",
       width,
       allow_nan: allowNan,
       allow_infinity: allowInfinity,
+      smallest_nonzero_magnitude: allowSubnormal
+        ? width === 32
+          ? 2 ** -149
+          : Number.MIN_VALUE
+        : normal,
     };
 
     if (hasMin) {
-      schema["min_value"] = options!.minValue;
-      schema["exclude_min"] = options?.excludeMin ?? false;
+      schema["min_value"] = min;
+      schema["exclude_min"] = excludeMin;
     }
     if (hasMax) {
-      schema["max_value"] = options!.maxValue;
-      schema["exclude_max"] = options?.excludeMax ?? false;
+      schema["max_value"] = max;
+      schema["exclude_max"] = excludeMax;
     }
     this.schema = schema;
   }
@@ -165,9 +225,17 @@ class FloatsGenerator extends ValueGenerator<number> {
 /**
  * Generate floating-point numbers.
  *
- * By default, NaN is allowed only when no bounds are set, and infinity
- * is allowed when at least one bound is missing. Pass `width: 32` for values
- * a `Float32Array` holds exactly.
+ * By default, NaN is allowed only when no bounds are set, infinity is
+ * allowed when at least one bound is missing, and subnormal values are
+ * allowed whenever the bounds admit any. A bound is inclusive (`minValue`,
+ * `maxValue`) or exclusive (`minValueExclusive`, `maxValueExclusive`); giving
+ * both forms of one bound is an error. Pass `width: 32` for values a
+ * `Float32Array` holds exactly.
+ *
+ * ```ts
+ * const unit = gs.floats({ minValue: 0, maxValue: 1 });
+ * const positive = gs.floats({ minValueExclusive: 0 });
+ * ```
  */
 export function floats(options?: FloatOptions): PrintableGenerator<number> {
   return new FloatsGenerator(options);
