@@ -119,6 +119,18 @@ interface DataSource {
     /** Release a collection handle from {@link #newCollection}. Safe once the case is aborted. */
     void collectionFree(long id);
 
+    /** Start the engine-driven loop behind {@link TestCase#repeat} ({@code hegel_new_repeat}). */
+    long newRepeat();
+
+    /** Whether the engine wants another repetition of the loop. */
+    boolean repeatMore(long id);
+
+    /** Report that the repetition just run failed, before the failure propagates. */
+    void repeatFailed(long id);
+
+    /** Release a repeat handle from {@link #newRepeat}. Safe once the case is aborted. */
+    void repeatFree(long id);
+
     /**
      * Create a pool. The pool is family-wide: it is released by {@link #releasePools()} on the
      * root source once the test case is over, wherever in the family it was created.
@@ -191,10 +203,16 @@ interface DataSource {
 
     /**
      * A source over an independent choice stream of the same test case ({@code
-     * hegel_test_case_clone}), attributed to concurrent worker {@code workerIndex}, for a worker
-     * thread to draw through. Release it with {@link #release()} once the worker is done with it.
+     * hegel_test_case_clone}), for another thread to draw through. Release it with {@link
+     * #release()} once that thread is done with it.
      */
-    DataSource cloneForWorker(long workerIndex);
+    DataSource clone();
+
+    /**
+     * Attribute this source's output from now on to concurrent worker {@code workerIndex} ({@code
+     * hegel_test_case_set_worker}).
+     */
+    void setWorker(long workerIndex);
 
     /**
      * A source over a block handle ({@code hegel_test_case_block}): the <em>same</em> choice stream
@@ -204,7 +222,7 @@ interface DataSource {
      */
     DataSource block(long indent);
 
-    /** Free the handle behind a source from {@link #cloneForWorker} or {@link #block}. Safe once the case is aborted. */
+    /** Free the handle behind a source from {@link #clone} or {@link #block}. Safe once the case is aborted. */
     void release();
 
     /**

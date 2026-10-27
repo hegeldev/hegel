@@ -460,15 +460,32 @@ pub fn reproduce_failure_calls(blobs: &[Expr]) -> TokenStream {
     quote! { #( .reproduce_failure((#blobs).to_string()) )* }
 }
 
-/// Generate a sequence of explicit test case blocks. Each block constructs an
-/// `ExplicitTestCase` populated with `with_value` calls and then runs the body
-/// via `ExplicitTestCase::run`.
-pub fn build_explicit_blocks(
+/// The tokens of a test's explicit phase: the statements that run its
+/// explicit test cases through a `hegel::ExplicitRun` named
+/// `__hegel_explicit`, reading the settings from `__hegel_settings`, and the
+/// `Hegel` builder call that hands that run on. Both are empty without
+/// explicit test cases.
+pub struct ExplicitRunTokens {
+    pub section: TokenStream,
+    pub builder_call: TokenStream,
+}
+
+/// Generate a test's explicit phase (see [`ExplicitRunTokens`]). Each
+/// explicit test case constructs an `ExplicitTestCase` populated with
+/// `with_value` calls and runs the body on it through `ExplicitRun::case`,
+/// which runs it at once.
+pub fn build_explicit_run(
     cases: &[ParsedExplicitTestCase],
     param_pat: &Pat,
     body: &syn::Block,
-) -> Vec<TokenStream> {
-    cases
+) -> ExplicitRunTokens {
+    if cases.is_empty() {
+        return ExplicitRunTokens {
+            section: quote! {},
+            builder_call: quote! {},
+        };
+    }
+    let case_calls: Vec<TokenStream> = cases
         .iter()
         .map(|case| {
             let with_value_calls: Vec<TokenStream> = case
@@ -486,14 +503,23 @@ pub fn build_explicit_blocks(
                 .collect();
 
             quote! {
-                {
-                    let __hegel_etc = ::hegel::ExplicitTestCase::new()
-                        #(#with_value_calls)*;
-                    __hegel_etc.run(|#param_pat: &::hegel::ExplicitTestCase| #body);
-                }
+                __hegel_explicit.case(
+                    ::hegel::ExplicitTestCase::new() #(#with_value_calls)*,
+                    |#param_pat: &::hegel::ExplicitTestCase| #body,
+                );
             }
         })
-        .collect()
+        .collect();
+
+    ExplicitRunTokens {
+        section: quote! {
+            let mut __hegel_explicit = ::hegel::ExplicitRun::new(&__hegel_settings);
+            if __hegel_settings.has_phase(::hegel::Phase::Explicit) {
+                #(#case_calls)*
+            }
+        },
+        builder_call: quote! { .__explicit_run(__hegel_explicit) },
+    }
 }
 
 #[cfg(test)]

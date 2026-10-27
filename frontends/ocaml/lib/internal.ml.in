@@ -245,9 +245,20 @@ let explicit_draw (tc : test_case) ~name ~source value =
 
     The native handle and context are owned by the test case (see
     {!type:owned}) and freed once it completes, so a clone may be captured and
-    used freely within the case. *)
+    used freely within the case.
+
+    A clone of an explicit example's test case has no engine behind it either:
+    it draws the example's values, sharing the example and the draw numbering
+    with [tc]. *)
 let clone (tc : test_case) =
-  require_engine tc;
+  if is_explicit tc
+  then
+    { tc with
+      test_aborted = Atomic.make false
+    ; draw_depth = Atomic.make (Atomic.get tc.draw_depth)
+    ; printer = Atomic.make None
+    }
+  else (
   let context = Ffi.context_new () in
   let handle = Ffi.test_case_clone tc.context tc.handle in
   own_clone tc context handle;
@@ -262,7 +273,7 @@ let clone (tc : test_case) =
   ; explicit = None
   ; printer = Atomic.make None
   ; printers = tc.printers
-  }
+  })
 ;;
 
 (** [with_block tc ~indent f] runs [f] on a {!test_case} for an indented
@@ -300,8 +311,7 @@ let with_block (tc : test_case) ~indent LOCAL(f) =
 ;;
 
 let set_worker_index (tc : test_case) worker_index =
-  require_engine tc;
-  Ffi.test_case_set_worker tc.context tc.handle ~worker_index
+  if not (is_explicit tc) then Ffi.test_case_set_worker tc.context tc.handle ~worker_index
 ;;
 
 (** Domain-local flag to detect nested test cases. *)
@@ -819,6 +829,7 @@ let stop_span ?(discard = false) tc =
 ;;
 
 type collection = Ffi.collection
+type repeat = Ffi.repeat
 type pool = Ffi.pool
 type state_machine = Ffi.state_machine
 
@@ -868,6 +879,24 @@ let collection_reject tc ~collection =
 ;;
 
 let collection_free tc ~collection = Ffi.collection_free tc.context collection
+
+(** [new_repeat tc] starts the engine-driven loop behind {!Hegel.repeat}.
+    Release it with {!repeat_free}. Raises {!Stop_test} on StopTest. *)
+let new_repeat tc = with_stop_guard tc (fun () -> Ffi.new_repeat tc.context tc.handle)
+
+(** [repeat_more tc ~repeat] returns whether the engine wants another
+    repetition. Raises {!Stop_test} on StopTest. *)
+let repeat_more tc ~repeat =
+  with_stop_guard tc (fun () -> Ffi.repeat_more tc.context tc.handle repeat)
+;;
+
+(** [repeat_failed tc ~repeat] reports that the repetition just run failed.
+    Raises {!Stop_test} on StopTest. *)
+let repeat_failed tc ~repeat =
+  with_stop_guard tc (fun () -> Ffi.repeat_failed tc.context tc.handle repeat)
+;;
+
+let repeat_free tc ~repeat = Ffi.repeat_free tc.context repeat
 
 let new_pool tc =
   let pool = with_stop_guard tc (fun () -> Ffi.new_pool tc.context tc.handle) in
@@ -1277,7 +1306,12 @@ let run_test
                  (fun () -> run_case handle)
              in
              (match settings.verbosity with
-              | Verbose | Debug -> Printf.eprintf "%s%!" outcome.output
+              | Verbose | Debug ->
+                Printf.eprintf "%s%!" outcome.output;
+                (match outcome.result with
+                 | Invalid -> Printf.eprintf "Test case stopped: failed assumption\n%!"
+                 | Overrun -> Printf.eprintf "Test case stopped: out of data\n%!"
+                 | Valid | Failed _ -> ())
               | Quiet | Normal -> ());
              (match outcome.result with
               | Failed failure -> update_captured failure outcome

@@ -594,3 +594,45 @@ describe("reproduceFailure", () => {
     );
   });
 });
+
+describe("why a verbose run says a test case stopped short", () => {
+  it("names a failed assumption", () => {
+    const { lines, runner } = capturing();
+    runner.test(
+      (tc) => {
+        tc.assume(tc.draw(gs.integers({ minValue: 0, maxValue: 1 })) === 0);
+      },
+      { ...deterministic, verbosity: Verbosity.Verbose, testCases: 20 },
+    );
+    expect(lines).toContain("Test case stopped: failed assumption");
+    expect(lines).not.toContain("Test case stopped: out of data");
+  });
+
+  it("names running out of data, as shrinking a long list does", () => {
+    const { lines, runner } = capturing();
+    const error = thrownBy(() =>
+      runner.test(
+        (tc) => {
+          const xs = tc.draw(
+            gs.arrays(gs.integers({ minValue: -1_000_000, maxValue: 1_000_000 }), { minSize: 10 }),
+          );
+          if (xs.some((x) => Math.abs(x) >= 1000)) throw new Error("large");
+        },
+        { ...deterministic, verbosity: Verbosity.Verbose, printBlob: false },
+      ),
+    );
+    expect((error as Error).message).toBe("large");
+    expect(lines).toContain("Test case stopped: out of data");
+  });
+
+  it("says nothing of its own for a case that passed", () => {
+    const { lines, runner } = capturing();
+    runner.test(
+      (tc) => {
+        tc.draw(gs.booleans());
+      },
+      { ...deterministic, verbosity: Verbosity.Verbose, testCases: 5 },
+    );
+    expect(lines.filter((line) => line.startsWith("Test case "))).toEqual([]);
+  });
+});

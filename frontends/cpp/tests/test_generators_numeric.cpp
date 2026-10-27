@@ -14,6 +14,30 @@
 
 namespace gs = hegel::generators;
 
+TEST(Validation, WeightedBooleansProbability) {
+    EXPECT_THROW(gs::weighted_booleans(-0.1), std::invalid_argument);
+    EXPECT_THROW(gs::weighted_booleans(1.1), std::invalid_argument);
+    EXPECT_THROW(gs::weighted_booleans(std::nan("")), std::invalid_argument);
+    EXPECT_NO_THROW(gs::weighted_booleans(0.0));
+    EXPECT_NO_THROW(gs::weighted_booleans(1.0));
+}
+
+TEST(WeightedBooleans, FollowTheirProbability) {
+    int trues = 0;
+    int cases = 0;
+    hegel::test(
+        [&](hegel::TestCase& tc) {
+            EXPECT_FALSE(tc.draw(gs::weighted_booleans(0.0)));
+            EXPECT_TRUE(tc.draw(gs::weighted_booleans(1.0)));
+            trues += tc.draw(gs::weighted_booleans(0.9)) ? 1 : 0;
+            ++cases;
+        },
+        hegel::Settings{.test_cases = 100,
+                        .database = hegel::Database::disabled()});
+    EXPECT_GT(trues, cases / 2) << trues << " of " << cases;
+    EXPECT_EQ(gs::weighted_booleans(0.9).label(), gs::booleans().label());
+}
+
 TEST(Validation, IntegersMinGreaterThanMax) {
     EXPECT_THROW(gs::integers<int>({.min_value = 10, .max_value = 5}),
                  std::invalid_argument);
@@ -43,6 +67,69 @@ TEST(Validation, FloatsAllowInfinityWithBothBounds) {
         gs::floats(
             {.min_value = 0.0, .max_value = 1.0, .allow_infinity = true}),
         std::invalid_argument);
+}
+
+TEST(Validation, FloatsBothFormsOfOneBound) {
+    EXPECT_THROW(gs::floats({.min_value = 0.0, .min_value_exclusive = 0.0}),
+                 std::invalid_argument);
+    EXPECT_THROW(gs::floats({.max_value = 1.0, .max_value_exclusive = 1.0}),
+                 std::invalid_argument);
+}
+
+TEST(Validation, FloatsAllowSubnormalAgainstTheBounds) {
+    EXPECT_THROW(gs::floats({.min_value = 1.0, .allow_subnormal = true}),
+                 std::invalid_argument);
+    EXPECT_THROW(gs::floats({.max_value = -1.0, .allow_subnormal = true}),
+                 std::invalid_argument);
+    EXPECT_THROW(gs::floats({.min_value = 1e-310,
+                             .max_value = 2e-310,
+                             .allow_subnormal = false}),
+                 std::invalid_argument);
+    EXPECT_NO_THROW(gs::floats(
+        {.min_value = -1e-310, .max_value = 0.0, .allow_subnormal = false}));
+    EXPECT_NO_THROW(gs::floats(
+        {.min_value = 1e-310, .max_value = 1.0, .allow_subnormal = false}));
+}
+
+TEST(Floats, ExclusiveBoundsExcludeTheBoundItself) {
+    hegel::tests::common::assert_all_examples<double>(
+        gs::floats<double>(
+            {.min_value_exclusive = 0.0, .max_value_exclusive = 1.0}),
+        [](const double& x) { return x > 0.0 && x < 1.0; }, 500);
+    hegel::tests::common::assert_all_examples<double>(
+        gs::floats<double>({.max_value = 0.0, .min_value_exclusive = -1.0}),
+        [](const double& x) { return x > -1.0 && x <= 0.0; }, 500);
+}
+
+TEST(Floats, SubnormalsAreAllowedWhenTheBoundsAdmitAny) {
+    const double normal = std::numeric_limits<double>::min();
+    hegel::tests::common::assert_all_examples<double>(
+        gs::floats<double>({.min_value = 1e-310, .max_value = 1e-310}),
+        [](const double& x) { return x == 1e-310; }, 20);
+    hegel::tests::common::assert_all_examples<double>(
+        gs::floats<double>({.min_value = 1.0, .max_value = 1.0}),
+        [](const double& x) { return x == 1.0; }, 20);
+    hegel::tests::common::assert_all_examples<double>(
+        gs::floats<double>({.min_value = -1e-310, .max_value = 1.0}),
+        [](const double& x) { return x >= -1e-310 && x <= 1.0; }, 100);
+    hegel::tests::common::assert_all_examples<double>(
+        gs::floats<double>({.min_value = 1.0}),
+        [](const double& x) { return x >= 1.0; }, 100);
+    hegel::tests::common::assert_all_examples<double>(
+        gs::floats<double>({.max_value = -1.0}),
+        [](const double& x) { return x <= -1.0; }, 100);
+    hegel::tests::common::assert_all_examples<double>(
+        gs::floats<double>(
+            {.min_value = -1.0, .max_value = 1.0, .allow_subnormal = false}),
+        [normal](const double& x) {
+            return x == 0.0 || std::fabs(x) >= normal;
+        },
+        500);
+    hegel::tests::common::assert_all_examples<float>(
+        gs::floats<float>(
+            {.min_value_exclusive = 0.0f, .allow_subnormal = false}),
+        [](const float& x) { return x >= std::numeric_limits<float>::min(); },
+        500);
 }
 
 // An unbounded float draw (allow_nan / allow_infinity default to true) must
@@ -122,7 +209,7 @@ TEST(WideIntegers, PrintAsDecimal) {
 // never reached by rounding a smaller double to a float.
 TEST(Floats, SinglePrecisionDrawsAtFloatWidth) {
     hegel::tests::common::assert_all_examples<float>(
-        gs::floats<float>({.min_value = 0.0f, .exclude_min = true}),
+        gs::floats<float>({.min_value_exclusive = 0.0f}),
         [](const float& x) { return x > 0.0f; }, 500);
     hegel::tests::common::assert_all_examples<float>(
         gs::floats<float>({.min_value = -1.0f, .max_value = 1.0f}),
@@ -174,10 +261,8 @@ TEST(Floats, LongDoubleExcludesOnlyBoundsThatAreDoubles) {
     long double max_value = static_cast<long double>(second) - tiny;
     for (long double min_value : {1.0L, 1.0L + tiny}) {
         hegel::tests::common::assert_all_examples<long double>(
-            gs::floats<long double>({.min_value = min_value,
-                                     .max_value = max_value,
-                                     .exclude_min = true,
-                                     .exclude_max = true}),
+            gs::floats<long double>({.min_value_exclusive = min_value,
+                                     .max_value_exclusive = max_value}),
             [&](const long double& x) {
                 return x == static_cast<long double>(above_one);
             });

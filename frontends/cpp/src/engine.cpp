@@ -9,6 +9,7 @@
 #include <hegel.h>
 #include <test_case.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -19,6 +20,7 @@
 #include <ios>
 #include <iterator>
 #include <limits>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
@@ -331,6 +333,14 @@ namespace hegel::impl {
         return yes;
     }
 
+    bool settings_get_report_multiple_failures(hegel_context_t* ctx,
+                                               const hegel_settings_t* s) {
+        bool yes = false;
+        check_rc(ctx,
+                 hegel_settings_get_report_multiple_failures(ctx, s, &yes));
+        return yes;
+    }
+
     uint32_t settings_get_phases(hegel_context_t* ctx,
                                  const hegel_settings_t* s) {
         uint32_t phases = 0;
@@ -601,15 +611,16 @@ namespace hegel::impl {
             });
     }
 
-    hegel_string_generator_t* string_generator_regex(std::string_view pattern,
-                                                     bool fullmatch) {
+    hegel_string_generator_t*
+    string_generator_regex(std::string_view pattern, bool fullmatch,
+                           const hegel_string_generator_t* alphabet) {
         return make_string_generator(
             "from_regex",
             [&](hegel_context_t* ctx, hegel_string_generator_t** out) {
                 // A NULL alphabet lets padding and wildcards draw from all
-                // of Unicode; from_regex() exposes no alphabet.
+                // of Unicode.
                 return hegel_string_generator_regex(ctx, borrow(pattern),
-                                                    fullmatch, nullptr, out);
+                                                    fullmatch, alphabet, out);
             });
     }
 
@@ -911,6 +922,8 @@ namespace hegel::internal {
             "hegel.tuples",
             "hegel.array",
             "hegel.permutation",
+            "hegel.subsequence",
+            "hegel.sample",
             "hegel.recursive",
             "hegel.stateful.rule",
             "hegel.pool.values_reusable",
@@ -1078,6 +1091,31 @@ namespace hegel::internal {
             "hegel_collection_reject");
     }
 
+    RepeatHandle::RepeatHandle(const TestCase& tc) {
+        impl::DrawScope scope(tc);
+        scope.raise_for_rc(hegel_new_repeat(scope.ctx, scope.tc, &handle_),
+                           "hegel_new_repeat");
+    }
+
+    RepeatHandle::~RepeatHandle() {
+        hegel_repeat_free(impl::thread_context(), handle_);
+    }
+
+    bool RepeatHandle::more(const TestCase& tc) {
+        impl::DrawScope scope(tc);
+        bool more = false;
+        scope.raise_for_rc(
+            hegel_repeat_more(scope.ctx, scope.tc, handle_, &more),
+            "hegel_repeat_more");
+        return more;
+    }
+
+    void RepeatHandle::failed(const TestCase& tc) {
+        impl::DrawScope scope(tc);
+        scope.raise_for_rc(hegel_repeat_failed(scope.ctx, scope.tc, handle_),
+                           "hegel_repeat_failed");
+    }
+
     PoolHandle::PoolHandle(const TestCase& tc) {
         impl::DrawScope scope(tc);
         scope.raise_for_rc(hegel_new_pool(scope.ctx, scope.tc, &handle_),
@@ -1168,8 +1206,10 @@ namespace hegel::internal {
     StateMachineHandle::StateMachineHandle(
         const TestCase& tc, const std::vector<std::string>& rule_names,
         const std::vector<int64_t>& rule_groups,
+        const std::vector<double>& rule_weights,
         const std::vector<std::string>& invariant_names,
-        int64_t min_concurrency, int64_t max_concurrency) {
+        const std::vector<bool>& invariant_always_check,
+        int64_t min_concurrency, int64_t max_concurrency, int64_t step_count) {
         impl::DrawScope scope(tc);
 
         auto to_strings = [](const std::vector<std::string>& names) {
@@ -1185,17 +1225,17 @@ namespace hegel::internal {
         std::vector<hegel_string_t> invariant_name_strings =
             to_strings(invariant_names);
 
-        // A NULL `rule_weights` array gives every rule the same weight and a
-        // NULL `invariant_always_check` array leaves every invariant sampled
-        // at its default probability; the public API exposes neither. The
-        // step budget is Settings::stateful_step_count, carried on the test
-        // case.
+        auto always_check =
+            std::make_unique<bool[]>(invariant_always_check.size());
+        std::copy(invariant_always_check.begin(), invariant_always_check.end(),
+                  always_check.get());
+
         scope.raise_for_rc(hegel_new_state_machine(
                                scope.ctx, scope.tc, rule_name_strings.data(),
-                               rule_groups.data(), nullptr, rule_names.size(),
-                               invariant_name_strings.data(), nullptr,
-                               invariant_names.size(), min_concurrency,
-                               max_concurrency, tc.data()->stateful_step_count,
+                               rule_groups.data(), rule_weights.data(),
+                               rule_names.size(), invariant_name_strings.data(),
+                               always_check.get(), invariant_names.size(),
+                               min_concurrency, max_concurrency, step_count,
                                &handle_, &concurrency_),
                            "hegel_new_state_machine");
     }

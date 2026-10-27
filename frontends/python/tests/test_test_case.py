@@ -26,7 +26,7 @@ def test_draw_reports_values_with_inferred_names():
 
     error = failing(body)
     falsifying = notes(error)[0]
-    assert falsifying.startswith("Falsifying example:\nxs = [0, 0]\n")
+    assert falsifying.startswith("xs = [0, 0]\n")
     assert "\nnamed_1 = " in falsifying
     assert "\ndraw_1 = 5" in falsifying
 
@@ -39,7 +39,7 @@ def test_repeated_names_get_suffixes():
         assert x is None or x_2 is None
 
     lines = notes(failing(body))[0].splitlines()
-    assert lines[1:] == ["x_1 = 1", "x_2 = 1", "x_3 = 1", "x_2_1 = 2"]
+    assert lines == ["x_1 = 1", "x_2 = 1", "x_3 = 1", "x_2_1 = 2"]
 
 
 def test_a_name_drawn_more_often_than_inferred_is_numbered():
@@ -54,7 +54,7 @@ def test_a_name_drawn_more_often_than_inferred_is_numbered():
         raise AssertionError(x_2)
 
     lines = notes(failing(body))[0].splitlines()
-    assert lines[1:] == ["x = 1", "x_2 = 1", "x_2_1 = 2"]
+    assert lines == ["x = 1", "x_2 = 1", "x_2_1 = 2"]
 
 
 def test_nested_draws_are_silent():
@@ -69,7 +69,7 @@ def test_nested_draws_are_silent():
         raise ValueError(pair)
 
     lines = notes(failing(body, ValueError))[0].splitlines()
-    assert lines == ["Falsifying example:", "pair = (1, 2)"]
+    assert lines == ["pair = (1, 2)"]
 
 
 def test_draw_silent_and_generate_alias():
@@ -97,7 +97,7 @@ def test_note_assume_reject(output):
 
     error = failing(body, suppress_health_check=[hegel.HealthCheck.filter_too_much])
     assert all(x % 2 == 0 for x in seen)
-    assert notes(error)[0] == "Falsifying example:\nx = 2\nx is 2"
+    assert notes(error)[0] == "x = 2\nx is 2"
 
 
 def test_target_event_and_event_value(output):
@@ -129,8 +129,8 @@ def test_repeat_runs_body_and_reports_repetitions():
     error = failing(body)
     assert counts == []
     text = notes(error)[0]
-    assert "// Repetition #1" in text
-    assert "// Repetition #2" in text
+    assert "# Repetition #1" in text
+    assert "# Repetition #2" in text
     assert "  x = " in text
 
 
@@ -390,7 +390,7 @@ def test_numbered_names_skip_names_already_taken():
         raise AssertionError((x_1, x))
 
     lines = notes(failing(body))[0].splitlines()
-    assert lines[1:] == ["x_1 = 0", "x_2 = 1", "x_3 = 1"]
+    assert lines == ["x_1 = 0", "x_2 = 1", "x_3 = 1"]
 
 
 def test_a_draw_that_raises_reports_neither_itself_nor_its_nested_draws():
@@ -408,7 +408,7 @@ def test_a_draw_that_raises_reports_neither_itself_nor_its_nested_draws():
         tc.draw(failing_composite())
 
     lines = notes(failing(body, KeyError))[0].splitlines()
-    assert lines == ["Falsifying example:", "first_1 = 0"]
+    assert lines == ["first_1 = 0"]
 
 
 def test_a_rejected_draw_reports_nothing():

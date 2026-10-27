@@ -733,14 +733,6 @@ TEST(Profiles, InvalidNamesAreRejected) {
     EXPECT_THROW(hegel::set_default_profile("default"), std::invalid_argument);
 }
 
-TEST(Settings, StepCountBelowOneIsRejected) {
-    EXPECT_THROW(count_cases({.stateful_step_count = 0}),
-                 std::invalid_argument);
-    EXPECT_THROW(
-        hegel::register_profile("cpp_bad_steps", {.stateful_step_count = 0}),
-        std::invalid_argument);
-}
-
 TEST(Settings, EngineVersionIsKnown) {
     EXPECT_FALSE(hegel::engine_version().empty());
 }

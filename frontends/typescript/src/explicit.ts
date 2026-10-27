@@ -46,6 +46,15 @@ export class ExplicitDataSource implements DataSource {
   collectionReject(): void {
     unsupported("A collection");
   }
+  newRepeat(): number {
+    return unsupported("A repeat loop");
+  }
+  repeatMore(): boolean {
+    return unsupported("A repeat loop");
+  }
+  repeatFailed(): void {
+    unsupported("A repeat loop");
+  }
   markComplete(): void {}
   newPool(): number {
     return unsupported("A stateful.Pool");

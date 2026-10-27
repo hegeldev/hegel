@@ -92,6 +92,8 @@ namespace hegel::impl {
                                              const hegel_settings_t* s);
     bool settings_get_print_blob(hegel_context_t* ctx,
                                  const hegel_settings_t* s);
+    bool settings_get_report_multiple_failures(hegel_context_t* ctx,
+                                               const hegel_settings_t* s);
     /// The enabled phases, as a bitwise OR of hegel_phase_t values.
     uint32_t settings_get_phases(hegel_context_t* ctx,
                                  const hegel_settings_t* s);
@@ -194,8 +196,9 @@ namespace hegel::impl {
 
     hegel_string_generator_t*
     string_generator_text(const TextGeneratorParams& params);
-    hegel_string_generator_t* string_generator_regex(std::string_view pattern,
-                                                     bool fullmatch);
+    hegel_string_generator_t*
+    string_generator_regex(std::string_view pattern, bool fullmatch,
+                           const hegel_string_generator_t* alphabet);
     hegel_string_generator_t* string_generator_email();
     hegel_string_generator_t* string_generator_url();
     hegel_string_generator_t* string_generator_domain(uint64_t max_length);

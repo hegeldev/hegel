@@ -18,7 +18,6 @@ def test_sorted_concatenation(tc):
 
 ```
 E       assert [-1, 0] == [0, -1]
-E       Falsifying example:
 E       xs = [0]
 E       ys = [-1]
 E       To reproduce this failure, add this decorator below @hegel.test:
@@ -33,8 +32,7 @@ input. Hegel attaches the rest of the report to the exception as
 
 ## Draw names
 
-Under `Falsifying example:` Hegel lists every value the test drew, in the
-order it drew them. A draw assigned to a variable is named after the variable.
+The report lists every value the test drew, in the order it drew them. A draw assigned to a variable is named after the variable.
 A draw made in a loop, or assigned to a variable that is assigned more than
 once in the test, is numbered, each name on its own, in the order the draws
 run:
@@ -51,7 +49,6 @@ def test_totals(tc):
 ```
 
 ```
-E       Falsifying example:
 E       n = 1
 E       x_1 = 1000
 ```
@@ -80,7 +77,6 @@ def test_sorted_concatenation(tc):
 ```
 
 ```
-E       Falsifying example:
 E       xs = [0]
 E       ys = [-1]
 E       xs + ys = [0, -1]

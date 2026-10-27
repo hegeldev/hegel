@@ -65,8 +65,6 @@ module Stateful : sig
     :  ?min_concurrency:int
     -> ?max_concurrency:int
     -> ?step_count:int
-    -> ?print_state:('state -> Hegel.Printer.doc)
-    -> ?sexp_of_state:('state -> Sexplib0.Sexp.t)
     -> Hegel.test_case
     -> (module Concurrent_state_machine with type state = 'state)
     -> init:'state
@@ -81,8 +79,6 @@ module Stateful : sig
     -> invariants:'state Invariant.t list
     -> ?min_concurrency:int
     -> ?max_concurrency:int
-    -> ?print_state:('state -> Hegel.Printer.doc)
-    -> ?sexp_of_state:('state -> Sexplib0.Sexp.t)
     -> ?step_count:int
     -> Hegel.test_case
     -> unit Async.Deferred.t

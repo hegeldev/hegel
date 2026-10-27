@@ -32,12 +32,12 @@ import java.util.Map;
  * for, to have values no draw takes, or to fail an {@link TestCase#assume assumption} (or call
  * {@link TestCase#reject}): explicit test cases must not be rejected.
  *
- * <p>The rest of the test-case API works in an example as follows. A {@link TestCase#drawSilent
- * silent draw} has no name, so it takes the next positional value. A {@link TestCase#fork fork}
- * draws from the same example as the test case it was forked from. {@link TestCase#repeat} runs
- * its body once, since an example's values can be drawn only once. {@link TestCase#target} and
- * events are ignored. Spans, pools and {@link Stateful} machines need the engine and are a usage
- * error.
+ * <p>The rest of the test-case API works in an example as follows. A {@link TestCase#clone clone}
+ * draws from the same example as the test case it was cloned from, and {@link TestCase#setWorker}
+ * does nothing. {@link TestCase#repeat} runs its body once, since an example's values can be drawn
+ * only once. {@link TestCase#target} and events are ignored. A {@link TestCase#drawSilent silent
+ * draw}, which the example has no value for, is a usage error, as are spans, pools and {@link
+ * Stateful} machines, which need the engine.
  */
 public final class Example {
     private final List<Object> positional;

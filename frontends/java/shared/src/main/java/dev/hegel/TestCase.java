@@ -1,6 +1,5 @@
 package dev.hegel;
 
-import dev.hegel.lowlevel.Abi;
 import dev.hegel.lowlevel.LibhegelException;
 import java.math.BigInteger;
 import java.time.LocalDate;
@@ -59,7 +58,7 @@ public final class TestCase {
     /**
      * A scope draw names are numbered in: each use of a label is numbered in turn ({@code x_1},
      * {@code x_2}, ...), and an unlabelled draw is {@code draw_N}, counting unlabelled draws only.
-     * A test body and its forks share one; each {@link #block} and each repetition of {@link
+     * A test body and its clones share one; each {@link #block} and each repetition of {@link
      * #repeat} opens a fresh one.
      */
     private static final class Names {
@@ -79,7 +78,7 @@ public final class TestCase {
         final boolean emits;
 
         private final Map<String, Object> draws = new LinkedHashMap<>();
-        /** Every fork and pinned block handle opened in the case, kept alive until the case is over. */
+        /** Every clone and pinned block handle opened in the case, kept alive until the case is over. */
         private final List<TestCase> blocks = new ArrayList<>();
         /** The deferred printer regions opened in the case, kept alive until the case is over. */
         final Printer.Regions regions = new Printer.Regions();
@@ -141,12 +140,19 @@ public final class TestCase {
 
     /**
      * A handle for concurrent worker {@code worker} to draw through for one round of a stateful
-     * machine: an independent choice stream of the same case (see {@link
-     * DataSource#cloneForWorker}) whose output the engine stamps {@code [worker N +X.XXXms]} and
-     * anchors where the handle was made. Release it with {@link #release()} once the round is over.
+     * machine: an independent choice stream of the same case (see {@link DataSource#clone}) whose
+     * output the engine stamps {@code [worker N +X.XXXms]} and anchors where the handle was made.
+     * Release it with {@link #release()} once the round is over.
      */
     TestCase forWorker(int worker) {
-        return new TestCase(source.cloneForWorker(worker), shared, null, names, false);
+        TestCase handle = new TestCase(source.clone(), shared, null, names, false);
+        try {
+            handle.setWorker(worker);
+        } catch (RuntimeException e) {
+            handle.release();
+            throw e;
+        }
+        return handle;
     }
 
     /**
@@ -181,7 +187,7 @@ public final class TestCase {
         }
     }
 
-    /** Free a handle from {@link #forWorker}, and its printer. */
+    /** Free a handle from {@link #clone} or {@link #forWorker}, and its printer. */
     void release() {
         try {
             closePrinter();
@@ -191,7 +197,7 @@ public final class TestCase {
     }
 
     /**
-     * Free this root handle's printer, every fork and pinned block handle opened in the case, with
+     * Free this root handle's printer, every clone and pinned block handle opened in the case, with
      * their printers, and every deferred printer region. Called once the case is over, however its
      * body ended.
      */
@@ -301,7 +307,8 @@ public final class TestCase {
     /**
      * Draw a value from {@code generator} without printing it: it is neither shown in the
      * counterexample output nor recorded in {@link Failure#draws()}. Any generator can be drawn
-     * silently.
+     * silently. An explicit {@link Example} has no value for a silent draw, so there it is a usage
+     * error.
      *
      * <p>Like every draw, this runs the generator inside a span labelled with its {@link
      * Generator#label() label}, so a generator drawing from component generators should draw them
@@ -311,11 +318,11 @@ public final class TestCase {
      * @param generator the generator to draw from
      * @param <T> the value type
      * @return the generated value
+     * @throws IllegalArgumentException in an explicit example
      */
-    @SuppressWarnings("unchecked")
     public <T> T drawSilent(Generator<T> generator) {
         if (explicit != null) {
-            return (T) explicit.takeSilent();
+            throw new InvalidExample("drawSilent is not supported in explicit test cases");
         }
         drawDepth++;
         startSpan(generator.label());
@@ -460,26 +467,47 @@ public final class TestCase {
 
     /**
      * A handle for drawing from another thread: an independent stream of choices of this same test
-     * case, whose output the engine attributes to worker {@code worker} ({@code [worker N
-     * +X.XXXms]}). Draws on one handle never perturb the values another produces, so several threads
-     * can generate concurrently and the test stays deterministic: the same seed replays the same
-     * values on every stream, and failures shrink and replay normally. A single handle must only be
-     * driven by one thread at a time, so fork one per thread.
+     * case. Draws on one handle never perturb the values another produces, so several threads can
+     * generate concurrently and the test stays deterministic: the same seed replays the same values
+     * on every stream, and failures shrink and replay normally. A single handle must only be driven
+     * by one thread at a time, so clone one per thread. The clone's draws are named in sequence
+     * with this handle's, and what it prints appears where the clone was made, however the threads
+     * are scheduled; {@link #setWorker} stamps its lines with a worker index.
      *
-     * <p>The forks share the test case's outcome: an exception on a fork's thread is a failure only
-     * once the test body rethrows it, typically by joining the thread. Forks are released when the
-     * test case ends. Forking is itself a draw.
+     * <p>The clones share the test case's outcome: an exception on a clone's thread is a failure
+     * only once the test body rethrows it, typically by joining the thread. Clones are released
+     * when the test case ends. Cloning is itself a draw.
      *
-     * @param worker the worker index the engine attributes this handle's output to
-     * @return the forked handle
+     * <p>In an explicit {@link Example}, the clone draws the example's values, in sequence with
+     * this handle's draws.
+     *
+     * @return the cloned handle
      */
-    public TestCase fork(int worker) {
+    @Override
+    public TestCase clone() {
         if (explicit != null) {
             return new TestCase(source, shared, explicit, names, false);
         }
-        TestCase fork = forWorker(worker);
-        shared.addBlock(fork);
-        return fork;
+        TestCase clone = new TestCase(source.clone(), shared, null, names, false);
+        shared.addBlock(clone);
+        return clone;
+    }
+
+    /**
+     * Attribute this handle's output from now on to concurrent worker {@code worker}: each line it
+     * prints, and each line of the blocks and clones made from it after the call, is prefixed with
+     * {@code [worker N +X.XXXms]}, the worker index and the time since the test case started. When
+     * several threads each draw from their own {@link #clone}, give each clone a worker index so
+     * the output says which thread printed what. In an explicit {@link Example}, which has no
+     * output to attribute, this does nothing.
+     *
+     * @param worker the worker index to attribute this handle's output to
+     */
+    public void setWorker(int worker) {
+        if (explicit != null) {
+            return;
+        }
+        source.setWorker(worker);
     }
 
     /**
@@ -499,22 +527,21 @@ public final class TestCase {
             body.run();
             throw new LoopDone();
         }
-        long minSize = drawSilent(Generators.longs().min(0).max(1L << 40));
-        long id = newCollection(minSize, Abi.UNBOUNDED);
+        long id = source.newRepeat();
         try {
             long repetition = 0;
-            while (collectionMore(id)) {
+            while (source.repeatMore(id)) {
                 repetition++;
                 note("// Repetition #" + repetition);
-                repeatOnce(body);
+                repeatOnce(id, body);
             }
         } finally {
-            collectionFree(id);
+            source.repeatFree(id);
         }
         throw new LoopDone();
     }
 
-    private void repeatOnce(Runnable body) {
+    private void repeatOnce(long id, Runnable body) {
         Throwable failure;
         DataSource outer = source;
         Names outerNames = names;
@@ -535,7 +562,7 @@ public final class TestCase {
             return;
         }
         if (!isControl(failure)) {
-            drawSilent(Generators.booleans());
+            source.repeatFailed(id);
         }
         throw rethrow(failure);
     }

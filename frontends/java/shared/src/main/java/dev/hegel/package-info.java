@@ -275,8 +275,9 @@
  *       printing it in the counterexample.
  *   <li>{@link dev.hegel.TestCase#repeat(Runnable) repeat} runs a block until the engine decides the
  *       test case is long enough, for tests that are logically infinite loops.
- *   <li>{@link dev.hegel.TestCase#fork(int) fork} gives another thread its own handle on the test
- *       case to draw from.
+ *   <li>{@link dev.hegel.TestCase#clone() clone} gives another thread its own handle on the test
+ *       case to draw from, and {@link dev.hegel.TestCase#setWorker(int) setWorker} says which
+ *       thread printed what.
  *   <li>{@link dev.hegel.TestCase#isFinal() isFinal} tells whether this run of the body is the
  *       final replay of a minimal counterexample, where expensive diagnostics are worth doing.
  * </ul>

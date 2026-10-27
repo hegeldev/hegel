@@ -1,4 +1,4 @@
-RELEASE_TYPE: patch
+RELEASE_TYPE: minor
 
 This patch adds `HEGEL_MAX_SIZE_DEFAULT`, which a frontend passes as the `max_size` of `hegel_string_generator_text` or `hegel_generate_bytes` when the user gave no maximum, or of `hegel_new_collection` for a collection that builds text or bytes, such as text whose characters come from an arbitrary generator. libhegel then applies its default of 100, or `min_size + 100` when `min_size` is above 100, so every frontend's text and binary generators share one default instead of each hard-coding its own. `UINT64_MAX` still means no upper bound. The sentinel is `UINT64_MAX - 1`, so that value is reserved: a frontend passing a user's explicit maximum should pass `UINT64_MAX` for anything at or above `HEGEL_MAX_SIZE_DEFAULT`, which no allocation could reach anyway.
 
@@ -27,3 +27,25 @@ libhegel replaces each placeholder marker with its value, keeps the whole string
 The header's list of constructors and their matching frees now includes `hegel_settings_new_for_profile`, `hegel_new_recursion` and the new grammar draw functions, and the documentation of `hegel_stop_span` no longer claims that libhegel retries a discarded span itself: the caller draws again.
 
 It also makes the `unbounded_choices` setting reachable the way the other settings are: profiles in `hegel.toml` accept an `unbounded_choices` key (a boolean), and the `HEGEL_UNBOUNDED_CHOICES` environment variable (`true`, `1` or `yes`, or `false`, `0` or `no`) sets it over the resolved profile. Previously it could only be set through `hegel_settings_set_unbounded_choices` or carried by a registered profile.
+
+It also moves the policy of a frontend's `repeat` loop (run the body as many times as the engine wants, so that a failure shrinks to the fewest repetitions) into libhegel, as four new functions over a `hegel_repeat_t` handle. A frontend starts the loop with `hegel_new_repeat`, asks `hegel_repeat_more` before each repetition whether to run another, tells the engine with `hegel_repeat_failed` when a repetition failed before it lets the failure propagate (a repetition that only fails an assumption is skipped, and needs no call), and releases the handle with `hegel_repeat_free`:
+
+```c
+hegel_repeat_t *repeat;
+hegel_new_repeat(ctx, tc, &repeat);
+bool more;
+while (hegel_repeat_more(ctx, tc, repeat, &more) == HEGEL_OK && more) {
+    /* note "// Repetition #N", run the body on a block of tc */
+    if (/* the body failed */) {
+        hegel_repeat_failed(ctx, tc, repeat);
+        /* rethrow */
+    }
+}
+hegel_repeat_free(ctx, repeat);
+```
+
+The choices the engine makes are the ones the Rust frontend's own loop used to make, so a reproduce blob printed by an earlier release still replays once a frontend switches to these functions.
+
+It also renames the type of the recursion handle in the header from `HegelRecursion` to `hegel_recursion_t`, the name the documentation and every other handle type already used. A C consumer that spelt the type out should replace `HegelRecursion` with `hegel_recursion_t`; the functions are unchanged.
+
+It also publishes `HEGEL_RECURSION_ATTEMPTS`, the number of attempts in a row that `hegel_recursion_leaf` and `hegel_recursion_finish` may discard before the engine rejects the test case (9), which the recursion documentation had left unspecified. The documentation of `HEGEL_HC_LARGE_INITIAL_TEST_CASE` now says that the health check aborts the run, as it does, rather than warns; and the documentation of `hegel_verbosity_t` now describes what libhegel itself prints at each level rather than what a frontend might.

@@ -45,7 +45,7 @@ Stacked `@hegel.reproduce_failure` decorators now replay every blob, where only 
 
 `FailedHealthCheck` now says which health check failed: its new `health_check` attribute is the `HealthCheck` member, and its message ends by naming it as Python spells it, with the `suppress_health_check` value that suppresses it.
 
-A `tc.assume(False)` or `tc.reject()` in an explicit test case (`@hegel.explicit_test_case`) still raises `InvalidArgument`, now with the message `Explicit test cases must not be rejected`, shared with the other Hegel libraries. `tc.repeat()` in an explicit test case now runs its body once, as in the other Hegel libraries, where it used to raise `InvalidArgument` saying `draw_silent` is not supported, so a rejection inside it gets that message too.
+A `tc.assume(False)` or `tc.reject()` in an explicit test case (`@hegel.explicit_test_case`) still raises `InvalidArgument`, now with the message `Explicit test cases must not be rejected`, shared with the other Hegel libraries. `tc.repeat()` in an explicit test case now runs its body once, as in the other Hegel libraries, where it used to raise `InvalidArgument` saying `draw_silent` is not supported, so a rejection inside it gets that message too. Under `Verbosity.quiet` a failing explicit test case no longer attaches its drawn values and notes to the exception as a `Falsifying example:` note, as a generated failure never did.
 
 A failure's caveat (such as `unconfirmed failure ...` for a failure that did not reproduce on every replay) is now attached to the exception as a note starting `note: `, as the other Hegel libraries print it.
 
@@ -64,5 +64,37 @@ class Coords(gs.Generator[tuple[int, int]]):
 `tc.draw(gs.lists(Coords(), min_size=1))` reports `xs = [Coord(0, 0)]`. Every built-in generator is printable and prints as before, except that an empty set now prints as `set()` and an empty frozenset as `frozenset()`, where they printed as `{}` and `frozenset({})`, and the containers `from_type()` builds by converting a drawn value now print their elements with the elements' own generators, as a call: `tuple[Foo, ...]` prints as `tuple([...])`, `deque[Foo]` as `deque([...])`, `OrderedDict[str, Foo]` as `OrderedDict({...})`, and a `TypedDict` named `Movie` as `Movie({...})`, where they printed the `repr` of the finished value, losing a `print_with` registered for `Foo`. A draw that raises now prints nothing at all: the half-drawn value and the draws made inside it are discarded, where the report used to list the inner draws under a `<KeyError raised while drawing from ...>` line.
 
 `PrettyPrinter` gains `repr(value)` (the preferred spelling of `pretty_print(value, printer)`), a `group(open, close)` context manager, `seq`, `separator`, and `deferred()`, which opens a region anchored at the current position that can be printed into later, from any thread, so a generator can describe a value that is only known after it is drawn. `PrettyPrinter.comment(text)` now renders `  # text`, where it used to render the text with no comment marker. `PrettyPrinter.value()` is no longer public: render a `Document` with `Document.finish()`. `Document` and `Speculation` are now exported from `hegel`.
+
+The notes a failing test's exception carries no longer begin with a `Falsifying example:` line. The first note is now the drawn values and notes themselves, one per line, as the other Hegel frontends print them; it is followed, as before, by a `note:` line with the engine's caveat when there is one and by the `reproduce_failure` reproducer when there is one. A test that matched the notes on that heading needs updating.
+
+Under `verbosity="verbose"`, a test case that stops short now says why in the same words as the other Hegel frontends: `Test case stopped: failed assumption` or `Test case stopped: out of data`. Cases that pass or fail print no line of their own after their drawn values (a failing one still prints its traceback), where they printed `Test case passed` and `Test case failed: <origin>`, and an explicit test case is no longer introduced with a `Running explicit test case:` line.
+
+This release also replaces the `exclude_min` and `exclude_max` flags of `gs.floats()` with `min_value_exclusive` and `max_value_exclusive`, which take the bound directly, as the other Hegel frontends do:
+
+```python
+# before
+gs.floats(min_value=0.0, max_value=1.0, exclude_min=True, exclude_max=True)
+
+# after
+gs.floats(min_value_exclusive=0.0, max_value_exclusive=1.0)
+```
+
+Giving both `min_value` and `min_value_exclusive` (or both `max_value` and `max_value_exclusive`) is an `InvalidArgument`. An exclusive bound can no longer be set without a bound value, so that error no longer exists; the remaining validation (an exclusive `inf` minimum, an exclusive `-inf` maximum, or exclusive bounds on a single-point range) is unchanged, and its messages now name the new arguments. The `repr` of such a generator shows the exclusive form, `floats(min_value_exclusive=0.0)`.
+
+`tc.repeat()` now introduces each repetition with a `# Repetition #N` note, a Python comment, where it used to print `// Repetition #N`. The engine now also decides how many repetitions run and is told which one failed (libhegel's new `hegel_repeat_t` functions) rather than the frontend drawing those choices itself; the choices are the same, so an existing reproduce blob still replays.
+
+`StateMachine.teardown()` is removed. No other Hegel frontend has a per-test-case teardown hook on a state machine, and a fresh instance is made for every test case anyway: do any cleanup a machine needs in a rule or invariant, or run the machine from a `@hegel.test` body with `hegel.run_state_machine(tc, Machine)` and clean up after it there.
+
+A concurrent machine's round header now quotes the group's name with double quotes (`---------------- Round 1: group "deposit" ----------------`), as the other Hegel frontends do, instead of Python's `repr` form.
+
+`text(alphabet=...)` now accepts only what the engine's string generator accepts: a string or sequence of characters, or a `characters()` generator. Passing any other generator, such as `gs.sampled_from("abc") | gs.just("d")`, used to build the string in Python one character at a time; it now raises `InvalidArgument`. To build text from an arbitrary generator of characters, draw a list of them and join it, which draws and shrinks the same way:
+
+```python
+# before
+gs.text(alphabet=gs.sampled_from("abc") | gs.just("d"))
+
+# after
+gs.lists(gs.sampled_from("abc") | gs.just("d")).map("".join)
+```
 
 A generator class of your own is now labelled with its qualified name (`mymodule.Coords`) instead of the shared `hegel.generator` label, so the engine can tell its draws apart from every other generator's when it shrinks and mutates them. A class that sets `label` itself keeps it. Failures saved by an earlier release under the shared label replay from the database as fresh test cases, and a `reproduce_failure` blob recorded for a test that draws such a generator no longer reproduces it.

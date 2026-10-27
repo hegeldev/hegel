@@ -80,6 +80,8 @@ Shrinking labels are now derived by the engine from each generator's kind and it
 - `gs.recursive(base, extend, { maxDepth, maxLeaves })` generates recursively structured data, such as trees or JSON documents. The engine decides where a value branches and keeps it within the limits, so recursive values are distributed the same way as in the other Hegel frontends, and they shrink toward a single leaf.
 - `gs.deferred(() => generator)` defines a generator in terms of generators defined after it, including itself, for mutually recursive definitions.
 - `gs.permutations(elements)` generates reorderings of a list, shrinking toward the original order.
+- `gs.subsequences(elements, { minSize, maxSize })` generates arrays of some of a list's elements, each used at most once, in their original order; `gs.samples(elements, { minSize, maxSize, replacement })` generates arrays of elements chosen from a list, with replacement by default, or without it (`replacement: false`) for a reordered subset. Both shrink toward fewer elements, taken from earlier in the list.
+- `gs.weightedBooleans(p)` generates `true` with probability `p` and `false` otherwise, shrinking toward `false`.
 - `gs.none()` always generates `null`.
 - `gs.arrays` takes `uniqueBy`, a key function or an array of them whose keys must be distinct across the array. Keys are compared structurally, as `unique` compares elements, so a key may be an array or an object.
 - `gs.floats({ width: 32 })` generates only values a 32-bit float holds exactly.
@@ -114,3 +116,23 @@ const expressions = gs.fromLark(`
   %import common.NUMBER
 `);
 ```
+
+With `verbosity: Verbosity.Verbose` or `Verbosity.Debug`, a test case that stops short now says why, as the other Hegel frontends do: `Test case stopped: failed assumption` or `Test case stopped: out of data`.
+
+This release also replaces the `excludeMin` and `excludeMax` flags of `gs.floats()` with `minValueExclusive` and `maxValueExclusive`, which take the bound directly, as the other Hegel frontends do:
+
+```ts
+// before
+gs.floats({ minValue: 0, maxValue: 1, excludeMin: true, excludeMax: true });
+
+// after
+gs.floats({ minValueExclusive: 0, maxValueExclusive: 1 });
+```
+
+Giving both `minValue` and `minValueExclusive` (or both `maxValue` and `maxValueExclusive`) is an error. `gs.floats()` also gains `allowSubnormal`: subnormal ("denormalised") values are drawn whenever the bounds admit any, as before, and `allowSubnormal: false` keeps them out, for code that may run with flush-to-zero floating point. Asking for subnormals with bounds that exclude them all, or excluding them from a range that holds nothing else, is an error.
+
+`gs.binary()` now returns a plain `Uint8Array` on Node too, where it returned a `Buffer`, so a drawn byte string prints as `Uint8Array.from([…])` on every host, as the README said.
+
+- `tc.repeat` and `tc.repeatAsync` now have the engine decide how many repetitions run and which one failed, through libhegel's new `hegel_repeat_t` functions, rather than drawing those choices in TypeScript. The choices are the same, so an existing reproduce blob still replays.
+
+**Stateful testing.** A rule can now carry a weight, as in the other Hegel frontends: write it as `{ apply: (tc, state) => …, weight: 3 }` instead of a bare function, and the engine offers it that many times as often as a rule of weight 1 (every rule's weight is 1 by default). A weight must be finite and positive; any other value throws before the run starts. Concurrent state machines, which the Rust, Java, C++ and OCaml frontends offer, are not supported in JavaScript, because the host is single-threaded; the 0.4.10 changelog entry and `BROWSER.md` said they were waiting on a newer libhegel, which was never the reason.

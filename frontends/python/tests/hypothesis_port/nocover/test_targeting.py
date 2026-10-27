@@ -37,7 +37,6 @@ def test_reports_target_results(testdir, multiple):
     script = testdir.makepyfile(TESTSUITE.format("" if multiple else "# "))
     result = testdir.runpytest(script, "--tb=native", "-rN")
     out = "\n".join(result.stdout.lines)
-    assert "Falsifying example" in out
     assert "x = 101" in out, out
     assert result.ret != 0
 

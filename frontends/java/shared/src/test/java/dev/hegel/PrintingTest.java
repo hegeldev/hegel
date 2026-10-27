@@ -276,7 +276,7 @@ class PrintingTest {
                 unique.toString());
         List<String> set = failingOutput(tc -> tc.draw(sets(small).minSize(2).maxSize(2), "s"));
         assertTrue(
-                set.equals(List.of("var s_1 = [e0, e1];")) || set.equals(List.of("var s_1 = [e1, e0];")),
+                set.equals(List.of("var s_1 = Set.of(e0, e1);")) || set.equals(List.of("var s_1 = Set.of(e1, e0);")),
                 set.toString());
         List<String> map =
                 failingOutput(tc -> tc.draw(maps(small, booleans()).minSize(2).maxSize(2), "m"));

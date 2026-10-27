@@ -270,6 +270,19 @@ module Public : sig
     ]} *)
 val booleans : ?p:float -> unit -> (bool, printable) generator MODE(portable)
 
+(** [unit ()] creates a generator that always produces [()], printed as [()].
+    It is the printable form of [just ()], for a component that carries no
+    information: a record field of type [unit], or a [one_of] branch that
+    stands for "nothing".
+
+    {[
+      let%hegel_test unit_example tc =
+        let () = draw tc (unit ()) in
+        ()
+      ;;
+    ]} *)
+val unit : unit -> (unit, printable) generator MODE(portable)
+
 (** [integers ?min_value ?max_value ()] creates a generator for integers within
     the given bounds.
 
@@ -285,8 +298,13 @@ val booleans : ?p:float -> unit -> (bool, printable) generator MODE(portable)
     ]} *)
 val integers : ?min_value:int -> ?max_value:int -> unit -> (int, printable) generator MODE(portable)
 
-(** [floats ?width ?min_value ?max_value ?exclude_min ?exclude_max ?allow_nan
-     ?allow_infinity ()] creates a generator for floating-point values.
+(** [floats ?width ?min_value ?max_value ?min_value_exclusive
+     ?max_value_exclusive ?allow_nan ?allow_infinity ?allow_subnormal ()]
+    creates a generator for floating-point values.
+
+    A bound is inclusive ([min_value], [max_value]) or exclusive
+    ([min_value_exclusive], [max_value_exclusive]: the bound itself is never
+    drawn). Giving both forms of one bound raises [Usage_error].
 
     With [~width:`W32], every drawn value is exactly representable as a 32-bit
     float ([Int32.float_of_bits (Int32.bits_of_float f) = f] for finite [f]),
@@ -296,10 +314,14 @@ val integers : ?min_value:int -> ?max_value:int -> unit -> (int, printable) gene
     - [width]: [`W64]
     - [min_value] / [max_value]: unbounded. With [allow_infinity = false] the
       range is [[-max_float, max_float]].
-    - [exclude_min]: [false]
-    - [exclude_max]: [false]
     - [allow_nan]: [true] only when no bounds are set
     - [allow_infinity]: [true] when at most one bound is set
+    - [allow_subnormal]: [true] when the bounds admit a subnormal
+      ("denormalised") value. Pass [false] when the code under test may run
+      with flush-to-zero floating point, where a subnormal input silently
+      becomes zero. Asking for subnormals with bounds that exclude them all,
+      or excluding them from a range that holds nothing else, raises
+      [Usage_error].
 
     Bounds that only allow infinity to be generated while [allow_infinity] is [false], 
     such as [~min_value:infinity], raise [Usage_error].
@@ -307,17 +329,19 @@ val integers : ?min_value:int -> ?max_value:int -> unit -> (int, printable) gene
     {[
       let%hegel_test floats_example tc =
         let f = draw tc (floats ~min_value:0.0 ~max_value:1.0 ()) in
-        assert (Float.compare f 0.0 >= 0)
+        let p = draw tc (floats ~min_value_exclusive:0.0 ()) in
+        assert (Float.compare f 0.0 >= 0 && p > 0.0)
       ;;
     ]} *)
 val floats
   :  ?width:[ `W32 | `W64 ]
   -> ?min_value:float
   -> ?max_value:float
-  -> ?exclude_min:bool
-  -> ?exclude_max:bool
+  -> ?min_value_exclusive:float
+  -> ?max_value_exclusive:float
   -> ?allow_nan:bool
   -> ?allow_infinity:bool
+  -> ?allow_subnormal:bool
   -> unit
   -> (float, printable) generator MODE(portable)
 
@@ -778,6 +802,54 @@ val%template tuples8
     ]} *)
 val%template permutations
   : ('a KIND(value mod c)) list MODE(m) -> ('a list, unprintable) generator MODE(m)
+[@@mode (m, c) = ((nonportable, uncontended), (portable, contended))]
+
+(** [subsequences ?min_size ?max_size values] creates a generator for
+    subsequences of [values]: between [min_size] (default [0]) and [max_size]
+    (default all) of its elements, in their original order. It shrinks toward
+    fewer elements, taken from earlier in the list. [min_size] larger than
+    the list raises [Usage_error]. The values are the caller's, so the result
+    carries no printer.
+
+    {[
+      let%hegel_test subsequences_example tc =
+        let xs = draw_silent tc (subsequences ~min_size:1 [ 1; 2; 3; 4 ]) in
+        assert (List.sort compare xs = xs)
+      ;;
+    ]} *)
+val%template subsequences
+  :  ?min_size:int
+  -> ?max_size:int
+  -> ('a KIND(value mod c)) list MODE(m)
+  -> ('a list, unprintable) generator MODE(m)
+[@@mode (m, c) = ((nonportable, uncontended), (portable, contended))]
+
+(** [samples ?min_size ?max_size ?replacement values] creates a generator for
+    samples of [values]: lists of between [min_size] (default [0]) and
+    [max_size] elements chosen from it. With [replacement] (the default) each
+    element is chosen independently from the whole list, so a value can appear
+    any number of times, and [max_size] defaults to the engine's usual list
+    maximum. With [~replacement:false] each element of [values] is used at
+    most once, so the result is a reordered subset of the list, and
+    [max_size] defaults to its length. It shrinks toward fewer elements,
+    taken from earlier in the list. A [min_size] that cannot be met raises
+    [Usage_error]. The values are the caller's, so the result carries no
+    printer.
+
+    {[
+      let%hegel_test samples_example tc =
+        let rolls = draw_silent tc (samples ~min_size:2 ~max_size:2 [ 1; 2; 3; 4; 5; 6 ]) in
+        let picks = draw_silent tc (samples ~replacement:false [ 1; 2; 3; 4; 5; 6 ]) in
+        assert (List.length rolls = 2);
+        assert (List.length (List.sort_uniq compare picks) = List.length picks)
+      ;;
+    ]} *)
+val%template samples
+  :  ?min_size:int
+  -> ?max_size:int
+  -> ?replacement:bool
+  -> ('a KIND(value mod c)) list MODE(m)
+  -> ('a list, unprintable) generator MODE(m)
 [@@mode (m, c) = ((nonportable, uncontended), (portable, contended))]
 
 (** {2 Function generators} *)
@@ -1450,6 +1522,8 @@ module Private : sig
     val set : Internal.Label.t
     val array : Internal.Label.t
     val permutation : Internal.Label.t
+    val subsequence : Internal.Label.t
+    val sample : Internal.Label.t
     val dict : Internal.Label.t
     val tuple : Internal.Label.t
     val one_of : Internal.Label.t

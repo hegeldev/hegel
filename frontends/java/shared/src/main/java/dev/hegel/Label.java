@@ -71,6 +71,12 @@ public final class Label {
     /** A permutation of a fixed list ({@link Generators#permutations}): {@code of("hegel.permutation")}. */
     public static final long PERMUTATION = 0xb027cceaf4155d40L;
 
+    /** A subsequence of a fixed list ({@link Generators#subsequences}): {@code of("hegel.subsequence")}. */
+    public static final long SUBSEQUENCE = 0xd25dd251af3d131fL;
+
+    /** A sample of a fixed list ({@link Generators#samples}): {@code of("hegel.sample")}. */
+    public static final long SAMPLE = 0x7689a4323364eda6L;
+
     /** A fixed-length array ({@link Generators#arrays}): {@code of("hegel.array")}. */
     public static final long ARRAY = 0x5a6e9dc8e669fff1L;
 

@@ -110,6 +110,12 @@ describe("a custom-printed element prints inside its container", () => {
     expect(line(generator)).toBe(`const x_1 = ${expected};`);
   });
 
+  it("prints binary as a Uint8Array on every host", () => {
+    expect(line(gs.binary({ minSize: 2, maxSize: 2 }))).toBe(
+      "const x_1 = Uint8Array.from([0, 0]);",
+    );
+  });
+
   it("prints an absent optional as null", () => {
     expect(line(gs.optional(digit))).toBe("const x_1 = null;");
     expect(line(gs.optional(unschema(digit)))).toBe("const x_1 = null;");
@@ -132,6 +138,9 @@ describe("built-in generators print their values as the values print", () => {
     ["a sample", gs.sampledFrom(["a", 1])],
     ["a constant", gs.just(new Map([[1, { a: [2n] }]]))],
     ["permutations", gs.permutations([3, 1, 2])],
+    ["subsequences", gs.subsequences([3, 1, 2], { minSize: 2 })],
+    ["samples", gs.samples([3, 1, 2], { minSize: 2, maxSize: 4 })],
+    ["weighted booleans", gs.weightedBooleans(0.9)],
     ["arrays", gs.arrays(gs.integers(), { minSize: 2 })],
     ["unique arrays", gs.arrays(gs.integers(), { minSize: 2, uniqueBy: (n) => n })],
     ["sets", gs.sets(gs.integers(), { minSize: 2 })],

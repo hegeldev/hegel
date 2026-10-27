@@ -22,6 +22,7 @@ use crate::control::{
     AssumeFailed, InternalError, InvalidArgument, LoopDone, StopTest, currently_in_test_context,
     hegel_internal_error, with_test_context,
 };
+use crate::explicit_test_case::ExplicitTestCase;
 use crate::ffi::{CTestCase, RunErrorKind, RunHandle, SettingsHandle};
 use crate::runner::{Settings, TestLocation, Verbosity};
 use crate::test_case::{RunOutput, TestCase};
@@ -363,6 +364,115 @@ pub(crate) fn run_test_case(
     (tc_result, payload, diagnostic)
 }
 
+/// A failing explicit test case: its origin, for keeping one failure per
+/// origin and dropping the generated failures that share it, and its report
+/// material.
+pub(crate) struct ExplicitFailure {
+    pub(crate) origin: String,
+    report: CapturedReport,
+}
+
+impl ExplicitFailure {
+    /// The failure as the report prints it: an explicit test case has no
+    /// caveat and no blob to reproduce it with.
+    pub(crate) fn into_reported(self) -> ReportedFailure {
+        ReportedFailure {
+            origin: self.origin,
+            report: self.report,
+            caveat: None,
+            reproducer: None,
+        }
+    }
+}
+
+/// Run the user's test body once against an explicit test case, catching
+/// its panic, as [`run_test_case`] does for a generated one.
+///
+/// A body that passes must have drawn every value the case was given, or
+/// the test is misused and panics saying which values were not drawn. A
+/// usage error the body hits ([`InvalidArgument`]: a rejected explicit test
+/// case, a draw with no value) and an [`InternalError`] panic at once with
+/// their message, as they do in a generated case. Any other panic is a
+/// failure, returned with the case's draw and note lines and the rendered
+/// diagnostic (neither under quiet) for the caller to report. A verbose run
+/// prints the case's lines and diagnostic as it finishes, like a generated
+/// case's.
+pub(crate) fn run_explicit_case<F: FnOnce(&ExplicitTestCase)>(
+    case: &ExplicitTestCase,
+    body: F,
+    verbosity: Verbosity,
+    output: &RunOutput,
+) -> Option<ExplicitFailure> {
+    init_panic_hook();
+    let verbose = matches!(verbosity, Verbosity::Verbose | Verbosity::Debug);
+    let quiet = verbosity == Verbosity::Quiet;
+    CAPTURE_BACKTRACE.with(|c| c.set(!quiet));
+    take_panic_info();
+
+    let result = with_test_context(|| catch_unwind(AssertUnwindSafe(|| body(case))));
+    let lines = if quiet { Vec::new() } else { case.lines() };
+
+    let payload = match result {
+        Ok(()) => None,
+        Err(e) if e.downcast_ref::<LoopDone>().is_some() => None,
+        Err(e) => Some(e),
+    };
+    let Some(payload) = payload else {
+        if verbose {
+            for line in &lines {
+                output.line(line);
+            }
+        }
+        let unused = case.unused_values();
+        if !unused.is_empty() {
+            panic!(
+                "Explicit test case: the following values were provided \
+                 but never drawn: {:?}",
+                unused
+            );
+        }
+        return None;
+    };
+    let payload = match payload.downcast::<InvalidArgument>() {
+        Ok(invalid) => panic!("{}", invalid.0),
+        Err(e) => e,
+    };
+    let payload = match payload.downcast::<InternalError>() {
+        Ok(internal) => panic!("{}", internal.0),
+        Err(e) => e,
+    };
+    let (thread_name, thread_id, location, backtrace) =
+        take_panic_info().unwrap_or_else(unknown_panic_info);
+    let diagnostic = if quiet {
+        None
+    } else {
+        let msg = panic_message(&payload);
+        Some(render_diagnostic(
+            &thread_name,
+            &thread_id,
+            &location,
+            &msg,
+            &backtrace,
+        ))
+    };
+    if verbose {
+        for line in &lines {
+            output.line(line);
+        }
+        if let Some(diagnostic) = &diagnostic {
+            output.block(diagnostic);
+        }
+    }
+    Some(ExplicitFailure {
+        origin: format!("Panic at {}", location),
+        report: CapturedReport {
+            lines,
+            diagnostic,
+            payload,
+        },
+    })
+}
+
 /// Report a test case's outcome to the engine over the C ABI.
 ///
 /// Only the status — and, for an interesting (failing) case, the bug origin —
@@ -545,18 +655,26 @@ fn store_capture(
 /// run-level error — a failed health check, a nondeterminism abort under
 /// `error` strictness, an engine panic — surfaces with the engine's own
 /// message instead of the `Property test failed:` framing.
+///
+/// `explicit_failures` are the failures the explicit phase collected under
+/// `report_multiple_failures` (see [`ExplicitRun`](crate::ExplicitRun)).
+/// They are reported first, a generated failure sharing one's origin is
+/// dropped, and a run-level error does not hide them: it is reported after
+/// them as one more distinct failure.
 pub(crate) fn drive<F>(
     test_fn: F,
     settings: &Settings,
     database_key: Option<&str>,
     test_location: Option<&TestLocation>,
     reproduce_attribute: Option<&str>,
+    explicit_failures: Vec<ExplicitFailure>,
 ) where
     F: FnMut(TestCase),
 {
     init_panic_hook();
     let mut test_fn = test_fn;
     let output = RunOutput::resolve();
+    let quiet = settings.verbosity == Verbosity::Quiet;
 
     let c_settings = SettingsHandle::build(settings, database_key, test_location);
     let run = match RunHandle::start(&c_settings, output.sink()) {
@@ -564,15 +682,50 @@ pub(crate) fn drive<F>(
         Err(message) => panic!("RunError: {message}"), // nocov
     };
 
-    let failures = drive_run(run, &mut test_fn, settings, &output, reproduce_attribute);
-    if !failures.is_empty() {
-        raise_failures(failures, settings, &output);
+    let generated = drive_run(run, &mut test_fn, settings, &output, reproduce_attribute);
+    if explicit_failures.is_empty() {
+        match generated {
+            Ok(failures) if failures.is_empty() => return,
+            Ok(failures) => raise_failures(failures, quiet, &output),
+            Err(message) => panic!("{message}"),
+        }
     }
+    let explicit_origins: Vec<String> = explicit_failures
+        .iter()
+        .map(|failure| failure.origin.clone())
+        .collect();
+    let mut failures: Vec<ReportedFailure> = explicit_failures
+        .into_iter()
+        .map(ExplicitFailure::into_reported)
+        .collect();
+    match generated {
+        Ok(generated) => failures.extend(
+            generated
+                .into_iter()
+                .filter(|failure| !explicit_origins.contains(&failure.origin)),
+        ),
+        Err(message) => failures.push(ReportedFailure {
+            origin: String::new(),
+            report: CapturedReport {
+                lines: Vec::new(),
+                diagnostic: if quiet {
+                    None
+                } else {
+                    Some(format!("{message}\n"))
+                },
+                payload: Box::new(message),
+            },
+            caveat: None,
+            reproducer: None,
+        }),
+    }
+    raise_failures(failures, quiet, &output);
 }
 
-/// One failure a run reported: its captured material plus the engine's
-/// caveat and the reproducer line to print after it.
-struct ReportedFailure {
+/// One failure a run reported: its origin, its captured material plus the
+/// engine's caveat and the reproducer line to print after it.
+pub(crate) struct ReportedFailure {
+    origin: String,
     report: CapturedReport,
     caveat: Option<String>,
     reproducer: Option<String>,
@@ -582,7 +735,7 @@ struct ReportedFailure {
 /// every test case off `run`, capture report material per origin, then
 /// read the run's verdict. A passing run returns no failures, a failed one
 /// returns every failure it reported, in the engine's order, and an
-/// errored one panics with its [`run_error_message`].
+/// errored one returns its [`run_error_message`] as the error.
 ///
 /// `#[inline(always)]`: without it the test body's call stops being
 /// inlined and panic backtraces lose the user closure's source location
@@ -594,7 +747,7 @@ fn drive_run<F: FnMut(TestCase)>(
     settings: &Settings,
     output: &RunOutput,
     reproduce_attribute: Option<&str>,
-) -> Vec<ReportedFailure> {
+) -> Result<Vec<ReportedFailure>, String> {
     let verbosity = settings.verbosity;
     let quiet = verbosity == Verbosity::Quiet;
     let verbose = matches!(verbosity, Verbosity::Verbose | Verbosity::Debug);
@@ -635,20 +788,21 @@ fn drive_run<F: FnMut(TestCase)>(
     let result = run.result();
     use crate::ffi::sys::hegel_run_status_t as RunStatus;
     match result.status() {
-        RunStatus::HEGEL_RUN_STATUS_PASSED => Vec::new(),
+        RunStatus::HEGEL_RUN_STATUS_PASSED => Ok(Vec::new()),
         RunStatus::HEGEL_RUN_STATUS_ERROR => {
             let message = result
                 .error()
                 .unwrap_or_else(|| "the run failed with an unknown error".to_string());
-            panic!("{}", run_error_message(result.error_kind(), message));
+            Err(run_error_message(result.error_kind(), message))
         }
-        RunStatus::HEGEL_RUN_STATUS_FAILED => (0..result.failure_count())
+        RunStatus::HEGEL_RUN_STATUS_FAILED => Ok((0..result.failure_count())
             .map(|index| {
                 let failure = result.failure(index);
                 let report = captured
                     .remove(&failure.origin)
                     .unwrap_or_else(|| hegel_internal_error!("failure {index} has no capture"));
                 ReportedFailure {
+                    origin: failure.origin,
                     report,
                     reproducer: reproducer_line(
                         settings,
@@ -658,15 +812,14 @@ fn drive_run<F: FnMut(TestCase)>(
                     caveat: failure.caveat,
                 }
             })
-            .collect(),
+            .collect()),
     }
 }
 
 /// Print every failure in `failures` as one grouped block each, under a
 /// count header when there are several, and end by re-raising the failing
 /// test's own panic, or, for several failures, a panic carrying the count.
-fn raise_failures(failures: Vec<ReportedFailure>, settings: &Settings, output: &RunOutput) -> ! {
-    let quiet = settings.verbosity == Verbosity::Quiet;
+pub(crate) fn raise_failures(failures: Vec<ReportedFailure>, quiet: bool, output: &RunOutput) -> ! {
     let count = failures.len();
     let multiple = count > 1;
     if multiple && !quiet {
@@ -757,13 +910,10 @@ pub(crate) fn drive_blob_replay<F>(
     let mut failures = Vec::new();
     for blob in blobs {
         let run = RunHandle::start_blob(&c_settings, blob, output.sink());
-        failures.extend(drive_run(
-            run,
-            &mut test_fn,
-            settings,
-            &output,
-            reproduce_attribute,
-        ));
+        match drive_run(run, &mut test_fn, settings, &output, reproduce_attribute) {
+            Ok(reproduced) => failures.extend(reproduced),
+            Err(message) => panic!("{message}"),
+        }
     }
     if failures.is_empty() {
         panic!(
@@ -774,7 +924,7 @@ pub(crate) fn drive_blob_replay<F>(
              delete the attribute once the failure is fixed."
         );
     }
-    raise_failures(failures, settings, &output);
+    raise_failures(failures, settings.verbosity == Verbosity::Quiet, &output);
 }
 
 #[cfg(test)]

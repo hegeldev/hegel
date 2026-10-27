@@ -30,30 +30,54 @@ let booleans ?(p = 0.5) (): _ MODE(portable) =
     ~print:Printer.bool
 ;;
 
-(** [floats ?width ?min_value ?max_value ?exclude_min ?exclude_max ?allow_nan ?allow_infinity ()] creates a generator for floating-point values.
+(** [unit ()] creates a generator for the unit value, printed as [()]. It is
+    the constant generator of [()], labelled as {!just}. *)
+let unit () : _ MODE(portable) =
+  (leaf [@mode portable])
+    ~name:"just"
+    ~draw:(fun _ -> ())
+    ~sexp_of:sexp_of_unit
+    ~print:Printer.unit
+;;
+
+(** [floats ?width ?min_value ?max_value ?min_value_exclusive
+     ?max_value_exclusive ?allow_nan ?allow_infinity ?allow_subnormal ()]
+    creates a generator for floating-point values.
 
     With [~width:`W32] every drawn value is exactly representable as a 32-bit
-    float, and the bounds must be too. The smallest positive subnormal of the
-    width is passed as [smallest_nonzero_magnitude], so the engine places no
-    magnitude restriction on drawn floats.
+    float, and the bounds must be too. The smallest nonzero magnitude the
+    engine may draw is the width's smallest subnormal, or its smallest normal
+    when subnormals are not allowed.
 
     Unbounded ends are sent to the engine as [neg_infinity] / [infinity].
 
     Defaults:
-    - [exclude_min]: [false]
-    - [exclude_max]: [false]
     - [allow_nan]: [true] only when no bounds are set
-    - [allow_infinity]: [true] when at most one bound is set *)
+    - [allow_infinity]: [true] when at most one bound is set
+    - [allow_subnormal]: [true] when the bounds admit a subnormal value *)
 let floats
       ?(width = `W64)
       ?(min_value : float option)
       ?(max_value : float option)
-      ?(exclude_min = false)
-      ?(exclude_max = false)
+      ?(min_value_exclusive : float option)
+      ?(max_value_exclusive : float option)
       ?(allow_nan : bool option)
       ?(allow_infinity : bool option)
+      ?(allow_subnormal : bool option)
       ()
  : _ MODE(portable) =
+  (match min_value, min_value_exclusive with
+   | Some _, Some _ ->
+     raise (Internal.Usage_error "min_value and min_value_exclusive are mutually exclusive")
+   | _ -> ());
+  (match max_value, max_value_exclusive with
+   | Some _, Some _ ->
+     raise (Internal.Usage_error "max_value and max_value_exclusive are mutually exclusive")
+   | _ -> ());
+  let exclude_min = Option.is_some min_value_exclusive in
+  let exclude_max = Option.is_some max_value_exclusive in
+  let min_value = if exclude_min then min_value_exclusive else min_value in
+  let max_value = if exclude_max then max_value_exclusive else max_value in
   let has_min = Option.is_some min_value in
   let has_max = Option.is_some max_value in
   let eff_allow_nan =
@@ -66,13 +90,53 @@ let floats
     | Some v -> v
     | None -> (not has_min) || not has_max
   in
+  let width, smallest_normal, smallest_subnormal =
+    match width with
+    | `W64 -> 64, Float.min_float, 5e-324
+    | `W32 -> 32, Float.ldexp 1.0 (-126), Float.ldexp 1.0 (-149)
+  in
+  let allow_subnormal =
+    match allow_subnormal with
+    | Some v -> v
+    | None ->
+      (match min_value, max_value with
+       | Some lo, Some hi when lo = hi -> -.smallest_normal < lo && lo < smallest_normal
+       | Some lo, Some hi -> lo < smallest_normal && hi > -.smallest_normal
+       | Some lo, None -> lo < smallest_normal
+       | None, Some hi -> hi > -.smallest_normal
+       | None, None -> true)
+  in
+  (if allow_subnormal
+   then (
+     (match min_value with
+      | Some lo when lo >= smallest_normal ->
+        raise
+          (Internal.Usage_error
+             "allow_subnormal=true, but min_value excludes all values below the smallest \
+              positive normal")
+      | _ -> ());
+     match max_value with
+     | Some hi when hi <= -.smallest_normal ->
+       raise
+         (Internal.Usage_error
+            "allow_subnormal=true, but max_value excludes all values above the smallest \
+             negative normal")
+     | _ -> ())
+   else
+     match min_value, max_value with
+     | Some lo, Some hi
+       when (not (lo <= 0.0 && hi >= 0.0)) && hi < smallest_normal && lo > -.smallest_normal
+       ->
+       raise
+         (Internal.Usage_error
+            "allow_subnormal=false leaves no floating-point values between min_value and \
+             max_value")
+     | _ -> ());
+  let smallest_nonzero_magnitude =
+    if allow_subnormal then smallest_subnormal else smallest_normal
+  in
   let min_value = Option.value min_value ~default:neg_infinity in
   let max_value = Option.value max_value ~default:infinity in
-  let width, smallest_nonzero_magnitude =
-    match width with
-    | `W64 -> 64, 5e-324
-    | `W32 -> 32, Float.ldexp 1.0 (-149)
-  in
   (leaf [@mode portable])
     ~name:"floats"
     ~draw:(fun tc ->

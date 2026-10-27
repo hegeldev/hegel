@@ -272,13 +272,6 @@ namespace hegel {
         /// of the profile; picking an explicit backend overrides it.
         Backend backend = Backend::Auto;
 
-        /// The maximum number of steps a stateful test case attempts. Each
-        /// case runs at least one step and at most this many. Must be at
-        /// least 1; hegel::test() rejects other values with
-        /// std::invalid_argument. Hegel for C++ applies this setting
-        /// itself, so it is not part of a settings profile.
-        int64_t stateful_step_count = 50;
-
         /// The settings profile to start from. Unset uses the `default`
         /// profile. A name can be reserved (`base`, `default`), shipped
         /// (`development`, `ci`, `workload`), defined in `hegel.toml`, or
@@ -292,8 +285,8 @@ namespace hegel {
      *
      * The profile holds a complete snapshot of @p settings, resolved as
      * hegel::test() resolves them: the profile they start from, with the
-     * fields they set applied over it. Settings::database_key and
-     * Settings::stateful_step_count are not part of the snapshot.
+     * fields they set applied over it. Settings::database_key is not part of
+     * the snapshot.
      * Registration is process-wide and replaces an earlier registration of
      * the same name. It is not retroactive, so register a profile before
      * the tests that use it run. A `hegel.toml` section for @p name still

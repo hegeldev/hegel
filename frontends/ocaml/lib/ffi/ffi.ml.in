@@ -772,6 +772,22 @@ let c_collection_free =
   foreign "hegel_collection_free" (handle_t @-> handle_t @-> returning int)
 ;;
 
+let c_new_repeat =
+  foreign "hegel_new_repeat" (handle_t @-> handle_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_repeat_more =
+  foreign
+    "hegel_repeat_more"
+    (handle_t @-> handle_t @-> handle_t @-> ptr bool @-> returning int)
+;;
+
+let c_repeat_failed =
+  foreign "hegel_repeat_failed" (handle_t @-> handle_t @-> handle_t @-> returning int)
+;;
+
+let c_repeat_free = foreign "hegel_repeat_free" (handle_t @-> handle_t @-> returning int)
+
 let c_new_pool =
   foreign "hegel_new_pool" (handle_t @-> handle_t @-> ptr handle_t @-> returning int)
 ;;
@@ -1022,6 +1038,7 @@ type run_result = handle
 type failure = handle
 type string_generator = handle
 type collection = handle
+type repeat = handle
 type pool = handle
 type state_machine = handle
 type recursion = handle
@@ -1903,6 +1920,21 @@ let collection_reject ctx tc collection why =
 
 let collection_free ctx collection = check_rc ctx (c_collection_free ctx collection)
 
+let new_repeat ctx tc =
+  let out = allocate handle_t null_handle in
+  check_rc ctx (c_new_repeat ctx tc out);
+  !@out
+;;
+
+let repeat_more ctx tc repeat =
+  let out = allocate bool false in
+  check_rc ctx (c_repeat_more ctx tc repeat out);
+  !@out
+;;
+
+let repeat_failed ctx tc repeat = check_rc ctx (c_repeat_failed ctx tc repeat)
+let repeat_free ctx repeat = check_rc ctx (c_repeat_free ctx repeat)
+
 let new_pool ctx tc =
   let out = allocate handle_t null_handle in
   check_rc ctx (c_new_pool ctx tc out);
@@ -2290,6 +2322,10 @@ let new_collection = Obj.magic_portable new_collection
 let collection_more = Obj.magic_portable collection_more
 let collection_reject = Obj.magic_portable collection_reject
 let collection_free = Obj.magic_portable collection_free
+let new_repeat = Obj.magic_portable new_repeat
+let repeat_more = Obj.magic_portable repeat_more
+let repeat_failed = Obj.magic_portable repeat_failed
+let repeat_free = Obj.magic_portable repeat_free
 let new_pool = Obj.magic_portable new_pool
 let pool_add = Obj.magic_portable pool_add
 let pool_generate = Obj.magic_portable pool_generate

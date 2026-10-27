@@ -218,3 +218,128 @@ describe("gs.permutations()", () => {
     expect(last).toEqual([1, 2, 3, 5, 4]);
   });
 });
+
+describe("gs.subsequences()", () => {
+  test("generates ordered subsets of the elements", () =>
+    hegel.test((tc) => {
+      const elements = ["a", "b", "c", "d", "e"];
+      const sub = tc.draw(gs.subsequences(elements));
+      expect(sub.length).toBeLessThanOrEqual(elements.length);
+      let position = -1;
+      for (const item of sub) {
+        const index = elements.indexOf(item, position + 1);
+        expect(index).toBeGreaterThan(position);
+        position = index;
+      }
+      expect(tc.draw(gs.subsequences([]))).toEqual([]);
+    }, FEW));
+
+  test("respects minSize and maxSize, capped at the number of elements", () =>
+    hegel.test((tc) => {
+      expect(tc.draw(gs.subsequences([1, 2, 3], { minSize: 2 })).length).toBeGreaterThanOrEqual(2);
+      expect(tc.draw(gs.subsequences([1, 2, 3], { maxSize: 1 })).length).toBeLessThanOrEqual(1);
+      expect(tc.draw(gs.subsequences([1, 2, 3], { minSize: 3, maxSize: 10 }))).toEqual([1, 2, 3]);
+    }, FEW));
+
+  test("keeps duplicates in the input as distinct elements", () =>
+    hegel.test((tc) => {
+      const sub = tc.draw(gs.subsequences([1, 1, 2]));
+      expect(sub.filter((x) => x === 1).length).toBeLessThanOrEqual(2);
+    }, FEW));
+
+  test("rejects impossible sizes when built", () => {
+    expect(() => gs.subsequences([1, 2], { minSize: 3 })).toThrow(
+      "Cannot generate a subsequence: minSize 3 is larger than the 2 elements in the sequence",
+    );
+    expect(() => gs.subsequences([1, 2], { minSize: 2, maxSize: 1 })).toThrow(
+      "Cannot have maxSize < minSize",
+    );
+  });
+
+  test("shrinks toward the earliest elements", () => {
+    let last: number[] = [];
+    expect(() =>
+      hegel.test(
+        (tc) => {
+          const sub = tc.draw(gs.subsequences([1, 2, 3, 4, 5]));
+          if (sub.length >= 2) {
+            last = sub;
+            throw new Error("long");
+          }
+        },
+        { testCases: 200, database: hegel.Database.disabled },
+      ),
+    ).toThrow("long");
+    expect(last).toEqual([1, 2]);
+  });
+});
+
+describe("gs.samples()", () => {
+  test("samples with replacement by default", () =>
+    hegel.test((tc) => {
+      const sample = tc.draw(gs.samples([1, 2, 3], { minSize: 4, maxSize: 6 }));
+      expect(sample.length).toBeGreaterThanOrEqual(4);
+      expect(sample.length).toBeLessThanOrEqual(6);
+      for (const item of sample) expect([1, 2, 3]).toContain(item);
+      expect(tc.draw(gs.samples([]))).toEqual([]);
+    }, FEW));
+
+  test("samples without replacement as a reordered subset", () =>
+    hegel.test((tc) => {
+      const elements = ["a", "b", "c", "d"];
+      const sample = tc.draw(gs.samples(elements, { replacement: false }));
+      expect(sample.length).toBeLessThanOrEqual(elements.length);
+      expect(new Set(sample).size).toBe(sample.length);
+      for (const item of sample) expect(elements).toContain(item);
+      expect(
+        tc.draw(gs.samples(elements, { replacement: false, minSize: 4, maxSize: 10 })).length,
+      ).toBe(4);
+      expect(
+        tc.draw(gs.samples(elements, { replacement: false, maxSize: 2 })).length,
+      ).toBeLessThanOrEqual(2);
+    }, FEW));
+
+  test("rejects impossible sizes when built", () => {
+    expect(() => gs.samples([], { minSize: 1 })).toThrow(
+      "Cannot generate a non-empty sample from an empty sequence",
+    );
+    expect(() => gs.samples([1, 2], { minSize: 3, replacement: false })).toThrow(
+      "Cannot generate a sample without replacement: minSize 3 is larger than the 2 elements in the sequence",
+    );
+    expect(() => gs.samples([1, 2], { minSize: 2, maxSize: 1 })).toThrow(
+      "Cannot have maxSize < minSize",
+    );
+  });
+
+  test("shrinks toward the earliest elements", () => {
+    let withReplacement: number[] = [];
+    expect(() =>
+      hegel.test(
+        (tc) => {
+          const sample = tc.draw(gs.samples([5, 6, 7]));
+          if (sample.length >= 2) {
+            withReplacement = sample;
+            throw new Error("long");
+          }
+        },
+        { testCases: 200, database: hegel.Database.disabled },
+      ),
+    ).toThrow("long");
+    expect(withReplacement).toEqual([5, 5]);
+
+    let withoutReplacement: number[] = [];
+    expect(() =>
+      hegel.test(
+        (tc) => {
+          const sample = tc.draw(gs.samples([5, 6, 7], { replacement: false }));
+          if (sample.length >= 2) {
+            withoutReplacement = sample;
+            throw new Error("long");
+          }
+        },
+        { testCases: 200, database: hegel.Database.disabled },
+      ),
+    ).toThrow("long");
+    expect(withoutReplacement).toEqual([5, 6]);
+  });
+});

@@ -359,8 +359,10 @@ let%expect_test "a stateful rule's drawn arguments appear in its trace" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    Step 1: push
+    Step 1: push {
       let n_1 = 7 in
+    }
+    Rule push failed:
     Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
 
     To reproduce this failure, pass this argument to run_hegel_test:
@@ -397,12 +399,15 @@ let%expect_test "verbose stateful tests print drawn values on passing runs" =
     Starting phase: Generate
     Running test case
     let _x = 42 in
-    Step 1: push
+    Step 1: push {
       let _n = 7 in
-    Step 2: push
+    }
+    Step 2: push {
       let _n = 7 in
-    Step 3: push
+    }
+    Step 3: push {
       let _n = 7 in
+    }
     Ending phase: Generate
     |}]
 ;;

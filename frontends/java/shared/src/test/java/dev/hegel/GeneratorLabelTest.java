@@ -23,11 +23,14 @@ import static dev.hegel.Generators.permutations;
 import static dev.hegel.Generators.records;
 import static dev.hegel.Generators.recursive;
 import static dev.hegel.Generators.sampledFrom;
+import static dev.hegel.Generators.samples;
 import static dev.hegel.Generators.sets;
+import static dev.hegel.Generators.subsequences;
 import static dev.hegel.Generators.text;
 import static dev.hegel.Generators.tuples;
 import static dev.hegel.Generators.urls;
 import static dev.hegel.Generators.uuids;
+import static dev.hegel.Generators.weightedBooleans;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
@@ -75,6 +78,9 @@ class GeneratorLabelTest {
         assertEquals(of("hegel.just"), just(1).label());
         assertEquals(Label.SAMPLED_FROM, sampledFrom(1, 2).label());
         assertEquals(Label.PERMUTATION, permutations(1, 2).label());
+        assertEquals(Label.SUBSEQUENCE, subsequences(1, 2).label());
+        assertEquals(Label.SAMPLE, samples(1, 2).label());
+        assertEquals(of("hegel.booleans"), weightedBooleans(0.9).label());
         assertEquals(Label.COMPOSITE, composite(tc -> 1).label());
         assertEquals(Label.DEFERRED, Generators.<Integer>deferred().label());
         assertEquals(Label.FROM_LARK, fromLark("start: \"a\"").label());

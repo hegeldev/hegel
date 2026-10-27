@@ -12,7 +12,6 @@ from hegel import _native
 from hegel._labels import label_from_name
 from hegel.errors import InvalidArgument
 from hegel.generators.base import Generator, _PrintsValue
-from hegel.test_case import TextCollection
 
 if TYPE_CHECKING:
     from hegel.test_case import TestCase
@@ -174,11 +173,15 @@ class CharacterSpec:
         )
 
 
-def _alphabet_spec(alphabet: Any) -> CharacterSpec | Generator[str]:
+def _alphabet_spec(alphabet: Any) -> CharacterSpec:
     if isinstance(alphabet, Characters):
         return alphabet.spec
     if isinstance(alphabet, Generator):
-        return alphabet
+        raise InvalidArgument(
+            f"alphabet={alphabet!r} must be a string of characters, a collection of single "
+            "characters or a characters() generator; to build text from an arbitrary "
+            'generator of characters, use lists(alphabet).map("".join)'
+        )
     if isinstance(alphabet, (bytes, bytearray)):
         raise InvalidArgument(f"alphabet={alphabet!r} must be a collection of characters")
     return CharacterSpec(categories=[], include_characters=_check_characters("alphabet", alphabet))
@@ -191,8 +194,6 @@ def _pattern_alphabet(who: str, alphabet: Any) -> _native.StringGenerator | None
     if alphabet is None:
         return None
     spec = _alphabet_spec(alphabet)
-    if isinstance(spec, Generator):
-        raise InvalidArgument(f"{who} alphabet must be a string of characters or characters()")
     if not isinstance(alphabet, Characters) and not spec.include_characters:
         raise InvalidArgument(f"{who} alphabet must not be empty")
     return spec.build(0, 0)
@@ -215,32 +216,6 @@ class Text(_PrintsValue[str]):
     def __repr__(self) -> str:
         prefix = f"{self._args}, " if self._args else ""
         return f"text({prefix}{_sizes(self.min_size, self.max_size)})"
-
-
-class TextFromAlphabet(_PrintsValue[str]):
-    """Text whose characters come from an arbitrary generator."""
-
-    def __init__(self, alphabet: Generator[str], min_size: int, max_size: int | None) -> None:
-        self.alphabet = alphabet
-        self.min_size = min_size
-        self.max_size = max_size
-        self.label = TEXT_LABEL
-
-    def __repr__(self) -> str:
-        return f"text(alphabet={self.alphabet!r}, {_sizes(self.min_size, self.max_size)})"
-
-    def do_draw(self, tc: TestCase) -> str:
-        collection = TextCollection(tc, self.min_size, self.max_size)
-        chars = []
-        while collection.more():
-            char = tc.draw_silent(self.alphabet)
-            if not isinstance(char, str) or len(char) != 1:
-                raise InvalidArgument(
-                    "The alphabet generator for text() must produce single characters, "
-                    f"got {char!r}"
-                )
-            chars.append(char)
-        return "".join(chars)
 
 
 def text(
@@ -266,9 +241,10 @@ def text(
     :class:`~hegel.InvalidArgument`.
 
     ``alphabet`` restricts the characters: a string or sequence of
-    characters, a :func:`characters` generator, or any generator of single
-    characters (any other value it produces is an
-    :class:`~hegel.InvalidArgument` when drawn). An empty alphabet gives
+    characters, or a :func:`characters` generator. Any other generator is
+    an :class:`~hegel.InvalidArgument`; to build text from an arbitrary
+    generator of characters, draw a list of them and join it:
+    ``gs.lists(chars).map("".join)``. An empty alphabet gives
     only ``""``. The keyword filters (``codec``, codepoint bounds, Unicode
     categories, included and excluded characters) are shorthand for a
     :func:`characters` alphabet, with the same meanings, and cannot be
@@ -302,8 +278,6 @@ def text(
         if char_params:
             raise InvalidArgument("Cannot combine alphabet with character filtering arguments")
         spec = _alphabet_spec(alphabet)
-        if isinstance(spec, Generator):
-            return TextFromAlphabet(spec, min_size, max_size)
         if not isinstance(alphabet, Characters) and not spec.include_characters:
             # An empty alphabet spells only the empty string.
             if min_size > 0:

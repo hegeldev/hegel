@@ -82,7 +82,8 @@ val set_test_aborted : test_case -> bool -> unit
 
 (** [clone tc] forks a fresh clone of [tc] on an independent choice stream (its
     own native handle and context), owned and freed by the test case once it
-    completes.
+    completes. A clone of an explicit example's test case draws the example's
+    values, in sequence with [tc]'s draws.
     Re-exported as [Hegel.clone]. *)
 val clone : test_case -> test_case
 
@@ -97,7 +98,8 @@ val with_block : test_case -> indent:int -> (test_case -> 'a) MODE(local) -> 'a
     currently owns; they are freed together once the case completes. *)
 val owned_clone_count : test_case -> int
 
-(** Tags subsequent output from [tc] with a concurrent worker index. *)
+(** Tags subsequent output from [tc] with a concurrent worker index. Does
+    nothing on an explicit example's test case, which has no output to tag. *)
 val set_worker_index : test_case -> int -> unit
 
 (** [is_explicit tc] is [true] when [tc] is an explicit example's test case,
@@ -388,6 +390,31 @@ val collection_reject : test_case -> collection:collection -> unit
 (** [collection_free tc ~collection] releases [collection]. Safe after the test
     case has aborted. *)
 val collection_free : test_case -> collection:collection -> unit
+
+(** {2 Repeat loops}
+
+    The engine decides how many times {!Hegel.repeat} runs its body and is
+    told which repetition failed, so that a failure shrinks to the fewest
+    repetitions. *)
+
+(** The engine's side of one {!Hegel.repeat} loop. Each one must be released
+    exactly once with {!repeat_free}. *)
+type repeat = Hegel_ffi.Ffi.repeat
+
+(** [new_repeat tc] starts a repeat loop at this point of [tc]'s draws. *)
+val new_repeat : test_case -> repeat
+
+(** [repeat_more tc ~repeat] returns whether the engine wants another
+    repetition. *)
+val repeat_more : test_case -> repeat:repeat -> bool
+
+(** [repeat_failed tc ~repeat] reports that the repetition just run failed,
+    before the failure propagates. *)
+val repeat_failed : test_case -> repeat:repeat -> unit
+
+(** [repeat_free tc ~repeat] releases [repeat]. Safe after the test case has
+    aborted. *)
+val repeat_free : test_case -> repeat:repeat -> unit
 
 (** {2 Variable pools}
 

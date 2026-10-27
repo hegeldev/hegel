@@ -367,21 +367,6 @@ pub(crate) fn current_output_sink() -> Option<OutputSink> {
     OUTPUT_OVERRIDE.with(|cell| cell.borrow().clone())
 }
 
-/// Emit a single line of verbose runner output, going through the
-/// installed output sink if there is one and otherwise to stderr.
-///
-/// Resolves the sink thread-locally at emit time, so it is only correct for
-/// output produced synchronously on the thread that installed the override
-/// (e.g. an explicit test case). A run resolves its destination once up
-/// front instead — see [`RunOutput`].
-pub(crate) fn emit_verbose_line(msg: &str) {
-    if let Some(sink) = current_output_sink() {
-        sink(msg);
-    } else {
-        eprintln!("{}", msg);
-    }
-}
-
 /// The output destination a run resolved when it started.
 ///
 /// Resolved exactly once, on the thread that starts the run, from the
@@ -827,12 +812,15 @@ impl TestCase {
         }
     }
 
-    /// Run `body` in a loop that should runs "logically infinitely" or until
+    /// Run `body` in a loop that should run "logically infinitely" or until
     /// error. Roughly equivalent to a `loop` but with better interaction with
-    /// the test runner: This loop will never exit until the test case completes.
+    /// the test runner: the engine decides how many iterations to run, so a
+    /// failing loop shrinks to the fewest, and this loop never exits until
+    /// the test case completes.
     ///
-    /// At the start of each iteration a `// Repetition #N` note is emitted
-    /// into the failing-test replay output.
+    /// Each iteration's output is indented under a `// Repetition #N` note.
+    /// An iteration that fails an assumption is skipped and the loop goes
+    /// on; any other panic fails the test case.
     ///
     /// # Example
     ///
@@ -850,15 +838,10 @@ impl TestCase {
     /// }
     /// ```
     pub fn repeat<F: FnMut()>(&self, mut body: F) -> ! {
-        use crate::generators::{booleans, integers};
-
-        let max_safe_min_size = usize::try_from(1u64 << 40).unwrap_or(usize::MAX / 2);
-        let min_size = self.draw_silent(integers::<usize>().max_value(max_safe_min_size));
-
-        let mut collection = Collection::new(self, min_size, None);
+        let repeat = self.draw_or_raise(|ctc| ctc.new_repeat());
         let mut iteration: u64 = 0;
 
-        while collection.more() {
+        while self.draw_or_raise(|ctc| ctc.repeat_more(&repeat)) {
             iteration += 1;
             self.note(&format!("// Repetition #{}", iteration));
 
@@ -877,7 +860,7 @@ impl TestCase {
                     resume_unwind(e);
                 }
                 Err(e) => {
-                    self.draw_silent(booleans());
+                    self.draw_or_raise(|ctc| ctc.repeat_failed(&repeat));
                     resume_unwind(e);
                 }
             }

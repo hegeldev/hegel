@@ -15,7 +15,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
-/** {@code reject}, {@code drawSilent}, events, {@code fork} and {@code repeat}. */
+/** {@code reject}, {@code drawSilent}, events, {@code clone} and {@code repeat}. */
 class TestCaseApiTest {
     private static final Settings SETTINGS = new Settings().database(Database.disabled());
 
@@ -95,16 +95,17 @@ class TestCaseApiTest {
         assertSame(error, repeatOnceThrowing(fake, () -> {
             throw error;
         }));
-        assertTrue(fake.booleanDrawn);
+        assertTrue(fake.repeatFailed);
     }
 
     @Test
-    void forksDrawOnOtherThreads() {
+    void clonesDrawOnOtherThreads() {
         RunReport report = Hegel.run(
                 tc -> {
-                    TestCase fork = tc.fork(1);
+                    TestCase clone = tc.clone();
+                    clone.setWorker(1);
                     int b = CompletableFuture.supplyAsync(
-                                    () -> fork.draw(integers().min(0).max(10), "b"))
+                                    () -> clone.draw(integers().min(0).max(10), "b"))
                             .join();
                     int a = tc.draw(integers().min(0).max(10), "a");
                     assertTrue(a + b < 12);
@@ -192,7 +193,7 @@ class TestCaseApiTest {
             assertSame(control, repeatOnceThrowing(fake, () -> {
                 throw control;
             }));
-            assertFalse(fake.booleanDrawn, control.toString());
+            assertFalse(fake.repeatFailed, control.toString());
         }
     }
 
@@ -207,7 +208,7 @@ class TestCaseApiTest {
                     fake.generateIntegerRc = Abi.E_ASSUME;
                     tc.draw(integers());
                 }));
-        assertFalse(fake.booleanDrawn);
+        assertFalse(fake.repeatFailed);
     }
 
     @Test
@@ -217,7 +218,8 @@ class TestCaseApiTest {
         assertSame(error, repeatOnceThrowing(fake, () -> {
             throw error;
         }));
-        assertTrue(fake.booleanDrawn);
+        assertTrue(fake.repeatFailed);
+        assertEquals(List.of(fake.repeatId), fake.freedRepeats);
     }
 
     @Test

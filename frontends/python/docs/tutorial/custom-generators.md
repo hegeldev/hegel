@@ -34,7 +34,6 @@ value the composite returned:
 
 ```
 E       assert 100 < 100
-E       Falsifying example:
 E       person = {'name': '0', 'age': 100}
 ```
 

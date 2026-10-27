@@ -42,6 +42,8 @@ export const LabelNames = {
   FROM_LARK: "hegel.from_lark",
   DEFERRED: "hegel.deferred",
   PERMUTATION: "hegel.permutation",
+  SUBSEQUENCE: "hegel.subsequence",
+  SAMPLE: "hegel.sample",
   POOL_VALUES_REUSABLE: "hegel.pool.values_reusable",
   POOL_VALUES_CONSUMED: "hegel.pool.values_consumed",
   COMPOSITE: "hegel.composite",

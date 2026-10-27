@@ -4,6 +4,7 @@ use common::exec::self_test;
 use common::utils::{assert_matches_regex, capture_hegel_output, expect_panic};
 use hegel::TestCase;
 use hegel::generators;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 // The compile-error cases — the attribute on a bare function, above
 // `#[hegel::test]`, with bad syntax, with empty arguments, or without an
@@ -234,7 +235,7 @@ fn test_explicit_repeat_propagates_failures() {
         });
     });
     assert!(result.is_err());
-    assert_eq!(lines, vec!["// Repetition #1".to_string()]);
+    assert_eq!(lines[0], "// Repetition #1");
 }
 
 #[test]
@@ -509,4 +510,232 @@ fn test_explicit_repeated_draws_are_numbered() {
         let second: i32 = tc.draw(generators::integers());
         assert_eq!((first, second), (1, 2));
     });
+}
+
+#[test]
+fn test_explicit_clone_shares_the_values_and_the_naming_scope() {
+    let etc = hegel::ExplicitTestCase::new()
+        .with_value("draw_1", "1", 1)
+        .with_value("draw_2", "2", 2);
+    etc.run(|tc: &hegel::ExplicitTestCase| {
+        let worker = tc.clone();
+        worker.set_worker(3);
+        let first: i32 = worker.draw(generators::integers());
+        let second: i32 = tc.draw(generators::integers());
+        assert_eq!((first, second), (1, 2));
+    });
+}
+
+#[test]
+fn test_explicit_clone_notes_are_reported_with_the_case() {
+    let (lines, result) = capture_hegel_output(|| {
+        let etc = hegel::ExplicitTestCase::new().with_value("x", "1", 1);
+        etc.run(|tc: &hegel::ExplicitTestCase| {
+            let worker = tc.clone();
+            let _: i32 = tc.__draw_named(generators::integers(), "x", false);
+            worker.note("from the clone");
+            panic!("intentional");
+        });
+    });
+    assert!(result.is_err());
+    assert_eq!(
+        lines[..2],
+        ["let x = 1;".to_string(), "from the clone".to_string()]
+    );
+}
+
+#[hegel::test(test_cases = 1)]
+#[hegel::explicit_test_case(x = 1, draw_1 = 2, y = 3)]
+fn test_macro_explicit_clone_draws_the_case_values(tc: TestCase) {
+    let worker = tc.clone();
+    worker.set_worker(1);
+    let x: i32 = tc.draw(generators::integers());
+    let z: i32 = worker.draw(generators::integers());
+    let y: i32 = tc.draw(generators::integers());
+    let _ = (x, y, z);
+}
+
+#[hegel::test]
+#[hegel::explicit_test_case(x = 1)]
+#[hegel::reproduce_failure("!!! not a blob !!!")]
+#[should_panic(expected = "could not be decoded")]
+fn test_macro_explicit_cases_do_not_run_under_blob_replay(tc: TestCase) {
+    let x: i32 = tc.draw(generators::integers());
+    assert_ne!(x, 1, "the explicit test case ran");
+}
+
+fn panic_text(payload: &Box<dyn std::any::Any + Send>) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|s| s.to_string())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_default()
+}
+
+static FIRST_FAILURE_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+#[hegel::standalone_function(test_cases = 5, database = None)]
+#[hegel::explicit_test_case(x = 1)]
+#[hegel::explicit_test_case(x = 2)]
+fn first_explicit_failure_ends_the_run(tc: TestCase) {
+    FIRST_FAILURE_CALLS.fetch_add(1, Ordering::SeqCst);
+    let x: i32 = tc.draw(generators::integers::<i32>().min_value(5).max_value(5));
+    if x == 1 {
+        panic!("first explicit failed");
+    }
+    if x == 2 {
+        panic!("second explicit failed");
+    }
+}
+
+#[test]
+fn test_first_explicit_failure_ends_the_run() {
+    let (lines, result) = capture_hegel_output(first_explicit_failure_ends_the_run);
+    assert_eq!(panic_text(&result.unwrap_err()), "first explicit failed");
+    assert_eq!(FIRST_FAILURE_CALLS.load(Ordering::SeqCst), 1);
+    let output = lines.join("\n");
+    assert!(output.starts_with("let x = 1;\nthread '"), "{output}");
+    assert!(output.contains("first explicit failed"), "{output}");
+    assert!(!output.contains("To reproduce"), "{output}");
+}
+
+#[hegel::standalone_function(report_multiple_failures = true, test_cases = 20, database = None)]
+#[hegel::explicit_test_case(x = 1)]
+#[hegel::explicit_test_case(x = 2)]
+#[hegel::explicit_test_case(x = 1)]
+fn explicit_failures_are_collected_with_the_generated_ones(tc: TestCase) {
+    let x: i32 = tc.draw(generators::integers::<i32>().min_value(5).max_value(5));
+    if x == 1 {
+        panic!("first explicit failed");
+    }
+    if x == 2 {
+        panic!("second explicit failed");
+    }
+    panic!("generated failed");
+}
+
+#[test]
+fn test_explicit_failures_are_collected_with_the_generated_ones() {
+    let (lines, result) =
+        capture_hegel_output(explicit_failures_are_collected_with_the_generated_ones);
+    assert_eq!(
+        panic_text(&result.unwrap_err()),
+        "Property-based test failed with 3 distinct failures."
+    );
+    let output = lines.join("\n");
+    assert!(
+        output.starts_with("Property-based test failed with 3 distinct failures.\n\nlet x = 1;\n"),
+        "{output}"
+    );
+    let first = output.find("first explicit failed").unwrap();
+    let second = output.find("second explicit failed").unwrap();
+    let generated = output.find("generated failed").unwrap();
+    assert!(first < second && second < generated, "{output}");
+    assert_eq!(output.matches("To reproduce").count(), 1, "{output}");
+    assert!(output.contains("\nlet x = 5;\n"), "{output}");
+}
+
+#[hegel::standalone_function(report_multiple_failures = true, test_cases = 5, database = None)]
+#[hegel::explicit_test_case(x = 7)]
+fn generated_failure_sharing_an_explicit_origin_is_dropped(tc: TestCase) {
+    let x: i32 = tc.draw(generators::integers::<i32>().min_value(7).max_value(7));
+    panic!("x is {x}");
+}
+
+#[test]
+fn test_generated_failure_sharing_an_explicit_origin_is_dropped() {
+    let (lines, result) =
+        capture_hegel_output(generated_failure_sharing_an_explicit_origin_is_dropped);
+    assert_eq!(panic_text(&result.unwrap_err()), "x is 7");
+    let output = lines.join("\n");
+    assert!(!output.contains("distinct failures"), "{output}");
+    assert!(output.starts_with("let x = 7;\n"), "{output}");
+    assert_eq!(output.matches("let x = 7;").count(), 1, "{output}");
+}
+
+#[hegel::standalone_function(
+    report_multiple_failures = true,
+    test_cases = 5,
+    verbosity = hegel::Verbosity::Quiet,
+    database = None
+)]
+#[hegel::explicit_test_case(x = 7)]
+fn quiet_explicit_failure_before_a_passing_generated_phase(tc: TestCase) {
+    let x: i32 = tc.draw(generators::integers::<i32>().min_value(0).max_value(0));
+    if x == 7 {
+        panic!("explicit failed");
+    }
+}
+
+#[test]
+fn test_quiet_explicit_failure_before_a_passing_generated_phase() {
+    let (lines, result) =
+        capture_hegel_output(quiet_explicit_failure_before_a_passing_generated_phase);
+    assert_eq!(panic_text(&result.unwrap_err()), "explicit failed");
+    assert!(lines.is_empty(), "{lines:?}");
+}
+
+#[hegel::standalone_function(report_multiple_failures = true, database = None)]
+#[hegel::explicit_test_case(x = 7)]
+fn explicit_failure_before_a_run_error(tc: TestCase) {
+    let x: i32 = tc.draw(generators::integers::<i32>().min_value(0).max_value(0));
+    if x == 7 {
+        panic!("explicit failed");
+    }
+    tc.assume(false);
+}
+
+#[test]
+fn test_explicit_failure_before_a_run_error() {
+    let (lines, result) = capture_hegel_output(explicit_failure_before_a_run_error);
+    assert_eq!(
+        panic_text(&result.unwrap_err()),
+        "Property-based test failed with 2 distinct failures."
+    );
+    let output = lines.join("\n");
+    assert!(output.contains("explicit failed"), "{output}");
+    assert_matches_regex(&output, "FailedHealthCheck|Unsatisfiable");
+}
+
+#[hegel::standalone_function(
+    verbosity = hegel::Verbosity::Verbose,
+    test_cases = 1,
+    database = None
+)]
+#[hegel::explicit_test_case(x = 1)]
+fn verbose_passing_explicit_case(tc: TestCase) {
+    let x: i32 = tc.draw(generators::integers());
+    tc.note(&format!("x was {x}"));
+}
+
+#[test]
+fn test_verbose_passing_explicit_case_prints_its_lines() {
+    let (lines, result) = capture_hegel_output(verbose_passing_explicit_case);
+    assert!(result.is_ok());
+    assert_eq!(
+        lines[..2],
+        ["let x = 1;".to_string(), "x was 1".to_string()]
+    );
+}
+
+#[hegel::standalone_function(
+    verbosity = hegel::Verbosity::Verbose,
+    test_cases = 1,
+    database = None
+)]
+#[hegel::explicit_test_case(x = 1)]
+fn verbose_failing_explicit_case(tc: TestCase) {
+    let x: i32 = tc.draw(generators::integers());
+    if x == 1 {
+        panic!("explicit failed");
+    }
+}
+
+#[test]
+fn test_verbose_failing_explicit_case_prints_its_lines_and_diagnostic() {
+    let (lines, result) = capture_hegel_output(verbose_failing_explicit_case);
+    assert_eq!(panic_text(&result.unwrap_err()), "explicit failed");
+    assert_eq!(lines[0], "let x = 1;");
+    assert!(lines[1].starts_with("thread '"), "{lines:?}");
+    assert_eq!(lines.iter().filter(|l| *l == "let x = 1;").count(), 2);
 }

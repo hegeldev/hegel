@@ -59,6 +59,8 @@ export class ExplicitExampleError extends Error {
 /** The registration for a state machine, see {@link DataSource.newStateMachine}. */
 export interface StateMachineSpec {
   ruleNames: readonly string[];
+  /** Parallel to `ruleNames`: each rule's selection weight, finite and positive. */
+  ruleWeights: readonly number[];
   invariantNames: readonly string[];
   /** Parallel to `invariantNames`: whether the invariant is exempt from sampling. */
   invariantAlwaysCheck: readonly boolean[];
@@ -93,6 +95,12 @@ export interface DataSource {
   newCollection(minSize: number, maxSize?: number): number;
   collectionMore(collectionId: number): boolean;
   collectionReject(collectionId: number, why?: string): void;
+  /** Start a repeat loop (see {@link TestCase.repeat}). */
+  newRepeat(): number;
+  /** Whether the engine wants another iteration of the loop. */
+  repeatMore(repeatId: number): boolean;
+  /** Report that the iteration just run failed, before the failure is rethrown. */
+  repeatFailed(repeatId: number): void;
   markComplete(status: number, origin: string | null): void;
 
   /** Open a variable pool (see `stateful.Pool`). */
@@ -228,8 +236,6 @@ interface Shared {
   readonly emit: boolean;
   readonly explicit: ExplicitValues | null;
 }
-
-const MAX_REPEAT_MIN_SIZE = 2 ** 40;
 
 /**
  * A handle to the current test case, passed to the test function: draw values
@@ -429,21 +435,12 @@ export class TestCase {
     this._dataSource.eventValue(label, value);
   }
 
-  private beginRepeat(): Collection {
-    const minSize = this._dataSource.generate({
-      type: "integer",
-      min_value: 0,
-      max_value: MAX_REPEAT_MIN_SIZE,
-    }) as number;
-    return new Collection(this, minSize);
-  }
-
   private beginIteration(iteration: number): DataSource {
     this.note(`// Repetition #${iteration}`);
     return this.switchTo(this._dataSource.block(2));
   }
 
-  private failIteration(outer: DataSource, error: unknown): void {
+  private failIteration(outer: DataSource, repeatId: number, error: unknown): void {
     this.switchTo(outer);
     if (error instanceof AssumeError) return;
     if (
@@ -453,7 +450,7 @@ export class TestCase {
     ) {
       throw error;
     }
-    this._dataSource.generate({ type: "boolean" });
+    this._dataSource.repeatFailed(repeatId);
     throw error;
   }
 
@@ -480,14 +477,14 @@ export class TestCase {
       }
       throw new LoopDone();
     }
-    const collection = this.beginRepeat();
+    const repeatId = this._dataSource.newRepeat();
     let iteration = 0;
-    while (collection.more()) {
+    while (this._dataSource.repeatMore(repeatId)) {
       const outer = this.beginIteration(++iteration);
       try {
         body();
       } catch (error) {
-        this.failIteration(outer, error);
+        this.failIteration(outer, repeatId, error);
       } finally {
         this.switchTo(outer);
       }
@@ -506,14 +503,14 @@ export class TestCase {
       }
       throw new LoopDone();
     }
-    const collection = this.beginRepeat();
+    const repeatId = this._dataSource.newRepeat();
     let iteration = 0;
-    while (collection.more()) {
+    while (this._dataSource.repeatMore(repeatId)) {
       const outer = this.beginIteration(++iteration);
       try {
         await body();
       } catch (error) {
-        this.failIteration(outer, error);
+        this.failIteration(outer, repeatId, error);
       } finally {
         this.switchTo(outer);
       }

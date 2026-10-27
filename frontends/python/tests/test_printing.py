@@ -14,9 +14,7 @@ from tests.helpers import failing, notes, run_test
 
 
 def report(body, exception=ValueError, **settings):
-    lines = notes(failing(body, exception, **settings))[0].splitlines()
-    assert lines[0] == "Falsifying example:"
-    return lines[1:]
+    return notes(failing(body, exception, **settings))[0].splitlines()
 
 
 def report_of(generator):

@@ -182,6 +182,7 @@ describe("WasmEngine pinned raw ABI", () => {
     const options = {
       ruleNames: ["push", "pop"],
       ruleGroups: [0, 0],
+      ruleWeights: [1, 3],
       invariantNames: ["sorted", "small"],
       invariantAlwaysCheck: [true, false],
       minConcurrency: 1,

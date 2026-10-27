@@ -92,6 +92,19 @@ class FakeDataSource implements DataSource {
     // no-op
   }
 
+  newRepeat(): number {
+    return 1;
+  }
+
+  repeatMore(_repeatId: number): boolean {
+    this._collectionCallCount++;
+    return this._collectionCallCount <= this._collectionCounts;
+  }
+
+  repeatFailed(_repeatId: number): void {
+    // no-op
+  }
+
   markComplete(status: number, origin: string | null): void {
     this._markCompleteCalls.push({ status, origin });
   }
@@ -487,7 +500,10 @@ describe("oneOf parse paths", () => {
     expect(basic).not.toBeNull();
     expect(basic!.schema).toEqual({
       type: "one_of",
-      generators: [{ type: "integer", min_value: 0n, max_value: 10n }, { type: "boolean" }],
+      generators: [
+        { type: "integer", min_value: 0n, max_value: 10n },
+        { type: "boolean", p: 0.5 },
+      ],
     });
     // Guard against accidental re-introduction of the legacy
     // [constant(i), child] tuple wrapping.

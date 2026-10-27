@@ -25,7 +25,9 @@ pub(crate) use grammar::{Grammar, GrammarBuilder, GrammarDraw};
 pub(crate) use printer::Printer;
 pub(crate) use settings::Settings;
 pub(crate) use strings::StringGenerator;
-pub(crate) use test_case::{Collection, Pool, Recursion, Run, RunResult, StateMachine, TestCase};
+pub(crate) use test_case::{
+    Collection, Pool, Recursion, Repeat, Run, RunResult, StateMachine, TestCase,
+};
 
 // Defined here, but exported (and so named) from hegel.errors.
 create_exception!(
@@ -294,6 +296,7 @@ fn _native(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RunResult>()?;
     m.add_class::<TestCase>()?;
     m.add_class::<Collection>()?;
+    m.add_class::<Repeat>()?;
     m.add_class::<Recursion>()?;
     m.add_class::<Pool>()?;
     m.add_class::<StateMachine>()?;

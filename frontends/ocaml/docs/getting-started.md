@@ -295,15 +295,12 @@ rules with `[@@rule]` and invariants with `[@@invariant]`. A rule takes the
 test case and the state and updates the state in place. Rules may be weighted
 with `[@@rule { weight = <weight> }]`. Every invariant is checked on the initial
 and final states and sampled after intermediate steps, or after every step when
-marked `[@@invariant { always_check = true }]`. Pass `?sexp_of_state` to 
-`Stateful.run` to trace the model state. Draws are also printed with their 
+marked `[@@invariant { always_check = true }]`. Draws are printed with their
 `let`-bound name.
 
 ```ocaml
 module%hegel_state_machine Stack = struct
   type state = int list ref
-
-  let sexp_of_state (stack : state) = sexp_of_list sexp_of_int !stack
 
   let push tc stack =
     let n = draw tc (integers ~min_value:0 ~max_value:9 ()) in
@@ -317,21 +314,21 @@ end
 let%hegel_test stack_model tc = Stack.run tc ~init:(ref [])
 ```
 
-When a sequence fails, the report shows each step, the draws it made, the state
-after it, and which step broke the invariant:
+When a sequence fails, the report shows each step with the draws it made, and
+names the invariant that broke:
 
 ```
-state = ()
-Step 1: push
+Checking invariants on the initial state.
+Step 1: push {
   let n = 0 in
-state = (0)
-Step 2: push
+}
+Step 2: push {
   let n = 0 in
-state = (0 0)
-Step 3: push
+}
+Step 3: push {
   let n = 0 in
-state = (0 0 0)
-Invariant stack_stays_small violated after step 3.
+}
+Invariant stack_stays_small failed:
 ```
 
 State machines can also be created without the PPX. Create the rules and
@@ -359,12 +356,7 @@ module Stack = struct
     ]
 end
 
-let%hegel_test stack_model tc =
-  Stateful.run
-    tc
-    (module Stack)
-    ~init:(ref [])
-    ~sexp_of_state:(fun stack -> [%sexp_of: int list] !stack)
+let%hegel_test stack_model tc = Stateful.run tc (module Stack) ~init:(ref [])
 ```
 
 In state machines not written with the PPX, draws print as `draw_1`, `draw_2`, ... unless given a `~label`.

@@ -1,5 +1,6 @@
 open Generators_core
 open Generators_primitives
+open Generators_collections
 
 #ifdef OXCAML
 #define MODE(m) @ m
@@ -496,6 +497,133 @@ let%template permutations ABSTRACT(a, value mod c) (values : a list MODE(m))
                   arr.(j) <- x
                 done;
                 Array.to_list arr)
+          }
+    }
+[@@mode (m, c) = ((nonportable, uncontended), (portable, contended))]
+;;
+
+(** [draw_index_sample data ~n ~min_size ~max_size] draws between [min_size]
+    and [max_size] distinct indices below [n] without replacement, in draw
+    order: for each position, which of the indices not yet taken comes next,
+    inside an engine collection. It shrinks toward fewer indices and toward
+    the earliest not yet taken, so the minimal sample is [0 .. min_size - 1]
+    in increasing order. *)
+let draw_index_sample data ~n ~min_size ~max_size =
+  let remaining = ref (List.init n Fun.id) in
+  let chosen = ref [] in
+  with_collection ~min_size ~max_size data (fun coll ->
+    while !remaining <> [] && collection_more coll data do
+      let j =
+        Internal.generate_integer
+          data
+          ~min_value:0
+          ~max_value:(List.length !remaining - 1)
+      in
+      chosen := List.nth !remaining j :: !chosen;
+      remaining := List.filteri (fun i _ -> i <> j) !remaining
+    done);
+  List.rev !chosen
+;;
+
+(** [subsequences ?min_size ?max_size values] creates a generator for
+    subsequences of [values]: some of its elements, in their original order.
+    It shrinks toward fewer elements, taken from earlier in the list. *)
+let%template subsequences
+  ABSTRACT(a, value mod c)
+  ?(min_size = 0)
+  ?max_size
+  (values : a list MODE(m))
+  : (a list, unprintable) generator MODE(m)
+  =
+  validate_size_bounds ~min_size ~max_size;
+  let n = List.length values in
+  if min_size > n
+  then
+    raise
+      (Internal.Usage_error
+         (Printf.sprintf
+            "Cannot generate a subsequence: min_size %d is larger than the %d elements \
+             in the sequence"
+            min_size
+            n));
+  let max_size =
+    match max_size with
+    | None -> n
+    | Some max_size -> Int.min max_size n
+  in
+  Unprintable
+    { core =
+        Composite
+          { label = Labels.subsequence
+          ; generate_fn =
+              (fun data _ ->
+                let arr = Array.of_list values in
+                draw_index_sample data ~n ~min_size ~max_size
+                |> List.sort compare
+                |> List.map (fun i -> arr.(i)))
+          }
+    }
+[@@mode (m, c) = ((nonportable, uncontended), (portable, contended))]
+;;
+
+(** [samples ?min_size ?max_size ?replacement values] creates a generator for
+    samples of [values]: lists of elements chosen from it. With [replacement]
+    (the default) each element is chosen independently from the whole list;
+    without, each element of [values] is used at most once, so the result is
+    a reordered subset. It shrinks toward fewer elements, taken from earlier
+    in the list. *)
+let%template samples
+  ABSTRACT(a, value mod c)
+  ?(min_size = 0)
+  ?max_size
+  ?(replacement = true)
+  (values : a list MODE(m))
+  : (a list, unprintable) generator MODE(m)
+  =
+  validate_size_bounds ~min_size ~max_size;
+  let n = List.length values in
+  if replacement
+  then (
+    if n = 0 && min_size > 0
+    then
+      raise
+        (Internal.Usage_error "Cannot generate a non-empty sample from an empty sequence"))
+  else if min_size > n
+  then
+    raise
+      (Internal.Usage_error
+         (Printf.sprintf
+            "Cannot generate a sample without replacement: min_size %d is larger than \
+             the %d elements in the sequence"
+            min_size
+            n));
+  Unprintable
+    { core =
+        Composite
+          { label = Labels.sample
+          ; generate_fn =
+              (fun data _ ->
+                let arr = Array.of_list values in
+                if replacement
+                then (
+                  let max_size = if n = 0 then Some 0 else max_size in
+                  let chosen = ref [] in
+                  with_collection ~min_size ?max_size data (fun coll ->
+                    while collection_more coll data do
+                      let j =
+                        Internal.generate_integer data ~min_value:0 ~max_value:(n - 1)
+                      in
+                      chosen := arr.(j) :: !chosen
+                    done);
+                  List.rev !chosen)
+                else (
+                  let max_size =
+                    match max_size with
+                    | None -> n
+                    | Some max_size -> Int.min max_size n
+                  in
+                  draw_index_sample data ~n ~min_size ~max_size
+                  |> List.map (fun i -> arr.(i))))
           }
     }
 [@@mode (m, c) = ((nonportable, uncontended), (portable, contended))]

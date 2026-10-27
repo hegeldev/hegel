@@ -70,7 +70,7 @@ public final class SetGenerator<T> implements PrintableGenerator<Set<T>> {
         long id = tc.newCollection(minSize, maxSize);
         try {
             Set<T> out = new LinkedHashSet<>();
-            p.beginGroup("[");
+            p.beginGroup("Set.of(");
             while (tc.collectionMore(id)) {
                 try (Printer.Speculation speculation = p.speculate()) {
                     if (!out.isEmpty()) {
@@ -85,7 +85,7 @@ public final class SetGenerator<T> implements PrintableGenerator<Set<T>> {
                     }
                 }
             }
-            p.endGroup("]");
+            p.endGroup(")");
             return out;
         } finally {
             tc.collectionFree(id);

@@ -64,6 +64,7 @@
 
 val hegel_generator_int : (int, Generators.printable) Generators.generator
 val hegel_generator_bool : (bool, Generators.printable) Generators.generator
+val hegel_generator_unit : (unit, Generators.printable) Generators.generator
 val hegel_generator_float : (float, Generators.printable) Generators.generator
 val hegel_generator_string : (string, Generators.printable) Generators.generator
 val hegel_generator_char : (char, Generators.printable) Generators.generator

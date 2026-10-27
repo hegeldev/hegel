@@ -3,7 +3,7 @@ use quote::quote;
 use syn::{Attribute, FnArg, ItemFn};
 
 use crate::common::{
-    SettingsAttrArgs, build_explicit_blocks, extract_explicit_test_cases, extract_ident_from_pat,
+    SettingsAttrArgs, build_explicit_run, extract_explicit_test_cases, extract_ident_from_pat,
     extract_reproduce_failure, reproduce_failure_calls, rewrite_draws_in_block,
 };
 
@@ -114,18 +114,27 @@ pub fn expand_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     let test_name = func.sig.ident.to_string();
     let settings_expr = test_args.to_settings_expr();
     let reproduce_call = reproduce_failure_calls(&reproduce_blobs);
-    let explicit_blocks = build_explicit_blocks(&explicit_cases, param_pat, &body);
+    let explicit = build_explicit_run(
+        if reproduce_blobs.is_empty() {
+            &explicit_cases
+        } else {
+            &[]
+        },
+        param_pat,
+        &body,
+    );
+    let explicit_section = explicit.section;
+    let explicit_call = explicit.builder_call;
 
     let new_body: TokenStream = quote! {
         {
             let __hegel_settings = #settings_expr;
-            if __hegel_settings.has_phase(::hegel::Phase::Explicit) {
-                #(#explicit_blocks)*
-            }
+            #explicit_section
 
             ::hegel::Hegel::new(|#param_pat: #param_ty| #body)
             .settings(__hegel_settings)
             #reproduce_call
+            #explicit_call
             .__reproduce_attribute("#[hegel::test]")
             .__database_key(format!("{}::{}", module_path!(), #test_name))
             .test_location(::hegel::TestLocation {

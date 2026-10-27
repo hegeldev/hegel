@@ -114,6 +114,7 @@ New test-case operations:
 - `reject tc` discards the current test case, like `assume tc false`, and has any result type, so it can end a branch of a `match`.
 - `repeat tc body` runs `body` for as many iterations as the engine wants and then ends the test case, printing each iteration's output under a `// Repetition #n` note.
 - `set_worker tc i` attributes a test case's output to concurrent worker `i`, so a test that draws from several threads through `clone` can label each thread's lines in the failure report.
+- `clone` now works in an explicit example (`[@@example ...]`), where it used to raise `Usage_error`: the clone draws the example's values, in sequence with the test case it was cloned from, so a test that draws from several threads runs on its examples too. `set_worker` does nothing there, as an example has no output to attribute.
 
 New generators for recursive data:
 
@@ -152,6 +153,8 @@ New generators:
 - `arrays` generates arrays, which print as `[|1; 2|]`.
 - `sets (module S) elements` generates sets of a `Set.S` module. A drawn set prints as `Set.of_list [1; 2]`, or as `Int_set.of_list [1; 2]` given `~module_name:"Int_set"`, as a first-class module does not carry its name.
 - `permutations values` generates permutations of a list, shrinking toward its original order.
+- `subsequences ?min_size ?max_size values` generates sublists of a list that keep its order, and `samples ?min_size ?max_size ?replacement values` lists of elements chosen from it, with replacement by default or each element at most once with `~replacement:false`. Both shrink toward fewer elements from earlier in the list.
+- `unit ()` generates `()`, printed as `()`, and `[@@deriving hegel_generator]` now derives a `unit` field from it.
 - `tuples5` to `tuples8` generate tuples of 5 to 8 elements.
 - The new optional `hegel.zarith` library, built when zarith is installed, has `Hegel_zarith.integers` for zarith integers of any magnitude. A missing bound is taken to be 2^127 values beyond the other bound, or beyond zero when that is further.
 
@@ -179,6 +182,24 @@ let%hegel_test greets tc =
   in
   assert (String.starts_with ~prefix:"hello " s)
 ```
+
+With `Settings.Verbose` or `Settings.Debug`, a test case that stops short now says why, as the other Hegel frontends do: `Test case stopped: failed assumption` or `Test case stopped: out of data`.
+
+This release also replaces the `?exclude_min` and `?exclude_max` flags of `floats` with `?min_value_exclusive` and `?max_value_exclusive`, which take the bound directly, as the other Hegel frontends do:
+
+```ocaml
+(* before *)
+floats ~min_value:0.0 ~max_value:1.0 ~exclude_min:true ~exclude_max:true ()
+
+(* after *)
+floats ~min_value_exclusive:0.0 ~max_value_exclusive:1.0 ()
+```
+
+Giving both `~min_value` and `~min_value_exclusive` (or both `~max_value` and `~max_value_exclusive`) raises `Usage_error`. `floats` also gains `?allow_subnormal`: subnormal ("denormalised") values are drawn whenever the bounds admit any, as before, and `~allow_subnormal:false` keeps them out, for code that may run with flush-to-zero floating point. Asking for subnormals with bounds that exclude them all, or excluding them from a range that holds nothing else, raises `Usage_error`.
+
+`repeat` now introduces each iteration with a `(* Repetition #n *)` note, an OCaml comment, where it used to print `// Repetition #n`. The engine now also decides how many iterations run and is told which one failed (libhegel's new `hegel_repeat_t` functions) rather than the frontend drawing those choices itself; the choices are the same, so an existing failure blob still replays.
+
+`Stateful.run`, `Stateful.run_concurrent` and the `run` of a `module%hegel_state_machine` or `module%hegel_concurrent_state_machine` no longer take `?print_state` or `?sexp_of_state`, and a module's `print_state` or `sexp_of_state` binding no longer has any effect: the `state = …` lines are gone from the failure report, as in the other Hegel frontends. Note what matters from a rule or invariant instead. The report now reads as it does elsewhere: each step prints as `Step 1: push {` with its draws and notes indented beneath it and a closing `}` (a concurrent worker's as `Rule: push {`), a rule that stops on a failed assumption notes `Rule stopped early due to violated assumption.` indented under its heading, the rule or invariant a failure escaped from is named right before the failure (`Rule pop failed:`, `Invariant short failed:`) instead of `Invariant short violated after step 2.`, the invariant checks on the initial and final state are announced (`Checking invariants on the initial state.`, `Checking invariants on the final state.`) when the machine has invariants, and a concurrent machine always reports its `Concurrency level: N`, even at one worker.
 
 A draw given a `~label` now prints numbered from its first use, `let x_1 = ... in` then `let x_2 = ... in`, where it printed `let x = ... in` for every use. A name the PPX captures from a single `let x = [%draw ...]` still prints bare, as does the first use of a name the PPX sees reused; an unnamed draw still prints as `draw_1`, `draw_2`. Each name counts on its own, in the order the draws run, and a number already taken by another name is skipped: a bare `x_2` followed by a reused `x` prints `x_2` then `x_3`. The counts start afresh in each repetition of `repeat` and each step of a stateful test, and a clone shares its parent's counts. `Hegel.Internal.draw_display_name` follows the same rule.
 

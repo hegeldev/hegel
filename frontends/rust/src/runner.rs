@@ -611,6 +611,7 @@ pub struct Hegel<F> {
     reproduce_failures: Vec<String>,
     reproduce_attribute: Option<&'static str>,
     single_test_case: bool,
+    explicit_run: Option<crate::ExplicitRun>,
 }
 
 impl<F> Hegel<F>
@@ -627,6 +628,7 @@ where
             reproduce_failures: Vec::new(),
             reproduce_attribute: None,
             single_test_case: false,
+            explicit_run: None,
         }
     }
 
@@ -669,6 +671,16 @@ where
     #[doc(hidden)]
     pub fn test_location(mut self, location: TestLocation) -> Self {
         self.test_location = Some(location);
+        self
+    }
+
+    /// The explicit phase the attribute macro has already run (see
+    /// [`ExplicitRun`](crate::ExplicitRun)): the failures it collected under
+    /// [`report_multiple_failures`](Settings::report_multiple_failures) are
+    /// reported by [`run`](Self::run) together with the generated phases'.
+    #[doc(hidden)]
+    pub fn __explicit_run(mut self, run: crate::ExplicitRun) -> Self {
+        self.explicit_run = Some(run);
         self
     }
 
@@ -750,6 +762,9 @@ where
             self.database_key.as_deref(),
             self.test_location.as_ref(),
             self.reproduce_attribute,
+            self.explicit_run
+                .map(crate::ExplicitRun::into_failures)
+                .unwrap_or_default(),
         );
     }
 }

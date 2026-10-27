@@ -13,7 +13,10 @@ import static dev.hegel.Generators.optionalDoubles;
 import static dev.hegel.Generators.optionalInts;
 import static dev.hegel.Generators.optionalLongs;
 import static dev.hegel.Generators.permutations;
+import static dev.hegel.Generators.samples;
+import static dev.hegel.Generators.subsequences;
 import static dev.hegel.Generators.text;
+import static dev.hegel.Generators.weightedBooleans;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -294,5 +297,135 @@ class GeneratorParityTest {
     @Test
     void bigIntegersAreDerived() {
         Hegel.test(tc -> assertInstanceOf(BigInteger.class, tc.draw(Generators.forType(BigInteger.class))), SETTINGS);
+    }
+
+    @Test
+    void weightedBooleansFollowTheirProbability() {
+        int trues = 0;
+        int cases = 0;
+        List<Integer> seen = new ArrayList<>();
+        for (int i = 0; i < 1; i++) {
+            Hegel.test(
+                    tc -> {
+                        assertEquals(false, tc.draw(weightedBooleans(0.0)));
+                        assertEquals(true, tc.draw(weightedBooleans(1.0)));
+                        seen.add(tc.draw(weightedBooleans(0.9)) ? 1 : 0);
+                    },
+                    SETTINGS.testCases(100));
+        }
+        for (int b : seen) {
+            trues += b;
+            cases++;
+        }
+        assertTrue(trues > cases / 2, trues + " of " + cases);
+    }
+
+    @Test
+    void subsequencesKeepTheOriginalOrder() {
+        List<String> elements = List.of("a", "b", "c", "d", "e");
+        Hegel.test(
+                tc -> {
+                    List<String> sub = tc.draw(subsequences(elements));
+                    assertTrue(sub.size() <= elements.size());
+                    int position = -1;
+                    for (String item : sub) {
+                        int index = elements.indexOf(item);
+                        assertTrue(index > position);
+                        position = index;
+                    }
+                    assertTrue(tc.draw(subsequences(elements).minSize(2)).size() >= 2);
+                    assertTrue(tc.draw(subsequences(elements).maxSize(1)).size() <= 1);
+                    assertEquals(
+                            elements, tc.draw(subsequences(elements).minSize(5).maxSize(10)));
+                    assertEquals(List.of(), tc.draw(subsequences(List.of())));
+                    assertTrue(tc.draw(subsequences(1, 1, 2)).stream()
+                                    .filter(x -> x == 1)
+                                    .count()
+                            <= 2);
+                },
+                SETTINGS);
+    }
+
+    @Test
+    void subsequencesShrinkTowardTheEarliestElements() {
+        RunReport report = Hegel.run(
+                tc -> {
+                    List<Integer> sub = tc.draw(subsequences(1, 2, 3, 4, 5), "s");
+                    assertTrue(sub.size() < 2);
+                },
+                SETTINGS,
+                Reporter.silent());
+        assertEquals(List.of(1, 2), report.failures().get(0).draws().get("s_1"));
+    }
+
+    @Test
+    void samplesWithReplacementRepeatElements() {
+        Set<List<Integer>> seen = new HashSet<>();
+        Hegel.test(
+                tc -> {
+                    List<Integer> sample = tc.draw(samples(1, 2, 3).minSize(4).maxSize(6));
+                    assertTrue(sample.size() >= 4 && sample.size() <= 6);
+                    assertTrue(Set.of(1, 2, 3).containsAll(sample));
+                    seen.add(sample);
+                    assertEquals(List.of(), tc.draw(samples(List.of())));
+                    assertEquals(List.of(), tc.draw(samples(List.of()).withReplacement()));
+                },
+                SETTINGS);
+        assertTrue(seen.stream().anyMatch(s -> new HashSet<>(s).size() < s.size()));
+    }
+
+    @Test
+    void samplesWithoutReplacementAreReorderedSubsets() {
+        List<String> elements = List.of("a", "b", "c", "d");
+        Hegel.test(
+                tc -> {
+                    List<String> sample = tc.draw(samples(elements).withoutReplacement());
+                    assertTrue(sample.size() <= elements.size());
+                    assertEquals(sample.size(), new HashSet<>(sample).size());
+                    assertTrue(elements.containsAll(sample));
+                    assertEquals(
+                            4,
+                            tc.draw(samples(elements)
+                                            .withoutReplacement()
+                                            .minSize(4)
+                                            .maxSize(10))
+                                    .size());
+                    assertTrue(tc.draw(samples(elements).withoutReplacement().maxSize(2))
+                                    .size()
+                            <= 2);
+                },
+                SETTINGS);
+    }
+
+    @Test
+    void samplesShrinkTowardTheEarliestElements() {
+        RunReport with = Hegel.run(
+                tc -> {
+                    List<Integer> sample = tc.draw(samples(5, 6, 7), "s");
+                    assertTrue(sample.size() < 2);
+                },
+                SETTINGS,
+                Reporter.silent());
+        assertEquals(List.of(5, 5), with.failures().get(0).draws().get("s_1"));
+        RunReport without = Hegel.run(
+                tc -> {
+                    List<Integer> sample = tc.draw(samples(5, 6, 7).withoutReplacement(), "s");
+                    assertTrue(sample.size() < 2);
+                },
+                SETTINGS,
+                Reporter.silent());
+        assertEquals(List.of(5, 6), without.failures().get(0).draws().get("s_1"));
+    }
+
+    @Test
+    void subsequencesAndSamplesEndWithTheirCollections() {
+        FakeLibhegel fake = new FakeLibhegel();
+        TestCase tc = new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), false);
+        assertEquals(List.of(), tc.draw(subsequences(1, 2)));
+        assertEquals(List.of(), tc.draw(samples(1, 2)));
+        assertEquals(List.of(), tc.draw(samples(1, 2).withoutReplacement()));
+        assertEquals(List.of(7L, 7L, 7L), fake.freedCollections);
+        assertTrue(fake.startedSpans.contains(Label.SUBSEQUENCE));
+        assertTrue(fake.startedSpans.contains(Label.SAMPLE));
     }
 }

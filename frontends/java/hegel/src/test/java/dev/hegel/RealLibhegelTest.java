@@ -324,7 +324,16 @@ class RealLibhegelTest {
     void collectionAndPoolFreesAcceptNull() {
         RealLibhegel lib = real();
         lib.collectionFree(0);
+        lib.repeatFree(0);
         lib.poolFree(0);
+    }
+
+    @Test
+    void repeatCallsOnANullHandleAreRejected() {
+        RealLibhegel lib = real();
+        assertEquals(Abi.E_INVALID_HANDLE, lib.newRepeat(0, new long[1]));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.repeatMore(0, 0, new boolean[1]));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.repeatFailed(0, 0));
     }
 
     @Test
@@ -355,19 +364,19 @@ class RealLibhegelTest {
     }
 
     @Test
-    void aForkDrivenFromAnotherThreadHasItsContextFreedOnceTheThreadEnds() throws InterruptedException {
+    void aCloneDrivenFromAnotherThreadHasItsContextFreedOnceTheThreadEnds() throws InterruptedException {
         RealLibhegel lib = real();
         lib.version();
-        Thread[] forkThread = new Thread[1];
+        Thread[] cloneThread = new Thread[1];
         Runner.run(
                         lib,
                         new Settings().database(Database.disabled()).testCases(1),
                         tc -> {
-                            TestCase fork = tc.fork(1);
-                            forkThread[0] = new Thread(() -> fork.draw(Generators.integers()));
-                            forkThread[0].start();
+                            TestCase clone = tc.clone();
+                            cloneThread[0] = new Thread(() -> clone.draw(Generators.integers()));
+                            cloneThread[0].start();
                             try {
-                                forkThread[0].join();
+                                cloneThread[0].join();
                             } catch (InterruptedException e) {
                                 throw new AssertionError(e);
                             }
@@ -375,7 +384,7 @@ class RealLibhegelTest {
                         Reporter.silent())
                 .throwIfFailed();
         assertEquals(2, lib.liveContexts());
-        forkThread[0] = null;
+        cloneThread[0] = null;
         long deadline = System.nanoTime() + 60_000_000_000L;
         while (lib.liveContexts() > 1 && System.nanoTime() < deadline) {
             System.gc();

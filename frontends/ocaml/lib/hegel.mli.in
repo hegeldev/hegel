@@ -320,7 +320,9 @@
     and every value it gives must be drawn; otherwise the test raises
     {!Usage_error}. An example must not be rejected: an example that {!assume}
     or {!reject} rejects raises {!Usage_error} too, as it does not test what it
-    says. In an example, {!repeat} runs its body once.
+    says. In an example, {!repeat} runs its body once, a {!clone} draws the
+    example's values in sequence with the test case it was cloned from, and
+    {!set_worker} does nothing.
     An example that fails is reported with the values it gave and ends the
     run, unless [report_multiple_failures] is set. Examples run in the
     [Explicit] phase, so leaving it out of [phases] skips them, and a run that
@@ -856,7 +858,7 @@ val%template with_ocaml_printer
     shrink a failure to the fewest.
 
     Each iteration runs [body] on a test case whose output is indented under a
-    [// Repetition #n] note. An iteration that rejects itself (with {!assume}
+    [(* Repetition #n *)] note. An iteration that rejects itself (with {!assume}
     or {!reject}) is skipped, and the loop continues; any other exception
     fails the test case. In an explicit example, [body] runs once, on the
     example's own test case, and rejecting it raises {!Usage_error}, as
@@ -905,5 +907,6 @@ val clone : test_case -> test_case
     (its drawn values and notes) to concurrent worker [worker_index], so the
     failure report prefixes those lines with [\[worker N +X.XXXms\]]. Clones
     taken from [tc] afterwards inherit the attribution. [worker_index] must be
-    non-negative. *)
+    non-negative. In an explicit example, which has no output to attribute,
+    this does nothing. *)
 val set_worker : test_case -> int -> unit

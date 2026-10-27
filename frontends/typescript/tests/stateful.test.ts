@@ -83,6 +83,36 @@ describe("stateful.run", () => {
       { testCases: 5 },
     ));
 
+  test("a heavily weighted rule is chosen more often than an equal one", () => {
+    const counts = { light: 0, heavy: 0 };
+    hegel.test(
+      (tc) => {
+        run(
+          tc,
+          {
+            rules: {
+              light: {
+                apply: () => {
+                  counts.light++;
+                },
+              },
+              heavy: {
+                apply: () => {
+                  counts.heavy++;
+                },
+                weight: 20,
+              },
+            },
+          },
+          {},
+        );
+      },
+      { ...deterministic, testCases: 20 },
+    );
+    expect(counts.light).toBeGreaterThan(0);
+    expect(counts.heavy).toBeGreaterThan(counts.light * 2);
+  });
+
   test("a violated invariant fails the test with the invariant's error", () => {
     interface Linear {
       state: number;
@@ -505,6 +535,16 @@ describe("usage errors", () => {
         run(tc, { rules: {} }, {});
       }, deterministic),
     ).toThrow(/cannot run a state machine with no rules/);
+  });
+
+  test("a rule weight that is not finite and positive is rejected", () => {
+    for (const weight of [0, -1, NaN, Infinity]) {
+      expect(() =>
+        hegel.test((tc) => {
+          run(tc, { rules: { noop: { apply: () => {}, weight } } }, {});
+        }, deterministic),
+      ).toThrow(/the weight of rule noop must be finite and positive/);
+    }
   });
 
   test("a stepCount below 1 or non-integral is rejected", () => {

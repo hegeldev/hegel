@@ -68,6 +68,13 @@ type collection
   : value mod portable contended
 #endif
 
+(** Opaque repeat-loop handle ([hegel_repeat_t]): the engine's side of
+    [Hegel.repeat]. Like a {!type:collection}, it is used from one thread. *)
+type repeat
+#ifdef OXCAML
+  : value mod portable contended
+#endif
+
 (** Opaque variable-pool handle ([hegel_pool_t]). Unlike a {!type:collection} it
     can be used from multiple threads. *)
 type pool
@@ -88,7 +95,7 @@ val null_context : context
 
 val null_test_case : test_case
 
-(** Opaque recursion handle ([HegelRecursion]), one per recursive value drawn.
+(** Opaque recursion handle ([hegel_recursion_t]), one per recursive value drawn.
     It can be used through any handle of the test case's family. *)
 type recursion
 #ifdef OXCAML
@@ -707,6 +714,21 @@ val collection_reject : context -> test_case -> collection -> string option -> u
 
 (** [collection_free ctx coll] releases [coll]. *)
 val collection_free : context -> collection -> unit
+
+(** [new_repeat ctx tc] starts the engine-driven loop behind [Hegel.repeat];
+    free it with {!repeat_free}. *)
+val new_repeat : context -> test_case -> repeat
+
+(** [repeat_more ctx tc repeat] returns whether the engine wants another
+    repetition. *)
+val repeat_more : context -> test_case -> repeat -> bool
+
+(** [repeat_failed ctx tc repeat] reports that the repetition just run failed,
+    before the failure propagates. *)
+val repeat_failed : context -> test_case -> repeat -> unit
+
+(** [repeat_free ctx repeat] releases [repeat]. *)
+val repeat_free : context -> repeat -> unit
 
 (** [new_pool ctx tc] creates a variable pool. *)
 val new_pool : context -> test_case -> pool

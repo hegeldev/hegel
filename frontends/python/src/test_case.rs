@@ -593,22 +593,19 @@ impl TestCase {
         Ok(Printer::from_raw(raw))
     }
 
-    #[pyo3(signature = (min_size, max_size, text_default=false))]
-    fn new_collection(
-        &self,
-        min_size: u64,
-        max_size: Option<u64>,
-        text_default: bool,
-    ) -> PyResult<Collection> {
-        let max_size = match max_size {
-            None if !text_default => u64::MAX,
-            max_size => max_size_arg(max_size),
-        };
+    fn new_collection(&self, min_size: u64, max_size: Option<u64>) -> PyResult<Collection> {
+        let max_size = max_size.unwrap_or(u64::MAX);
         let mut raw: *mut c::HegelCollection = ptr::null_mut();
         with_ctx(|ctx| {
             check(unsafe { c::hegel_new_collection(ctx, self.tc(), min_size, max_size, &mut raw) })
         })?;
         Ok(Collection { raw: SendPtr(raw) })
+    }
+
+    fn new_repeat(&self) -> PyResult<Repeat> {
+        let mut raw: *mut c::HegelRepeat = ptr::null_mut();
+        with_ctx(|ctx| check(unsafe { c::hegel_new_repeat(ctx, self.tc(), &mut raw) }))?;
+        Ok(Repeat { raw: SendPtr(raw) })
     }
 
     fn new_recursion(&self, max_depth: u64, max_leaves: u64) -> PyResult<Recursion> {
@@ -698,6 +695,32 @@ impl Collection {
         let s = why.map(hstr);
         let p = s.as_ref().map_or(ptr::null(), |s| s as *const _);
         with_ctx(|ctx| check(unsafe { c::hegel_collection_reject(ctx, tc.tc(), self.raw.0, p) }))
+    }
+}
+
+#[pyclass(frozen, name = "Repeat", module = "hegel._native")]
+pub(crate) struct Repeat {
+    raw: SendPtr<c::HegelRepeat>,
+}
+
+impl Drop for Repeat {
+    fn drop(&mut self) {
+        with_ctx(|ctx| unsafe {
+            let _ = c::hegel_repeat_free(ctx, self.raw.0);
+        });
+    }
+}
+
+#[pymethods]
+impl Repeat {
+    fn more(&self, tc: &TestCase) -> PyResult<bool> {
+        let mut out = false;
+        with_ctx(|ctx| check(unsafe { c::hegel_repeat_more(ctx, tc.tc(), self.raw.0, &mut out) }))?;
+        Ok(out)
+    }
+
+    fn failed(&self, tc: &TestCase) -> PyResult<()> {
+        with_ctx(|ctx| check(unsafe { c::hegel_repeat_failed(ctx, tc.tc(), self.raw.0) }))
     }
 }
 

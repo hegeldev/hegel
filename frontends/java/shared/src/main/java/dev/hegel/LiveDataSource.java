@@ -423,6 +423,33 @@ final class LiveDataSource implements DataSource {
     }
 
     @Override
+    public long newRepeat() {
+        checkLive();
+        long[] id = new long[1];
+        translate(lib.newRepeat(tc, id), "new_repeat");
+        return id[0];
+    }
+
+    @Override
+    public boolean repeatMore(long id) {
+        checkLive();
+        boolean[] more = new boolean[1];
+        translate(lib.repeatMore(tc, id, more), "repeat_more");
+        return more[0];
+    }
+
+    @Override
+    public void repeatFailed(long id) {
+        checkLive();
+        translate(lib.repeatFailed(tc, id), "repeat_failed");
+    }
+
+    @Override
+    public void repeatFree(long id) {
+        lib.repeatFree(id);
+    }
+
+    @Override
     public long newPool() {
         checkLive();
         long[] id = new long[1];
@@ -576,19 +603,19 @@ final class LiveDataSource implements DataSource {
     }
 
     @Override
-    public DataSource cloneForWorker(long workerIndex) {
+    public DataSource clone() {
         checkLive();
         // Cloning consumes a choice position, so it is a draw: on a replay of a shorter sequence
         // it reports STOP_TEST like any other draw, and the case is an overrun.
         long[] clone = new long[1];
         translate(lib.testCaseClone(tc, clone), "test_case_clone");
-        try {
-            lib.testCaseSetWorker(clone[0], workerIndex);
-        } catch (RuntimeException e) {
-            lib.testCaseFree(clone[0]);
-            throw e;
-        }
         return new LiveDataSource(lib, clone[0], pools, new boolean[1], new boolean[1]);
+    }
+
+    @Override
+    public void setWorker(long workerIndex) {
+        checkNotReleased();
+        lib.testCaseSetWorker(tc, workerIndex);
     }
 
     @Override

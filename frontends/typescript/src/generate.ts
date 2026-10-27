@@ -213,7 +213,7 @@ function drawFloat(
     allowInfinity: schema["allow_infinity"] as boolean,
     excludeMin: (schema["exclude_min"] as boolean | undefined) ?? false,
     excludeMax: (schema["exclude_max"] as boolean | undefined) ?? false,
-    smallestNonzeroMagnitude: schema["width"] === 32 ? 2 ** -149 : Number.MIN_VALUE,
+    smallestNonzeroMagnitude: schema["smallest_nonzero_magnitude"] as number,
   });
 }
 
@@ -565,7 +565,7 @@ export function generateValue(
   const type = schema["type"] as string;
   switch (type) {
     case "boolean":
-      return lib.generateBoolean(ctx, tc, 0.5);
+      return lib.generateBoolean(ctx, tc, (schema["p"] as number | undefined) ?? 0.5);
     case "integer":
       return drawInteger(lib, ctx, tc, schema);
     case "float":

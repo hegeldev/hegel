@@ -9,7 +9,7 @@ import pytest
 
 import hegel
 from hegel import generators as gs
-from hegel.generators.strings import Characters, CharacterSpec, Text, TextFromAlphabet
+from hegel.generators.strings import Characters, CharacterSpec, Text
 from tests.helpers import find_example, run_test
 
 
@@ -79,17 +79,9 @@ def test_text_alphabets():
     check_all(gs.text("xyz", min_size=1), lambda s: set(s) <= set("xyz"))
     check_all(gs.text(["x", "y"], min_size=1), lambda s: set(s) <= set("xy"))
     check_all(gs.text(gs.characters(codec="ascii"), min_size=1), lambda s: s.isascii())
-    check_all(gs.text(gs.sampled_from("ab"), min_size=2), lambda s: set(s) <= set("ab"))
-    assert isinstance(gs.text(gs.sampled_from("ab")), TextFromAlphabet)
     assert isinstance(gs.text(gs.characters()), Text)
     assert isinstance(gs.characters(), Characters)
     assert repr(gs.characters()) == "characters()"
-
-
-def test_text_over_a_generator_alphabet_has_the_text_default_maximum():
-    alphabet = gs.sampled_from("ab")
-    check_all(gs.text(alphabet), lambda s: len(s) <= 100)
-    check_all(gs.text(alphabet, min_size=150), lambda s: 150 <= len(s) <= 250, test_cases=5)
 
 
 def test_empty_alphabet_spells_only_the_empty_string():
@@ -101,7 +93,6 @@ def test_empty_alphabet_spells_only_the_empty_string():
 
 def test_text_and_characters_repr_their_arguments():
     assert repr(gs.text("abc", min_size=2)) == "text(alphabet='abc', min_size=2)"
-    assert repr(gs.text(gs.sampled_from("ab"))) == "text(alphabet=sampled_from('ab'), min_size=0)"
     assert (
         repr(gs.text(gs.characters(codec="ascii"), max_size=3))
         == "text(alphabet=characters(max_codepoint=127), min_size=0, max_size=3)"
@@ -139,12 +130,10 @@ def test_text_alphabet_errors():
         gs.text(max_size=True)
     with pytest.raises(hegel.InvalidArgument):
         gs.text(min_size=3, max_size=2)
-
-    def body(tc):
-        with pytest.raises(hegel.InvalidArgument):
-            tc.draw(gs.text(gs.just("ab"), min_size=1))
-
-    run_test(body, test_cases=1)
+    with pytest.raises(hegel.InvalidArgument, match=r'lists\(alphabet\)\.map\(""\.join\)'):
+        gs.text(gs.sampled_from("ab"))
+    with pytest.raises(hegel.InvalidArgument, match=r'lists\(alphabet\)\.map\(""\.join\)'):
+        gs.text(gs.just("ab"), min_size=1)
 
 
 @pytest.mark.parametrize(

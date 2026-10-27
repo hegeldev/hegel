@@ -12,6 +12,7 @@ describe("gs.binary()", () => {
       (tc) => {
         const v = tc.draw(gs.binary({ minSize: 0, maxSize: 10 }));
         expect(v).toBeInstanceOf(Uint8Array);
+        expect(Object.getPrototypeOf(v)).toBe(Uint8Array.prototype);
         expect(v.length).toBeLessThanOrEqual(10);
       },
       { testCases: 20 },

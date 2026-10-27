@@ -187,6 +187,41 @@ fn concurrent_use_of_one_collection_is_rejected() {
     }
 }
 
+/// A repeat loop used from two threads at once reports
+/// `HEGEL_E_CONCURRENT_USE`, stood in for as in
+/// [`concurrent_use_of_one_collection_is_rejected`] by holding the loop's
+/// own state lock on this thread.
+#[test]
+fn concurrent_use_of_one_repeat_is_rejected() {
+    unsafe {
+        let (ctx, s, run, tc) = start_run_and_first_case();
+
+        let mut repeat: *mut HegelRepeat = ptr::null_mut();
+        ok(hegel_new_repeat(ctx, tc, &mut repeat));
+        let mut clone: *mut HegelTestCase = ptr::null_mut();
+        ok(hegel_test_case_clone(ctx, tc, &mut clone));
+
+        let held = (&*repeat).state.try_lock().unwrap();
+        let mut more = false;
+        assert_eq!(
+            hegel_repeat_more(ctx, clone, repeat, &mut more),
+            HEGEL_E_CONCURRENT_USE
+        );
+        assert_eq!(
+            hegel_repeat_failed(ctx, clone, repeat),
+            HEGEL_E_CONCURRENT_USE
+        );
+        drop(held);
+
+        ok(hegel_repeat_more(ctx, clone, repeat, &mut more));
+        ok(hegel_repeat_failed(ctx, clone, repeat));
+
+        ok(hegel_repeat_free(ctx, repeat));
+        ok(hegel_test_case_free(ctx, clone));
+        finish(ctx, s, run, tc);
+    }
+}
+
 #[test]
 fn size_arg_is_lossless_within_usize_and_saturates_beyond() {
     assert_eq!(size_arg(0), 0);

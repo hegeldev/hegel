@@ -10,6 +10,7 @@ import {
   type TestCaseHandle,
   type FailureHandle,
   type CollectionHandle,
+  type RepeatHandle,
   type StringGeneratorHandle,
   type PoolHandle,
   type RecursionHandle,
@@ -939,6 +940,29 @@ export class WasmEngine implements Engine {
   freeCollection(collection: CollectionHandle): void {
     this.free("collection_free", collection);
   }
+  newRepeat(ctx: ContextHandle, tc: TestCaseHandle): RepeatHandle {
+    const c = this.ptr(ctx);
+    return this.handle(c, "new_repeat", [c, this.ptr(tc)], true);
+  }
+  repeatMore(ctx: ContextHandle, tc: TestCaseHandle, repeat: RepeatHandle): boolean {
+    const c = this.ptr(ctx);
+    return this.output(
+      c,
+      "repeat_more",
+      [c, this.ptr(tc), this.ptr(repeat)],
+      1,
+      1,
+      (a, p) => a.boolean(p),
+      true,
+    );
+  }
+  repeatFailed(ctx: ContextHandle, tc: TestCaseHandle, repeat: RepeatHandle): void {
+    const c = this.ptr(ctx);
+    this.check(c, "repeat_failed", [c, this.ptr(tc), this.ptr(repeat)], true);
+  }
+  freeRepeat(repeat: RepeatHandle): void {
+    this.free("repeat_free", repeat);
+  }
   markComplete(
     ctx: ContextHandle,
     tc: TestCaseHandle,
@@ -1025,6 +1049,10 @@ export class WasmEngine implements Engine {
       opts.ruleGroups.forEach((group, index) => {
         a.view(groups + index * 8, 8).setBigInt64(0, BigInt(group), true);
       });
+      const weights = a.alloc(Math.max(8, opts.ruleWeights.length * 8), 8);
+      opts.ruleWeights.forEach((weight, index) => {
+        a.view(weights + index * 8, 8).setFloat64(0, weight, true);
+      });
       const c = this.ptr(ctx);
       // The machine handle is not the trailing out-parameter here: the drawn
       // concurrency level follows it (and is discarded, the bounds being 1).
@@ -1038,9 +1066,7 @@ export class WasmEngine implements Engine {
           this.ptr(tc),
           a.stringList(opts.ruleNames),
           groups,
-          // `rule_weights`: NULL for all-equal weights, which this client
-          // does not expose.
-          0,
+          weights,
           u32(opts.ruleNames.length),
           a.stringList(opts.invariantNames),
           a.input(Uint8Array.from(opts.invariantAlwaysCheck, Number)),

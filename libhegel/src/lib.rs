@@ -450,20 +450,29 @@ pub enum hegel_run_error_kind_t {
     HEGEL_RUN_ERROR_INTERNAL = 6,
 }
 
-/// Verbosity of engine-emitted output (logs, per-case traces). Set via
-/// `hegel_settings_set_verbosity`.
+/// How much libhegel says about a run through the output callback of
+/// `hegel_run_start`. Set via `hegel_settings_set_verbosity`. The setting
+/// is also the frontend's to read back (`hegel_settings_get_verbosity`)
+/// for the output it produces itself — which test cases it prints and
+/// how it reports a failure — so each level names the engine's own
+/// output and leaves the frontend's to the frontend.
 #[repr(C)]
 #[derive(Copy, Clone)]
 #[allow(non_camel_case_types)]
 pub enum hegel_verbosity_t {
-    /// A short summary line per run. The default.
+    /// The run's notices only: the statistics report when
+    /// `show_statistics` is on, a warning when shrinking ran out of time,
+    /// the nondeterminism notice under `HEGEL_ND_WARN`, and where a blob
+    /// replay first diverged from its recording. The default.
     HEGEL_VERBOSITY_NORMAL = 0,
-    /// Nothing besides the final result.
+    /// None of those notices; libhegel emits nothing.
     HEGEL_VERBOSITY_QUIET = 1,
-    /// Per-test-case progress and drawn values, plus panic diagnostics as
-    /// they happen.
+    /// As normal, plus a line as each phase starts and ends and one as
+    /// each test case starts.
     HEGEL_VERBOSITY_VERBOSE = 2,
-    /// As verbose, plus shrinker trace output.
+    /// As verbose, plus the engine's own trace: the configuration it
+    /// loaded, the shrinker's progress and profile, and the replay and
+    /// nondeterminism bookkeeping.
     HEGEL_VERBOSITY_DEBUG = 3,
 }
 
@@ -524,8 +533,8 @@ pub enum hegel_health_check_t {
     HEGEL_HC_TOO_SLOW = 1 << 1,
     /// Aborts the run if generated values are too large.
     HEGEL_HC_TEST_CASES_TOO_LARGE = 1 << 2,
-    /// Warns if the first generated test case is already disproportionately
-    /// large.
+    /// Aborts the run if the first generated test case is already
+    /// disproportionately large.
     HEGEL_HC_LARGE_INITIAL_TEST_CASE = 1 << 3,
 }
 
@@ -3164,6 +3173,14 @@ unsafe fn typed_draw<T>(
 /// uses this number, so a filter rejects equally often in every language.
 pub const HEGEL_FILTER_ATTEMPTS: u32 = 3;
 
+/// How many attempts one recursive value (`hegel_new_recursion`) gets
+/// before libhegel gives up on it: an attempt that outgrows its leaf
+/// budget is discarded and retried steering toward a smaller value, and
+/// once this many attempts in a row have failed to fit the test case is
+/// rejected as a failed assumption is. The limit lives in the engine, so
+/// a recursive generator gives up equally often in every language.
+pub const HEGEL_RECURSION_ATTEMPTS: u64 = 9;
+
 /// A span groups a set of draws so the shrinker can treat them as a unit.
 /// Libraries should wrap each compound generator in a span.
 ///
@@ -3524,6 +3541,216 @@ pub unsafe extern "C" fn hegel_collection_free(
     HEGEL_OK
 }
 
+/// Opaque handle to an engine-managed *repeat loop*: a test body that runs
+/// again and again, each run an *iteration*, for as long as libhegel wants
+/// another one. It is what a frontend's `repeat` is made of, so that every
+/// language runs the same number of iterations from the same choices and
+/// shrinks a failing loop the same way.
+///
+/// Created by `hegel_new_repeat` on a test case; driven by
+/// `hegel_repeat_more` / `hegel_repeat_failed` through any handle of the
+/// *same* test-case family (the root or any clone) — the decisions are
+/// drawn from whichever handle makes the call. A loop must not be used from
+/// two threads at once: the operations take an internal non-blocking lock
+/// and return `HEGEL_E_CONCURRENT_USE` on contention.
+///
+/// The protocol: call `hegel_repeat_more`; on `true` run the body once,
+/// then call `hegel_repeat_more` again. An iteration that ends on a failed
+/// assumption is simply over — the loop goes on, and the iteration still
+/// counts. An iteration that ends on any other failure ends the loop: call
+/// `hegel_repeat_failed`, then complete the test case as interesting. On
+/// `false` the loop is over and the body must not run again; what the
+/// caller does then (typically end the test case as valid) is its own. The
+/// caller prints each iteration's heading and indents its output itself;
+/// libhegel prints nothing.
+///
+/// The handle is independent of the test case and run it was created under:
+/// free it with `hegel_repeat_free` exactly once, at any point — before or
+/// after the test case or run is freed, in any order relative to other
+/// frees.
+pub struct HegelRepeat {
+    state: Mutex<crate::native::core::ManyState>,
+}
+
+/// The largest minimum number of iterations `hegel_new_repeat` draws. A
+/// loop then has no maximum: the engine decides iteration by iteration.
+const REPEAT_MAX_MIN_SIZE: u64 = 1 << 40;
+
+/// Resolve a repeat handle, recording a diagnostic and returning
+/// `HEGEL_E_INVALID_HANDLE` on a null pointer.
+unsafe fn repeat_ref<'a>(
+    ctx: *mut HegelContext,
+    fn_name: &str,
+    repeat: *const HegelRepeat,
+) -> Result<&'a HegelRepeat, hegel_result_t> {
+    match unsafe { repeat.as_ref() } {
+        Some(r) => Ok(r),
+        None => {
+            set_last_error(ctx, &format!("{fn_name}: repeat handle is null"));
+            Err(HEGEL_E_INVALID_HANDLE)
+        }
+    }
+}
+
+/// Lock a repeat loop's state for one operation. A loop may be driven by at
+/// most one thread at a time, so contention is reported as
+/// `HEGEL_E_CONCURRENT_USE` rather than waited out.
+fn repeat_lock<'a>(
+    ctx: *mut HegelContext,
+    fn_name: &str,
+    repeat: &'a HegelRepeat,
+) -> Result<MutexGuard<'a, crate::native::core::ManyState>, hegel_result_t> {
+    match repeat.state.try_lock() {
+        Some(guard) => Ok(guard),
+        None => {
+            set_last_error(
+                ctx,
+                &format!("{fn_name}: repeat handle is in use on another thread"),
+            );
+            Err(HEGEL_E_CONCURRENT_USE)
+        }
+    }
+}
+
+/// Start a repeat loop: libhegel decides how many times the body runs, so
+/// that the count shrinks like the length of a collection. Draws the
+/// loop's minimum number of iterations from `tc`'s stream, so it must be
+/// called at the point in the draw sequence where the loop begins. See
+/// `hegel_repeat_t` for the protocol.
+///
+/// Parameters:
+/// `out_repeat`: Receives a caller-owned handle to pass to the calls below
+///   (through any handle of the same test-case family). Release it with
+///   `hegel_repeat_free` exactly once.
+///
+/// Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_new_repeat(
+    ctx: *mut HegelContext,
+    tc: *mut HegelTestCase,
+    out_repeat: *mut *mut HegelRepeat,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    let (tc, _guard) = match unsafe { tc_guard(ctx, "hegel_new_repeat", tc) } {
+        Ok(t) => t,
+        Err(rc) => return rc,
+    };
+    if out_repeat.is_null() {
+        set_last_error(ctx, "hegel_new_repeat: out parameter is null");
+        return HEGEL_E_INVALID_ARG;
+    }
+    unsafe { *out_repeat = ptr::null_mut() };
+    let min_size = match tc
+        .stream
+        .generate_integer(&BigInt::from(0u64), &BigInt::from(REPEAT_MAX_MIN_SIZE))
+    {
+        Ok(v) => u64::try_from(v).unwrap_or(REPEAT_MAX_MIN_SIZE),
+        Err(e) => return translate_ds_error(ctx, e),
+    };
+    match tc.stream.new_collection(min_size, None) {
+        Ok(state) => {
+            unsafe {
+                *out_repeat = into_raw_send_sync(HegelRepeat {
+                    state: Mutex::new(state),
+                });
+            }
+            HEGEL_OK
+        }
+        Err(e) => translate_ds_error(ctx, e),
+    }
+}
+
+/// Parameters:
+/// `out_more`: Receives whether libhegel wants another iteration, drawn
+///   from `tc`'s stream. Call before each iteration and run the body only
+///   on `true`; on `false` the loop is over.
+///
+/// Returns `HEGEL_OK`, `HEGEL_E_STOP_TEST`, or `HEGEL_E_CONCURRENT_USE`
+/// when another thread is mid-operation on the loop.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_repeat_more(
+    ctx: *mut HegelContext,
+    tc: *mut HegelTestCase,
+    repeat: *mut HegelRepeat,
+    out_more: *mut bool,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    let (tc, _guard) = match unsafe { tc_guard(ctx, "hegel_repeat_more", tc) } {
+        Ok(t) => t,
+        Err(rc) => return rc,
+    };
+    let repeat = match unsafe { repeat_ref(ctx, "hegel_repeat_more", repeat) } {
+        Ok(r) => r,
+        Err(rc) => return rc,
+    };
+    if out_more.is_null() {
+        set_last_error(ctx, "hegel_repeat_more: out parameter is null");
+        return HEGEL_E_INVALID_ARG;
+    }
+    let mut state = match repeat_lock(ctx, "hegel_repeat_more", repeat) {
+        Ok(state) => state,
+        Err(rc) => return rc,
+    };
+    match tc.stream.collection_more(&mut state) {
+        Ok(m) => {
+            unsafe { *out_more = m };
+            HEGEL_OK
+        }
+        Err(e) => translate_ds_error(ctx, e),
+    }
+}
+
+/// Tells libhegel the iteration just run failed — the body raised anything
+/// other than a failed assumption — and so ends the loop. Call it before
+/// completing the test case as interesting: it draws from `tc`'s stream
+/// what marks the failing iteration, so that the shrinker can tell the
+/// iterations before the failure from the one that failed.
+///
+/// Returns `HEGEL_OK`, `HEGEL_E_STOP_TEST`, or `HEGEL_E_CONCURRENT_USE`
+/// when another thread is mid-operation on the loop.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_repeat_failed(
+    ctx: *mut HegelContext,
+    tc: *mut HegelTestCase,
+    repeat: *mut HegelRepeat,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    let (tc, _guard) = match unsafe { tc_guard(ctx, "hegel_repeat_failed", tc) } {
+        Ok(t) => t,
+        Err(rc) => return rc,
+    };
+    let repeat = match unsafe { repeat_ref(ctx, "hegel_repeat_failed", repeat) } {
+        Ok(r) => r,
+        Err(rc) => return rc,
+    };
+    let _state = match repeat_lock(ctx, "hegel_repeat_failed", repeat) {
+        Ok(state) => state,
+        Err(rc) => return rc,
+    };
+    match tc.stream.generate_boolean(0.5, None) {
+        Ok(_) => HEGEL_OK,
+        Err(e) => translate_ds_error(ctx, e),
+    }
+}
+
+/// Release a repeat handle from `hegel_new_repeat`. Safe to call with NULL
+/// (a no-op that returns `HEGEL_OK`), and safe at any point in any order
+/// relative to freeing the test case or the run. Each handle must be freed
+/// exactly once; freeing the same handle twice is undefined behaviour.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_repeat_free(
+    ctx: *mut HegelContext,
+    repeat: *mut HegelRepeat,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    if !repeat.is_null() {
+        // SAFETY: `repeat` came from `hegel_new_repeat`'s Box::into_raw and
+        // is freed exactly once here.
+        drop(unsafe { Box::from_raw(repeat) });
+    }
+    HEGEL_OK
+}
+
 /// Opaque handle to an engine-managed *recursive generation scope*: the
 /// leaf budget and retry bookkeeping for one draw of a recursively defined
 /// value (a tree, a document, ...).
@@ -3589,8 +3816,9 @@ unsafe fn recursion_ref<'a>(
 /// `max_leaves`: The most leaves one generated value may contain. Each
 ///   value steers toward a target size drawn from this range. Attempts
 ///   that outgrow the budget are discarded and retried steering toward a
-///   smaller target, and the test case is rejected as invalid when several
-///   attempts in a row fail to fit.
+///   smaller target, and the test case is rejected as invalid (as a failed
+///   assumption is) once `HEGEL_RECURSION_ATTEMPTS` attempts in a row fail
+///   to fit.
 /// `out_recursion`: Receives a caller-owned handle to pass to the calls
 ///   below (through any handle of the same test-case family). Release it
 ///   with `hegel_recursion_free` exactly once.

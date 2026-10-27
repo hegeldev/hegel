@@ -179,16 +179,17 @@ final class Runner {
 
     /**
      * Run the body once with {@code example}'s values, returning its failure, or {@code null} if it
-     * passed. A verbose run reports the case as it does a generated one.
+     * passed. A verbose run reports the case as it does a generated one; a quiet run's failure
+     * carries no output.
      */
     private static Failure runExample(
             Libhegel lib, Example example, Settings settings, Consumer<TestCase> body, Reporter reporter) {
         boolean verbose = settings.verbosity.code >= Verbosity.VERBOSE.code;
+        boolean quiet = settings.verbosity == Verbosity.QUIET;
         try (ExplicitDraws draws = new ExplicitDraws(lib, example)) {
             TestCase testCase = TestCase.explicit(draws);
             if (verbose) {
                 reporter.caseStarted(false);
-                reporter.caseOutput("Running explicit " + example, false);
             }
             Throwable failure = null;
             try {
@@ -202,7 +203,7 @@ final class Runner {
             } catch (Throwable e) {
                 failure = e;
             }
-            List<String> output = draws.output();
+            List<String> output = quiet ? List.of() : draws.output();
             if (verbose) {
                 for (String line : output) {
                     reporter.caseOutput(line, false);

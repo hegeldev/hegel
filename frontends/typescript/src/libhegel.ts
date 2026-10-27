@@ -40,6 +40,7 @@ import {
   type TestCaseHandle,
   type FailureHandle,
   type CollectionHandle,
+  type RepeatHandle,
   type StringGeneratorHandle,
   type PoolHandle,
   type RecursionHandle,
@@ -322,6 +323,10 @@ export interface Bindings {
   collectionMore: (ctx: Ptr, tc: Ptr, collection: Ptr, out: boolean[]) => number;
   collectionReject: (ctx: Ptr, tc: Ptr, collection: Ptr, why: string | null) => number;
   collectionFree: (collection: Ptr) => void;
+  newRepeat: (ctx: Ptr, tc: Ptr, out: Ptr[]) => number;
+  repeatMore: (ctx: Ptr, tc: Ptr, repeat: Ptr, out: boolean[]) => number;
+  repeatFailed: (ctx: Ptr, tc: Ptr, repeat: Ptr) => number;
+  repeatFree: (repeat: Ptr) => void;
   markComplete: (ctx: Ptr, tc: Ptr, status: number, origin: string | null) => number;
 
   newPool: (ctx: Ptr, tc: Ptr, out: Ptr[]) => number;
@@ -343,10 +348,6 @@ export interface Bindings {
   recursionFinish: (ctx: Ptr, tc: Ptr, recursion: Ptr) => number;
   recursionFree: (recursion: Ptr) => void;
 
-  /**
-   * The `rule_weights` array of `hegel_new_state_machine` is absorbed as NULL
-   * (all rules equally likely): this client does not expose rule weights.
-   */
   newStateMachine: (
     ctx: Ptr,
     tc: Ptr,
@@ -750,6 +751,10 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     koffi.pointer(stringType),
   ]);
   const collectionFree = f("int hegel_collection_free(void* ctx, void* collection)");
+  const newRepeat = f("int hegel_new_repeat(void* ctx, void* tc, _Out_ void** out_repeat)");
+  const repeatMore = f("int hegel_repeat_more(void* ctx, void* tc, void* repeat, _Out_ bool* out)");
+  const repeatFailed = f("int hegel_repeat_failed(void* ctx, void* tc, void* repeat)");
+  const repeatFree = f("int hegel_repeat_free(void* ctx, void* repeat)");
   const markComplete = fs("hegel_mark_complete", [
     "void*",
     "void*",
@@ -1118,6 +1123,10 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     collectionReject: (ctx, tc, collection, why) =>
       collectionReject(ctx, tc, collection, optionalString(why)),
     collectionFree: (collection) => checked(collectionFree(null, collection), "collectionFree"),
+    newRepeat: (ctx, tc, out) => newRepeat(ctx, tc, out),
+    repeatMore: (ctx, tc, repeat, out) => repeatMore(ctx, tc, repeat, out),
+    repeatFailed: (ctx, tc, repeat) => repeatFailed(ctx, tc, repeat),
+    repeatFree: (repeat) => checked(repeatFree(null, repeat), "repeatFree"),
     markComplete: (ctx, tc, status, origin) =>
       markComplete(ctx, tc, status, optionalString(origin)),
     newPool: (ctx, tc, out) => newPool(ctx, tc, out),
@@ -1139,7 +1148,7 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
         tc,
         opts.ruleNames.map(nativeString),
         opts.ruleGroups,
-        null,
+        opts.ruleWeights,
         opts.ruleNames.length,
         opts.invariantNames.map(nativeString),
         opts.invariantAlwaysCheck,
@@ -1208,16 +1217,16 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
   };
 }
 
-/** Copy an engine-owned `{data, len}` buffer into a JS-owned Buffer. */
-function copyNativeBuffer(result: NativeBuffer): Buffer {
+/** Copy an engine-owned `{data, len}` buffer into a JS-owned Uint8Array. */
+function copyNativeBuffer(result: NativeBuffer): Uint8Array {
   const len = Number(result.len);
   if (!Number.isSafeInteger(len) || len < 0 || (len > 0 && result.data === null)) {
     throw new EngineError("Invalid native buffer result");
   }
   if (len === 0) {
-    return Buffer.alloc(0);
+    return new Uint8Array(0);
   }
-  return Buffer.from(koffi.decode(result.data, "uint8_t", len) as unknown as number[]);
+  return Uint8Array.from(koffi.decode(result.data, "uint8_t", len) as unknown as number[]);
 }
 
 /**
@@ -1827,7 +1836,7 @@ export class Libhegel implements Engine {
   }
 
   /** Draw a byte string with length in `[minSize, maxSize]` (see {@link Engine.generateBytes}). */
-  generateBytes(ctx: Ptr, tc: Ptr, minSize: number, maxSize: bigint): Buffer {
+  generateBytes(ctx: Ptr, tc: Ptr, minSize: number, maxSize: bigint): Uint8Array {
     const out: NativeBuffer[] = [{ data: null, len: 0 }];
     this.check(
       ctx,
@@ -2125,6 +2134,38 @@ export class Libhegel implements Engine {
 
   freeCollection(collection: Ptr): void {
     this.release(collection, (pointer) => this.fns.collectionFree(pointer));
+  }
+
+  /**
+   * Start a repeat loop. The returned handle is owned by the caller — release
+   * it with {@link freeRepeat}.
+   */
+  newRepeat(ctx: Ptr, tc: Ptr): RepeatHandle {
+    const out: Ptr[] = [null];
+    this.check(ctx, this.fns.newRepeat(this.ptr(ctx), this.ptr(tc), out), "hegel_new_repeat");
+    return this.requireHandle<RepeatHandle>(out[0], "newRepeat");
+  }
+
+  repeatMore(ctx: Ptr, tc: Ptr, repeat: Ptr): boolean {
+    const out: boolean[] = [false];
+    this.check(
+      ctx,
+      this.fns.repeatMore(this.ptr(ctx), this.ptr(tc), this.ptr(repeat), out),
+      "hegel_repeat_more",
+    );
+    return out[0];
+  }
+
+  repeatFailed(ctx: Ptr, tc: Ptr, repeat: Ptr): void {
+    this.check(
+      ctx,
+      this.fns.repeatFailed(this.ptr(ctx), this.ptr(tc), this.ptr(repeat)),
+      "hegel_repeat_failed",
+    );
+  }
+
+  freeRepeat(repeat: Ptr): void {
+    this.release(repeat, (pointer) => this.fns.repeatFree(pointer));
   }
 
   markComplete(ctx: Ptr, tc: Ptr, status: number, origin: string | null): void {

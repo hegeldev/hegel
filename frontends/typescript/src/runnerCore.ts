@@ -29,6 +29,7 @@ import {
   type TestCaseHandle,
   type FailureHandle,
   type CollectionHandle,
+  type RepeatHandle,
   type PoolHandle,
   type RecursionHandle,
   type StateMachineHandle,
@@ -74,6 +75,7 @@ interface Family {
   readonly cache: StringGeneratorCache;
   readonly ownsCache: boolean;
   readonly collections: CollectionHandle[];
+  readonly repeats: RepeatHandle[];
   readonly pools: PoolHandle[];
   readonly recursions: RecursionHandle[];
   readonly machines: StateMachineHandle[];
@@ -111,6 +113,7 @@ export class EngineDataSource implements DataSource {
       cache,
       ownsCache,
       collections: [],
+      repeats: [],
       pools: [],
       recursions: [],
       machines: [],
@@ -160,6 +163,19 @@ export class EngineDataSource implements DataSource {
         why ?? null,
       ),
     );
+  }
+
+  newRepeat(): number {
+    this.family.repeats.push(this.call(() => this.lib.newRepeat(this.ctx, this.tc)));
+    return this.family.repeats.length - 1;
+  }
+
+  repeatMore(repeatId: number): boolean {
+    return this.call(() => this.lib.repeatMore(this.ctx, this.tc, this.family.repeats[repeatId]));
+  }
+
+  repeatFailed(repeatId: number): void {
+    this.call(() => this.lib.repeatFailed(this.ctx, this.tc, this.family.repeats[repeatId]));
   }
 
   markComplete(status: number, origin: string | null): void {
@@ -247,6 +263,7 @@ export class EngineDataSource implements DataSource {
           ruleNames: spec.ruleNames,
           // One concurrency group, so rules never need to be kept apart.
           ruleGroups: spec.ruleNames.map(() => 0),
+          ruleWeights: spec.ruleWeights,
           invariantNames: spec.invariantNames,
           invariantAlwaysCheck: spec.invariantAlwaysCheck,
           minConcurrency: 1,
@@ -399,6 +416,7 @@ export class EngineDataSource implements DataSource {
     release(family.printers, (printer) => this.lib.freePrinter(printer));
     release(family.derived, (tc) => this.lib.freeTestCase(tc));
     release(family.collections, (collection) => this.lib.freeCollection(collection));
+    release(family.repeats, (repeat) => this.lib.freeRepeat(repeat));
     release(family.pools, (pool) => this.lib.freePool(pool));
     release(family.recursions, (recursion) => this.lib.freeRecursion(recursion));
     release(family.machines, (machine) => this.lib.freeStateMachine(machine));
@@ -612,6 +630,13 @@ interface Captured {
 function rank(capture: Captured): number {
   if (capture.stamped) return 2;
   return capture.lines.length > 0 ? 1 : 0;
+}
+
+/** The verbose line saying why a test case stopped short of its end, for one that did. */
+function stopReason(outcome: TestCaseResult): string | null {
+  if (outcome.status === "invalid") return "Test case stopped: failed assumption";
+  if (outcome.status === "overrun") return "Test case stopped: out of data";
+  return null;
 }
 
 /** What one engine run concluded. */
@@ -952,7 +977,11 @@ export class Hegel {
           const emit = (stamped && !quiet) || verbose;
           const outcome = yield { ds, emit, explicit: null };
           const lines = emit ? ds.render() : [];
-          if (verbose) for (const line of lines) this.output(line);
+          if (verbose) {
+            for (const line of lines) this.output(line);
+            const reason = stopReason(outcome);
+            if (reason !== null) this.output(reason);
+          }
           if (outcome.status === "interesting") {
             const capture: Captured = { lines, stamped, error: outcome.error };
             const stored = captured.get(outcome.origin);

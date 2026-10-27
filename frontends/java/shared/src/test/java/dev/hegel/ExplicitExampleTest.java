@@ -75,8 +75,7 @@ class ExplicitExampleTest {
                 tc -> tc.draw(integers(), "x"),
                 SETTINGS.testCases(1).verbosity(Verbosity.VERBOSE).examples(Example.of("a\nb")),
                 recorder);
-        assertEquals("live: Running explicit Example(\"a\\nb\")", recorder.events.get(0));
-        assertEquals("live: var x_1 = \"a\\nb\";", recorder.events.get(1));
+        assertEquals("live: var x_1 = \"a\\nb\";", recorder.events.get(0));
 
         Recorder failing = new Recorder();
         Hegel.run(
@@ -85,7 +84,7 @@ class ExplicitExampleTest {
                 },
                 SETTINGS.verbosity(Verbosity.VERBOSE).examples(Example.of()),
                 failing);
-        assertEquals("live: Running explicit Example()", failing.events.get(0));
+        assertEquals(List.of("failures: 1"), failing.events);
     }
 
     @Test
@@ -209,9 +208,10 @@ class ExplicitExampleTest {
                 IllegalArgumentException.class,
                 () -> Hegel.run(tc -> {}, SETTINGS.examples(Example.of().with("y_1", 3)), Reporter.silent()));
         assertFalse(onlyNamed.getMessage().contains("positional"), onlyNamed.getMessage());
-        assertThrows(
+        IllegalArgumentException silent = assertThrows(
                 IllegalArgumentException.class,
-                () -> Hegel.run(tc -> tc.drawSilent(integers()), SETTINGS.examples(Example.of()), Reporter.silent()));
+                () -> Hegel.run(tc -> tc.drawSilent(integers()), SETTINGS.examples(Example.of(1)), Reporter.silent()));
+        assertEquals("drawSilent is not supported in explicit test cases", silent.getMessage());
         IllegalArgumentException span = assertThrows(
                 IllegalArgumentException.class,
                 () -> Hegel.run(
@@ -258,28 +258,31 @@ class ExplicitExampleTest {
     }
 
     @Test
-    void aSilentDrawTakesTheNextPositionalValue() {
+    void aQuietFailingExampleCarriesNoOutput() {
         Recorder recorder = new Recorder();
         RunReport report = Hegel.run(
                 tc -> {
-                    int x = tc.drawSilent(integers());
+                    tc.note("noted");
                     int y = tc.draw(integers(), "y");
-                    assertTrue(x != 3 || y != 4, "both");
+                    assertTrue(y != 4, "four");
                 },
-                SETTINGS.testCases(1).examples(Example.of(3, 4)),
+                SETTINGS.testCases(1).verbosity(Verbosity.QUIET).examples(Example.of(4)),
                 recorder);
         assertFalse(report.passed());
-        assertEquals(List.of("var y_1 = 4;"), report.failures().get(0).output());
+        assertEquals(List.of(), report.failures().get(0).output());
+        assertEquals(Map.of("y_1", 4), report.failures().get(0).draws());
+        assertEquals(List.of("failures: 1"), recorder.events);
     }
 
     @Test
-    void aForkOfAnExampleDrawsFromTheSameValues() throws Exception {
+    void aCloneOfAnExampleDrawsFromTheSameValues() throws Exception {
         List<Object> seen = new ArrayList<>();
         Hegel.test(
                 tc -> {
-                    TestCase fork = tc.fork(1);
+                    TestCase clone = tc.clone();
+                    clone.setWorker(1);
                     int[] drawn = new int[1];
-                    Thread thread = new Thread(() -> drawn[0] = fork.draw(integers(), "x"));
+                    Thread thread = new Thread(() -> drawn[0] = clone.draw(integers(), "x"));
                     thread.start();
                     try {
                         thread.join();

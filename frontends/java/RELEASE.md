@@ -41,7 +41,7 @@ Stored failures are replayed differently:
 - A replay the engine aborts, such as on a failed health check, raises the same typed `HegelRunException` as any other run, rather than a plain `HegelException`.
 - The reproducer printed with a failure names the right place for the blob: `reproduceFailure = "..."` for an `@HegelTest`, and `.reproduceFailure("...")` on the test's `Settings` for `Hegel.test` and `Hegel.run`.
 
-This release also fixes several native memory leaks. Every list a test drew left its engine-side collection allocated, every `Pool` and `ConcurrentPool` stayed allocated after its test case ended, every thread that called into the engine, such as each worker thread of a concurrent stateful run, left its engine error context behind when it exited, and each stateful rule and each `repeat` repetition held engine memory until its test case ended. A thread's context is now freed once the thread has ended, including a thread of yours that draws through `TestCase.fork`. Long runs, and long state machines and repeated test bodies in particular, now hold steady memory. A `TestCase` a stateful rule was given can no longer be used once the rule has ended: drawing through it fails the run with an `IllegalArgumentException`.
+This release also fixes several native memory leaks. Every list a test drew left its engine-side collection allocated, every `Pool` and `ConcurrentPool` stayed allocated after its test case ended, every thread that called into the engine, such as each worker thread of a concurrent stateful run, left its engine error context behind when it exited, and each stateful rule and each `repeat` repetition held engine memory until its test case ended. A thread's context is now freed once the thread has ended, including a thread of yours that draws through `TestCase.clone`. Long runs, and long state machines and repeated test bodies in particular, now hold steady memory. A `TestCase` a stateful rule was given can no longer be used once the rule has ended: drawing through it fails the run with an `IllegalArgumentException`.
 
 An argument the engine rejects while a test case runs, such as `text().codec("nonsense")`, now fails the run at once with an `IllegalArgumentException` carrying the engine's explanation. Before, it was treated as a failure of the property, shrunk and reported as a counterexample. An `IllegalArgumentException` the test itself throws is still a failure of the property.
 
@@ -112,7 +112,7 @@ A filtered consuming pool draw, `pool.consuming().filter(...)` on a `Pool` or `C
 - `event(label)` and `eventValue(label, value)` record events and numeric observations for the engine's end-of-run statistics report, printed when `showStatistics` is on.
 - `reject()` rejects the test case unconditionally, like `assume(false)`.
 - `drawSilent(generator)` draws a value without printing it in the counterexample.
-- `fork(worker)` returns a handle with its own independent stream of choices, for drawing from another thread. The engine attributes its output to worker `worker`.
+- `clone()` returns a handle with its own independent stream of choices, for drawing from another thread, and `setWorker(worker)` makes the engine attribute a handle's output to worker `worker`.
 - `repeat(body)` runs `body` until the engine decides the test case is long enough, so a test that is logically an infinite loop shrinks repetition by repetition.
 
 `Generators.recursive(base, extend)` generates recursively defined data, such as trees or JSON documents, through the engine's recursion support: `base` generates the leaves and `extend` builds a branch from a generator of sub-values. The engine decides where the value branches, steers each value toward a size drawn from across its leaf budget, and lets the shrinker replace a tree with one of its subtrees. Limit the shape with `maxDepth` (default 32) and `maxLeaves` (default 100). `Generators.deferred()` remains for mutually recursive generators.
@@ -124,10 +124,14 @@ New generators, matching the other Hegel frontends:
 - `Generators.bigIntegers()` generates `BigInteger` values, narrowed with `min` and `max`, which may be of any magnitude. An unset bound reaches `2^127` values beyond the other bound, or beyond zero when that is further, so `bigIntegers()` alone draws from `[-2^127, 2^127)`, as in the other Hegel frontends. `Generators.forType(BigInteger.class)` derives it.
 - `lists(...).unique()` and `lists(...).uniqueBy(key)` generate lists whose elements, or their keys, are distinct, comparing arrays by their contents.
 - `Generators.permutations(elements)` generates reorderings of a fixed list, shrinking toward the original order.
+- `Generators.subsequences(elements)` generates sublists of a fixed list that keep its order, and `Generators.samples(elements)` lists of elements chosen from it, with replacement by default or without it after `.withoutReplacement()`. Both take `.minSize(n)` and `.maxSize(n)`, and shrink toward fewer elements from earlier in the list.
+- `Generators.weightedBooleans(p)` generates `true` with probability `p`, which must be between 0 and 1.
 - `Generators.arrays(element, length, newArray)` generates arrays of a fixed length, such as `arrays(integers(), 3, Integer[]::new)`.
 - `Generators.nulls()` always generates `null`.
 - `text().alphabet(chars)` draws only from the given characters, and `text().codec(name)` restricts to the characters `"ascii"`, `"latin-1"` (or `"iso-8859-1"`) or `"utf-8"` can encode. An alphabet cannot be combined with the other character restrictions.
 - `fromRegex(pattern).alphabet(characters)` restricts every character of a generated string, padding included, to those `characters` can generate, such as `characters().codec("ascii")`.
+
+`Generators.forType(cls)` and `records(cls)` now reject a record that refers back to itself through its components, directly or through other records and collections, such as `record Node(int value, List<Node> children)`. Deriving a generator for one recursed without bound; it now fails with a `HegelException` naming the record and the cycle, and pointing at `Generators.recursive`, `Generators.deferred()` and `records(Node.class).with(...)`, which remain the ways to build such a generator.
 
 `text()` now leaves character validation to the engine. `text().categories("Cs")` and `text().categories("C")` were rejected when the generator was built because they name surrogates; the engine never generates surrogates, so `categories("C")` now generates the other control, format, private-use and unassigned characters, and a set of categories that leaves no characters fails when drawn from with an `IllegalArgumentException`, as an unknown codec does.
 
@@ -142,7 +146,7 @@ Hegel.test(tc -> {
 }, new Settings().examples(Example.of(List.of()), Example.of().with("xs", List.of(1, 1))));
 ```
 
-A draw takes the value `Example.with` gives for its name, or otherwise the example's next positional value. A failing example is reported before any generated failure; with `reportMultipleFailures` off it ends the run, and with it on it is reported alongside the engine's failures, merged by origin. An example that lacks a value for a draw, has values no draw takes, or fails an assumption (`assume` or `reject`, inside `repeat` or not) is a usage error: explicit test cases must not be rejected. Inside an example a silent draw takes the next positional value, a fork draws from the same example, and `repeat` runs its body once; targets and events are ignored. When an explicit example fails and the engine's run then errors (a health check, say), the run is `FAILED` and `RunReport.error()` and `errorKind()` also describe the error.
+A draw takes the value `Example.with` gives for its name, or otherwise the example's next positional value. A failing example is reported before any generated failure; with `reportMultipleFailures` off it ends the run, and with it on it is reported alongside the engine's failures, merged by origin. An example that lacks a value for a draw, has values no draw takes, or fails an assumption (`assume` or `reject`, inside `repeat` or not) is a usage error: explicit test cases must not be rejected. Inside an example a clone draws from the same example, `setWorker` does nothing and `repeat` runs its body once; targets and events are ignored, and a silent draw, which the example has no value for, is a usage error. Under `Verbosity.QUIET` a failing example's `Failure.output()` is empty, as a generated failure's is. When an explicit example fails and the engine's run then errors (a health check, say), the run is `FAILED` and `RunReport.error()` and `errorKind()` also describe the error.
 
 `Generators.fromLark(grammar)` generates strings matching a grammar written in the syntax of the [Lark](https://lark-parser.readthedocs.io/en/stable/grammar.html) parsing library, as the other Hegel frontends' grammar generators do:
 
@@ -165,3 +169,23 @@ Text and binary generators with no `maxSize` now leave the maximum length to the
 `dev.hegel.lowlevel.Libhegel` gains `grammarBuilderNew`, `grammarBuilderFile`, `grammarBuilderProvide`, `grammarBuilderFree`, `grammarNew`, `grammarFree`, `grammarDrawNew`, `grammarDrawNext`, `grammarDrawProvide`, `grammarDrawResult` and `grammarDrawFree`. A third-party binding needs to implement them.
 
 A draw label containing a newline now fails the run with an `IllegalArgumentException`. Errors the engine reports while printing a test case's output, or for `TestCase.note`, are now raised instead of ignored, except that an error printing a failing test case's output is attached to the test's own exception as a suppressed exception rather than replacing it. Output written after the case's document has been read, such as by a straggling thread, is still silently dropped.
+
+With `Verbosity.VERBOSE` or `Verbosity.DEBUG`, the printing reporter now says why a test case stopped short, as the other Hegel frontends do: `Test case stopped: failed assumption` or `Test case stopped: out of data`. An explicit example is no longer introduced with a `Running explicit Example(...)` line through `Reporter.caseOutput`: its drawn values and notes are reported like a generated case's.
+
+This release also replaces the `excludeMin(boolean)` and `excludeMax(boolean)` methods of `DoubleGenerator` and `FloatGenerator` with `minValueExclusive(v)` and `maxValueExclusive(v)`, which take the bound directly, as the other Hegel frontends do:
+
+```java
+// before
+doubles().min(0).max(1).excludeMin(true).excludeMax(true)
+
+// after
+doubles().minValueExclusive(0).maxValueExclusive(1)
+```
+
+`min` and `minValueExclusive` set the same bound, so whichever is called last wins (likewise `max` and `maxValueExclusive`). An exclusive bound can no longer be set without a bound value, so that `IllegalArgumentException` no longer exists; the remaining validation (an exclusive `+Infinity` minimum, an exclusive `-Infinity` maximum, or exclusive bounds on a single-point range) is unchanged, and its messages now name the new methods. The public six-argument constructors of `DoubleGenerator` and `FloatGenerator` are replaced by no-argument ones; `Generators.doubles()` and `Generators.floats()` are the usual way to get one.
+
+A `java.util.Set` now prints as `Set.of(1, 2)`, where it printed as `[1, 2]`, indistinguishable from a list, and a `UUID` prints as `UUID.fromString("f47ac10b-58cc-4372-a567-0e02b2c3d479")`, where it printed bare. This applies to the values `sets()` and `uuids()` draw and to sets and UUIDs inside any other printed value.
+
+`TestCase.repeat` now has the engine decide how many repetitions run and which one failed, through libhegel's new `hegel_repeat_t` functions, rather than drawing those choices itself. The choices are the same, so an existing reproduce blob still replays.
+
+**Stateful testing.** `Stateful.run` now finds `@Rule` and `@Invariant` methods declared in a machine's superclasses, not only in its own class, so a machine can extend a base machine. A method that takes a `TestCase` hides a method of the same name declared further up the hierarchy, so an override is a rule only if it repeats the annotation; rules and invariants are still ordered by name. A failing test's report now names the rule or invariant the failure escaped from (`Rule pop failed:`, `Invariant sizesAgree failed:`) right before the failure itself, and an invariant's draws and notes are indented like a rule's, as in the other Hegel frontends.

@@ -16,6 +16,7 @@
 #include <mutex>
 #include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <typeinfo>
@@ -62,22 +63,20 @@ namespace hegel {
     TestCase::~TestCase() = default;
 
     TestCase TestCase::clone() const {
-        if (data_->explicit_state) {
-            throw internal::UsageError(
-                "clone() is not supported in an explicit test case");
+        hegel_test_case_t* handle = nullptr;
+        if (!data_->explicit_state) {
+            handle = impl::test_case_clone(impl::thread_context(), data_->tc);
         }
-        hegel_test_case_t* handle =
-            impl::test_case_clone(impl::thread_context(), data_->tc);
         auto cloned = std::make_unique<impl::test_case::TestCaseData>(
-            handle, data_->emit, data_->stateful_step_count);
+            handle, data_->emit);
         cloned->draw_names = data_->draw_names;
+        cloned->explicit_state = data_->explicit_state;
         return TestCase(std::move(cloned));
     }
 
     void TestCase::set_worker(std::size_t worker_index) {
         if (data_->explicit_state) {
-            throw internal::UsageError(
-                "set_worker() is not supported in an explicit test case");
+            return;
         }
         impl::test_case_set_worker(impl::thread_context(), data_->tc,
                                    static_cast<int64_t>(worker_index));
@@ -112,25 +111,60 @@ namespace hegel {
         impl::event_value(*this, label, value);
     }
 
+    namespace {
+        // Routes `outer`'s draws, notes and printing through `inner`'s
+        // engine handle for the scope's lifetime.
+        class HandleSwap {
+          public:
+            HandleSwap(impl::test_case::TestCaseData& outer,
+                       impl::test_case::TestCaseData& inner)
+                : outer_(outer), inner_(inner) {
+                swap();
+            }
+            ~HandleSwap() { swap(); }
+            HandleSwap(const HandleSwap&) = delete;
+            HandleSwap& operator=(const HandleSwap&) = delete;
+
+          private:
+            void swap() noexcept {
+                std::swap(outer_.tc, inner_.tc);
+                std::swap(outer_.printer, inner_.printer);
+                std::swap(outer_.draw_depth, inner_.draw_depth);
+            }
+
+            impl::test_case::TestCaseData& outer_;
+            impl::test_case::TestCaseData& inner_;
+        };
+
+        void run_repetition(const TestCase& tc,
+                            const std::function<void()>& body) {
+            TestCase block = internal::block(tc, 2);
+            HandleSwap swap(*tc.data(), *block.data());
+            body();
+        }
+    } // namespace
+
     void TestCase::repeat(const std::function<void()>& body) const {
         if (data_->explicit_state) {
             note("// Repetition #1");
             body();
             return;
         }
-        // Seed the loop's minimum length, then let the engine decide each
-        // iteration: the count is drawn like any collection, so it shrinks.
-        int64_t min_size = internal::draw_integer(*this, 0, int64_t{1} << 20);
-        internal::CollectionHandle collection(
-            *this, static_cast<uint64_t>(min_size), internal::no_max_size);
+        internal::RepeatHandle repeat(*this);
         uint64_t iteration = 0;
-        while (collection.more(*this)) {
+        while (repeat.more(*this)) {
             note("// Repetition #" + std::to_string(++iteration));
             try {
-                body();
+                run_repetition(*this, body);
             } catch (const internal::HegelReject&) {
-                // Iteration rejected; discard it and keep looping.
                 continue;
+            } catch (const internal::HegelStopTest&) {
+                throw;
+            } catch (const std::invalid_argument&) {
+                throw;
+            } catch (...) {
+                repeat.failed(*this);
+                throw;
             }
         }
     }
@@ -139,6 +173,7 @@ namespace hegel {
         if (data_->explicit_state) {
             std::istringstream lines{std::string(message)};
             std::string line;
+            std::lock_guard<std::mutex> lock(data_->explicit_state->mutex);
             while (std::getline(lines, line)) {
                 data_->explicit_state->lines.push_back(line);
             }
@@ -168,7 +203,7 @@ namespace hegel {
         void check_not_explicit(const TestCase& tc, const char* what) {
             if (is_explicit(tc)) {
                 throw UsageError(std::string(what) +
-                                 " is not supported in an explicit test case");
+                                 " is not supported in explicit test cases");
             }
         }
 
@@ -179,6 +214,7 @@ namespace hegel {
             const std::vector<ExplicitTestCase::Value>& values =
                 state.test_case.values();
             std::string display = draw_display_name(tc, name);
+            std::lock_guard<std::mutex> lock(state.mutex);
             std::optional<size_t> chosen;
             for (size_t i = 0; i < values.size() && !chosen; ++i) {
                 if (!state.used[i] && values[i].name == display) {
@@ -232,7 +268,7 @@ namespace hegel {
             hegel_test_case_t* handle =
                 impl::test_case_block(impl::thread_context(), data->tc, indent);
             auto block = std::make_unique<impl::test_case::TestCaseData>(
-                handle, data->emit, data->stateful_step_count);
+                handle, data->emit);
             block->draw_names = data->draw_names;
             return TestCase(std::move(block));
         }
