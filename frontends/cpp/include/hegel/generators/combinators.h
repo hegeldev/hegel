@@ -161,6 +161,10 @@ namespace hegel::generators {
 
     /**
      * @brief Choose from generators that are not all printable.
+     *
+     * A braced list of generators that are not all printable, such as
+     * `one_of<int>({printable, silent})`, converts to this overload.
+     *
      * @tparam T Value type (all generators must produce this type)
      * @param gens Vector of generators to choose from (must not be empty)
      * @return AnyGenerator that delegates to a randomly chosen generator
@@ -171,7 +175,7 @@ namespace hegel::generators {
     }
 
     /**
-     * @brief Choose from a list of generators (initializer list).
+     * @brief Choose from a list of printable generators (initializer list).
      * @tparam T Value type produced by each generator
      * @param gens Generators to choose from (must not be empty)
      * @return Generator that picks from gens and forwards do_draw
@@ -179,18 +183,6 @@ namespace hegel::generators {
     template <typename T>
     Generator<T> one_of(std::initializer_list<Generator<T>> gens) {
         return one_of(std::vector<Generator<T>>(gens));
-    }
-
-    /**
-     * @brief Choose from a list of generators that are not all printable
-     *        (initializer list).
-     * @tparam T Value type produced by each generator
-     * @param gens Generators to choose from (must not be empty)
-     * @return AnyGenerator that picks from gens and forwards do_draw
-     */
-    template <typename T>
-    AnyGenerator<T> one_of(std::initializer_list<AnyGenerator<T>> gens) {
-        return one_of(std::vector<AnyGenerator<T>>(gens));
     }
 
     /// @cond INTERNAL

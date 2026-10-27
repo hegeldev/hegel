@@ -238,7 +238,7 @@ describe("resolved settings", () => {
   const disabled = { database: hegel.Database.disabled };
 
   it("resolves every field when made and keeps it", () => {
-    hegel.registerProfile("ts-snapshot", { testCases: 2, ...disabled });
+    hegel.registerProfile("ts-snapshot", { testCases: 2, suppressHealthCheck: [], ...disabled });
     const snapshot = hegel.resolveSettings({ profile: "ts-snapshot" });
     expect(snapshot.testCases).toBe(2);
     expect(snapshot.database).toEqual(hegel.Database.disabled);

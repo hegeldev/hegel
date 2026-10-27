@@ -698,6 +698,32 @@ fn test_explicit_failure_before_a_run_error() {
 }
 
 #[hegel::standalone_function(
+    report_multiple_failures = true,
+    verbosity = hegel::Verbosity::Quiet,
+    database = None
+)]
+#[hegel::explicit_test_case(x = 7)]
+fn quiet_explicit_failure_before_a_run_error(tc: TestCase) {
+    let x: i32 = tc.draw(generators::integers::<i32>().min_value(0).max_value(0));
+    if x == 7 {
+        panic!("explicit failed");
+    }
+    tc.assume(false);
+}
+
+#[test]
+fn test_quiet_explicit_failure_before_a_run_error() {
+    let (lines, result) = capture_hegel_output(quiet_explicit_failure_before_a_run_error);
+    assert_eq!(
+        panic_text(&result.unwrap_err()),
+        "Property-based test failed with 2 distinct failures."
+    );
+    let output = lines.join("\n");
+    assert!(!output.contains("FailedHealthCheck"), "{output}");
+    assert!(!output.contains("Unsatisfiable"), "{output}");
+}
+
+#[hegel::standalone_function(
     verbosity = hegel::Verbosity::Verbose,
     test_cases = 1,
     database = None

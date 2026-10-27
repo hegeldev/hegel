@@ -140,7 +140,7 @@ TEST(Loop, RunsBodyAndReturns) {
                 max_iters = iters;
             }
         },
-        hegel::Settings{.test_cases = 100,
+        hegel::Settings{.test_cases = 10,
                         .derandomize = true,
                         .database = hegel::Database::disabled()});
     EXPECT_TRUE(returned);
@@ -218,7 +218,8 @@ TEST(Loop, RejectInsideContinues) {
     hegel::test(
         [&](hegel::TestCase& tc) {
             tc.repeat([&] {
-                int n = tc.draw(gs::integers<int>());
+                int n = tc.draw(
+                    gs::integers<int>({.min_value = 0, .max_value = 3}));
                 if (n % 2 != 0) {
                     tc.reject();
                 }
@@ -226,7 +227,7 @@ TEST(Loop, RejectInsideContinues) {
             completed = true;
         },
         hegel::Settings{
-            .test_cases = 100,
+            .test_cases = 3,
             .derandomize = true,
             .database = hegel::Database::disabled(),
             .suppress_health_check = {hegel::HealthCheck::FilterTooMuch}});

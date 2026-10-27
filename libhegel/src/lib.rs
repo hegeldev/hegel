@@ -3651,14 +3651,14 @@ pub unsafe extern "C" fn hegel_new_repeat(
         return HEGEL_E_INVALID_ARG;
     }
     unsafe { *out_repeat = ptr::null_mut() };
-    let min_size = match tc
+    let state = tc
         .stream
         .generate_integer(&BigInt::from(0u64), &BigInt::from(REPEAT_MAX_MIN_SIZE))
-    {
-        Ok(v) => u64::try_from(v).unwrap_or(REPEAT_MAX_MIN_SIZE),
-        Err(e) => return translate_ds_error(ctx, e),
-    };
-    match tc.stream.new_collection(min_size, None) {
+        .and_then(|v| {
+            let min_size = u64::try_from(v).unwrap_or(REPEAT_MAX_MIN_SIZE);
+            tc.stream.new_collection(min_size, None)
+        });
+    match state {
         Ok(state) => {
             unsafe {
                 *out_repeat = into_raw_send_sync(HegelRepeat {

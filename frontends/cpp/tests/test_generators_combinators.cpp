@@ -418,7 +418,7 @@ namespace {
 
     const gs::Generator<int> printable = gs::integers<int>();
     const gs::AnyGenerator<int> silent = gs::AnyGenerator<int>(printable);
-    const auto doubled = printable.map([](int v) { return v * 2; });
+    const auto evens = printable.map([](int v) { return v / 2 * 2; });
     const auto sealed = printable.map([](int v) { return Sealed(v); });
 } // namespace
 
@@ -430,7 +430,7 @@ TEST(HandleTypes, BuiltInGeneratorsArePrintable) {
     static_assert(std::is_same_v<decltype(gs::vectors(printable)),
                                  gs::Generator<std::vector<int>>>);
     static_assert(is_printable_handle<decltype(gs::just(1)), int>);
-    static_assert(is_printable_handle<decltype(doubled), int>);
+    static_assert(is_printable_handle<decltype(evens), int>);
 }
 
 TEST(HandleTypes, ASilentElementGivesASilentContainer) {
@@ -461,7 +461,7 @@ TEST(HandleTypes, AValueWithNoRepresentationIsSilent) {
 
 TEST(HandleTypes, FlatMapFollowsTheHandleItsFunctionReturns) {
     auto to_printable = printable.flat_map([](int) { return printable; });
-    auto to_mapped = printable.flat_map([](int) { return doubled; });
+    auto to_mapped = printable.flat_map([](int) { return evens; });
     auto to_silent = printable.flat_map([](int) { return silent; });
     auto to_sealed = silent.flat_map([](int) { return sealed; });
     static_assert(std::is_same_v<decltype(to_printable), gs::Generator<int>>);
@@ -472,8 +472,8 @@ TEST(HandleTypes, FlatMapFollowsTheHandleItsFunctionReturns) {
 }
 
 TEST(HandleTypes, AMappedHandleWorksWhereverAGeneratorDoes) {
-    auto mapped_vectors = gs::vectors(doubled, {.min_size = 1});
-    auto mixed = gs::one_of({printable, doubled});
+    auto mapped_vectors = gs::vectors(evens, {.min_size = 1});
+    auto mixed = gs::one_of({printable, evens});
     auto sealed_vectors = gs::vectors(sealed);
     static_assert(std::is_same_v<decltype(mapped_vectors),
                                  gs::Generator<std::vector<int>>>);
@@ -482,7 +482,7 @@ TEST(HandleTypes, AMappedHandleWorksWhereverAGeneratorDoes) {
                                  gs::AnyGenerator<std::vector<Sealed>>>);
     hegel::test(
         [&](hegel::TestCase& tc) {
-            int n = tc.draw(doubled);
+            int n = tc.draw(evens);
             EXPECT_EQ(n % 2, 0);
             std::vector<int> v = tc.draw(mapped_vectors);
             EXPECT_FALSE(v.empty());
