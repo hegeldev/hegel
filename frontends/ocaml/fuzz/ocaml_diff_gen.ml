@@ -15,13 +15,123 @@ type ty =
   | Pair of ty * ty
   | Arrow of ty * ty
   | Named of int
-  | Float_u (* OxCaml's unboxed float#: never inside a list, option or tuple *)
+  (* OxCaml only. The unboxed ones (U, UTuple, Or_null and unboxed records)
+     are only ever bound, passed, returned or stored in a record, tuple or
+     array that allows them, never inside a list, option or pair. *)
+  | Num of nb
+  | U of ub
+  | UTuple of ty list
+  | Or_null of ty
+  | Arr of ty
+
+and nb = I8 | I16 | I32 | Nat | F32
+and ub = UF | UF32 | UI | UI8 | UI16 | UI32 | UI64 | UNat
+
+let float_u = U UF
 
 (* Declared types refer only to earlier ones and hold only first-order
    values. *)
 type decl =
   | Record of (string * ty * bool) list (* name, type, mutable *)
   | Variant of (string * ty list) list
+  | URecord of (string * ty) list
+
+let num_name = function
+  | Int -> "int"
+  | Int64 -> "int64"
+  | Float -> "float"
+  | Num I8 -> "int8"
+  | Num I16 -> "int16"
+  | Num I32 -> "int32"
+  | Num Nat -> "nativeint"
+  | Num F32 -> "float32"
+  | U UF -> "float#"
+  | U UF32 -> "float32#"
+  | U UI -> "int#"
+  | U UI8 -> "int8#"
+  | U UI16 -> "int16#"
+  | U UI32 -> "int32#"
+  | U UI64 -> "int64#"
+  | U UNat -> "nativeint#"
+  | _ -> invalid_arg "num_name"
+;;
+
+let is_num = function
+  | Int | Int64 | Float | Num _ | U _ -> true
+  | _ -> false
+;;
+
+let is_float = function
+  | Float | Num F32 | U UF | U UF32 -> true
+  | _ -> false
+;;
+
+let width = function
+  | Int | U UI -> 63
+  | Num I8 | U UI8 -> 8
+  | Num I16 | U UI16 -> 16
+  | Num I32 | U UI32 -> 32
+  | _ -> 64
+;;
+
+(* The module with each number type's arithmetic, aliased in the prelude. *)
+let num_module = function
+  | Int -> "Int"
+  | Int64 -> "Int64"
+  | Float -> "Float"
+  | Num I8 -> "I8"
+  | Num I16 -> "I16"
+  | Num I32 -> "Int32"
+  | Num Nat -> "Nativeint"
+  | Num F32 -> "F32"
+  | U UF -> "Fu"
+  | U UF32 -> "F32u"
+  | U UI -> "Iu"
+  | U UI8 -> "I8u"
+  | U UI16 -> "I16u"
+  | U UI32 -> "I32u"
+  | U UI64 -> "I64u"
+  | U UNat -> "Natu"
+  | _ -> invalid_arg "num_module"
+;;
+
+let boxed_of = function
+  | U UF -> Float
+  | U UF32 -> Num F32
+  | U UI -> Int
+  | U UI8 -> Num I8
+  | U UI16 -> Num I16
+  | U UI32 -> Num I32
+  | U UI64 -> Int64
+  | U UNat -> Num Nat
+  | t -> t
+;;
+
+let all_nb = [ I8; I16; I32; Nat; F32 ]
+let all_ub = [ UF; UF32; UI; UI8; UI16; UI32; UI64; UNat ]
+
+(* Number conversions are externals declared ahead of the program as it uses
+   them; float-to-integer ones saturate, since out of range they are
+   unspecified. *)
+let convs = ref []
+
+let conv_ext a b =
+  let clean t = String.map (fun c -> if c = '#' then 'u' else c) (num_name t) in
+  let name = Printf.sprintf "cv_%s_%s" (clean a) (clean b) in
+  if not (List.mem_assoc name !convs) then convs := (name, (a, b)) :: !convs;
+  name
+;;
+
+let convert a b x =
+  if a = b
+  then x
+  else if is_float a && not (is_float b)
+  then (
+    let f = if a = Float then x else Printf.sprintf "(%s %s)" (conv_ext a Float) x in
+    let i = Printf.sprintf "(fsat %d %s)" (width b) f in
+    if b = Int64 then i else Printf.sprintf "(%s %s)" (conv_ext Int64 b) i)
+  else Printf.sprintf "(%s %s)" (conv_ext a b) x
+;;
 
 let rec show_ty = function
   | Int -> "int"
@@ -35,7 +145,14 @@ let rec show_ty = function
   | Pair (a, b) -> Printf.sprintf "(%s * %s)" (show_ty a) (show_ty b)
   | Arrow (a, b) -> Printf.sprintf "(%s -> %s)" (show_ty a) (show_ty b)
   | Named i -> Printf.sprintf "t%d" i
-  | Float_u -> "float#"
+  | U UF -> "float#"
+  | (Num _ | U _) as t when t <> Num I32 && t <> Num Nat -> num_module t ^ ".t"
+  | Num I32 -> "int32"
+  | Num Nat -> "nativeint"
+  | UTuple ts -> Printf.sprintf "#(%s)" (String.concat " * " (List.map show_ty ts))
+  | Or_null t -> Printf.sprintf "(%s or_null)" (show_ty t)
+  | Arr t -> Printf.sprintf "(%s array)" (show_ty t)
+  | Num _ | U _ -> assert false
 ;;
 
 (* Whether OxCaml features are generated. *)
@@ -45,12 +162,17 @@ let use_effect_syntax = ref false
 (* (child, parent): polymorphic variant t<child> extends t<parent>. *)
 let poly_parent = ref []
 
+(* (boxed, unboxed): an unboxed record type with a boxed record's fields. *)
+let twins = ref []
+
 (* Swarm testing: each program uses only some features, so the ones it does
    use are not crowded out, and a shrunk failure names the ones it needs. *)
 let all_features =
   [ "atomics"; "deep"; "effect_syntax"; "effects"; "exits"; "exns"; "gadt"; "gc"; "lazy"
   ; "locals"; "loops"; "manyargs"; "modules"; "opaque"; "partial"; "poly"; "records"
-  ; "recvals"; "shallow"; "strings"; "tmc"
+  ; "recvals"; "samebranch"; "shallow"; "strings"; "tmc"
+    (* OxCaml only *)
+  ; "arrays"; "mutables"; "numbers"; "or_null"; "urecords"; "utuples"
   ]
 
 let features = ref all_features
@@ -60,17 +182,27 @@ let on feature = List.mem feature !features
    them makes the feature show up in the programs that switch it on. *)
 let boost l = List.concat (List.init 5 (fun _ -> l))
 
-(* The declared types that hold a float#, whose values polymorphic comparison
-   rejects. *)
+(* The declared types that hold an unboxed or uncomparable value, which
+   polymorphic comparison rejects, and the unboxed records. *)
 let mixed = ref [||]
+let urec = ref [||]
 
+(* float32's polymorphic comparison of NaNs is left out. *)
 let rec first_order = function
-  | Int | Bool | Float | Char | Int64 | Str -> true
+  | Int | Bool | Float | Char | Int64 | Str | Num (I8 | I16 | I32 | Nat) -> true
   | Named i -> not !mixed.(i)
-  | Float_u -> false
+  | Num F32 | U _ | UTuple _ | Or_null _ | Arr _ -> false
   | List t | Option t -> first_order t
   | Pair (a, b) -> first_order a && first_order b
   | Arrow _ -> false
+;;
+
+(* Whether a value of the type can only be bound, passed, returned, or held
+   by an unboxed tuple or record or a record field. *)
+let restricted = function
+  | U _ | UTuple _ | Or_null _ -> true
+  | Named i -> !urec.(i)
+  | _ -> false
 ;;
 
 let rec printer = function
@@ -95,15 +227,19 @@ let rec printer = function
       (printer b)
   | Arrow _ -> {|(fun _ -> "<fun>")|}
   | Named i -> Printf.sprintf "show_t%d" i
-  | Float_u -> "(fun (x : float#) -> show_float (box_float x))"
+  | t when is_num t ->
+    if is_float t
+    then Printf.sprintf "(fun (x : %s) -> show_float %s)" (show_ty t) (convert t Float "x")
+    else Printf.sprintf "(fun (x : %s) -> Int64.to_string %s)" (show_ty t) (convert t Int64 "x")
+  | _ -> {|(fun _ -> "<unprintable>")|}
 ;;
 
-let rec has_float_u = function
-  | Float_u -> true
+let rec has_float_u t =
+  match t with
   | Named i -> !mixed.(i)
   | List t | Option t -> has_float_u t
   | Pair (a, b) -> has_float_u a || has_float_u b
-  | Int | Bool | Float | Char | Int64 | Str | Arrow _ -> false
+  | t -> not (first_order t) && (match t with Arrow _ -> false | _ -> true)
 ;;
 
 let declaration ?parent i decl =
@@ -117,9 +253,9 @@ let declaration ?parent i decl =
     let has t = List.exists (fun (_, t', _) -> t' = t) fields in
     let flatten =
       if
-        List.for_all (fun (_, t, _) -> t = Float || t = Float_u) fields
+        List.for_all (fun (_, t, _) -> t = Float || t = float_u) fields
         && has Float
-        && has Float_u
+        && has float_u
       then " [@@flatten_floats]"
       else ""
     in
@@ -131,6 +267,11 @@ let declaration ?parent i decl =
       i
       i
       (String.concat {| ^ "; " ^ |} (List.map show fields))
+  | URecord fields ->
+    p
+      "type t%d = #{ %s }\n"
+      i
+      (String.concat "; " (List.map (fun (f, t) -> p "%s : %s" f (show_ty t)) fields))
   | Variant constrs ->
     let constr (c, args) =
       match args with
@@ -213,6 +354,27 @@ let[@inline always] fu_sub x y = unbox_float (box_float x -. box_float y)
 let[@inline always] fu_mul x y = unbox_float (Sys.opaque_identity (box_float x *. box_float y))
 let[@inline never] fu_div x y = unbox_float (box_float x /. box_float y)
 let fu_sqrt x = unbox_float (sqrt (box_float x))
+module F32 = Stdlib_stable.Float32
+module F32u = Stdlib_stable.Float32_u
+module I8 = Stdlib_stable.Int8
+module I8u = Stdlib_stable.Int8_u
+module I16 = Stdlib_stable.Int16
+module I16u = Stdlib_stable.Int16_u
+module Iu = Stdlib_stable.Int_u
+module Fu = Stdlib_upstream_compatible.Float_u
+module I32u = Stdlib_upstream_compatible.Int32_u
+module I64u = Stdlib_upstream_compatible.Int64_u
+module Natu = Stdlib_upstream_compatible.Nativeint_u
+external array_make : ('a : any mod separable). int -> 'a -> 'a array = "%makearray_dynamic" [@@layout_poly]
+external array_get : ('a : any mod separable). 'a array -> int -> 'a = "%array_safe_get" [@@layout_poly]
+external array_set : ('a : any mod separable). 'a array -> int -> 'a -> unit = "%array_safe_set" [@@layout_poly]
+external array_length : ('a : any mod separable). 'a array -> int = "%array_length" [@@layout_poly]
+let fsat w f =
+  let b = Float.ldexp 1. (w - 1) in
+  if Float.is_nan f then 0L
+  else if f >= b then (if w = 64 then Int64.max_int else Int64.pred (Int64.shift_left 1L (w - 1)))
+  else if f < -. b then (if w = 64 then Int64.min_int else Int64.neg (Int64.shift_left 1L (w - 1)))
+  else Int64.of_float f
 |}
   else ""
 ;;
@@ -240,15 +402,17 @@ let span ctx f =
   draw_silent ctx.tc (Generators.Ppx_internal.composite_with_label ~label (fun _ -> f ()))
 ;;
 
-(* With [~unboxed], the type may be float#, which only a binding, a function
-   argument or result, or a record field can have. *)
+(* With [~unboxed], the type may be a [restricted] one, which only a binding,
+   a function argument or result, or a record field can have. *)
 let rec gen_ty ?(unboxed = false) ctx ~first_order depth =
   let sub () = gen_ty ctx ~first_order (depth - 1) in
   let named =
     List.filter
-      (fun i -> (not first_order) || not !mixed.(i))
+      (fun i -> ((not first_order) || not !mixed.(i)) && (unboxed || not !urec.(i)))
       (List.init (Array.length ctx.decls) Fun.id)
   in
+  let ox f = !ox_mode && on f in
+  let nums = List.map (fun n -> Num n) (if first_order then [ I8; I16; I32; Nat ] else all_nb) in
   choose
     ctx
     ([ (fun () -> Int)
@@ -263,7 +427,21 @@ let rec gen_ty ?(unboxed = false) ctx ~first_order depth =
      @ (if named <> []
         then [ (fun () -> Named (List.nth named (int_in ctx 0 (List.length named - 1)))) ]
         else [])
-     @ (if unboxed && !ox_mode then [ (fun () -> Float_u) ] else [])
+     @ (if unboxed && !ox_mode then [ (fun () -> float_u) ] else [])
+     @ (if ox "numbers" then List.map (fun t () -> t) nums else [])
+     @ (if unboxed && ox "numbers" then List.map (fun u () -> U u) all_ub else [])
+     @ (if unboxed && depth > 0 && ox "utuples"
+        then
+          [ (fun () ->
+              UTuple
+                (List.init (int_in ctx 2 3) (fun _ ->
+                   gen_ty ~unboxed:true ctx ~first_order (depth - 1))))
+          ]
+        else [])
+     @ (if unboxed && depth > 0 && ox "or_null" then [ (fun () -> Or_null (sub ())) ] else [])
+     @ (if (not first_order) && depth > 0 && ox "arrays"
+        then [ (fun () -> Arr (array_elem ctx (depth - 1))) ]
+        else [])
      @ (if depth = 0
         then []
         else
@@ -281,6 +459,14 @@ let rec gen_ty ?(unboxed = false) ctx ~first_order depth =
            let a = gen_ty ~unboxed:true ctx ~first_order (depth - 1) in
            Arrow (a, gen_ty ~unboxed:true ctx ~first_order (depth - 1)))
        ])
+
+(* Arrays hold numbers, boxed or not, or arrays of them. *)
+and array_elem ctx depth =
+  choose
+    ctx
+    ([ (fun () -> Int); (fun () -> Float); (fun () -> Int64) ]
+     @ (if on "numbers" then List.map (fun t () -> t) (List.map (fun n -> Num n) all_nb @ List.map (fun u -> U u) all_ub) else [ (fun () -> float_u) ])
+     @ if depth > 0 then [ (fun () -> Arr (array_elem ctx (depth - 1))) ] else [])
 ;;
 
 let any_ty ctx = gen_ty ctx ~first_order:false 2
@@ -305,7 +491,7 @@ let int_literal ctx =
     ]
 ;;
 
-let float_literal ctx =
+let rec float_literal ctx =
   choose
     ctx
     [ (fun () -> "0.")
@@ -321,7 +507,86 @@ let float_literal ctx =
     ; (fun () ->
         paren
           (p "%h" (draw_silent ctx.tc (floats ~allow_nan:false ~allow_infinity:false ()))))
+    ; (fun () -> p "(Int64.float_of_bits %s)" (float_bits ctx))
     ]
+
+(* Bit patterns at the edges: subnormals, the largest finite value, powers of
+   two a bit off, and NaNs with payloads. *)
+and float_bits ctx =
+  let edge =
+    [ 1L; 0x000fffffffffffffL; 0x0010000000000000L; 0x7fefffffffffffffL; 0x7ff0000000000000L
+    ; 0x7ff0000000000001L; 0x7ff8000000000001L; 0x3ff0000000000000L
+    ; Int64.bits_of_float (Float.ldexp 1. (int_in ctx (-1074) 1023))
+    ]
+  in
+  let bits =
+    Int64.add
+      (List.nth edge (int_in ctx 0 (List.length edge - 1)))
+      (Int64.of_int (int_in ctx (-1) 1))
+  in
+  let bits = if draw_silent ctx.tc (booleans ()) then Int64.logor bits Int64.min_int else bits in
+  if Int64.compare bits 0L < 0 then p "(%LdL)" bits else p "%LdL" bits
+;;
+
+let float32_bits ctx =
+  let edge = [ 1l; 0x007fffffl; 0x00800000l; 0x7f7fffffl; 0x7f800000l; 0x7f800001l; 0x7fc00001l; 0x3f800000l ] in
+  let bits =
+    Int32.add (List.nth edge (int_in ctx 0 (List.length edge - 1))) (Int32.of_int (int_in ctx (-1) 1))
+  in
+  let bits = if draw_silent ctx.tc (booleans ()) then Int32.logor bits Int32.min_int else bits in
+  if Int32.compare bits 0l < 0 then p "(%ldl)" bits else p "%ldl" bits
+;;
+
+(* A literal of a new number type: an integer in its range or a float32,
+   unboxed with # when the syntax allows and by conversion otherwise. *)
+let num_literal ctx t =
+  let w = width t in
+  let int_value () =
+    let lo = if w = 64 then Int64.min_int else Int64.neg (Int64.shift_left 1L (w - 1)) in
+    let hi = if w = 64 then Int64.max_int else Int64.pred (Int64.shift_left 1L (w - 1)) in
+    choose
+      ctx
+      [ (fun () -> 0L)
+      ; (fun () -> 1L)
+      ; (fun () -> -1L)
+      ; (fun () -> Int64.of_int (int_in ctx (-100) 100))
+      ; (fun () -> lo)
+      ; (fun () -> hi)
+      ; (fun () -> Int64.shift_left 1L (int_in ctx 0 (w - 2)))
+      ; (fun () ->
+          let x = Int64.of_int (draw_silent ctx.tc (integers ())) in
+          if w = 64 then x else Int64.rem x (Int64.shift_left 1L (w - 1)))
+      ]
+  in
+  let suffix = function
+    | Num I8 | U UI8 -> "s"
+    | Num I16 | U UI16 -> "S"
+    | Num I32 | U UI32 -> "l"
+    | Num Nat | U UNat -> "n"
+    | Int64 | U UI64 -> "L"
+    | _ -> ""
+  in
+  let f32 () =
+    choose
+      ctx
+      [ (fun () -> p "(F32.of_float %s)" (float_literal ctx))
+      ; (fun () -> p "(F32.of_bits %s)" (float32_bits ctx))
+      ]
+  in
+  match t with
+  | Num F32 -> f32 ()
+  | U UF32 -> convert (Num F32) t (f32 ())
+  | U UF -> convert Float t (float_literal ctx)
+  | U UI -> convert Int t (paren (Int64.to_string (int_value ())))
+  | Num _ ->
+    let v = int_value () in
+    paren (Int64.to_string v ^ suffix t)
+  | U _ ->
+    let v = int_value () in
+    if Int64.compare v 0L >= 0
+    then p "#%Ld%s" v (suffix t)
+    else convert (boxed_of t) t (paren (Int64.to_string v ^ suffix (boxed_of t)))
+  | _ -> invalid_arg "num_literal"
 ;;
 
 let char_literal ctx =
@@ -381,7 +646,7 @@ let rec literal ctx ty =
     if draw_silent ctx.tc (booleans ()) then p "(Some %s)" (literal ctx t) else "None"
   | Pair (a, b) -> p "(%s, %s)" (literal ctx a) (literal ctx b)
   | Arrow (a, b) -> p "(fun (_ : %s) -> %s)" (show_ty a) (literal ctx b)
-  | Float_u ->
+  | U UF ->
     choose
       ctx
       [ (fun () -> "#0.")
@@ -389,6 +654,11 @@ let rec literal ctx ty =
       ; (fun () -> "#0x1.8p+1")
       ; (fun () -> p "(unbox_float %s)" (float_literal ctx))
       ]
+  | Num _ | U _ -> num_literal ctx ty
+  | UTuple ts -> p "#(%s)" (String.concat ", " (List.map (literal ctx) ts))
+  | Or_null t ->
+    if draw_silent ctx.tc (booleans ()) then p "(This %s)" (literal ctx t) else "Null"
+  | Arr t -> p "[| %s |]" (String.concat "; " (List.init (int_in ctx 1 3) (fun _ -> literal ctx t)))
   | Named i ->
     (match ctx.decls.(i) with
      | Record fields ->
@@ -399,18 +669,38 @@ let rec literal ctx ty =
             (List.map (fun (f, t, _) -> p "%s = %s" f (literal ctx t)) fields))
      | Variant constrs ->
        let c, args = List.nth constrs (int_in ctx 0 (List.length constrs - 1)) in
-       construct c (List.map (literal ctx) args))
+       construct c (List.map (literal ctx) args)
+     | URecord fields ->
+       p "#{ %s }" (String.concat "; " (List.map (fun (f, t) -> p "%s = %s" f (literal ctx t)) fields)))
 
 and construct c = function
   | [] -> c
   | args -> p "(%s (%s))" c (String.concat ", " args)
 ;;
 
+(* [raise Exit] at any type; raise itself only returns a value. *)
+let rec raise_at ctx ty =
+  match ty with
+  | U UF -> "(unbox_float (raise Exit))"
+  | U _ -> convert (boxed_of ty) ty "(raise Exit)"
+  | UTuple ts -> p "#(%s)" (String.concat ", " (List.map (raise_at ctx) ts))
+  | Or_null _ -> "(This (raise Exit))"
+  | Named i ->
+    (match ctx.decls.(i) with
+     | URecord fields ->
+       p "#{ %s }" (String.concat "; " (List.map (fun (f, t) -> p "%s = %s" f (raise_at ctx t)) fields))
+     | _ -> "(raise Exit)")
+  | _ -> "(raise Exit)"
+;;
+
 let gen_decl ctx =
   if on "records" && draw_silent ctx.tc (booleans ())
   then (
     let all_float = draw_silent ctx.tc (booleans ~p:0.3 ()) in
-    let float = if !ox_mode && draw_silent ctx.tc (booleans ()) then Float_u else Float in
+    let float = if !ox_mode && draw_silent ctx.tc (booleans ()) then float_u else Float in
+    let unboxed () =
+      if on "numbers" then U (List.nth all_ub (int_in ctx 0 (List.length all_ub - 1))) else float_u
+    in
     Record
       (List.init (int_in ctx 1 4) (fun _ ->
          let f = fresh ctx "f" in
@@ -418,7 +708,7 @@ let gen_decl ctx =
            if all_float
            then float
            else if !ox_mode && draw_silent ctx.tc (booleans ~p:0.25 ())
-           then Float_u
+           then unboxed ()
            else fo_ty ctx
          in
          f, t, draw_silent ctx.tc (booleans ~p:0.3 ()))))
@@ -500,7 +790,7 @@ let rec pattern ?(top = false) ctx ty depth ~binds =
                ]))
       ]
     | Str -> [ (fun () -> none (string_literal ctx)) ]
-    | Float | Float_u | Arrow _ -> []
+    | Float | Arrow _ | Num _ | U _ | UTuple _ | Or_null _ | Arr _ -> []
     | List t ->
       [ (fun () -> none "[]")
       ; (fun () ->
@@ -546,7 +836,8 @@ let rec pattern ?(top = false) ctx ty depth ~binds =
            (fun (c, args) () ->
               let parts = List.map sub args in
               construct c (List.map fst parts), List.concat_map snd parts)
-           constrs)
+           constrs
+       | URecord _ -> [])
   in
   let combined =
     if structural = []
@@ -581,11 +872,12 @@ type env =
   ; locals : (string * ty) list
   ; in_try : bool
   ; effs : (string * ty * ty) list (* the effects a handler around here handles *)
+  ; muts : (string * ty) list (* [let mutable]s, which no closure can use *)
   }
 
 let bind env x t = { env with vars = (x, t) :: env.vars }
 let bind_local env x t = { env with locals = (x, t) :: env.locals }
-let closure env = { env with locals = [] }
+let closure env = { env with locals = []; muts = [] }
 
 (* A function that may be called after the handlers around it are gone. *)
 let escape env = { (closure env) with effs = [] }
@@ -627,7 +919,7 @@ let fo_env_ty ctx env =
 
 let rec expr ctx env ty depth =
   span ctx (fun () ->
-    let vars = List.filter (fun (_, t) -> t = ty) env.vars in
+    let vars = List.filter (fun (_, t) -> t = ty) (env.vars @ env.muts) in
     let unused = List.filter (fun (x, _) -> not (Hashtbl.mem ctx.used x)) vars in
     let use (x, _) =
       Hashtbl.replace ctx.used x ();
@@ -642,13 +934,13 @@ let rec expr ctx env ty depth =
       else (
         let l = literal ctx ty in
         (* Sys.opaque_identity keeps the compiler from folding the value away. *)
-        if ty <> Float_u && on "opaque" && draw_silent ctx.tc (booleans ~p:0.15 ())
+        if (not (restricted ty)) && on "opaque" && draw_silent ctx.tc (booleans ~p:0.15 ())
         then p "(Sys.opaque_identity %s)" l
         else l)
     in
     let performs = List.filter (fun (_, _, r) -> r = ty) env.effs in
     if env.in_try && draw_silent ctx.tc (booleans ~p:0.15 ())
-    then if ty = Float_u then "(unbox_float (raise Exit))" else "(raise Exit)"
+    then raise_at ctx ty
     else if
       depth <= 0
       || (unused <> [] && draw_silent ctx.tc (booleans ~p:0.5 ()))
@@ -680,8 +972,8 @@ let rec expr ctx env ty depth =
          are computed with rather than only passed around. *)
       let p_specific =
         match ty with
-        | Int | Bool | Float | Char | Int64 | Str | List _ -> 0.7
-        | Option _ | Pair _ | Arrow _ | Named _ | Float_u -> 0.4
+        | Int | Bool | Float | Char | Int64 | Str | List _ | Num _ | U _ | Arr _ -> 0.7
+        | Option _ | Pair _ | Arrow _ | Named _ | UTuple _ | Or_null _ -> 0.4
       in
       match other with
       | (x, t) :: _ when draw_silent ctx.tc (booleans ~p:0.3 ()) ->
@@ -696,7 +988,7 @@ let rec expr ctx env ty depth =
 
 and generic ctx env ty e =
   let fo = first_order ty in
-  let value = ty <> Float_u in
+  let value = not (restricted ty) in
   (* A scrutinee of type [s]: sometimes a local, whose components are then
      local too. *)
   let scrutinee env s =
@@ -852,10 +1144,30 @@ and generic ctx env ty e =
           (fun () -> from_env ctx env some_ty (fun () -> top_ty ctx))
       in
       let v, local = scrutinee env s in
+      let variants =
+        List.filter_map
+          (fun (j, d) ->
+             match d with
+             | Variant cs -> Some (j, cs)
+             | _ -> None)
+          (List.mapi (fun j d -> j, d) (Array.to_list ctx.decls))
+      in
       let v =
         match s with
         | Pair (a, b) when (not local) && draw_silent ctx.tc (booleans ~p:0.4 ()) ->
           p "%s, %s" (e env a) (e env b)
+        | Named k
+          when (not local) && List.mem_assoc k variants && draw_silent ctx.tc (booleans ~p:0.3 ()) ->
+          (* match-in-match: the inner match's opaque input hides which
+             constructor comes out, but each arm builds a known one. *)
+          let outs = List.assoc k variants in
+          let j, ins = List.nth variants (int_in ctx 0 (List.length variants - 1)) in
+          let off = int_in ctx 0 (List.length outs - 1) in
+          let arm idx (c, args) =
+            let c', args' = List.nth outs ((idx + off) mod List.length outs) in
+            p "| %s -> %s" (construct c (List.map (fun _ -> "_") args)) (construct c' (List.map (e env) args'))
+          in
+          p "(match Sys.opaque_identity %s with %s)" (e env (Named j)) (String.concat " " (List.mapi arm ins))
         | _ -> v
       in
       let arm () =
@@ -872,7 +1184,7 @@ and generic ctx env ty e =
       let arms =
         String.concat
           " "
-          (if (not local) && on "exits" && draw_silent ctx.tc (booleans ~p:0.2 ())
+          (if (not local) && (not (restricted s)) && on "exits" && draw_silent ctx.tc (booleans ~p:0.2 ())
            then arms @ [ p "| exception Exit -> %s" (e env ty) ]
            else arms)
       in
@@ -937,10 +1249,15 @@ and generic ctx env ty e =
                       p "(%s).%s" r f)
                 else None)
              fields
+         | URecord fields ->
+           List.filter_map
+             (fun (f, t) -> if t = ty then Some (fun () -> p "(%s).#%s" (e env (Named i)) f) else None)
+             fields
          | Variant _ -> [])
       (List.mapi (fun i d -> i, d) (Array.to_list ctx.decls))
+  @ (if !ox_mode then ox_forms ctx env ty e else [])
   @ (if env.in_try
-     then [ (fun () -> if value then "(raise Exit)" else "(unbox_float (raise Exit))") ]
+     then [ (fun () -> raise_at ctx ty) ]
      else [])
   @ (if !ox_mode && immediate ty && on "locals"
      then [ (fun () -> local_binding ctx env ty e) ]
@@ -975,6 +1292,11 @@ and generic ctx env ty e =
   @ (if value && on "manyargs" then [ (fun () -> many_args ctx env ty e) ] else [])
   @ boost (if value && on "gc" then [ (fun () -> gc ctx env ty e) ] else [])
   @ boost (if value && on "exns" then [ (fun () -> local_exn ctx env ty e) ] else [])
+  (* Both branches the same, so the join of their values is exact. *)
+  @ boost
+      (if on "samebranch"
+       then [ (fun () -> let c = e env Bool in let a = e env ty in p "(if %s then %s else %s)" c a a) ]
+       else [])
   @
   if (not fo) || not (on "loops")
   then []
@@ -983,9 +1305,10 @@ and generic ctx env ty e =
         let r = fresh ctx "r" in
         let i = fresh ctx "i" in
         p
-          "(let %s = ref %s in for %s = 0 to (%s land 7) do %s := %s done; !%s)"
+          "(let %s = ref (%s : %s) in for %s = 0 to (%s land 7) do %s := %s done; !%s)"
           r
           (e env ty)
+          (show_ty ty)
           i
           (e env Int)
           r
@@ -997,10 +1320,11 @@ and generic ctx env ty e =
         let lim = fresh ctx "lim" in
         let env' = bind env (p "!%s" r) ty in
         p
-          "(let %s = ref %s in let %s = ref 0 in let %s = %s land 7 in while !%s < %s && \
+          "(let %s = ref (%s : %s) in let %s = ref 0 in let %s = %s land 7 in while !%s < %s && \
            %s do %s := %s; incr %s done; !%s)"
           r
           (e env ty)
+          (show_ty ty)
           k
           lim
           (e env Int)
@@ -1233,10 +1557,16 @@ and atomic_op ctx env a ty e =
     let x = fresh ctx "c" and y = fresh ctx "c" in
     p "(let %s = %s in let %s = %s in Atomic.compare_and_set %s %s %s)" x seen y v a x y
   in
+  (* the old value stays live, so it can be spilled across the use *)
+  let keep_old op v =
+    let o = fresh ctx "old" in
+    p "(let %s = %s %s %s in ignore (Sys.opaque_identity %s))" o op a v (e (bind env o ty) ty)
+  in
   choose
     ctx
     ([ (fun () -> p "Atomic.set %s %s" a (e env ty))
      ; (fun () -> p "ignore (Atomic.exchange %s %s)" a (e env ty))
+     ; (fun () -> keep_old "Atomic.exchange" (e env ty))
      ; (fun () -> p "ignore %s" (cas (p "Atomic.get %s" a) (e env ty)))
      ; (fun () -> p "ignore %s" (cas (e env ty) (e env ty)))
      ; (fun () ->
@@ -1251,6 +1581,7 @@ and atomic_op ctx env a ty e =
      match ty with
      | Int ->
        [ (fun () -> p "ignore (Atomic.fetch_and_add %s %s)" a (e env Int))
+       ; (fun () -> keep_old "Atomic.fetch_and_add" (e env Int))
        ; (fun () -> p "Atomic.incr %s" a)
        ; (fun () -> p "Atomic.decr %s" a)
        ]
@@ -1262,8 +1593,8 @@ and atomic_op ctx env a ty e =
 and local_binding ctx env ty e =
   let s =
     match any_ty ctx with
-    | (Int | Bool | Float | Char | Int64 | Str | Arrow _ | Float_u) as t -> Option t
-    | t -> t
+    | (List _ | Option _ | Pair _ | Named _) as t -> t
+    | t -> Option t
   in
   let x = fresh ctx "l" in
   let allocation env =
@@ -1288,8 +1619,9 @@ and local_binding ctx env ty e =
             Some
               (fun () ->
                 let c, args = List.nth constrs (int_in ctx 0 (List.length constrs - 1)) in
-                construct c (List.map (e env) args))))
-    | Int | Bool | Float | Char | Int64 | Str | Arrow _ | Float_u -> None
+                construct c (List.map (e env) args)))
+       | URecord _ -> None)
+    | _ -> None
   in
   let source =
     let mk = fresh ctx "mk" in
@@ -1314,6 +1646,113 @@ and local_binding ctx env ty e =
   in
   p "(let local_ %s : %s = %s in %s)" x (show_ty s) source (e (bind_local env x s) ty)
 
+(* OxCaml forms for any type: taking apart an unboxed tuple or an or_null,
+   reading an array at an index kept in bounds, and a [let mutable] updated
+   in a loop. *)
+and ox_forms ctx env ty e =
+  (if on "utuples"
+   then
+     [ (fun () ->
+         let ts =
+           from_env
+             ctx
+             env
+             (function
+               | UTuple ts when List.mem ty ts -> Some ts
+               | _ -> None)
+             (fun () -> if draw_silent ctx.tc (booleans ()) then [ ty; top_ty ctx ] else [ top_ty ctx; ty ])
+         in
+         let xs = List.map (fun t -> fresh ctx "u", t) ts in
+         p
+           "(let #(%s) = %s in %s)"
+           (String.concat ", " (List.map fst xs))
+           (e env (UTuple ts))
+           (e (List.fold_left (fun env (x, t) -> bind env x t) env xs) ty))
+     ]
+   else [])
+  @ (if on "or_null"
+     then
+       [ (fun () ->
+           let s =
+             env_ty ctx env (function
+               | Or_null s -> Some s
+               | _ -> None)
+           in
+           let x = fresh ctx "x" in
+           p "(match %s with Null -> %s | This %s -> %s)" (e env (Or_null s)) (e env ty) x (e (bind env x s) ty))
+       ]
+     else [])
+  @ (if on "arrays" && (is_num ty || match ty with Arr _ -> true | _ -> false)
+     then
+       [ (fun () ->
+           let a = fresh ctx "a" in
+           p "(let %s = %s in array_get %s ((%s land max_int) mod array_length %s))" a (e env (Arr ty)) a (e env Int) a)
+       ]
+     else [])
+  @
+  if on "mutables" && (match ty with UTuple _ | Or_null _ -> false | Named i -> not !urec.(i) | _ -> true)
+  then
+    [ (fun () ->
+        let x = fresh ctx "mu" in
+        let i = fresh ctx "i" in
+        let env' = { (bind env i Int) with muts = (x, ty) :: env.muts } in
+        p
+          "(let mutable %s : %s = %s in for %s = 0 to (%s land 7) do %s <- %s done; %s)"
+          x
+          (show_ty ty)
+          (e env ty)
+          i
+          (e env Int)
+          x
+          (e env' ty)
+          x)
+    ]
+  else []
+
+(* Arithmetic on the newer number types, and conversions into them. *)
+and num_ops ctx env t e =
+  let m = num_module t in
+  let call f args () = p "(%s.%s %s)" m f (String.concat " " (List.map (e env) args)) in
+  let from () =
+    let nums = [ Int; Int64; Float ] @ List.map (fun n -> Num n) all_nb @ List.map (fun u -> U u) all_ub in
+    let s = List.nth nums (int_in ctx 0 (List.length nums - 1)) in
+    convert s t (e env s)
+  in
+  from
+  :: (if is_float t
+      then
+        [ call "add" [ t; t ]; call "sub" [ t; t ]; call "div" [ t; t ]; call "neg" [ t ]; call "abs" [ t ]; call "sqrt" [ t ]
+          (* opaque so arm64 cannot fuse the product into an fmadd *)
+        ; (fun () ->
+            let b = boxed_of t in
+            convert b t (p "(Sys.opaque_identity %s)" (convert t b (p "(%s.mul %s %s)" m (e env t) (e env t)))))
+        ]
+      else
+        List.map (fun f -> call f [ t; t ]) [ "add"; "sub"; "mul"; "logand"; "logor"; "logxor" ]
+        @ [ call "neg" [ t ]
+          ; (fun () ->
+              let w = width t in
+              let sh = choose ctx (List.map (fun s () -> s) [ "shift_left"; "shift_right"; "shift_right_logical" ]) in
+              let count =
+                choose
+                  ctx
+                  [ (fun () -> string_of_int (List.nth [ 0; 1; w - 2; w - 1 ] (int_in ctx 0 3)))
+                  ; (fun () -> p "(%s land %d)" (e env Int) (if w = 63 then 31 else w - 1))
+                  ]
+              in
+              p "(%s.%s %s %s)" m sh (e env t) count)
+          ])
+
+(* Comparing two numbers of one of the newer types, through int64 or float. *)
+and num_compare ctx env e =
+  let nums = List.map (fun n -> Num n) all_nb @ List.map (fun u -> U u) all_ub in
+  let t = List.nth nums (int_in ctx 0 (List.length nums - 1)) in
+  let hub = if is_float t then Float else Int64 in
+  let m = if is_float t then "Float" else "Int64" in
+  let a = convert t hub (e env t) in
+  let b = convert t hub (e env t) in
+  choose ctx [ (fun () -> p "(%s.compare %s %s < 0)" m a b); (fun () -> p "(%s.equal %s %s)" m a b) ]
+
 and specific ctx env ty e =
   let bin op t = fun () -> p "(%s %s %s)" (e env t) op (e env t) in
   let call f args = fun () -> p "(%s %s)" f (String.concat " " (List.map (e env) args)) in
@@ -1324,6 +1763,9 @@ and specific ctx env ty e =
     @ List.map (fun f -> call f [ Int; Int ]) [ "min"; "max"; "sdiv"; "smod" ]
     @ [ (fun () -> p "(%s / %s)" (e env Int) (nonzero ctx))
       ; (fun () -> p "(%s mod %s)" (e env Int) (nonzero ctx))
+      ; (fun () ->
+          let op = choose ctx (List.map (fun o () -> o) [ "/"; "mod" ]) in
+          p "(try %s %s 0 with Division_by_zero -> %s)" (e env Int) op (e env Int))
       ; (fun () ->
           let op = choose ctx (List.map (fun o () -> o) [ "lsl"; "lsr"; "asr" ]) in
           let amount =
@@ -1345,6 +1787,10 @@ and specific ctx env ty e =
       ; call "Int64.to_int" [ Int64 ]
       ; (fun () -> p "(sgn (Int64.compare %s %s))" (e env Int64) (e env Int64))
       ]
+    @ (if !ox_mode && on "numbers" then [ List.hd (num_ops ctx env Int e) ] else [])
+    @ (if !ox_mode && on "arrays"
+       then [ (fun () -> p "(array_length %s)" (e env (Arr (array_elem ctx 1)))) ]
+       else [])
   | Bool ->
     [ call "not" [ Bool ]
     ; bin "&&" Bool
@@ -1354,6 +1800,7 @@ and specific ctx env ty e =
     ; call "String.contains" [ Str; Char ]
     ; (fun () -> p "(String.starts_with ~prefix:%s %s)" (e env Str) (e env Str))
     ]
+    @ (if !ox_mode && on "numbers" then [ (fun () -> num_compare ctx env e) ] else [])
     @ List.map
         (fun op () ->
            let s = fo_env_ty ctx env in
@@ -1383,7 +1830,8 @@ and specific ctx env ty e =
         (fun f -> call f [ Float; Float ])
         [ "Float.min"; "Float.max"; "Float.rem" ]
     @ [ call "Float.of_int" [ Int ]; call "Float.fma" [ Float; Float; Float ] ]
-    @ if !ox_mode then [ call "box_float" [ Float_u ] ] else []
+    @ (if !ox_mode then [ call "box_float" [ float_u ] ] else [])
+    @ if !ox_mode && on "numbers" then [ List.hd (num_ops ctx env Float e) ] else []
   | Char ->
     [ (fun () -> p "(Char.chr (%s land 255))" (e env Int))
     ; call "Char.lowercase_ascii" [ Char ]
@@ -1422,6 +1870,7 @@ and specific ctx env ty e =
           in
           p "(%s %s (%s land 63))" op (e env Int64) (e env Int))
       ]
+    @ if !ox_mode && on "numbers" then [ List.hd (num_ops ctx env Int64 e) ] else []
   | Str ->
     [ bin "^" Str
     ; call "ssub" [ Str; Int; Int ]
@@ -1507,11 +1956,43 @@ and specific ctx env ty e =
           store
           b)
     ]
-  | Float_u ->
+  | U UF ->
     List.map
-      (fun f -> call f [ Float_u; Float_u ])
+      (fun f -> call f [ float_u; float_u ])
       [ "fu_add"; "fu_sub"; "fu_mul"; "fu_div" ]
-    @ [ call "fu_sqrt" [ Float_u ]; call "unbox_float" [ Float ] ]
+    @ [ call "fu_sqrt" [ float_u ]; call "unbox_float" [ Float ] ]
+    @ if on "numbers" then num_ops ctx env ty e else []
+  | Num _ | U _ -> num_ops ctx env ty e
+  | UTuple ts -> [ (fun () -> p "#(%s)" (String.concat ", " (List.map (e env) ts))) ]
+  | Or_null t -> [ (fun () -> "Null"); (fun () -> p "(This %s)" (e env t)) ]
+  | Arr t ->
+    let n () = p "(1 + (%s land 7))" (e env Int) in
+    [ (fun () -> p "[| %s |]" (String.concat "; " (List.init (int_in ctx 1 3) (fun _ -> e env t))))
+    ; (fun () -> p "(array_make %s %s)" (n ()) (e env t))
+    ; (fun () ->
+        (* each index comes from the loop, so it is in bounds *)
+        let a = fresh ctx "a" in
+        let i = fresh ctx "i" in
+        let env' = bind (bind env i Int) (p "(array_get %s %s)" a i) t in
+        p
+          "(let %s = array_make %s %s in for %s = 0 to array_length %s - 1 do array_set %s %s %s done; %s)"
+          a
+          (n ())
+          (e env t)
+          i
+          a
+          a
+          i
+          (e env' t)
+          a)
+    ]
+    @ (match t with
+       | Arr _ ->
+         [ (fun () ->
+             let i = fresh ctx "i" in
+             p "(Array.init %s (fun (%s : int) -> %s))" (n ()) i (e (bind (closure env) i Int) t))
+         ]
+       | _ -> [])
   | List t ->
     [ (fun () -> p "(%s :: %s)" (e env t) (e env ty))
     ; (fun () -> p "[%s; %s]" (e env t) (e env t))
@@ -1576,6 +2057,27 @@ and specific ctx env ty e =
     ]
   | Named i ->
     (match ctx.decls.(i) with
+     | URecord fields ->
+       let build () = String.concat "; " (List.map (fun (f, t) -> p "%s = %s" f (e env t)) fields) in
+       [ (fun () -> p "#{ %s }" (build ()))
+       ; (fun () ->
+           let f, t = List.nth fields (int_in ctx 0 (List.length fields - 1)) in
+           p "#{ %s with %s = %s }" (e env ty) f (e env t))
+       ]
+       @ List.filter_map
+           (fun (b, u) ->
+              if u <> i
+              then None
+              else
+                Some
+                  (fun () ->
+                    let s = fresh ctx "s" in
+                    p
+                      "(let %s = %s in #{ %s })"
+                      s
+                      (e env (Named b))
+                      (String.concat "; " (List.map (fun (f, _) -> p "%s = %s.%s" f s (String.sub f 1 (String.length f - 1))) fields))))
+           !twins
      | Variant constrs ->
        List.map (fun (c, args) () -> construct c (List.map (e env) args)) constrs
        @ List.concat_map
@@ -1595,6 +2097,20 @@ and specific ctx env ty e =
            let f, t, _ = List.nth fields (int_in ctx 0 (List.length fields - 1)) in
            p "{ %s with %s = %s }" (e env ty) f (e env t))
        ]
+       @ List.filter_map
+           (fun (b, u) ->
+              if b <> i
+              then None
+              else
+                Some
+                  (fun () ->
+                    let s = fresh ctx "s" in
+                    p
+                      "(let %s = %s in { %s })"
+                      s
+                      (e env (Named u))
+                      (String.concat "; " (List.map (fun (f, _, _) -> p "%s = %s.#u%s" f s f) fields))))
+           !twins
        @
        (* Only a record the expression itself allocates is mutated, and only
           before it is returned, so no other expression can observe it. *)
@@ -1796,7 +2312,7 @@ and local_exn ctx env ty e =
 
 (* A deferred computation, forced where its value is used. *)
 and lazy_value ctx env ty e =
-  let s = from_env ctx env (fun t -> if t = Float_u then None else Some t) (fun () -> any_ty ctx) in
+  let s = from_env ctx env (fun t -> if restricted t then None else Some t) (fun () -> any_ty ctx) in
   let l = fresh ctx "lz" in
   let x = fresh ctx "x" in
   (* An effect could leave a lazy mid-force for good, so none happens inside. *)
@@ -1967,8 +2483,8 @@ and tmc ctx env t e =
       ]
   in
   p
-    "(let[@tail_mod_cons] rec %s (%s : int) : %s = if %s <= 0 then %s else %s in %s (%s \
-     land 15))"
+    "(let[@tail_mod_cons] rec %s (%s : int) : %s = if %s <= 0 then %s else %s in \
+     (%s[@tailcall false]) (%s land 15))"
     go
     n
     (show_ty (List t))
@@ -2097,29 +2613,54 @@ let program ?(ox = false) ?(effect_syntax = false) tc =
   features := List.filter (fun _ -> draw_silent tc (booleans ())) all_features;
   use_effect_syntax := effect_syntax;
   mixed := [||];
+  urec := [||];
+  twins := [];
+  convs := [];
+  let head = p "(* features: %s *)\n%s" (String.concat " " !features) (prelude ()) in
   let buf = Buffer.create 1024 in
-  Buffer.add_string buf (p "(* features: %s *)\n" (String.concat " " !features));
-  Buffer.add_string buf (prelude ());
-  for i = 0 to int_in ctx 0 4 - 1 do
-    let decl = gen_decl ctx in
+  let add decl =
+    let i = Array.length ctx.decls in
     ctx.decls <- Array.append ctx.decls [| decl |];
     mixed
     := Array.append
          !mixed
          [| (match decl with
              | Record fields -> List.exists (fun (_, t, _) -> has_float_u t) fields
+             | URecord _ -> true
              | Variant constrs ->
                List.exists (fun (_, args) -> List.exists has_float_u args) constrs)
          |];
+    urec := Array.append !urec [| (match decl with URecord _ -> true | _ -> false) |];
     let parent =
       Option.map
         (fun j ->
            match ctx.decls.(j) with
            | Variant cs -> j, cs
-           | Record _ -> assert false)
+           | Record _ | URecord _ -> assert false)
         (List.assoc_opt i !poly_parent)
     in
-    Buffer.add_string buf (declaration ?parent i decl)
+    Buffer.add_string buf (declaration ?parent i decl);
+    i
+  in
+  let urecords = ox && on "urecords" in
+  for _ = 1 to int_in ctx 0 4 do
+    let decl = gen_decl ctx in
+    let i = add decl in
+    (match decl with
+     | Record fields when urecords && draw_silent ctx.tc (booleans ()) ->
+       let u = add (URecord (List.map (fun (f, t, _) -> "u" ^ f, t) fields)) in
+       twins := (i, u) :: !twins
+     | _ -> ());
+    if urecords && draw_silent ctx.tc (booleans ~p:0.3 ())
+    then
+      ignore
+        (add
+           (URecord
+              (List.init (int_in ctx 1 3) (fun _ ->
+                 ( fresh ctx "uf"
+                 , match gen_ty ~unboxed:true ctx ~first_order:false 1 with
+                   | Or_null _ -> Int
+                   | t -> t )))))
   done;
   let depth = int_in ctx 2 7 in
   let count = int_in ctx 1 6 in
@@ -2133,7 +2674,7 @@ let program ?(ox = false) ?(effect_syntax = false) tc =
          let r = base () in
          Buffer.add_string buf (p "type _ Effect.t += %s : %s -> %s Effect.t\n" c (show_ty a) (show_ty r));
          c, a, r);
-  let env = ref { vars = []; locals = []; in_try = false; effs = [] } in
+  let env = ref { vars = []; locals = []; in_try = false; effs = []; muts = [] } in
   let globals =
     List.init (if on "atomics" then int_in ctx 0 2 else 0) (fun _ ->
       let g = fresh ctx "g" in
@@ -2179,5 +2720,13 @@ let program ?(ox = false) ?(effect_syntax = false) tc =
          v);
     env := bind !env v ty
   done;
-  Buffer.contents buf
+  let conversions =
+    String.concat
+      ""
+      (List.rev_map
+         (fun (name, (a, b)) ->
+            p "external %s : %s -> %s = \"%%%s_of_%s\"\n" name (show_ty a) (show_ty b) (num_name b) (num_name a))
+         !convs)
+  in
+  head ^ conversions ^ Buffer.contents buf
 ;;

@@ -8,9 +8,10 @@
    -O3 -linscan and an aggressive -O3 with it; a crash fails the run even when
    every backend crashes.
 
-   With --ox, the programs also use OxCaml features (unboxed float#, mixed
-   records, local and stack allocation, inlining attributes) and are compiled
-   only by flambda2 switches, at -Oclassic, the default level, and -O3.
+   With --ox, the programs also use OxCaml features (unboxed numbers, tuples
+   and records, or_null, arrays, let mutable, local and stack allocation) and
+   are compiled only by flambda2 switches, at -Oclassic, the default level,
+   and -O3, plus a toggles backend.
 
    dune exec fuzz/ocaml_diff.exe -- [--sample] [--ox] [TEST_CASES] *)
 
@@ -63,12 +64,24 @@ let discover ~ox =
       let flambda = config "flambda" = Some "true" || flambda2 in
       (* the compiler's own consistency checks, so a broken invariant fails
          the compile instead of hiding in the output *)
+      (* OxCaml programs use the unboxed number modules of these libraries *)
+      let libs ext =
+        if ox
+        then
+          [ "-I"; "+stdlib_stable"; "-I"; "+stdlib_upstream_compatible"; "stdlib_stable" ^ ext
+          ; "stdlib_upstream_compatible" ^ ext
+          ]
+        else []
+      in
       let nat flags =
         (ocamlopt :: "-dcmm-invariants" :: (if flambda then [ "-dflambda-invariants" ] else []))
+        @ libs ".cmxa"
         @ flags
       in
       (* the reference: bytecode on the debug runtime *)
-      let byte = { name = p "%s/ocamlc" switch; argv = [ ocamlc; "-runtime-variant"; "d" ] } in
+      let byte =
+        { name = p "%s/ocamlc" switch; argv = (ocamlc :: libs ".cma") @ [ "-runtime-variant"; "d" ] }
+      in
       if ox
       then
         if not flambda2
@@ -251,6 +264,16 @@ let run_all ?(source_for = Fun.const Fun.id) backends source =
        in
        let dirs, files = List.split dirs in
        let exe dir = Filename.concat dir "prog.exe" in
+       (* macOS scans each new executable on its first launch, which takes up
+          to 2s; bytecode skips that by starting the already-seen runtime. *)
+       let run b dir =
+         let c = List.hd b.argv in
+         if String.starts_with ~prefix:"ocamlc" (Filename.basename c)
+         then (
+           let d = List.mem "d" b.argv in
+           [ Filename.concat (Filename.dirname c) (if d then "ocamlrund" else "ocamlrun"); exe dir ])
+         else [ exe dir ]
+       in
        let compiles =
          List.map2
            (fun b (dir, files) ->
@@ -261,11 +284,11 @@ let run_all ?(source_for = Fun.const Fun.id) backends source =
        let compiled = wait_all ~timeout:120. (List.map fst compiles) in
        let runs =
          List.map2
-           (fun dir status ->
+           (fun (b, dir) status ->
               match status with
-              | Exited 0 -> Some (spawn ~dir [ exe dir ])
+              | Exited 0 -> Some (spawn ~dir (run b dir))
               | _ -> None)
-           dirs
+           (List.combine backends dirs)
            compiled
        in
        let ran = wait_all ~timeout:10. (List.filter_map (Option.map fst) runs) in
@@ -334,6 +357,30 @@ end
 |}
 ;;
 
+(* ocaml/ocaml#15154: ocamlopt without flambda cannot size an allocation
+   field that is a mutable let, such as an unused ref.
+   ocaml/ocaml#15171: releases before trunk crash on a redundant or-pattern
+   with a guard after a catch-all; 5.2 (and so OxCaml) reports it as
+   Matching.comp_exit.
+   Unreported: OxCaml -Oclassic keeps a dead trap handler around a call that
+   cannot raise, and linscan reads a ref there from a register nothing set.
+   oxcaml/oxcaml#7668, #7705: -Oclassic, a raise inside a try (Array.iter2 in
+   Cfg_selectgen). #7704: -flambda2-expert-inline-effects-in-cmm.
+   #7683: -Oclassic, a float# read in an unreachable match arm.
+   #7701, #7702: -use-ssa's validator rejects the SSA pipeline's CFG.
+   Unreported: OxCaml on arm64 emits fmov with a float32# constant it cannot
+   encode, (1 + m/16) * 2^k for k in 61..68, and the assembler rejects it. *)
+let known_compile_crash msg =
+  contains msg "Selection.size_expr"
+  || contains msg "Matching: impossible empty matrix in a Total match"
+  || contains msg "Matching.comp_exit"
+  || contains msg "While verifying locations destroyed at raise"
+  || contains msg "Array.iter2: arrays must have the same length"
+  || contains msg "Duplicate order for bindings when flushing"
+  || contains msg "Illegal move between registers of differing types"
+  || contains msg "CFG comparison MISMATCH"
+  || (contains msg "expected compatible register or floating-point constant" && contains msg "fmov");;
+
 let known_bug backends results source =
   let obs = List.map observable results in
   let reference = List.hd obs in
@@ -342,22 +389,21 @@ let known_bug backends results source =
       (fun (b, o) -> if o = reference then None else Some b.name)
       (List.combine backends obs)
   in
-  (* ocaml/ocaml#15154: ocamlopt without flambda cannot size an allocation
-     field that is a mutable let, such as an unused ref. *)
-  let size_expr =
+  let compile_crash =
     odd <> []
     && List.for_all
          (fun r ->
             observable r = reference
             ||
             match r with
-            | Compile_error msg -> contains msg "Selection.size_expr"
-            | Ran _ -> false)
+            | Compile_error msg -> known_compile_crash msg
+            (* oxcaml/oxcaml#7684: -flambda2-reaper with phantom lets aborts at run time. *)
+            | Ran (_, _, err) -> contains err "Dead variable in bound pattern")
          results
   in
-  size_expr
+  compile_crash
   ||
-  (* Unreported: after a nested perform, native code leaves a shallow fiber's
+  (* ocaml/ocaml#15196: after a nested perform, native code leaves a shallow fiber's
      effect handler pointing into the minor heap, so the GC later crashes on
      it. It is that bug only if every crashing backend, rebuilt with the debug
      runtime, fails the runtime's check for it. *)
@@ -367,7 +413,7 @@ let known_bug backends results source =
            (not (List.mem b.name odd))
            ||
            match r with
-           | Ran (Signaled s, _, _) -> s = Sys.sigbus || s = Sys.sigsegv || s = Sys.sigabrt
+           | Ran (Signaled s, _, _) -> List.mem s Sys.[ sigbus; sigsegv; sigabrt; sigtrap ]
            | _ -> false)
         (List.combine backends results)
    && List.for_all
@@ -387,16 +433,32 @@ let known_bug backends results source =
      the native Atomic exchange, compare-and-set and fetch-and-add results out
      of their arguments' registers. It is that bug only if the odd backends
      agree once those are ordinary calls. *)
-  odd <> []
-  && contains source "Atomic."
-  && List.for_all
-       (fun n -> contains n "trunk" && String.ends_with ~suffix:"-linscan" n)
-       odd
-  &&
-  let odd_backends = List.filter (fun b -> List.mem b.name odd) backends in
-  List.for_all
-    (fun r -> observable r = reference)
-    (run_all odd_backends (atomic_shim ^ source))
+  (odd <> []
+   && contains source "Atomic."
+   && List.for_all
+        (fun n -> contains n "trunk" && String.ends_with ~suffix:"-linscan" n)
+        odd
+   &&
+   let odd_backends = List.filter (fun b -> List.mem b.name odd) backends in
+   List.for_all
+     (fun r -> observable r = reference)
+     (run_all odd_backends (atomic_shim ^ source)))
+  ||
+  (* ocaml/ocaml#15202: flambda's -Oclassic reads a constant field of a lifted
+     block as the block itself. It is that bug only if the odd backends agree
+     when compiled by OCAML_DIFF_FIXED_OCLASSIC, an ocamlopt with the fix. *)
+  match Sys.getenv_opt "OCAML_DIFF_FIXED_OCLASSIC" with
+  | None -> false
+  | Some fixed ->
+    odd <> []
+    && List.for_all (fun n -> contains n "flambda/" && String.ends_with ~suffix:"-Oclassic" n) odd
+    &&
+    let odd_backends =
+      List.filter_map
+        (fun b -> if List.mem b.name odd then Some { b with argv = fixed :: List.tl b.argv } else None)
+        backends
+    in
+    List.for_all (fun r -> observable r = reference) (run_all odd_backends source)
 ;;
 
 (* Every backend's compiler is OCaml 5.3 or later, so it has effect syntax. *)
@@ -449,19 +511,53 @@ let ox_toggles =
   ; "-flambda2-inline-threshold 1000 -flambda2-inline-max-depth 6"
   ; "-flambda2-cse-depth 0"; "-flambda2-join-depth 0"; "-regalloc irc"; "-regalloc ls"
   ; "-regalloc gi"; "-regalloc-linscan-threshold 0"; "-runtime-variant d"
+  ; "-flambda2-reaper"; "-flambda2-expert-inline-effects-in-cmm"; "-use-ssa"
+    (* oxfuzzer's aggressive configuration *)
+  ; "-flambda2-result-types-all-functions"; "-flambda2-expert-can-inline-recursive-functions"
+  ; "-flambda2-match-in-match"; "-flambda2-join-algorithm n-way"; "-experimental-optimizations"
   ]
+;;
+
+(* Newer switches add flags, so each compiler only gets the ones its -help lists. *)
+let help = Hashtbl.create 4
+
+let supports compiler toggle =
+  let text =
+    match Hashtbl.find_opt help compiler with
+    | Some t -> t
+    | None ->
+      let t = Option.value ~default:"" (read_process [| compiler; "-help" |]) in
+      Hashtbl.add help compiler t;
+      t
+  in
+  contains text ("  " ^ List.hd (String.split_on_char ' ' toggle) ^ " ")
 ;;
 
 let with_toggles tc backends =
   let level =
-    List.nth [ "-O3"; ""; "-O2"; "-Oclassic" ] (draw_silent tc (integers ~min_value:0 ~max_value:3 ()))
+    List.nth [ "-O3"; ""; "-O2"; "-Oclassic"; "-O4" ] (draw_silent tc (integers ~min_value:0 ~max_value:4 ()))
   in
   let picked = List.filter (fun _ -> draw_silent tc (booleans ~p:0.08 ())) ox_toggles in
-  let flags = List.concat_map (String.split_on_char ' ') (level :: picked) |> List.filter (( <> ) "") in
   List.map
     (fun b ->
        if String.ends_with ~suffix:"-toggles" b.name
-       then { name = p "%s %s" b.name (String.concat " " flags); argv = b.argv @ flags }
+       then (
+         let picked = List.filter (supports (List.hd b.argv)) picked in
+         let flags =
+           List.concat_map (String.split_on_char ' ') (level :: picked) |> List.filter (( <> ) "")
+         in
+         let reaper = List.mem "-flambda2-reaper" flags || List.mem "-O4" flags in
+         (* The reaper with phantom lets leaves dangling symbols (#7684 and
+            unreported link failures), so the two are never combined. *)
+         let flags = if reaper then List.filter (( <> ) "-flambda2-expert-phantom-lets") flags else flags in
+         (* The reaper (also on at -O4) trips -dcmm-invariants with
+            oxcaml/oxcaml#7737, so with it the output is what gets checked. *)
+         let argv =
+           if reaper
+           then List.filter (( <> ) "-dcmm-invariants") b.argv
+           else b.argv
+         in
+         { name = p "%s %s" b.name (String.concat " " flags); argv = argv @ flags })
        else b)
     backends
 ;;
@@ -476,6 +572,13 @@ let check ~ox ~effect_syntax backends tc =
   incr cases;
   let source = Ocaml_diff_gen.program ~ox ~effect_syntax tc in
   note tc source;
+  (* -dcmm-invariants counts a call returning an unboxed tuple or record as
+     one value, so it rejects every handler that takes the results apart. *)
+  let backends =
+    if ox && (contains source "#(" || contains source "#{")
+    then List.map (fun b -> { b with argv = List.filter (( <> ) "-dcmm-invariants") b.argv }) backends
+    else backends
+  in
   (* -linscan miscompiles native atomics on trunk (see [known_bug]), so it
      gets them as ordinary calls. *)
   let source_for b source =
@@ -491,6 +594,14 @@ let check ~ox ~effect_syntax backends tc =
         | Ran _ -> false)
       results
   then (
+    if List.for_all
+         (function
+           | Compile_error msg -> known_compile_crash msg
+           | Ran _ -> false)
+         results
+    then (
+      incr known;
+      assume tc false);
     let crashed =
       List.exists
         (function

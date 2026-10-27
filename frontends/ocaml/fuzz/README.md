@@ -19,8 +19,9 @@ dune exec fuzz/ocaml_diff.exe -- [--sample] [--ox] [TEST_CASES]
 
 ## Files
 
-- `ocaml_diff_gen.ml`: the program generator. Its only export is
-  `program ?ox ?effect_syntax tc`, which returns a program's source.
+- `ocaml_diff_gen.ml`: the program generator. It exports
+  `program ?ox ?effect_syntax tc`, which returns a program's source, and
+  `module_boundary`, the line at which a program splits into two modules.
 - `ocaml_diff.ml`: the driver. It finds the backends, compiles and runs each
   program, compares the results and filters out known bugs.
 - `run.sh` and `watch.sh`: scripts for long unattended runs (see below).
@@ -28,9 +29,13 @@ dune exec fuzz/ocaml_diff.exe -- [--sample] [--ox] [TEST_CASES]
 ## Long runs
 
 ```
-OCAML_DIFF_SWITCHES=ocaml-trunkfix,ocaml-trunkfix-flambda fuzz/run.sh <dir> <hours> <workers>
+OCAML_DIFF_SWITCHES=ocaml-trunkfix,ocaml-trunkfix-flambda \
+OCAML_DIFF_EXTRA="ocaml-5.5.1/ocamlc=$(opam var --switch ocaml-5.5.1 bin)/ocamlc -runtime-variant d" \
+  fuzz/run.sh <dir> <hours> <workers>
 fuzz/watch.sh <dir>
 ```
+
+Arguments after `<workers>`, such as `--ox`, go to every fuzzer.
 
 `run.sh` builds the fuzzer and copies the binary to `<dir>/fuzz.exe`, so you
 can keep editing and rebuilding without disturbing the run. It then starts
@@ -69,7 +74,9 @@ thing. The generator keeps these rules:
   sign the same everywhere. Results of `compare` go through `sgn`, because only
   their sign is specified.
 - **Totality.** Division, `mod` and `String.sub` go through the prelude's
-  `sdiv`, `smod`, `i64div`, `i64rem` and `ssub`, which can't fail. Loop bounds
+  `sdiv`, `smod`, `i64div`, `i64rem` and `ssub`, which can't fail, or divide
+  by a non-zero literal. Division by a literal `0` only appears inside
+  `try ... with Division_by_zero`. Loop bounds
   are masked (`land 7`). Recursive functions count down a masked counter.
   Programs don't rely on bounds checks, which is why `-unsafe` backends are
   allowed.
@@ -122,16 +129,46 @@ one of these:
   - `gc`: fresh allocations stay live across `Gc.minor`, `Gc.full_major` or
     `Gc.compact`, then get used.
   - `local_exn`: a local exception carries a value out of a function.
+  - `rec_value`: recursive value definitions, for `value_rec_compiler`: a
+    cyclic list read through the prelude's `take`, a lazy and a function
+    that refer to each other, a tuple holding the function that reads it,
+    and mutually recursive functions.
+  - `tmc`: a `[@tail_mod_cons]` list builder whose recursive call sits under
+    `::`, possibly inside an `if`, `let` or `match`.
+  - `str_match`: a `match` on string literals that share prefixes around
+    the 8-byte word, for the compiler's string-matching code.
   - `lazy_value`: a `lazy` that is forced where its value is used.
   - `gadt`: a term of the prelude's GADT.
   - `atomic_op`, `local_atomic`: `Atomic` updates in a loop.
   - `str_load`: string reads at offsets inside the string's padding.
+  - `samebranch`: `if` with the same expression in both branches, such as
+    a constant tuple, so the optimiser joins identical values.
   - Effects: deep handlers (`handler`), shallow handlers that resume the
     fiber again and again (`shallow`), and OCaml 5.3's
     `match ... with effect` syntax (`effect_match`). Handlers may continue,
     discontinue with `Exit`, or drop the continuation.
   - With `--ox`: `let local_`/`stack_`/`exclave_` bindings and `float#`
-    arithmetic.
+    arithmetic. Ideas from OxCaml's own oxfuzzer (`tools/oxfuzzer`), each a
+    swarm feature: `numbers` (`float32`, `int8`, `int16`, `int32`, `nativeint`
+    and the unboxed `#` forms of every number type, with their arithmetic and
+    conversions between all of them; float-to-integer conversions saturate,
+    as out of range they are unspecified), `utuples` (`#(...)`), `urecords`
+    (`#{...}`, some the twin of a boxed record so values convert between the
+    two), `or_null`, `arrays` (multi-dimensional, unboxed elements, filled by
+    a loop whose index keeps every access in bounds) and `mutables`
+    (`let mutable` updated in a loop). The programs link `stdlib_stable` and
+    `stdlib_upstream_compatible`.
+  - Floats also come from bit patterns (subnormals, the largest finite value,
+    powers of two one ulp off, NaN payloads), and a match's scrutinee is
+    sometimes itself a match on an opaque value that builds known
+    constructors (match-in-match).
+
+With the `modules` feature, a `(* module boundary *)` line splits the
+program: everything before it becomes `m1.ml`, and the rest becomes
+`prog.ml`, which starts with `open M1`. Both are compiled in one command
+without `-opaque`, so native backends inline across the two modules through
+`.cmx` files. The output is the same as for the unsplit program, since `M1`
+runs first.
 
 Literals favour edge values such as `min_int`, `max_int`, `-0.`, subnormals
 and infinities.
@@ -159,8 +196,8 @@ from 37% to about 27%, with programs about the same size.
 
 Each program turns on a random subset of features: `atomics`, `deep`,
 `effect_syntax`, `effects`, `exits`, `exns`, `gadt`, `gc`, `lazy`, `locals`,
-`loops`, `manyargs`, `opaque`, `partial`, `poly`, `records`, `shallow` and
-`strings`. A feature that is off is never generated. A feature that is on has
+`loops`, `manyargs`, `modules`, `opaque`, `partial`, `poly`, `records`,
+`recvals`, `samebranch`, `shallow`, `strings` and `tmc`. A feature that is off is never generated. A feature that is on has
 its forms repeated five times (`boost`) among the choices, so it actually
 shows up. The program's first line lists its features
 (`(* features: ... *)`). Because the feature flags are Hegel draws, shrinking
@@ -185,7 +222,27 @@ the switches named. Each switch contributes:
   `-O3 -linscan`, and an aggressive `-O3` (`-unbox-closures -inline 1000
   -rounds 4 -inline-max-depth 3 -remove-unused-arguments -unsafe`).
 - **With `--ox`** (flambda2 switches only): `ocamlc`, and `ocamlopt` at
-  `-Oclassic`, the default level and `-O3`.
+  `-Oclassic`, the default level and `-O3`, plus a toggles backend. For each
+  program, the toggles backend draws an optimisation level and a few
+  switches that must not change the result (`ox_toggles`: CFG passes,
+  register allocators, flambda2 knobs at extremes, `-vectorize`, DWARF,
+  the reaper, `-use-ssa` and so on). A switch only gets the flags its
+  `ocamlopt -help` lists. These are Hegel draws, so shrinking also cuts the flags down to
+  the ones a failure needs. The backend's name in a report lists its flags.
+
+`ocamlc` always uses the debug runtime (`-runtime-variant d`), whose
+assertions catch heap corruption. So does one native backend per switch (the
+`-unsafe -inline` or aggressive one). Every `ocamlopt` runs with
+`-dcmm-invariants`, and with flambda also `-dflambda-invariants`, so a broken
+compiler invariant fails the compile rather than hiding in the output.
+
+The first backend, the switch's `ocamlc`, is the reference. A release
+compiler's bytecode makes a second reference:
+`OCAML_DIFF_EXTRA="ocaml-5.5.1/ocamlc=<bin>/ocamlc -runtime-variant d"`.
+That catches front-end bugs (pattern matching, `[@tail_mod_cons]`, recursive
+values) that trunk's bytecode and native code share. A difference only
+against the release may be a bug that trunk fixed or a documented change, so
+check trunk's `Changes` before reporting it.
 
 `OCAML_DIFF_EXTRA="name=compiler flags;..."` adds more backends. Effect
 syntax is only generated when every backend is OCaml 5.3 or later.
@@ -223,21 +280,65 @@ a `failure_blobs` line that reproduces it.
 
 `known_bug` recognises bugs that are already found, so a long run can keep
 looking for new ones. Each check looks at which backends disagree with the
-majority result (the "odd" backends), and confirms the bug by behaviour rather
+reference (the first backend; these are the "odd" backends), and confirms the bug by behaviour rather
 than by the text of the source:
 
 - **ocaml/ocaml#15154:** `ocamlopt` without flambda fails to compile some
   programs, with `Selection.size_expr` in the error.
-- **Unreported effect-handler bug:** after a nested `perform`, native code
+- **ocaml/ocaml#15171:** releases before trunk (5.5.1 and older) crash with
+  `Matching: impossible empty matrix in a Total match` on a redundant
+  or-pattern with a guard after a catch-all. 5.2, and so OxCaml, reports it as
+  `Matching.comp_exit` instead. Without `--ox`, only the release reference
+  hits it. This check also applies when every backend fails to compile.
+- **oxcaml/oxcaml#7668, #7705, #7704, #7683:** OxCaml compile crashes
+  (`Array.iter2: arrays must have the same length`, `Duplicate order for
+  bindings when flushing`, `Illegal move between registers of differing
+  types`). **#7701, #7702:** `-use-ssa` fails with `CFG comparison MISMATCH`.
+  This filter hides every `-use-ssa` validator failure, so new ones there go
+  unseen. **#7684:** with `-flambda2-reaper`, the binary aborts with
+  `Dead variable in bound pattern`.
+- **oxcaml/oxcaml#7737:** with the reaper (`-flambda2-reaper`, or `-O4`),
+  `-dcmm-invariants` reports `Continuation N was declared with 0 arguments but
+  called with 1`, though the program runs correctly. Rather than filter it,
+  the toggles backend drops `-dcmm-invariants` whenever it draws either flag,
+  so those programs still have their output checked.
+- **`-dcmm-invariants` and unboxed products:** the check counts a call that
+  returns an unboxed tuple or record as one value, so it rejects the handler
+  that takes the results apart, at every level. Programs with `#(` or `#{`
+  are compiled without it.
+- **Unreported OxCaml arm64 `fmov` bug:** a `float32#` constant
+  (1 + m/16) × 2^k with k from 61 to 68 is emitted as an `fmov` immediate,
+  which it cannot be, so the assembler fails with `expected compatible
+  register or floating-point constant`.
+- **Unreported OxCaml reaper link failure:** with `-flambda2-reaper` (or
+  `-O4`) at `-O3`, plus `-g -flambda2-expert-phantom-lets`, the reaper can
+  delete a function's code but keep the partial-application stub that calls
+  it, so linking fails with `Undefined symbols ... _code`. Constants of
+  another module (`camlM1__const_block_4`, `camlM1__immstring_0`) can dangle
+  the same way. The toggles backend never combines phantom lets with the
+  reaper.
+- **Unreported OxCaml `-Oclassic` regalloc check failure:** a `try` whose body
+  cannot raise (such as `Float.rem`) and whose handler reads a local `ref`
+  keeps a dead trap handler, and linscan's validator fails with
+  `While verifying locations destroyed at raise`. The handler never runs, so
+  only compilation is affected.
+- **ocaml/ocaml#15196:** after a nested `perform`, native code
   leaves a shallow fiber's effect handler pointing into the minor heap. A
-  program matches when every odd backend died with SIGBUS or SIGSEGV, and every
+  program matches when every odd backend died with SIGBUS, SIGSEGV, or SIGABRT or
+  SIGTRAP (a debug-runtime assertion), and every
   one of them, rebuilt with `-runtime-variant d`, fails
   `Assertion failed: !Is_young(v)`.
 - **ocaml/ocaml#15189:** trunk's `-linscan` miscompiles native `Atomic`
   operations. A program matches when the odd backends are all trunk `-linscan`
-  ones and they agree with the majority once `Atomic` is replaced by ordinary
+  ones and they agree with the reference once `Atomic` is replaced by ordinary
   functions (`atomic_shim`). To keep this bug from hiding others, `-linscan`
   backends always get the shim when the program uses `Atomic`.
+- **ocaml/ocaml#15202:** flambda's `-Oclassic` reads a constant field of a
+  lifted block (such as the `'a'` in `if b then ('a', 1) else ('a', 1)`) as
+  the block's address. Set `OCAML_DIFF_FIXED_OCLASSIC` to an `ocamlopt` built
+  with the fix; a program then matches when the odd backends are all flambda
+  `-Oclassic` ones and agree with the reference when compiled by it. Without
+  the variable, the bug stops the run.
 
 With `OCAML_DIFF_SAVE=dir`, each program that matched a known bug is written
 to `dir/known<pid>-<n>.ml`, so the filter can be checked.
