@@ -1,0 +1,28 @@
+; The workload runs on Jane Street's Parallel scheduler through
+; hegel.jane.concurrent, so it needs OxCaml. Elsewhere it builds a stub that
+; says so.
+
+(executable
+ (name workload)
+ (libraries
+  hegel
+  sexplib0
+  unix
+  (select
+   workload.ml
+   from
+   (hegel_jane_concurrent
+    concurrent
+    parallel.kernel
+    parallel.scheduler
+    ->
+    workload.ox.ml)
+   (-> workload.upstream.ml)))
+ (preprocess
+  (pps
+   ppx_js_style
+   ppx_hegel_test
+   --
+   -allow-unannotated-ignores
+   -check
+   -locations-check)))
