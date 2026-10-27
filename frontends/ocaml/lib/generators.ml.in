@@ -53,17 +53,6 @@ end
 module Ppx_internal = struct
   module Labels = Generators_core.Labels
 
-  let draw_and_print (type a p) tc printer (gen : (a, p) Generators_core.generator) ~sexp_of =
-    match gen with
-    | Generators_core.Printable { core; _ } -> Generators_core.do_draw core tc printer
-    | Generators_core.Unprintable { core } ->
-      let value = Generators_core.do_draw core tc Printer.Out.noop in
-      Printer.Out.sexp printer sexp_of value;
-      value
-    | Generators_core.Dependent { core } ->
-      Generators_core.do_draw (Generators_core.with_sexp_fallback sexp_of core) tc printer
-  ;;
-
   let explicit_draw tc ~name ~source value (_ : _ Generators_core.generator) =
     Internal.explicit_draw tc ~name ~source value
   ;;
@@ -73,10 +62,6 @@ module Ppx_internal = struct
   ;;
 
   let%template with_printers = (Generators_core.with_printers [@mode m])
-  [@@mode m = (nonportable, portable)]
-  ;;
-
-  let%template with_sexp_of = (Generators_core.with_sexp_of [@mode m])
   [@@mode m = (nonportable, portable)]
   ;;
 end

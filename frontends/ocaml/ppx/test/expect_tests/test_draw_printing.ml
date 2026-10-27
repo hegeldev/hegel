@@ -690,10 +690,12 @@ type negative =
   | Negative of
       (int
       [@hegel.generator
-        Hegel.map (fun n -> -n) (Hegel.integers ~min_value:5 ~max_value:5 ())])
+        Hegel.with_ocaml_printer
+          Hegel.Printer.int
+          (Hegel.map (fun n -> -n) (Hegel.integers ~min_value:5 ~max_value:5 ()))])
 [@@deriving hegel_generator]
 
-let%expect_test "a negative fallback s-expression is parenthesized" =
+let%expect_test "a negative constructor argument is parenthesized" =
   run_failing (fun tc ->
     let _ = Hegel.draw tc hegel_generator_negative in
     assert false);
@@ -709,12 +711,14 @@ let%expect_test "a negative fallback s-expression is parenthesized" =
 ;;
 
 type dependent =
-  { unprinted :
+  { inner_printed :
       (int
       [@hegel.generator
         Hegel.flat_map
           (fun n ->
-             Hegel.map (fun m -> m + 1) (Hegel.integers ~min_value:n ~max_value:n ()))
+             Hegel.with_ocaml_printer
+               Hegel.Printer.int
+               (Hegel.map (fun m -> m + 1) (Hegel.integers ~min_value:n ~max_value:n ())))
           (Hegel.integers ~min_value:4 ~max_value:4 ())])
   ; filtered :
       (int
@@ -723,7 +727,10 @@ type dependent =
           (fun _ -> true)
           (Hegel.flat_map
              (fun n ->
-                Hegel.map (fun m -> -m) (Hegel.integers ~min_value:n ~max_value:n ()))
+                Hegel.map_as_call
+                  "Int.neg"
+                  (fun m -> -m)
+                  (Hegel.integers ~min_value:n ~max_value:n ()))
              (Hegel.integers ~min_value:6 ~max_value:6 ()))])
   ; printed :
       (int list
@@ -743,11 +750,14 @@ type dependent_alias =
   (int
   [@hegel.generator
     Hegel.flat_map
-      (fun n -> Hegel.map (fun m -> m * 10) (Hegel.integers ~min_value:n ~max_value:n ()))
+      (fun n ->
+         Hegel.with_ocaml_printer
+           Hegel.Printer.int
+           (Hegel.map (fun m -> m * 10) (Hegel.integers ~min_value:n ~max_value:n ())))
       (Hegel.integers ~min_value:7 ~max_value:7 ())])
 [@@deriving hegel_generator]
 
-let%expect_test "a flat_map field with no printer prints its value as an s-expression" =
+let%expect_test "a flat_map field prints as the generator its function returns" =
   run_failing (fun tc ->
     let _ = Hegel.draw tc hegel_generator_dependent in
     let _ = Hegel.draw tc hegel_generator_dependent_alias in
@@ -760,7 +770,7 @@ let%expect_test "a flat_map field with no printer prints its value as an s-expre
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    let draw_1 = { unprinted = 5; filtered = -6; printed = [2] } in
+    let draw_1 = { inner_printed = 5; filtered = Int.neg 6; printed = [2] } in
     let draw_2 = 70 in
     let draw_3 = [70] in
     Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed

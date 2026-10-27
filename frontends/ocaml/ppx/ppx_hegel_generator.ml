@@ -24,9 +24,9 @@
     and every derived generator is printable, with [sexp_of_<t>] as its
     printer. A derived generator prints what it draws as OCaml syntax, as it
     draws it: it opens the record, constructor or tuple on the printer, and
-    each part prints itself inside it ([Ppx_internal.draw_and_print], which
-    prints the s-expression of the part's type when the part's generator does
-    not print). *)
+    each part prints itself inside it ([Hegel.Generators.draw_and_print]).
+    Every part's generator must therefore be printable: a [[@hegel.generator]]
+    override or a type alias whose generator cannot print is a type error. *)
 
 open Ppxlib
 
@@ -180,11 +180,10 @@ and draw_all ~portable ~loc ~tc ~printer ~before (types : core_type list) k =
          i
          [%expr
            let [%p Ast_builder.Default.pvar ~loc v] =
-             [%e internal ~loc "draw_and_print"]
+             Hegel.Generators.draw_and_print
                [%e Ast_builder.Default.evar ~loc tc]
                [%e Ast_builder.Default.evar ~loc printer]
                [%e generator_expr_of_core_type ~portable ct]
-               ~sexp_of:[%e Ppx_compat.sexp_of_core_type ct]
            in
            [%e acc]])
     (List.mapi (fun i x -> i, x) named)
@@ -623,9 +622,8 @@ let generate_impl
     | Ptype_variant constrs, _ -> generator_of_variant ~portable ~loc ~type_name constrs
     | Ptype_abstract, Some ct ->
       [%expr
-        [%e with_mode ~portable (internal ~loc "with_sexp_of")]
-          ~sexp_of:[%e sexp_of_type_name ~loc type_name]
-          [%e generator_expr_of_core_type ~portable ct]]
+        ([%e generator_expr_of_core_type ~portable ct]
+         : (_, Hegel.Generators.printable) Hegel.Generators.generator)]
     | Ptype_abstract, None ->
       Location.raise_errorf
         ~loc

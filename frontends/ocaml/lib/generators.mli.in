@@ -1514,16 +1514,6 @@ module Ppx_internal : sig
     val enum_variant : Internal.Label.t
   end
 
-  (** [draw_and_print tc printer gen ~sexp_of] draws from [gen], printing
-      the value to [printer]: as [gen] prints it when [gen] is printable,
-      else, once drawn, as the s-expression [sexp_of] gives. *)
-  val draw_and_print
-    :  Internal.test_case
-    -> Printer.Out.t
-    -> ('a, 'p) generator
-    -> sexp_of:('a -> Sexplib0.Sexp.t)
-    -> 'a
-
   (** [explicit_draw tc ~name ~source value gen] is [value], the value an
       [[@@example]] gives, written [source], for the binding [name] of a draw
       from [gen]. The [let%hegel_test] PPX substitutes it for the draw in the
@@ -1552,15 +1542,6 @@ module Ppx_internal : sig
   val%template with_printers
     :  sexp_of:('a -> Sexplib0.Sexp.t) MODE(m)
     -> print:('a -> Printer.doc) MODE(m)
-    -> ('a, 'p) generator MODE(m)
-    -> ('a, printable) generator MODE(m)
-  [@@mode m = (nonportable, portable)]
-
-  (** [with_sexp_of ~sexp_of gen] is [gen] made printable with [sexp_of] as
-      its printer. A printable [gen] keeps its display; an unprintable one
-      displays its values as the s-expressions [sexp_of] gives. *)
-  val%template with_sexp_of
-    :  sexp_of:('a -> Sexplib0.Sexp.t) MODE(m)
     -> ('a, 'p) generator MODE(m)
     -> ('a, printable) generator MODE(m)
   [@@mode m = (nonportable, portable)]

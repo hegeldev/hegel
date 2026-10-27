@@ -73,9 +73,6 @@ module Out = Printer.Out
     - [Printed] draws its source silently, then prints the finished value
       with [print]: value printing, behind {!with_printer} and
       {!with_ocaml_printer}.
-    - [Sexp_fallback] draws its source with each [Silent] inner core in it
-      printing its value as the s-expression [sexp_of] gives: how a derived
-      type prints a {!flat_map} whose generators have no printer.
     - [Deferred] draws from the core [get] returns, which is defined after
       the [Deferred] is built, so a definition can refer to itself.
 
@@ -134,11 +131,6 @@ type 'a core CROSSING =
       ; print : ('a -> Printer.doc)
       }
       -> 'a core
-  | Sexp_fallback :
-      { source : 'a core
-      ; sexp_of : ('a -> Sexp.t)
-      }
-      -> 'a core
   | Deferred :
       { get : (unit -> 'a core option)
       ; label : Internal.Label.t
@@ -163,8 +155,7 @@ let rec label_of_core : type a. a core -> Internal.Label.t = function
   | Composite { label; _ } -> label
   | Values _ -> Labels.pool
   | Function { label; _ } -> label
-  | Printed { source; _ } | Sexp_fallback { source; _ } ->
-    label_of_core source
+  | Printed { source; _ } -> label_of_core source
   | Deferred { label; _ } -> label
 ;;
 
@@ -307,20 +298,6 @@ let%template with_printers
   =
   fun ~sexp_of ~print gen ->
   Printable { core = (with_display [@mode m]) print ((core_of [@mode m]) gen); sexp_of }
-[@@mode m = (nonportable, portable)]
-;;
-
-(** [with_sexp_of ~sexp_of gen] is [gen] made printable with [sexp_of] as its
-    printer. A printable [gen] keeps its display; an unprintable one displays
-    its values as the s-expressions [sexp_of] gives. *)
-let%template with_sexp_of
-  : type a p. sexp_of:(a -> Sexp.t) MODE(m) -> (a, p) generator MODE(m) -> (a, printable) generator MODE(m)
-  =
-  fun ~sexp_of gen ->
-  match gen with
-  | Printable { core; _ } -> Printable { core; sexp_of }
-  | Unprintable _ -> (with_printer [@mode m]) sexp_of gen
-  | Dependent { core } -> Printable { core = Sexp_fallback { source = core; sexp_of }; sexp_of }
 [@@mode m = (nonportable, portable)]
 ;;
 
@@ -702,24 +679,6 @@ let rec flatten_filter (core : 'a core) (predicate : 'a -> bool) =
   | _ -> core, predicate
 ;;
 
-(** [with_sexp_fallback sexp_of core] is [core] with each [Silent] inner core
-    drawn inside its [FlatMapped]s printing its value as the s-expression
-    [sexp_of] gives, instead of [<abstr>]. *)
-let rec with_sexp_fallback : type a. (a -> Sexp.t) -> a core -> a core =
-  fun sexp_of core ->
-  match core with
-  | FlatMapped { source; f; label } ->
-    let f x =
-      match f x with
-      | Printing core -> Printing (with_sexp_fallback sexp_of core)
-      | Silent source -> Printing (Printed { source; print = Printer.of_sexp sexp_of })
-    in
-    FlatMapped { source; f; label }
-  | Filtered { source; predicate; label } ->
-    Filtered { source = with_sexp_fallback sexp_of source; predicate; label }
-  | core -> core
-;;
-
 (** [do_draw core data printer] produces a typed value from generation
     structure [core] using the given test case [data], printing it to
     [printer] as it draws. *)
@@ -785,7 +744,6 @@ let rec do_draw : type a. a core -> Internal.test_case -> Out.t -> a =
     let value = do_draw source data Out.noop in
     Out.value printer print value;
     value
-  | Sexp_fallback { source; sexp_of } -> do_draw (with_sexp_fallback sexp_of source) data printer
   | Deferred { get; _ } ->
     (match get () with
      | None -> raise (Internal.Usage_error "deferred generator drawn from before it is defined")

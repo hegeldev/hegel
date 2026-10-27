@@ -182,7 +182,11 @@ type with_opaque =
   { id : int
   ; handle :
       (ungeneratable
-      [@sexp.opaque] [@hegel.generator composite (fun _ -> { thunk = Fun.id })])
+      [@sexp.opaque]
+      [@hegel.generator
+        with_ocaml_printer
+          (fun _ -> Hegel.Printer.opaque)
+          (composite (fun _ -> { thunk = Fun.id }))])
   }
 [@@deriving hegel_generator]
 
@@ -499,11 +503,6 @@ module Plain_nat = struct
   [@@deriving hegel_generator]
 end
 
-(** An alias whose generator has no printer: it prints through [sexp_of_<t>]. *)
-type mapped_alias =
-  (int[@hegel.generator Hegel.map succ (Hegel.integers ~min_value:0 ~max_value:0 ())])
-[@@deriving hegel_generator]
-
 (** A recursive variant: [Leaf] is the leaf, [Node] the branch. *)
 type tree =
   | Leaf of int
@@ -673,8 +672,6 @@ let test_printer_e2e () =
   check_shown "alias of a tuple" Plain_derived.hegel_generator_alias (fun (n, b) ->
     tuple [ int n; bool b ]);
   check_shown "alias" hegel_generator_label string;
-  check_shown "alias of an unprintable generator" hegel_generator_mapped_alias (fun _ ->
-    text "1");
   let rec print_tree = function
     | Leaf n -> constructor "Leaf" [ int n ]
     | Node (l, r) -> constructor "Node" [ print_tree l; print_tree r ]
@@ -694,8 +691,8 @@ let test_printer_e2e () =
   check_shown "recursive record" hegel_generator_chain print_chain
 ;;
 
-(** Test: an [[@sexp.opaque]] field prints as the opaque placeholder while
-    [[@hegel.generator]] supplies its values. *)
+(** Test: an [[@sexp.opaque]] field is opaque in [sexp_of], and prints as
+    its [[@hegel.generator]] prints. *)
 let%hegel_test test_opaque_field_e2e tc =
   let w = Hegel.draw tc hegel_generator_with_opaque in
   ignore (w.id : int);
@@ -705,7 +702,7 @@ let%hegel_test test_opaque_field_e2e tc =
   in
   assert (String.is_substring rendered ~substring:"opaque");
   let _, rendered = Hegel.Generators.Private.render_draw tc hegel_generator_with_opaque in
-  assert (String.is_substring rendered ~substring:"handle = <opaque>")
+  assert (String.is_substring rendered ~substring:"handle = <abstr>")
 [@@settings Hegel.Settings.create ~test_cases:20 ~seed:0 ()]
 ;;
 

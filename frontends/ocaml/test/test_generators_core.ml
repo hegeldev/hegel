@@ -427,17 +427,6 @@ let test_make_generators () =
   check_shown "hash table display" tables "((1 2))"
 ;;
 
-let test_display_unprintable_parts () =
-  Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:1 ()) (fun tc ->
-    Alcotest.(check string)
-      "falls back on sexp_of"
-      "3"
-      (Printer.Out.with_document (fun printer ->
-         ignore
-           (Ppx_internal.draw_and_print tc printer (just 3) ~sexp_of:Core.Int.sexp_of_t
-            : int))))
-;;
-
 let test_display_structures () =
   check_shown "list" (lists (int_gen 1) ~min_size:3 ~max_size:3 ()) "[1; 1; 1]";
   check_shown
@@ -594,7 +583,6 @@ let tests =
   ; Alcotest.test_case "display primitives" `Quick test_display_primitives
   ; Alcotest.test_case "display filter delegates" `Quick test_display_filter_delegates
   ; Alcotest.test_case "display with_printer" `Quick test_display_with_printer
-  ; Alcotest.test_case "display unprintable parts" `Quick test_display_unprintable_parts
   ; Alcotest.test_case "make_characters, make_hash_tables" `Quick test_make_generators
   ; Alcotest.test_case "display structures" `Quick test_display_structures
   ; Alcotest.test_case "display one_of" `Quick test_display_one_of

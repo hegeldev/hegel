@@ -369,7 +369,7 @@ name the same value, and the templated portable instances come along. A new
 constructor goes in `Public` only; `Generators` stays the documented reference. Project code prefers the unqualified form
 wherever `open Hegel` is already in scope.
 
-A generator is `('a, 'p) generator = Printable of { core; sexp_of } | Unprintable of { core } | Dependent of { core }`: the phantom `'p` (`printable`/`unprintable`, private polymorphic variants) is what makes `draw` require a printer, and `sexp_of` is what `printer` returns. What a draw prints comes from the core, not from `sexp_of`: the core prints as it draws (`do_draw core tc printer`, see Pretty printing), so a container prints element by element and each element as its own generator prints it. Value printing is the escape hatch: `with_ocaml_printer print` and `with_printer sexp_of` wrap the core in a `Printed` core that draws its source silently and prints the finished value, so a user's `with_printer` prints exactly the s-expression it returns. `map_as_call name f` prints a mapped value as `name <source as it prints>`, and `printable_composite` is a hand-written printable core (a `Composite` whose `generate_fn` gets the printer). `Dependent` is the one constructor whose `'p` is not fixed: `flat_map` returns it, typed with the printability of the generators `f` returns, and prints the inner draw. `FlatMapped`'s function returns an `inner`: `Printing core`, or `Silent core` for an unprintable generator (drawn silently, printed as `<abstr>`); a derived type supplies its `sexp_of` through `Sexp_fallback` (or `Ppx_internal.draw_and_print`), which `with_sexp_fallback` turns into printing those `Silent` draws as s-expressions. `printer` of a `Dependent` is `<abstr>`. `rewrap` keeps a generator's printability across `filter`/`recursive`.
+A generator is `('a, 'p) generator = Printable of { core; sexp_of } | Unprintable of { core } | Dependent of { core }`: the phantom `'p` (`printable`/`unprintable`, private polymorphic variants) is what makes `draw` require a printer, and `sexp_of` is what `printer` returns. What a draw prints comes from the core, not from `sexp_of`: the core prints as it draws (`do_draw core tc printer`, see Pretty printing), so a container prints element by element and each element as its own generator prints it. Value printing is the escape hatch: `with_ocaml_printer print` and `with_printer sexp_of` wrap the core in a `Printed` core that draws its source silently and prints the finished value, so a user's `with_printer` prints exactly the s-expression it returns. `map_as_call name f` prints a mapped value as `name <source as it prints>`, and `printable_composite` is a hand-written printable core (a `Composite` whose `generate_fn` gets the printer). `Dependent` is the one constructor whose `'p` is not fixed: `flat_map` returns it, typed with the printability of the generators `f` returns, and prints the inner draw. `FlatMapped`'s function returns an `inner`: `Printing core`, or `Silent core` for an unprintable generator (drawn silently, printed as `<abstr>`). `printer` of a `Dependent` is `<abstr>`. `rewrap` keeps a generator's printability across `filter`/`recursive`.
 
 Cores are a discriminated union:
 - **Leaf** — holds a `draw : test_case -> 'a` closure that performs a single typed engine draw (via one of the `Internal.generate_*` primitives). Calling `map` on a Leaf composes the closure in place (no extra span), since the engine already wraps every primitive draw in its own span.
@@ -382,7 +382,6 @@ Cores are a discriminated union:
 - **Span labels** (libhegel 0.39.0) — a label identifies the generator that opened a span; the engine treats two spans with the same label as coming from the same generator when it shrinks and mutates, and does nothing else with it. There are no predefined label constants in the ABI. A label is an `Internal.Label.t`: a description (`Label.of_name name` or `Label.combine [labels…]`) with an atomic cache, computed by libhegel's `hegel_label_from_name`/`hegel_label_combine` (through the `Ffi.label_*` bindings, with the test case's context) the first time a span uses it, and reused afterwards. Building a generator never calls the engine, so it doesn't load libhegel (`test_lazy_load`). `Internal.start_span ~label` resolves it. Every core stores its `label`, fixed at construction: a `Leaf` from its primitive's name (`leaf ~name:"integers"` → `hegel.integers`), and everything built from other generators as `combine [own kind; components' labels…]` (`lists (integers ())` ≠ `lists (text ())`; `map` on a leaf stays a leaf but combines `Labels.mapped` in; `with_printer` leaves the label alone; `Values` is the constant `Labels.pool`). `Generators.Private.label_of` reads it back. The deriver emits `combine [fixed_dict|enum_variant; from_name "<type name>"]` so two derived types of the same shape stay distinct. Names are `hegel.<kind>`, the names the other frontends use for the same generator: `hegel.lists` (unique lists too), `hegel.sets`, `hegel.dicts` (assoc lists and hash tables), `hegel.fixed_dicts`, `hegel.one_of`, `hegel.optional` as in Python, TypeScript and Java, `hegel.tuple`, `hegel.array`, `hegel.permutation` as in Rust. A filter draws inside its own `combine [hegel.filter; source]` span, and each attempt inside a `hegel.filter.attempt` span (discarded when rejected), as Rust and Python do.
 - **Function** — a generated function (`functions`/`functions2`/`functions3`). `build ~name` returns a fresh per-test-case memoized function that draws each result from `returns` on first application (memoized on the argument via structural hash/equality — a polymorphic `Stdlib.Hashtbl` — so `print_arg`/`sexp_of_arg` are display-only and with neither the argument shows as `<abstr>`, `Printer.opaque`, without collapsing the key) and shows applied pairs as `name arg = result` (the argument as `print_arg` renders it, else as its s-expression; curried for `functions2`/`functions3` as `name a b = result`; and the result as `returns` displays it) in the print region of a printing case. Only *top-level* applications print — a pair applied at draw depth > 0 (inside a span) is suppressed, like a nested draw. A distinct core so `draw_silent_named` / `draw_named` can thread the draw-site binding name into the function (see the PPX note below); the name threads even when the function is drawn nested. Result draws are wrapped in a span labelled `combine [Labels.function_result; label of returns]`.
 - **Printed** — draws its source silently, then prints the finished value with `print` (value printing: `with_printer`, `with_ocaml_printer`).
-- **Sexp_fallback** — draws its source with each `Silent` in it printing as the given `sexp_of` (`with_sexp_of` on a `flat_map`, for derived types).
 
 ### Inline Test Integration (ppx/ppx_hegel_test.ml)
 
@@ -513,8 +512,8 @@ the base_quickcheck conventions:
 3. **Always printable**: the deriver also emits `sexp_of_<t>` (it calls
    `Ppx_sexp_conv_expander.Sexp_of.str_type_decl`; ppx_sexp_conv is a build
    dependency of the PPX package, not of user projects) and makes it the
-   generator's printer (`composite_with_label ~sexp_of`, `with_printers`,
-   `with_sexp_of`), so `Generators.printer` returns it. Draw with `draw` to
+   generator's printer (`composite_with_label ~sexp_of`, `with_printers`),
+   so `Generators.printer` returns it. Draw with `draw` to
    print on a failing replay, or `draw_silent` to stay silent. Deriving
    `sexp`/`sexp_of` alongside stays legal: the identical `sexp_of_<t>`
    definitions shadow. `[@sexp.opaque]` on a field type is the escape hatch
@@ -524,13 +523,14 @@ the base_quickcheck conventions:
    **Prints as OCaml syntax, as it draws**: a derived generator is a
    `composite_with_label` whose body takes `tc` and a `Printer.Out.t` and
    prints its punctuation around each component's draw
-   (`Ppx_internal.draw_and_print tc printer gen ~sexp_of`, which has the
-   component's generator print itself): a record prints `{ x = 1; y = 2 }`, a
+   (`Generators.draw_and_print tc printer gen`, which has the component's
+   generator print itself): a record prints `{ x = 1; y = 2 }`, a
    constructor `C (a, b)` (parenthesized in argument position), a tuple
-   `(a, b)`. A component whose generator has no printer (a `map`, an
-   override) is drawn silently and printed as the s-expression of its type
-   (the `~sexp_of` the deriver passes, `Ppx_compat.sexp_of_core_type`), the
-   one place a value is printed implicitly. An all-nullary variant is a
+   `(a, b)`. As with Rust's `#[derive(DefaultGenerator)]`, every component's
+   generator must be printable: an unprintable `[@hegel.generator]` override
+   (a `map`, a `flat_map` returning unprintable generators) or type alias is
+   a type error, fixed with `with_ocaml_printer`, `map_as_call` or
+   `with_printer`. An all-nullary variant is a
    `sampled_from` given `with_printers`, which prints the constructor name.
 4. **Attributes**: `[@hegel.generator EXPR]` on any type occurrence (record
    field, constructor argument, tuple component) replaces that occurrence's
