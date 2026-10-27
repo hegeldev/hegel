@@ -293,6 +293,52 @@ describe("speculative printing leaves nothing behind", () => {
     expect(lines).toEqual(["const x = [0, 0];"]);
   });
 
+  it.each<
+    [string, (leaf: gs.PrintableGenerator<number>) => gs.PrintableGenerator<unknown>, string]
+  >([
+    [
+      "a recursive generator abandons",
+      (leaf) =>
+        gs.recursive<unknown>(leaf, (children) => gs.arrays(children, { minSize: 2, maxSize: 2 }), {
+          maxLeaves: 1,
+        }),
+      "const x = 0;",
+    ],
+    [
+      "a unique array rejects",
+      (leaf) => gs.arrays(leaf, { minSize: 1, unique: true }),
+      "const x = [0];",
+    ],
+    ["a set rejects", (leaf) => gs.sets(leaf, { minSize: 1 }), "const x = new Set([0]);"],
+    [
+      "a map rejects",
+      (leaf) => gs.maps(leaf, gs.integers({ minValue: 0, maxValue: 0 }), { minSize: 1 }),
+      "const x = new Map([[0, 0]]);",
+    ],
+  ])("prints nothing of the draws %s", (_name, make, expected) => {
+    let draws = 0;
+    const leaf = unschema(gs.integers({ minValue: 0, maxValue: 0 })).map((v) => {
+      draws += 1;
+      return v;
+    });
+    const generator = make(leaf);
+    const kept = (value: unknown): number =>
+      value instanceof Set || value instanceof Map
+        ? value.size
+        : Array.isArray(value)
+          ? value.length
+          : 1;
+    const lines = report((tc) => {
+      draws = 0;
+      const value = tc.draw(generator, "x");
+      tc.draw(gs.integers(), "n");
+      if (draws > kept(value)) throw new Error("fail");
+    });
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toBe(expected);
+    expect(lines[1]).toMatch(/^const n = -?\d+;$/);
+  });
+
   it("drops the binding a throwing printer started", () => {
     const thrower = gs.integers().printWith(() => {
       throw new Error("printer failed");
