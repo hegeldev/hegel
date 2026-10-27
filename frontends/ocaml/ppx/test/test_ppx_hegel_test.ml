@@ -382,12 +382,6 @@ let%hegel_test missing_example_value tc =
 [@@example { a = 1 }]
 ;;
 
-let%hegel_test cloning_example tc =
-  let n = Hegel.draw tc (Hegel.integers ()) in
-  ignore (Hegel.draw_silent (Hegel.clone tc) (Hegel.integers ()) + n : int)
-[@@example { n = 0 }]
-;;
-
 let%hegel_test silent_draw_in_example tc =
   let n = Hegel.draw tc (Hegel.integers ()) in
   ignore (n + Hegel.draw_silent tc (Hegel.integers ()) : int)
@@ -413,7 +407,6 @@ let test_example_usage_errors () =
   in
   expect "unused value" unused_example_value "never drawn: n";
   expect "missing value" missing_example_value "no value for the draw b";
-  expect "clone" cloning_example "generated data";
   expect "draw_silent" silent_draw_in_example "draw_silent";
   expect "silently drawn function" function_in_example "no value for the draw f";
   expect
@@ -429,6 +422,38 @@ let test_example_usage_errors () =
               (Hegel.integers ())
             : int)))
     "only be drawn in an explicit example"
+;;
+
+let test_clone_in_example () =
+  let seen = ref [] in
+  let explicit_draw tc name value =
+    Hegel.Generators.Ppx_internal.explicit_draw
+      tc
+      ~name
+      ~source:(string_of_int value)
+      value
+      (Hegel.integers ())
+  in
+  match
+    Hegel.run_hegel_test_ppx
+      ~settings:(Hegel.Settings.create ~test_cases:1 ())
+      ~examples:
+        [ ( [ "n"; "m" ]
+          , fun tc ->
+              let n = explicit_draw tc "n" 0 in
+              let worker = Hegel.clone tc in
+              Hegel.set_worker worker 1;
+              let m = explicit_draw worker "m" 1 in
+              Hegel.note worker "from the clone";
+              seen := [ n; m ];
+              failwith "boom" )
+        ]
+      (fun _ -> ())
+  with
+  | () -> Alcotest.fail "expected the example to fail"
+  | exception Failure msg ->
+    Alcotest.(check string) "the example" "boom" msg;
+    Alcotest.(check (list int)) "the values" [ 0; 1 ] !seen
 ;;
 
 let test_examples_without_location () =
@@ -523,6 +548,7 @@ let () =
             `Quick
             test_multiple_failures_with_examples
         ; Alcotest.test_case "example usage errors" `Quick test_example_usage_errors
+        ; Alcotest.test_case "clone in an example" `Quick test_clone_in_example
         ; Alcotest.test_case
             "examples without a location"
             `Quick

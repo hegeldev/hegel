@@ -52,16 +52,22 @@ namespace hegel {
      * A string literal is a `std::string`.
      *
      * Every value must be drawn. TestCase::target() and TestCase::event()
-     * do nothing, and TestCase::repeat() runs its body once. Anything else is a
-     * usage error, which makes hegel::test() throw `std::invalid_argument`
-     * without reporting a failure: a value that no draw takes, a draw with no
-     * value or a value of another type, a rejection (TestCase::assume() or
-     * TestCase::reject(), whose message begins "Explicit test cases must not be
-     * rejected"), and anything that needs generated data other than a draw
-     * (TestCase::clone(), stateful testing).
+     * do nothing, TestCase::repeat() runs its body once, a TestCase::clone()
+     * draws the same values and names its draws in the same sequence as the
+     * test case it was cloned from, and TestCase::set_worker() does nothing.
+     * Anything else is a usage error, which makes hegel::test() throw
+     * `std::invalid_argument` without reporting a failure: a value that no
+     * draw takes, a draw with no value or a value of another type, a
+     * rejection (TestCase::assume() or TestCase::reject(), whose message
+     * begins "Explicit test cases must not be rejected"), and anything that
+     * needs generated data other than a draw (TestCase::draw_silent(),
+     * stateful testing).
      *
      * If an explicit test case fails, Hegel prints what it drew and noted,
-     * and the test's exception propagates. No test case is generated.
+     * and the test's exception propagates; no test case is generated. With
+     * Settings::report_multiple_failures, every explicit test case runs, the
+     * generated test cases follow, and every distinct failure is reported
+     * together, the explicit test cases' first.
      *
      * @code{.cpp}
      * HEGEL_EXPLICIT_TEST_CASE(division, 7, 0)

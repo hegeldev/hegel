@@ -367,21 +367,6 @@ pub(crate) fn current_output_sink() -> Option<OutputSink> {
     OUTPUT_OVERRIDE.with(|cell| cell.borrow().clone())
 }
 
-/// Emit a single line of verbose runner output, going through the
-/// installed output sink if there is one and otherwise to stderr.
-///
-/// Resolves the sink thread-locally at emit time, so it is only correct for
-/// output produced synchronously on the thread that installed the override
-/// (e.g. an explicit test case). A run resolves its destination once up
-/// front instead — see [`RunOutput`].
-pub(crate) fn emit_verbose_line(msg: &str) {
-    if let Some(sink) = current_output_sink() {
-        sink(msg);
-    } else {
-        eprintln!("{}", msg);
-    }
-}
-
 /// The output destination a run resolved when it started.
 ///
 /// Resolved exactly once, on the thread that starts the run, from the

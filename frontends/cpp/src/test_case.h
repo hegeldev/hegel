@@ -27,12 +27,14 @@ namespace hegel::impl::test_case {
     };
 
     // The state of an explicit test case: the values it was given, which
-    // of them the draws took, and what it printed.
+    // of them the draws took, and what it printed. Shared by the test case
+    // and its clones, which may draw from other threads, hence the mutex.
     struct ExplicitState {
         explicit ExplicitState(const ExplicitTestCase& test_case)
             : test_case(test_case), used(test_case.values().size(), false) {}
 
         const ExplicitTestCase& test_case;
+        std::mutex mutex;
         std::vector<bool> used;
         std::vector<std::string> lines;
     };

@@ -463,10 +463,10 @@ def _run_explicit(
     output: RunOutput,
 ) -> _CaseOutcome:
     """Run one explicit test case. A failure is returned in the outcome
-    rather than raised, annotated with the case's drawn values and notes,
-    so the caller can raise it or collect it with further failures. A
-    verbose run reports the case as it does a generated one: a heading,
-    the drawn values, and how it ended."""
+    rather than raised, annotated with the case's drawn values and notes
+    (none under quiet verbosity), so the caller can raise it or collect it
+    with further failures. A verbose run reports the case as it does a
+    generated one: a heading, the drawn values, and how it ended."""
     verbose = verbosity in (Verbosity.verbose, Verbosity.debug)
     explicit = ExplicitTestCase(case)
     tc = TestCase(NO_HANDLE, True, output.resolved_sink(), explicit)
@@ -497,7 +497,8 @@ def _run_explicit(
     if outcome.exception is None:
         explicit.check_consumed()
         return outcome
-    _annotate(outcome.exception, explicit.lines, None, None)
+    lines = [] if verbosity is Verbosity.quiet else explicit.lines
+    _annotate(outcome.exception, lines, None, None)
     _trim_traceback(outcome.exception)
     return outcome
 

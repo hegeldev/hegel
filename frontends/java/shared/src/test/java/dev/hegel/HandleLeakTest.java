@@ -207,11 +207,11 @@ class HandleLeakTest {
     }
 
     @Test
-    void forksAndRepetitionBlocksAreFreed() {
+    void clonesAndRepetitionBlocksAreFreed() {
         Tracker tracker = new Tracker(Engine.get());
         RunReport report =
                 tracker.run(new Settings().verbosity(Verbosity.VERBOSE).testCases(5), tc -> {
-                    tc.fork(1).draw(integers());
+                    tc.clone().draw(integers());
                     int[] repetitions = {0};
                     tc.repeat(() -> {
                         tc.draw(integers(), "x");
@@ -237,7 +237,7 @@ class HandleLeakTest {
         RunReport report =
                 tracker.run(new Settings().verbosity(Verbosity.VERBOSE).testCases(5), tc -> {
                     tc.draw(slots).text("filled");
-                    tc.fork(1).draw(slots);
+                    tc.clone().draw(slots);
                     tc.repeat(() -> {
                         tc.draw(slots);
                         throw new IllegalStateException();

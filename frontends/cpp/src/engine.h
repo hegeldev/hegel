@@ -92,6 +92,8 @@ namespace hegel::impl {
                                              const hegel_settings_t* s);
     bool settings_get_print_blob(hegel_context_t* ctx,
                                  const hegel_settings_t* s);
+    bool settings_get_report_multiple_failures(hegel_context_t* ctx,
+                                               const hegel_settings_t* s);
     /// The enabled phases, as a bitwise OR of hegel_phase_t values.
     uint32_t settings_get_phases(hegel_context_t* ctx,
                                  const hegel_settings_t* s);

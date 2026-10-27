@@ -62,22 +62,20 @@ namespace hegel {
     TestCase::~TestCase() = default;
 
     TestCase TestCase::clone() const {
-        if (data_->explicit_state) {
-            throw internal::UsageError(
-                "clone() is not supported in an explicit test case");
+        hegel_test_case_t* handle = nullptr;
+        if (!data_->explicit_state) {
+            handle = impl::test_case_clone(impl::thread_context(), data_->tc);
         }
-        hegel_test_case_t* handle =
-            impl::test_case_clone(impl::thread_context(), data_->tc);
         auto cloned = std::make_unique<impl::test_case::TestCaseData>(
             handle, data_->emit, data_->stateful_step_count);
         cloned->draw_names = data_->draw_names;
+        cloned->explicit_state = data_->explicit_state;
         return TestCase(std::move(cloned));
     }
 
     void TestCase::set_worker(std::size_t worker_index) {
         if (data_->explicit_state) {
-            throw internal::UsageError(
-                "set_worker() is not supported in an explicit test case");
+            return;
         }
         impl::test_case_set_worker(impl::thread_context(), data_->tc,
                                    static_cast<int64_t>(worker_index));
@@ -139,6 +137,7 @@ namespace hegel {
         if (data_->explicit_state) {
             std::istringstream lines{std::string(message)};
             std::string line;
+            std::lock_guard<std::mutex> lock(data_->explicit_state->mutex);
             while (std::getline(lines, line)) {
                 data_->explicit_state->lines.push_back(line);
             }
@@ -168,7 +167,7 @@ namespace hegel {
         void check_not_explicit(const TestCase& tc, const char* what) {
             if (is_explicit(tc)) {
                 throw UsageError(std::string(what) +
-                                 " is not supported in an explicit test case");
+                                 " is not supported in explicit test cases");
             }
         }
 
@@ -180,6 +179,7 @@ namespace hegel {
             const std::vector<ExplicitTestCase::Value>& values =
                 state.test_case.values();
             std::string display = draw_display_name(tc, name, repeatable);
+            std::lock_guard<std::mutex> lock(state.mutex);
             std::optional<size_t> chosen;
             for (size_t i = 0; i < values.size() && !chosen; ++i) {
                 if (!state.used[i] && values[i].name == display) {

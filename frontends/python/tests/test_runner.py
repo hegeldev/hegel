@@ -1071,6 +1071,20 @@ def test_explicit_cases_print_nothing_unless_verbose(output):
     assert output.lines == []
 
 
+def test_quiet_explicit_failure_carries_no_lines(output):
+    @hegel.explicit_test_case(x=1)
+    @hegel.test(test_cases=1, verbosity=Verbosity.quiet)
+    def test_it(tc):
+        tc.note("noted")
+        x = tc.draw(gs.integers())
+        assert x != 1
+
+    with pytest.raises(AssertionError) as info:
+        test_it()
+    assert notes(info.value) == []
+    assert output.lines == []
+
+
 def test_first_explicit_failure_ends_the_run_by_default():
     seen = []
 

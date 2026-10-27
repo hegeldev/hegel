@@ -284,10 +284,17 @@ TEST(CloneOutput, SetWorkerPrefixesTheClonesLines) {
     EXPECT_NE(out.find("ms] from worker three\n"), std::string::npos) << out;
 }
 
-TEST(CloneOutput, SetWorkerIsAUsageErrorInAnExplicitTestCase) {
-    EXPECT_THROW(
-        hegel::test([](hegel::TestCase& tc) { tc.set_worker(0); },
-                    hegel::Settings{.database = hegel::Database::disabled()},
-                    {}, {hegel::ExplicitTestCase()}),
-        std::invalid_argument);
+TEST(CloneOutput, SetWorkerDoesNothingInAnExplicitTestCase) {
+    testing::internal::CaptureStderr();
+    EXPECT_THROW(hegel::test(
+                     [](hegel::TestCase& tc) {
+                         hegel::TestCase worker = tc.clone();
+                         worker.set_worker(3);
+                         worker.note("from worker three");
+                         throw std::runtime_error("boom");
+                     },
+                     hegel::Settings{.database = hegel::Database::disabled()},
+                     {}, {hegel::ExplicitTestCase()}),
+                 std::runtime_error);
+    EXPECT_EQ(testing::internal::GetCapturedStderr(), "from worker three\n");
 }

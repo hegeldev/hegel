@@ -140,7 +140,7 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   `lastErrorMessage()`, created on the thread's first call and freed by
   `releaseThreadContext()`, which each concurrent stateful worker calls before
   it exits, or otherwise by a `Cleaner` once the thread has been collected, so
-  a user thread drawing through `TestCase.fork` never leaks one), pass date/time/datetime structs by value, pass every
+  a user thread drawing through `TestCase.clone` never leaks one), pass date/time/datetime structs by value, pass every
   string as the engine's `hegel_string_t` (`{const char *data; size_t len}`:
   by value for a required string, by nullable pointer where absent is
   meaningful, as a contiguous struct array for name lists; a Java `null`
@@ -184,9 +184,10 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   runner rethrows it, failing the run at once as Rust's `InvalidArgument` does,
   while any other `IllegalArgumentException` the body throws is a failure of
   the property. `TestCase` also carries `event`/`eventValue`, `reject`,
-  `drawSilent` (a draw that is neither printed nor recorded), `fork(worker)`
-  (a `hegel_test_case_clone` + `hegel_test_case_set_worker` handle sharing the
-  draw-naming scope of the handle it forks, freed when the case ends) and
+  `drawSilent` (a draw that is neither printed nor recorded), `clone()` (a
+  `hegel_test_case_clone` handle sharing the draw-naming scope of the handle
+  it clones, freed when the case ends), `setWorker(worker)`
+  (`hegel_test_case_set_worker`) and
   `repeat(body)` (a `hegel.collection` of silent draws; each repetition is a
   block noted `// Repetition #N`, with a fresh naming scope, freed when the
   repetition ends; an `assume` failure skips the repetition, and any other
@@ -356,12 +357,12 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   the engine's run, when the resolved phases (`settingsGetPhases`) include
   `EXPLICIT` and no blob is being replayed. The engine is not involved: the
   `TestCase` draws from `ExplicitDraws` (a draw takes the value named for it,
-  else the next positional one; a silent draw takes the next positional one)
+  else the next positional one; a silent draw is a usage error)
   over an `ExplicitDraws.noEngine()` data source that ignores `target`/events
   and rejects the engine primitives (spans, pools, state machines) as a usage
-  error, and prints into a standalone `hegel_printer_new` document. `fork`
-  shares the example's values and `repeat` runs its body once, as Rust's
-  `ExplicitTestCase` does. Misfitting examples (a missing value, an unused
+  error, and prints into a standalone `hegel_printer_new` document. `clone`
+  shares the example's values, `setWorker` does nothing and `repeat` runs its
+  body once, as Rust's `ExplicitTestCase` does. Misfitting examples (a missing value, an unused
   one, a failed assumption, inside `repeat` or not) are
   `IllegalArgumentException`s. Without `reportMultipleFailures`
   (`settingsGetReportMultipleFailures`) the first failing example ends the
@@ -370,7 +371,7 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   dropped. An explicit failure makes an otherwise PASSED or ERROR run FAILED
   (an ERROR's message and kind stay on the report).
 - **Public API** — `Hegel.test`/`Hegel.run`, `TestCase`
-  (`draw`/`drawSilent`/`drawAndPrint`/`assume`/`reject`/`note`/`target`/`event`/`eventValue`/`fork`/`repeat`/`isFinal`/`span`),
+  (`draw`/`drawSilent`/`drawAndPrint`/`assume`/`reject`/`note`/`target`/`event`/`eventValue`/`clone`/`setWorker`/`repeat`/`isFinal`/`span`),
   `Example`, `Generator`/`PrintableGenerator`, `Printer`/`Document` (the
   printer surface), `Label` (span labels;
   `Label.of(name)` mints labels through the engine), `Reporter`, `RunReport`,

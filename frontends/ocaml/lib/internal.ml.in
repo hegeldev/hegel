@@ -236,9 +236,20 @@ let explicit_draw (tc : test_case) ~name ~source value =
 
     The native handle and context are owned by the test case (see
     {!type:owned}) and freed once it completes, so a clone may be captured and
-    used freely within the case. *)
+    used freely within the case.
+
+    A clone of an explicit example's test case has no engine behind it either:
+    it draws the example's values, sharing the example and the draw numbering
+    with [tc]. *)
 let clone (tc : test_case) =
-  require_engine tc;
+  if is_explicit tc
+  then
+    { tc with
+      test_aborted = Atomic.make false
+    ; draw_depth = Atomic.make (Atomic.get tc.draw_depth)
+    ; printer = Atomic.make None
+    }
+  else (
   let context = Ffi.context_new () in
   let handle = Ffi.test_case_clone tc.context tc.handle in
   own_clone tc context handle;
@@ -253,7 +264,7 @@ let clone (tc : test_case) =
   ; explicit = None
   ; printer = Atomic.make None
   ; printers = tc.printers
-  }
+  })
 ;;
 
 (** [with_block tc ~indent f] runs [f] on a {!test_case} for an indented
@@ -291,8 +302,7 @@ let with_block (tc : test_case) ~indent LOCAL(f) =
 ;;
 
 let set_worker_index (tc : test_case) worker_index =
-  require_engine tc;
-  Ffi.test_case_set_worker tc.context tc.handle ~worker_index
+  if not (is_explicit tc) then Ffi.test_case_set_worker tc.context tc.handle ~worker_index
 ;;
 
 (** Domain-local flag to detect nested test cases. *)

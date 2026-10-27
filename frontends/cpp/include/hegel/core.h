@@ -1059,7 +1059,7 @@ namespace hegel {
 
     template <typename T>
     T TestCase::draw_silent(const generators::AnyGenerator<T>& gen) const {
-        internal::check_not_explicit(*this, "draw_silent()");
+        internal::check_not_explicit(*this, "draw_silent");
         internal::NestedDraw nested(*this);
         return gen.do_draw(*this);
     }
@@ -1067,7 +1067,7 @@ namespace hegel {
     template <typename T>
     T TestCase::draw_and_print(const generators::Generator<T>& gen,
                                Printer& printer) const {
-        internal::check_not_explicit(*this, "draw_and_print()");
+        internal::check_not_explicit(*this, "draw_and_print");
         internal::NestedDraw nested(*this);
         return gen.do_draw_and_print(*this, printer);
     }

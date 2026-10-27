@@ -15,7 +15,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
-/** {@code reject}, {@code drawSilent}, events, {@code fork} and {@code repeat}. */
+/** {@code reject}, {@code drawSilent}, events, {@code clone} and {@code repeat}. */
 class TestCaseApiTest {
     private static final Settings SETTINGS = new Settings().database(Database.disabled());
 
@@ -99,12 +99,13 @@ class TestCaseApiTest {
     }
 
     @Test
-    void forksDrawOnOtherThreads() {
+    void clonesDrawOnOtherThreads() {
         RunReport report = Hegel.run(
                 tc -> {
-                    TestCase fork = tc.fork(1);
+                    TestCase clone = tc.clone();
+                    clone.setWorker(1);
                     int b = CompletableFuture.supplyAsync(
-                                    () -> fork.draw(integers().min(0).max(10), "b"))
+                                    () -> clone.draw(integers().min(0).max(10), "b"))
                             .join();
                     int a = tc.draw(integers().min(0).max(10), "a");
                     assertTrue(a + b < 12);
