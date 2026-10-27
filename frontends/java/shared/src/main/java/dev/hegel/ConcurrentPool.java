@@ -65,7 +65,7 @@ public final class ConcurrentPool<T> {
      *
      * @return the reusing generator
      */
-    public Generator<T> reusable() {
+    public PrintableGenerator<T> reusable() {
         return new ReusableGenerator();
     }
 
@@ -79,11 +79,11 @@ public final class ConcurrentPool<T> {
      *
      * @return the consuming generator
      */
-    public Generator<T> consuming() {
+    public PrintableGenerator<T> consuming() {
         return new ConsumingGenerator();
     }
 
-    private final class ReusableGenerator implements Generator<T> {
+    private final class ReusableGenerator extends PoolGenerator<T> {
         @Override
         public long label() {
             return Label.POOL_VALUES_REUSABLE;
@@ -97,7 +97,7 @@ public final class ConcurrentPool<T> {
         }
     }
 
-    private final class ConsumingGenerator implements Generator<T> {
+    private final class ConsumingGenerator extends PoolGenerator<T> {
         @Override
         public long label() {
             return Label.POOL_VALUES_CONSUMED;
@@ -111,8 +111,8 @@ public final class ConcurrentPool<T> {
         }
 
         @Override
-        public Generator<T> filter(Predicate<? super T> predicate) {
-            return new Generator<T>() {
+        public PrintableGenerator<T> filter(Predicate<? super T> predicate) {
+            return new PoolGenerator<T>() {
                 @Override
                 public long label() {
                     return Label.combine(Label.FILTER, Label.POOL_VALUES_CONSUMED);

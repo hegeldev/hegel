@@ -41,7 +41,7 @@ class LibraryApiTest {
         assertEquals(1, report.failures().size());
         Failure f = report.failures().get(0);
         assertEquals(Map.of("x", 11), f.draws());
-        assertEquals(List.of("x = 11;", "observed x=11"), f.output());
+        assertEquals(List.of("var x = 11;", "observed x=11"), f.output());
         assertTrue(f.exception() instanceof AssertionError);
         assertTrue(f.exception().getMessage().contains("x was too big: 11"));
         assertTrue(f.origin().startsWith("AssertionFailedError at "), f.origin());
@@ -67,8 +67,8 @@ class LibraryApiTest {
                 Reporter.silent());
         assertEquals(
                 List.of(
-                        "pair = Tuple2[value1=\"\", value2=\"\"];",
-                        "nested = Tuple2[value1=\"a b\\nc\", value2=Optional.empty];"),
+                        "var pair = Tuple2[value1=\"\", value2=\"\"];",
+                        "var nested = Tuple2[value1=\"a b\\nc\", value2=Optional.empty];"),
                 report.failures().get(0).output());
     }
 
@@ -106,9 +106,14 @@ class LibraryApiTest {
         assertTrue(report.statistics().invalid() > 0);
     }
 
-    /** A foreign composite generator: two draws enclosed in a custom-labelled span. */
-    private static final Generator<int[]> PAIR = tc -> tc.span(Label.of("dev.hegel.test.pair"), () -> new int[] {
-        tc.draw(integers().min(0).max(50)), tc.draw(integers().min(0).max(50))
+    /** A foreign printable generator: two draws enclosed in a custom-labelled span. */
+    private static final PrintableGenerator<int[]> PAIR = (tc, p) -> tc.span(Label.of("dev.hegel.test.pair"), () -> {
+        p.beginGroup("pair(");
+        int a = tc.drawAndPrint(integers().min(0).max(50), p);
+        p.separator();
+        int b = tc.drawAndPrint(integers().min(0).max(50), p);
+        p.endGroup(")");
+        return new int[] {a, b};
     });
 
     @Test
@@ -124,6 +129,9 @@ class LibraryApiTest {
         int[] shrunk = (int[]) report.failures().get(0).draws().get("p");
         // The engine shrinks the pair as a unit toward the boundary.
         assertEquals(60, shrunk[0] + shrunk[1]);
+        assertEquals(
+                List.of("var p = pair(" + shrunk[0] + ", " + shrunk[1] + ");"),
+                report.failures().get(0).output());
     }
 
     @Test

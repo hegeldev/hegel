@@ -25,7 +25,7 @@ class ConcurrentStatefulTest {
     private static final Pattern WORKER_RULE_LINE =
             Pattern.compile(" *\\[worker [0-9]+ \\+[0-9]+\\.[0-9]{3}ms\\] Rule: boom \\{");
     private static final Pattern WORKER_DRAW_LINE =
-            Pattern.compile(" *\\[worker [0-9]+ \\+[0-9]+\\.[0-9]{3}ms\\] *x(_[0-9]+)? = -?[0-9]+;");
+            Pattern.compile(" *\\[worker [0-9]+ \\+[0-9]+\\.[0-9]{3}ms\\] *var x(_[0-9]+)? = -?[0-9]+;");
 
     private static Settings settings() {
         return new Settings().database(Database.disabled());

@@ -61,7 +61,7 @@ class UsageErrorTest {
         TestCase tc = new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), true);
         AssertionError thrown = assertThrows(
                 AssertionError.class,
-                () -> tc.draw(t -> {
+                () -> tc.draw((PrintableGenerator<Object>) (t, p) -> {
                     throw error;
                 }));
         assertSame(error, thrown);

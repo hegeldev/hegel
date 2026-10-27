@@ -214,8 +214,11 @@ interface DataSource {
      */
     void note(String message);
 
-    /** A caller-owned printer onto this source's print region ({@code hegel_test_case_printer}). */
-    Printer printer();
+    /**
+     * A caller-owned printer onto this source's print region ({@code hegel_test_case_printer}),
+     * whose deferred regions are registered in {@code regions}.
+     */
+    Printer printer(Printer.Regions regions);
 
     /** The engine's sampling decision for invariant {@code invariantIndex} at this join point. */
     boolean stateMachineShouldCheckInvariant(long stateMachineId, long invariantIndex);

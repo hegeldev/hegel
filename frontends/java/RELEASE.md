@@ -53,7 +53,46 @@ An errored run now raises an exception typed by the engine's classification of t
 
 `dev.hegel.lowlevel.Libhegel` gains a method for each newly bound C function: `collectionFree`, `poolFree`, `releaseThreadContext`, `settingsNewForProfile`, `settingsRegisterProfile`, `setDefaultProfile`, `settingsGetVerbosity`, `settingsStopOnFirstFailure`, `settingsShowStatistics`, `settingsUnboundedChoices`, `settingsTestLocation`, `runResultErrorKind`, `labelFromName` and `labelCombine`. A third-party binding needs to implement them.
 
-All output a test case prints now goes through the engine, as in the other Hegel frontends. `TestCase.note` hands the note to the engine, and a top-level draw prints into the engine's document for the case, which lays out a long list, map, array or record over several lines, one element per line, instead of on one long line. Strings and characters print as escaped Java literals, so a drawn string containing a newline stays on its line, and so do the strings inside a drawn value: records, including `Tuple2` to `Tuple8` and the values of `Generators.records`, print component by component as `Tuple2[value1="a b", value2=""]`, and `Optional`, `OptionalInt`, `OptionalLong` and `OptionalDouble` as `Optional["a b"]` or `Optional.empty`. Before, these printed through their `toString()`, so a string inside them lost its quotes and a newline in it broke the line. In a stateful test each rule's draws and notes are indented under its `Step N: rule {` line and closed by `}`, and each rule, like each repetition of `repeat`, names its draws afresh, so a rule that draws `x` prints `x = ...;` every time it runs rather than `x_2`, `x_3` and so on; and in a concurrent one the engine stamps each worker's lines with `[worker N +X.XXXms]`, timed from the start of the test case rather than of the machine.
+All output a test case prints now goes through the engine, as in the other Hegel frontends, and printing a drawn value is now the generator's job rather than the value's. `TestCase.note` hands the note to the engine, and a top-level draw prints as a declaration, `var x = 11;` rather than `x = 11;`, into the engine's document for the case, which lays out a long list, map, array or record over several lines, one element per line, instead of on one long line. In a stateful test each rule's draws and notes are indented under its `Step N: rule {` line and closed by `}`, and each rule, like each repetition of `repeat`, names its draws afresh, so a rule that draws `x` prints `var x = ...;` every time it runs rather than `x_2`, `x_3` and so on; and in a concurrent one the engine stamps each worker's lines with `[worker N +X.XXXms]`, timed from the start of the test case rather than of the machine.
+
+The generator describes each value as it draws it. The new `PrintableGenerator` interface draws and prints in one step, and every built-in generator implements it:
+
+- Lists, sets, maps, arrays, tuples, optionals, records (`records` and `forType`), `oneOf`, `filter`, `flatMap`, `recursive` and `deferred` print as they draw, element by element and component by component, so an element's own printing shows up inside its container. A rejected filter attempt or duplicate element prints nothing.
+- The leaf generators, and `map`, `just`, `sampledFrom` and `composite`, print the value they produce in Java syntax: strings and characters as escaped literals, so a drawn string containing a newline stays on its line, collections as `[a, b]`, maps as `{k: v}`, records (including `Tuple2` to `Tuple8`) as `Tuple2[value1="a b", value2=""]`, and optionals as `Optional["a b"]` or `Optional.empty`. A composite's own draws are not printed, only what it returns.
+
+`TestCase.draw` now needs a printable generator. A hand-written `Generator`, such as `tc -> 1`, draws silently: drawing it with `draw`, or drawing a list, record override or other structure containing it, now fails the run with an `IllegalArgumentException` explaining how to fix it, where before its value was printed through `toString()`. Make it printable, or draw it with `drawSilent`:
+
+```java
+Generator<Point> points = tc -> new Point(tc.drawSilent(integers()), tc.drawSilent(integers()));
+
+tc.draw(points.printAsRepr(), "p");                                         // var p = Point[x=0, y=0];
+tc.draw(points.printWith((p, printer) -> printer.text("origin()")), "p");   // var p = origin();
+tc.draw(integers().map(Key::of).printAsCall("Key.of"), "k");                // var k = Key.of(3);
+```
+
+To print a value as it is built, implement `PrintableGenerator` and draw each part with the new `TestCase.drawAndPrint`, so that it prints itself in place, or use the new `Generators.composite((tc, printer) -> ...)`:
+
+```java
+PrintableGenerator<Point> points = (tc, p) -> {
+    p.beginGroup("Point.of(");
+    int x = tc.drawAndPrint(integers(), p);
+    p.separator();
+    int y = tc.drawAndPrint(integers(), p);
+    p.endGroup(")");
+    return Point.of(x, y);
+};
+
+Point point = tc.draw(points, "point");   // var point = Point.of(3, -1);
+```
+
+`Printer` is the engine's layout engine: `text`, `repr`, `reflow`, `breakable`, `ifBreak`, `hardBreak`, `beginGroup`/`endGroup` and `group`, `seq`, `separator`, `shiftIndent`, `comment`, `speculate` (print an attempt and commit or abort it), `deferred` (a region filled in after the draw, for a value whose description is only known once it is used) and `shouldPrint`. `Printer.noop()` discards everything, and `Document` lays out a standalone document, for trying printing code outside a test.
+
+Other API changes that come with this:
+
+- `Generator.doDraw` is now public API, the silent draw a hand-written generator implements, and `Generator` is a functional interface.
+- `Generator.map` returns `MappedGenerator`, and `filter` and `flatMap` return `PrintableGenerator`. The `Generators` factories that returned `Generator`, and `Pool.reusable()`, `Pool.consuming()` and their `ConcurrentPool` counterparts, now return `PrintableGenerator`. Code is source-compatible but must be recompiled.
+- The constructors of `OptionalGenerator` and the typed-tuple form of `TupleGenerator` take the name of the type they print.
+- A draw that throws now uses up its name, so the next draw with the same label is numbered as if it had succeeded.
 
 With several distinct failures, the `AssertionError` that aggregates them now begins `Property-based test failed with N distinct failures.`, the wording of the header printed above them and of the other Hegel frontends, rather than `Hegel found N distinct failing examples:`. Under `Verbosity.QUIET` that header, and the blank line between failures, are no longer printed.
 
@@ -62,7 +101,7 @@ The `Reporter` and `Failure` APIs change to match:
 - `Reporter.draw(label, value, finalReplay)` and `Reporter.note(message, finalReplay)` are replaced by `Reporter.caseOutput(line, finalReplay)`, which receives the case's rendered output one line at a time. Under `Verbosity.VERBOSE` a case's lines now arrive once its body has finished rather than as each draw is made.
 - `Failure.notes()` is replaced by `Failure.output()`, the counterexample's printed report as a list of lines. `Failure.draws()` still gives the drawn values.
 
-`dev.hegel.lowlevel.Libhegel` gains `testCaseBlock`, `note`, `testCasePrinter`, `printerNew`, `printerFree`, `printerText`, `printerBreakable`, `printerHardBreak`, `printerBeginGroup`, `printerEndGroup`, `printerReflow`, `printerBeginSpeculative`, `printerCommitSpeculative`, `printerAbortSpeculative`, `printerResolve` and `printerValue`, for the engine's printer. A third-party binding needs to implement them.
+`dev.hegel.lowlevel.Libhegel` gains `testCaseBlock`, `note`, `testCasePrinter`, `printerNew`, `printerFree`, `printerText`, `printerBreakable`, `printerHardBreak`, `printerBeginGroup`, `printerEndGroup`, `printerReflow`, `printerBeginSpeculative`, `printerCommitSpeculative`, `printerAbortSpeculative`, `printerResolve`, `printerValue`, `printerIfBreak`, `printerComment`, `printerShiftIndent`, `printerDeferred`, `printerIsLive`, `printerOptionsNew`, `printerOptionsSetMaxWidth`, `printerOptionsFree` and `printerNew(options)`, for the engine's printer. A third-party binding needs to implement them.
 
 A filtered consuming pool draw, `pool.consuming().filter(...)` on a `Pool` or `ConcurrentPool`, now consumes only the value it yields. Before, every value an attempt drew and the filter rejected was consumed too, and lost from the pool. Each attempt still consumes its value, so no attempt draws a value an earlier one rejected, and once the attempts are over the engine puts every rejected value back (`hegel_pool_restore`). Sets and maps now also free their engine-side collection after each draw, as lists already did.
 

@@ -33,6 +33,8 @@ final class FakeLibhegel implements Libhegel {
     static final long BLOCK_BASE = 0x8000;
     /** Printer handles are {@code PRINTER_BASE + n} for the n-th printer fetched. */
     static final long PRINTER_BASE = 0x20000;
+    /** A deferred printer's region is keyed {@code DEFERRED_BASE + n} for the n-th one opened. */
+    static final long DEFERRED_BASE = 0x40000;
 
     // Output. Like the engine, the fake keeps one document per test case made of regions: the
     // root handle's region is the body, and a clone or block opens a child region at its source's
@@ -633,6 +635,56 @@ final class FakeLibhegel implements Libhegel {
     @Override
     public long printerNew() {
         throw new UnsupportedOperationException("the fake has no standalone documents");
+    }
+
+    @Override
+    public long printerNew(long options) {
+        throw new UnsupportedOperationException("the fake has no standalone documents");
+    }
+
+    @Override
+    public long printerOptionsNew() {
+        throw new UnsupportedOperationException("the fake has no standalone documents");
+    }
+
+    @Override
+    public int printerOptionsSetMaxWidth(long options, long maxWidth) {
+        throw new UnsupportedOperationException("the fake has no standalone documents");
+    }
+
+    @Override
+    public void printerOptionsFree(long options) {
+        throw new UnsupportedOperationException("the fake has no standalone documents");
+    }
+
+    @Override
+    public int printerIfBreak(long printer, String text) {
+        return Abi.OK;
+    }
+
+    @Override
+    public int printerComment(long printer, String text) {
+        return printerText(printer, text);
+    }
+
+    @Override
+    public int printerShiftIndent(long printer, long delta) {
+        return Abi.OK;
+    }
+
+    @Override
+    public synchronized int printerDeferred(long printer, long[] out) {
+        long region = DEFERRED_BASE + regions.size();
+        regions.put(region, printerRegion(printer).child(0));
+        out[0] = PRINTER_BASE + printerOwners.size();
+        printerOwners.put(out[0], region);
+        return Abi.OK;
+    }
+
+    @Override
+    public int printerIsLive(long printer, boolean[] out) {
+        out[0] = true;
+        return Abi.OK;
     }
 
     @Override

@@ -1,6 +1,5 @@
 package dev.hegel.generators;
 
-import dev.hegel.Generator;
 import dev.hegel.Generators;
 import dev.hegel.Label;
 import dev.hegel.TestCase;
@@ -18,7 +17,7 @@ import dev.hegel.TestCase;
  * Bounds are {@code float}-precision and validation of conflicting options happens at construction
  * time.
  */
-public final class FloatGenerator implements Generator<Float> {
+public final class FloatGenerator extends ValueGenerator<Float> {
     private final Floats.DrawParams params;
     private final boolean excludeMin;
     private final boolean excludeMax;

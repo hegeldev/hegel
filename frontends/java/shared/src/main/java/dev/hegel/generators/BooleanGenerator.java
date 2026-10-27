@@ -1,13 +1,12 @@
 package dev.hegel.generators;
 
-import dev.hegel.Generator;
 import dev.hegel.Label;
 import dev.hegel.TestCase;
 
 /**
  * Generates {@code true} or {@code false} with equal probability.
  */
-public final class BooleanGenerator implements Generator<Boolean> {
+public final class BooleanGenerator extends ValueGenerator<Boolean> {
     /** @hidden */
     @Override
     public long label() {

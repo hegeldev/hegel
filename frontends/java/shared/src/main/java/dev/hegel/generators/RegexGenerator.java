@@ -1,6 +1,5 @@
 package dev.hegel.generators;
 
-import dev.hegel.Generator;
 import dev.hegel.Label;
 import dev.hegel.TestCase;
 
@@ -10,7 +9,7 @@ import dev.hegel.TestCase;
  * that merely contain a match. The pattern is validated by the engine when the first value is
  * drawn.
  */
-public final class RegexGenerator implements Generator<String> {
+public final class RegexGenerator extends ValueGenerator<String> {
     private final String pattern;
     private final boolean fullmatch;
     private final TextGenerator alphabet;

@@ -88,14 +88,14 @@ class SortTest {
 This test will fail when run with `mvn test`! Hegel will produce a minimal failing test case for us:
 
 ```
-xs = [0, 0];
+var xs = [0, 0];
 
 org.opentest4j.AssertionFailedError: expected: <2> but was: <1>
 ```
 
 Hegel reports the minimal example showing that our sort is incorrectly dropping duplicates: `[0, 0]`, two equal elements, which `mySort` collapses into one. If we replace the `TreeSet`-based body of `mySort()` with a sort that keeps duplicates, this test will then pass.
 
-The optional `"xs"` label passed to `draw` names the value in the falsifying-example output. See the [API documentation](https://javadoc.io/doc/dev.hegel/hegel) for a full tour of generators, combinators, control functions, and settings.
+The optional `"xs"` label passed to `draw` names the value in the falsifying-example output. The generator prints the value as it draws it, so `draw` needs a `PrintableGenerator`, as every built-in generator is; make a hand-written generator printable with `printWith` or `printAsRepr`, or draw it with `drawSilent`. See the [API documentation](https://javadoc.io/doc/dev.hegel/hegel) for a full tour of generators, combinators, control functions, and settings.
 
 ## Generators
 

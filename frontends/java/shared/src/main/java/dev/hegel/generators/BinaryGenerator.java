@@ -1,6 +1,5 @@
 package dev.hegel.generators;
 
-import dev.hegel.Generator;
 import dev.hegel.Label;
 import dev.hegel.TestCase;
 
@@ -10,7 +9,7 @@ import dev.hegel.TestCase;
  * <p>Without an explicit {@link #maxSize(int)}, the engine picks the maximum length: 100, or
  * {@code minSize + 100} for a minimum above 100. Set one for longer arrays.
  */
-public final class BinaryGenerator implements Generator<byte[]> {
+public final class BinaryGenerator extends ValueGenerator<byte[]> {
     private final long minSize;
     private final long maxSize;
 

@@ -146,7 +146,7 @@ class RunReportTest {
         // The fake stamps the case for capture, so its draws and output are the report.
         assertEquals(List.of("x", "draw_1"), List.copyOf(f.draws().keySet()));
         assertEquals(7, f.draws().get("x"));
-        assertEquals(List.of("x = 7;", "draw_1 = 7;", "saw 7"), f.output());
+        assertEquals(List.of("var x = 7;", "var draw_1 = 7;", "saw 7"), f.output());
         assertThrows(UnsupportedOperationException.class, () -> f.draws().put("y", 1));
         assertThrows(UnsupportedOperationException.class, () -> f.output().add("more"));
         assertThrows(UnsupportedOperationException.class, () -> r.failures().clear());
@@ -323,7 +323,7 @@ class RunReportTest {
                         "caseFinished:INTERESTING:false",
                         "failuresFound:1",
                         "caseStarted:true",
-                        "output:x = 3;:true",
+                        "output:var x = 3;:true",
                         "output:hi:true",
                         "caseFinished:INTERESTING:true",
                         "failure:" + r.failures().get(0).origin(),
@@ -351,11 +351,11 @@ class RunReportTest {
         // case is reported finished ...
         int finished = reporter.events.indexOf("caseFinished:INTERESTING:false");
         assertEquals(
-                List.of("output:x = 3;:false", "output:hi:false"), reporter.events.subList(finished - 2, finished));
+                List.of("output:var x = 3;:false", "output:hi:false"), reporter.events.subList(finished - 2, finished));
         // ... and replayed with the failure report.
-        assertTrue(reporter.events.contains("output:x = 3;:true"), reporter.events.toString());
+        assertTrue(reporter.events.contains("output:var x = 3;:true"), reporter.events.toString());
         assertEquals(Map.of("x", 3), r.failures().get(0).draws());
-        assertEquals(List.of("x = 3;", "hi"), r.failures().get(0).output());
+        assertEquals(List.of("var x = 3;", "hi"), r.failures().get(0).output());
     }
 
     @Test
@@ -420,7 +420,7 @@ class RunReportTest {
                         "caseFinished:INTERESTING:false",
                         "failuresFound:1",
                         "caseStarted:true",
-                        "output:x = 1;:true",
+                        "output:var x = 1;:true",
                         "caseFinished:INTERESTING:true"),
                 reporter.events.subList(0, 7));
         assertEquals("runFinished:FAILED", reporter.events.get(reporter.events.size() - 1));

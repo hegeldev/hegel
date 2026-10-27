@@ -24,6 +24,7 @@ import dev.hegel.generators.MapGenerator;
 import dev.hegel.generators.OneOfGenerator;
 import dev.hegel.generators.OptionalGenerator;
 import dev.hegel.generators.PermutationGenerator;
+import dev.hegel.generators.PrintingCompositeGenerator;
 import dev.hegel.generators.RecordGenerator;
 import dev.hegel.generators.RecursiveGenerator;
 import dev.hegel.generators.RegexGenerator;
@@ -49,6 +50,7 @@ import java.util.OptionalDouble;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.UUID;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.IntFunction;
 
@@ -122,7 +124,7 @@ public final class Generators {
      *
      * @return a boolean generator
      */
-    public static Generator<Boolean> booleans() {
+    public static PrintableGenerator<Boolean> booleans() {
         return new BooleanGenerator();
     }
 
@@ -164,7 +166,7 @@ public final class Generators {
      * @param <T> the value type
      * @return a constant generator
      */
-    public static <T> Generator<T> just(T value) {
+    public static <T> PrintableGenerator<T> just(T value) {
         return new ConstantGenerator<>(value);
     }
 
@@ -174,7 +176,7 @@ public final class Generators {
      * @param <T> the value type
      * @return a generator of {@code null}
      */
-    public static <T> Generator<T> nulls() {
+    public static <T> PrintableGenerator<T> nulls() {
         return new ConstantGenerator<>(null);
     }
 
@@ -186,7 +188,7 @@ public final class Generators {
      * @return a sampling generator
      */
     @SafeVarargs
-    public static <T> Generator<T> sampledFrom(T... values) {
+    public static <T> PrintableGenerator<T> sampledFrom(T... values) {
         return sampledFrom(List.of(values));
     }
 
@@ -197,7 +199,7 @@ public final class Generators {
      * @param <T> the value type
      * @return a sampling generator
      */
-    public static <T> Generator<T> sampledFrom(List<T> values) {
+    public static <T> PrintableGenerator<T> sampledFrom(List<T> values) {
         if (values.isEmpty()) {
             throw new IllegalArgumentException("sampledFrom requires a non-empty collection");
         }
@@ -213,7 +215,7 @@ public final class Generators {
      */
     @SafeVarargs
     @SuppressWarnings("unchecked")
-    public static <T> Generator<T> oneOf(Generator<? extends T>... options) {
+    public static <T> PrintableGenerator<T> oneOf(Generator<? extends T>... options) {
         List<Generator<T>> list = new ArrayList<>(options.length);
         for (Generator<? extends T> g : options) {
             list.add((Generator<T>) g);
@@ -228,8 +230,8 @@ public final class Generators {
      * @param <T> the value type
      * @return an optional generator
      */
-    public static <T> Generator<Optional<T>> optional(Generator<T> generator) {
-        return new OptionalGenerator<>(generator, Optional::of, Optional.empty());
+    public static <T> PrintableGenerator<Optional<T>> optional(Generator<T> generator) {
+        return new OptionalGenerator<>("Optional", generator, Optional::of, Optional.empty());
     }
 
     /**
@@ -238,8 +240,8 @@ public final class Generators {
      * @param generator the value generator
      * @return an optional-int generator
      */
-    public static Generator<OptionalInt> optionalInts(Generator<Integer> generator) {
-        return new OptionalGenerator<>(generator, OptionalInt::of, OptionalInt.empty());
+    public static PrintableGenerator<OptionalInt> optionalInts(Generator<Integer> generator) {
+        return new OptionalGenerator<>("OptionalInt", generator, OptionalInt::of, OptionalInt.empty());
     }
 
     /**
@@ -248,8 +250,8 @@ public final class Generators {
      * @param generator the value generator
      * @return an optional-long generator
      */
-    public static Generator<OptionalLong> optionalLongs(Generator<Long> generator) {
-        return new OptionalGenerator<>(generator, OptionalLong::of, OptionalLong.empty());
+    public static PrintableGenerator<OptionalLong> optionalLongs(Generator<Long> generator) {
+        return new OptionalGenerator<>("OptionalLong", generator, OptionalLong::of, OptionalLong.empty());
     }
 
     /**
@@ -258,8 +260,8 @@ public final class Generators {
      * @param generator the value generator
      * @return an optional-double generator
      */
-    public static Generator<OptionalDouble> optionalDoubles(Generator<Double> generator) {
-        return new OptionalGenerator<>(generator, OptionalDouble::of, OptionalDouble.empty());
+    public static PrintableGenerator<OptionalDouble> optionalDoubles(Generator<Double> generator) {
+        return new OptionalGenerator<>("OptionalDouble", generator, OptionalDouble::of, OptionalDouble.empty());
     }
 
     // --- collections ---
@@ -283,7 +285,7 @@ public final class Generators {
      * @param <T> the element type
      * @return a permutation generator
      */
-    public static <T> Generator<List<T>> permutations(List<T> elements) {
+    public static <T> PrintableGenerator<List<T>> permutations(List<T> elements) {
         return new PermutationGenerator<>(elements);
     }
 
@@ -296,7 +298,7 @@ public final class Generators {
      * @return a permutation generator
      */
     @SafeVarargs
-    public static <T> Generator<List<T>> permutations(T... elements) {
+    public static <T> PrintableGenerator<List<T>> permutations(T... elements) {
         return permutations(List.of(elements));
     }
 
@@ -310,7 +312,7 @@ public final class Generators {
      * @param <T> the element type
      * @return an array generator
      */
-    public static <T> Generator<T[]> arrays(Generator<T> element, int length, IntFunction<T[]> newArray) {
+    public static <T> PrintableGenerator<T[]> arrays(Generator<T> element, int length, IntFunction<T[]> newArray) {
         return new ArrayGenerator<>(element, length, newArray);
     }
 
@@ -348,8 +350,8 @@ public final class Generators {
      * @return a generator of {@link Tuple2}
      */
     @SuppressWarnings("unchecked")
-    public static <A, B> Generator<Tuple2<A, B>> tuples(Generator<A> a, Generator<B> b) {
-        return new TupleGenerator<>(List.of(a, b), parts -> new Tuple2<>((A) parts.get(0), (B) parts.get(1)));
+    public static <A, B> PrintableGenerator<Tuple2<A, B>> tuples(Generator<A> a, Generator<B> b) {
+        return new TupleGenerator<>("Tuple2", List.of(a, b), parts -> new Tuple2<>((A) parts.get(0), (B) parts.get(1)));
     }
 
     /**
@@ -364,9 +366,11 @@ public final class Generators {
      * @return a generator of {@link Tuple3}
      */
     @SuppressWarnings("unchecked")
-    public static <A, B, C> Generator<Tuple3<A, B, C>> tuples(Generator<A> a, Generator<B> b, Generator<C> c) {
+    public static <A, B, C> PrintableGenerator<Tuple3<A, B, C>> tuples(Generator<A> a, Generator<B> b, Generator<C> c) {
         return new TupleGenerator<>(
-                List.of(a, b, c), parts -> new Tuple3<>((A) parts.get(0), (B) parts.get(1), (C) parts.get(2)));
+                "Tuple3",
+                List.of(a, b, c),
+                parts -> new Tuple3<>((A) parts.get(0), (B) parts.get(1), (C) parts.get(2)));
     }
 
     /**
@@ -383,9 +387,10 @@ public final class Generators {
      * @return a generator of {@link Tuple4}
      */
     @SuppressWarnings("unchecked")
-    public static <A, B, C, D> Generator<Tuple4<A, B, C, D>> tuples(
+    public static <A, B, C, D> PrintableGenerator<Tuple4<A, B, C, D>> tuples(
             Generator<A> a, Generator<B> b, Generator<C> c, Generator<D> d) {
         return new TupleGenerator<>(
+                "Tuple4",
                 List.of(a, b, c, d),
                 parts -> new Tuple4<>((A) parts.get(0), (B) parts.get(1), (C) parts.get(2), (D) parts.get(3)));
     }
@@ -406,9 +411,10 @@ public final class Generators {
      * @return a generator of {@link Tuple5}
      */
     @SuppressWarnings("unchecked")
-    public static <A, B, C, D, E> Generator<Tuple5<A, B, C, D, E>> tuples(
+    public static <A, B, C, D, E> PrintableGenerator<Tuple5<A, B, C, D, E>> tuples(
             Generator<A> a, Generator<B> b, Generator<C> c, Generator<D> d, Generator<E> e) {
         return new TupleGenerator<>(
+                "Tuple5",
                 List.of(a, b, c, d, e),
                 parts -> new Tuple5<>(
                         (A) parts.get(0), (B) parts.get(1), (C) parts.get(2), (D) parts.get(3), (E) parts.get(4)));
@@ -432,9 +438,10 @@ public final class Generators {
      * @return a generator of {@link Tuple6}
      */
     @SuppressWarnings("unchecked")
-    public static <A, B, C, D, E, F> Generator<Tuple6<A, B, C, D, E, F>> tuples(
+    public static <A, B, C, D, E, F> PrintableGenerator<Tuple6<A, B, C, D, E, F>> tuples(
             Generator<A> a, Generator<B> b, Generator<C> c, Generator<D> d, Generator<E> e, Generator<F> f) {
         return new TupleGenerator<>(
+                "Tuple6",
                 List.of(a, b, c, d, e, f),
                 parts -> new Tuple6<>(
                         (A) parts.get(0), (B) parts.get(1), (C) parts.get(2), (D) parts.get(3), (E) parts.get(4), (F)
@@ -461,7 +468,7 @@ public final class Generators {
      * @return a generator of {@link Tuple7}
      */
     @SuppressWarnings("unchecked")
-    public static <A, B, C, D, E, F, G> Generator<Tuple7<A, B, C, D, E, F, G>> tuples(
+    public static <A, B, C, D, E, F, G> PrintableGenerator<Tuple7<A, B, C, D, E, F, G>> tuples(
             Generator<A> a,
             Generator<B> b,
             Generator<C> c,
@@ -470,6 +477,7 @@ public final class Generators {
             Generator<F> f,
             Generator<G> g) {
         return new TupleGenerator<>(
+                "Tuple7",
                 List.of(a, b, c, d, e, f, g),
                 parts -> new Tuple7<>(
                         (A) parts.get(0),
@@ -503,7 +511,7 @@ public final class Generators {
      * @return a generator of {@link Tuple8}
      */
     @SuppressWarnings("unchecked")
-    public static <A, B, C, D, E, F, G, H> Generator<Tuple8<A, B, C, D, E, F, G, H>> tuples(
+    public static <A, B, C, D, E, F, G, H> PrintableGenerator<Tuple8<A, B, C, D, E, F, G, H>> tuples(
             Generator<A> a,
             Generator<B> b,
             Generator<C> c,
@@ -513,6 +521,7 @@ public final class Generators {
             Generator<G> g,
             Generator<H> h) {
         return new TupleGenerator<>(
+                "Tuple8",
                 List.of(a, b, c, d, e, f, g, h),
                 parts -> new Tuple8<>(
                         (A) parts.get(0),
@@ -533,21 +542,46 @@ public final class Generators {
      * @param generators one generator per position
      * @return a tuple generator
      */
-    public static Generator<List<Object>> tuples(Generator<?>... generators) {
+    public static PrintableGenerator<List<Object>> tuples(Generator<?>... generators) {
         return new TupleGenerator<>(List.of(generators), parts -> parts);
     }
 
     // --- imperative composition ---
 
     /**
-     * Builds a value imperatively from multiple draws on the test case.
+     * Builds a value imperatively from multiple draws on the test case. It prints the value {@code
+     * body} returns with {@link Printer#repr}; the draws inside it are not printed.
      *
      * @param body draws from the test case and returns a value
      * @param <T> the value type
      * @return a composite generator
      */
-    public static <T> Generator<T> composite(Function<TestCase, T> body) {
+    public static <T> PrintableGenerator<T> composite(Function<TestCase, T> body) {
         return new CompositeGenerator<>(body);
+    }
+
+    /**
+     * Builds a value imperatively from multiple draws on the test case, printing it as {@code body}
+     * prints it to the printer it is given. Draw each part with {@link TestCase#drawAndPrint} to
+     * print it in place, or with {@link TestCase#drawSilent} to leave it out:
+     *
+     * <pre>{@code
+     * Generator<Point> points = composite((tc, p) -> {
+     *     p.beginGroup("Point.of(");
+     *     int x = tc.drawAndPrint(integers(), p);
+     *     p.separator();
+     *     int y = tc.drawAndPrint(integers(), p);
+     *     p.endGroup(")");
+     *     return Point.of(x, y);
+     * });
+     * }</pre>
+     *
+     * @param body draws from the test case, printing to the printer, and returns a value
+     * @param <T> the value type
+     * @return a composite generator
+     */
+    public static <T> PrintableGenerator<T> composite(BiFunction<TestCase, Printer, T> body) {
+        return new PrintingCompositeGenerator<>(body);
     }
 
     /**
@@ -604,8 +638,8 @@ public final class Generators {
      * @return a generator producing instances of {@code type}
      */
     @SuppressWarnings("unchecked")
-    public static <T> Generator<T> forType(Class<T> type) {
-        return (Generator<T>) Derive.fromType(type);
+    public static <T> PrintableGenerator<T> forType(Class<T> type) {
+        return (PrintableGenerator<T>) Derive.fromType(type);
     }
 
     /**
@@ -625,14 +659,14 @@ public final class Generators {
     /**
      * @return a generator of syntactically valid email addresses
      */
-    public static Generator<String> emails() {
+    public static PrintableGenerator<String> emails() {
         return new EmailGenerator();
     }
 
     /**
      * @return a generator of syntactically valid URLs
      */
-    public static Generator<String> urls() {
+    public static PrintableGenerator<String> urls() {
         return new UrlGenerator();
     }
 
@@ -713,7 +747,7 @@ public final class Generators {
      *
      * @return a zone-id generator
      */
-    public static Generator<ZoneId> zoneIds() {
+    public static PrintableGenerator<ZoneId> zoneIds() {
         return sampledFrom(AVAILABLE_ZONE_IDS);
     }
 

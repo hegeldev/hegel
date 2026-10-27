@@ -1,6 +1,5 @@
 package dev.hegel.generators;
 
-import dev.hegel.Generator;
 import dev.hegel.Label;
 import dev.hegel.TestCase;
 
@@ -8,7 +7,7 @@ import dev.hegel.TestCase;
  * Generates IP address strings. By default produces a mix of IPv4 and IPv6; restrict to one family
  * with the fluent {@link #v4()} / {@link #v6()} methods.
  */
-public final class IpAddressGenerator implements Generator<String> {
+public final class IpAddressGenerator extends ValueGenerator<String> {
     private final Integer version; // null = a mix of IPv4 and IPv6
 
     public IpAddressGenerator(Integer version) {

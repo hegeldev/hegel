@@ -62,20 +62,98 @@
  * <h2>Understanding test output</h2>
  *
  * <p>When a property fails, Hegel replays the minimal counterexample and prints each top-level
- * {@code draw} as an assignment:
+ * {@code draw} as a declaration:
  *
  * <pre>{@code
- * draw_1 = 50;
+ * var draw_1 = 50;
  * }</pre>
  *
  * <p>Pass a label — {@code tc.draw(integers(), "n")} — to name the variable instead:
  *
  * <pre>{@code
- * n = 50;
+ * var n = 50;
  * }</pre>
  *
  * <p>Long values are laid out over several lines, one element per line, and notes from {@link
  * dev.hegel.TestCase#note(String)} appear in order among the draws.
+ *
+ * <h2>Printing</h2>
+ *
+ * <p>A value often cannot print itself usefully: a drawn lambda has no readable {@code
+ * toString()}, and the useful description of a stateful object is what it does after it is drawn.
+ * The generator that made a value can always describe it, so printing is a capability of the
+ * generator, not the value: a {@link dev.hegel.PrintableGenerator} draws and prints in one step,
+ * writing to the engine's {@link dev.hegel.Printer} as it draws. {@link
+ * dev.hegel.TestCase#draw(dev.hegel.Generator) draw} needs a printable generator, so that the
+ * report can say what was drawn; {@link dev.hegel.TestCase#drawSilent(dev.hegel.Generator)
+ * drawSilent} draws from any generator and prints nothing.
+ *
+ * <p>Every built-in generator is printable:
+ *
+ * <ul>
+ *   <li>The leaf generators print the value they draw: integers, floats, booleans, strings,
+ *       bytes, dates and times, UUIDs, IP addresses, emails, URLs, durations, regex and grammar
+ *       strings, pool draws.
+ *   <li>The structural generators print as they draw, element by element and component by
+ *       component: {@code lists}, {@code sets}, {@code maps}, {@code arrays}, {@code tuples},
+ *       {@code optional}, {@code records} and {@code forType}, {@code oneOf}, {@code filter},
+ *       {@code flatMap}, {@code recursive} and {@code deferred}. An element's own printing (a
+ *       {@link dev.hegel.Generator#printWith printWith} callback, a deferred description) therefore
+ *       appears inside its container.
+ *   <li>The value-producing generators print the value they produce with {@link
+ *       dev.hegel.Printer#repr}, in Java syntax: {@code map}, {@code just}, {@code sampledFrom}
+ *       and {@code composite}. A composite's own draws are not printed, only what it returns.
+ * </ul>
+ *
+ * <p>A hand-written {@link dev.hegel.Generator} draws silently. To draw it with {@code draw}:
+ *
+ * <ul>
+ *   <li>{@link dev.hegel.Generator#printWith printWith} prints each value with a callback taking
+ *       the value and the printer: {@code .printWith((key, p) -> p.text("Key.of(" + key.id() +
+ *       ")"))}. It is also the way to mask a secret, or to print a type whose {@code toString()} is
+ *       unhelpful.
+ *   <li>{@link dev.hegel.Generator#printAsRepr() printAsRepr} prints each value with {@link
+ *       dev.hegel.Printer#repr}.
+ *   <li>{@link dev.hegel.generators.MappedGenerator#printAsCall printAsCall}, on a {@code map}
+ *       whose source is printable, prints the call that made the value instead of the value:
+ *       {@code integers().map(Key::of).printAsCall("Key.of")} reports {@code Key.of(3)}.
+ *   <li>Implement {@link dev.hegel.PrintableGenerator}, drawing each part with {@link
+ *       dev.hegel.TestCase#drawAndPrint} so that it prints itself in place, or build one with
+ *       {@link dev.hegel.Generators#composite(java.util.function.BiFunction)}.
+ * </ul>
+ *
+ * <p>Drawing a generator that cannot print with {@code draw}, or a structural generator with a
+ * part that cannot, fails the run with an {@link IllegalArgumentException} naming the generator.
+ * Printability belongs to the generator object, so declaring it as a {@code Generator<T>} does not
+ * lose it.
+ *
+ * <p>The {@link dev.hegel.Printer} is the engine's layout engine: text, break points that become
+ * newlines only when their group does not fit, and groups. A generator that may reject an attempt
+ * prints it inside a {@linkplain dev.hegel.Printer#speculate() speculation} and commits only the
+ * accepted one, and {@link dev.hegel.Printer#deferred()} opens a hole that is filled in after the
+ * draw, for a value whose description is only known once it is used:
+ *
+ * <pre>{@code
+ * PrintableGenerator<IntSupplier> counters = (tc, p) -> {
+ *     int start = tc.drawSilent(integers().min(0).max(9));
+ *     p.beginGroup("Counter[calls=[");
+ *     Printer calls = p.deferred();
+ *     p.endGroup("]]");
+ *     int[] next = {start};
+ *     return () -> {
+ *         if (next[0] > start) {
+ *             calls.separator();
+ *         }
+ *         calls.repr(next[0]);
+ *         return next[0]++;
+ *     };
+ * };
+ *
+ * IntSupplier c = tc.draw(counters, "c");   // var c = Counter[calls=[3, 4, 5]];
+ * }</pre>
+ *
+ * <p>{@link dev.hegel.Document} lays out a standalone document, for trying printing code outside a
+ * test.
  *
  * <p>This report is produced by the run's {@link dev.hegel.Reporter}; the default prints to
  * {@code System.err}. Pass your own to {@link dev.hegel.Hegel#test(java.util.function.Consumer,
@@ -137,8 +215,8 @@
  *       <pre>{@code
  * Generator<List<Boolean>> sized = integers().min(0).max(10).flatMap(n -> lists(booleans()).minSize(n).maxSize(n));
  * }</pre>
- *   <li>{@link dev.hegel.Generators#composite composite} builds a value imperatively from several
- *       draws:
+ *   <li>{@link dev.hegel.Generators#composite(java.util.function.Function) composite} builds a
+ *       value imperatively from several draws, and prints the value it returns:
  *       <pre>{@code
  * Generator<int[]> pair = Generators.composite(tc -> new int[] {
  *     tc.draw(integers()), tc.draw(integers())

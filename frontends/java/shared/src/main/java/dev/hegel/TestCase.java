@@ -25,9 +25,11 @@ import java.util.function.Supplier;
  *
  * <p>On an execution the engine stamped for capture ({@link #isFinal()}) — the final replay of a
  * minimal failing example among them — and on every execution of a {@linkplain Verbosity#VERBOSE
- * verbose} run, each top-level {@code draw} is printed as {@code x = 42;} and each note as its
+ * verbose} run, each top-level {@code draw} is printed as {@code var x = 42;} and each note as its
  * text into the engine's document for the case, which lays out long values over several lines and
- * attributes concurrent workers' lines. If the case fails and the engine reports that failure, the
+ * attributes concurrent workers' lines. The generator prints the value as it draws it (see {@link
+ * PrintableGenerator}), so {@code draw} needs a printable generator; {@link #drawSilent} draws from
+ * any generator and prints nothing. If the case fails and the engine reports that failure, the
  * run's {@link Reporter} receives the rendered lines and the resulting {@link Failure} carries
  * them, so the counterexample is readable. A label drawn more than once in a case is numbered from
  * its second use ({@code x}, {@code x_2}, {@code x_3}); unlabelled draws are {@code draw_1}, {@code
@@ -83,6 +85,8 @@ public final class TestCase {
         private final Map<String, Object> draws = new LinkedHashMap<>();
         /** Every fork and pinned block handle opened in the case, kept alive until the case is over. */
         private final List<TestCase> blocks = new ArrayList<>();
+        /** The deferred printer regions opened in the case, kept alive until the case is over. */
+        final Printer.Regions regions = new Printer.Regions();
 
         Shared(boolean captured, boolean verbose) {
             this.captured = captured;
@@ -191,16 +195,18 @@ public final class TestCase {
     }
 
     /**
-     * Free this root handle's printer and every fork and pinned block handle opened in the case,
-     * with their printers. Called once the case is over, however its body ended.
+     * Free this root handle's printer, every fork and pinned block handle opened in the case, with
+     * their printers, and every deferred printer region. Called once the case is over, however its
+     * body ended.
      */
     void releaseAll() {
         try {
             closePrinter();
-        } finally {
             for (TestCase block : shared.takeBlocks()) {
                 block.release();
             }
+        } finally {
+            shared.regions.freeAll();
         }
     }
 
@@ -208,7 +214,7 @@ public final class TestCase {
         if (printer != null) {
             Printer p = printer;
             printer = null;
-            p.close();
+            p.free();
         }
     }
 
@@ -223,11 +229,12 @@ public final class TestCase {
         if (!shared.emits) {
             return List.of();
         }
-        String text;
-        try (Printer root = source.printer()) {
-            text = root.read();
+        Printer root = source.printer(shared.regions);
+        try {
+            return root.read().lines().toList();
+        } finally {
+            root.free();
         }
-        return text.lines().toList();
     }
 
     /**
@@ -246,11 +253,15 @@ public final class TestCase {
     }
 
     /**
-     * Draw a value from {@code generator}.
+     * Draw a value from {@code generator}, printing it in the counterexample output. The generator
+     * must be a {@link PrintableGenerator}, as every built-in generator is; draw any other with
+     * {@link #drawSilent}, or make it printable with {@link Generator#printWith} or {@link
+     * Generator#printAsRepr()}.
      *
-     * @param generator the generator to draw from
+     * @param generator the printable generator to draw from
      * @param <T> the value type
      * @return the generated value
+     * @throws IllegalArgumentException if {@code generator} is not a {@link PrintableGenerator}
      */
     public <T> T draw(Generator<T> generator) {
         return draw(generator, null);
@@ -259,57 +270,41 @@ public final class TestCase {
     /**
      * Draw a value, naming it {@code label} in the falsifying-example output.
      *
-     * @param generator the generator to draw from
+     * @param generator the printable generator to draw from
      * @param label the variable name to show in counterexample output
      * @param <T> the value type
      * @return the generated value
+     * @throws IllegalArgumentException if {@code generator} is not a {@link PrintableGenerator}
      */
     public <T> T draw(Generator<T> generator, String label) {
         if (label != null && label.indexOf('\n') >= 0) {
             throw new InvalidArgument("draw label " + Printer.quote(label, '"') + " must not contain a newline");
         }
+        requirePrintable(generator);
         if (explicit != null) {
             return explicitDraw(label);
         }
         if (drawDepth > 0 || !shared.emits) {
-            return drawNested(generator);
+            return drawAndPrint(generator, Printer.noop());
         }
         Printer p = printer();
-        p.beginSpeculative();
-        T value;
-        try {
-            value = drawNested(generator);
-        } catch (Throwable e) {
-            abortQuietly(p, e);
-            throw e;
-        }
         String name = names.next(label);
-        shared.record(name, value);
-        try {
-            p.text(name + " = ");
-            p.value(value);
+        T value;
+        try (Printer.Speculation speculation = p.speculate()) {
+            p.text("var " + name + " = ");
+            value = drawAndPrint(generator, p);
             p.text(";");
             p.hardBreak();
-            p.commitSpeculative();
-        } catch (RuntimeException e) {
-            abortQuietly(p, e);
-            throw e;
+            speculation.commit();
         }
+        shared.record(name, value);
         return value;
-    }
-
-    /** Abandon {@code p}'s speculative region, attaching any error doing so to {@code cause}. */
-    private static void abortQuietly(Printer p, Throwable cause) {
-        try {
-            p.abortSpeculative();
-        } catch (RuntimeException e) {
-            cause.addSuppressed(e);
-        }
     }
 
     /**
      * Draw a value from {@code generator} without printing it: it is neither shown in the
-     * counterexample output nor recorded in {@link Failure#draws()}.
+     * counterexample output nor recorded in {@link Failure#draws()}. Any generator can be drawn
+     * silently.
      *
      * @param generator the generator to draw from
      * @param <T> the value type
@@ -320,7 +315,44 @@ public final class TestCase {
         if (explicit != null) {
             return (T) explicit.takeSilent();
         }
-        return drawNested(generator);
+        drawDepth++;
+        try {
+            return generator.doDraw(this);
+        } finally {
+            drawDepth--;
+        }
+    }
+
+    /**
+     * Draw a value from {@code generator}, which describes it to {@code printer} as it draws it:
+     * how a {@link PrintableGenerator} draws each of its parts, so that the part prints itself in
+     * place. A {@link #draw} made while this one is in progress prints nothing.
+     *
+     * @param generator the printable generator to draw from
+     * @param printer the printer to describe the value to
+     * @param <T> the value type
+     * @return the generated value
+     * @throws IllegalArgumentException if {@code generator} is not a {@link PrintableGenerator}
+     */
+    public <T> T drawAndPrint(Generator<T> generator, Printer printer) {
+        PrintableGenerator<T> printable = requirePrintable(generator);
+        drawDepth++;
+        try {
+            return printable.doDrawAndPrint(this, printer);
+        } finally {
+            drawDepth--;
+        }
+    }
+
+    private static <T> PrintableGenerator<T> requirePrintable(Generator<T> generator) {
+        if (generator instanceof PrintableGenerator<T> printable) {
+            return printable;
+        }
+        throw new InvalidArgument(generator.getClass().getName()
+                + " cannot print the values it draws: implement PrintableGenerator, or make it printable"
+                + " with .printWith((value, printer) -> ...) or .printAsRepr(); a map whose input is"
+                + " printable can print the call with .printAsCall(\"Type.factory\"); or draw it with"
+                + " tc.drawSilent(...)");
     }
 
     @SuppressWarnings("unchecked")
@@ -331,18 +363,9 @@ public final class TestCase {
         return value;
     }
 
-    private <T> T drawNested(Generator<T> generator) {
-        drawDepth++;
-        try {
-            return generator.doDraw(this);
-        } finally {
-            drawDepth--;
-        }
-    }
-
     private Printer printer() {
         if (printer == null) {
-            printer = source.printer();
+            printer = source.printer(shared.regions);
         }
         return printer;
     }

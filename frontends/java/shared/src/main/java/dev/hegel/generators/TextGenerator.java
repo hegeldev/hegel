@@ -1,6 +1,5 @@
 package dev.hegel.generators;
 
-import dev.hegel.Generator;
 import dev.hegel.Label;
 import dev.hegel.StringGeneratorHandle;
 import dev.hegel.TestCase;
@@ -20,7 +19,7 @@ import java.util.List;
  * restrictions the other methods set ({@link #codec(String) codec}, {@link #codepoints(int, int)
  * codepoints}, {@link #categories(String...) categories} and so on); the two cannot be combined.
  */
-public final class TextGenerator implements Generator<String> {
+public final class TextGenerator extends ValueGenerator<String> {
     private final long minSize;
     private final long maxSize;
     private final String codec;

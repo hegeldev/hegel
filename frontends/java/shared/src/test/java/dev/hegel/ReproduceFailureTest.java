@@ -43,7 +43,7 @@ class ReproduceFailureTest {
         // Replaying the blob reproduces the shrunk counterexample (x = 11) and the same failure.
         String replayOutput = runCapturing(
                 new Settings().database(Database.disabled()).reproduceFailure(blob), FAILING, AssertionError.class);
-        assertTrue(replayOutput.contains("x = 11;"), replayOutput);
+        assertTrue(replayOutput.contains("var x = 11;"), replayOutput);
 
         // A body that no longer fails makes the blob stale.
         DidNotReproduceException stale = assertThrows(

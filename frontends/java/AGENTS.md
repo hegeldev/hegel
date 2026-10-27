@@ -172,8 +172,7 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   Java's way to every setting by its `hegel.toml` key (Java has no CLI to pass
   flags through). The engine's
   `hegel_set_unicode_version` has no Java surface (Java reports no Unicode
-  version), and the printer's `if_break`, `comment`, `shift_indent` and
-  `deferred` are unbound because Java's value rendering does not use them. The grammar functions are bound except `hegel_grammar_placeholder`
+  version). The grammar functions are bound except `hegel_grammar_placeholder`
   and `hegel_generate_grammar`: the frontend draws every grammar string through
   a `hegel_grammar_draw_t`, which splices in explicit terminals' values engine-side.
 - **Per-case primitives** — `DataSource` is the abstraction generators draw
@@ -195,14 +194,40 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   repetitions apart).
 - **Output** — all of a case's output goes through the engine's per-case
   document: `TestCase.note` is `hegel_note`, and a top-level `draw` prints
-  `name = value;` through the handle's `hegel_test_case_printer` inside a
+  `var name = ` through the handle's `hegel_test_case_printer`, then has the
+  generator print the value as it draws it, then `;`, all inside a
   speculative region (committed once the value is drawn, aborted if the draw
   throws; the engine holds back notes made mid-draw until the region closes).
-  `Printer.value` renders Java syntax — quoted, escaped strings and chars,
-  arrays and collections as `[a, b]`, maps as `{k: v}`, each a group with
-  breakables so the engine can lay it out — and hands anything else's
-  `toString()` to `hegel_printer_reflow`. Draw names (`x`, `x_2`, `draw_N`)
-  are numbered Java-side, per naming scope as Rust's `child()` scopes them
+  Printing is the generator's job, modelled on the Rust frontend (`pretty.rs`):
+  `PrintableGenerator.doDrawAndPrint(tc, printer)` draws and prints in one step,
+  and `TestCase.draw` requires one (`requirePrintable`, an `InvalidArgument`
+  checked before anything is drawn, explicit examples included), while
+  `drawSilent` takes any `Generator` and calls its silent `doDraw`. A
+  non-emitting or nested `draw` still runs the printing path, into
+  `Printer.noop()`, so an unprintable generator fails on the first case.
+  Structural generators (`dev.hegel.generators`) have one body taking a
+  nullable printer: `null` on the silent path, where each part is drawn with
+  `drawSilent`, and the printer on the printing path, where each part is drawn
+  with `TestCase.drawAndPrint` (which raises `drawDepth`, so a `draw` inside a
+  generator prints nothing) and so prints itself in place (`Components`).
+  Collections, filter attempts and recursion attempts print each attempt in a
+  `Printer.speculate()` region and commit only the accepted one. Leaf and
+  value-producing generators (`ValueGenerator`: the leaves, `map`, `just`,
+  `sampledFrom`, the one-argument `composite`; `PoolGenerator` for pool draws)
+  draw silently and print the value with `Printer.repr`, which renders Java
+  syntax — quoted, escaped strings and chars, arrays and collections as
+  `[a, b]`, maps as `{k: v}`, records as `Name[a=x]`, optionals — as groups
+  with breakables, and hands anything else's `toString()` to
+  `hegel_printer_reflow`. `printWith`/`printAsRepr` (`PrintedGenerator`) and
+  `MappedGenerator.printAsCall` are the value-printing escape hatches.
+  `Printer` is public and binds the whole printer ABI (`if_break`, `comment`,
+  `shift_indent`, `deferred`, `is_live`, speculation); a write to a dead
+  region (`E_INVALID_HANDLE`) or through the no-op or a freed printer is
+  ignored. Deferred regions are registered in a `Printer.Regions` owned by the
+  case (`TestCase.Shared`) or `Document` and freed after the document is read.
+  `Document` is a standalone `hegel_printer_new` document with
+  `hegel_printer_options_*` for its width. Draw names (`x`, `x_2`, `draw_N`)
+  are allocated before the draw and numbered Java-side, per naming scope as Rust's `child()` scopes them
   (the engine has no naming); `Failure.draws()` keys stay unique across scopes
   by suffixing a taken name. A draw label containing a newline is an
   `InvalidArgument` before anything is drawn, and an error abandoning a draw's
@@ -292,13 +317,15 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   JVM (`EnvironmentFixture`), since the engine reads its own process
   environment. There is no single-test-case mode; `testCases(1)` is the
   one-case configuration.
-- **Generators** — `Generator<T>` (public) with `map`/`filter`/`flatMap`. Leaf
+- **Generators** — `Generator<T>` (public; `doDraw` is the silent draw) with
+  `map`/`filter`/`flatMap`/`printWith`/`printAsRepr`, and
+  `PrintableGenerator<T>` (see **Output**). Leaf
   generators call the typed draw bridges on `TestCase` (`generateInteger`,
   `generateFloat`, `generateString`, …); composite generators (collections via
   the engine's `new_collection`/`collection_more` protocol, each collection
   freed with `collectionFree` when its draw ends, `oneOf`, tuples,
-  `map`/`filter`/`flatMap`) compose other generators' `doDraw` inside labeled
-  spans, mirroring the Rust frontend. String-shaped generators
+  `map`/`filter`/`flatMap`) draw their parts through the test case inside
+  labeled spans, mirroring the Rust frontend. String-shaped generators
   (`text`/`characters`/regex/email/url/domain) build a validated
   `hegel_string_generator_t` handle once per configuration and cache it
   (`HandleCache`, rebuilt if a test swaps the `Engine` binding);
@@ -343,8 +370,9 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   dropped. An explicit failure makes an otherwise PASSED or ERROR run FAILED
   (an ERROR's message and kind stay on the report).
 - **Public API** — `Hegel.test`/`Hegel.run`, `TestCase`
-  (`draw`/`drawSilent`/`assume`/`reject`/`note`/`target`/`event`/`eventValue`/`fork`/`repeat`/`isFinal`/`span`),
-  `Example`, `Label` (span labels;
+  (`draw`/`drawSilent`/`drawAndPrint`/`assume`/`reject`/`note`/`target`/`event`/`eventValue`/`fork`/`repeat`/`isFinal`/`span`),
+  `Example`, `Generator`/`PrintableGenerator`, `Printer`/`Document` (the
+  printer surface), `Label` (span labels;
   `Label.of(name)` mints labels through the engine), `Reporter`, `RunReport`,
   `Settings.infrastructurePackages` (extra class-name prefixes skipped by
   `Runner.originOf`), the `@HegelTest` annotation + `HegelTestExtension` (a

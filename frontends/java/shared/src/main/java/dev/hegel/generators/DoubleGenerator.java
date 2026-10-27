@@ -1,6 +1,5 @@
 package dev.hegel.generators;
 
-import dev.hegel.Generator;
 import dev.hegel.Generators;
 import dev.hegel.Label;
 import dev.hegel.TestCase;
@@ -17,7 +16,7 @@ import dev.hegel.TestCase;
  * {@code allowNan}/{@code allowInfinity} override these defaults where the combination is valid.
  * Validation of conflicting options happens at construction time.
  */
-public final class DoubleGenerator implements Generator<Double> {
+public final class DoubleGenerator extends ValueGenerator<Double> {
     private final Floats.DrawParams params;
     private final boolean excludeMin;
     private final boolean excludeMax;

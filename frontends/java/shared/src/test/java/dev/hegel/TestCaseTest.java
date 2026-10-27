@@ -22,7 +22,7 @@ class TestCaseTest {
         TestCase tc = newCase(fake, true);
         tc.draw(constant(1), "x");
         tc.draw(constant(2));
-        assertEquals(List.of("x = 1;", "draw_1 = 2;"), tc.output());
+        assertEquals(List.of("var x = 1;", "var draw_1 = 2;"), tc.output());
         // The case fetched one printer for its draws and freed it; output() read the document
         // through a second root printer, also freed.
         assertEquals(List.copyOf(fake.printerOwners.keySet()), fake.freedPrinters);
@@ -52,8 +52,8 @@ class TestCaseTest {
                 return a + 1;
             }
         };
-        tc.draw(nested, "top");
-        assertEquals(List.of("top = 11;"), tc.output());
+        tc.draw(nested.printAsRepr(), "top");
+        assertEquals(List.of("var top = 11;"), tc.output());
         assertEquals(Map.of("top", 11), tc.draws());
     }
 
@@ -75,7 +75,7 @@ class TestCaseTest {
         tc.draw(constant(2));
         assertEquals(List.of("x", "draw_1"), List.copyOf(tc.draws().keySet()));
         assertEquals(Map.of("x", 1, "draw_1", 2), tc.draws());
-        assertEquals(List.of("x = 1;", "first", "draw_1 = 2;"), tc.output());
+        assertEquals(List.of("var x = 1;", "first", "var draw_1 = 2;"), tc.output());
     }
 
     @Test
@@ -89,7 +89,9 @@ class TestCaseTest {
         assertEquals(
                 List.of("x", "x_2", "x_3", "draw_1", "draw_2"),
                 List.copyOf(tc.draws().keySet()));
-        assertEquals(List.of("x = 1;", "x_2 = 2;", "x_3 = 3;", "draw_1 = 8;", "draw_2 = 9;"), tc.output());
+        assertEquals(
+                List.of("var x = 1;", "var x_2 = 2;", "var x_3 = 3;", "var draw_1 = 8;", "var draw_2 = 9;"),
+                tc.output());
     }
 
     @Test
@@ -103,9 +105,9 @@ class TestCaseTest {
             }
         };
         tc.note("before");
-        tc.draw(noisy, "v");
+        tc.draw(noisy.printAsRepr(), "v");
         tc.note("after");
-        assertEquals(List.of("before", "v = 7;", "inside", "after"), tc.output());
+        assertEquals(List.of("before", "var v = 7;", "inside", "after"), tc.output());
     }
 
     @Test
@@ -118,7 +120,7 @@ class TestCaseTest {
                 throw new IllegalStateException("inside");
             }
         };
-        assertThrows(IllegalStateException.class, () -> tc.draw(failing, "v"));
+        assertThrows(IllegalStateException.class, () -> tc.draw(failing.printAsRepr(), "v"));
         assertEquals(List.of("about to fail"), tc.output());
         assertTrue(tc.draws().isEmpty());
     }
@@ -129,7 +131,7 @@ class TestCaseTest {
         assertFalse(tc.isFinal());
         tc.draw(constant(1), "x");
         tc.note("n");
-        assertEquals(List.of("x = 1;", "n"), tc.output());
+        assertEquals(List.of("var x = 1;", "n"), tc.output());
         assertTrue(tc.draws().isEmpty());
     }
 
@@ -161,7 +163,15 @@ class TestCaseTest {
         tc.note("}");
         tc.draw(constant(4), "x");
         assertEquals(
-                List.of("x = 1;", "Step 1: rule {", "  x = 2;", "  x_2 = 3;", "  inner", "}", "x_2 = 4;"), tc.output());
+                List.of(
+                        "var x = 1;",
+                        "Step 1: rule {",
+                        "  var x = 2;",
+                        "  var x_2 = 3;",
+                        "  inner",
+                        "}",
+                        "var x_2 = 4;"),
+                tc.output());
         assertEquals(Map.of("x", 1, "x_2", 2, "x_2_2", 3, "x_2_3", 4), tc.draws());
         assertEquals(List.of(FakeLibhegel.BLOCK_BASE), fake.freedBlocks);
         tc.releaseAll();
@@ -244,11 +254,6 @@ class TestCaseTest {
     }
 
     private static Generator<Integer> constant(int v) {
-        return new Generator<>() {
-            @Override
-            public Integer doDraw(TestCase tc) {
-                return v;
-            }
-        };
+        return Generators.just(v);
     }
 }

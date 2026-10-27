@@ -20,7 +20,7 @@ import java.util.List;
  * {@link #explicit explicit} generator for a terminal the grammar does not use is reported then as
  * an {@link IllegalArgumentException}.
  */
-public final class LarkGenerator implements Generator<String> {
+public final class LarkGenerator extends ValueGenerator<String> {
     private final String grammar;
     private final String start;
     private final List<Explicit> explicit;

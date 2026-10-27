@@ -109,7 +109,49 @@ class JnaLibhegelTest {
         assertEquals(Abi.E_INVALID_HANDLE, lib.printerCommitSpeculative(0));
         assertEquals(Abi.E_INVALID_HANDLE, lib.printerAbortSpeculative(0));
         assertEquals(Abi.E_INVALID_HANDLE, lib.printerResolve(0));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.printerIfBreak(0, ","));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.printerComment(0, "  // c"));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.printerShiftIndent(0, 2));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.printerDeferred(0, handle));
+        assertEquals(7, handle[0]);
+        boolean[] live = {true};
+        assertEquals(Abi.E_INVALID_HANDLE, lib.printerIsLive(0, live));
+        assertTrue(live[0]);
+        assertEquals(Abi.E_INVALID_HANDLE, lib.printerOptionsSetMaxWidth(0, 10));
+        lib.printerOptionsFree(0);
         lib.printerFree(0);
+    }
+
+    @Test
+    void aDocumentWithOptionsLaysOutAndSplicesDeferredRegions() {
+        JnaLibhegel lib = real();
+        long options = lib.printerOptionsNew();
+        assertEquals(Abi.E_INVALID_ARG, lib.printerOptionsSetMaxWidth(options, 0));
+        assertEquals(Abi.OK, lib.printerOptionsSetMaxWidth(options, 8));
+        long printer = lib.printerNew(options);
+        lib.printerOptionsFree(options);
+        assertEquals(Abi.OK, lib.printerBeginGroup(printer, 1, "["));
+        assertEquals(Abi.OK, lib.printerText(printer, "1000,"));
+        assertEquals(Abi.OK, lib.printerShiftIndent(printer, 0));
+        assertEquals(Abi.OK, lib.printerBreakable(printer, " "));
+        long[] slot = new long[1];
+        assertEquals(Abi.OK, lib.printerDeferred(printer, slot));
+        assertEquals(Abi.OK, lib.printerIfBreak(printer, ","));
+        assertEquals(Abi.OK, lib.printerEndGroup(printer, "]"));
+        assertEquals(Abi.OK, lib.printerComment(printer, "  // c"));
+        assertEquals(Abi.E_INVALID_ARG, lib.printerComment(printer, "a\nb"));
+        boolean[] live = new boolean[1];
+        assertEquals(Abi.OK, lib.printerIsLive(slot[0], live));
+        assertTrue(live[0]);
+        assertEquals(Abi.OK, lib.printerText(slot[0], "2000"));
+        assertEquals(Abi.OK, lib.printerResolve(printer));
+        assertEquals(Abi.OK, lib.printerIsLive(slot[0], live));
+        assertFalse(live[0]);
+        String[] text = new String[1];
+        assertEquals(Abi.OK, lib.printerValue(printer, text));
+        assertEquals("[1000,\n 2000,]  // c", text[0]);
+        lib.printerFree(slot[0]);
+        lib.printerFree(printer);
     }
 
     @Test

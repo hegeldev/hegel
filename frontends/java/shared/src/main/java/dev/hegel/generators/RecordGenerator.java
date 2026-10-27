@@ -3,6 +3,8 @@ package dev.hegel.generators;
 import dev.hegel.Generator;
 import dev.hegel.HegelException;
 import dev.hegel.Label;
+import dev.hegel.PrintableGenerator;
+import dev.hegel.Printer;
 import dev.hegel.TestCase;
 import java.lang.reflect.RecordComponent;
 import java.util.HashMap;
@@ -10,11 +12,13 @@ import java.util.Map;
 
 /**
  * Generates instances of a record type by drawing each component from its derived (or overridden)
- * generator and invoking the canonical constructor.
+ * generator and invoking the canonical constructor. It prints as the record's default {@code
+ * toString()} does, {@code Name[a=x, b=y]}, each component printed by its generator as it is drawn,
+ * so an override's own printing appears inside it.
  *
  * @param <T> the record type
  */
-public final class RecordGenerator<T> implements Generator<T> {
+public final class RecordGenerator<T> implements PrintableGenerator<T> {
     private final Class<T> type;
     private final Map<String, Generator<?>> overrides;
     private final CachedLabel label = new CachedLabel();
@@ -56,13 +60,26 @@ public final class RecordGenerator<T> implements Generator<T> {
         return label.get(() -> Label.combine(Label.FIXED_DICT, Label.of(type.getName())));
     }
 
+    /** @hidden */
     @Override
     public T doDraw(TestCase tc) {
+        return draw(tc, null);
+    }
+
+    /** @hidden */
+    @Override
+    public T doDrawAndPrint(TestCase tc, Printer printer) {
+        return draw(tc, printer);
+    }
+
+    private T draw(TestCase tc, Printer printer) {
+        Printer p = Components.out(printer);
         RecordComponent[] components = type.getRecordComponents();
         Object[] values = new Object[components.length];
         Class<?>[] paramTypes = new Class<?>[components.length];
         tc.startSpan(label());
         try {
+            p.beginGroup(type.getSimpleName() + "[");
             for (int i = 0; i < components.length; i++) {
                 RecordComponent rc = components[i];
                 paramTypes[i] = rc.getType();
@@ -70,8 +87,13 @@ public final class RecordGenerator<T> implements Generator<T> {
                 if (g == null) {
                     g = Derive.fromType(rc.getGenericType());
                 }
-                values[i] = g.doDraw(tc);
+                if (i > 0) {
+                    p.separator();
+                }
+                p.text(rc.getName() + "=");
+                values[i] = Components.draw(tc, g, printer);
             }
+            p.endGroup("]");
         } finally {
             tc.stopSpan(false);
         }
