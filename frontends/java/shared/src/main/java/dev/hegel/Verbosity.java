@@ -5,8 +5,9 @@ import dev.hegel.lowlevel.Abi;
 /** Engine output verbosity. */
 public enum Verbosity {
     /**
-     * Leave the choice to the engine's settings profile ({@link #NORMAL} unless configured
-     * otherwise).
+     * The {@link HegelTest} default: leave the resolved choice in place ({@link #NORMAL} unless the
+     * engine's settings profile or {@code HEGEL_VERBOSITY} says otherwise). {@link
+     * Settings#verbosity(Verbosity)} rejects it.
      */
     DEFAULT(null),
     /** Nothing besides the final result. */

@@ -151,4 +151,13 @@ public final class Hegel {
     private static Reporter defaultReporter() {
         return Reporter.printing(System.err);
     }
+
+    /**
+     * The version of the libhegel engine this frontend drives, such as {@code "0.47.1"}.
+     *
+     * @return the engine's version
+     */
+    public static String engineVersion() {
+        return Engine.get().version();
+    }
 }

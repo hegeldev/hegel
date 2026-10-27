@@ -8,7 +8,7 @@ import java.io.PrintStream;
  *
  * <p>Hegel itself never writes to {@code System.out} or {@code System.err}; all output goes through
  * the run's reporter. The default, {@link #printing(PrintStream) Reporter.printing(System.err)},
- * prints the classic report (each top-level draw as {@code x = 42;}, notes, and reproduce blobs).
+ * prints the classic report (each top-level draw as {@code var x = 42;}, notes, and reproduce blobs).
  * A frontend built on top of Hegel — another JVM language, a custom test runner — supplies its own
  * implementation to route output through its logging, or {@link #silent()} to consume the {@link
  * RunReport} returned by {@link Hegel#run} instead.

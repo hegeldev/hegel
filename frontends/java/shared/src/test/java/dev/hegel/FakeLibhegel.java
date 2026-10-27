@@ -12,6 +12,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalLong;
 import java.util.function.Consumer;
 
 /**
@@ -194,7 +195,10 @@ final class FakeLibhegel implements Libhegel {
     int suppressMask = -1;
     Integer backendCode;
     Long testCases;
-    String databasePath = "unset";
+    Long seed; // what settingsSeed received, null = no seed
+    boolean seedSent;
+    String databasePath;
+    boolean databaseSent;
     String databaseKey;
     Boolean derandomize;
     Integer verbosity;
@@ -356,6 +360,14 @@ final class FakeLibhegel implements Libhegel {
     int resolvedPhases = Abi.PHASE_ALL;
     boolean resolvedReportMultipleFailures = false;
     int resolvedStrictness = Abi.NONDETERMINISM_QUIET;
+    Long resolvedSeed; // null = no seed fixed
+    boolean resolvedDerandomize;
+    String resolvedDatabase; // null = the default location
+    int resolvedSuppressMask;
+    boolean resolvedStopOnFirstFailure = true;
+    boolean resolvedShowStatistics;
+    boolean resolvedUnboundedChoices;
+    int resolvedBackend = Abi.BACKEND_DEFAULT;
     Boolean printBlob; // what the setter received; null = never set
     Integer strictness; // what the setter received; null = never set
 
@@ -405,6 +417,47 @@ final class FakeLibhegel implements Libhegel {
     @Override
     public boolean settingsGetReportMultipleFailures(long s) {
         return reportMultipleFailures == null ? resolvedReportMultipleFailures : reportMultipleFailures;
+    }
+
+    @Override
+    public OptionalLong settingsGetSeed(long s) {
+        Long value = seedSent ? seed : resolvedSeed;
+        return value == null ? OptionalLong.empty() : OptionalLong.of(value);
+    }
+
+    @Override
+    public boolean settingsGetDerandomize(long s) {
+        return derandomize == null ? resolvedDerandomize : derandomize;
+    }
+
+    @Override
+    public String settingsGetDatabase(long s) {
+        return databaseSent ? databasePath : resolvedDatabase;
+    }
+
+    @Override
+    public int settingsGetSuppressHealthCheck(long s) {
+        return suppressMask == -1 ? resolvedSuppressMask : suppressMask;
+    }
+
+    @Override
+    public boolean settingsGetStopOnFirstFailure(long s) {
+        return stopOnFirstFailure == null ? resolvedStopOnFirstFailure : stopOnFirstFailure;
+    }
+
+    @Override
+    public boolean settingsGetShowStatistics(long s) {
+        return showStatistics == null ? resolvedShowStatistics : showStatistics;
+    }
+
+    @Override
+    public boolean settingsGetUnboundedChoices(long s) {
+        return unboundedChoices == null ? resolvedUnboundedChoices : unboundedChoices;
+    }
+
+    @Override
+    public int settingsGetBackend(long s) {
+        return backendCode == null ? resolvedBackend : backendCode;
     }
 
     @Override
@@ -479,7 +532,10 @@ final class FakeLibhegel implements Libhegel {
     }
 
     @Override
-    public void settingsSeed(long s, long seed, boolean hasSeed) {}
+    public void settingsSeed(long s, long seed, boolean hasSeed) {
+        this.seed = hasSeed ? seed : null;
+        seedSent = true;
+    }
 
     @Override
     public void settingsDerandomize(long s, boolean derandomize) {
@@ -494,6 +550,7 @@ final class FakeLibhegel implements Libhegel {
     @Override
     public void settingsDatabase(long s, String path) {
         databasePath = path;
+        databaseSent = true;
     }
 
     @Override

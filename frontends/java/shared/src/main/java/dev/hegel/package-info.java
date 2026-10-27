@@ -5,10 +5,11 @@
  * should hold for all inputs and let Hegel generate inputs to try to falsify it. When it finds a
  * failing input it automatically <strong>shrinks</strong> it to a minimal counterexample.
  *
- * <p>Hegel requires <strong>Java 22+</strong> (it uses the Foreign Function &amp; Memory API) and
- * {@code --enable-native-access=ALL-UNNAMED} on the test JVM. The native engine, {@code libhegel},
- * is bundled inside the jar for every supported platform and loaded automatically — nothing else to
- * install.
+ * <p>The {@code dev.hegel:hegel} artifact requires <strong>Java 22+</strong> (it uses the Foreign
+ * Function &amp; Memory API) and {@code --enable-native-access=ALL-UNNAMED} on the test JVM; {@code
+ * dev.hegel:hegel-jna} offers the same API on <strong>Java 17+</strong> through JNA. The native
+ * engine, {@code libhegel}, is bundled inside the jar for every supported platform and loaded
+ * automatically — nothing else to install.
  *
  * <h2>Your first test</h2>
  *
@@ -320,13 +321,15 @@
  * phases}, {@link dev.hegel.Settings#examples(dev.hegel.Example...) examples} (explicit {@link
  * dev.hegel.Example}s that run before any generated input; {@code @HegelTest(examples = ...)} names
  * methods that supply them), and a test can start from a named settings profile ({@link
- * dev.hegel.Settings#fromProfile(String)}, or {@code @HegelTest(profile = "...")}). Whatever a test
- * leaves unset is resolved by the engine from its settings profile — a {@code hegel.toml} in the
- * working directory or an ancestor, a profile registered with {@link
+ * dev.hegel.Settings#fromProfile(String)}, or {@code @HegelTest(profile = "...")}). A {@link
+ * dev.hegel.Settings} resolves every setting through the engine when it is created, so whatever a
+ * test does not set comes from the engine's settings profile — a {@code hegel.toml} in the working
+ * directory or an ancestor, a profile registered with {@link
  * dev.hegel.Settings#registerProfile(String, dev.hegel.Settings)}, or the shipped {@code ci} profile,
  * which makes runs deterministic and disables the example database when a CI server is detected —
  * and from the {@code HEGEL_*} settings environment variables ({@code HEGEL_TEST_CASES}, {@code
- * HEGEL_SEED}, {@code HEGEL_DATABASE} and so on), which win over the profile.
+ * HEGEL_SEED}, {@code HEGEL_DATABASE}, {@code HEGEL_VERBOSITY}, {@code HEGEL_PHASES} and so on),
+ * which win over the profile.
  * If a health check fires — for example, your generators reject almost every input — Hegel aborts
  * the run and throws {@link dev.hegel.HealthCheckFailure} (distinct from a property's own failure);
  * pass the relevant {@link dev.hegel.HealthCheck} to {@code suppressHealthCheck} if the behaviour is

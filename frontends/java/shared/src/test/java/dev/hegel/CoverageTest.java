@@ -114,26 +114,25 @@ class CoverageTest {
         assertEquals(5L, withSeed.seed);
         assertTrue(withSeed.hasSeed);
 
-        // Defaults: no seed, no derandomize override, engine-default phases, default database, no
-        // blob replay, the class-qualified method name as the property name, and the method as
-        // the test location.
+        // Defaults: every engine setting as the default profile resolves it, no blob replay, the
+        // class-qualified method name as the property name, and the method as the test location.
+        Settings resolved = new Settings();
         Settings noSeed =
                 HegelTestExtension.settingsFrom(unseeded.getAnnotation(HegelTest.class), unseeded, Holder.class);
-        assertFalse(noSeed.hasSeed);
-        assertNull(noSeed.derandomize);
-        assertNull(noSeed.phasesMask);
-        assertEquals(Database.Kind.UNSET, noSeed.database.kind);
-        assertNull(noSeed.suppressMask);
-        assertEquals(Backend.AUTO, noSeed.backend);
-        assertEquals(NondeterminismStrictness.DEFAULT, noSeed.nondeterminismStrictness);
-        assertNull(noSeed.reportMultipleFailures);
-        assertNull(noSeed.stopOnFirstFailure);
-        assertNull(noSeed.showStatistics);
-        assertNull(noSeed.unboundedChoices);
-        assertEquals(Verbosity.DEFAULT, noSeed.verbosity);
-        assertNull(noSeed.profile);
-        assertNull(noSeed.printBlob);
-        assertNull(noSeed.testCases);
+        assertEquals(resolved.hasSeed, noSeed.hasSeed);
+        assertEquals(resolved.derandomize, noSeed.derandomize);
+        assertEquals(resolved.phasesMask, noSeed.phasesMask);
+        assertEquals(resolved.database.kind, noSeed.database.kind);
+        assertEquals(resolved.suppressMask, noSeed.suppressMask);
+        assertEquals(resolved.backend, noSeed.backend);
+        assertEquals(resolved.nondeterminismStrictness, noSeed.nondeterminismStrictness);
+        assertEquals(resolved.reportMultipleFailures, noSeed.reportMultipleFailures);
+        assertEquals(resolved.stopOnFirstFailure, noSeed.stopOnFirstFailure);
+        assertEquals(resolved.showStatistics, noSeed.showStatistics);
+        assertEquals(resolved.unboundedChoices, noSeed.unboundedChoices);
+        assertEquals(resolved.verbosity, noSeed.verbosity);
+        assertEquals(resolved.printBlob, noSeed.printBlob);
+        assertEquals(resolved.testCases, noSeed.testCases);
         assertEquals(List.of(), noSeed.reproduceFailure);
         assertTrue(noSeed.annotated);
         assertEquals("dev.hegel.CoverageTest$Holder.unseeded", noSeed.name);
@@ -146,18 +145,18 @@ class CoverageTest {
         Method configured = Holder.class.getDeclaredMethod("configured", TestCase.class);
         Settings c =
                 HegelTestExtension.settingsFrom(configured.getAnnotation(HegelTest.class), configured, Holder.class);
-        assertEquals(Boolean.TRUE, c.derandomize);
-        assertEquals(Integer.valueOf(Phase.GENERATE.bit), c.phasesMask);
-        assertEquals(Integer.valueOf(HealthCheck.TOO_SLOW.bit), c.suppressMask);
+        assertTrue(c.derandomize);
+        assertEquals(Phase.GENERATE.bit, c.phasesMask);
+        assertEquals(HealthCheck.TOO_SLOW.bit, c.suppressMask);
         assertEquals(Backend.URANDOM, c.backend);
         assertEquals(NondeterminismStrictness.ERROR, c.nondeterminismStrictness);
-        assertEquals(Boolean.TRUE, c.reportMultipleFailures);
-        assertEquals(Boolean.TRUE, c.stopOnFirstFailure);
-        assertEquals(Boolean.TRUE, c.showStatistics);
-        assertEquals(Boolean.TRUE, c.unboundedChoices);
+        assertTrue(c.reportMultipleFailures);
+        assertTrue(c.stopOnFirstFailure);
+        assertTrue(c.showStatistics);
+        assertTrue(c.unboundedChoices);
         assertEquals(Verbosity.VERBOSE, c.verbosity);
-        assertEquals("ci", c.profile);
-        assertEquals(Boolean.TRUE, c.printBlob);
+        assertEquals(Database.Kind.DISABLED, c.database.kind);
+        assertTrue(c.printBlob);
         assertEquals(List.of("blob-xyz"), c.reproduceFailure);
         assertEquals("custom", c.name);
 
@@ -166,13 +165,13 @@ class CoverageTest {
         Method emptyPhases = Holder.class.getDeclaredMethod("derandomFalseEmptyPhases", TestCase.class);
         Settings e =
                 HegelTestExtension.settingsFrom(emptyPhases.getAnnotation(HegelTest.class), emptyPhases, Holder.class);
-        assertEquals(Boolean.FALSE, e.derandomize);
-        assertEquals(Boolean.FALSE, e.printBlob);
-        assertEquals(Boolean.FALSE, e.reportMultipleFailures);
-        assertEquals(Boolean.FALSE, e.stopOnFirstFailure);
-        assertEquals(Boolean.FALSE, e.showStatistics);
-        assertEquals(Boolean.FALSE, e.unboundedChoices);
-        assertEquals(Integer.valueOf(0), e.phasesMask);
+        assertFalse(e.derandomize);
+        assertFalse(e.printBlob);
+        assertFalse(e.reportMultipleFailures);
+        assertFalse(e.stopOnFirstFailure);
+        assertFalse(e.showStatistics);
+        assertFalse(e.unboundedChoices);
+        assertEquals(0, e.phasesMask);
         assertEquals(Database.Kind.DISABLED, e.database.kind);
 
         // A custom (compile-time) database path.
@@ -190,7 +189,7 @@ class CoverageTest {
         Method suppressNone = Holder.class.getDeclaredMethod("suppressNone", TestCase.class);
         Settings n = HegelTestExtension.settingsFrom(
                 suppressNone.getAnnotation(HegelTest.class), suppressNone, Holder.class);
-        assertEquals(Integer.valueOf(0), n.suppressMask);
+        assertEquals(0, n.suppressMask);
 
         Settings inherited =
                 HegelTestExtension.settingsFrom(unseeded.getAnnotation(HegelTest.class), unseeded, SubHolder.class);

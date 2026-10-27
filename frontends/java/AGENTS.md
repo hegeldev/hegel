@@ -288,19 +288,25 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   `UnsatisfiableException`, or the base type for usage and internal errors.
   `HegelException` (binding/engine errors) is always thrown, never reported.
   `Settings` is the immutable config; its closed-state setting types live
-  alongside it — `Backend` (auto = leave it to the engine's profile, which
-  picks urandom inside Antithesis / default / urandom), `Database`,
-  `OptBoolean`, `NondeterminismStrictness` and `Verbosity` (`DEFAULT` = leave
-  it to the engine), `TestLocation` — plus `printBlob` (print a
+  alongside it — `Backend` (`AUTO` is the `@HegelTest` default only: leave
+  the resolved choice, urandom inside Antithesis / default), `Database`,
+  `OptBoolean`, `NondeterminismStrictness` and `Verbosity` (`DEFAULT` =
+  the `@HegelTest` default only), `TestLocation` — plus `printBlob` (print a
   copy-pasteable reproducer per failure) and `reproduceFailure` (replay a
-  stored blob instead of running the property). Every engine setting is
-  unset unless the user sets it: `Runner.applySettings` sends only what the
-  user set, so the engine's resolution — its profile (`hegel.toml`, a
-  registered profile, the shipped `development`/`ci`/`workload` profiles, or
-  the one `Settings.fromProfile` names, resolved by
-  `hegel_settings_new_for_profile`) with the `HEGEL_*` settings variables
-  applied over it — stands for the rest, and explicit Java settings win over
-  both. `Settings.registerProfile` snapshots a resolved handle with
+  stored blob instead of running the property). A `Settings` holds a value
+  for every engine setting: creating one resolves a profile through the
+  engine (`hegel_settings_new`, or `hegel_settings_new_for_profile` for
+  `Settings.fromProfile`) — `hegel.toml`, a registered profile, the shipped
+  `development`/`ci`/`workload` profiles, with the `HEGEL_*` settings
+  variables applied over it — and copies every value back through the
+  `hegel_settings_get_*` getters (`Settings.resolve`); the fluent methods
+  replace values, and `Runner.applySettings` sends every field to a fresh
+  handle at run time, so a profile registered or made the default after a
+  `Settings` was created does not affect it. String settings (`Settings.set`)
+  are the exception: the engine parses them when the run starts, so
+  `Runner.run` reads back what the reporters need (`Settings.effective`).
+  The frontend never sets a field to a default of its own and never detects
+  CI. `Settings.registerProfile` snapshots a resolved handle with
   `hegel_settings_register_profile`; `Settings.setDefaultProfile` calls
   `hegel_set_default_profile`. `@HegelTest` names a test (its database key)
   `<fully.qualified.Class>.<method>`, the class being the test class running

@@ -23,8 +23,11 @@ import org.junit.jupiter.api.extension.ExtendWith;
  * }
  * }</pre>
  *
- * <p>The test appears as a single entry in the JUnit test tree. Every {@link Settings} knob has a
- * corresponding attribute here, so this annotation is the preferred entry point for property tests:
+ * <p>The test appears as a single entry in the JUnit test tree. Every engine setting has a
+ * corresponding attribute here (only a test's {@linkplain Settings#testLocation location}, its
+ * {@linkplain Settings#infrastructurePackages infrastructure packages} and {@linkplain
+ * Settings#set string-form settings} are {@link Settings}-only), so this annotation is the preferred
+ * entry point for property tests:
  *
  * <pre>{@code
  * @HegelTest(testCases = 500, seed = 42, phases = {Phase.GENERATE, Phase.SHRINK})
@@ -50,9 +53,9 @@ public @interface HegelTest {
     long NO_SEED = Long.MIN_VALUE;
 
     /**
-     * Maximum number of valid test cases to run. The default, {@code 0}, leaves the budget to the
-     * engine's settings profile and the {@code HEGEL_TEST_CASES} environment variable (100 unless
-     * configured otherwise).
+     * Maximum number of valid test cases to run. The default, {@code 0}, leaves the budget the
+     * engine's settings profile and the {@code HEGEL_TEST_CASES} environment variable resolve (100
+     * unless configured otherwise).
      *
      * @return the test-case budget, or {@code 0} for the engine's
      */
@@ -69,7 +72,7 @@ public @interface HegelTest {
     long seed() default NO_SEED;
 
     /**
-     * The settings profile to start from instead of the default one (see {@link
+     * The settings profile to resolve instead of the default one (see {@link
      * Settings#fromProfile(String)}). Empty (the default) uses the default profile.
      *
      * @return the profile name, or {@code ""} for the default profile
@@ -77,8 +80,9 @@ public @interface HegelTest {
     String profile() default "";
 
     /**
-     * Engine output verbosity. The default leaves it to the engine's settings profile ({@link
-     * Verbosity#NORMAL} unless configured otherwise).
+     * Engine output verbosity. The default leaves what the engine's settings profile and the {@code
+     * HEGEL_VERBOSITY} environment variable resolve ({@link Verbosity#NORMAL} unless configured
+     * otherwise).
      *
      * @return the verbosity level
      */
@@ -95,7 +99,8 @@ public @interface HegelTest {
 
     /**
      * Enable only the listed phases; phases not listed are disabled. The default (all phases) leaves
-     * the engine default in place. An explicitly empty list runs no phases at all.
+     * what the engine's settings profile and the {@code HEGEL_PHASES} environment variable resolve.
+     * An explicitly empty list runs no phases at all.
      *
      * @return the phases to enable
      */
@@ -103,9 +108,9 @@ public @interface HegelTest {
 
     /**
      * Health checks to suppress (because the flagged behaviour is intentional). Empty (the
-     * default) leaves the suppressions to the engine's settings profile and the {@code HEGEL_*}
-     * environment variables. To run every check where the profile suppresses some, give {@code
-     * suppressHealthCheck = HealthCheck.NONE}.
+     * default) leaves the suppressions the engine's settings profile and the {@code
+     * HEGEL_SUPPRESS_HEALTH_CHECK} environment variable resolve. To run every check where the
+     * profile suppresses some, give {@code suppressHealthCheck = HealthCheck.NONE}.
      *
      * @return the checks to disable
      */
@@ -115,7 +120,8 @@ public @interface HegelTest {
      * The example-database root, as a single value:
      *
      * <ul>
-     *   <li>{@code ""} (default) — keep the database of the settings profile.
+     *   <li>{@code ""} (default) — keep the database the settings resolved from the engine's
+     *       profile.
      *   <li>{@link Database#DEFAULT_LOCATION} — use the default location, {@code .hegel/examples},
      *       even under a profile that disables the database.
      *   <li>{@link Database#DISABLED} — disable the database entirely (no persistence, no replay).
@@ -130,8 +136,9 @@ public @interface HegelTest {
     String database() default "";
 
     /**
-     * The source of randomness. The default, {@link Backend#AUTO}, leaves the choice to the engine's
-     * settings profile: {@link Backend#URANDOM} inside Antithesis and {@link Backend#DEFAULT} otherwise.
+     * The source of randomness. The default, {@link Backend#AUTO}, leaves what the engine's settings
+     * profile and the {@code HEGEL_BACKEND} environment variable resolve: {@link Backend#URANDOM}
+     * inside Antithesis and {@link Backend#DEFAULT} otherwise.
      *
      * @return the randomness backend
      */
@@ -140,7 +147,9 @@ public @interface HegelTest {
     /**
      * Report every distinct failure the run finds rather than only the smallest. Several distinct
      * bugs aggregate into one report; a run that finds a single bug still rethrows it directly. The
-     * default leaves it to the engine's settings profile (off unless configured otherwise).
+     * default leaves what the engine's settings profile and the {@code
+     * HEGEL_REPORT_MULTIPLE_FAILURES} environment variable resolve (off unless configured
+     * otherwise).
      *
      * @return whether to report multiple failures
      */

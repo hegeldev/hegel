@@ -21,6 +21,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalLong;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -85,6 +86,22 @@ final class JnaLibhegel implements Libhegel {
         int hegel_settings_get_phases(Pointer ctx, Pointer s, IntByReference out);
 
         int hegel_settings_get_report_multiple_failures(Pointer ctx, Pointer s, ByteByReference out);
+
+        int hegel_settings_get_seed(Pointer ctx, Pointer s, LongByReference outSeed, ByteByReference outHasSeed);
+
+        int hegel_settings_get_derandomize(Pointer ctx, Pointer s, ByteByReference out);
+
+        int hegel_settings_get_database(Pointer ctx, Pointer s, PointerByReference out);
+
+        int hegel_settings_get_suppress_health_check(Pointer ctx, Pointer s, IntByReference out);
+
+        int hegel_settings_get_stop_on_first_failure(Pointer ctx, Pointer s, ByteByReference out);
+
+        int hegel_settings_get_show_statistics(Pointer ctx, Pointer s, ByteByReference out);
+
+        int hegel_settings_get_unbounded_choices(Pointer ctx, Pointer s, ByteByReference out);
+
+        int hegel_settings_get_backend(Pointer ctx, Pointer s, IntByReference out);
 
         int hegel_settings_set_stop_on_first_failure(Pointer ctx, Pointer s, byte yes);
 
@@ -742,6 +759,67 @@ final class JnaLibhegel implements Libhegel {
                 "hegel_settings_get_report_multiple_failures",
                 lib.hegel_settings_get_report_multiple_failures(ctx(), pointer(s), out));
         return out.getValue() != 0;
+    }
+
+    @Override
+    public OptionalLong settingsGetSeed(long s) {
+        LongByReference seed = new LongByReference();
+        ByteByReference hasSeed = new ByteByReference();
+        check("hegel_settings_get_seed", lib.hegel_settings_get_seed(ctx(), pointer(s), seed, hasSeed));
+        return hasSeed.getValue() != 0 ? OptionalLong.of(seed.getValue()) : OptionalLong.empty();
+    }
+
+    @Override
+    public boolean settingsGetDerandomize(long s) {
+        ByteByReference out = new ByteByReference();
+        check("hegel_settings_get_derandomize", lib.hegel_settings_get_derandomize(ctx(), pointer(s), out));
+        return out.getValue() != 0;
+    }
+
+    @Override
+    public String settingsGetDatabase(long s) {
+        PointerByReference out = new PointerByReference();
+        check("hegel_settings_get_database", lib.hegel_settings_get_database(ctx(), pointer(s), out));
+        return readStringAt(out.getValue());
+    }
+
+    @Override
+    public int settingsGetSuppressHealthCheck(long s) {
+        IntByReference out = new IntByReference();
+        check(
+                "hegel_settings_get_suppress_health_check",
+                lib.hegel_settings_get_suppress_health_check(ctx(), pointer(s), out));
+        return out.getValue();
+    }
+
+    @Override
+    public boolean settingsGetStopOnFirstFailure(long s) {
+        ByteByReference out = new ByteByReference();
+        check(
+                "hegel_settings_get_stop_on_first_failure",
+                lib.hegel_settings_get_stop_on_first_failure(ctx(), pointer(s), out));
+        return out.getValue() != 0;
+    }
+
+    @Override
+    public boolean settingsGetShowStatistics(long s) {
+        ByteByReference out = new ByteByReference();
+        check("hegel_settings_get_show_statistics", lib.hegel_settings_get_show_statistics(ctx(), pointer(s), out));
+        return out.getValue() != 0;
+    }
+
+    @Override
+    public boolean settingsGetUnboundedChoices(long s) {
+        ByteByReference out = new ByteByReference();
+        check("hegel_settings_get_unbounded_choices", lib.hegel_settings_get_unbounded_choices(ctx(), pointer(s), out));
+        return out.getValue() != 0;
+    }
+
+    @Override
+    public int settingsGetBackend(long s) {
+        IntByReference out = new IntByReference();
+        check("hegel_settings_get_backend", lib.hegel_settings_get_backend(ctx(), pointer(s), out));
+        return out.getValue();
     }
 
     @Override

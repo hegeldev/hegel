@@ -5,13 +5,17 @@ import dev.hegel.lowlevel.Abi;
 /**
  * The source of randomness the engine draws from.
  *
- * <p>Mirrors Hypothesis's {@code backend} setting. The default, {@link #AUTO}, leaves the choice to
- * the engine's settings profile: the shipped {@code workload} profile, which the engine selects when
- * running inside <a href="https://antithesis.com/">Antithesis</a>, uses {@link #URANDOM}, and every
- * other profile uses {@link #DEFAULT}. An explicit choice always wins over the profile's.
+ * <p>Mirrors Hypothesis's {@code backend} setting. A {@link Settings} resolves it from the engine's
+ * settings profile and the {@code HEGEL_BACKEND} environment variable: the shipped {@code workload}
+ * profile, which the engine selects when running inside <a
+ * href="https://antithesis.com/">Antithesis</a>, uses {@link #URANDOM}, and every other profile
+ * uses {@link #DEFAULT}. An explicit choice always wins over the profile's.
  */
 public enum Backend {
-    /** Leave the choice to the engine's profile: {@code URANDOM} under Antithesis, else {@code DEFAULT}. */
+    /**
+     * The {@link HegelTest} default: leave the resolved choice in place ({@code URANDOM} under
+     * Antithesis, else {@code DEFAULT}). {@link Settings#backend(Backend)} rejects it.
+     */
     AUTO(null),
     /**
      * Expand a single seeded PRNG. Runs are reproducible from the seed and shrinking and replay
@@ -30,5 +34,15 @@ public enum Backend {
 
     Backend(Integer code) {
         this.code = code;
+    }
+
+    /** The backend the engine reports back for {@code code}. */
+    static Backend fromCode(int code) {
+        for (Backend b : values()) {
+            if (b.code != null && b.code == code) {
+                return b;
+            }
+        }
+        throw new HegelException("unknown hegel_backend_t value " + code);
     }
 }

@@ -91,14 +91,17 @@ public final class HegelTestExtension implements TestTemplateInvocationContextPr
         String className = testClass.getName();
         String name = ann.name().isEmpty() ? className + "." + method.getName() : ann.name();
         Settings s = ann.profile().isEmpty() ? new Settings() : Settings.fromProfile(ann.profile());
-        s = s.verbosity(ann.verbosity())
-                .backend(ann.backend())
-                .nondeterminismStrictness(ann.nondeterminismStrictness())
-                .name(name)
-                .testLocation(MethodLocation.of(method, testClass))
-                .annotated();
-        // The annotation cannot express "unset" for a primitive: 0 test cases (its default) leaves
-        // the engine's profile / HEGEL_TEST_CASES value in place.
+        s = s.name(name).testLocation(MethodLocation.of(method, testClass)).annotated();
+        // Each attribute's default leaves the value the settings resolved in place.
+        if (ann.verbosity() != Verbosity.DEFAULT) {
+            s = s.verbosity(ann.verbosity());
+        }
+        if (ann.backend() != Backend.AUTO) {
+            s = s.backend(ann.backend());
+        }
+        if (ann.nondeterminismStrictness() != NondeterminismStrictness.DEFAULT) {
+            s = s.nondeterminismStrictness(ann.nondeterminismStrictness());
+        }
         if (ann.testCases() != 0) {
             s = s.testCases(ann.testCases());
         }

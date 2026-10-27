@@ -27,6 +27,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalLong;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -118,6 +119,14 @@ final class RealLibhegel implements Libhegel {
     private final MethodHandle settingsGetVerbosity;
     private final MethodHandle settingsGetPhases;
     private final MethodHandle settingsGetReportMultipleFailures;
+    private final MethodHandle settingsGetSeed;
+    private final MethodHandle settingsGetDerandomize;
+    private final MethodHandle settingsGetDatabase;
+    private final MethodHandle settingsGetSuppressHealthCheck;
+    private final MethodHandle settingsGetStopOnFirstFailure;
+    private final MethodHandle settingsGetShowStatistics;
+    private final MethodHandle settingsGetUnboundedChoices;
+    private final MethodHandle settingsGetBackend;
     private final MethodHandle settingsSetStopOnFirstFailure;
     private final MethodHandle settingsSetShowStatistics;
     private final MethodHandle settingsSetUnboundedChoices;
@@ -295,6 +304,46 @@ final class RealLibhegel implements Libhegel {
                 linker,
                 lookup,
                 "hegel_settings_get_report_multiple_failures",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+        this.settingsGetSeed = h(
+                linker,
+                lookup,
+                "hegel_settings_get_seed",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
+        this.settingsGetDerandomize = h(
+                linker,
+                lookup,
+                "hegel_settings_get_derandomize",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+        this.settingsGetDatabase = h(
+                linker,
+                lookup,
+                "hegel_settings_get_database",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+        this.settingsGetSuppressHealthCheck = h(
+                linker,
+                lookup,
+                "hegel_settings_get_suppress_health_check",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+        this.settingsGetStopOnFirstFailure = h(
+                linker,
+                lookup,
+                "hegel_settings_get_stop_on_first_failure",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+        this.settingsGetShowStatistics = h(
+                linker,
+                lookup,
+                "hegel_settings_get_show_statistics",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+        this.settingsGetUnboundedChoices = h(
+                linker,
+                lookup,
+                "hegel_settings_get_unbounded_choices",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+        this.settingsGetBackend = h(
+                linker,
+                lookup,
+                "hegel_settings_get_backend",
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
         this.settingsSetStopOnFirstFailure = h(
                 linker,
@@ -992,6 +1041,61 @@ final class RealLibhegel implements Libhegel {
     public boolean settingsGetReportMultipleFailures(long s) {
         MemorySegment out = Arena.ofAuto().allocate(JAVA_BOOLEAN);
         check("hegel_settings_get_report_multiple_failures", rc(settingsGetReportMultipleFailures, segment(s), out));
+        return out.get(JAVA_BOOLEAN, 0);
+    }
+
+    @Override
+    public OptionalLong settingsGetSeed(long s) {
+        MemorySegment seed = Arena.ofAuto().allocate(JAVA_LONG);
+        MemorySegment hasSeed = Arena.ofAuto().allocate(JAVA_BOOLEAN);
+        check("hegel_settings_get_seed", rc(settingsGetSeed, segment(s), seed, hasSeed));
+        return hasSeed.get(JAVA_BOOLEAN, 0) ? OptionalLong.of(seed.get(JAVA_LONG, 0)) : OptionalLong.empty();
+    }
+
+    @Override
+    public boolean settingsGetDerandomize(long s) {
+        return getBoolean("hegel_settings_get_derandomize", settingsGetDerandomize, s);
+    }
+
+    @Override
+    public String settingsGetDatabase(long s) {
+        MemorySegment out = Arena.ofAuto().allocate(ADDRESS);
+        check("hegel_settings_get_database", rc(settingsGetDatabase, segment(s), out));
+        return readStringPtr(out);
+    }
+
+    @Override
+    public int settingsGetSuppressHealthCheck(long s) {
+        MemorySegment out = Arena.ofAuto().allocate(JAVA_INT);
+        check("hegel_settings_get_suppress_health_check", rc(settingsGetSuppressHealthCheck, segment(s), out));
+        return out.get(JAVA_INT, 0);
+    }
+
+    @Override
+    public boolean settingsGetStopOnFirstFailure(long s) {
+        return getBoolean("hegel_settings_get_stop_on_first_failure", settingsGetStopOnFirstFailure, s);
+    }
+
+    @Override
+    public boolean settingsGetShowStatistics(long s) {
+        return getBoolean("hegel_settings_get_show_statistics", settingsGetShowStatistics, s);
+    }
+
+    @Override
+    public boolean settingsGetUnboundedChoices(long s) {
+        return getBoolean("hegel_settings_get_unbounded_choices", settingsGetUnboundedChoices, s);
+    }
+
+    @Override
+    public int settingsGetBackend(long s) {
+        MemorySegment out = Arena.ofAuto().allocate(JAVA_INT);
+        check("hegel_settings_get_backend", rc(settingsGetBackend, segment(s), out));
+        return out.get(JAVA_INT, 0);
+    }
+
+    private boolean getBoolean(String op, MethodHandle getter, long s) {
+        MemorySegment out = Arena.ofAuto().allocate(JAVA_BOOLEAN);
+        check(op, rc(getter, segment(s), out));
         return out.get(JAVA_BOOLEAN, 0);
     }
 

@@ -84,9 +84,9 @@ final class Runner {
 
     static RunReport run(Libhegel lib, Settings settings, Consumer<TestCase> body, Reporter reporter) {
         RunReport report = withSettings(lib, settings, s -> {
-            // The engine resolved whatever the caller left unset (its profile, hegel.toml, the
-            // HEGEL_* variables); the run and its reporters see the effective configuration.
-            Settings effective = settings.resolved(
+            // The engine parses the string settings as they are applied, so the run and its
+            // reporters read the effective configuration back.
+            Settings effective = settings.effective(
                     lib.settingsGetTestCases(s),
                     lib.settingsGetPrintBlob(s),
                     NondeterminismStrictness.fromCode(lib.settingsGetNondeterminismStrictness(s)),
@@ -219,12 +219,11 @@ final class Runner {
     }
 
     /**
-     * Run {@code body} on the engine's settings handle for {@code settings}: resolved from its
-     * profile (the default one unless {@link Settings#fromProfile} named another), with the
-     * caller's explicit settings applied over it. The handle is freed when {@code body} returns.
+     * Run {@code body} on an engine settings handle holding every field of {@code settings}. The
+     * handle is freed when {@code body} returns.
      */
     private static <T> T withSettings(Libhegel lib, Settings settings, LongFunction<T> body) {
-        long s = newSettings(lib, settings.profile);
+        long s = newSettings(lib, null);
         try {
             applySettings(lib, s, settings);
             return body.apply(s);
@@ -239,7 +238,7 @@ final class Runner {
      * fail on user input: an unknown profile or a malformed {@code hegel.toml} or variable surfaces
      * as an {@link IllegalArgumentException} carrying the engine's diagnostic.
      */
-    private static long newSettings(Libhegel lib, String profile) {
+    static long newSettings(Libhegel lib, String profile) {
         long[] out = new long[1];
         if (profile == null) {
             checkUserCall(lib, lib.settingsNew(out), "hegel_settings_new");
@@ -263,12 +262,7 @@ final class Runner {
         checkUserCall(lib, lib.settingsSetFromString(s, key, value), "hegel_settings_set_from_string");
     }
 
-    /** Fail with the engine's diagnostic unless {@code profile} resolves. */
-    static void checkProfile(Libhegel lib, String profile) {
-        lib.settingsFree(newSettings(lib, profile));
-    }
-
-    /** Register {@code settings}, as the engine resolves them now, as the profile {@code name}. */
+    /** Register {@code settings} as the profile {@code name}. */
     static void registerProfile(Libhegel lib, String name, Settings settings) {
         withSettings(lib, settings, s -> {
             checkUserCall(lib, lib.settingsRegisterProfile(name, s), "hegel_settings_register_profile");
@@ -515,56 +509,25 @@ final class Runner {
     }
 
     /**
-     * Send the caller's explicit settings to the handle. Anything left unset keeps the value the
-     * engine resolved from its profile (a {@code hegel.toml}, or the shipped {@code ci}/{@code
-     * workload} profiles it selects from the environment) and the {@code HEGEL_*} variables, which
-     * is what makes explicit Java settings win over both.
+     * Send every field of {@code st} to the handle. A {@code Settings} holds a value for each
+     * engine setting, resolved from the engine's profile and the {@code HEGEL_*} variables when it
+     * was created, so the handle's own resolution is replaced wholesale.
      */
     static void applySettings(Libhegel lib, long s, Settings st) {
-        if (st.testCases != null) {
-            lib.settingsTestCases(s, st.testCases);
-        }
-        if (st.verbosity.code != null) {
-            lib.settingsVerbosity(s, st.verbosity.code);
-        }
-        if (st.hasSeed) {
-            lib.settingsSeed(s, st.seed, true);
-        }
-        if (st.derandomize != null) {
-            lib.settingsDerandomize(s, st.derandomize);
-        }
-        if (st.reportMultipleFailures != null) {
-            lib.settingsReportMultipleFailures(s, st.reportMultipleFailures);
-        }
-        if (st.stopOnFirstFailure != null) {
-            lib.settingsStopOnFirstFailure(s, st.stopOnFirstFailure);
-        }
-        if (st.showStatistics != null) {
-            lib.settingsShowStatistics(s, st.showStatistics);
-        }
-        if (st.unboundedChoices != null) {
-            lib.settingsUnboundedChoices(s, st.unboundedChoices);
-        }
-        if (st.printBlob != null) {
-            lib.settingsPrintBlob(s, st.printBlob);
-        }
-        if (st.nondeterminismStrictness.code != null) {
-            lib.settingsNondeterminismStrictness(s, st.nondeterminismStrictness.code);
-        }
-        if (st.backend.code != null) {
-            lib.settingsBackend(s, st.backend.code);
-        }
-        if (st.suppressMask != null) {
-            lib.settingsSuppressHealthCheck(s, st.suppressMask);
-        }
-        if (st.phasesMask != null) {
-            lib.settingsPhases(s, st.phasesMask);
-        }
-
+        lib.settingsTestCases(s, st.testCases);
+        lib.settingsVerbosity(s, st.verbosity.code);
+        lib.settingsSeed(s, st.seed, st.hasSeed);
+        lib.settingsDerandomize(s, st.derandomize);
+        lib.settingsReportMultipleFailures(s, st.reportMultipleFailures);
+        lib.settingsStopOnFirstFailure(s, st.stopOnFirstFailure);
+        lib.settingsShowStatistics(s, st.showStatistics);
+        lib.settingsUnboundedChoices(s, st.unboundedChoices);
+        lib.settingsPrintBlob(s, st.printBlob);
+        lib.settingsNondeterminismStrictness(s, st.nondeterminismStrictness.code);
+        lib.settingsBackend(s, st.backend.code);
+        lib.settingsSuppressHealthCheck(s, st.suppressMask);
+        lib.settingsPhases(s, st.phasesMask);
         switch (st.database.kind) {
-            case DEFAULT_LOCATION:
-                lib.settingsDatabase(s, null);
-                break;
             case DISABLED:
                 lib.settingsDatabase(s, "");
                 break;
@@ -572,7 +535,7 @@ final class Runner {
                 lib.settingsDatabase(s, st.database.path);
                 break;
             default:
-                // Unset: the engine's profile decides (the ci and workload profiles disable it).
+                lib.settingsDatabase(s, null);
                 break;
         }
         // The key is sent whenever there is one, even with the database off: the engine also derives
