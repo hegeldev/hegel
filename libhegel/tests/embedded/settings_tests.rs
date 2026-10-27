@@ -426,7 +426,12 @@ fn env_override_phases_takes_a_comma_separated_list_or_none() {
         vec![Phase::Explicit, Phase::Generate]
     );
     assert_eq!(
-        with_env(Settings::base(false), "HEGEL_PHASES", "shrink, target ,reuse").phases,
+        with_env(
+            Settings::base(false),
+            "HEGEL_PHASES",
+            "shrink, target ,reuse"
+        )
+        .phases,
         vec![Phase::Shrink, Phase::Target, Phase::Reuse]
     );
     assert_eq!(
@@ -434,7 +439,12 @@ fn env_override_phases_takes_a_comma_separated_list_or_none() {
         vec![]
     );
     assert_eq!(
-        with_env(Settings::base(false).phases([Phase::Shrink]), "HEGEL_PHASES", "").phases,
+        with_env(
+            Settings::base(false).phases([Phase::Shrink]),
+            "HEGEL_PHASES",
+            ""
+        )
+        .phases,
         vec![Phase::Shrink]
     );
     assert_eq!(

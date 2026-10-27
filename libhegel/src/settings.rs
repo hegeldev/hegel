@@ -649,7 +649,8 @@ impl Settings {
         }
         if let Some(items) = env_list(&env, "HEGEL_SUPPRESS_HEALTH_CHECK") {
             let items: Vec<&str> = items.iter().map(String::as_str).collect();
-            self.suppress_health_check = parse_health_checks(&items, "HEGEL_SUPPRESS_HEALTH_CHECK")?;
+            self.suppress_health_check =
+                parse_health_checks(&items, "HEGEL_SUPPRESS_HEALTH_CHECK")?;
         }
         Ok(self)
     }
