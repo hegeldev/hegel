@@ -70,7 +70,12 @@ class PoolFilterTest {
         pool.add(1);
         assertThrows(AssumeRejected.class, () -> tc.draw(pool.consuming().filter(x -> x == 0)));
         assertEquals(List.of(0L), fake.restoredVariables);
-        assertEquals(List.of(Label.FILTER_ATTEMPT, Label.POOL_VALUES_CONSUMED), fake.startedSpans);
+        assertEquals(
+                List.of(
+                        Label.combine(Label.FILTER, Label.POOL_VALUES_CONSUMED),
+                        Label.FILTER_ATTEMPT,
+                        Label.POOL_VALUES_CONSUMED),
+                fake.startedSpans);
         assertEquals(1, pool.size());
     }
 
@@ -80,7 +85,7 @@ class PoolFilterTest {
         TestCase tc = fakeCase(fake);
         ConcurrentPool<Integer> pool = new ConcurrentPool<>(tc);
         assertThrows(AssumeRejected.class, () -> tc.draw(pool.consuming().filter(x -> true)));
-        assertEquals(List.of(), fake.startedSpans);
+        assertEquals(List.of(Label.combine(Label.FILTER, Label.POOL_VALUES_CONSUMED)), fake.startedSpans);
     }
 
     @Test

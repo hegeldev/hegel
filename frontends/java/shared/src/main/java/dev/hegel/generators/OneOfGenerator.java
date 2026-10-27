@@ -9,8 +9,8 @@ import java.util.List;
 
 /**
  * Chooses among alternative generators of the same type: an index is drawn and the selected
- * alternative is generated inside a ONE_OF span, so the shrinker can swap which branch is taken.
- * It prints what the chosen alternative prints.
+ * alternative is generated, so the shrinker can swap which branch is taken. It prints what the
+ * chosen alternative prints.
  */
 public final class OneOfGenerator<T> implements PrintableGenerator<T> {
     private final List<Generator<T>> options;
@@ -42,12 +42,7 @@ public final class OneOfGenerator<T> implements PrintableGenerator<T> {
     }
 
     private T draw(TestCase tc, Printer printer) {
-        tc.startSpan(label());
-        try {
-            int index = (int) tc.generateInteger(0, options.size() - 1);
-            return Components.draw(tc, options.get(index), printer);
-        } finally {
-            tc.stopSpan(false);
-        }
+        int index = (int) tc.generateInteger(0, options.size() - 1);
+        return Components.draw(tc, options.get(index), printer);
     }
 }

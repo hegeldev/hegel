@@ -89,7 +89,7 @@ public final class Label {
     /** A consuming draw from a stateful test's {@link Pool} ({@link Pool#consuming}): {@code of("hegel.pool.values_consumed")}. */
     public static final long POOL_VALUES_CONSUMED = 0x06d5135fb19072d1L;
 
-    /** A generator that gives no label of its own ({@link Generator#label}): {@code of("hegel.generator")}. */
+    /** A lambda generator, which has no class name to be labelled by ({@link Generator#label}): {@code of("hegel.generator")}. */
     public static final long GENERATOR = 0xb86174e143a64e31L;
 
     /**

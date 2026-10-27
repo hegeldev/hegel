@@ -55,10 +55,10 @@ class TestCaseApiTest {
                 SETTINGS,
                 Reporter.silent());
         Failure failure = report.failures().get(0);
-        assertEquals(List.of("shown"), List.copyOf(failure.draws().keySet()));
+        assertEquals(List.of("shown_1"), List.copyOf(failure.draws().keySet()));
         assertEquals(1, failure.output().size());
         assertTrue(
-                failure.output().get(0).startsWith("var shown = "),
+                failure.output().get(0).startsWith("var shown_1 = "),
                 failure.output().get(0));
     }
 
@@ -113,7 +113,7 @@ class TestCaseApiTest {
                 Reporter.silent());
         Failure failure = report.failures().get(0);
         assertTrue(
-                failure.output().stream().anyMatch(l -> l.contains("[worker 1") && l.contains("b = ")),
+                failure.output().stream().anyMatch(l -> l.contains("[worker 1") && l.contains("b_1 = ")),
                 String.join("\n", failure.output()));
     }
 
@@ -153,11 +153,11 @@ class TestCaseApiTest {
         assertEquals(
                 List.of(
                         "// Repetition #1",
-                        "  var x = 0;",
+                        "  var x_1 = 0;",
                         "// Repetition #2",
-                        "  var x = 0;",
+                        "  var x_1 = 0;",
                         "// Repetition #3",
-                        "  var x = 0;"),
+                        "  var x_1 = 0;"),
                 failure.output());
     }
 

@@ -88,7 +88,7 @@ class SortTest {
 This test will fail when run with `mvn test`! Hegel will produce a minimal failing test case for us:
 
 ```
-var xs = [0, 0];
+var xs_1 = [0, 0];
 
 org.opentest4j.AssertionFailedError: expected: <2> but was: <1>
 ```

@@ -39,7 +39,7 @@ final class ExplicitDraws implements AutoCloseable {
                 });
     }
 
-    /** The value of the draw named {@code name}, printed as {@code var name = value;}. */
+    /** The value of the draw printed as {@code var name = value;}. */
     synchronized Object take(String name) {
         Object value;
         if (example.named().containsKey(name)) {

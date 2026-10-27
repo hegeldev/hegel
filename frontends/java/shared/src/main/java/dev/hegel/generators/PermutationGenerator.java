@@ -30,22 +30,17 @@ public final class PermutationGenerator<T> extends ValueGenerator<List<T>> {
     /** @hidden */
     @Override
     public List<T> doDraw(TestCase tc) {
-        tc.startSpan(Label.PERMUTATION);
+        int n = elements.size();
+        List<T> remaining = new ArrayList<>(elements);
+        List<T> out = new ArrayList<>(n);
+        long id = tc.newCollection(n, n);
         try {
-            int n = elements.size();
-            List<T> remaining = new ArrayList<>(elements);
-            List<T> out = new ArrayList<>(n);
-            long id = tc.newCollection(n, n);
-            try {
-                while (!remaining.isEmpty() && tc.collectionMore(id)) {
-                    out.add(remaining.remove((int) tc.generateInteger(0, remaining.size() - 1)));
-                }
-            } finally {
-                tc.collectionFree(id);
+            while (!remaining.isEmpty() && tc.collectionMore(id)) {
+                out.add(remaining.remove((int) tc.generateInteger(0, remaining.size() - 1)));
             }
-            return out;
         } finally {
-            tc.stopSpan(false);
+            tc.collectionFree(id);
         }
+        return out;
     }
 }

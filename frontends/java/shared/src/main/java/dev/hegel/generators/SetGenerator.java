@@ -67,33 +67,28 @@ public final class SetGenerator<T> implements PrintableGenerator<Set<T>> {
 
     private Set<T> draw(TestCase tc, Printer printer) {
         Printer p = Components.out(printer);
-        tc.startSpan(label());
+        long id = tc.newCollection(minSize, maxSize);
         try {
-            long id = tc.newCollection(minSize, maxSize);
-            try {
-                Set<T> out = new LinkedHashSet<>();
-                p.beginGroup("[");
-                while (tc.collectionMore(id)) {
-                    try (Printer.Speculation speculation = p.speculate()) {
-                        if (!out.isEmpty()) {
-                            p.separator();
-                        }
-                        T value = Components.draw(tc, element, printer);
-                        if (out.add(value)) {
-                            speculation.commit();
-                        } else {
-                            speculation.abort();
-                            tc.collectionReject(id, "duplicate element");
-                        }
+            Set<T> out = new LinkedHashSet<>();
+            p.beginGroup("[");
+            while (tc.collectionMore(id)) {
+                try (Printer.Speculation speculation = p.speculate()) {
+                    if (!out.isEmpty()) {
+                        p.separator();
+                    }
+                    T value = Components.draw(tc, element, printer);
+                    if (out.add(value)) {
+                        speculation.commit();
+                    } else {
+                        speculation.abort();
+                        tc.collectionReject(id, "duplicate element");
                     }
                 }
-                p.endGroup("]");
-                return out;
-            } finally {
-                tc.collectionFree(id);
             }
+            p.endGroup("]");
+            return out;
         } finally {
-            tc.stopSpan(false);
+            tc.collectionFree(id);
         }
     }
 }

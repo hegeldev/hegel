@@ -69,35 +69,30 @@ public final class MapGenerator<K, V> implements PrintableGenerator<Map<K, V>> {
 
     private Map<K, V> draw(TestCase tc, Printer printer) {
         Printer p = Components.out(printer);
-        tc.startSpan(label());
+        long id = tc.newCollection(minSize, maxSize);
         try {
-            long id = tc.newCollection(minSize, maxSize);
-            try {
-                Map<K, V> out = new LinkedHashMap<>();
-                p.beginGroup("{");
-                while (tc.collectionMore(id)) {
-                    try (Printer.Speculation speculation = p.speculate()) {
-                        if (!out.isEmpty()) {
-                            p.separator();
-                        }
-                        K key = Components.draw(tc, keys, printer);
-                        if (out.containsKey(key)) {
-                            speculation.abort();
-                            tc.collectionReject(id, "duplicate key");
-                        } else {
-                            p.text(": ");
-                            out.put(key, Components.draw(tc, values, printer));
-                            speculation.commit();
-                        }
+            Map<K, V> out = new LinkedHashMap<>();
+            p.beginGroup("{");
+            while (tc.collectionMore(id)) {
+                try (Printer.Speculation speculation = p.speculate()) {
+                    if (!out.isEmpty()) {
+                        p.separator();
+                    }
+                    K key = Components.draw(tc, keys, printer);
+                    if (out.containsKey(key)) {
+                        speculation.abort();
+                        tc.collectionReject(id, "duplicate key");
+                    } else {
+                        p.text(": ");
+                        out.put(key, Components.draw(tc, values, printer));
+                        speculation.commit();
                     }
                 }
-                p.endGroup("}");
-                return out;
-            } finally {
-                tc.collectionFree(id);
             }
+            p.endGroup("}");
+            return out;
         } finally {
-            tc.stopSpan(false);
+            tc.collectionFree(id);
         }
     }
 }

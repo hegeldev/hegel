@@ -9,8 +9,8 @@ import java.util.function.Function;
 
 /**
  * Result of {@link Generator#flatMap}. Always uses the composite draw path: it draws a value
- * silently, asks {@code f} for the next generator, and draws from it, bracketing the pair in a
- * {@code flat_map} span. It prints what the second generator prints.
+ * silently, asks {@code f} for the next generator, and draws from it. It prints what the second
+ * generator prints.
  *
  * @param <T> the source value type
  * @param <U> the dependent value type
@@ -44,12 +44,7 @@ public final class FlatMappedGenerator<T, U> implements PrintableGenerator<U> {
     }
 
     private U draw(TestCase tc, Printer printer) {
-        tc.startSpan(label());
-        try {
-            T value = tc.drawSilent(source);
-            return Components.draw(tc, f.apply(value), printer);
-        } finally {
-            tc.stopSpan(false);
-        }
+        T value = tc.drawSilent(source);
+        return Components.draw(tc, f.apply(value), printer);
     }
 }

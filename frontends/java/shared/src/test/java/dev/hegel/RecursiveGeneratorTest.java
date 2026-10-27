@@ -69,7 +69,7 @@ class RecursiveGeneratorTest {
     void deepTreesAreFoundAndShrunk() {
         RunReport report =
                 Hegel.run(tc -> assertTrue(depth(tc.draw(trees(10, 50), "t")) < 3), SETTINGS, Reporter.silent());
-        Object tree = report.failures().get(0).draws().get("t");
+        Object tree = report.failures().get(0).draws().get("t_1");
         assertEquals(3, depth(tree));
     }
 
@@ -102,8 +102,8 @@ class RecursiveGeneratorTest {
         Object value = tc.draw(trees(3, 10));
         assertEquals(0, value);
         // The retried attempt's map, list and subtree spans were left open for the engine; only the
-        // second attempt's leaf map span and the generator's own span were closed.
-        assertEquals(2, fake.stoppedSpans);
+        // second attempt's leaf span, its map span and the generator's own span were closed.
+        assertEquals(3, fake.stoppedSpans);
         assertEquals(List.of(fake.recursionId), fake.freedRecursions);
     }
 

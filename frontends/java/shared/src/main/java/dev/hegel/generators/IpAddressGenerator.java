@@ -40,12 +40,7 @@ public final class IpAddressGenerator extends ValueGenerator<String> {
         if (version != null) {
             return version == 4 ? formatV4(tc.generateIpv4()) : formatV6(tc.generateIpv6());
         }
-        tc.startSpan(Label.ONE_OF);
-        try {
-            return tc.generateInteger(0, 1) == 0 ? formatV4(tc.generateIpv4()) : formatV6(tc.generateIpv6());
-        } finally {
-            tc.stopSpan(false);
-        }
+        return tc.generateInteger(0, 1) == 0 ? formatV4(tc.generateIpv4()) : formatV6(tc.generateIpv6());
     }
 
     private static String formatV4(byte[] b) {

@@ -40,8 +40,8 @@ class LibraryApiTest {
         assertEquals(RunStatus.FAILED, report.status());
         assertEquals(1, report.failures().size());
         Failure f = report.failures().get(0);
-        assertEquals(Map.of("x", 11), f.draws());
-        assertEquals(List.of("var x = 11;", "observed x=11"), f.output());
+        assertEquals(Map.of("x_1", 11), f.draws());
+        assertEquals(List.of("var x_1 = 11;", "observed x=11"), f.output());
         assertTrue(f.exception() instanceof AssertionError);
         assertTrue(f.exception().getMessage().contains("x was too big: 11"));
         assertTrue(f.origin().startsWith("AssertionFailedError at "), f.origin());
@@ -67,8 +67,8 @@ class LibraryApiTest {
                 Reporter.silent());
         assertEquals(
                 List.of(
-                        "var pair = new Tuple2(\"\", \"\");",
-                        "var nested = new Tuple2(\"a b\\nc\", Optional.empty());"),
+                        "var pair_1 = new Tuple2(\"\", \"\");",
+                        "var nested_1 = new Tuple2(\"a b\\nc\", Optional.empty());"),
                 report.failures().get(0).output());
     }
 
@@ -126,11 +126,11 @@ class LibraryApiTest {
                 QUIET,
                 Reporter.silent());
         assertEquals(RunStatus.FAILED, report.status());
-        int[] shrunk = (int[]) report.failures().get(0).draws().get("p");
+        int[] shrunk = (int[]) report.failures().get(0).draws().get("p_1");
         // The engine shrinks the pair as a unit toward the boundary.
         assertEquals(60, shrunk[0] + shrunk[1]);
         assertEquals(
-                List.of("var p = pair(" + shrunk[0] + ", " + shrunk[1] + ");"),
+                List.of("var p_1 = pair(" + shrunk[0] + ", " + shrunk[1] + ");"),
                 report.failures().get(0).output());
     }
 

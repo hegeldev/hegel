@@ -15,8 +15,8 @@ import java.util.function.Function;
 
 /**
  * Generates lists by driving the engine's collection API element by element: the engine decides how
- * many elements to produce and the shrinker can delete or reorder them. The element generator opens
- * its own spans, so no per-element span is needed here (matching the engine's canonical client).
+ * many elements to produce and the shrinker can delete or reorder them. Each element is drawn
+ * through the test case, in a span of the element generator's own.
  *
  * <p>The length range defaults to any size; narrow it with the fluent {@link #minSize(int)} /
  * {@link #maxSize(int)} methods. {@link #unique()} and {@link #uniqueBy(Function)} make the
@@ -101,35 +101,30 @@ public final class ListGenerator<T> implements PrintableGenerator<List<T>> {
 
     private List<T> draw(TestCase tc, Printer printer) {
         Printer p = Components.out(printer);
-        tc.startSpan(label());
+        long id = tc.newCollection(minSize, maxSize);
         try {
-            long id = tc.newCollection(minSize, maxSize);
-            try {
-                List<T> out = new ArrayList<>();
-                Set<Object> keys = new HashSet<>();
-                p.beginGroup("[");
-                while (tc.collectionMore(id)) {
-                    try (Printer.Speculation speculation = p.speculate()) {
-                        if (!out.isEmpty()) {
-                            p.separator();
-                        }
-                        T value = Components.draw(tc, element, printer);
-                        if (uniqueKey != null && !keys.add(new ContentKey(uniqueKey.apply(value)))) {
-                            speculation.abort();
-                            tc.collectionReject(id, "duplicate element");
-                        } else {
-                            speculation.commit();
-                            out.add(value);
-                        }
+            List<T> out = new ArrayList<>();
+            Set<Object> keys = new HashSet<>();
+            p.beginGroup("[");
+            while (tc.collectionMore(id)) {
+                try (Printer.Speculation speculation = p.speculate()) {
+                    if (!out.isEmpty()) {
+                        p.separator();
+                    }
+                    T value = Components.draw(tc, element, printer);
+                    if (uniqueKey != null && !keys.add(new ContentKey(uniqueKey.apply(value)))) {
+                        speculation.abort();
+                        tc.collectionReject(id, "duplicate element");
+                    } else {
+                        speculation.commit();
+                        out.add(value);
                     }
                 }
-                p.endGroup("]");
-                return out;
-            } finally {
-                tc.collectionFree(id);
             }
+            p.endGroup("]");
+            return out;
         } finally {
-            tc.stopSpan(false);
+            tc.collectionFree(id);
         }
     }
 

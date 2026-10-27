@@ -31,12 +31,12 @@ import java.util.function.Supplier;
  * PrintableGenerator}), so {@code draw} needs a printable generator; {@link #drawSilent} draws from
  * any generator and prints nothing. If the case fails and the engine reports that failure, the
  * run's {@link Reporter} receives the rendered lines and the resulting {@link Failure} carries
- * them, so the counterexample is readable. A label drawn more than once in a case is numbered from
- * its second use ({@code x}, {@code x_2}, {@code x_3}); unlabelled draws are {@code draw_1}, {@code
- * draw_2}, ...
+ * them, so the counterexample is readable. Each use of a label is numbered in turn ({@code x_1},
+ * {@code x_2}, {@code x_3}); unlabelled draws are {@code draw_1}, {@code draw_2}, ...
  *
- * <p>Frontends implementing their own composite generators enclose their draws in a labelled
- * {@link #span(long, Supplier) span} so the engine can shrink the structure they build.
+ * <p>Every draw runs its generator inside a span labelled with the generator's {@link
+ * Generator#label() label}, so the engine can shrink the structure a composite generator builds
+ * from the parts it draws through {@link #drawSilent} and {@link #drawAndPrint}.
  */
 public final class TestCase {
     /** The handle this instance draws through; {@link #repeat} swaps in a block for each repetition. */
@@ -57,21 +57,17 @@ public final class TestCase {
     private int drawDepth;
 
     /**
-     * A scope draw names are numbered in: a label prints bare the first time and numbered from its
-     * second use ({@code x}, {@code x_2}, ...); an unlabelled draw is {@code draw_N}, counting
-     * unlabelled draws only. A test body and its forks share one; each {@link #block} and each
-     * repetition of {@link #repeat} opens a fresh one.
+     * A scope draw names are numbered in: each use of a label is numbered in turn ({@code x_1},
+     * {@code x_2}, ...), and an unlabelled draw is {@code draw_N}, counting unlabelled draws only.
+     * A test body and its forks share one; each {@link #block} and each repetition of {@link
+     * #repeat} opens a fresh one.
      */
     private static final class Names {
         private final Map<String, Integer> uses = new HashMap<>();
 
         synchronized String next(String label) {
             String base = label != null ? label : "draw";
-            int count = uses.merge(base, 1, Integer::sum);
-            if (label == null) {
-                return base + "_" + count;
-            }
-            return count == 1 ? label : label + "_" + count;
+            return base + "_" + uses.merge(base, 1, Integer::sum);
         }
     }
 
@@ -268,7 +264,8 @@ public final class TestCase {
     }
 
     /**
-     * Draw a value, naming it {@code label} in the falsifying-example output.
+     * Draw a value, naming it {@code label} in the falsifying-example output: {@code var label_1 =
+     * ...;} for its first use, {@code label_2} for the second, and so on.
      *
      * @param generator the printable generator to draw from
      * @param label the variable name to show in counterexample output
@@ -306,6 +303,11 @@ public final class TestCase {
      * counterexample output nor recorded in {@link Failure#draws()}. Any generator can be drawn
      * silently.
      *
+     * <p>Like every draw, this runs the generator inside a span labelled with its {@link
+     * Generator#label() label}, so a generator drawing from component generators should draw them
+     * through this (or {@link #drawAndPrint}) rather than calling their {@code doDraw} directly:
+     * that is what groups each component's choices for the shrinker.
+     *
      * @param generator the generator to draw from
      * @param <T> the value type
      * @return the generated value
@@ -316,9 +318,11 @@ public final class TestCase {
             return (T) explicit.takeSilent();
         }
         drawDepth++;
+        startSpan(generator.label());
         try {
             return generator.doDraw(this);
         } finally {
+            stopSpan(false);
             drawDepth--;
         }
     }
@@ -326,7 +330,8 @@ public final class TestCase {
     /**
      * Draw a value from {@code generator}, which describes it to {@code printer} as it draws it:
      * how a {@link PrintableGenerator} draws each of its parts, so that the part prints itself in
-     * place. A {@link #draw} made while this one is in progress prints nothing.
+     * place, inside its own span as {@link #drawSilent} describes. A {@link #draw} made while this
+     * one is in progress prints nothing.
      *
      * @param generator the printable generator to draw from
      * @param printer the printer to describe the value to
@@ -337,9 +342,11 @@ public final class TestCase {
     public <T> T drawAndPrint(Generator<T> generator, Printer printer) {
         PrintableGenerator<T> printable = requirePrintable(generator);
         drawDepth++;
+        startSpan(generator.label());
         try {
             return printable.doDrawAndPrint(this, printer);
         } finally {
+            stopSpan(false);
             drawDepth--;
         }
     }
@@ -699,10 +706,11 @@ public final class TestCase {
     }
 
     /**
-     * Draw a structured value inside a labelled span: open the span, run {@code body}, and close
-     * the span whether or not the body completes. This is how composite generators tell the engine
-     * which draws belong together, so it can shrink the structure as a unit; {@link Label} lists
-     * the engine's structural labels and {@link Label#of(String)} mints custom ones.
+     * Run {@code body} inside a labelled span: open the span, run {@code body}, and close the span
+     * whether or not the body completes. Every draw already runs its generator in a span of its
+     * own, so a generator needs this only for a group of draws that is not a generator of its own;
+     * {@link Label} lists the engine's structural labels and {@link Label#of(String)} mints custom
+     * ones.
      *
      * @param label the span's label
      * @param body the draws making up the value

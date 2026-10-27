@@ -68,10 +68,11 @@
  * var draw_1 = 50;
  * }</pre>
  *
- * <p>Pass a label — {@code tc.draw(integers(), "n")} — to name the variable instead:
+ * <p>Pass a label — {@code tc.draw(integers(), "n")} — to name the variable instead; each use of
+ * a label is numbered in turn:
  *
  * <pre>{@code
- * var n = 50;
+ * var n_1 = 50;
  * }</pre>
  *
  * <p>Long values are laid out over several lines, one element per line, and notes from {@link
@@ -149,7 +150,7 @@
  *     };
  * };
  *
- * IntSupplier c = tc.draw(counters, "c");   // var c = Counter[calls=[3, 4, 5]];
+ * IntSupplier c = tc.draw(counters, "c");   // var c_1 = Counter[calls=[3, 4, 5]];
  * }</pre>
  *
  * <p>{@link dev.hegel.Document} lays out a standalone document, for trying printing code outside a

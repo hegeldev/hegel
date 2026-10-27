@@ -625,7 +625,7 @@ class RunnerTest {
                 Reporter.printing(capture(buf)));
         assertTrue(report.failures().get(0).nondeterministic());
         String out = normalizedOutput(buf);
-        assertEquals("var x = 0;\nnote: nondeterministic failure, unconfirmed: failed 0 of 20 replays\n", out);
+        assertEquals("var x_1 = 0;\nnote: nondeterministic failure, unconfirmed: failed 0 of 20 replays\n", out);
     }
 
     @Test

@@ -53,20 +53,15 @@ public final class ArrayGenerator<T> implements PrintableGenerator<T[]> {
 
     private T[] draw(TestCase tc, Printer printer) {
         Printer p = Components.out(printer);
-        tc.startSpan(label());
-        try {
-            T[] out = newArray.apply(length);
-            p.beginGroup("[");
-            for (int i = 0; i < length; i++) {
-                if (i > 0) {
-                    p.separator();
-                }
-                out[i] = Components.draw(tc, element, printer);
+        T[] out = newArray.apply(length);
+        p.beginGroup("[");
+        for (int i = 0; i < length; i++) {
+            if (i > 0) {
+                p.separator();
             }
-            p.endGroup("]");
-            return out;
-        } finally {
-            tc.stopSpan(false);
+            out[i] = Components.draw(tc, element, printer);
         }
+        p.endGroup("]");
+        return out;
     }
 }

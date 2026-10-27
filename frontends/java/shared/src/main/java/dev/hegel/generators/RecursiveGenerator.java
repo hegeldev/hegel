@@ -13,8 +13,8 @@ import java.util.function.Function;
  * leaves, steering each value toward a size drawn from across the leaf budget.
  *
  * <p>Values are leaves from the base generator, or branches built by the extend function from
- * generators of further sub-values. Each subtree is drawn in a span of its own with the same
- * label, so the shrinker can replace a tree with one of its subtrees. Narrow the shape with {@link
+ * generators of further sub-values. Each subtree is a generator with the same label, drawn in a
+ * span of its own, so the shrinker can replace a tree with one of its subtrees. Narrow the shape with {@link
  * #maxDepth(int)} (default {@value #DEFAULT_MAX_DEPTH}) and {@link #maxLeaves(int)} (default
  * {@value #DEFAULT_MAX_LEAVES}).
  *
@@ -101,33 +101,28 @@ public final class RecursiveGenerator<T> implements PrintableGenerator<T> {
 
     private T draw(TestCase tc, Printer printer) {
         Printer p = Components.out(printer);
-        tc.startSpan(label());
+        long recursion = tc.newRecursion(maxDepth, maxLeaves);
         try {
-            long recursion = tc.newRecursion(maxDepth, maxLeaves);
-            try {
-                while (true) {
-                    Printer.Speculation speculation = p.speculate();
+            while (true) {
+                Printer.Speculation speculation = p.speculate();
+                try {
+                    T value;
                     try {
-                        T value;
-                        try {
-                            value = drawSubtree(tc, recursion, 0, printer);
-                        } catch (OverBudget e) {
-                            tc.recursionRetry(recursion);
-                            continue;
-                        }
-                        if (tc.recursionFinish(recursion)) {
-                            speculation.commit();
-                            return value;
-                        }
-                    } finally {
-                        speculation.close();
+                        value = drawSubtree(tc, recursion, 0, printer);
+                    } catch (OverBudget e) {
+                        tc.recursionRetry(recursion);
+                        continue;
                     }
+                    if (tc.recursionFinish(recursion)) {
+                        speculation.commit();
+                        return value;
+                    }
+                } finally {
+                    speculation.close();
                 }
-            } finally {
-                tc.recursionFree(recursion);
             }
         } finally {
-            tc.stopSpan(false);
+            tc.recursionFree(recursion);
         }
     }
 
@@ -135,13 +130,18 @@ public final class RecursiveGenerator<T> implements PrintableGenerator<T> {
         if (tc.recursionBranch(recursion, depth)) {
             PrintableGenerator<T> subtrees = new PrintableGenerator<>() {
                 @Override
+                public long label() {
+                    return RecursiveGenerator.this.label();
+                }
+
+                @Override
                 public T doDraw(TestCase inner) {
-                    return drawSubtreeInSpan(inner, recursion, depth + 1, null);
+                    return drawSubtree(inner, recursion, depth + 1, null);
                 }
 
                 @Override
                 public T doDrawAndPrint(TestCase inner, Printer innerPrinter) {
-                    return drawSubtreeInSpan(inner, recursion, depth + 1, innerPrinter);
+                    return drawSubtree(inner, recursion, depth + 1, innerPrinter);
                 }
             };
             return Components.draw(tc, extend.apply(subtrees), printer);
@@ -150,14 +150,5 @@ public final class RecursiveGenerator<T> implements PrintableGenerator<T> {
             throw new OverBudget();
         }
         return Components.draw(tc, base, printer);
-    }
-
-    private T drawSubtreeInSpan(TestCase tc, long recursion, long depth, Printer printer) {
-        tc.startSpan(label());
-        try {
-            return drawSubtree(tc, recursion, depth, printer);
-        } finally {
-            tc.stopSpan(false);
-        }
     }
 }

@@ -36,6 +36,20 @@ import org.junit.jupiter.api.Test;
 
 /** Every standard generator labels itself as the other Hegel frontends do. */
 class GeneratorLabelTest {
+    private static final class Evens implements Generator<Integer> {
+        @Override
+        public Integer doDraw(TestCase tc) {
+            return tc.drawSilent(integers()) & ~1;
+        }
+    }
+
+    private static final class Odds implements Generator<Integer> {
+        @Override
+        public Integer doDraw(TestCase tc) {
+            return tc.drawSilent(integers()) | 1;
+        }
+    }
+
     record Point(int x, int y) {}
 
     private static long of(String name) {
@@ -66,6 +80,8 @@ class GeneratorLabelTest {
         assertEquals(Label.FROM_LARK, fromLark("start: \"a\"").label());
         Generator<Integer> custom = tc -> 1;
         assertEquals(Label.GENERATOR, custom.label());
+        assertEquals(Label.of(Evens.class.getName()), new Evens().label());
+        assertNotEquals(new Evens().label(), new Odds().label());
     }
 
     @Test

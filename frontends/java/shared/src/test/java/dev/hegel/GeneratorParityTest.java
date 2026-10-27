@@ -43,7 +43,7 @@ class GeneratorParityTest {
                 SETTINGS.testCases(1000),
                 Reporter.silent());
         assertEquals(
-                LONG_MAX.add(BigInteger.ONE), report.failures().get(0).draws().get("x"));
+                LONG_MAX.add(BigInteger.ONE), report.failures().get(0).draws().get("x_1"));
     }
 
     @Test
@@ -55,7 +55,7 @@ class GeneratorParityTest {
                 Reporter.silent());
         assertEquals(
                 longMin.subtract(BigInteger.ONE),
-                report.failures().get(0).draws().get("x"));
+                report.failures().get(0).draws().get("x_1"));
     }
 
     @Test
@@ -178,7 +178,7 @@ class GeneratorParityTest {
                 },
                 SETTINGS,
                 Reporter.silent());
-        assertEquals(List.of(2, 3, 4, 5, 1), report.failures().get(0).draws().get("p"));
+        assertEquals(List.of(2, 3, 4, 5, 1), report.failures().get(0).draws().get("p_1"));
     }
 
     @Test

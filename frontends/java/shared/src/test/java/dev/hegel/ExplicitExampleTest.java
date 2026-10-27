@@ -43,9 +43,9 @@ class ExplicitExampleTest {
                 },
                 SETTINGS.testCases(3)
                         .examples(
-                                Example.of(-7).with("x", 1000),
+                                Example.of(-7).with("x_1", 1000),
                                 Example.of(5, 6),
-                                Example.of().with("x", 1).with("draw_1", 2)));
+                                Example.of().with("x_1", 1).with("draw_1", 2)));
         assertEquals(List.of(List.of(1000, -7), List.of(5, 6), List.of(1, 2)), seen.subList(0, 3));
     }
 
@@ -62,10 +62,10 @@ class ExplicitExampleTest {
                 recorder);
         Failure failure = report.failures().get(0);
         assertTrue(failure.exception().getMessage().startsWith("two"));
-        assertEquals(List.of("var xs = [3, 4];", "checking"), failure.output());
-        assertEquals(Map.of("xs", List.of(3, 4)), failure.draws());
+        assertEquals(List.of("var xs_1 = [3, 4];", "checking"), failure.output());
+        assertEquals(Map.of("xs_1", List.of(3, 4)), failure.draws());
         assertTrue(failure.reproduceBlob().isEmpty());
-        assertEquals(List.of("failures: 1", "final: var xs = [3, 4];", "final: checking"), recorder.events);
+        assertEquals(List.of("failures: 1", "final: var xs_1 = [3, 4];", "final: checking"), recorder.events);
     }
 
     @Test
@@ -76,7 +76,7 @@ class ExplicitExampleTest {
                 SETTINGS.testCases(1).verbosity(Verbosity.VERBOSE).examples(Example.of("a\nb")),
                 recorder);
         assertEquals("live: Running explicit Example(\"a\\nb\")", recorder.events.get(0));
-        assertEquals("live: var x = \"a\\nb\";", recorder.events.get(1));
+        assertEquals("live: var x_1 = \"a\\nb\";", recorder.events.get(1));
 
         Recorder failing = new Recorder();
         Hegel.run(
@@ -133,7 +133,7 @@ class ExplicitExampleTest {
                 SETTINGS.reportMultipleFailures(true).examples(Example.of(70), Example.of(80)),
                 Reporter.silent());
         assertEquals(1, report.failures().size());
-        assertEquals(Map.of("x", 70), report.failures().get(0).draws());
+        assertEquals(Map.of("x_1", 70), report.failures().get(0).draws());
         assertTrue(report.failures().get(0).reproduceBlob().isEmpty());
     }
 
@@ -201,13 +201,13 @@ class ExplicitExampleTest {
                 IllegalArgumentException.class,
                 () -> Hegel.run(
                         tc -> tc.draw(integers()),
-                        SETTINGS.examples(Example.of(1, 2).with("y", 3)),
+                        SETTINGS.examples(Example.of(1, 2).with("y_1", 3)),
                         Reporter.silent()));
         assertTrue(unused.getMessage().contains("no draw is named y"), unused.getMessage());
         assertTrue(unused.getMessage().contains("1 positional value(s)"), unused.getMessage());
         IllegalArgumentException onlyNamed = assertThrows(
                 IllegalArgumentException.class,
-                () -> Hegel.run(tc -> {}, SETTINGS.examples(Example.of().with("y", 3)), Reporter.silent()));
+                () -> Hegel.run(tc -> {}, SETTINGS.examples(Example.of().with("y_1", 3)), Reporter.silent()));
         assertFalse(onlyNamed.getMessage().contains("positional"), onlyNamed.getMessage());
         assertThrows(
                 IllegalArgumentException.class,
@@ -269,7 +269,7 @@ class ExplicitExampleTest {
                 SETTINGS.testCases(1).examples(Example.of(3, 4)),
                 recorder);
         assertFalse(report.passed());
-        assertEquals(List.of("var y = 4;"), report.failures().get(0).output());
+        assertEquals(List.of("var y_1 = 4;"), report.failures().get(0).output());
     }
 
     @Test
@@ -291,7 +291,7 @@ class ExplicitExampleTest {
                         seen.add(tc.draw(integers()));
                     }
                 },
-                SETTINGS.testCases(1).examples(Example.of(2).with("x", 1)));
+                SETTINGS.testCases(1).examples(Example.of(2).with("x_1", 1)));
         assertEquals(List.of(1, 2), seen);
     }
 
@@ -314,7 +314,7 @@ class ExplicitExampleTest {
                 Reporter.silent());
         assertFalse(failing.passed());
         assertEquals(
-                List.of("// Repetition #1", "var x = 9;"),
+                List.of("// Repetition #1", "var x_1 = 9;"),
                 failing.failures().get(0).output());
 
         IllegalArgumentException unused = assertThrows(
@@ -349,14 +349,14 @@ class ExplicitExampleTest {
                         seen.add(second);
                     }
                 },
-                SETTINGS.testCases(1).examples(Example.of(2).with("x", 1)));
+                SETTINGS.testCases(1).examples(Example.of(2).with("x_1", 1)));
         assertEquals(List.of(1, 2), seen);
     }
 
     @Test
     void examplesDescribeThemselves() {
         assertEquals(
-                "Example(1, null, \"s\", k=[1])",
-                Example.of(1, null, "s").with("k", Arrays.asList(1)).toString());
+                "Example(1, null, \"s\", k_1=[1])",
+                Example.of(1, null, "s").with("k_1", Arrays.asList(1)).toString());
     }
 }

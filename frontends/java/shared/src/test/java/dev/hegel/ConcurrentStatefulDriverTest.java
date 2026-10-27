@@ -148,7 +148,7 @@ class ConcurrentStatefulDriverTest {
                         "Checking invariants on the final state."),
                 plainNames(tc));
         // Draw names are unique across workers and recorded plain.
-        assertEquals(Set.of("x", "x_2"), tc.draws().keySet());
+        assertEquals(Set.of("x_1", "x_1_2"), tc.draws().keySet());
         tc.releaseAll();
         assertEquals(4, fake.freedBlocks.size());
         assertEquals(fake.printerOwners.size(), fake.freedPrinters.size());
@@ -162,7 +162,7 @@ class ConcurrentStatefulDriverTest {
         List<String> printed = tc.output();
         assertTrue(printed.contains("[worker 0] Rule: alpha {"), printed.toString());
         assertTrue(printed.contains("[worker 1] Rule: gamma {"), printed.toString());
-        assertTrue(printed.contains("  [worker 1] var x = 0;"), printed.toString());
+        assertTrue(printed.contains("  [worker 1] var x_1 = 0;"), printed.toString());
         assertTrue(tc.draws().isEmpty());
     }
 

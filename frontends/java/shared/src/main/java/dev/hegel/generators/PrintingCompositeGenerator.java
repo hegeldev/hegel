@@ -8,8 +8,7 @@ import java.util.function.BiFunction;
 
 /**
  * A generator built from imperative code that draws from other generators and prints what it
- * builds, backing {@link dev.hegel.Generators#composite(BiFunction)}. It brackets the body in a
- * single {@code composite} span.
+ * builds, backing {@link dev.hegel.Generators#composite(BiFunction)}.
  *
  * @param <T> the value type
  */
@@ -29,11 +28,6 @@ public final class PrintingCompositeGenerator<T> implements PrintableGenerator<T
     /** @hidden */
     @Override
     public T doDrawAndPrint(TestCase tc, Printer printer) {
-        tc.startSpan(Label.COMPOSITE);
-        try {
-            return body.apply(tc, printer);
-        } finally {
-            tc.stopSpan(false);
-        }
+        return body.apply(tc, printer);
     }
 }

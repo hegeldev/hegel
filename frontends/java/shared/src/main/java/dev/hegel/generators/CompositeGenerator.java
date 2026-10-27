@@ -28,11 +28,6 @@ public final class CompositeGenerator<T> extends ValueGenerator<T> {
     /** @hidden */
     @Override
     public T doDraw(TestCase tc) {
-        tc.startSpan(Label.COMPOSITE);
-        try {
-            return body.apply(tc);
-        } finally {
-            tc.stopSpan(false);
-        }
+        return body.apply(tc);
     }
 }

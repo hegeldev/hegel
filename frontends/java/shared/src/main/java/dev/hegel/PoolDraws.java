@@ -13,13 +13,7 @@ final class PoolDraws {
     /** Draw a value from the pool, removing it when {@code consume}; an empty pool rejects the case. */
     static <T> T draw(TestCase tc, long poolId, Map<Long, T> values, boolean consume) {
         tc.assume(!values.isEmpty());
-        tc.startSpan(consume ? Label.POOL_VALUES_CONSUMED : Label.POOL_VALUES_REUSABLE);
-        long variableId;
-        try {
-            variableId = tc.poolGenerate(poolId, consume);
-        } finally {
-            tc.stopSpan(false);
-        }
+        long variableId = tc.poolGenerate(poolId, consume);
         return consume ? values.remove(variableId) : values.get(variableId);
     }
 

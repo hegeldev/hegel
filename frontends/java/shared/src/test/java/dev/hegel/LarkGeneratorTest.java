@@ -114,7 +114,7 @@ class LarkGeneratorTest {
                 tc -> assertTrue(tc.draw(fromLark("start: A+\nA: \"a\""), "s").length() < 3),
                 SETTINGS.derandomize(true),
                 Reporter.silent());
-        assertEquals("aaa", report.failures().get(0).draws().get("s"));
+        assertEquals("aaa", report.failures().get(0).draws().get("s_1"));
     }
 
     @Test

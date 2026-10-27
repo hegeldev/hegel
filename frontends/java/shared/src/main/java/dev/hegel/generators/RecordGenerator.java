@@ -77,25 +77,20 @@ public final class RecordGenerator<T> implements PrintableGenerator<T> {
         RecordComponent[] components = type.getRecordComponents();
         Object[] values = new Object[components.length];
         Class<?>[] paramTypes = new Class<?>[components.length];
-        tc.startSpan(label());
-        try {
-            p.beginGroup("new " + type.getSimpleName() + "(");
-            for (int i = 0; i < components.length; i++) {
-                RecordComponent rc = components[i];
-                paramTypes[i] = rc.getType();
-                Generator<?> g = overrides.get(rc.getName());
-                if (g == null) {
-                    g = Derive.fromType(rc.getGenericType());
-                }
-                if (i > 0) {
-                    p.separator();
-                }
-                values[i] = Components.draw(tc, g, printer);
+        p.beginGroup("new " + type.getSimpleName() + "(");
+        for (int i = 0; i < components.length; i++) {
+            RecordComponent rc = components[i];
+            paramTypes[i] = rc.getType();
+            Generator<?> g = overrides.get(rc.getName());
+            if (g == null) {
+                g = Derive.fromType(rc.getGenericType());
             }
-            p.endGroup(")");
-        } finally {
-            tc.stopSpan(false);
+            if (i > 0) {
+                p.separator();
+            }
+            values[i] = Components.draw(tc, g, printer);
         }
+        p.endGroup(")");
         return construct(paramTypes, values);
     }
 

@@ -144,9 +144,9 @@ class RunReportTest {
         assertFalse(f.nondeterministic());
         assertEquals(Optional.empty(), f.caveat());
         // The fake stamps the case for capture, so its draws and output are the report.
-        assertEquals(List.of("x", "draw_1"), List.copyOf(f.draws().keySet()));
-        assertEquals(7, f.draws().get("x"));
-        assertEquals(List.of("var x = 7;", "var draw_1 = 7;", "saw 7"), f.output());
+        assertEquals(List.of("x_1", "draw_1"), List.copyOf(f.draws().keySet()));
+        assertEquals(7, f.draws().get("x_1"));
+        assertEquals(List.of("var x_1 = 7;", "var draw_1 = 7;", "saw 7"), f.output());
         assertThrows(UnsupportedOperationException.class, () -> f.draws().put("y", 1));
         assertThrows(UnsupportedOperationException.class, () -> f.output().add("more"));
         assertThrows(UnsupportedOperationException.class, () -> r.failures().clear());
@@ -323,7 +323,7 @@ class RunReportTest {
                         "caseFinished:INTERESTING:false",
                         "failuresFound:1",
                         "caseStarted:true",
-                        "output:var x = 3;:true",
+                        "output:var x_1 = 3;:true",
                         "output:hi:true",
                         "caseFinished:INTERESTING:true",
                         "failure:" + r.failures().get(0).origin(),
@@ -351,11 +351,12 @@ class RunReportTest {
         // case is reported finished ...
         int finished = reporter.events.indexOf("caseFinished:INTERESTING:false");
         assertEquals(
-                List.of("output:var x = 3;:false", "output:hi:false"), reporter.events.subList(finished - 2, finished));
+                List.of("output:var x_1 = 3;:false", "output:hi:false"),
+                reporter.events.subList(finished - 2, finished));
         // ... and replayed with the failure report.
-        assertTrue(reporter.events.contains("output:var x = 3;:true"), reporter.events.toString());
-        assertEquals(Map.of("x", 3), r.failures().get(0).draws());
-        assertEquals(List.of("var x = 3;", "hi"), r.failures().get(0).output());
+        assertTrue(reporter.events.contains("output:var x_1 = 3;:true"), reporter.events.toString());
+        assertEquals(Map.of("x_1", 3), r.failures().get(0).draws());
+        assertEquals(List.of("var x_1 = 3;", "hi"), r.failures().get(0).output());
     }
 
     @Test
@@ -409,7 +410,7 @@ class RunReportTest {
         // The test suite itself lives in dev.hegel, which counts as infrastructure, so the origin
         // names the exception and whatever frame sits below the suite.
         assertTrue(f.origin().startsWith("IllegalStateException at "), f.origin());
-        assertEquals(Map.of("x", 1), f.draws());
+        assertEquals(Map.of("x_1", 1), f.draws());
         assertEquals(1, r.statistics().total());
         assertEquals(1, r.statistics().interesting());
         // The blob run is pumped like any other, then its failure is reported from the capture.
@@ -420,7 +421,7 @@ class RunReportTest {
                         "caseFinished:INTERESTING:false",
                         "failuresFound:1",
                         "caseStarted:true",
-                        "output:var x = 1;:true",
+                        "output:var x_1 = 1;:true",
                         "caseFinished:INTERESTING:true"),
                 reporter.events.subList(0, 7));
         assertEquals("runFinished:FAILED", reporter.events.get(reporter.events.size() - 1));

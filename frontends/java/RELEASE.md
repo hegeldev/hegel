@@ -49,11 +49,13 @@ An errored run now raises an exception typed by the engine's classification of t
 
 `Label.of` and `Label.combine` are now computed by the engine, and the labels of the standard generators (`Label.LIST`, `Label.ONE_OF`, `Label.OPTIONAL`, `Label.FILTER` and so on) now use the same names as the other Hegel frontends, so their values change. Labels are only identities, so this changes nothing but the values of those constants. The constants are fixed values and need no engine, so when the engine cannot be loaded, building generators still works and the run fails with a `LibhegelException` saying why.
 
-`Generator` gains `label()`, the label identifying a generator to the engine, as in the other Hegel frontends. A composite generator such as `lists(integers())` or `optional(text())` combines its own kind with its components' labels and draws in a span with that label, so a list of integers and a list of strings are told apart. A generator that does not override `label()` is labelled `Label.GENERATOR`. Each attempt of a filter now draws in a `Label.FILTER_ATTEMPT` span, and each pool draw in a `Label.POOL_VALUES_REUSABLE` or `Label.POOL_VALUES_CONSUMED` span. `Label` gains those constants and `DEFERRED` and `FROM_LARK`, and loses `LIST_ELEMENT`, `SET_ELEMENT`, `MAP_ENTRY` and `ENUM_VARIANT`, which no generator used.
+`Generator` gains `label()`, the label identifying a generator to the engine, as in the other Hegel frontends. A composite generator such as `lists(integers())` or `optional(text())` combines its own kind with its components' labels, so a list of integers and a list of strings are told apart. A generator that does not override `label()` is labelled by the name of its class (`Label.of(getClass().getName())`), so two hand-written generators shrink apart; a lambda, whose class has no stable name, is labelled `Label.GENERATOR`. Each attempt of a filter now draws in a `Label.FILTER_ATTEMPT` span.
+
+Every draw made through the test case, with `draw`, `drawSilent` or `drawAndPrint`, now runs its generator inside a span with the generator's label, and the generators open none of their own: `lists`, `sets`, `maps`, `arrays`, `tuples`, `records`, `oneOf`, `optional`, `permutations`, `recursive`, `map`, `flatMap`, `composite`, the pool draws and a mixed `ipAddresses()` used to open a span of their own around their draws. A generator of your own that draws its components through `tc.drawSilent` or `tc.drawAndPrint` gets a span for each of them with no code of its own, so `TestCase.span` is only for a group of draws that is not a generator in itself. The spans a test case records are part of its failure blob, so a blob printed by an earlier version, or a failure the database saved under one, no longer replays. `Label` gains those constants and `DEFERRED` and `FROM_LARK`, and loses `LIST_ELEMENT`, `SET_ELEMENT`, `MAP_ENTRY` and `ENUM_VARIANT`, which no generator used.
 
 `dev.hegel.lowlevel.Libhegel` gains a method for each newly bound C function: `collectionFree`, `poolFree`, `releaseThreadContext`, `settingsNewForProfile`, `settingsRegisterProfile`, `setDefaultProfile`, `settingsGetVerbosity`, `settingsStopOnFirstFailure`, `settingsShowStatistics`, `settingsUnboundedChoices`, `settingsTestLocation`, `runResultErrorKind`, `labelFromName` and `labelCombine`. A third-party binding needs to implement them.
 
-All output a test case prints now goes through the engine, as in the other Hegel frontends, and printing a drawn value is now the generator's job rather than the value's. `TestCase.note` hands the note to the engine, and a top-level draw prints as a declaration, `var x = 11;` rather than `x = 11;`, into the engine's document for the case, which lays out a long list, map, array or record over several lines, one element per line, instead of on one long line. In a stateful test each rule's draws and notes are indented under its `Step N: rule {` line and closed by `}`, and each rule, like each repetition of `repeat`, names its draws afresh, so a rule that draws `x` prints `var x = ...;` every time it runs rather than `x_2`, `x_3` and so on; and in a concurrent one the engine stamps each worker's lines with `[worker N +X.XXXms]`, timed from the start of the test case rather than of the machine.
+All output a test case prints now goes through the engine, as in the other Hegel frontends, and printing a drawn value is now the generator's job rather than the value's. `TestCase.note` hands the note to the engine, and a top-level draw prints as a declaration, `var x = 11;` rather than `x = 11;`, into the engine's document for the case, which lays out a long list, map, array or record over several lines, one element per line, instead of on one long line. In a stateful test each rule's draws and notes are indented under its `Step N: rule {` line and closed by `}`, and each rule, like each repetition of `repeat`, names its draws afresh, so a rule that draws `x` prints `var x_1 = ...;` every time it runs rather than `x_2`, `x_3` and so on. Each use of a label is numbered in turn, as in every other Hegel frontend: `tc.draw(integers(), "x")` prints `var x_1 = 0;` the first time and `var x_2 = 0;` the second, where before the first use printed bare (`var x = 0;`), and `Failure.draws()` and `Example.with` use these printed names (`Example.of().with("x_1", 5)`); and in a concurrent one the engine stamps each worker's lines with `[worker N +X.XXXms]`, timed from the start of the test case rather than of the machine.
 
 The generator describes each value as it draws it. The new `PrintableGenerator` interface draws and prints in one step, and every built-in generator implements it:
 
@@ -65,9 +67,9 @@ The generator describes each value as it draws it. The new `PrintableGenerator` 
 ```java
 Generator<Point> points = tc -> new Point(tc.drawSilent(integers()), tc.drawSilent(integers()));
 
-tc.draw(points.printAsRepr(), "p");                                         // var p = new Point(0, 0);
-tc.draw(points.printWith((p, printer) -> printer.text("origin()")), "p");   // var p = origin();
-tc.draw(integers().map(Key::of).printAsCall("Key.of"), "k");                // var k = Key.of(3);
+tc.draw(points.printAsRepr(), "p");                                         // var p_1 = new Point(0, 0);
+tc.draw(points.printWith((p, printer) -> printer.text("origin()")), "p");   // var p_2 = origin();
+tc.draw(integers().map(Key::of).printAsCall("Key.of"), "k");                // var k_1 = Key.of(3);
 ```
 
 To print a value as it is built, implement `PrintableGenerator` and draw each part with the new `TestCase.drawAndPrint`, so that it prints itself in place, or use the new `Generators.composite((tc, printer) -> ...)`:
@@ -82,7 +84,7 @@ PrintableGenerator<Point> points = (tc, p) -> {
     return Point.of(x, y);
 };
 
-Point point = tc.draw(points, "point");   // var point = Point.of(3, -1);
+Point point = tc.draw(points, "point");   // var point_1 = Point.of(3, -1);
 ```
 
 `Printer` is the engine's layout engine: `text`, `repr`, `reflow`, `breakable`, `ifBreak`, `hardBreak`, `beginGroup`/`endGroup` and `group`, `seq`, `separator`, `shiftIndent`, `comment`, `speculate` (print an attempt and commit or abort it), `deferred` (a region filled in after the draw, for a value whose description is only known once it is used) and `shouldPrint`. `Printer.noop()` discards everything, and `Document` lays out a standalone document, for trying printing code outside a test.

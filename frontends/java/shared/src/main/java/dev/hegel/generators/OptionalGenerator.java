@@ -8,8 +8,8 @@ import dev.hegel.TestCase;
 import java.util.function.Function;
 
 /**
- * Generates an optional value: empty, or wrapping a value from an inner generator, inside a {@link
- * Label#OPTIONAL} span. Shrinks toward empty. It prints as {@code Optional.of(x)}, the inner value
+ * Generates an optional value: empty, or wrapping a value from an inner generator. Shrinks toward
+ * empty. It prints as {@code Optional.of(x)}, the inner value
  * printed by the inner generator as it is drawn, or {@code Optional.empty()} (with the name of the
  * optional type it makes, such as {@code OptionalInt}).
  *
@@ -56,18 +56,13 @@ public final class OptionalGenerator<T, R> implements PrintableGenerator<R> {
 
     private R draw(TestCase tc, Printer printer) {
         Printer p = Components.out(printer);
-        tc.startSpan(label());
-        try {
-            if (tc.generateBoolean(0.5)) {
-                p.beginGroup(name + ".of(");
-                R value = present.apply(Components.draw(tc, inner, printer));
-                p.endGroup(")");
-                return value;
-            }
-            p.text(name + ".empty()");
-            return empty;
-        } finally {
-            tc.stopSpan(false);
+        if (tc.generateBoolean(0.5)) {
+            p.beginGroup(name + ".of(");
+            R value = present.apply(Components.draw(tc, inner, printer));
+            p.endGroup(")");
+            return value;
         }
+        p.text(name + ".empty()");
+        return empty;
     }
 }

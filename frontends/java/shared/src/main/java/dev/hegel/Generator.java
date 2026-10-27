@@ -42,16 +42,19 @@ public interface Generator<T> {
     T doDraw(TestCase tc);
 
     /**
-     * The label identifying this generator to the engine. A composite generator labels the span it
-     * draws in with its own kind combined with its components' labels ({@link Label#combine}), so
-     * that a list of integers and a list of strings get different labels while every list of
-     * integers gets the same one, as in every Hegel frontend. A generator that does not override
-     * this is labelled {@link Label#GENERATOR}.
+     * The label identifying this generator to the engine, which labels the span every draw of it
+     * runs in. A composite generator combines its own kind with its components' labels ({@link
+     * Label#combine}), so that a list of integers and a list of strings get different labels while
+     * every list of integers gets the same one, as in every Hegel frontend. A generator that does
+     * not override this is labelled by the name of its class ({@link Label#of(String)} of {@code
+     * getClass().getName()}), so two generators of different classes shrink apart; a lambda, whose
+     * class has no stable name, is labelled {@link Label#GENERATOR}.
      *
      * @return the label
      */
     default long label() {
-        return Label.GENERATOR;
+        Class<?> type = getClass();
+        return type.isHidden() ? Label.GENERATOR : Label.of(type.getName());
     }
 
     /**

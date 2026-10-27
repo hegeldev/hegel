@@ -45,7 +45,7 @@ class OutputTest {
                                 Reporter.printing(out))
                         .throwIfFailed());
         String s = buf.toString(StandardCharsets.UTF_8);
-        assertTrue(s.contains("var x = 11;"), s);
+        assertTrue(s.contains("var x_1 = 11;"), s);
         assertTrue(s.contains("observed x=11"), s);
     }
 

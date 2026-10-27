@@ -10,16 +10,16 @@ package dev.hegel;
  * {@link TestCase#drawAndPrint}, so that it prints itself in place:
  *
  * <pre>{@code
- * PrintableGenerator<Point> points = (tc, p) -> tc.span(Label.of("point"), () -> {
+ * PrintableGenerator<Point> points = (tc, p) -> {
  *     p.beginGroup("Point.of(");
  *     int x = tc.drawAndPrint(integers(), p);
  *     p.separator();
  *     int y = tc.drawAndPrint(integers(), p);
  *     p.endGroup(")");
  *     return Point.of(x, y);
- * });
+ * };
  *
- * Point point = tc.draw(points, "point");   // var point = Point.of(3, -1);
+ * Point point = tc.draw(points, "point");   // var point_1 = Point.of(3, -1);
  * }</pre>
  *
  * <p>The silent {@link #doDraw} draws through {@link #doDrawAndPrint} with the {@link

@@ -8,8 +8,8 @@ import dev.hegel.TestCase;
 import java.util.function.Function;
 
 /**
- * Result of {@link Generator#map}. Draws from the source and applies {@code f}, bracketing the pair
- * in a {@code map} span so the shrinker treats them as one unit. It prints the mapped value with
+ * Result of {@link Generator#map}. Draws from the source and applies {@code f}. It prints the
+ * mapped value with
  * {@link Printer#repr}, so the source need not be printable; {@link #printAsCall} prints the call
  * that made the value instead.
  *
@@ -35,12 +35,7 @@ public final class MappedGenerator<T, U> extends ValueGenerator<U> {
     /** @hidden */
     @Override
     public U doDraw(TestCase tc) {
-        tc.startSpan(label());
-        try {
-            return f.apply(tc.drawSilent(source));
-        } finally {
-            tc.stopSpan(false);
-        }
+        return f.apply(tc.drawSilent(source));
     }
 
     /**
@@ -49,7 +44,7 @@ public final class MappedGenerator<T, U> extends ValueGenerator<U> {
      * representation is not how it is built:
      *
      * <pre>{@code
-     * tc.draw(integers().min(0).map(Key::of).printAsCall("Key.of"), "key")   // var key = Key.of(3);
+     * tc.draw(integers().min(0).map(Key::of).printAsCall("Key.of"), "key")   // var key_1 = Key.of(3);
      * }</pre>
      *
      * <p>The source must be printable; a structural source whose parts are not fails when drawn.
@@ -81,15 +76,10 @@ public final class MappedGenerator<T, U> extends ValueGenerator<U> {
 
             @Override
             public U doDrawAndPrint(TestCase tc, Printer printer) {
-                tc.startSpan(label());
-                try {
-                    printer.beginGroup(open);
-                    T input = tc.drawAndPrint(source, printer);
-                    printer.endGroup(")");
-                    return f.apply(input);
-                } finally {
-                    tc.stopSpan(false);
-                }
+                printer.beginGroup(open);
+                T input = tc.drawAndPrint(source, printer);
+                printer.endGroup(")");
+                return f.apply(input);
             }
         };
     }
