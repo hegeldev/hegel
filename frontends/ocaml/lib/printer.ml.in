@@ -456,7 +456,7 @@ module Out = struct
     | Noop -> Noop
     | Region { region; argument } ->
       let child =
-        Locked.protect region.state (fun state ->
+        Locked.protect region.state (fun state : region option ->
           if state.live
           then (
             match Ffi.printer_deferred region.context region.handle with

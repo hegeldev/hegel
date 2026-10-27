@@ -93,7 +93,9 @@ let%template assoc_lists
     { core =
         Composite
           { label = Labels.combine [ Labels.dict; label_of_core keys; label_of_core values ]
-          ; generate_fn = draw_association_pairs keys values ~min_size ~max_size
+          ; generate_fn =
+              (fun data printer ->
+                draw_association_pairs keys values ~min_size ~max_size data printer)
           }
     ; sexp_of = (fun kvs -> Sexp.List (List.map (fun (k, v) -> Sexp.List [ pk k; pv v ]) kvs))
     }
@@ -135,7 +137,6 @@ let%template tables
   and pv = (printer [@mode m]) values in
   let keys = (core_of [@mode m]) keys
   and values = (core_of [@mode m]) values in
-  let draw = draw_association_pairs keys values ~min_size ~max_size in
   Printable
     { core =
         Composite
@@ -143,9 +144,16 @@ let%template tables
           ; generate_fn =
               (fun data printer ->
                 match print with
-                | `Calls names -> of_pairs (print_calls printer names (draw data))
+                | `Calls names -> of_pairs
+                    (print_calls
+                       printer
+                       names
+                       (draw_association_pairs keys values ~min_size ~max_size data))
                 | `Sexp ->
-                  let table = of_pairs (draw data Out.noop) in
+                  let table =
+                    of_pairs
+                      (draw_association_pairs keys values ~min_size ~max_size data Out.noop)
+                  in
                   Out.sexp printer (sexp_of_t pk pv) table;
                   table)
           }
@@ -239,7 +247,8 @@ let%template lists
   let generate (type k) (key : ('a -> k) MODE(m)) =
     Composite
       { label
-      ; generate_fn = draw_unique ~key elements ~min_size ~max_size
+      ; generate_fn =
+          (fun data printer -> draw_unique ~key elements ~min_size ~max_size data printer)
       }
   in
   let core =
