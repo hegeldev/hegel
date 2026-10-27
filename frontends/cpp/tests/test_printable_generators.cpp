@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -567,18 +568,38 @@ TEST(PrintableGenerators, ARecursiveGeneratorWithASilentLeafDrawsSilently) {
 }
 
 TEST(PrintableGenerators, ARecursiveGeneratorPrintsThroughItsBranches) {
+    EXPECT_EQ(
+        failing_lines([](hegel::TestCase& tc) {
+            auto trees = gs::recursive(hashed(), [](gs::Generator<int> sub) {
+                return gs::vectors(sub, {.min_size = 2, .max_size = 2})
+                    .map([](const std::vector<int>& v) {
+                        return 100 + v[0] + v[1];
+                    })
+                    .print_as_call("node");
+            });
+            if (tc.draw(trees) >= 100) {
+                boom();
+            }
+        }),
+        Lines{"auto draw_1 = node(std::vector<int>{#0, #0});"});
+}
+
+TEST(PrintableGenerators, ACustomPrintedElementPrintsInsideAnArray) {
     EXPECT_EQ(failing_lines([](hegel::TestCase& tc) {
-                  auto sums =
-                      gs::recursive(hashed(), [](gs::Generator<int> sub) {
-                          return gs::tuples(sub, sub).map(
-                              [](const std::tuple<int, int>& t) {
-                                  return std::get<0>(t) + std::get<1>(t);
-                              });
-                      });
-                  (void)tc.draw(sums);
+                  (void)tc.draw(gs::arrays<int, 2>(hashed()));
                   boom();
               }),
-              Lines{"auto draw_1 = #0;"});
+              Lines{"auto draw_1 = std::array<int, 2>{#0, #0};"});
+}
+
+TEST(PrintableGenerators, ACustomPrintedBranchPrintsInsideAVariant) {
+    EXPECT_EQ(
+        failing_lines([](hegel::TestCase& tc) {
+            (void)tc.draw(gs::variant(hashed(), gs::booleans()));
+            boom();
+        }),
+        Lines{"auto draw_1 = std::variant<int, bool>{std::in_place_index<0>, "
+              "#0};"});
 }
 
 TEST(PrintableGenerators,
