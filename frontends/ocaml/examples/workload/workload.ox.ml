@@ -16,31 +16,39 @@
 
 open Hegel
 
-module Bank = struct
-  type t = { next_id : int Atomic.t }
+let rec push list value =
+  let old = Atomic.get list in
+  if not (Atomic.compare_and_set list old (value :: old)) then push list value
+;;
 
-  type account =
-    { id : int
-    ; balance : int Atomic.t
+module Bank = struct
+  type t =
+    { next_id : int Atomic.t
+    ; accounts : (int * int Atomic.t) list Atomic.t
     }
 
-  let create () = { next_id = Atomic.make 0 }
+  let create () = { next_id = Atomic.make 0; accounts = Atomic.make [] }
+  let find bank id = List.assoc id (Atomic.get bank.accounts)
 
   let open_account bank ~deposit =
-    { id = Atomic.fetch_and_add bank.next_id 1; balance = Atomic.make deposit }
+    let id = Atomic.fetch_and_add bank.next_id 1 in
+    push bank.accounts (id, Atomic.make deposit);
+    id
   ;;
 
-  let balance account = Atomic.get account.balance
-  let deposit account ~amount = ignore (Atomic.fetch_and_add account.balance amount : int)
+  let balance bank id = Atomic.get (find bank id)
+  let deposit bank id ~amount = ignore (Atomic.fetch_and_add (find bank id) amount : int)
 
-  let transfer ~source ~dest ~amount =
-    let source_balance = Atomic.get source.balance in
+  let transfer bank ~source ~dest ~amount =
+    let source = find bank source in
+    let dest = find bank dest in
+    let source_balance = Atomic.get source in
     if source_balance >= amount
     then (
-      let dest_balance = Atomic.get dest.balance in
+      let dest_balance = Atomic.get dest in
       Unix.sleepf 0.0001;
-      Atomic.set source.balance (source_balance - amount);
-      Atomic.set dest.balance (dest_balance + amount))
+      Atomic.set source (source_balance - amount);
+      Atomic.set dest (dest_balance + amount))
   ;;
 end
 
@@ -49,73 +57,64 @@ module%hegel_concurrent_state_machine Bank_test = struct
 
   type t =
     { bank : Bank.t
-    ; accounts : Bank.account Stateful.Concurrent_pool.t
-    ; all : Bank.account list Atomic.t
+    ; accounts : int Stateful.Concurrent_pool.t
+    ; all : int list Atomic.t
     ; total : int Atomic.t
     }
 
   let sexp_of_state state =
     Sexplib0.Sexp.List
       (List.rev_map
-         (fun (account : Bank.account) ->
-            Sexplib0.Sexp.Atom (Printf.sprintf "#%d=%d" account.id (Bank.balance account)))
+         (fun id ->
+            Sexplib0.Sexp.Atom (Printf.sprintf "#%d=%d" id (Bank.balance state.bank id)))
          (Atomic.get state.all))
-  ;;
-
-  let rec register all account =
-    let old = Atomic.get all in
-    if not (Atomic.compare_and_set all old (account :: old)) then register all account
   ;;
 
   let accounts_gen = Stateful.Concurrent_pool.values_reusable
 
   let open_account tc (_ : ctx) (state : t) =
     let deposit = draw tc (integers ~min_value:0 ~max_value:1_000 ()) in
-    let account = Bank.open_account state.bank ~deposit in
-    register state.all account;
+    let id = Bank.open_account state.bank ~deposit in
+    push state.all id;
     ignore (Atomic.fetch_and_add state.total deposit : int);
-    Stateful.Concurrent_pool.add state.accounts tc account;
-    note tc (Printf.sprintf "opened #%d" account.id)
+    Stateful.Concurrent_pool.add state.accounts tc id;
+    note tc (Printf.sprintf "opened #%d" id)
   [@@rule { group = "accounts" }]
   ;;
 
   let deposit tc (_ : ctx) (state : t) =
-    let account = draw_silent tc (accounts_gen state.accounts) in
+    let id = draw_silent tc (accounts_gen state.accounts) in
     let amount = draw tc (integers ~min_value:1 ~max_value:1_000 ()) in
-    note tc (Printf.sprintf "into #%d" account.id);
-    Bank.deposit account ~amount;
+    note tc (Printf.sprintf "into #%d" id);
+    Bank.deposit state.bank id ~amount;
     ignore (Atomic.fetch_and_add state.total amount : int)
   [@@rule { group = "accounts" }]
   ;;
 
   let transfer tc (_ : ctx) (state : t) =
     let source = draw_silent tc (accounts_gen state.accounts) in
-    let available = Bank.balance source in
+    let available = Bank.balance state.bank source in
     assume tc (available > 0);
     let dest =
-      draw_silent
-        tc
-        (filter
-           (fun (account : Bank.account) -> account.id <> source.id)
-           (accounts_gen state.accounts))
+      draw_silent tc (filter (fun id -> id <> source) (accounts_gen state.accounts))
     in
     let amount = draw tc (integers ~min_value:1 ~max_value:available ()) in
-    note tc (Printf.sprintf "from #%d to #%d" source.id dest.id);
-    Bank.transfer ~source ~dest ~amount
+    note tc (Printf.sprintf "from #%d to #%d" source dest);
+    Bank.transfer state.bank ~source ~dest ~amount
   [@@rule { group = "transfers"; weight = 6 }]
   ;;
 
   let check_balance tc (_ : ctx) (state : t) =
-    let account = draw_silent tc (accounts_gen state.accounts) in
-    note tc (Printf.sprintf "#%d" account.id);
-    assert (Bank.balance account >= 0)
+    let id = draw_silent tc (accounts_gen state.accounts) in
+    note tc (Printf.sprintf "#%d" id);
+    assert (Bank.balance state.bank id >= 0)
   [@@rule { group = "transfers" }]
   ;;
 
   let no_money_lost _tc (state : t) =
     let sum =
       List.fold_left
-        (fun sum account -> sum + Bank.balance account)
+        (fun sum id -> sum + Bank.balance state.bank id)
         0
         (Atomic.get state.all)
     in
@@ -124,7 +123,8 @@ module%hegel_concurrent_state_machine Bank_test = struct
   ;;
 
   let no_negative_balance _tc (state : t) =
-    assert (List.for_all (fun account -> Bank.balance account >= 0) (Atomic.get state.all))
+    assert (
+      List.for_all (fun id -> Bank.balance state.bank id >= 0) (Atomic.get state.all))
   [@@invariant { always_check = true }]
   ;;
 end
@@ -150,9 +150,6 @@ let%hegel_main workload tc =
       ~step_count:1_000
       ~min_concurrency:2
       ~max_concurrency:4 [@nontail])
-[@@settings
-  let s = Settings.default () in
-  { s with phases = List.filter (fun phase -> phase <> Settings.Shrink) s.phases }]
 ;;
 
 (* The same workload on systhreads instead of a Parallel scheduler. To use it,
@@ -177,9 +174,6 @@ let%hegel_main workload tc =
        ~step_count:1_000
        ~min_concurrency:2
        ~max_concurrency:4
-   [@@settings
-     let s = Settings.default () in
-     { s with phases = List.filter (fun phase -> phase <> Settings.Shrink) s.phases }]
    ;;
    ]} *)
 
