@@ -62,12 +62,12 @@ let draw_association_pairs
     Out.group printer "[" "]" (fun printer ->
       draw_elements coll data printer (fun acc printer ->
         Out.group printer "(" ")" (fun printer ->
-          let k = do_draw keys data printer in
+          let k = draw_core keys data printer in
           if List.exists (fun (k', _) -> k' = k) acc
           then None
           else (
             Out.separator printer ",";
-            Some (k, do_draw values data printer))))))
+            Some (k, draw_core values data printer))))))
 ;;
 
 (** [assoc_lists keys values ?min_size ?max_size ()] creates a generator for
@@ -219,7 +219,7 @@ let draw_unique ~key elements ~min_size ~max_size data printer =
       List.map
         fst
         (draw_elements coll data printer (fun acc printer ->
-           let elem = do_draw elements data printer in
+           let elem = draw_core elements data printer in
            let k = key elem in
            if List.exists (fun (_, k') -> k' = k) acc then None else Some (elem, k)))))
 ;;
@@ -287,7 +287,7 @@ let%template arrays
                   Out.group printer "[|" "|]" (fun printer ->
                     Array.of_list
                       (draw_elements coll data printer (fun _ printer ->
-                         Some (do_draw elements data printer))))))
+                         Some (draw_core elements data printer))))))
           }
     }
 [@@mode m = (nonportable, portable)]
@@ -323,7 +323,7 @@ let sets
                       let set = ref S.empty in
                       ignore
                         (draw_elements coll data printer (fun _ printer ->
-                           let elem = do_draw elements data printer in
+                           let elem = draw_core elements data printer in
                            if S.mem elem !set
                            then None
                            else (

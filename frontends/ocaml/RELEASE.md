@@ -179,3 +179,7 @@ let%hegel_test greets tc =
   in
   assert (String.starts_with ~prefix:"hello " s)
 ```
+
+A draw given a `~label` now prints numbered from its first use, `let x_1 = ... in` then `let x_2 = ... in`, where it printed `let x = ... in` for every use. A name the PPX captures from a single `let x = [%draw ...]` still prints bare, as does the first use of a name the PPX sees reused; an unnamed draw still prints as `draw_1`, `draw_2`. Each name counts on its own, in the order the draws run, and a number already taken by another name is skipped: a bare `x_2` followed by a reused `x` prints `x_2` then `x_3`. The counts start afresh in each repetition of `repeat` and each step of a stateful test, and a clone shares its parent's counts. `Hegel.Internal.draw_display_name` follows the same rule.
+
+Every draw made through a test case, printed or silent, is now wrapped in an engine span labelled with its generator's label, and the compound generators (`map`, `bind`, `tuple2`, `lists`, `composite`, `printable_composite` and the rest) open no spans of their own around their component draws, where each used to open one; `filter` still opens a span around every attempt. This makes the choice sequence line up with every other Hegel frontend, so `composite` and `printable_composite` are now labelled `hegel.composite` rather than `hegel.fixed_dicts`, and a generator derived by `ppx_hegel_generator` keeps its type-name label. A `reproduce_blob` recorded by an earlier release no longer reproduces its failure, and failures saved in the database replay as fresh test cases.

@@ -330,8 +330,10 @@ val require : test_case -> ?msg:string -> bool -> unit
 
 (** [draw_display_name tc ~label ~repeatable] returns the display name to print
     for a drawn value, bumping the per-test-case occurrence counter for [label].
-    A [repeatable] name is numbered on every occurrence ([label_1], [label_2],
-    …), while a non-repeatable name is printed bare. *)
+    The name is numbered ([label_1], [label_2], …) when [repeatable] is set,
+    when [label] has been drawn under before, or when the bare [label] is
+    already taken, skipping any numbered name already taken; otherwise it is
+    printed bare. *)
 val draw_display_name : test_case -> label:string -> repeatable:bool -> string
 
 (**/**)

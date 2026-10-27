@@ -85,10 +85,11 @@ type unprintable
     On the final replay of a failing test (or on every case under verbose
     output), an outermost draw prints the binding [let name = value in], with
     the value printed as OCaml syntax by [gen] as it draws it (see
-    {!Printer}). The [name] is [label] when given, else ["draw"]. An
-    unlabeled draw is numbered ([draw_1], [draw_2], …). Draws nested inside a
-    span (e.g. inside a {!composite}) print nothing. To draw a generator that
-    does not print, use {!draw_silent}, or see {!unprintable}.
+    {!Printer}). The [name] is [label] when given, else ["draw"], numbered
+    on each use ([x_1], [x_2], … and [draw_1], [draw_2], …). Draws nested
+    inside a span (e.g. inside a {!composite}) print nothing. To draw a
+    generator that does not print, use {!draw_silent}, or see
+    {!unprintable}.
 
     [?loc] adds the source filename and line to the printed draw as a
     comment: [let name = value in  (* filename:line *)]. In OxCaml, the
@@ -98,7 +99,8 @@ type unprintable
     Inside a [let%hegel_test], the PPX supplies the binding name as the label, so
     [let x = draw tc gen] prints [let x = value in]. When the same name is
     shadowed or drawn in a loop, its draws are numbered [x_1], [x_2], … in draw
-    order. Pass [?label] to override the name (e.g. [draw ~label:"y" tc gen]).
+    order. Pass [?label] to override the name (e.g. [draw ~label:"y" tc gen],
+    which prints [let y_1 = value in]).
 
     {[
       let%hegel_test draw_example tc =
@@ -119,9 +121,10 @@ val draw
 
 (** [draw_named ~label ~repeatable tc gen] is the naming-aware draw the
     [let%hegel_test] PPX rewrites bindings to; not intended for direct use
-    (prefer {!draw}). It prints [let label = value in] (bare), or
-    [let label_1 = value in], … when [repeatable] is set. The PPX sets [repeatable = true]
-    for a binding name that is reused or drawn in a loop. *)
+    (prefer {!draw}). It prints [let label_1 = value in], … when [repeatable]
+    is set, which the PPX does for a binding name that is reused or drawn in
+    a loop, and otherwise [let label = value in] on the name's first use and
+    [let label_2 = value in], … from its second. *)
 val draw_named
   :  label:string
 #ifdef OXCAML
@@ -1161,8 +1164,9 @@ val uuids : ?version:int -> unit -> (string, printable) generator MODE(portable)
     for printing with {!Printer.Out.should_print}.
 
     [label] names the generator to the engine, which shrinks the values of
-    generators with the same label alike. [sexp_of] is what [printer]
-    returns, [<abstr>] by default.
+    generators with the same label alike; without one the generator is
+    labelled [hegel.composite], like every other hand-written composite.
+    [sexp_of] is what [printer] returns, [<abstr>] by default.
 
     {[
       let stacks elements =
@@ -1451,6 +1455,7 @@ module Private : sig
     val one_of : Internal.Label.t
     val optional : Internal.Label.t
     val fixed_dict : Internal.Label.t
+    val composite : Internal.Label.t
     val flat_map : Internal.Label.t
     val filter : Internal.Label.t
     val filter_attempt : Internal.Label.t

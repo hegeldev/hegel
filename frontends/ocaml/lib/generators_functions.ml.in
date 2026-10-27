@@ -59,10 +59,10 @@ let%template make
         let result = ref None in
         let shown =
           Printer.Out.with_document ~max_width:max_int (fun printer ->
-            result := Some (do_draw returns tc printer))
+            result := Some (draw_core returns tc printer))
         in
         Option.get !result, shown)
-      else do_draw returns tc Printer.Out.noop, ""
+      else draw_core returns tc Printer.Out.noop, ""
     in
     let base arg =
       let (ret, shown), is_fresh =

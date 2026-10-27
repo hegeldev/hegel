@@ -276,7 +276,7 @@ let%expect_test "rejected attempts and duplicates are never printed" =
   in
   check_lines
     "unique lists"
-    {|^let xs = \[((true|false)(; (true|false))*)?\] in$|}
+    {|^let xs_1 = \[((true|false)(; (true|false))*)?\] in$|}
     lists_lines;
   distinct "unique lists" {|(true|false)|} lists_lines;
   let sets_lines =
@@ -290,8 +290,8 @@ let%expect_test "rejected attempts and duplicates are never printed" =
               (sets (module Int_set) (integers ~min_value:0 ~max_value:2 ()) ())
             : Int_set.t))
   in
-  check_lines "sets" {|^let xs = Set.of_list \[(\d(; \d)*)?\] in$|} sets_lines;
-  distinct "sets" {|(\d)|} sets_lines;
+  check_lines "sets" {|^let xs_1 = Set.of_list \[(\d(; \d)*)?\] in$|} sets_lines;
+  distinct "sets" {|[\[; ](\d)|} sets_lines;
   let assoc_lines =
     verbose_lines
       (fun () -> [%expect.output])
@@ -305,7 +305,7 @@ let%expect_test "rejected attempts and duplicates are never printed" =
   in
   check_lines
     "assoc lists"
-    {|^let xs = \[(\(\d, (true|false)\)(; \(\d, (true|false)\))*)?\] in$|}
+    {|^let xs_1 = \[(\(\d, (true|false)\)(; \(\d, (true|false)\))*)?\] in$|}
     assoc_lines;
   distinct "assoc lists" {|\((\d),|} assoc_lines;
   [%expect
@@ -335,7 +335,7 @@ let%expect_test "a retried recursive value leaves no partial output" =
                (fun subtrees ->
                   map_as_call "Node" List.length (lists subtrees ~min_size:1 ())))
           : int))
-  |> check_lines "recursive" {|^let t = (Leaf 0|Node \[[][LeafNod0; ]*\]) in$|};
+  |> check_lines "recursive" {|^let t_1 = (Leaf 0|Node \[[][LeafNod0; ]*\]) in$|};
   [%expect {| recursive: 200 lines ok |}]
 ;;
 
@@ -401,7 +401,7 @@ let%expect_test "a note made while drawing prints after the binding" =
   print_report (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    let n = 4 in
+    let n_1 = 4 in
     drawing
     |}]
 ;;
@@ -419,5 +419,5 @@ let%expect_test "a nested draw in a printable composite prints nothing" =
        : int);
     assert false);
   print_report (Expect_scrub.scrub_report [%expect.output]);
-  [%expect {| let n = 4 in |}]
+  [%expect {| let n_1 = 4 in |}]
 ;;

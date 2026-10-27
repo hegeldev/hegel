@@ -90,7 +90,20 @@ let test_labels_structural () =
     ; "hegel.filter.attempt", Labels.filter_attempt
     ; "hegel.one_of", Labels.one_of
     ; "hegel.optional", Labels.optional
+    ; "hegel.composite", Labels.composite
     ];
+  Alcotest.(check int64)
+    "composite"
+    (value Labels.composite)
+    (value (label_of (composite (fun _ -> 0))));
+  Alcotest.(check int64)
+    "printable_composite"
+    (value Labels.composite)
+    (value (label_of (printable_composite (fun _ _ -> 0))));
+  Alcotest.(check int64)
+    "printable_composite with a label"
+    (value (Labels.from_name "stack"))
+    (value (label_of (printable_composite ~label:"stack" (fun _ _ -> 0))));
   with_tc (fun tc ->
     let pool = Stateful.Pool.create tc in
     Alcotest.(check int64)

@@ -211,7 +211,8 @@ let%hegel_test all_draws_below_ten tc =
 
 The same `let x` runs on each iteration, so Hegel disambiguates the draws as
 `x_1`, `x_2`, `x_3` in draw order. You can override the name with `~label`:
-`draw ~label:"y" tc (integers ())`.
+`draw ~label:"y" tc (integers ())`, which prints `let y_1 = … in`, numbering
+each use of the label in turn.
 
 Values print as OCaml syntax: lists as `[1; 2; 3]`, tuples as `(1, "a")`,
 options as `Some 3`, records and variants of derived types as

@@ -94,7 +94,7 @@ let%expect_test "a multiline drawn value aligns under its name" =
   print_string (Expect_scrub.scrub_report ~hide_draw_positions:false [%expect.output]);
   [%expect
     {|
-    let l = ["00000";  (* draw.ml:<LINE> *)
+    let l_1 = ["00000";  (* draw.ml:<LINE> *)
      "00000";
      "00000";
      "00000";

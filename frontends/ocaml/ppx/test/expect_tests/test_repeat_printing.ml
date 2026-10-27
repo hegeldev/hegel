@@ -23,9 +23,9 @@ let%expect_test "repeat prints each iteration under a repetition note" =
   [%expect
     {|
     // Repetition #1
-      let n = 4 in
+      let n_1 = 4 in
     // Repetition #2
-      let n = 6 in
+      let n_1 = 6 in
     Exception: File "ppx/test/expect_tests/test_repeat_printing.ml", line LINE, characters C1-C2: Assertion failed
 
     To reproduce this failure, pass this argument to run_hegel_test:
@@ -42,7 +42,7 @@ let%expect_test "set_worker attributes a clone's output to the worker" =
   print_string (Expect_scrub.scrub_concurrent_report [%expect.output]);
   [%expect
     {|
-    [worker 3 +time] let n = 5 in
+    [worker 3 +time] let n_1 = 5 in
     Exception: File "ppx/test/expect_tests/test_repeat_printing.ml", line LINE, characters C1-C2: Assertion failed
 
     To reproduce this failure, pass this argument to run_hegel_test:

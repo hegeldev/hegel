@@ -606,9 +606,9 @@ val main
     value printed as OCaml syntax by [gen] itself as it draws it (see
     {!Printer.Out}): a list prints element by element, each element as its
     own generator prints it. The [name] is [label] when given, else
-    ["draw"]. An unlabeled draw is numbered ([draw_1], [draw_2], …). Draws
-    nested inside a span (e.g. composite elements) print nothing of their
-    own, so only the outermost value shows. A value whose printer was
+    ["draw"], numbered on each use ([x_1], [x_2], … and [draw_1], [draw_2],
+    …). Draws nested inside a span (e.g. composite elements) print nothing
+    of their own, so only the outermost value shows. A value whose printer was
     attached with {!with_printer} prints as the s-expression that printer
     gives. To draw a generator with no printer, use {!draw_silent}, or make
     it printable (see {!unprintable}).
@@ -621,7 +621,8 @@ val main
     Inside a [let%hegel_test], the PPX supplies the binding name as the label, so
     [let x = draw tc gen] prints its value as [let x = value in]. When the same name is
     shadowed or drawn in a loop, its draws are numbered [x_1], [x_2], … in draw
-    order. Pass [?label] to override the name (e.g. [draw ~label:"y" tc gen]).
+    order. Pass [?label] to override the name (e.g. [draw ~label:"y" tc gen],
+    which prints [let y_1 = value in]).
 
     {[
       let%hegel_test draw_example tc =

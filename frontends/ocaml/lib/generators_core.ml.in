@@ -33,6 +33,7 @@ module Labels = struct
   let one_of = from_name "hegel.one_of"
   let optional = from_name "hegel.optional"
   let fixed_dict = from_name "hegel.fixed_dicts"
+  let composite = from_name "hegel.composite"
   let flat_map = from_name "hegel.flat_map"
   let filter = from_name "hegel.filter"
   let filter_attempt = from_name "hegel.filter.attempt"
@@ -340,7 +341,7 @@ let%template printable_composite
   =
   fun ?label ?(sexp_of = abstract_sexp) body ->
   (composite_with_label [@mode m])
-    ~label:(Option.fold ~none:Labels.fixed_dict ~some:Labels.from_name label)
+    ~label:(Option.fold ~none:Labels.composite ~some:Labels.from_name label)
     ~sexp_of
     body
 [@@mode m = (nonportable, portable)]
@@ -348,15 +349,15 @@ let%template printable_composite
 
 (** [composite generate_fn] builds an unprintable generator from an imperative
     [generate_fn] that draws sub-values from the test case and returns a value.
-    The draws run inside a {!Labels.fixed_dict} span (the struct/record
-    grouping), so they are nested draws and print nothing. *)
+    The draws are nested inside the draw of the composite, labelled
+    {!Labels.composite}, so they print nothing. *)
 let%template composite
   : type a. (Internal.test_case -> a) MODE(m) -> (a, unprintable) generator MODE(m)
   =
   fun generate_fn ->
   Unprintable
     { core =
-        Composite { label = Labels.fixed_dict; generate_fn = (fun tc _ -> generate_fn tc) }
+        Composite { label = Labels.composite; generate_fn = (fun tc _ -> generate_fn tc) }
     }
 [@@mode m = (nonportable, portable)]
 ;;
@@ -372,7 +373,7 @@ let max_filter_attempts = Hegel_ffi.Ffi.filter_attempts
 exception Leaf_budget_exceeded of Internal.recursion
 
 (** [in_span ~discard label data f] runs [f ()] inside a span with the given
-    [label], stopping it with [discard] of whether [f] raised, except on
+    [label], stopping it with [discard] if [f] raised, except on
     {!Leaf_budget_exceeded}.
 
     It also increments [draw_depth] for the duration of [f], marking [f]'s
@@ -681,7 +682,9 @@ let rec flatten_filter (core : 'a core) (predicate : 'a -> bool) =
 
 (** [do_draw core data printer] produces a typed value from generation
     structure [core] using the given test case [data], printing it to
-    [printer] as it draws. *)
+    [printer] as it draws. It opens no span of its own: a draw of a
+    component goes through {!draw_core}, which runs it in a span labelled
+    with the component's label, as every draw through the test case does. *)
 let rec do_draw : type a. a core -> Internal.test_case -> Out.t -> a =
   fun core data printer ->
   match core with
@@ -689,55 +692,52 @@ let rec do_draw : type a. a core -> Internal.test_case -> Out.t -> a =
     let value = draw data in
     Out.value printer print value;
     value
-  | Mapped { source; f; label } -> group label data (fun () -> f (do_draw source data Out.noop))
-  | FlatMapped { source; f; label } ->
-    discardable_group label data (fun () ->
-      match f (do_draw source data Out.noop) with
-      | Printing core -> do_draw core data printer
-      | Silent core ->
-        let value = do_draw core data Out.noop in
-        Out.doc printer Printer.opaque;
-        value)
-  | Filtered { source; predicate; label } ->
-    group label data (fun () ->
-      match flatten_filter source predicate with
-      | Values { consume = true; select; _ }, predicate ->
-        select data ~filter:(Some (Labels.filter_attempt, predicate))
-      | source, predicate ->
-        let rec attempt i =
-          if i > max_filter_attempts
-          then raise Internal.Assume_rejected
-          else (
-            Internal.start_span ~label:Labels.filter_attempt data;
-            let accepted =
-              Out.speculate printer (fun printer ->
-                let value = do_draw source data printer in
-                if predicate value
-                then (
-                  Internal.stop_span data;
-                  Some value, `Commit)
-                else (
-                  Internal.stop_span ~discard:true data;
-                  None, `Abort))
-            in
-            match accepted with
-            | Some value -> value
-            | None -> attempt (i + 1))
+  | Mapped { source; f; _ } -> f (draw_core source data Out.noop)
+  | FlatMapped { source; f; _ } ->
+    (match f (draw_core source data Out.noop) with
+     | Printing core -> draw_core core data printer
+     | Silent core ->
+       let value = draw_core core data Out.noop in
+       Out.doc printer Printer.opaque;
+       value)
+  | Filtered { source; predicate; _ } ->
+    (match flatten_filter source predicate with
+     | Values { consume = true; select; _ }, predicate ->
+       select data ~filter:(Some (Labels.filter_attempt, predicate))
+     | source, predicate ->
+       let rec attempt i =
+         if i > max_filter_attempts
+         then raise Internal.Assume_rejected
+         else (
+           Internal.start_span ~label:Labels.filter_attempt data;
+           let accepted =
+             Out.speculate printer (fun printer ->
+               let value = draw_core source data printer in
+               if predicate value
+               then (
+                 Internal.stop_span data;
+                 Some value, `Commit)
+               else (
+                 Internal.stop_span ~discard:true data;
+                 None, `Abort))
+           in
+           match accepted with
+           | Some value -> value
+           | None -> attempt (i + 1))
+       in
+       attempt 1)
+  | CompositeList { elements; min_size; max_size; _ } ->
+    with_collection ~min_size ?max_size data (fun coll ->
+      Out.group printer "[" "]" (fun printer ->
+        let rec collect values =
+          if collection_more coll data
+          then (
+            if not (List.is_empty values) then Out.separator printer ";";
+            collect (draw_core elements data printer :: values))
+          else List.rev values
         in
-        attempt 1)
-  | CompositeList { elements; min_size; max_size; label } ->
-    group label data (fun () ->
-      with_collection ~min_size ?max_size data (fun coll ->
-        Out.group printer "[" "]" (fun printer ->
-          let rec collect values =
-            if collection_more coll data
-            then (
-              if not (List.is_empty values) then Out.separator printer ";";
-              collect (do_draw elements data printer :: values))
-            else List.rev values
-          in
-          collect [])))
-  | Composite { label; generate_fn } -> group label data (fun () -> generate_fn data printer)
+        collect []))
+  | Composite { generate_fn; _ } -> generate_fn data printer
   | Values { select; _ } -> select data ~filter:None
   | Function { build; _ } -> build ~name:None data
   | Printed { source; print } ->
@@ -748,12 +748,19 @@ let rec do_draw : type a. a core -> Internal.test_case -> Out.t -> a =
     (match get () with
      | None -> raise (Internal.Usage_error "deferred generator drawn from before it is defined")
      | Some core -> do_draw core data printer)
+
+(** [draw_core core data printer] is {!do_draw} inside a span labelled with
+    [core]'s label: how every draw made through the test case, and every
+    draw of a component by a compound generator, runs. *)
+and draw_core : type a. a core -> Internal.test_case -> Out.t -> a =
+  fun core data printer ->
+  group (label_of_core core) data (fun () -> do_draw core data printer)
 ;;
 
 (** [draw_and_print tc printer gen] draws from the printable generator [gen],
     printing the value to [printer] as it is drawn. *)
 let draw_and_print : type a. Internal.test_case -> Out.t -> (a, printable) generator -> a =
-  fun tc printer gen -> do_draw (core_of gen) tc printer
+  fun tc printer gen -> draw_core (core_of gen) tc printer
 ;;
 
 (** [draw_named ~label ~repeatable tc gen] is the naming-aware draw the
@@ -761,9 +768,10 @@ let draw_and_print : type a. Internal.test_case -> Out.t -> (a, printable) gener
     (prefer {!draw}). On the final replay of a failing test (or on every case
     under verbose output), an outermost draw prints a [let name = value in]
     binding to the test case's print region, the value printed by [gen] as
-    it draws, where [name] is [label], printed bare on its sole use and
-    numbered ([label_1], [label_2], …) when [repeatable] is set — which the
-    PPX does for a binding name that is reused or drawn in a loop. Draws
+    it draws, where [name] is [label] numbered ([label_1], [label_2], …)
+    when [repeatable] is set — which the PPX does for a binding name that is
+    reused or drawn in a loop — and otherwise printed bare on its first use
+    and numbered from its second (see {!Internal.draw_display_name}). Draws
     nested inside a span (e.g. composite elements) print nothing. *)
 let draw_named
   : type a.
@@ -777,13 +785,15 @@ let draw_named
   let open Lexing in
   fun ~label ?loc ~repeatable tc gen ->
     Internal.check_drawable tc ~label;
+    let core = core_of gen in
     let draw name printer =
-      match core_of gen with
-      | Printed { source = Function { build; _ }; print } ->
-        let value = build ~name:(Some (name ())) tc in
-        Out.value printer print value;
-        value
-      | core -> do_draw core tc printer
+      group (label_of_core core) tc (fun () ->
+        match core with
+        | Printed { source = Function { build; _ }; print } ->
+          let value = build ~name:(Some (name ())) tc in
+          Out.value printer print value;
+          value
+        | core -> do_draw core tc printer)
     in
     if Internal.draw_depth tc > 0
     then draw (fun () -> Internal.draw_display_name tc ~label ~repeatable) Out.noop
@@ -810,19 +820,14 @@ let draw_named
     On the final replay of a failing test (or on every case under verbose
     output), an outermost draw prints a [let name = value in] binding to the
     test case's print region, with the value printed by [gen] as it draws.
-    The [name] is [label] when given, else ["draw"]; an unlabeled draw is
-    numbered ([draw_1], [draw_2], …) while a [label] is printed bare. When
-    [loc] is provided, the binding carries it as a [(* file:line *)]
-    comment. Draws nested inside a span (e.g. composite elements) print
-    nothing. To draw a generator that carries no printer, use
-    {!draw_silent}, or make it printable with {!with_ocaml_printer}. *)
+    The [name] is [label] when given, else ["draw"], numbered on each use
+    ([x_1], [x_2], … and [draw_1], [draw_2], …). When [loc] is provided, the
+    binding carries it as a [(* file:line *)] comment. Draws nested inside a
+    span (e.g. composite elements) print nothing. To draw a generator that
+    carries no printer, use {!draw_silent}, or make it printable with
+    {!with_ocaml_printer}. *)
 let draw ?label ?loc tc gen =
-  draw_named
-    ~label:(Option.value label ~default:"draw")
-    ?loc
-    ~repeatable:(Option.is_none label)
-    tc
-    gen
+  draw_named ~label:(Option.value label ~default:"draw") ?loc ~repeatable:true tc gen
 ;;
 
 (** [draw_silent tc gen] produces a typed value from any generator [gen] without
@@ -831,7 +836,7 @@ let draw ?label ?loc tc gen =
 let draw_silent : type a p. Internal.test_case -> (a, p) generator -> a =
   fun tc gen ->
   Internal.check_drawable tc ~label:"draw_silent";
-  do_draw (core_of gen) tc Out.noop
+  draw_core (core_of gen) tc Out.noop
 ;;
 
 (** [draw_silent_named ~name tc gen] is {!draw_silent} threading the draw-site
@@ -842,10 +847,12 @@ let draw_silent_named
   =
   fun ~name tc gen ->
   Internal.check_drawable tc ~label:name;
-  match core_of gen with
-  | Function { build; _ } | Printed { source = Function { build; _ }; _ } ->
-    build ~name:(Some name) tc
-  | core -> do_draw core tc Out.noop
+  let core = core_of gen in
+  group (label_of_core core) tc (fun () ->
+    match core with
+    | Function { build; _ } | Printed { source = Function { build; _ }; _ } ->
+      build ~name:(Some name) tc
+    | core -> do_draw core tc Out.noop)
 ;;
 
 (** [map f gen] transforms values from [gen] using [f]. The result carries no
@@ -897,7 +904,7 @@ let%template map_as_call
                   Out.group printer ~indent:2 "" "" (fun printer ->
                     Out.text printer name;
                     Out.breakable printer " ";
-                    f (do_draw source tc (Out.argument printer)))))
+                    f (draw_core source tc (Out.argument printer)))))
           }
     ; sexp_of = abstract_sexp
     }
@@ -985,11 +992,11 @@ let%template recursive
   and draw_subtree recursion depth tc printer =
     let drawn =
       if Internal.recursion_branch tc recursion ~depth
-      then do_draw (core_of (branch (subtree recursion (depth + 1)))) tc printer
+      then draw_core (core_of (branch (subtree recursion (depth + 1)))) tc printer
       else (
         (try Internal.recursion_leaf tc recursion with
          | Internal.Retry -> raise (Leaf_budget_exceeded recursion));
-        do_draw leaf_core tc printer)
+        draw_core leaf_core tc printer)
     in
     if depth = 0
     then (
