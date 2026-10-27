@@ -1,0 +1,125 @@
+(** Snapshot tests for [Hegel.note]'s verbosity gating: silent under [Quiet],
+    final-replay-only under [Normal], every case under [Verbose]/[Debug]. *)
+
+let marker = "NOTE_MARKER"
+let int_gen = Hegel.integers ~min_value:0 ~max_value:100 ()
+
+(** A passing property (5 cases) that notes the marker on every case. *)
+let run_passing verbosity =
+  let settings = { (Hegel.Settings.create ~test_cases:5 ~seed:1 ()) with verbosity } in
+  Hegel.run_hegel_test ~settings (fun tc ->
+    ignore (Hegel.draw tc int_gen : int);
+    Hegel.note tc marker)
+;;
+
+(** A property that fails (so the client performs a final replay) and notes the
+    marker on every case. *)
+let run_failing verbosity =
+  let settings = { (Hegel.Settings.create ~test_cases:5 ~seed:1 ()) with verbosity } in
+  try
+    Hegel.run_hegel_test ~settings (fun tc ->
+      Hegel.note tc marker;
+      failwith "boom")
+  with
+  | _ -> ()
+;;
+
+let%expect_test "Quiet suppresses notes entirely" =
+  run_passing Hegel.Settings.Quiet;
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect {| |}]
+;;
+
+let%expect_test "Normal notes only on the final failing replay" =
+  run_passing Hegel.Settings.Normal;
+  run_failing Hegel.Settings.Normal;
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    --- Failure --------------------------------------------------------------------
+
+    NOTE_MARKER
+
+    Exception: Failure("boom")
+    rerun with: ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;
+
+let%expect_test "Verbose notes on every case (not just the final replay)" =
+  run_passing Hegel.Settings.Verbose;
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    Starting phase: Generate
+    Running test case
+    draw_1 = 0
+    NOTE_MARKER
+    Running test case
+    draw_1 = 55
+    NOTE_MARKER
+    Running test case
+    draw_1 = 79
+    NOTE_MARKER
+    Running test case
+    draw_1 = 98
+    NOTE_MARKER
+    Running test case
+    draw_1 = 39
+    NOTE_MARKER
+    Ending phase: Generate
+    |}]
+;;
+
+let%expect_test "Debug notes on every case (not just the final replay)" =
+  run_passing Hegel.Settings.Debug;
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    no config file loaded
+    Starting phase: Generate
+    draw_1 = 0
+    NOTE_MARKER
+    draw_1 = 55
+    NOTE_MARKER
+    test case #2: status = Valid, choices = 1
+    draw_1 = 79
+    NOTE_MARKER
+    test case #3: status = Valid, choices = 1
+    draw_1 = 98
+    NOTE_MARKER
+    test case #4: status = Valid, choices = 1
+    draw_1 = 39
+    NOTE_MARKER
+    test case #5: status = Valid, choices = 1
+    Ending phase: Generate
+    Test done. interesting_test_cases=0
+    |}]
+;;
+
+let%expect_test "prints from clone interleave deterministically" =
+  let settings =
+    { (Hegel.Settings.create ~test_cases:1 ~seed:0 ()) with
+      database = Hegel.Settings.Disabled
+    }
+  in
+  (try
+     Hegel.run_hegel_test ~settings (fun tc ->
+       Hegel.note tc "before clone";
+       Hegel.note (Hegel.clone tc) "from clone";
+       Hegel.note tc "after clone";
+       failwith "boom")
+   with
+   | _ -> ());
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    --- Failure --------------------------------------------------------------------
+
+    before clone
+    from clone
+    after clone
+
+    Exception: Failure("boom")
+    rerun with: ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;

@@ -1,0 +1,242 @@
+# CI for the OCaml frontend (the `hegel` opam packages in frontends/ocaml/,
+# driving libhegel in-process through ctypes). Called from ci.yml when the
+# frontend, libhegel (which it bundles) or the shared workspace changed. Every
+# job builds the in-tree engine first: the tests never fetch a released
+# binary.
+name: ocaml
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  # The full suite with bisect_ppx (100% coverage) on the main OCaml version,
+  # then the release-profile build and tests opam-repo-ci would run.
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - uses: ./.github/actions/setup-opam
+        with:
+          cache-key: opam-${{ runner.os }}-5.2.1-with-test-${{ hashFiles('frontends/ocaml/*.opam') }}
+          cache-restore-keys: |
+            opam-${{ runner.os }}-5.2.1-with-test-
+          deps-flags: --with-test
+          # bisect_ppx for the coverage gate; core and async are the opam
+          # depopts the hegel.jane and hegel.jane.async suites need.
+          packages: bisect_ppx.2.8.3 core async
+      - name: Build libhegel
+        run: just ocaml::build-libhegel
+      - name: Run the test suite with coverage
+        run: just ocaml::check-test
+      - name: Mirror opam-repo-ci (isolated release build + tests)
+        working-directory: frontends/ocaml
+        env:
+          # Verbosity 2 streams sub-command output so build warnings land in
+          # the log we grep below.
+          OPAMVERBOSE: "2"
+        run: |
+          set -o pipefail
+          HEGEL_LIBHEGEL_PATH="$(scripts/libhegel-path.sh)"
+          export HEGEL_LIBHEGEL_PATH
+          opam install ./*.opam --with-test --confirm-level=unsafe-yes 2>&1 \
+            | tee "$RUNNER_TEMP/opam-install.log"
+          # Release-profile builds (dune -p) print warnings but never fail on
+          # them (release flags are just `-w -40`), so a new compiler's
+          # warnings scroll past silently. Only our packages build here (deps
+          # are preinstalled), so any warning is ours: fail on it.
+          if grep -E 'Warning [0-9]+ \[' "$RUNNER_TEMP/opam-install.log"; then
+            echo "::error::OCaml warnings emitted during the release-profile build"
+            exit 1
+          fi
+
+  # The oldest and newest supported OCaml, without coverage (their switches
+  # lack the dev-setup dependencies) and without the hegel.jane suites (no
+  # core/async depopts).
+  compat:
+    name: compat (ocaml ${{ matrix.ocaml }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        ocaml: ["5.1.1", "5.5.0"]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - uses: ./.github/actions/setup-opam
+        with:
+          ocaml-version: ${{ matrix.ocaml }}
+          # The OCaml version is part of the cache key so the matrix legs don't
+          # share (and clobber) one ~/.opam.
+          cache-key: opam-${{ runner.os }}-${{ matrix.ocaml }}-with-test-${{ hashFiles('frontends/ocaml/*.opam') }}
+          cache-restore-keys: |
+            opam-${{ runner.os }}-${{ matrix.ocaml }}-with-test-
+          deps-flags: --with-test
+      - name: Build libhegel
+        run: just ocaml::build-libhegel
+      - name: Run tests (no coverage)
+        env:
+          HEGEL_SKIP_JANE_TESTS: "1"
+        run: just ocaml::check-test-no-coverage
+      - name: Mirror opam-repo-ci (isolated release build + tests)
+        working-directory: frontends/ocaml
+        env:
+          OPAMVERBOSE: "2"
+        run: |
+          set -o pipefail
+          HEGEL_LIBHEGEL_PATH="$(scripts/libhegel-path.sh)"
+          export HEGEL_LIBHEGEL_PATH
+          opam install ./*.opam --with-test --confirm-level=unsafe-yes 2>&1 \
+            | tee "$RUNNER_TEMP/opam-install.log"
+          if grep -E 'Warning [0-9]+ \[' "$RUNNER_TEMP/opam-install.log"; then
+            echo "::error::OCaml warnings emitted during the release-profile build"
+            exit 1
+          fi
+
+  # The API reference (odoc), with warnings as errors.
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/install-tools
+        with:
+          tools: just
+      - uses: ./.github/actions/setup-opam
+        with:
+          cache-key: opam-${{ runner.os }}-5.2.1-with-doc-${{ hashFiles('frontends/ocaml/*.opam') }}
+          cache-restore-keys: |
+            opam-${{ runner.os }}-5.2.1-with-doc-
+          deps-flags: --with-doc
+          # core/async are opam depopts (not pulled by --deps-only
+          # --with-doc); install them so hegel_jane and hegel_jane_async build
+          # and lib/hegel.mli's {!Hegel_jane...} cross-references resolve.
+          packages: core async
+      - name: Build the documentation
+        run: just ocaml::check-docs
+
+  # Cross-platform check: build the engine and run the suite on macOS.
+  smoke:
+    name: smoke (macos)
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - uses: ./.github/actions/setup-opam
+        with:
+          cache-key: opam-${{ runner.os }}-5.2.1-smoke-${{ hashFiles('frontends/ocaml/*.opam') }}
+          cache-restore-keys: |
+            opam-${{ runner.os }}-5.2.1-smoke-
+          deps-flags: --with-test
+      - name: Build libhegel
+        run: just ocaml::build-libhegel
+      - name: Run tests
+        working-directory: frontends/ocaml
+        run: |
+          HEGEL_LIBHEGEL_PATH="$(scripts/libhegel-path.sh)"
+          export HEGEL_LIBHEGEL_PATH
+          opam exec -- dune runtest
+
+  # The OxCaml compiler (Jane Street's branch with modes), where the library
+  # is mode-checked and the concurrent hegel.jane.concurrent / Async suites
+  # run. The switch is built from the OxCaml opam repository and cached.
+  oxcaml:
+    name: test (oxcaml)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - name: Free disk space
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet
+      - name: Install opam
+        run: |
+          OPAM_VERSION="2.2.1"
+          curl -fsSL \
+            "https://github.com/ocaml/opam/releases/download/${OPAM_VERSION}/opam-${OPAM_VERSION}-x86_64-linux" \
+            -o /usr/local/bin/opam
+          chmod +x /usr/local/bin/opam
+          opam --version
+      - name: Cache opam
+        id: cache-opam
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.opam
+            !~/.opam/**/.opam-switch/build
+            !~/.opam/**/.opam-switch/sources
+            !~/.opam/download-cache
+            !~/.opam/log
+          # The compiler variant is part of the key: bumping the OxCaml version
+          # below must bust the cache, otherwise the restored ~/.opam keeps the
+          # old switch and "opam switch create" is skipped by the guard. Keep
+          # this version in sync with the ocaml-variants line in "Set up OxCaml".
+          key: opam-oxcaml-${{ runner.os }}-5.2.0+ox-with-test-${{ hashFiles('frontends/ocaml/*.opam', '.github/ocaml/oxcaml-ci.opam') }}
+          restore-keys: |
+            opam-oxcaml-${{ runner.os }}-5.2.0+ox-with-test-
+      - name: Set up OxCaml
+        if: steps.cache-opam.outputs.cache-hit != 'true'
+        run: |
+          # Cache may be partially restored via restore-keys (a different key
+          # prefix matched); guard each step so it's idempotent.
+          if [ ! -d "$HOME/.opam" ]; then
+            opam init --bare --disable-sandboxing --yes
+          fi
+          if ! opam switch list --short 2>/dev/null | grep -q '^oxcaml$'; then
+            opam switch create oxcaml \
+              --packages "ocaml-variants.5.2.0+ox" \
+              --repos "oxcaml=git+https://github.com/oxcaml/opam-repository.git,default" \
+              --yes
+          fi
+      - name: Set opam environment
+        run: | # zizmor: ignore[github-env] static PATH/switch values, no untrusted input
+          echo "$HOME/.opam/oxcaml/bin" >> $GITHUB_PATH
+          echo "OPAMSWITCH=oxcaml" >> $GITHUB_ENV
+      - name: Install OCaml dependencies
+        working-directory: frontends/ocaml
+        env:
+          OPAMSOLVERTIMEOUT: "600"
+        run: |
+          eval $(opam env)
+          # One solver call for everything. The OxCaml-only packages
+          # (capsule0, concurrent, parallel) live in .github/ocaml/oxcaml-ci.opam,
+          # not hegel.opam, because they exist only in the OxCaml repository.
+          # async is there too, for the concurrent hegel.jane.async suites.
+          # Installing them in a second `opam install` lets the 0install
+          # solver drop packages the first call installed but this one does
+          # not name: it removed alcotest ("conflicts with uutf") when it
+          # picked uutf 1.0.3+ox for textutils, and the test build failed.
+          opam install ./*.opam ../../.github/ocaml/oxcaml-ci.opam \
+            --deps-only --with-test --yes --solver=builtin-0install
+      - name: Build libhegel
+        run: just ocaml::build-libhegel
+      - name: Run tests
+        env:
+          HEGEL_SKIP_EXPECT_TESTS: "1"
+          # hegel.jane's optional core dependency isn't installed by
+          # --deps-only --with-test.
+          HEGEL_SKIP_JANE_TESTS: "1"
+          HEGEL_CONCURRENT_TESTS: "1"
+        run: just ocaml::check-test-no-coverage

@@ -1,4 +1,6 @@
 /target/
+# The C++ frontend's CMake build trees
+/frontends/cpp/build/
 **/*.rs.bk
 .idea/
 .vscode/
@@ -37,5 +39,6 @@ resources
 !.agents/skills/new-default-generator/
 !.agents/skills/add-library-support/
 !.agents/skills/new-setting/
+!.agents/skills/typescript-ffi/
 
 docs/superpowers

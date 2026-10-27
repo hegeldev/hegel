@@ -1,8 +1,9 @@
 # The CI entry point. Works out which components a change touches, runs the
 # workspace-wide checks, calls each component's reusable workflow
-# (libhegel.yml, frontend-rust.yml, frontend-python.yml) only when that
-# component is affected, and — on a push to main — releases whatever has a
-# RELEASE.md.
+# (libhegel.yml, frontend-rust.yml, frontend-python.yml,
+# frontend-typescript.yml, frontend-cpp.yml, frontend-java.yml,
+# frontend-ocaml.yml) only when that component is affected, and — on a push to
+# main — releases whatever has a RELEASE.md.
 #
 # Adding a frontend: add a `frontends/<lang>/**` filter below, a
 # `.github/workflows/frontend-<lang>.yml` reusable workflow, a job here that
@@ -37,6 +38,10 @@ jobs:
       libhegel: ${{ github.event_name != 'pull_request' || steps.filter.outputs.libhegel == 'true' }}
       rust: ${{ github.event_name != 'pull_request' || steps.filter.outputs.rust == 'true' }}
       python: ${{ github.event_name != 'pull_request' || steps.filter.outputs.python == 'true' }}
+      typescript: ${{ github.event_name != 'pull_request' || steps.filter.outputs.typescript == 'true' }}
+      cpp: ${{ github.event_name != 'pull_request' || steps.filter.outputs.cpp == 'true' }}
+      java: ${{ github.event_name != 'pull_request' || steps.filter.outputs.java == 'true' }}
+      ocaml: ${{ github.event_name != 'pull_request' || steps.filter.outputs.ocaml == 'true' }}
     steps:
       - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
         if: github.event_name == 'pull_request'
@@ -65,6 +70,22 @@ jobs:
               - *shared
               - 'libhegel/**'
               - 'frontends/python/**'
+            typescript:
+              - *shared
+              - 'libhegel/**'
+              - 'frontends/typescript/**'
+            cpp:
+              - *shared
+              - 'libhegel/**'
+              - 'frontends/cpp/**'
+            java:
+              - *shared
+              - 'libhegel/**'
+              - 'frontends/java/**'
+            ocaml:
+              - *shared
+              - 'libhegel/**'
+              - 'frontends/ocaml/**'
 
   # Workspace-wide lints: formatting, clippy, the scripts/check-*.py lints,
   # each component's own lints (via `just check-lint`), the workflow lint and
@@ -85,7 +106,34 @@ jobs:
           tools: just uv
       - name: Set up the Python frontend
         run: just python::setup
+      # The TypeScript frontend's lints (prettier, eslint, tsc) run from its
+      # node_modules.
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "22"
+      - name: Set up the TypeScript frontend
+        run: just typescript::setup
+      # The C++ frontend's lints are clang-format (through uvx) and
+      # clang-tidy over a configured build.
+      - name: Install clang-tidy
+        run: sudo apt-get update && sudo apt-get install -y clang-tidy-18
+      # The Java frontend's lint (spotless) runs under Maven.
+      - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+      # The OCaml frontend's lints (dune build @fmt, the generated opam files,
+      # opam lint) run from an opam switch.
+      - uses: ./.github/actions/setup-opam
+        with:
+          cache-key: opam-${{ runner.os }}-5.2.1-lint-${{ hashFiles('frontends/ocaml/*.opam', 'frontends/ocaml/.ocamlformat') }}
+          cache-restore-keys: |
+            opam-${{ runner.os }}-5.2.1-lint-
+          packages: ocamlformat.0.29.0
       - name: Check lint
+        env:
+          CLANG_TIDY: clang-tidy-18
         run: just check-lint
       - name: Check zizmor
         run: |
@@ -128,6 +176,36 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/frontend-python.yml
+
+  typescript:
+    name: typescript
+    needs: changes
+    if: needs.changes.outputs.typescript == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/frontend-typescript.yml
+
+  cpp:
+    name: cpp
+    needs: changes
+    if: needs.changes.outputs.cpp == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/frontend-cpp.yml
+  java:
+    name: java
+    needs: changes
+    if: needs.changes.outputs.java == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/frontend-java.yml
+  ocaml:
+    name: ocaml
+    needs: changes
+    if: needs.changes.outputs.ocaml == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/frontend-ocaml.yml
 
   # Test with the minimal versions of every dependency in the workspace.
   test-minimal-versions:
@@ -229,7 +307,7 @@ jobs:
   nix:
     name: nix
     needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.cpp == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -251,7 +329,7 @@ jobs:
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [lint, libhegel, rust, python, test-minimal-versions, coverage, nix]
+    needs: [lint, libhegel, rust, python, typescript, cpp, java, ocaml, test-minimal-versions, coverage, nix]
     runs-on: ubuntu-latest
     permissions: {}
     steps:
@@ -270,7 +348,7 @@ jobs:
     # every dependency is required; the `!cancelled()` form is what lets this
     # job evaluate its condition at all when a dependency was skipped.
     if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && github.event_name == 'push' && github.repository == 'hegeldev/hegel' }}
-    needs: [lint, libhegel, rust, python, test-minimal-versions, coverage, nix]
+    needs: [lint, libhegel, rust, python, typescript, cpp, java, ocaml, test-minimal-versions, coverage, nix]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -283,7 +361,11 @@ jobs:
     # post-bump libhegel version and `libhegel_tag` the `libhegel/<version>`
     # tag release.py cut for it, which they check out and upload against.
     # `python_released` / `python_tag` do the same for the Python wheel
-    # builds. Each is read off the tags release.py left on the release
+    # builds, `typescript_released` / `typescript_tag` for the npm
+    # publish, `cpp_released` / `cpp_tag` for the C++ docs push,
+    # `java_released` / `java_tag` for the Maven Central publish and
+    # `ocaml_released` / `ocaml_tag` for the opam source tarball. Each
+    # is read off the tags release.py left on the release
     # commit, so a frontend dragged along by a libhegel release counts too.
     outputs:
       c_released: ${{ steps.released.outputs.libhegel_tag != '' }}
@@ -291,6 +373,14 @@ jobs:
       libhegel_tag: ${{ steps.released.outputs.libhegel_tag }}
       python_released: ${{ steps.released.outputs.python_tag != '' }}
       python_tag: ${{ steps.released.outputs.python_tag }}
+      typescript_released: ${{ steps.released.outputs.typescript_tag != '' }}
+      typescript_tag: ${{ steps.released.outputs.typescript_tag }}
+      cpp_released: ${{ steps.released.outputs.cpp_tag != '' }}
+      cpp_tag: ${{ steps.released.outputs.cpp_tag }}
+      java_released: ${{ steps.released.outputs.java_tag != '' }}
+      java_tag: ${{ steps.released.outputs.java_tag }}
+      ocaml_released: ${{ steps.released.outputs.ocaml_tag != '' }}
+      ocaml_tag: ${{ steps.released.outputs.ocaml_tag }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -351,7 +441,11 @@ jobs:
           libhegel_tag=$(git tag --points-at HEAD --list 'libhegel/*')
           rust_tag=$(git tag --points-at HEAD --list 'frontends/rust/*')
           python_tag=$(git tag --points-at HEAD --list 'frontends/python/*')
-          if [ -z "$libhegel_tag$rust_tag$python_tag" ]; then
+          typescript_tag=$(git tag --points-at HEAD --list 'frontends/typescript/*')
+          cpp_tag=$(git tag --points-at HEAD --list 'frontends/cpp/*')
+          java_tag=$(git tag --points-at HEAD --list 'frontends/java/*')
+          ocaml_tag=$(git tag --points-at HEAD --list 'frontends/ocaml/*')
+          if [ -z "$libhegel_tag$rust_tag$python_tag$typescript_tag$cpp_tag$java_tag$ocaml_tag" ]; then
             echo "release.py left no release tag on the release commit" >&2
             exit 1
           fi
@@ -361,6 +455,10 @@ jobs:
             echo "libhegel_version=$libhegel_version"
             echo "rust_tag=$rust_tag"
             echo "python_tag=$python_tag"
+            echo "typescript_tag=$typescript_tag"
+            echo "cpp_tag=$cpp_tag"
+            echo "java_tag=$java_tag"
+            echo "ocaml_tag=$ocaml_tag"
           } >> "$GITHUB_OUTPUT"
 
       - name: Authenticate with crates.io
@@ -772,6 +870,337 @@ jobs:
           packages-dir: dist
           skip-existing: true
 
+  # The TypeScript frontend: the main `@hegeldev/hegel` package and its five
+  # platform packages, each carrying one libhegel shared library downloaded
+  # from the GitHub release of the engine version in libhegel/Cargo.toml.
+  # When libhegel released in the same run those binaries are only on the
+  # release once `release-binaries-verify` has published it, so this job
+  # waits for that; a frontend-only release packages the already-published
+  # engine release and needs no wait. npm trusted publishing (the `id-token`
+  # permission) covers all six packages.
+  release-typescript:
+    name: release-typescript
+    if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.typescript_released == 'true' && (needs.release.outputs.c_released != 'true' || needs.release-binaries-verify.result == 'success') }}
+    needs: [release, release-binaries-verify]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: refs/tags/${{ needs.release.outputs.typescript_tag }}
+      - uses: ./.github/actions/setup-rust
+        with:
+          targets: wasm32-unknown-unknown
+      # npm >= 11.5 (Node 24) for trusted publishing.
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+      - name: Set up the frontend
+        run: just typescript::setup
+      - name: Build the package
+        run: just typescript::build
+      - name: Publish to npm
+        run: python3 .github/scripts/publish_typescript.py
+
+  # The TypeScript API reference, pushed to hegel.dev/typescript (the
+  # hegeldev/website repository) for every TypeScript release.
+  release-typescript-docs:
+    name: release-typescript-docs
+    if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.typescript_released == 'true' }}
+    needs: release
+    runs-on: ubuntu-latest
+    # The website push uses the app token below, not GITHUB_TOKEN.
+    permissions:
+      contents: read
+    steps:
+      - name: Generate app token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        id: app-token
+        with:
+          app-id: ${{ vars.HEGEL_RELEASE_APP_ID }}
+          private-key: ${{ secrets.HEGEL_RELEASE_APP_PRIVATE_KEY }}
+          repositories: website
+      - name: Checkout release commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: refs/tags/${{ needs.release.outputs.typescript_tag }}
+      - name: Checkout website # zizmor: ignore[artipacked]
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: hegeldev/website
+          token: ${{ steps.app-token.outputs.token }}
+          path: website
+      - uses: ./.github/actions/install-tools
+        with:
+          tools: just
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "22"
+      - name: Set up the frontend
+        run: just typescript::setup
+      - name: Build the documentation
+        run: just typescript::check-docs
+      - name: Push the documentation to the website repository
+        env:
+          HEGEL_RELEASE_APP_ID: ${{ vars.HEGEL_RELEASE_APP_ID }}
+          HEGEL_RELEASE_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: python3 .github/scripts/push_typescript_docs.py
+
+  # The C++ frontend has no package index: a consumer fetches the
+  # `frontends/cpp/<version>` tag with CMake's FetchContent, so the tag is
+  # the release. What remains is its API reference (Doxygen), pushed to
+  # hegel.dev/cpp (the hegeldev/website repository) for every C++ release.
+  release-cpp-docs:
+    name: release-cpp-docs
+    if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.cpp_released == 'true' }}
+    needs: release
+    runs-on: ubuntu-latest
+    # The website push uses the app token below, not GITHUB_TOKEN.
+    permissions:
+      contents: read
+    steps:
+      - name: Generate app token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        id: app-token
+        with:
+          app-id: ${{ vars.HEGEL_RELEASE_APP_ID }}
+          private-key: ${{ secrets.HEGEL_RELEASE_APP_PRIVATE_KEY }}
+          repositories: website
+      - name: Checkout release commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: refs/tags/${{ needs.release.outputs.cpp_tag }}
+      - name: Checkout website # zizmor: ignore[artipacked]
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: hegeldev/website
+          token: ${{ steps.app-token.outputs.token }}
+          path: website
+      - uses: ./.github/actions/setup-rust
+        with:
+          tools: just doxygen
+      - name: Build the documentation
+        run: just cpp::check-docs
+      - name: Push the documentation to the website repository
+        env:
+          HEGEL_RELEASE_APP_ID: ${{ vars.HEGEL_RELEASE_APP_ID }}
+          HEGEL_RELEASE_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: python3 .github/scripts/push_cpp_docs.py
+
+  # The Java frontend: the `dev.hegel:hegel-lowlevel`, `dev.hegel:hegel` and
+  # `dev.hegel:hegel-jna` artifacts, the two frontend jars each bundling every
+  # platform's libhegel shared library downloaded from the GitHub release of
+  # the engine version in libhegel/Cargo.toml. When libhegel released in the
+  # same run those binaries are only on the release once
+  # `release-binaries-verify` has published it, so this job waits for that; a
+  # frontend-only release bundles the already-published engine release and
+  # needs no wait. The artifacts are signed with the Hegel release key and
+  # uploaded to the Central Portal (`.github/scripts/publish_java.py`).
+  release-java:
+    name: release-java
+    if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.java_released == 'true' && (needs.release.outputs.c_released != 'true' || needs.release-binaries-verify.result == 'success') }}
+    needs: [release, release-binaries-verify]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: refs/tags/${{ needs.release.outputs.java_tag }}
+      - name: Set up Java and signing
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: temurin
+          java-version: "22"
+          cache: maven
+          # Templates ~/.m2/settings.xml with a <server id="central"> entry whose
+          # username/password read from the env vars of the same name at deploy time.
+          server-id: central
+          server-username: CENTRAL_TOKEN_USER
+          server-password: CENTRAL_TOKEN_PASS
+          # Imports the release key into the runner's keyring for the gpg plugin.
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+      # Maven 3.10 (on ubuntu-latest since 2026-10-05) writes maven-metadata-local.xml and
+      # _remote.repositories into central-publishing-maven-plugin's staging directory; the plugin
+      # bundles them and Central rejects the bundle ("Bundle has content that does NOT have a
+      # .pom file"). Pin 3.9.16 for the publish until the plugin copes with 3.10:
+      # https://github.com/mavenplugins/central-publishing-maven-plugin/issues/78
+      - name: Use Maven 3.9.16
+        run: |
+          version=3.9.16
+          curl -sSfL -o "$RUNNER_TEMP/maven.tar.gz" \
+            "https://repo1.maven.org/maven2/org/apache/maven/apache-maven/$version/apache-maven-$version-bin.tar.gz"
+          echo "831a8591fe20c8243b1dbe7d71e3244f31d1665b0804b2e825e38cbbe5ce0cafb8338851f90780735568773e0a6cd07bbec107cda0b896b008b861075358b6f6  $RUNNER_TEMP/maven.tar.gz" | sha512sum -c -
+          tar -xzf "$RUNNER_TEMP/maven.tar.gz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/apache-maven-$version/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/apache-maven-$version/bin/mvn" -v
+      - name: Publish to Maven Central
+        env:
+          CENTRAL_TOKEN_USER: ${{ secrets.CENTRAL_TOKEN_USER }}
+          CENTRAL_TOKEN_PASS: ${{ secrets.CENTRAL_TOKEN_PASS }}
+          # Fingerprint of the Hegel release signing key (public). Pins which key signs the
+          # release so a wrong/missing key fails the build instead of signing with gpg's default.
+          # If the key is ever rotated, update this alongside the GPG_PRIVATE_KEY secret.
+          GPG_KEYNAME: C186BF0E8891449F3B1C17A9A73C7B80C255320A
+        run: python3 .github/scripts/publish_java.py
+      - name: Checkout release commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+  # The OCaml frontend: the opam source tarball — the frontends/ocaml subtree
+  # plus a `prebuilt/` directory holding the Linux amd64/arm64 and macOS
+  # arm64 libhegel libraries of the engine version in libhegel/Cargo.toml
+  # (from that libhegel GitHub release, sha256-verified) and the dune rules
+  # (.github/ocaml/prebuilt.dune) that install the host's one into the
+  # package's `libhegel` dune-site, so `opam install hegel` ships its engine.
+  # The tarball is attached to a GitHub release on the frontends/ocaml tag,
+  # which is where opam-repository fetches it from: publishing there is the
+  # manual `ocaml-opam-release.yml` workflow. When libhegel released in the
+  # same run its binaries are only on the release once
+  # `release-binaries-verify` has published it, so this job waits for that;
+  # a frontend-only release bundles the already-published engine release.
+  release-ocaml:
+    name: release-ocaml
+    if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.ocaml_released == 'true' && (needs.release.outputs.c_released != 'true' || needs.release-binaries-verify.result == 'success') }}
+    needs: [release, release-binaries-verify]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.release.outputs.ocaml_tag }}
+      PREBUILT_ASSETS: libhegel-linux-amd64.so libhegel-linux-arm64.so libhegel-darwin-arm64.dylib
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: refs/tags/${{ needs.release.outputs.ocaml_tag }}
+      - name: Build the bundled source archive
+        id: archive
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#frontends/ocaml/}"
+          LIBHEGEL_VERSION=$(grep '^version' libhegel/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          URL_BASE="https://github.com/${REPOSITORY}/releases/download/libhegel/${LIBHEGEL_VERSION}"
+          STAGE_DIR="hegel-${VERSION}"
+          STAGE="${RUNNER_TEMP}/${STAGE_DIR}"
+
+          # The frontend's clean source tree at the tag (tracked files only).
+          mkdir -p "$STAGE"
+          git archive --format=tar "HEAD:frontends/ocaml" | tar -x -C "$STAGE"
+
+          # Download + checksum-verify each platform's libhegel into prebuilt/,
+          # then drop in the dune rules that select & install the matching one.
+          mkdir -p "$STAGE/prebuilt"
+          for asset in $PREBUILT_ASSETS; do
+            curl -fsSL -o "$STAGE/prebuilt/$asset" "$URL_BASE/$asset"
+            curl -fsSL -o "${RUNNER_TEMP}/$asset.sha256" "$URL_BASE/$asset.sha256"
+            WANT=$(awk '{print $1}' "${RUNNER_TEMP}/$asset.sha256")
+            echo "${WANT}  $STAGE/prebuilt/$asset" | sha256sum -c -
+          done
+          cp .github/ocaml/prebuilt.dune "$STAGE/prebuilt/dune"
+
+          ASSET_NAME="hegel-${VERSION}-opam.tar.gz"
+          TARBALL="${RUNNER_TEMP}/${ASSET_NAME}"
+          tar -C "${RUNNER_TEMP}" -czf "$TARBALL" "$STAGE_DIR"
+
+          # The release notes are the version's changelog entry.
+          awk -v version="$VERSION" '
+            /^## / { printing = ($2 == version) ; next }
+            printing { print }
+          ' frontends/ocaml/CHANGELOG.md > "${RUNNER_TEMP}/notes.md"
+
+          {
+            echo "version=$VERSION"
+            echo "tarball=$TARBALL"
+            echo "notes=${RUNNER_TEMP}/notes.md"
+          } >> "$GITHUB_OUTPUT"
+      - name: Create the GitHub release with the archive attached
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.archive.outputs.version }}
+          TARBALL: ${{ steps.archive.outputs.tarball }}
+          NOTES: ${{ steps.archive.outputs.notes }}
+        run: |
+          set -euo pipefail
+          # Assets must land in a *draft* release: GitHub's immutable releases
+          # lock a release's assets once it is published. `--clobber` makes
+          # re-runs idempotent.
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --draft \
+              --title "Hegel for OCaml v${VERSION}" \
+              --notes-file "$NOTES"
+          fi
+          gh release upload "$TAG" "$TARBALL" --clobber
+          gh release edit "$TAG" --draft=false
+
+  # The OCaml API reference, pushed to hegel.dev/ocaml (the hegeldev/website
+  # repository) for every OCaml release.
+  release-ocaml-docs:
+    name: release-ocaml-docs
+    if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.ocaml_released == 'true' }}
+    needs: release
+    runs-on: ubuntu-latest
+    # The website push uses the app token below, not GITHUB_TOKEN.
+    permissions:
+      contents: read
+    steps:
+      - name: Generate app token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        id: app-token
+        with:
+          app-id: ${{ vars.HEGEL_RELEASE_APP_ID }}
+          private-key: ${{ secrets.HEGEL_RELEASE_APP_PRIVATE_KEY }}
+          repositories: website
+      - name: Checkout release commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: refs/tags/${{ needs.release.outputs.ocaml_tag }}
+      - name: Checkout website # zizmor: ignore[artipacked]
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: hegeldev/website
+          token: ${{ steps.app-token.outputs.token }}
+          path: website
+      - uses: ./.github/actions/install-tools
+        with:
+          tools: just
+      - uses: ./.github/actions/setup-opam
+        with:
+          cache-key: opam-${{ runner.os }}-5.2.1-with-doc-${{ hashFiles('frontends/ocaml/*.opam') }}
+          cache-restore-keys: |
+            opam-${{ runner.os }}-5.2.1-with-doc-
+          deps-flags: --with-doc
+          packages: core async
+      - name: Build the documentation
+        run: just ocaml::check-docs
+      - name: Push the documentation to the website repository
+        env:
+          HEGEL_RELEASE_APP_ID: ${{ vars.HEGEL_RELEASE_APP_ID }}
+          HEGEL_RELEASE_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: python3 .github/scripts/push_ocaml_docs.py
+
   # Notify each downstream language binding that still lives in its own repo
   # that a new libhegel release is live so it can bump its pinned version.
   # One matrix entry per consumer repo; remove an entry when that frontend
@@ -791,7 +1220,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        repo: [hegel-go, hegel-ocaml, hegel-typescript, hegel-cpp]
+        repo: [hegel-go]
     steps:
       - name: Generate app token
         uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0

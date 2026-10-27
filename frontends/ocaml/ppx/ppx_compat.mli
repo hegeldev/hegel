@@ -1,0 +1,74 @@
+(** Platform compatibility shim for ppxlib types.
+
+    On OxCaml, ppxlib's AST types differ from standard OCaml (labeled tuples,
+    constructor modalities, etc.). This module abstracts over those differences
+    so the PPX deriver can work on both platforms. *)
+
+open Ppxlib
+
+(** [extract_tuple_types ct] returns [Some types] if [ct] is a tuple type,
+    [None] otherwise. On OxCaml, strips the optional labels from labeled tuples. *)
+val extract_tuple_types : core_type -> core_type list option
+
+(** Constructor arguments with a uniform representation on every platform. *)
+type constr_args =
+  | Tuple of core_type list (** Positional arguments ([C of t1 * t2]). *)
+  | Record of label_declaration list (** Inline-record arguments ([C of { f : t }]). *)
+
+(** [extract_constr_args args] converts [constructor_arguments] to
+    {!constr_args}. On OxCaml, extracts the core types from
+    [constructor_argument] records. *)
+val extract_constr_args : constructor_arguments -> constr_args
+
+(** [map_constr_arg_types f args] applies [f] to each argument core type of
+    [args], in both the tuple and the inline-record form. *)
+val map_constr_arg_types
+  :  (core_type -> core_type)
+  -> constructor_arguments
+  -> constructor_arguments
+
+(** [sexp_of_str_type_decl ~loc ~path decls] emits [sexp_of_<t>] definitions for
+    [decls] through ppx_sexp_conv's expander. On OxCaml, fills the extra mode
+    arguments ([unboxed]/[stackify]/[portable]/[localize]) with [false]. *)
+val sexp_of_str_type_decl
+  :  loc:Location.t
+  -> path:string
+  -> rec_flag * type_declaration list
+  -> structure
+
+(** [unwrap_pattern_constraint pat] returns [Some inner] if [pat] is a
+    type-constraint pattern ([(p : ty)]), [None] otherwise. On OxCaml,
+    [Ppat_constraint] carries an extra modes argument. *)
+val unwrap_pattern_constraint : pattern -> pattern option
+
+(** [expr_first_param_pat e] returns [Some pat] for the pattern of the first
+    value parameter of a function expression [e] ([fun pat … -> …]), or [None]
+    if [e] is not a function or has no value parameter. Abstracts over the
+    OxCaml [Pexp_function]/standard [Pexp_fun] split. *)
+val expr_first_param_pat : expression -> pattern option
+
+(** [peel_fun_params e] strips the leading value-parameter lambdas of [e] and
+    returns the function body, or [e] unchanged when it is not such a function. *)
+val peel_fun_params : expression -> expression
+
+(** [is_function_expr e] is [true] when [e] is a function literal ([fun … -> …]
+    or [function …]). *)
+val is_function_expr : expression -> bool
+
+(** [extract_let_bindings e] returns [Some vbs] if [e] is a [let … in …]
+    expression, [None] otherwise. On OxCaml, [Pexp_let] carries an extra
+    [mutable_flag]. *)
+val extract_let_bindings : expression -> value_binding list option
+
+(** [map_let_value_bindings f e] rewrites the bindings of a [let … in …]
+    expression [e] with [f], preserving every other field (recursion flag, body,
+    and the OxCaml-only [mutable_flag]); returns [e] unchanged if it is not a
+    [let]. *)
+val map_let_value_bindings
+  :  (value_binding list -> value_binding list)
+  -> expression
+  -> expression
+
+(** [portable_value_description vd] marks [vd] portable. On OxCaml, adds the
+    [portable] modality. Elsewhere, returns [vd] unchanged. *)
+val portable_value_description : value_description -> value_description

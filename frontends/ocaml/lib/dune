@@ -1,0 +1,221 @@
+(library
+ (name hegel)
+ (public_name hegel)
+ (libraries
+  cmdliner
+  hegel_ffi
+  ipaddr
+  sexplib0
+  threads.posix
+  unix
+  ; Locked: mutex-guarded shared data. Under OxCaml (where capsule0 is
+  ; installable) it is a capsule, so portable code can use it; elsewhere a
+  ; Mutex around the value. Neither variant depends on core.
+  (select
+   locked.ml
+   from
+   (capsule0.prim capsule0.blocking_sync -> locked.capsule.ml)
+   (-> locked.mutex.ml)))
+ (private_modules
+  io
+  locked
+  hegel_version
+  generators_core
+  generators_primitives
+  generators_collections
+  generators_combinators
+  generators_functions)
+ (preprocess
+  (pps ppx_js_style hegel.template))
+ (instrumentation
+  (backend bisect_ppx)))
+
+; Hegel.version is the package version in dune-project (what the release
+; automation bumps), not a second copy of it.
+
+(rule
+ (target hegel_version.ml)
+ (action
+  (with-stdout-to
+   %{target}
+   (echo "let version = \"%{version:hegel}\"\n"))))
+
+; Only compiler-flavor detection needs a shell. Run cppo directly before PPX.
+
+(rule
+ (target cppo-flags)
+ (action
+  (with-stdout-to
+   %{target}
+   (bash
+    "case '%{ocaml_version}' in *+ox*) echo '-D';; *) echo '-U';; esac; echo OXCAML"))))
+
+(rule
+ (target generators.mli)
+ (action
+  (run
+   %{bin:cppo}
+   %{read-strings:cppo-flags}
+   -o
+   %{target}
+   %{dep:generators.mli.in})))
+
+(rule
+ (target hegel.mli)
+ (action
+  (run
+   %{bin:cppo}
+   %{read-strings:cppo-flags}
+   -o
+   %{target}
+   %{dep:hegel.mli.in})))
+
+(rule
+ (target generators.ml)
+ (action
+  (run
+   %{bin:cppo}
+   %{read-strings:cppo-flags}
+   -o
+   %{target}
+   %{dep:generators.ml.in})))
+
+(rule
+ (target internal.ml)
+ (action
+  (run
+   %{bin:cppo}
+   %{read-strings:cppo-flags}
+   -o
+   %{target}
+   %{dep:internal.ml.in})))
+
+(rule
+ (target concurrency.mli)
+ (action
+  (run
+   %{bin:cppo}
+   %{read-strings:cppo-flags}
+   -o
+   %{target}
+   %{dep:concurrency.mli.in})))
+
+(rule
+ (target concurrency.ml)
+ (action
+  (run
+   %{bin:cppo}
+   %{read-strings:cppo-flags}
+   -o
+   %{target}
+   %{dep:concurrency.ml.in})))
+
+(rule
+ (target internal.mli)
+ (action
+  (run
+   %{bin:cppo}
+   %{read-strings:cppo-flags}
+   -o
+   %{target}
+   %{dep:internal.mli.in})))
+
+(rule
+ (target stateful.mli)
+ (action
+  (run
+   %{bin:cppo}
+   %{read-strings:cppo-flags}
+   -o
+   %{target}
+   %{dep:stateful.mli.in})))
+
+(rule
+ (target settings.mli)
+ (action
+  (run
+   %{bin:cppo}
+   %{read-strings:cppo-flags}
+   -o
+   %{target}
+   %{dep:settings.mli.in})))
+
+(rule
+ (target derive.mli)
+ (action
+  (run
+   %{bin:cppo}
+   %{read-strings:cppo-flags}
+   -o
+   %{target}
+   %{dep:derive.mli.in})))
+
+(rule
+ (target generators_collections.ml)
+ (action
+  (run
+   %{bin:cppo}
+   %{read-strings:cppo-flags}
+   -o
+   %{target}
+   %{dep:generators_collections.ml.in})))
+
+(rule
+ (target generators_core.ml)
+ (action
+  (run
+   %{bin:cppo}
+   %{read-strings:cppo-flags}
+   -o
+   %{target}
+   %{dep:generators_core.ml.in})))
+
+(rule
+ (target locked.mli)
+ (action
+  (run
+   %{bin:cppo}
+   %{read-strings:cppo-flags}
+   -o
+   %{target}
+   %{dep:locked.mli.in})))
+
+(rule
+ (target generators_primitives.ml)
+ (action
+  (run
+   %{bin:cppo}
+   %{read-strings:cppo-flags}
+   -o
+   %{target}
+   %{dep:generators_primitives.ml.in})))
+
+(rule
+ (target generators_combinators.ml)
+ (action
+  (run
+   %{bin:cppo}
+   %{read-strings:cppo-flags}
+   -o
+   %{target}
+   %{dep:generators_combinators.ml.in})))
+
+(rule
+ (target generators_functions.ml)
+ (action
+  (run
+   %{bin:cppo}
+   %{read-strings:cppo-flags}
+   -o
+   %{target}
+   %{dep:generators_functions.ml.in})))
+
+(rule
+ (target stateful.ml)
+ (action
+  (run
+   %{bin:cppo}
+   %{read-strings:cppo-flags}
+   -o
+   %{target}
+   %{dep:stateful.ml.in})))
