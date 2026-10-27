@@ -124,9 +124,9 @@ class ConcurrentStatefulDriverTest {
         assertEquals(4, machine.sampledChecks);
         assertEquals(4, machine.alwaysChecks);
         assertEquals(List.of(0L, 1L, 0L, 1L), fake.invariantChecksAsked);
-        // Every rule body ran in a block, freed with its printer when the rule ended.
-        assertEquals(4, fake.blockParents.size());
-        assertEquals(4, fake.freedBlocks.size());
+        // Every rule and invariant body ran in a block, freed with its printer when it ended.
+        assertEquals(12, fake.blockParents.size());
+        assertEquals(12, fake.freedBlocks.size());
         // Output: each round's worker lines follow its header, grouped by worker index, each rule's
         // body indented under its heading.
         assertEquals(
@@ -150,7 +150,7 @@ class ConcurrentStatefulDriverTest {
         // Draw names are unique across workers and recorded plain.
         assertEquals(Set.of("x", "x_2"), tc.draws().keySet());
         tc.releaseAll();
-        assertEquals(4, fake.freedBlocks.size());
+        assertEquals(12, fake.freedBlocks.size());
         assertEquals(fake.printerOwners.size(), fake.freedPrinters.size());
     }
 
@@ -413,7 +413,9 @@ class ConcurrentStatefulDriverTest {
                         "}",
                         "Checking invariants on the final state."),
                 tc.output());
-        assertEquals(List.of(FakeLibhegel.BLOCK_BASE), List.copyOf(fake.blockParents.keySet()));
+        // One block for the rule and one per invariant check (two invariants at three join points).
+        assertEquals(7, fake.blockParents.size());
+        assertEquals(Set.of(FakeLibhegel.TC), Set.copyOf(fake.blockParents.values()));
         assertEquals(9, fake.stateMachineStepCount);
         // Groups are registered for sequential machines too; they have no effect at concurrency 1.
         assertArrayEquals(new long[] {0, 1, 1}, fake.stateMachineRuleGroups);
