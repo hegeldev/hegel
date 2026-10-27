@@ -684,9 +684,9 @@ namespace hegel::stateful {
                 return IGenerator<T>::do_draw_filtered(tc, predicate);
             }
             std::lock_guard<std::mutex> lock(pool_.mutex_);
-            return detail::draw_filtered_consumed(
-                tc, pool_.pool_handle_, pool_.values_, this->label(),
-                predicate);
+            return detail::draw_filtered_consumed(tc, pool_.pool_handle_,
+                                                  pool_.values_, this->label(),
+                                                  predicate);
         }
 
       private:

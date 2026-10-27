@@ -20,7 +20,8 @@ namespace hegel::generators {
     // zero entropy, so it returns the captured value without touching the
     // engine at all.
     template <typename T>
-    class JustGenerator : public detail::value_base_t<T, is_representable_v<T>> {
+    class JustGenerator
+        : public detail::value_base_t<T, is_representable_v<T>> {
       public:
         explicit JustGenerator(T value) : value_(std::move(value)) {}
 

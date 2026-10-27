@@ -410,8 +410,7 @@ namespace {
     };
 
     template <typename H, typename T>
-    constexpr bool is_printable_handle =
-        std::is_base_of_v<gs::Generator<T>, H>;
+    constexpr bool is_printable_handle = std::is_base_of_v<gs::Generator<T>, H>;
 
     template <typename H, typename T>
     constexpr bool is_silent_handle =
@@ -424,10 +423,10 @@ namespace {
 } // namespace
 
 TEST(HandleTypes, BuiltInGeneratorsArePrintable) {
-    static_assert(std::is_same_v<decltype(gs::integers<int>()),
-                                 gs::Generator<int>>);
-    static_assert(std::is_same_v<decltype(gs::booleans()),
-                                 gs::Generator<bool>>);
+    static_assert(
+        std::is_same_v<decltype(gs::integers<int>()), gs::Generator<int>>);
+    static_assert(
+        std::is_same_v<decltype(gs::booleans()), gs::Generator<bool>>);
     static_assert(std::is_same_v<decltype(gs::vectors(printable)),
                                  gs::Generator<std::vector<int>>>);
     static_assert(is_printable_handle<decltype(gs::just(1)), int>);
@@ -439,9 +438,8 @@ TEST(HandleTypes, ASilentElementGivesASilentContainer) {
                                  gs::AnyGenerator<std::vector<int>>>);
     static_assert(std::is_same_v<decltype(gs::optional(silent)),
                                  gs::AnyGenerator<std::optional<int>>>);
-    static_assert(
-        std::is_same_v<decltype(gs::tuples(silent, silent)),
-                       gs::AnyGenerator<std::tuple<int, int>>>);
+    static_assert(std::is_same_v<decltype(gs::tuples(silent, silent)),
+                                 gs::AnyGenerator<std::tuple<int, int>>>);
     static_assert(std::is_same_v<decltype(gs::one_of<int>({printable, silent})),
                                  gs::AnyGenerator<int>>);
     static_assert(std::is_same_v<decltype(gs::one_of({printable, printable})),
@@ -454,12 +452,11 @@ TEST(HandleTypes, AValueWithNoRepresentationIsSilent) {
     static_assert(
         is_silent_handle<decltype(gs::deferred_silent<int>().generator()),
                          int>);
-    static_assert(is_printable_handle<
-                  decltype(sealed.print_with([](const Sealed&,
-                                                hegel::Printer&) {})),
-                  Sealed>);
     static_assert(
-        is_printable_handle<decltype(silent.print_as_repr()), int>);
+        is_printable_handle<decltype(sealed.print_with(
+                                [](const Sealed&, hegel::Printer&) {})),
+                            Sealed>);
+    static_assert(is_printable_handle<decltype(silent.print_as_repr()), int>);
 }
 
 TEST(HandleTypes, FlatMapFollowsTheHandleItsFunctionReturns) {
@@ -500,10 +497,9 @@ TEST(HandleTypes, AMappedHandleWorksWhereverAGeneratorDoes) {
 TEST(HandleTypes, AFieldOverrideKeepsPrintabilityOnlyIfItsGeneratorHasIt) {
     auto printed = gs::default_generator<Point>().override(
         gs::field<&Point::x>(printable));
-    auto silenced = gs::default_generator<Point>().override(
-        gs::field<&Point::x>(silent));
-    auto still_silenced =
-        silenced.override(gs::field<&Point::y>(printable));
+    auto silenced =
+        gs::default_generator<Point>().override(gs::field<&Point::x>(silent));
+    auto still_silenced = silenced.override(gs::field<&Point::y>(printable));
     static_assert(is_printable_handle<decltype(printed), Point>);
     static_assert(is_silent_handle<decltype(silenced), Point>);
     static_assert(is_silent_handle<decltype(still_silenced), Point>);

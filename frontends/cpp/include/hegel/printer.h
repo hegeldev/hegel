@@ -60,10 +60,15 @@ namespace hegel {
          */
         static Printer noop();
 
-        /// Move-constructs, transferring the region.
+        /**
+         * @brief Move-constructs, transferring the region.
+         * @param other The printer to move from. It becomes a no-op printer.
+         */
         Printer(Printer&& other) noexcept;
         /**
          * @brief Move-assigns, transferring the region.
+         * @param other The printer to move from. It takes the region this
+         *   printer had, and releases it when it is destroyed.
          * @return Reference to this printer.
          */
         Printer& operator=(Printer&& other) noexcept;
@@ -279,7 +284,11 @@ namespace hegel {
      */
     class Speculation {
       public:
-        /// Move-constructs, transferring the open region.
+        /**
+         * @brief Move-constructs, transferring the open region.
+         * @param other The speculation to move from. It no longer closes the
+         *   region.
+         */
         Speculation(Speculation&& other) noexcept;
         Speculation(const Speculation&) = delete;
         Speculation& operator=(const Speculation&) = delete;

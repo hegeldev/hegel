@@ -157,7 +157,8 @@ namespace hegel::generators {
      * @param fields Field specifications from field()
      * @return Generator producing T instances
      */
-    template <typename T, typename... Fields> auto builds_agg(Fields... fields) {
+    template <typename T, typename... Fields>
+    auto builds_agg(Fields... fields) {
         auto gen_tuple = std::make_tuple(std::move(fields)...);
 
         return compose([gen_tuple](const TestCase& tc) mutable -> T {

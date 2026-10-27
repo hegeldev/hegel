@@ -254,8 +254,6 @@ namespace hegel::internal {
     // it was given instead of generating them.
     bool is_explicit(const TestCase& tc);
 
-    // Throws UsageError when `tc` runs an explicit test case, which cannot
-    // do `what`.
     void check_not_explicit(const TestCase& tc, const char* what);
 
     // Takes the value that the explicit test case `tc` gives a draw, and

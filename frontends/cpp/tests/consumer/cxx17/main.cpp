@@ -51,8 +51,8 @@ int main() {
                             .map([](int x) { return x * x; }));
             auto named = tc.draw("named", gs::integers<int>());
             auto flag = tc.draw("flag", gs::booleans());
-            auto id = tc.draw(gs::integers<int>().print_with(
-                [](int v, hegel::Printer& p) {
+            auto id = tc.draw(
+                gs::integers<int>().print_with([](int v, hegel::Printer& p) {
                     p.text("Id(" + std::to_string(v) + ")");
                 }));
             auto point = tc.draw(gs::make_generator<PointGenerator>());

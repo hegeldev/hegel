@@ -288,7 +288,8 @@ namespace hegel::generators {
                 result = detail::draw_component(tc, gen_, printer);
                 printer.end_block("}");
             } else {
-                printer.text(detail::open_text<std::optional<T>>(printer, "{}"));
+                printer.text(
+                    detail::open_text<std::optional<T>>(printer, "{}"));
             }
             hi::stop_span(tc);
             return result;
@@ -519,8 +520,7 @@ namespace hegel::generators {
     namespace detail {
 
         // What the generators of one recursive() share: its leaf generator,
-        // its branch function and its label. `Sub` is the handle type the
-        // branch function receives, and `Branch` the one it returns.
+        // its branch function and its label.
         template <typename T, typename Sub, typename Branch>
         struct RecursiveDefinition {
             Sub leaf;
@@ -557,10 +557,9 @@ namespace hegel::generators {
             T result = recursion_->branch(tc, depth_)
                            ? detail::draw_component(
                                  tc,
-                                 definition_->branch(Sub(
-                                     std::make_shared<SubtreeGenerator>(
-                                         definition_, recursion_,
-                                         depth_ + 1))),
+                                 definition_->branch(
+                                     Sub(std::make_shared<SubtreeGenerator>(
+                                         definition_, recursion_, depth_ + 1))),
                                  printer)
                            : draw_leaf(tc, printer);
             if (depth_ == 0) {
@@ -712,12 +711,13 @@ namespace hegel::generators {
     template <typename T, typename F>
     AnyGenerator<T> recursive(AnyGenerator<T> leaf, F branch,
                               RecursiveParams params = {}) {
-        return AnyGenerator<T>(std::make_shared<
-                               RecursiveGenerator<T, AnyGenerator<T>,
-                                                  AnyGenerator<T>>>(
-            std::move(leaf),
-            std::function<AnyGenerator<T>(AnyGenerator<T>)>(std::move(branch)),
-            params));
+        return AnyGenerator<T>(
+            std::make_shared<
+                RecursiveGenerator<T, AnyGenerator<T>, AnyGenerator<T>>>(
+                std::move(leaf),
+                std::function<AnyGenerator<T>(AnyGenerator<T>)>(
+                    std::move(branch)),
+                params));
     }
 
 } // namespace hegel::generators

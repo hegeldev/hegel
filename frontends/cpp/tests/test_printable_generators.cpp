@@ -62,14 +62,14 @@ struct Span {
     int hi;
 };
 
-class HolderGenerator : public gs::IPrintableGenerator<std::shared_ptr<Holder>> {
+class HolderGenerator
+    : public gs::IPrintableGenerator<std::shared_ptr<Holder>> {
   public:
     std::shared_ptr<Holder>
     do_draw_and_print(const hegel::TestCase&,
                       hegel::Printer& p) const override {
         p.text("Holder(");
-        auto holder =
-            std::make_shared<Holder>(Holder{p.deferred()});
+        auto holder = std::make_shared<Holder>(Holder{p.deferred()});
         p.text(")");
         return holder;
     }
@@ -190,33 +190,32 @@ TEST(PrintableGenerators, AUserGeneratorPrintsInsideAVector) {
 }
 
 TEST(PrintableGenerators, CustomPrintingSurvivesEveryCombinator) {
-    EXPECT_EQ(
-        failing_lines([](hegel::TestCase& tc) {
-            (void)tc.draw("o", gs::optional(hashed()).filter(
-                                   [](const std::optional<int>& v) {
-                                       return v.has_value();
-                                   }));
-            (void)tc.draw("t", gs::tuples(hashed(), gs::booleans()));
-            (void)tc.draw("m", gs::maps(hashed(), hashed(),
-                                        {.min_size = 1, .max_size = 1}));
-            (void)tc.draw("one", gs::one_of({hashed(), hashed()}));
-            (void)tc.draw("f", hashed().filter([](int) { return true; }));
-            (void)tc.draw("fm", gs::booleans().flat_map(
-                                    [](bool) { return hashed(); }));
-            (void)tc.draw("r", gs::recursive(hashed(),
-                                             [](gs::Generator<int> sub) {
-                                                 return gs::one_of({sub, sub});
-                                             }));
-            auto d = gs::deferred<int>();
-            d.set(hashed());
-            (void)tc.draw("d", d.generator());
-            boom();
-        }),
-        (Lines{"auto o = std::optional<int>{#0};",
-               "auto t = std::tuple<int, bool>{#0, false};",
-               "auto m = std::map<int, int>{{#0, #0}};", "auto one = #0;",
-               "auto f = #0;", "auto fm = #0;", "auto r = #0;",
-               "auto d = #0;"}));
+    EXPECT_EQ(failing_lines([](hegel::TestCase& tc) {
+                  (void)tc.draw("o", gs::optional(hashed()).filter(
+                                         [](const std::optional<int>& v) {
+                                             return v.has_value();
+                                         }));
+                  (void)tc.draw("t", gs::tuples(hashed(), gs::booleans()));
+                  (void)tc.draw("m", gs::maps(hashed(), hashed(),
+                                              {.min_size = 1, .max_size = 1}));
+                  (void)tc.draw("one", gs::one_of({hashed(), hashed()}));
+                  (void)tc.draw("f", hashed().filter([](int) { return true; }));
+                  (void)tc.draw("fm", gs::booleans().flat_map(
+                                          [](bool) { return hashed(); }));
+                  (void)tc.draw(
+                      "r", gs::recursive(hashed(), [](gs::Generator<int> sub) {
+                          return gs::one_of({sub, sub});
+                      }));
+                  auto d = gs::deferred<int>();
+                  d.set(hashed());
+                  (void)tc.draw("d", d.generator());
+                  boom();
+              }),
+              (Lines{"auto o = std::optional<int>{#0};",
+                     "auto t = std::tuple<int, bool>{#0, false};",
+                     "auto m = std::map<int, int>{{#0, #0}};", "auto one = #0;",
+                     "auto f = #0;", "auto fm = #0;", "auto r = #0;",
+                     "auto d = #0;"}));
 }
 
 #if HEGEL_HAS_REFLECTION
@@ -269,34 +268,31 @@ TEST(PrintableGenerators, DerivedPrintingMatchesTheValuesRepr) {
             boom();
         }
     });
-    EXPECT_EQ(lines,
-              (Lines{"auto draw_1 = " + hegel::internal::render(pairs, 79) +
-                         ";",
-                     "auto draw_2 = " + hegel::internal::render(pair, 79) +
-                         ";"}));
+    EXPECT_EQ(
+        lines,
+        (Lines{"auto draw_1 = " + hegel::internal::render(pairs, 79) + ";",
+               "auto draw_2 = " + hegel::internal::render(pair, 79) + ";"}));
 }
 #endif
 
 TEST(PrintableGenerators, ARandomGeneratorPrintsWhatItHandsOutLater) {
-    EXPECT_EQ(
-        failing_lines([](hegel::TestCase& tc) {
-            auto rngs = tc.draw("rngs", gs::vectors(gs::randoms(),
-                                                    {.min_size = 2,
-                                                     .max_size = 2}));
-            (void)rngs[0]();
-            (void)rngs[0]();
-            (void)tc.draw("n", zero());
-            boom();
-        }),
-        (Lines{"auto rngs = std::vector<hegel::generators::HegelRandom>{",
-               "    HegelRandom{.consumed = {0, 0}},",
-               "    HegelRandom{.consumed = {}}", "};", "auto n = 0;"}));
+    EXPECT_EQ(failing_lines([](hegel::TestCase& tc) {
+                  auto rngs = tc.draw(
+                      "rngs", gs::vectors(gs::randoms(),
+                                          {.min_size = 2, .max_size = 2}));
+                  (void)rngs[0]();
+                  (void)rngs[0]();
+                  (void)tc.draw("n", zero());
+                  boom();
+              }),
+              (Lines{"auto rngs = std::vector<hegel::generators::HegelRandom>{",
+                     "    HegelRandom{.consumed = {0, 0}},",
+                     "    HegelRandom{.consumed = {}}", "};", "auto n = 0;"}));
 }
 
 TEST(PrintableGenerators, ADeferredPrinterCanBeFilledFromAThread) {
     EXPECT_EQ(failing_lines([](hegel::TestCase& tc) {
-                  auto holder =
-                      tc.draw(gs::make_generator<HolderGenerator>());
+                  auto holder = tc.draw(gs::make_generator<HolderGenerator>());
                   (void)tc.draw("n", zero());
                   std::thread([holder] {
                       holder->slot.text("from a thread");
@@ -332,12 +328,11 @@ TEST(PrintableGenerators, MapPrintsTheFinishedValue) {
                   auto three =
                       gs::integers<int>({.min_value = 3, .max_value = 3});
                   (void)tc.draw(three.map([](int x) { return x * 2; }));
-                  (void)tc.draw(
-                      three
-                          .print_with([](int, hegel::Printer& p) {
-                              p.text("custom");
-                          })
-                          .map([](int x) { return x * 2; }));
+                  (void)tc.draw(three
+                                    .print_with([](int, hegel::Printer& p) {
+                                        p.text("custom");
+                                    })
+                                    .map([](int x) { return x * 2; }));
                   boom();
               }),
               (Lines{"auto draw_1 = 6;", "auto draw_2 = 6;"}));
@@ -346,9 +341,9 @@ TEST(PrintableGenerators, MapPrintsTheFinishedValue) {
 TEST(PrintableGenerators, PrintAsCallPrintsTheMappedExpression) {
     EXPECT_EQ(failing_lines([](hegel::TestCase& tc) {
                   (void)tc.draw("key", key_data());
-                  (void)tc.draw("keys", gs::vectors(key_data(),
-                                                    {.min_size = 2,
-                                                     .max_size = 2}));
+                  (void)tc.draw(
+                      "keys",
+                      gs::vectors(key_data(), {.min_size = 2, .max_size = 2}));
                   boom();
               }),
               (Lines{"auto key = KeyData::from_ffi(0);",
@@ -357,16 +352,15 @@ TEST(PrintableGenerators, PrintAsCallPrintsTheMappedExpression) {
 }
 
 TEST(PrintableGenerators, PrintAsCallBreaksAWideListOneItemPerLine) {
-    EXPECT_EQ(failing_lines([](hegel::TestCase& tc) {
-                  (void)tc.draw("keys", gs::vectors(key_data(),
-                                                    {.min_size = 4,
-                                                     .max_size = 4}));
-                  boom();
-              }),
-              (Lines{"auto keys = std::vector<KeyData>{",
-                     "    KeyData::from_ffi(0),", "    KeyData::from_ffi(0),",
-                     "    KeyData::from_ffi(0),", "    KeyData::from_ffi(0)",
-                     "};"}));
+    EXPECT_EQ(
+        failing_lines([](hegel::TestCase& tc) {
+            (void)tc.draw("keys", gs::vectors(key_data(),
+                                              {.min_size = 4, .max_size = 4}));
+            boom();
+        }),
+        (Lines{"auto keys = std::vector<KeyData>{", "    KeyData::from_ffi(0),",
+               "    KeyData::from_ffi(0),", "    KeyData::from_ffi(0),",
+               "    KeyData::from_ffi(0)", "};"}));
 }
 
 TEST(PrintableGenerators, PrintAsCallWrapsWideInputsInsideTheCall) {
@@ -394,12 +388,16 @@ TEST(PrintableGenerators, PrintAsCallNeedsAName) {
 TEST(PrintableGenerators, PrintAsReprMatchesThePlainDraw) {
     EXPECT_EQ(failing_lines([](hegel::TestCase& tc) {
                   (void)tc.draw(zero().print_as_repr());
+                  (void)tc.draw(gs::vectors(zero().print_as_repr().filter(
+                                                [](int v) { return v == 0; }),
+                                            {.min_size = 1, .max_size = 1}));
                   (void)tc.draw(gs::compose([](const hegel::TestCase& inner) {
                                     return inner.draw(zero()) + 1;
                                 }).print_as_repr());
                   boom();
               }),
-              (Lines{"auto draw_1 = 0;", "auto draw_2 = 1;"}));
+              (Lines{"auto draw_1 = 0;", "auto draw_2 = std::vector<int>{0};",
+                     "auto draw_3 = 1;"}));
 }
 
 TEST(PrintableGenerators, ComposeInnerDrawsAreSilent) {
@@ -416,17 +414,22 @@ TEST(PrintableGenerators, ComposeInnerDrawsAreSilent) {
 TEST(PrintableGenerators, BuildsPrintsAConstructorCall) {
     EXPECT_EQ(failing_lines([](hegel::TestCase& tc) {
                   (void)tc.draw(gs::builds<Span>(zero(), hashed()));
+                  (void)tc.draw(gs::vectors(gs::builds<Span>(zero(), hashed()),
+                                            {.min_size = 1, .max_size = 1}));
                   boom();
               }),
-              Lines{"auto draw_1 = Span(0, #0);"});
+              (Lines{"auto draw_1 = Span(0, #0);",
+                     "auto draw_2 = std::vector<Span>{Span(0, #0)};"}));
 }
 
 TEST(PrintableGenerators, SetsAndMapsPrintInDrawOrder) {
-    auto descending = gs::integers<int>({.min_value = 0, .max_value = 9})
-                          .map([](int x) { return 9 - x; });
+    auto descending =
+        gs::integers<int>({.min_value = 0, .max_value = 9}).map([](int x) {
+            return 9 - x;
+        });
     EXPECT_EQ(failing_lines([descending](hegel::TestCase& tc) {
-                  (void)tc.draw(
-                      "s", gs::sets(descending, {.min_size = 2, .max_size = 2}));
+                  (void)tc.draw("s", gs::sets(descending,
+                                              {.min_size = 2, .max_size = 2}));
                   (void)tc.draw("m", gs::maps(descending, zero(),
                                               {.min_size = 2, .max_size = 2}));
                   boom();
@@ -463,18 +466,19 @@ TEST(PrintableGenerators, RejectedAttemptsNeverCorruptVerboseOutput) {
     std::string out = verbose_output([](hegel::TestCase& tc) {
         (void)tc.draw("f", gs::integers<int>({.min_value = 0, .max_value = 9})
                                .filter([](int v) { return v % 3 == 0; }));
-        (void)tc.draw("u",
-                      gs::vectors(gs::integers<int>(
-                                      {.min_value = 0, .max_value = 3}),
-                                  {.min_size = 3, .max_size = 3, .unique = true}));
-        (void)tc.draw("s",
-                      gs::sets(gs::integers<int>({.min_value = 0, .max_value = 2}),
-                               {.min_size = 2, .max_size = 2}));
-        (void)tc.draw("m", gs::maps(gs::integers<int>(
-                                        {.min_value = 0, .max_value = 2}),
-                                    zero(), {.min_size = 2, .max_size = 2}));
+        (void)tc.draw(
+            "u",
+            gs::vectors(gs::integers<int>({.min_value = 0, .max_value = 3}),
+                        {.min_size = 3, .max_size = 3, .unique = true}));
+        (void)tc.draw(
+            "s", gs::sets(gs::integers<int>({.min_value = 0, .max_value = 2}),
+                          {.min_size = 2, .max_size = 2}));
+        (void)tc.draw(
+            "m", gs::maps(gs::integers<int>({.min_value = 0, .max_value = 2}),
+                          zero(), {.min_size = 2, .max_size = 2}));
     });
-    std::regex shape(R"(auto f = [0369];|auto u = std::vector<int>\{[0-3], [0-3], [0-3]\};|auto s = std::set<int>\{[0-2], [0-2]\};|auto m = std::map<int, int>\{\{[0-2], 0\}, \{[0-2], 0\}\};)");
+    std::regex shape(
+        R"(auto f = [0369];|auto u = std::vector<int>\{[0-3], [0-3], [0-3]\};|auto s = std::set<int>\{[0-2], [0-2]\};|auto m = std::map<int, int>\{\{[0-2], 0\}, \{[0-2], 0\}\};)");
     int draws = 0;
     for (const std::string& line : split_lines(out)) {
         if (line.rfind("auto ", 0) == 0) {
@@ -486,28 +490,35 @@ TEST(PrintableGenerators, RejectedAttemptsNeverCorruptVerboseOutput) {
 }
 
 TEST(PrintableGenerators, ExhaustedFilterRetriesPrintNothing) {
-    std::string out = verbose_output(
+    std::string never = verbose_output(
         [](hegel::TestCase& tc) {
-            (void)tc.draw("never", gs::integers<int>().filter(
-                                       [](int) { return false; }));
+            (void)tc.draw(
+                "never", gs::integers<int>().filter([](int) { return false; }));
         },
         5);
-    EXPECT_EQ(out.find("auto never"), std::string::npos) << out;
+    EXPECT_EQ(never.find("auto never"), std::string::npos) << never;
+    std::string points = verbose_output(
+        [](hegel::TestCase& tc) {
+            (void)tc.draw("points", gs::make_generator<PointGenerator>().filter(
+                                        [](const Point&) { return false; }));
+        },
+        5);
+    EXPECT_EQ(points.find("auto points"), std::string::npos) << points;
 }
 
 TEST(PrintableGenerators, AThrowingPrintWithLeavesNoPartialLine) {
     testing::internal::CaptureStderr();
-    EXPECT_THROW(
-        hegel::test(
-            [](hegel::TestCase& tc) {
-                tc.note("before");
-                (void)tc.draw(zero().print_with([](int, hegel::Printer& p) {
-                    p.text("partial");
-                    throw std::logic_error("cannot print");
-                }));
-            },
-            settings_at(hegel::Verbosity::Verbose, 1)),
-        std::logic_error);
+    EXPECT_THROW(hegel::test(
+                     [](hegel::TestCase& tc) {
+                         tc.note("before");
+                         (void)tc.draw(
+                             zero().print_with([](int, hegel::Printer& p) {
+                                 p.text("partial");
+                                 throw std::logic_error("cannot print");
+                             }));
+                     },
+                     settings_at(hegel::Verbosity::Verbose, 1)),
+                 std::logic_error);
     std::string out = testing::internal::GetCapturedStderr();
     EXPECT_NE(out.find("before"), std::string::npos) << out;
     EXPECT_EQ(out.find("partial"), std::string::npos) << out;
@@ -557,8 +568,8 @@ TEST(PrintableGenerators, ARecursiveGeneratorWithASilentLeafDrawsSilently) {
 
 TEST(PrintableGenerators, ARecursiveGeneratorPrintsThroughItsBranches) {
     EXPECT_EQ(failing_lines([](hegel::TestCase& tc) {
-                  auto sums = gs::recursive(
-                      hashed(), [](gs::Generator<int> sub) {
+                  auto sums =
+                      gs::recursive(hashed(), [](gs::Generator<int> sub) {
                           return gs::tuples(sub, sub).map(
                               [](const std::tuple<int, int>& t) {
                                   return std::get<0>(t) + std::get<1>(t);
@@ -570,7 +581,8 @@ TEST(PrintableGenerators, ARecursiveGeneratorPrintsThroughItsBranches) {
               Lines{"auto draw_1 = #0;"});
 }
 
-TEST(PrintableGenerators, DrawSilentAndDrawAndPrintAreUsageErrorsInExplicitCases) {
+TEST(PrintableGenerators,
+     DrawSilentAndDrawAndPrintAreUsageErrorsInExplicitCases) {
     auto run = [](const Body& body) {
         testing::internal::CaptureStderr();
         try {

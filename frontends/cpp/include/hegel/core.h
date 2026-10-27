@@ -186,10 +186,9 @@ namespace hegel::generators {
          * @param printer The printer to write the value's representation to.
          * @return The value.
          */
-        virtual T
-        do_draw_filtered_and_print(const TestCase& tc,
-                                   const std::function<bool(const T&)>& predicate,
-                                   Printer& printer) const {
+        virtual T do_draw_filtered_and_print(
+            const TestCase& tc, const std::function<bool(const T&)>& predicate,
+            Printer& printer) const {
             uint64_t attempt =
                 internal::label(internal::LabelName::FilterAttempt);
             for (int i = 0; i < internal::filter_attempts; ++i) {
@@ -211,9 +210,8 @@ namespace hegel::generators {
     /// @cond INTERNAL
     namespace detail {
 
-        // A generator that prints the value it drew, by its C++
-        // representation.
-        template <typename T> class ValuePrinted : public IPrintableGenerator<T> {
+        template <typename T>
+        class ValuePrinted : public IPrintableGenerator<T> {
           public:
             T do_draw(const TestCase& tc) const override = 0;
 
@@ -234,13 +232,10 @@ namespace hegel::generators {
             }
         };
 
-        // The base of a generator that prints its value when `Printable`.
         template <typename T, bool Printable>
         using value_base_t =
             std::conditional_t<Printable, ValuePrinted<T>, IGenerator<T>>;
 
-        // A generator with one drawing body for both paths, which prints
-        // as it draws when `Printable`.
         template <typename T, bool Printable> class Structural;
 
         template <typename T>
@@ -256,7 +251,8 @@ namespace hegel::generators {
                                     Printer& printer) const = 0;
         };
 
-        template <typename T> class Structural<T, false> : public IGenerator<T> {
+        template <typename T>
+        class Structural<T, false> : public IGenerator<T> {
           public:
             T do_draw(const TestCase& tc) const override {
                 Printer silent = Printer::noop();
@@ -276,7 +272,6 @@ namespace hegel::generators {
         using handle_t =
             std::conditional_t<Printable, Generator<T>, AnyGenerator<T>>;
 
-        // Draws from a component: printing when the component is printable.
         template <typename H>
         typename H::value_type draw_component(const TestCase& tc, const H& gen,
                                               Printer& printer) {
@@ -287,7 +282,6 @@ namespace hegel::generators {
             }
         }
 
-        // The text that opens the printed form of a T, when it is printed.
         template <typename T>
         std::string open_text(const Printer& printer, std::string_view open) {
             if (!printer.should_print()) {
@@ -325,9 +319,9 @@ namespace hegel::generators {
 
         T do_draw(const TestCase& tc) const { return inner_->do_draw(tc); }
 
-        T do_draw_filtered(
-            const TestCase& tc,
-            const std::function<bool(const T&)>& predicate) const {
+        T
+        do_draw_filtered(const TestCase& tc,
+                         const std::function<bool(const T&)>& predicate) const {
             return inner_->do_draw_filtered(tc, predicate);
         }
 
@@ -832,8 +826,9 @@ namespace hegel::generators {
     namespace detail {
 
         template <typename T, typename U, bool SourcePrintable>
-        Mapped<U, SourcePrintable> make_mapped(handle_t<SourcePrintable, T> source,
-                                               std::function<U(T)> f) {
+        Mapped<U, SourcePrintable>
+        make_mapped(handle_t<SourcePrintable, T> source,
+                    std::function<U(T)> f) {
             using Result = Mapped<U, SourcePrintable>;
             typename Result::Base base(
                 std::make_shared<MapImpl<T, U, is_representable_v<U>>>(source,
@@ -889,7 +884,8 @@ namespace hegel::generators {
     }
 
     template <typename T>
-    Generator<T> Generator<T>::filter(std::function<bool(const T&)> pred) const {
+    Generator<T>
+    Generator<T>::filter(std::function<bool(const T&)> pred) const {
         return Generator<T>(std::make_shared<detail::PrintedFilterImpl<T>>(
             *this, std::move(pred)));
     }
@@ -898,8 +894,8 @@ namespace hegel::generators {
     template <typename F>
     Generator<T> AnyGenerator<T>::print_with(F&& print) const {
         return Generator<T>(std::make_shared<detail::PrintedWithImpl<T>>(
-            *this,
-            typename detail::PrintedWithImpl<T>::Print(std::forward<F>(print))));
+            *this, typename detail::PrintedWithImpl<T>::Print(
+                       std::forward<F>(print))));
     }
 
     template <typename T> Generator<T> AnyGenerator<T>::print_as_repr() const {
@@ -907,7 +903,8 @@ namespace hegel::generators {
                       "print_as_repr() needs a type with a C++ "
                       "representation (hegel::is_representable_v). Use "
                       ".print_with(...) to print it another way.");
-        return Generator<T>(std::make_shared<detail::ReprPrintedImpl<T>>(*this));
+        return Generator<T>(
+            std::make_shared<detail::ReprPrintedImpl<T>>(*this));
     }
 
     /**

@@ -79,19 +79,13 @@ namespace hegel::generators {
         // DefaultGenerator trait — primary template (struct fallback)
         // =================================================================
 
-        // One field override of a struct generator: draws into the field at
-        // `field` of `result` and returns true when that is its field.
         template <typename T>
-        using FieldOverride = std::function<bool(
-            const TestCase&, T& result, const void* field, Printer&)>;
+        using FieldOverride = std::function<bool(const TestCase&, T& result,
+                                                 const void* field, Printer&)>;
 
         template <typename T>
         using FieldOverrides = std::vector<FieldOverride<T>>;
 
-        // Draws a reflectable struct field by field, in declaration order,
-        // and prints it as `T{.a = <field>, .b = <field>}`, each field as
-        // its generator prints it. A field with an override is drawn from
-        // the last override for it, else from default_generator().
         template <typename T, bool Printable>
         class StructGenerator : public Structural<T, Printable> {
           public:
@@ -133,8 +127,8 @@ namespace hegel::generators {
             }
 
           private:
-            bool draw_override(const TestCase& tc, T& result,
-                               const void* field, Printer& printer) const {
+            bool draw_override(const TestCase& tc, T& result, const void* field,
+                               Printer& printer) const {
                 for (auto it = overrides_->rbegin(); it != overrides_->rend();
                      ++it) {
                     if ((*it)(tc, result, field, printer)) {
@@ -389,7 +383,8 @@ namespace hegel::generators {
                 detail::DefaultGenerator<T>::generator(),
                 std::make_shared<const detail::FieldOverrides<T>>());
         } else {
-            return DerivedGenerator<T>(detail::DefaultGenerator<T>::generator());
+            return DerivedGenerator<T>(
+                detail::DefaultGenerator<T>::generator());
         }
     }
 

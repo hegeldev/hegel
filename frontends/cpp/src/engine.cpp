@@ -24,6 +24,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 #include <arpa/inet.h>
@@ -1235,8 +1236,6 @@ namespace hegel {
 
     namespace {
 
-        // A write to a dead region is discarded. A rejected argument is a
-        // misuse of the printing protocol by the code that prints.
         void printer_call(hegel_context_t* ctx, hegel_result_t rc) {
             if (rc == HEGEL_E_INVALID_ARG) {
                 throw std::logic_error(impl::last_error(ctx));
@@ -1283,8 +1282,8 @@ namespace hegel {
             std::size_t end = text.find('\n', start);
             std::string_view segment = text.substr(start, end - start);
             if (!segment.empty()) {
-                printer_call(
-                    ctx, hegel_printer_text(ctx, handle_, impl::borrow(segment)));
+                printer_call(ctx, hegel_printer_text(ctx, handle_,
+                                                     impl::borrow(segment)));
             }
             if (end == std::string_view::npos) {
                 return;
@@ -1343,8 +1342,8 @@ namespace hegel {
             return;
         }
         hegel_context_t* ctx = impl::thread_context();
-        printer_call(ctx,
-                     hegel_printer_end_group(ctx, handle_, impl::borrow(close)));
+        printer_call(
+            ctx, hegel_printer_end_group(ctx, handle_, impl::borrow(close)));
     }
 
     void Printer::separator() {
@@ -1402,8 +1401,8 @@ namespace hegel {
     }
 
     Speculation::Speculation(Speculation&& other) noexcept
-        : handle_(other.handle_), resolved_(std::exchange(other.resolved_, true)) {
-    }
+        : handle_(other.handle_),
+          resolved_(std::exchange(other.resolved_, true)) {}
 
     Speculation::~Speculation() {
         if (!resolved_ && handle_ != nullptr) {

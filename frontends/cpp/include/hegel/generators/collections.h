@@ -185,7 +185,8 @@ namespace hegel::generators {
                 if (!result.empty()) {
                     printer.separator();
                 }
-                if (!result.insert(detail::draw_component(tc, elements_, printer))
+                if (!result
+                         .insert(detail::draw_component(tc, elements_, printer))
                          .second) {
                     element.abort();
                     collection.reject(tc, "duplicate element");
@@ -208,8 +209,7 @@ namespace hegel::generators {
     // value once the key is known to be fresh; duplicate keys are rejected
     // back to the engine. Entries print in draw order.
     template <typename K, typename V, bool Printable>
-    class MapsGenerator
-        : public detail::Structural<std::map<K, V>, Printable> {
+    class MapsGenerator : public detail::Structural<std::map<K, V>, Printable> {
       public:
         MapsGenerator(detail::handle_t<Printable, K> keys,
                       detail::handle_t<Printable, V> values,
@@ -457,9 +457,8 @@ namespace hegel::generators {
      * @return AnyGenerator producing maps
      */
     template <typename K, typename V>
-    AnyGenerator<std::map<K, V>> maps(AnyGenerator<K> keys,
-                                      AnyGenerator<V> values,
-                                      MapsParams params = {}) {
+    AnyGenerator<std::map<K, V>>
+    maps(AnyGenerator<K> keys, AnyGenerator<V> values, MapsParams params = {}) {
         return AnyGenerator<std::map<K, V>>(new MapsGenerator<K, V, false>(
             std::move(keys), std::move(values), params));
     }
@@ -485,8 +484,8 @@ namespace hegel::generators {
             namespace hi = hegel::internal;
             hi::start_span(tc, label_);
             printer.begin_block(detail::open_text<ResultTuple>(printer, "{"));
-            ResultTuple result = draw_all(tc, printer,
-                                          std::index_sequence_for<Ts...>{});
+            ResultTuple result =
+                draw_all(tc, printer, std::index_sequence_for<Ts...>{});
             printer.end_block("}");
             hi::stop_span(tc);
             return result;
