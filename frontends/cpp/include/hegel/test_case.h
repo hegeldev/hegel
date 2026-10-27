@@ -267,6 +267,9 @@ namespace hegel {
          * output at the point where the clone was made, however the threads
          * are scheduled.
          *
+         * In an explicit test case, the clone draws the same values and
+         * names its draws in the same sequence as this test case.
+         *
          * @return A @c TestCase.
          *
          * @code{.cpp}
@@ -286,10 +289,10 @@ namespace hegel {
          * Every line this test case prints after the call, and every line
          * of the blocks and clones made from it after the call, is prefixed
          * with `[worker N +X.XXXms]`: the worker index and the time since
-         * the test case started.
+         * the test case started. In an explicit test case, which has no
+         * output to attribute, this does nothing.
          *
          * @param worker_index The worker to attribute the output to.
-         * @throws std::invalid_argument in an explicit test case.
          *
          * @code{.cpp}
          * std::vector<std::thread> threads;

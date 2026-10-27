@@ -3,7 +3,7 @@ use quote::quote;
 use syn::{FnArg, ItemFn};
 
 use crate::common::{
-    SettingsAttrArgs, build_explicit_blocks, extract_explicit_test_cases, extract_ident_from_pat,
+    SettingsAttrArgs, build_explicit_run, extract_explicit_test_cases, extract_ident_from_pat,
     extract_reproduce_failure, reproduce_failure_calls, rewrite_draws_in_block,
 };
 
@@ -75,10 +75,11 @@ pub fn expand_main(attr: TokenStream, item: TokenStream) -> TokenStream {
         Err(err) => return err,
     };
 
-    let reproduce_call = match extract_reproduce_failure(&mut func.attrs) {
-        Ok(blobs) => reproduce_failure_calls(&blobs),
+    let reproduce_blobs = match extract_reproduce_failure(&mut func.attrs) {
+        Ok(blobs) => blobs,
         Err(err) => return err,
     };
+    let reproduce_call = reproduce_failure_calls(&reproduce_blobs);
 
     let body = {
         let mut body = (*func.block).clone();
@@ -90,7 +91,17 @@ pub fn expand_main(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let fn_name = func.sig.ident.to_string();
     let default_settings_expr = main_args.to_settings_expr();
-    let explicit_blocks = build_explicit_blocks(&explicit_cases, param_pat, &body);
+    let explicit = build_explicit_run(
+        if reproduce_blobs.is_empty() {
+            &explicit_cases
+        } else {
+            &[]
+        },
+        param_pat,
+        &body,
+    );
+    let explicit_section = explicit.section;
+    let explicit_call = explicit.builder_call;
 
     let new_body: TokenStream = quote! {
         {
@@ -109,14 +120,13 @@ pub fn expand_main(attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
             };
 
-            if __hegel_settings.has_phase(::hegel::Phase::Explicit) {
-                #(#explicit_blocks)*
-            }
+            #explicit_section
 
             ::hegel::Hegel::new(|#param_pat: #param_ty| #body)
             .settings(__hegel_settings)
             .__single_test_case()
             #reproduce_call
+            #explicit_call
             .__reproduce_attribute("#[hegel::main]")
             .__database_key(format!("{}::{}", module_path!(), #fn_name))
             .test_location(::hegel::TestLocation {

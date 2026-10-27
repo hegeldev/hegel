@@ -18,6 +18,7 @@
 
 #include <hegel.h>
 
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <cstddef>
@@ -185,6 +186,7 @@ namespace hegel {
         struct RunConfig {
             Verbosity verbosity;
             bool print_blob;
+            bool report_multiple_failures;
         };
 
         struct BodyOutcome {
@@ -215,6 +217,16 @@ namespace hegel {
             captures[outcome.origin] =
                 CapturedFailure{outcome, std::move(lines)};
         }
+
+        // A failure as the report prints it: what was captured for it, the
+        // engine's caveat and the blob that reproduces it. An explicit test
+        // case's failure, and a run error reported among the failures, have
+        // neither.
+        struct ReportedFailure {
+            CapturedFailure captured;
+            std::optional<std::string> caveat;
+            std::optional<std::string> blob;
+        };
 
         using impl::demangle;
 
@@ -577,9 +589,9 @@ namespace hegel {
 
         // Pulls every test case off `run`, then acts on its verdict: returns
         // nothing for a pass, throws the RunError subclass for a run error,
-        // and for a failure prints the report of each distinct failure from
-        // what the run captured for its origin, and returns their outcomes.
-        std::vector<BodyOutcome> drive_run(
+        // and for a failure returns each distinct failure, built from what
+        // the run captured for its origin, for print_report().
+        std::vector<ReportedFailure> drive_run(
             const std::function<void(TestCase&)>& test_fn, hegel_context_t* ctx,
             hegel_run_t* run, const RunConfig& config,
             const std::optional<TestLocation>& location, RerunForm rerun_form) {
@@ -629,41 +641,47 @@ namespace hegel {
                                       impl::run_result_error_kind(ctx, result));
             }
 
-            bool quiet = config.verbosity == Verbosity::Quiet;
             size_t failure_count = impl::run_result_failure_count(ctx, result);
-            bool multiple = failure_count > 1;
-            if (multiple && !quiet) {
-                std::fprintf(
-                    stderr,
-                    "Property-based test failed with %zu distinct failures.\n",
-                    failure_count);
-            }
-
-            std::vector<BodyOutcome> outcomes;
+            std::vector<ReportedFailure> failures;
             for (size_t i = 0; i < failure_count; i++) {
                 FailureGuard failure_guard{ctx};
                 failure_guard.failure =
                     impl::run_result_failure(ctx, result, i);
                 const hegel_failure_t* failure = failure_guard.failure;
-                const CapturedFailure& captured =
-                    captures.at(impl::failure_origin(ctx, failure));
+                failures.push_back(ReportedFailure{
+                    captures.at(impl::failure_origin(ctx, failure)),
+                    impl::failure_caveat(ctx, failure),
+                    impl::failure_reproduction_blob(ctx, failure)});
+            }
+            return failures;
+        }
+
+        // Prints the report of each failure: its captured lines, its caveat
+        // and its rerun line, under a count header when there are several.
+        void print_report(const RunConfig& config,
+                          const std::optional<TestLocation>& location,
+                          RerunForm rerun_form,
+                          const std::vector<ReportedFailure>& failures) {
+            bool quiet = config.verbosity == Verbosity::Quiet;
+            bool multiple = failures.size() > 1;
+            if (multiple && !quiet) {
+                std::fprintf(
+                    stderr,
+                    "Property-based test failed with %zu distinct failures.\n",
+                    failures.size());
+            }
+            for (const ReportedFailure& failure : failures) {
                 if (multiple && !quiet) {
                     std::fprintf(stderr, "\n");
                 }
-                print_lines(captured.lines);
-                std::optional<std::string> caveat =
-                    impl::failure_caveat(ctx, failure);
-                if (caveat.has_value() && !quiet) {
-                    std::fprintf(stderr, "note: %s\n", caveat->c_str());
+                print_lines(failure.captured.lines);
+                if (failure.caveat.has_value() && !quiet) {
+                    std::fprintf(stderr, "note: %s\n", failure.caveat->c_str());
                 }
-                std::optional<std::string> blob =
-                    impl::failure_reproduction_blob(ctx, failure);
-                if (config.print_blob && blob.has_value()) {
-                    print_reproducer(rerun_form, location, *blob);
+                if (config.print_blob && failure.blob.has_value()) {
+                    print_reproducer(rerun_form, location, *failure.blob);
                 }
-                outcomes.push_back(captured.outcome);
             }
-            return outcomes;
         }
 
         // Re-raises the test's own exception for a single failure, and a
@@ -678,6 +696,21 @@ namespace hegel {
                 exceptions.push_back(std::move(outcome.exception));
             }
             throw MultipleFailures(std::move(exceptions));
+        }
+
+        // Prints the report of `failures` and raises them.
+        [[noreturn]] void
+        report_and_raise(const RunConfig& config,
+                         const std::optional<TestLocation>& location,
+                         RerunForm rerun_form,
+                         std::vector<ReportedFailure> failures) {
+            print_report(config, location, rerun_form, failures);
+            std::vector<BodyOutcome> outcomes;
+            outcomes.reserve(failures.size());
+            for (ReportedFailure& failure : failures) {
+                outcomes.push_back(std::move(failure.captured.outcome));
+            }
+            raise_failures(std::move(outcomes));
         }
 
         // How an explicit test case reads in a report: its values, in the
@@ -716,17 +749,20 @@ namespace hegel {
             }
         }
 
-        // Runs each explicit test case once, in order. The first that fails
-        // prints what it drew and noted, and its exception propagates. A
-        // misuse of the test case (a rejection included) is a usage error,
-        // which propagates as it is.
-        void run_explicit_cases(
+        // Runs each explicit test case once, in order. Without
+        // report_multiple_failures, the first that fails prints what it drew
+        // and noted, and its exception propagates; with it, every case runs
+        // and the failures are returned, one per origin, with the lines
+        // their report prints. A misuse of the test case (a rejection
+        // included) is a usage error, which propagates as it is.
+        std::vector<CapturedFailure> run_explicit_cases(
             const std::function<void(TestCase&)>& test_fn,
             const RunConfig& config,
             const std::vector<ExplicitTestCase>& explicit_cases) {
             bool verbose = config.verbosity == Verbosity::Verbose ||
                            config.verbosity == Verbosity::Debug;
             bool quiet = config.verbosity == Verbosity::Quiet;
+            std::vector<CapturedFailure> failures;
             for (const ExplicitTestCase& test_case : explicit_cases) {
                 auto data = std::make_unique<impl::test_case::TestCaseData>(
                     nullptr, false);
@@ -747,13 +783,30 @@ namespace hegel {
                         "TestCase::reject().");
                 }
                 if (outcome.status == HEGEL_STATUS_INTERESTING) {
-                    if (!quiet && !verbose) {
-                        print_lines(state->lines);
+                    if (!config.report_multiple_failures) {
+                        if (!quiet && !verbose) {
+                            print_lines(state->lines);
+                        }
+                        std::rethrow_exception(outcome.exception);
                     }
-                    std::rethrow_exception(outcome.exception);
+                    bool seen = std::any_of(
+                        failures.begin(), failures.end(),
+                        [&](const CapturedFailure& failure) {
+                            return failure.outcome.origin == outcome.origin;
+                        });
+                    if (!seen) {
+                        std::vector<std::string> lines;
+                        if (!quiet) {
+                            lines = state->lines;
+                        }
+                        failures.push_back(
+                            CapturedFailure{outcome, std::move(lines)});
+                    }
+                    continue;
                 }
                 check_fully_used(*state);
             }
+            return failures;
         }
 
         // Replays each blob in a run of its own, then re-raises what they
@@ -764,36 +817,78 @@ namespace hegel {
                             const std::optional<TestLocation>& location,
                             RerunForm rerun_form,
                             const std::vector<std::string>& failure_blobs) {
-            std::vector<BodyOutcome> outcomes;
+            std::vector<ReportedFailure> failures;
             for (const std::string& blob : failure_blobs) {
                 RunGuard run_guard{ctx};
                 run_guard.run = impl::run_start_blob(ctx, s, blob);
-                for (BodyOutcome& outcome :
+                for (ReportedFailure& failure :
                      drive_run(test_fn, ctx, run_guard.run, config, location,
                                rerun_form)) {
-                    outcomes.push_back(std::move(outcome));
+                    failures.push_back(std::move(failure));
                 }
             }
-            if (outcomes.empty()) {
+            if (failures.empty()) {
                 throw DidNotReproduce(
                     "The failure blob did not reproduce a failure. The "
                     "failure may be fixed, or the test may have changed so "
                     "that the blob means something else.");
             }
-            raise_failures(std::move(outcomes));
+            report_and_raise(config, location, rerun_form, std::move(failures));
         }
 
+        // Runs the generated phases and reports their failures after the
+        // explicit test cases' (collected under report_multiple_failures),
+        // dropping a generated failure that shares an explicit one's
+        // origin. A run error does not hide the explicit failures: it is
+        // reported after them as one more failure.
         void run_from_engine(const std::function<void(TestCase&)>& test_fn,
                              hegel_context_t* ctx, hegel_settings_t* s,
                              const RunConfig& config,
                              const std::optional<TestLocation>& location,
-                             RerunForm rerun_form) {
+                             RerunForm rerun_form,
+                             std::vector<CapturedFailure> explicit_failures) {
             RunGuard run_guard{ctx};
             run_guard.run = impl::run_start(ctx, s);
-            std::vector<BodyOutcome> outcomes = drive_run(
-                test_fn, ctx, run_guard.run, config, location, rerun_form);
-            if (!outcomes.empty()) {
-                raise_failures(std::move(outcomes));
+            std::vector<ReportedFailure> failures;
+            failures.reserve(explicit_failures.size());
+            for (const CapturedFailure& failure : explicit_failures) {
+                failures.push_back(
+                    ReportedFailure{failure, std::nullopt, std::nullopt});
+            }
+            std::vector<ReportedFailure> generated;
+            try {
+                generated = drive_run(test_fn, ctx, run_guard.run, config,
+                                      location, rerun_form);
+            } catch (const RunError& error) {
+                if (failures.empty()) {
+                    throw;
+                }
+                std::vector<std::string> lines;
+                if (config.verbosity != Verbosity::Quiet) {
+                    lines.emplace_back(error.what());
+                }
+                failures.push_back(ReportedFailure{
+                    CapturedFailure{BodyOutcome{HEGEL_STATUS_INTERESTING, "",
+                                                std::current_exception()},
+                                    std::move(lines)},
+                    std::nullopt, std::nullopt});
+                report_and_raise(config, location, rerun_form,
+                                 std::move(failures));
+            }
+            for (ReportedFailure& failure : generated) {
+                bool explicit_origin = std::any_of(
+                    explicit_failures.begin(), explicit_failures.end(),
+                    [&](const CapturedFailure& explicit_failure) {
+                        return explicit_failure.outcome.origin ==
+                               failure.captured.outcome.origin;
+                    });
+                if (!explicit_origin) {
+                    failures.push_back(std::move(failure));
+                }
+            }
+            if (!failures.empty()) {
+                report_and_raise(config, location, rerun_form,
+                                 std::move(failures));
             }
         }
     } // namespace
@@ -894,15 +989,20 @@ namespace hegel {
             if (location.has_value()) {
                 apply_test_location(ctx, s, *location);
             }
-            RunConfig config{from_engine(impl::settings_get_verbosity(ctx, s)),
-                             impl::settings_get_print_blob(ctx, s)};
+            RunConfig config{
+                from_engine(impl::settings_get_verbosity(ctx, s)),
+                impl::settings_get_print_blob(ctx, s),
+                impl::settings_get_report_multiple_failures(ctx, s)};
 
             if (failure_blobs.empty()) {
+                std::vector<CapturedFailure> explicit_failures;
                 if ((impl::settings_get_phases(ctx, s) &
                      HEGEL_PHASE_EXPLICIT) != 0) {
-                    run_explicit_cases(test_fn, config, explicit_cases);
+                    explicit_failures =
+                        run_explicit_cases(test_fn, config, explicit_cases);
                 }
-                run_from_engine(test_fn, ctx, s, config, location, rerun_form);
+                run_from_engine(test_fn, ctx, s, config, location, rerun_form,
+                                std::move(explicit_failures));
             } else {
                 run_from_blobs(test_fn, ctx, s, config, location, rerun_form,
                                failure_blobs);

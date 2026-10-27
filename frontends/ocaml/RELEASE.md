@@ -114,6 +114,7 @@ New test-case operations:
 - `reject tc` discards the current test case, like `assume tc false`, and has any result type, so it can end a branch of a `match`.
 - `repeat tc body` runs `body` for as many iterations as the engine wants and then ends the test case, printing each iteration's output under a `// Repetition #n` note.
 - `set_worker tc i` attributes a test case's output to concurrent worker `i`, so a test that draws from several threads through `clone` can label each thread's lines in the failure report.
+- `clone` now works in an explicit example (`[@@example ...]`), where it used to raise `Usage_error`: the clone draws the example's values, in sequence with the test case it was cloned from, so a test that draws from several threads runs on its examples too. `set_worker` does nothing there, as an example has no output to attribute.
 
 New generators for recursive data:
 

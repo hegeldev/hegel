@@ -45,7 +45,7 @@ Stacked `@hegel.reproduce_failure` decorators now replay every blob, where only 
 
 `FailedHealthCheck` now says which health check failed: its new `health_check` attribute is the `HealthCheck` member, and its message ends by naming it as Python spells it, with the `suppress_health_check` value that suppresses it.
 
-A `tc.assume(False)` or `tc.reject()` in an explicit test case (`@hegel.explicit_test_case`) still raises `InvalidArgument`, now with the message `Explicit test cases must not be rejected`, shared with the other Hegel libraries. `tc.repeat()` in an explicit test case now runs its body once, as in the other Hegel libraries, where it used to raise `InvalidArgument` saying `draw_silent` is not supported, so a rejection inside it gets that message too.
+A `tc.assume(False)` or `tc.reject()` in an explicit test case (`@hegel.explicit_test_case`) still raises `InvalidArgument`, now with the message `Explicit test cases must not be rejected`, shared with the other Hegel libraries. `tc.repeat()` in an explicit test case now runs its body once, as in the other Hegel libraries, where it used to raise `InvalidArgument` saying `draw_silent` is not supported, so a rejection inside it gets that message too. Under `Verbosity.quiet` a failing explicit test case no longer attaches its drawn values and notes to the exception as a `Falsifying example:` note, as a generated failure never did.
 
 A failure's caveat (such as `unconfirmed failure ...` for a failure that did not reproduce on every replay) is now attached to the exception as a note starting `note: `, as the other Hegel libraries print it.
 

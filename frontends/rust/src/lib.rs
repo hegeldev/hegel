@@ -335,6 +335,8 @@ pub mod stateful;
 mod test_case;
 #[doc(hidden)]
 pub use control::currently_in_test_context;
+#[doc(hidden)]
+pub use explicit_test_case::ExplicitRun;
 pub use explicit_test_case::ExplicitTestCase;
 pub use generators::Generator;
 pub use generators::PrintableGenerator;

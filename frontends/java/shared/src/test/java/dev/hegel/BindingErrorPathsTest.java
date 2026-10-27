@@ -93,8 +93,9 @@ class BindingErrorPathsTest {
         FakeLibhegel fake = new FakeLibhegel();
         fake.integerValue = 4L;
         LiveDataSource ds = source(fake);
-        DataSource clone = ds.cloneForWorker(2);
+        DataSource clone = ds.clone();
         assertEquals(List.of(FakeLibhegel.TC), fake.clonesMade);
+        clone.setWorker(2);
         assertEquals(2L, fake.workersSet.get(FakeLibhegel.CLONE_BASE));
         assertEquals(4, clone.generateInteger(0, 10));
         clone.release();
@@ -107,19 +108,20 @@ class BindingErrorPathsTest {
     void cloneFailuresPropagateAndLeakNothing() {
         FakeLibhegel cloneFails = new FakeLibhegel();
         cloneFails.cloneRc = Abi.E_BACKEND;
-        assertThrows(HegelException.class, () -> source(cloneFails).cloneForWorker(0));
+        assertThrows(HegelException.class, () -> source(cloneFails).clone());
         assertTrue(cloneFails.freedClones.isEmpty());
 
         // A clone past the end of a replayed sequence is an overrun, like any other draw.
         FakeLibhegel exhausted = new FakeLibhegel();
         exhausted.cloneRc = Abi.E_STOP_TEST;
         LiveDataSource ds0 = source(exhausted);
-        assertThrows(StopTest.class, () -> ds0.cloneForWorker(0));
+        assertThrows(StopTest.class, () -> ds0.clone());
         assertTrue(ds0.isAborted());
 
         FakeLibhegel workerFails = new FakeLibhegel();
         workerFails.setWorkerFails = true;
-        assertThrows(HegelException.class, () -> source(workerFails).cloneForWorker(0));
+        TestCase root = new TestCase(source(workerFails), true);
+        assertThrows(HegelException.class, () -> root.forWorker(0));
         // The clone was made, so it is released before the failure surfaces.
         assertEquals(List.of(FakeLibhegel.CLONE_BASE), workerFails.freedClones);
 
@@ -128,7 +130,7 @@ class BindingErrorPathsTest {
         aborted.generateIntegerRc = Abi.E_STOP_TEST;
         LiveDataSource ds = source(aborted);
         assertThrows(StopTest.class, () -> ds.generateInteger(0, 1));
-        assertThrows(StopTest.class, () -> ds.cloneForWorker(0));
+        assertThrows(StopTest.class, () -> ds.clone());
         assertTrue(aborted.clonesMade.isEmpty());
     }
 

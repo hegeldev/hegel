@@ -58,15 +58,6 @@ final class ExplicitDraws implements AutoCloseable {
         return value;
     }
 
-    /** The value of a silent draw: the example's next positional value, not printed. */
-    synchronized Object takeSilent() {
-        if (consumed < example.positional().size()) {
-            return example.positional().get(consumed++);
-        }
-        throw new InvalidExample("Explicit example " + example
-                + " has no value for a silent draw: a silent draw takes the next positional value");
-    }
-
     synchronized void note(String message) {
         for (String line : message.split("\n", -1)) {
             printer.text(line);

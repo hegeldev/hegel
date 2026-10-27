@@ -603,19 +603,19 @@ final class LiveDataSource implements DataSource {
     }
 
     @Override
-    public DataSource cloneForWorker(long workerIndex) {
+    public DataSource clone() {
         checkLive();
         // Cloning consumes a choice position, so it is a draw: on a replay of a shorter sequence
         // it reports STOP_TEST like any other draw, and the case is an overrun.
         long[] clone = new long[1];
         translate(lib.testCaseClone(tc, clone), "test_case_clone");
-        try {
-            lib.testCaseSetWorker(clone[0], workerIndex);
-        } catch (RuntimeException e) {
-            lib.testCaseFree(clone[0]);
-            throw e;
-        }
         return new LiveDataSource(lib, clone[0], pools, new boolean[1], new boolean[1]);
+    }
+
+    @Override
+    public void setWorker(long workerIndex) {
+        checkNotReleased();
+        lib.testCaseSetWorker(tc, workerIndex);
     }
 
     @Override

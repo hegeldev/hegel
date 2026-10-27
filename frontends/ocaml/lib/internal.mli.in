@@ -82,7 +82,8 @@ val set_test_aborted : test_case -> bool -> unit
 
 (** [clone tc] forks a fresh clone of [tc] on an independent choice stream (its
     own native handle and context), owned and freed by the test case once it
-    completes.
+    completes. A clone of an explicit example's test case draws the example's
+    values, in sequence with [tc]'s draws.
     Re-exported as [Hegel.clone]. *)
 val clone : test_case -> test_case
 
@@ -97,7 +98,8 @@ val with_block : test_case -> indent:int -> (test_case -> 'a) MODE(local) -> 'a
     currently owns; they are freed together once the case completes. *)
 val owned_clone_count : test_case -> int
 
-(** Tags subsequent output from [tc] with a concurrent worker index. *)
+(** Tags subsequent output from [tc] with a concurrent worker index. Does
+    nothing on an explicit example's test case, which has no output to tag. *)
 val set_worker_index : test_case -> int -> unit
 
 (** [is_explicit tc] is [true] when [tc] is an explicit example's test case,

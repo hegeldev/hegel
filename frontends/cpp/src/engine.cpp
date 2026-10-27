@@ -329,6 +329,14 @@ namespace hegel::impl {
         return yes;
     }
 
+    bool settings_get_report_multiple_failures(hegel_context_t* ctx,
+                                               const hegel_settings_t* s) {
+        bool yes = false;
+        check_rc(ctx,
+                 hegel_settings_get_report_multiple_failures(ctx, s, &yes));
+        return yes;
+    }
+
     uint32_t settings_get_phases(hegel_context_t* ctx,
                                  const hegel_settings_t* s) {
         uint32_t phases = 0;

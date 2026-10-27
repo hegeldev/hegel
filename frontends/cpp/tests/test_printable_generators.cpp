@@ -617,12 +617,12 @@ TEST(PrintableGenerators,
         return std::string("<no error>");
     };
     EXPECT_EQ(run([](hegel::TestCase& tc) { (void)tc.draw_silent(zero()); }),
-              "draw_silent() is not supported in an explicit test case");
+              "draw_silent is not supported in explicit test cases");
     EXPECT_EQ(run([](hegel::TestCase& tc) {
                   hegel::Printer printer = hegel::Printer::noop();
                   (void)tc.draw_and_print(zero(), printer);
               }),
-              "draw_and_print() is not supported in an explicit test case");
+              "draw_and_print is not supported in explicit test cases");
 }
 
 TEST(PrintableGenerators, LabelsArePublic) {
