@@ -29,6 +29,9 @@ export type PoolHandle = { readonly [poolBrand]: never };
 declare const recursionBrand: unique symbol;
 export type RecursionHandle = { readonly [recursionBrand]: never };
 
+declare const repeatBrand: unique symbol;
+export type RepeatHandle = { readonly [repeatBrand]: never };
+
 declare const stateMachineBrand: unique symbol;
 export type StateMachineHandle = { readonly [stateMachineBrand]: never };
 
@@ -506,6 +509,13 @@ export interface Engine {
     why: string | null,
   ): void;
   freeCollection(collection: CollectionHandle): void;
+  /** Start a repeat loop (see `TestCase.repeat`); released with {@link freeRepeat}. */
+  newRepeat(ctx: ContextHandle, tc: TestCaseHandle): RepeatHandle;
+  /** Whether the engine wants another iteration of the loop. */
+  repeatMore(ctx: ContextHandle, tc: TestCaseHandle, repeat: RepeatHandle): boolean;
+  /** Report that the iteration just run failed, before the failure is rethrown. */
+  repeatFailed(ctx: ContextHandle, tc: TestCaseHandle, repeat: RepeatHandle): void;
+  freeRepeat(repeat: RepeatHandle): void;
   markComplete(ctx: ContextHandle, tc: TestCaseHandle, status: number, origin: string | null): void;
   /** Open a variable pool for stateful testing; released with {@link freePool}. */
   newPool(ctx: ContextHandle, tc: TestCaseHandle): PoolHandle;

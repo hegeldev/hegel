@@ -268,6 +268,16 @@ final class FakeLibhegel implements Libhegel {
     /** Collection handles released through collectionFree, in order. */
     final List<Long> freedCollections = new ArrayList<>();
 
+    // Repeat loops answer repeat_more from `moreSequence`, like collections do.
+    int newRepeatRc = Abi.OK;
+    long repeatId = 11;
+    int repeatMoreRc = Abi.OK;
+    int repeatFailedRc = Abi.OK;
+    /** Whether repeat_failed was ever called. */
+    boolean repeatFailed;
+    /** Repeat handles released through repeatFree, in order. */
+    final List<Long> freedRepeats = new ArrayList<>();
+
     int targetRc = Abi.OK;
     /** Whether generate_boolean was ever called. */
     boolean booleanDrawn;
@@ -1072,6 +1082,33 @@ final class FakeLibhegel implements Libhegel {
     @Override
     public void collectionFree(long id) {
         freedCollections.add(id);
+    }
+
+    @Override
+    public int newRepeat(long tc, long[] outId) {
+        if (newRepeatRc == Abi.OK) {
+            outId[0] = repeatId;
+        }
+        return newRepeatRc;
+    }
+
+    @Override
+    public int repeatMore(long tc, long id, boolean[] outMore) {
+        if (repeatMoreRc == Abi.OK) {
+            outMore[0] = moreIndex < moreSequence.length && moreSequence[moreIndex++];
+        }
+        return repeatMoreRc;
+    }
+
+    @Override
+    public int repeatFailed(long tc, long id) {
+        repeatFailed = true;
+        return repeatFailedRc;
+    }
+
+    @Override
+    public void repeatFree(long id) {
+        freedRepeats.add(id);
     }
 
     @Override

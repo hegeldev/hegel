@@ -211,6 +211,10 @@ final class RealLibhegel implements Libhegel {
     private final MethodHandle collectionMore;
     private final MethodHandle collectionReject;
     private final MethodHandle collectionFree;
+    private final MethodHandle newRepeat;
+    private final MethodHandle repeatMore;
+    private final MethodHandle repeatFailed;
+    private final MethodHandle repeatFree;
     private final MethodHandle newPool;
     private final MethodHandle poolAdd;
     private final MethodHandle poolGenerate;
@@ -681,6 +685,16 @@ final class RealLibhegel implements Libhegel {
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, ADDRESS));
         this.collectionFree =
                 h(linker, lookup, "hegel_collection_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_LONG));
+        this.newRepeat =
+                h(linker, lookup, "hegel_new_repeat", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+        this.repeatMore = h(
+                linker,
+                lookup,
+                "hegel_repeat_more",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, ADDRESS));
+        this.repeatFailed =
+                h(linker, lookup, "hegel_repeat_failed", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG));
+        this.repeatFree = h(linker, lookup, "hegel_repeat_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_LONG));
         this.newPool = h(linker, lookup, "hegel_new_pool", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
         this.poolAdd = h(
                 linker,
@@ -1855,6 +1869,34 @@ final class RealLibhegel implements Libhegel {
     @Override
     public void collectionFree(long id) {
         check("hegel_collection_free", rc(collectionFree, id));
+    }
+
+    @Override
+    public int newRepeat(long tc, long[] outId) {
+        MemorySegment seg = Arena.ofAuto().allocate(JAVA_LONG);
+        int code = rc(newRepeat, segment(tc), seg);
+        outId[0] = seg.get(JAVA_LONG, 0);
+        return code;
+    }
+
+    @Override
+    public int repeatMore(long tc, long id, boolean[] outMore) {
+        MemorySegment seg = Arena.ofAuto().allocate(JAVA_BOOLEAN);
+        int code = rc(repeatMore, segment(tc), id, seg);
+        if (code == Abi.OK) {
+            outMore[0] = seg.get(JAVA_BOOLEAN, 0);
+        }
+        return code;
+    }
+
+    @Override
+    public int repeatFailed(long tc, long id) {
+        return rc(repeatFailed, segment(tc), id);
+    }
+
+    @Override
+    public void repeatFree(long id) {
+        check("hegel_repeat_free", rc(repeatFree, id));
     }
 
     @Override

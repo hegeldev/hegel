@@ -12,6 +12,7 @@ import {
   type StringGeneratorHandle,
   type PoolHandle,
   type RecursionHandle,
+  type RepeatHandle,
   type StateMachineHandle,
   type PrinterHandle,
   type PrinterOptionsHandle,
@@ -31,6 +32,7 @@ export const collection = {} as CollectionHandle;
 export const stringGenerator = {} as StringGeneratorHandle;
 export const pool = {} as PoolHandle;
 export const recursion = {} as RecursionHandle;
+export const repeat = {} as RepeatHandle;
 export const stateMachine = {} as StateMachineHandle;
 export const derivedCase = {} as TestCaseHandle;
 export const grammarBuilder = {} as GrammarBuilderHandle;
@@ -190,6 +192,10 @@ export function fakeEngine() {
       .mockReturnValue(false),
     collectionReject: vi.fn<Engine["collectionReject"]>(),
     freeCollection: vi.fn<Engine["freeCollection"]>(),
+    newRepeat: vi.fn<Engine["newRepeat"]>(() => repeat),
+    repeatMore: vi.fn<Engine["repeatMore"]>().mockReturnValueOnce(true).mockReturnValue(false),
+    repeatFailed: vi.fn<Engine["repeatFailed"]>(),
+    freeRepeat: vi.fn<Engine["freeRepeat"]>(),
     markComplete: vi.fn<Engine["markComplete"]>(),
     newPool: vi.fn<Engine["newPool"]>(() => pool),
     poolAdd: vi.fn<Engine["poolAdd"]>(() => 0n),

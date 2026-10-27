@@ -112,3 +112,5 @@ const expressions = gs.fromLark(`
   %import common.NUMBER
 `);
 ```
+
+- `tc.repeat` and `tc.repeatAsync` now have the engine decide how many repetitions run and which one failed, through libhegel's new `hegel_repeat_t` functions, rather than drawing those choices in TypeScript. The choices are the same, so an existing reproduce blob still replays.

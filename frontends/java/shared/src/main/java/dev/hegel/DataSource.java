@@ -119,6 +119,18 @@ interface DataSource {
     /** Release a collection handle from {@link #newCollection}. Safe once the case is aborted. */
     void collectionFree(long id);
 
+    /** Start the engine-driven loop behind {@link TestCase#repeat} ({@code hegel_new_repeat}). */
+    long newRepeat();
+
+    /** Whether the engine wants another repetition of the loop. */
+    boolean repeatMore(long id);
+
+    /** Report that the repetition just run failed, before the failure propagates. */
+    void repeatFailed(long id);
+
+    /** Release a repeat handle from {@link #newRepeat}. Safe once the case is aborted. */
+    void repeatFree(long id);
+
     /**
      * Create a pool. The pool is family-wide: it is released by {@link #releasePools()} on the
      * root source once the test case is over, wherever in the family it was created.

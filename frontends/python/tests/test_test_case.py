@@ -129,8 +129,8 @@ def test_repeat_runs_body_and_reports_repetitions():
     error = failing(body)
     assert counts == []
     text = notes(error)[0]
-    assert "// Repetition #1" in text
-    assert "// Repetition #2" in text
+    assert "# Repetition #1" in text
+    assert "# Repetition #2" in text
     assert "  x = " in text
 
 

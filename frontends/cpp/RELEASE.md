@@ -120,3 +120,7 @@ A `filter()` on `hegel::stateful::values_consumed()` now removes only the value 
 The undocumented `hegel::verbosity_to_string()` and `hegel::health_check_to_string()` are removed.
 
 The 0.13.2 changelog entry says the Nix flake was removed. That is not correct: `nix/flake.nix` is still available and still exports `lib.mkHegelCppProject`. It now builds the in-tree libhegel instead of downloading one.
+
+### `TestCase::repeat()`
+
+`TestCase::repeat()` now has the engine decide how many repetitions run and which one failed, through libhegel's new `hegel_repeat_t` functions, as the other Hegel frontends do, rather than drawing a loop length of its own. Each repetition's draws and notes now print indented under its `// Repetition #N` note, and a failing repetition is marked for the engine before its exception propagates, so a failure shrinks to the fewest repetitions. The loop makes different choices from before (its minimum length is drawn from a larger range), so a reproduce blob from an earlier release that went through `repeat()` no longer replays.

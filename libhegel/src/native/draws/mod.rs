@@ -432,8 +432,9 @@ pub(crate) fn many_reject<D: Draws>(d: &mut D, state: &mut ManyState) -> Result<
 /// The number of budget-exceeded retries one recursive draw gets before
 /// the test case is rejected: attempt `k` prices branches as if each had
 /// `k` more children than observed, so nine attempts push any branch
-/// function down to a fitting probability.
-pub(crate) const RECURSION_MAX_ATTEMPTS: u64 = 9;
+/// function down to a fitting probability. Published in the C header as
+/// `HEGEL_RECURSION_ATTEMPTS`.
+pub(crate) const RECURSION_MAX_ATTEMPTS: u64 = crate::HEGEL_RECURSION_ATTEMPTS;
 
 /// The number of completed-but-mispriced attempts one recursive draw
 /// discards (see [`recursion_finish`]) before accepting whatever the

@@ -35,6 +35,7 @@ class HandleLeakTest {
         final Set<Long> liveTestCases = new HashSet<>();
         final Set<Long> livePrinters = new HashSet<>();
         final Set<Long> liveRecursions = new HashSet<>();
+        final Set<Long> liveRepeats = new HashSet<>();
         final Set<Long> liveGrammarBuilders = new HashSet<>();
         final Set<Long> liveGrammars = new HashSet<>();
         final Set<Long> liveGrammarDraws = new HashSet<>();
@@ -47,6 +48,7 @@ class HandleLeakTest {
         int blocksCreated;
         int printersCreated;
         int collectionsCreated;
+        int repeatsCreated;
         int poolsCreated;
         final Map<Thread, Boolean> threadReleased = new HashMap<>();
         final Libhegel lib;
@@ -82,6 +84,13 @@ class HandleLeakTest {
                     }
                 }
                 case "collectionFree" -> assertTrue(liveCollections.remove((Long) args[0]));
+                case "newRepeat" -> {
+                    if (ok) {
+                        repeatsCreated++;
+                        liveRepeats.add(((long[]) args[1])[0]);
+                    }
+                }
+                case "repeatFree" -> assertTrue(liveRepeats.remove((Long) args[0]));
                 case "newPool" -> {
                     if (ok) {
                         poolsCreated++;
@@ -222,6 +231,7 @@ class HandleLeakTest {
                 });
         assertFalse(report.passed());
         assertTrue(tracker.blocksCreated > 0);
+        assertTrue(tracker.repeatsCreated > 0);
         tracker.assertNothingLeaked();
     }
 

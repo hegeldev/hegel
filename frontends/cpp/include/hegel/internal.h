@@ -19,7 +19,8 @@
 struct hegel_collection_t;
 struct hegel_pool_t;
 struct hegel_state_machine_t;
-struct HegelRecursion;
+struct hegel_recursion_t;
+struct hegel_repeat_t;
 /// @endcond
 
 /**
@@ -136,6 +137,23 @@ namespace hegel::internal {
         hegel_collection_t* handle_ = nullptr;
     };
 
+    // The engine's loop behind TestCase::repeat (hegel_new_repeat): it
+    // decides how many repetitions run and is told which one failed.
+    class RepeatHandle {
+      public:
+        explicit RepeatHandle(const TestCase& tc);
+        ~RepeatHandle();
+        RepeatHandle(const RepeatHandle&) = delete;
+        RepeatHandle& operator=(const RepeatHandle&) = delete;
+
+        bool more(const TestCase& tc);
+
+        void failed(const TestCase& tc);
+
+      private:
+        hegel_repeat_t* handle_ = nullptr;
+    };
+
     class PoolHandle {
       public:
         explicit PoolHandle(const TestCase& tc);
@@ -180,7 +198,7 @@ namespace hegel::internal {
         void finish(const TestCase& tc);
 
       private:
-        HegelRecursion* handle_ = nullptr;
+        hegel_recursion_t* handle_ = nullptr;
     };
 
     // Thrown out of the generators of a recursive value when its attempt

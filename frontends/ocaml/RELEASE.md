@@ -179,3 +179,5 @@ let%hegel_test greets tc =
   in
   assert (String.starts_with ~prefix:"hello " s)
 ```
+
+`repeat` now introduces each iteration with a `(* Repetition #n *)` note, an OCaml comment, where it used to print `// Repetition #n`. The engine now also decides how many iterations run and is told which one failed (libhegel's new `hegel_repeat_t` functions) rather than the frontend drawing those choices itself; the choices are the same, so an existing failure blob still replays.

@@ -36,6 +36,7 @@ opaque_handles!(
     HegelPrinter,
     HegelPrinterOptions,
     HegelRecursion,
+    HegelRepeat,
     HegelReflowOptions,
     HegelRun,
     HegelRunResult,

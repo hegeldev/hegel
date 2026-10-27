@@ -125,17 +125,25 @@ impl core::fmt::Debug for Output {
     }
 }
 
-/// Controls how much output Hegel produces during test runs.
+/// How much the engine says about a run through its output. The frontend
+/// reads the level back for the output it produces itself (which test
+/// cases it prints, how it reports a failure); the variants describe the
+/// engine's own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Verbosity {
-    /// Suppress all output.
+    /// Nothing at all from the engine.
     Quiet,
-    /// Default output level.
+    /// The run's notices only: the statistics report, a warning when
+    /// shrinking ran out of time, the nondeterminism notice, and where a
+    /// blob replay first diverged from its recording.
     Normal,
-    /// Show more detail about the test run.
+    /// As normal, plus a line as each phase starts and ends and one as each
+    /// test case starts.
     Verbose,
-    /// Show protocol-level debug information.
+    /// As verbose, plus the engine's own trace: the configuration loaded,
+    /// the shrinker's progress and profile, and the replay and
+    /// nondeterminism bookkeeping.
     Debug,
 }
 

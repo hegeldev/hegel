@@ -163,3 +163,5 @@ Text and binary generators with no `maxSize` now leave the maximum length to the
 `dev.hegel.lowlevel.Libhegel` gains `grammarBuilderNew`, `grammarBuilderFile`, `grammarBuilderProvide`, `grammarBuilderFree`, `grammarNew`, `grammarFree`, `grammarDrawNew`, `grammarDrawNext`, `grammarDrawProvide`, `grammarDrawResult` and `grammarDrawFree`. A third-party binding needs to implement them.
 
 A draw label containing a newline now fails the run with an `IllegalArgumentException`. Errors the engine reports while printing a test case's output, or for `TestCase.note`, are now raised instead of ignored, except that an error printing a failing test case's output is attached to the test's own exception as a suppressed exception rather than replacing it. Output written after the case's document has been read, such as by a straggling thread, is still silently dropped.
+
+`TestCase.repeat` now has the engine decide how many repetitions run and which one failed, through libhegel's new `hegel_repeat_t` functions, rather than drawing those choices itself. The choices are the same, so an existing reproduce blob still replays.

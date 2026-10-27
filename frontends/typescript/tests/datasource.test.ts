@@ -92,6 +92,19 @@ class FakeDataSource implements DataSource {
     // no-op
   }
 
+  newRepeat(): number {
+    return 1;
+  }
+
+  repeatMore(_repeatId: number): boolean {
+    this._collectionCallCount++;
+    return this._collectionCallCount <= this._collectionCounts;
+  }
+
+  repeatFailed(_repeatId: number): void {
+    // no-op
+  }
+
   markComplete(status: number, origin: string | null): void {
     this._markCompleteCalls.push({ status, origin });
   }

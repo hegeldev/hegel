@@ -611,6 +611,12 @@ impl TestCase {
         Ok(Collection { raw: SendPtr(raw) })
     }
 
+    fn new_repeat(&self) -> PyResult<Repeat> {
+        let mut raw: *mut c::HegelRepeat = ptr::null_mut();
+        with_ctx(|ctx| check(unsafe { c::hegel_new_repeat(ctx, self.tc(), &mut raw) }))?;
+        Ok(Repeat { raw: SendPtr(raw) })
+    }
+
     fn new_recursion(&self, max_depth: u64, max_leaves: u64) -> PyResult<Recursion> {
         let mut raw: *mut c::HegelRecursion = ptr::null_mut();
         with_ctx(|ctx| {
@@ -698,6 +704,32 @@ impl Collection {
         let s = why.map(hstr);
         let p = s.as_ref().map_or(ptr::null(), |s| s as *const _);
         with_ctx(|ctx| check(unsafe { c::hegel_collection_reject(ctx, tc.tc(), self.raw.0, p) }))
+    }
+}
+
+#[pyclass(frozen, name = "Repeat", module = "hegel._native")]
+pub(crate) struct Repeat {
+    raw: SendPtr<c::HegelRepeat>,
+}
+
+impl Drop for Repeat {
+    fn drop(&mut self) {
+        with_ctx(|ctx| unsafe {
+            let _ = c::hegel_repeat_free(ctx, self.raw.0);
+        });
+    }
+}
+
+#[pymethods]
+impl Repeat {
+    fn more(&self, tc: &TestCase) -> PyResult<bool> {
+        let mut out = false;
+        with_ctx(|ctx| check(unsafe { c::hegel_repeat_more(ctx, tc.tc(), self.raw.0, &mut out) }))?;
+        Ok(out)
+    }
+
+    fn failed(&self, tc: &TestCase) -> PyResult<()> {
+        with_ctx(|ctx| check(unsafe { c::hegel_repeat_failed(ctx, tc.tc(), self.raw.0) }))
     }
 }
 

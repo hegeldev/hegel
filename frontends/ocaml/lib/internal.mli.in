@@ -387,6 +387,31 @@ val collection_reject : test_case -> collection:collection -> unit
     case has aborted. *)
 val collection_free : test_case -> collection:collection -> unit
 
+(** {2 Repeat loops}
+
+    The engine decides how many times {!Hegel.repeat} runs its body and is
+    told which repetition failed, so that a failure shrinks to the fewest
+    repetitions. *)
+
+(** The engine's side of one {!Hegel.repeat} loop. Each one must be released
+    exactly once with {!repeat_free}. *)
+type repeat = Hegel_ffi.Ffi.repeat
+
+(** [new_repeat tc] starts a repeat loop at this point of [tc]'s draws. *)
+val new_repeat : test_case -> repeat
+
+(** [repeat_more tc ~repeat] returns whether the engine wants another
+    repetition. *)
+val repeat_more : test_case -> repeat:repeat -> bool
+
+(** [repeat_failed tc ~repeat] reports that the repetition just run failed,
+    before the failure propagates. *)
+val repeat_failed : test_case -> repeat:repeat -> unit
+
+(** [repeat_free tc ~repeat] releases [repeat]. Safe after the test case has
+    aborted. *)
+val repeat_free : test_case -> repeat:repeat -> unit
+
 (** {2 Variable pools}
 
     Pools are the engine-side primitive backing variables in stateful testing

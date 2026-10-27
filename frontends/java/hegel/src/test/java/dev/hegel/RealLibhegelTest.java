@@ -324,7 +324,16 @@ class RealLibhegelTest {
     void collectionAndPoolFreesAcceptNull() {
         RealLibhegel lib = real();
         lib.collectionFree(0);
+        lib.repeatFree(0);
         lib.poolFree(0);
+    }
+
+    @Test
+    void repeatCallsOnANullHandleAreRejected() {
+        RealLibhegel lib = real();
+        assertEquals(Abi.E_INVALID_HANDLE, lib.newRepeat(0, new long[1]));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.repeatMore(0, 0, new boolean[1]));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.repeatFailed(0, 0));
     }
 
     @Test

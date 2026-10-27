@@ -16,6 +16,7 @@
 #include <mutex>
 #include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <typeinfo>
@@ -112,25 +113,60 @@ namespace hegel {
         impl::event_value(*this, label, value);
     }
 
+    namespace {
+        // Routes `outer`'s draws, notes and printing through `inner`'s
+        // engine handle for the scope's lifetime.
+        class HandleSwap {
+          public:
+            HandleSwap(impl::test_case::TestCaseData& outer,
+                       impl::test_case::TestCaseData& inner)
+                : outer_(outer), inner_(inner) {
+                swap();
+            }
+            ~HandleSwap() { swap(); }
+            HandleSwap(const HandleSwap&) = delete;
+            HandleSwap& operator=(const HandleSwap&) = delete;
+
+          private:
+            void swap() noexcept {
+                std::swap(outer_.tc, inner_.tc);
+                std::swap(outer_.printer, inner_.printer);
+                std::swap(outer_.draw_depth, inner_.draw_depth);
+            }
+
+            impl::test_case::TestCaseData& outer_;
+            impl::test_case::TestCaseData& inner_;
+        };
+
+        void run_repetition(const TestCase& tc,
+                            const std::function<void()>& body) {
+            TestCase block = internal::block(tc, 2);
+            HandleSwap swap(*tc.data(), *block.data());
+            body();
+        }
+    } // namespace
+
     void TestCase::repeat(const std::function<void()>& body) const {
         if (data_->explicit_state) {
             note("// Repetition #1");
             body();
             return;
         }
-        // Seed the loop's minimum length, then let the engine decide each
-        // iteration: the count is drawn like any collection, so it shrinks.
-        int64_t min_size = internal::draw_integer(*this, 0, int64_t{1} << 20);
-        internal::CollectionHandle collection(
-            *this, static_cast<uint64_t>(min_size), internal::no_max_size);
+        internal::RepeatHandle repeat(*this);
         uint64_t iteration = 0;
-        while (collection.more(*this)) {
+        while (repeat.more(*this)) {
             note("// Repetition #" + std::to_string(++iteration));
             try {
-                body();
+                run_repetition(*this, body);
             } catch (const internal::HegelReject&) {
-                // Iteration rejected; discard it and keep looping.
                 continue;
+            } catch (const internal::HegelStopTest&) {
+                throw;
+            } catch (const std::invalid_argument&) {
+                throw;
+            } catch (...) {
+                repeat.failed(*this);
+                throw;
             }
         }
     }

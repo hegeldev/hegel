@@ -800,6 +800,7 @@ let stop_span ?(discard = false) tc =
 ;;
 
 type collection = Ffi.collection
+type repeat = Ffi.repeat
 type pool = Ffi.pool
 type state_machine = Ffi.state_machine
 
@@ -849,6 +850,24 @@ let collection_reject tc ~collection =
 ;;
 
 let collection_free tc ~collection = Ffi.collection_free tc.context collection
+
+(** [new_repeat tc] starts the engine-driven loop behind {!Hegel.repeat}.
+    Release it with {!repeat_free}. Raises {!Stop_test} on StopTest. *)
+let new_repeat tc = with_stop_guard tc (fun () -> Ffi.new_repeat tc.context tc.handle)
+
+(** [repeat_more tc ~repeat] returns whether the engine wants another
+    repetition. Raises {!Stop_test} on StopTest. *)
+let repeat_more tc ~repeat =
+  with_stop_guard tc (fun () -> Ffi.repeat_more tc.context tc.handle repeat)
+;;
+
+(** [repeat_failed tc ~repeat] reports that the repetition just run failed.
+    Raises {!Stop_test} on StopTest. *)
+let repeat_failed tc ~repeat =
+  with_stop_guard tc (fun () -> Ffi.repeat_failed tc.context tc.handle repeat)
+;;
+
+let repeat_free tc ~repeat = Ffi.repeat_free tc.context repeat
 
 let new_pool tc =
   let pool = with_stop_guard tc (fun () -> Ffi.new_pool tc.context tc.handle) in
