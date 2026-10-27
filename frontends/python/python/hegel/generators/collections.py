@@ -7,10 +7,10 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from hegel._labels import combine_labels, label_from_name
 from hegel.errors import InvalidArgument
-from hegel.generators.base import NOOP_PRINTER, Filtered, Generator, Mapped
+from hegel.generators.base import Filtered, Generator, Mapped, _PrintsValue
 from hegel.generators.combinators import FilteredSample, Just, SampledFrom, as_generator
 from hegel.generators.numeric import Booleans, Integers
-from hegel.pretty import PrettyPrinter, pretty_print
+from hegel.pretty import _SILENT_PRINTER, PrettyPrinter
 from hegel.test_case import Collection
 
 if TYPE_CHECKING:
@@ -139,7 +139,7 @@ class _WithoutReplacement:
                     return False, None
             else:
                 value = function(value)
-        pretty_print(value, printer)
+        printer.repr(value)
         return True, value
 
 
@@ -202,7 +202,7 @@ class Lists(Generator[list[T]]):
         return result
 
     def do_draw(self, tc: TestCase) -> list[T]:
-        return self._draw(tc, NOOP_PRINTER)
+        return self._draw(tc, _SILENT_PRINTER)
 
     def do_draw_and_print(self, tc: TestCase, printer: PrettyPrinter) -> list[T]:
         return self._draw(tc, printer)
@@ -305,7 +305,7 @@ class Sets(Generator[Any]):
         return frozenset(result) if self.frozen else result
 
     def do_draw(self, tc: TestCase) -> Any:
-        return self._draw(tc, NOOP_PRINTER)
+        return self._draw(tc, _SILENT_PRINTER)
 
     def do_draw_and_print(self, tc: TestCase, printer: PrettyPrinter) -> Any:
         return self._draw(tc, printer)
@@ -358,9 +358,10 @@ def iterables(
     arguments. Iterating once exhausts it, which tests code that must not
     iterate its input twice. The failure report prints the values it
     started with."""
-    return lists(
+    one_shot: Generator[Iterable[T]] = lists(
         elements, min_size=min_size, max_size=max_size, unique=unique, unique_by=unique_by
     ).map(_OneShot)
+    return one_shot.print_as_call("iter")
 
 
 class _OneShot:
@@ -426,7 +427,7 @@ class Dicts(Generator[dict[Any, Any]]):
         return result
 
     def do_draw(self, tc: TestCase) -> dict[Any, Any]:
-        return self._draw(tc, NOOP_PRINTER)
+        return self._draw(tc, _SILENT_PRINTER)
 
     def do_draw_and_print(self, tc: TestCase, printer: PrettyPrinter) -> dict[Any, Any]:
         return self._draw(tc, printer)
@@ -477,15 +478,13 @@ class FixedDicts(Generator[dict[Any, Any]]):
         )
 
     def _draw(self, tc: TestCase, printer: PrettyPrinter) -> dict[Any, Any]:
-        from hegel.pretty import pretty_print
-
         printer.begin_group(1, "{")
         result: dict[Any, Any] = {}
         for key, generator in self.mapping.items():
             if result:
                 printer.text(",")
                 printer.breakable(" ")
-            pretty_print(key, printer)
+            printer.repr(key)
             printer.text(": ")
             result[key] = tc.draw_and_print(generator, printer)
         for key, generator in self.optional.items():
@@ -495,7 +494,7 @@ class FixedDicts(Generator[dict[Any, Any]]):
                 if result:
                     printer.text(",")
                     printer.breakable(" ")
-                pretty_print(key, printer)
+                printer.repr(key)
                 printer.text(": ")
                 result[key] = tc.draw_and_print(generator, printer)
                 speculation.commit()
@@ -503,7 +502,7 @@ class FixedDicts(Generator[dict[Any, Any]]):
         return result
 
     def do_draw(self, tc: TestCase) -> dict[Any, Any]:
-        return self._draw(tc, NOOP_PRINTER)
+        return self._draw(tc, _SILENT_PRINTER)
 
     def do_draw_and_print(self, tc: TestCase, printer: PrettyPrinter) -> dict[Any, Any]:
         return self._draw(tc, printer)
@@ -558,7 +557,7 @@ class Tuples(Generator[tuple[Any, ...]]):
         return tuple(result)
 
     def do_draw(self, tc: TestCase) -> tuple[Any, ...]:
-        return self._draw(tc, NOOP_PRINTER)
+        return self._draw(tc, _SILENT_PRINTER)
 
     def do_draw_and_print(self, tc: TestCase, printer: PrettyPrinter) -> tuple[Any, ...]:
         return self._draw(tc, printer)
@@ -584,7 +583,7 @@ def _draw_index_sample(tc: TestCase, n: int, min_size: int, max_size: int) -> li
     return chosen
 
 
-class Subsequences(Generator[list[T]]):
+class Subsequences(_PrintsValue[list[T]]):
     def __init__(self, elements: Sequence[T], min_size: int, max_size: int | None) -> None:
         self.elements = elements
         self.min_size = min_size
@@ -620,7 +619,7 @@ def subsequences(
     return Subsequences(list(elements), min_size, max_size)
 
 
-class Permutations(Generator[list[T]]):
+class Permutations(_PrintsValue[list[T]]):
     def __init__(self, elements: Sequence[T]) -> None:
         self.elements = elements
         self.label = PERMUTATION_LABEL
@@ -639,7 +638,7 @@ def permutations(elements: Iterable[T]) -> Generator[list[T]]:
     return Permutations(list(elements))
 
 
-class Samples(Generator[list[T]]):
+class Samples(_PrintsValue[list[T]]):
     def __init__(
         self, elements: Sequence[T], min_size: int, max_size: int | None, replacement: bool
     ) -> None:

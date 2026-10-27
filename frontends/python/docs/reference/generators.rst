@@ -123,7 +123,10 @@ The generator class
 
 Every generator is an instance of :class:`Generator`, which provides the
 methods for transforming one generator into another. Subclassing it directly is
-rarely necessary: :func:`composite` covers almost every case.
+rarely necessary: :func:`composite` covers almost every case. A subclass that
+should be drawn with :meth:`TestCase.draw <hegel.TestCase.draw>` implements
+``do_draw_and_print``, which prints the value as it draws it; see
+:doc:`printing`.
 
 .. autoclass:: Generator
-   :members: map, filter, flat_map, print_with, print_as_call, do_draw, do_draw_and_print
+   :members: map, filter, flat_map, print_with, print_as_repr, print_as_call, do_draw, do_draw_and_print

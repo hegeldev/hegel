@@ -129,5 +129,21 @@ gs.register_type_generator(Temperature, gs.floats(-273.15, 1000).map(Temperature
 ## Generator subclasses
 
 The generators on this page cover almost every need. For the rare case they
-don't, generators are subclasses of {class}`~hegel.generators.Generator`;
+don't, generators are subclasses of {class}`~hegel.generators.Generator`. A
+subclass implements `do_draw_and_print`, which draws the value and prints it
+in the failure report as it goes, drawing its components with
+`tc.draw_and_print`:
+
+```python
+class Coords(gs.Generator[tuple[int, int]]):
+    def do_draw_and_print(self, tc, printer):
+        with printer.group("Coord(", ")"):
+            x = tc.draw_and_print(gs.integers(0, 9), printer)
+            printer.separator()
+            y = tc.draw_and_print(gs.integers(0, 9), printer)
+        return (x, y)
+```
+
+A failing test that draws one reports it as `coords = Coord(0, 0)`.
+{doc}`../reference/printing` explains how printing works, and
 {doc}`../reference/generators` describes the interface.

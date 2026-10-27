@@ -10,9 +10,9 @@ from typing import TYPE_CHECKING, TypeVar
 from hegel._labels import combine_labels, label_from_name
 from hegel._native import RetrySignal
 from hegel.errors import InvalidArgument
-from hegel.generators.base import NOOP_PRINTER, Generator
+from hegel.generators.base import Generator
 from hegel.generators.combinators import as_generator
-from hegel.pretty import PrettyPrinter
+from hegel.pretty import _SILENT_PRINTER, PrettyPrinter
 
 if TYPE_CHECKING:
     from hegel import _native
@@ -54,7 +54,7 @@ class _Subtree(Generator[T]):
         return result
 
     def do_draw(self, tc: TestCase) -> T:
-        return self._draw(tc, NOOP_PRINTER)
+        return self._draw(tc, _SILENT_PRINTER)
 
     def do_draw_and_print(self, tc: TestCase, printer: PrettyPrinter) -> T:
         return self._draw(tc, printer)
@@ -99,7 +99,7 @@ class Recursive(Generator[T]):
             return value
 
     def do_draw(self, tc: TestCase) -> T:
-        return self._draw(tc, NOOP_PRINTER)
+        return self._draw(tc, _SILENT_PRINTER)
 
     def do_draw_and_print(self, tc: TestCase, printer: PrettyPrinter) -> T:
         return self._draw(tc, printer)

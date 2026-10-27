@@ -32,6 +32,9 @@ failure.
 .. autoexception:: ResolutionFailed
    :show-inheritance:
 
+.. autoexception:: NotPrintable
+   :show-inheritance:
+
 .. autoexception:: BackendError
    :show-inheritance:
 

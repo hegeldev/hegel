@@ -129,6 +129,7 @@ exc_instances = [
     errors.InvalidArgument("invalid"),
     errors.MultipleFailures("check with Exception", [Exception()]),
     errors.MultipleFailures("check with BaseException", [KeyboardInterrupt()]),
+    errors.NotPrintable("not printable"),
     errors.ResolutionFailed("resolution"),
     errors.RunError("run"),
     errors.StopTest("stop"),

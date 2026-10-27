@@ -87,5 +87,8 @@ report shows the value the composite returned.
 The report a failing test produces is a single document: the drawn values and
 notes, in the order the test produced them. Hegel builds it during the final
 run and attaches it to the exception afterwards, so it does not interleave
-with anything the test prints. Values are printed with their `repr`, laid out
-to fit the line width, with long collections broken across lines.
+with anything the test prints. Each value is printed by the generator that drew
+it, as it drew it: collections and other structures print element by element,
+values from leaves and from `map`, `just`, `sampled_from` and composites print
+as their `repr`, and the engine lays it all out to fit the line width, with
+long collections broken across lines. See {doc}`../reference/printing`.

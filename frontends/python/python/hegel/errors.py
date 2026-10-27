@@ -27,6 +27,7 @@ __all__ = [
     "InternalError",
     "InvalidArgument",
     "MultipleFailures",
+    "NotPrintable",
     "ResolutionFailed",
     "RunError",
     "StopTest",
@@ -38,6 +39,19 @@ class ResolutionFailed(InvalidArgument):
     """:func:`~hegel.generators.from_type` could not find a generator for a
     type. Raised when the generator is built; a subclass of
     :class:`InvalidArgument`."""
+
+
+class NotPrintable(InvalidArgument):
+    """:meth:`TestCase.draw <hegel.TestCase.draw>` was given a generator
+    that cannot print the values it draws: a
+    :class:`~hegel.generators.Generator` subclass that implements only
+    ``do_draw``, or a structure containing one. Raised from the draw, on
+    the first test case that reaches it; a subclass of
+    :class:`InvalidArgument`, so it ends the run as a usage error. Implement
+    ``do_draw_and_print`` on the generator, make it printable with
+    :meth:`~hegel.generators.Generator.print_with` or
+    :meth:`~hegel.generators.Generator.print_as_repr`, or draw it with
+    :meth:`TestCase.draw_silent <hegel.TestCase.draw_silent>`."""
 
 
 class LoopDone(BaseException):

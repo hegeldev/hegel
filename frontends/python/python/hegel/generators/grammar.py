@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 from hegel import _native
 from hegel._labels import combine_labels, label_from_name
 from hegel.errors import InvalidArgument
-from hegel.generators.base import Generator
+from hegel.generators.base import Generator, _PrintsValue
 from hegel.generators.strings import _pattern_alphabet
 
 if TYPE_CHECKING:
@@ -64,7 +64,7 @@ def _check_bound(name: str, value: object, bits: int) -> int:
     return value
 
 
-class Lark(Generator[str]):
+class Lark(_PrintsValue[str]):
     def __init__(
         self,
         text: str,
