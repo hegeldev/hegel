@@ -1,6 +1,6 @@
 RELEASE_TYPE: minor
 
-This release brings Hegel for C++ into line with the other Hegel frontends: `hegel::Settings` now combine with the engine's settings profiles instead of overriding them, run errors and failure reports match hegel-rust's, every reproduce blob is replayed, output goes through libhegel's printer, and it adds explicit test cases, several generators and the rest of the engine's settings.
+This release brings Hegel for C++ into line with the other Hegel frontends: `hegel::Settings` now combine with the engine's settings profiles instead of overriding them, run errors and failure reports match hegel-rust's, every reproduce blob is replayed, output goes through libhegel's printer, generators print the values they draw, and it adds explicit test cases, several generators and the rest of the engine's settings.
 
 ### Settings
 
@@ -69,6 +69,31 @@ The new `TestCase::set_worker()` attributes what a test case prints to a worker 
 auto worker = tc.clone();
 worker.set_worker(1);
 ```
+
+### Printing drawn values
+
+A generator now prints each value as it draws it, as in hegel-rust, instead of Hegel for C++ printing the finished value. A container prints each element as the element's generator prints it, so printing that you give one generator shows inside every value built from it. This makes the following changes, some of them breaking:
+
+- `TestCase::draw()` takes a printable generator, `hegel::generators::Generator<T>`. Every built-in generator of a type with a C++ representation (a `print_to(hegel::Printer&) const` member, an `operator<<`, or a reflectable aggregate) is one. A generator that cannot print is the new `hegel::generators::AnyGenerator<T>`, which `Generator<T>` derives from. Drawing one with `tc.draw()` does not compile, and the error says how to fix it. `map()` to a type with no representation, `just()` and `sampled_from()` of one, `compose()` that returns one, and a collection or combinator of an `AnyGenerator` give an `AnyGenerator`. To make one printable, use `.print_with(f)` (prints each value with `f(value, printer)`), `.print_as_repr()`, or `.print_as_call("f")` on a `map()` of a printable generator, which prints `f(<input>)`:
+
+  ```cpp
+  auto keys = gs::integers<int>()
+                  .map([](int raw) { return KeyData::from_ffi(raw); })
+                  .print_as_call("KeyData::from_ffi");
+  // auto key = KeyData::from_ffi(3);
+  ```
+
+- The new `TestCase::draw_silent()` draws from any generator and prints nothing, and `TestCase::draw_and_print()` draws from a printable generator inside another generator's printing. Both are usage errors in an explicit test case.
+- `map()` now returns a `hegel::generators::Mapped<U, SourcePrintable>`, which derives from `Generator<U>` (or from `AnyGenerator<U>`) and has `print_as_call()`. It prints the value it made. Code that names the type `Generator<U>` still compiles when `U` has a representation.
+- `IGenerator<T>` is now documented, and the new `IPrintableGenerator<T>` is the interface of a printable generator: implement `do_draw_and_print(tc, printer)`, and wrap it with `make_generator<Impl>()`. A `Generator<T>` can no longer be made from an implementation of `IGenerator<T>` only; make it an `AnyGenerator<T>` or implement `IPrintableGenerator<T>`.
+- `hegel::Printer`, `hegel::Speculation` and `hegel::Document` are the new public printer: text, break points, groups, `seq()` for a list, `repr()` for a value's representation, speculative regions, and `deferred()` for a part of the line that is filled in later. They replace the undocumented printer types in `hegel::internal`. A type's `print_to()` member now takes a `hegel::Printer&`. `hegel::is_representable_v<T>` says whether a type has a C++ representation, and `label_from_name()` and `combine_labels()` are public, for generators of your own.
+- `HegelRandom::print_to()` is removed. A `randoms()` generator prints what its engine hands out.
+- `deferred<T>()` is printable and its `set()` takes a `Generator<T>`; the new `deferred_silent<T>()` takes any generator. `recursive()` is printable when its leaf and the generators its branch function returns are, and `flat_map()` when its function returns a printable generator.
+- `sets()` and `maps()` print their elements in the order they were drawn, not in sorted order: `std::set<int>{9, 8}`.
+- `builds<T>()` prints a constructor call, `T(<arg>, <arg>)`, with each argument as its generator prints it.
+- A `default_generator<T>().override(...)` struct draws each overridden field once, from the override. Before, it drew the field from its default generator and then again from the override. Database entries saved by earlier versions may no longer replay.
+- A `filter()` of a `filter()` checks both predicates on each attempt, instead of retrying the inner filter for each attempt of the outer one.
+- `LarkParams::explicit_terminals` holds `AnyGenerator<std::string>` values. A `Generator<std::string>` converts to one.
 
 ### Generators
 
