@@ -152,8 +152,7 @@ namespace hegel::generators {
     };
 
     // Concrete IGenerator for sets(). Duplicate elements are rejected back
-    // to the engine so it draws a replacement. Elements print in draw
-    // order.
+    // to the engine so it draws a replacement.
     template <typename T, bool Printable>
     class SetsGenerator : public detail::Structural<std::set<T>, Printable> {
       public:
@@ -207,7 +206,7 @@ namespace hegel::generators {
 
     // Concrete IGenerator for maps(). Draws the key first and only draws a
     // value once the key is known to be fresh; duplicate keys are rejected
-    // back to the engine. Entries print in draw order.
+    // back to the engine.
     template <typename K, typename V, bool Printable>
     class MapsGenerator : public detail::Structural<std::map<K, V>, Printable> {
       public:
@@ -492,8 +491,6 @@ namespace hegel::generators {
         }
 
       private:
-        // Braced-init evaluates its elements left to right, so the draws
-        // happen in order.
         template <size_t... Is>
         ResultTuple draw_all(const TestCase& tc, Printer& printer,
                              std::index_sequence<Is...>) const {

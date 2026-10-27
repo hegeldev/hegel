@@ -7,9 +7,6 @@
 namespace hegel::generators {
 
     /// @cond INTERNAL
-    // Concrete IGenerator for builds(). Draws the constructor arguments in
-    // order and prints the value as a constructor call, `T(<arg>, ...)`,
-    // with each argument as its generator prints it.
     template <typename T, bool Printable, typename... Gens>
     class BuildsGenerator : public detail::Structural<T, Printable> {
       public:

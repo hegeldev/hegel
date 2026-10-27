@@ -46,7 +46,7 @@ namespace hegel::generators {
     };
 
     // Concrete IGenerator for one_of(). Draws a branch index inside a
-    // one_of span, then delegates to that branch, which prints the value.
+    // one_of span, then delegates to that branch.
     template <typename T, bool Printable>
     class OneOfGenerator : public detail::Structural<T, Printable> {
       public:
@@ -588,8 +588,7 @@ namespace hegel::generators {
     };
 
     // Concrete IGenerator for recursive(). Draws attempts at the whole value
-    // until the engine accepts one. Each attempt prints in a speculative
-    // region, so only the accepted attempt shows.
+    // until the engine accepts one.
     template <typename T, typename Sub, typename Branch>
     class RecursiveGenerator
         : public detail::Structural<T, detail::is_printable_handle_v<Branch> &&
