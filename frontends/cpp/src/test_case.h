@@ -11,7 +11,6 @@
 #include <map>
 #include <memory>
 #include <mutex>
-#include <set>
 #include <string>
 #include <vector>
 
@@ -23,7 +22,6 @@ namespace hegel::impl::test_case {
     struct DrawNames {
         std::mutex mutex;
         std::map<std::string, int> counts;
-        std::set<std::string> taken;
     };
 
     // The state of an explicit test case: the values it was given, which

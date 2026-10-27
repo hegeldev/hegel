@@ -593,9 +593,10 @@ TEST(ReprLayout, ARandomEnginePrintsWhatItHandedOut) {
     EXPECT_TRUE(std::regex_search(
         output,
         std::regex(
-            R"(auto rng = HegelRandom\{\.consumed = \{[0-9]+, [0-9]+\}\};)")))
+            R"(auto rng_1 = HegelRandom\{\.consumed = \{[0-9]+, [0-9]+\}\};)")))
         << output;
     EXPECT_TRUE(std::regex_search(
-        output, std::regex(R"(auto seeded = HegelRandom\{\.seed = [0-9]+\};)")))
+        output,
+        std::regex(R"(auto seeded_1 = HegelRandom\{\.seed = [0-9]+\};)")))
         << output;
 }

@@ -409,8 +409,8 @@ TEST(Diagnostics, InternalExceptionMessages) {
 }
 
 // ---------------------------------------------------------------------------
-// Draw naming: bare names, 1-based suffixes for repeatable draws, one line
-// per user-level draw. Deterministic outputs are snapshotted whole with
+// Draw naming: 1-based suffixes per name in draw order, one line per
+// user-level draw. Deterministic outputs are snapshotted whole with
 // ApprovalTests (tests/approvals/*.approved.txt).
 // ---------------------------------------------------------------------------
 
@@ -427,8 +427,8 @@ namespace {
     }
 } // namespace
 
-// A user-supplied name drawn once prints bare, with no suffix.
-TEST(DrawNames, NamedDrawPrintsBareName) {
+// A user-supplied name is suffixed even for a single use.
+TEST(DrawNames, NamedDrawIsNumberedFromOne) {
     std::string out = run_verbose(
         [](hegel::TestCase& tc) { (void)tc.draw("count", gs::just(5)); });
     Approvals::verify(out);
@@ -444,45 +444,23 @@ TEST(DrawNames, UnnamedDrawsAreNumbered) {
     Approvals::verify(out);
 }
 
-// A repeatable name is suffixed even for a single use.
-TEST(DrawNames, RepeatableSingleUseIsSuffixed) {
-    std::string out = run_verbose([](hegel::TestCase& tc) {
-        (void)tc.draw("x", gs::just(3), /*repeatable=*/true);
-    });
-    Approvals::verify(out);
-}
-
-TEST(DrawNames, RepeatableDrawsNumberInOrder) {
+TEST(DrawNames, ReusedNamesNumberInOrder) {
     std::string out = run_verbose([](hegel::TestCase& tc) {
         for (int i = 1; i <= 3; ++i) {
-            (void)tc.draw("x", gs::just(i), /*repeatable=*/true);
+            (void)tc.draw("x", gs::just(i));
         }
     });
     Approvals::verify(out);
 }
 
-// Suffix allocation skips display names an earlier draw already took.
-TEST(DrawNames, SuffixAllocationSkipsTakenNames) {
-    std::string out = run_verbose([](hegel::TestCase& tc) {
-        (void)tc.draw("x_1", gs::just(0));
-        (void)tc.draw("x", gs::just(1), /*repeatable=*/true);
-        (void)tc.draw("x", gs::just(2), /*repeatable=*/true);
-    });
-    Approvals::verify(out);
-}
-
-TEST(DrawNames, BareNameReusePrintsBare) {
+// Each name numbers on its own, and the unnamed draws count as "draw".
+TEST(DrawNames, EachNameCountsSeparately) {
     std::string out = run_verbose([](hegel::TestCase& tc) {
         (void)tc.draw("x", gs::just(1));
-        (void)tc.draw("x", gs::just(2));
-    });
-    Approvals::verify(out);
-}
-
-TEST(DrawNames, MixedRepeatableAndBareUses) {
-    std::string out = run_verbose([](hegel::TestCase& tc) {
-        (void)tc.draw("x", gs::just(1), /*repeatable=*/true);
-        (void)tc.draw("x", gs::just(2));
+        (void)tc.draw(gs::just(2));
+        (void)tc.draw("y", gs::just(3));
+        (void)tc.draw("x", gs::just(4));
+        (void)tc.draw(gs::just(5));
     });
     Approvals::verify(out);
 }
@@ -511,8 +489,7 @@ TEST(DrawNames, ComposeInnerDrawsAreSilent) {
 TEST(DrawNames, CountersResetPerCase) {
     std::string out = run_verbose(
         [](hegel::TestCase& tc) {
-            (void)tc.draw("x", gs::integers<int>().map([](int) { return 3; }),
-                          /*repeatable=*/true);
+            (void)tc.draw("x", gs::integers<int>().map([](int) { return 3; }));
         },
         /*test_cases=*/3);
     Approvals::verify(out);

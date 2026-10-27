@@ -18,7 +18,6 @@ namespace hegel::generators {
 
       protected:
         T draw_printing(const TestCase& tc, Printer& printer) const override {
-            internal::start_span(tc, label_);
             std::string open;
             if (printer.should_print()) {
                 open = internal::cpp_type_name<T>() + "(";
@@ -32,9 +31,7 @@ namespace hegel::generators {
                 },
                 gens_);
             printer.end_group(")");
-            T result = std::make_from_tuple<T>(std::move(arguments));
-            internal::stop_span(tc);
-            return result;
+            return std::make_from_tuple<T>(std::move(arguments));
         }
 
       private:
@@ -47,11 +44,7 @@ namespace hegel::generators {
             if (index > 0) {
                 printer.separator();
             }
-            if constexpr (Printable) {
-                return gen.do_draw_and_print(tc, printer);
-            } else {
-                return gen.do_draw(tc);
-            }
+            return detail::draw_component(tc, gen, printer);
         }
 
         std::tuple<Gens...> gens_;
@@ -164,7 +157,7 @@ namespace hegel::generators {
                 [&result, &tc](auto&... fs) {
                     ((result.*
                           (std::remove_reference_t<decltype(fs)>::member_ptr) =
-                          fs.generator.do_draw(tc)),
+                          tc.draw_silent(fs.generator)),
                      ...);
                 },
                 gen_tuple);

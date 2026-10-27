@@ -323,7 +323,7 @@ namespace hegel::generators {
             std::string do_draw(const TestCase& tc) const override {
                 return impl::draw_grammar(
                     tc, grammar_->get(), [&](size_t terminal) {
-                        return terminals_[terminal].second.do_draw(tc);
+                        return tc.draw_silent(terminals_[terminal].second);
                     });
             }
 
@@ -495,17 +495,14 @@ namespace hegel::generators {
 
             HegelRandom do_draw_and_print(const TestCase& tc,
                                           Printer& printer) const override {
-                internal::start_span(tc, label());
                 if (use_true_random_) {
-                    uint64_t seed = seeds_.do_draw(tc);
-                    internal::stop_span(tc);
+                    uint64_t seed = tc.draw_silent(seeds_);
                     if (printer.should_print()) {
                         printer.text("HegelRandom{.seed = " +
                                      std::to_string(seed) + "}");
                     }
                     return HegelRandom(seed);
                 }
-                internal::stop_span(tc);
                 printer.begin_group(1, "HegelRandom{.consumed = {");
                 Printer consumed = printer.deferred();
                 printer.end_group("}}");

@@ -41,9 +41,10 @@ namespace hegel::generators {
      * do_draw() makes the value from draws on the test case: through other
      * generators, with TestCase::draw_silent().
      *
-     * A built-in generator opens a span (a group of draws that the engine
-     * shrinks as a unit) with its label(). Hegel does not open a span for a
-     * generator of your own.
+     * Every draw from a generator runs in a span (a group of draws that the
+     * engine shrinks as a unit) labelled with its label(), opened by the
+     * TestCase draw it is made through. A generator of your own is labelled
+     * with the name of its type unless it overrides label().
      *
      * @tparam T The type of value the generator makes
      */
@@ -71,7 +72,7 @@ namespace hegel::generators {
          * @return The label.
          */
         virtual uint64_t label() const {
-            return internal::label(internal::LabelName::Generator);
+            return internal::type_label(typeid(*this));
         }
 
         /**
@@ -276,9 +277,9 @@ namespace hegel::generators {
         typename H::value_type draw_component(const TestCase& tc, const H& gen,
                                               Printer& printer) {
             if constexpr (is_printable_handle_v<H>) {
-                return gen.do_draw_and_print(tc, printer);
+                return tc.draw_and_print(gen, printer);
             } else {
-                return gen.do_draw(tc);
+                return tc.draw_silent(gen);
             }
         }
 
@@ -525,10 +526,7 @@ namespace hegel::generators {
                        source_.label()})) {}
 
             U do_draw(const TestCase& tc) const override {
-                internal::start_span(tc, label_);
-                U result = f_(source_.do_draw(tc));
-                internal::stop_span(tc);
-                return result;
+                return f_(tc.draw_silent(source_));
             }
 
             uint64_t label() const override { return label_; }
@@ -549,13 +547,10 @@ namespace hegel::generators {
 
             U do_draw_and_print(const TestCase& tc,
                                 Printer& printer) const override {
-                internal::start_span(tc, label_);
                 printer.begin_group(open_.size(), open_);
-                T input = source_.do_draw_and_print(tc, printer);
+                T input = tc.draw_and_print(source_, printer);
                 printer.end_group(")");
-                U result = f_(std::move(input));
-                internal::stop_span(tc);
-                return result;
+                return f_(std::move(input));
             }
 
             uint64_t label() const override { return label_; }
@@ -727,11 +722,8 @@ namespace hegel::generators {
           protected:
             U draw_printing(const TestCase& tc,
                             Printer& printer) const override {
-                internal::start_span(tc, label_);
-                handle_t<Printable, U> next = f_(source_.do_draw(tc));
-                U result = draw_component(tc, next, printer);
-                internal::stop_span(tc);
-                return result;
+                handle_t<Printable, U> next = f_(tc.draw_silent(source_));
+                return draw_component(tc, next, printer);
             }
 
           private:
@@ -746,12 +738,7 @@ namespace hegel::generators {
             CompositeImpl(std::function<T(const TestCase&)> fn, uint64_t label)
                 : fn_(std::move(fn)), label_(label) {}
 
-            T do_draw(const TestCase& tc) const override {
-                internal::start_span(tc, label_);
-                T result = fn_(tc);
-                internal::stop_span(tc);
-                return result;
-            }
+            T do_draw(const TestCase& tc) const override { return fn_(tc); }
 
             uint64_t label() const override { return label_; }
 
@@ -1002,22 +989,21 @@ namespace hegel {
     }
 
     template <typename T>
-    T TestCase::draw(std::string_view name, const generators::Generator<T>& gen,
-                     bool repeatable) const {
+    T TestCase::draw(std::string_view name,
+                     const generators::Generator<T>& gen) const {
         if (internal::is_explicit(*this)) {
-            return std::any_cast<T>(internal::take_explicit_value(
-                *this, name, repeatable, typeid(T)));
+            return std::any_cast<T>(
+                internal::take_explicit_value(*this, name, typeid(T)));
         }
         internal::NestedDraw nested(*this);
         if (!nested.outermost() || !internal::records_output(*this)) {
-            return gen.do_draw(*this);
+            return draw_silent(gen);
         }
-        std::string display =
-            internal::draw_display_name(*this, name, repeatable);
+        std::string display = internal::draw_display_name(*this, name);
         Printer printer = internal::test_case_printer(*this);
         Speculation line = printer.speculate();
         printer.text("auto " + display + " = ");
-        T value = gen.do_draw_and_print(*this, printer);
+        T value = draw_and_print(gen, printer);
         printer.text(";");
         printer.hard_break();
         line.commit();
@@ -1041,8 +1027,8 @@ namespace hegel {
     }
 
     template <typename T>
-    T TestCase::draw(std::string_view, const generators::AnyGenerator<T>&,
-                     bool) const {
+    T TestCase::draw(std::string_view,
+                     const generators::AnyGenerator<T>&) const {
         static_assert(
             internal::always_false_v<T>,
             "tc.draw() needs a printable generator "
@@ -1061,7 +1047,10 @@ namespace hegel {
     T TestCase::draw_silent(const generators::AnyGenerator<T>& gen) const {
         internal::check_not_explicit(*this, "draw_silent()");
         internal::NestedDraw nested(*this);
-        return gen.do_draw(*this);
+        internal::start_span(*this, gen.label());
+        T value = gen.do_draw(*this);
+        internal::stop_span(*this);
+        return value;
     }
 
     template <typename T>
@@ -1069,7 +1058,10 @@ namespace hegel {
                                Printer& printer) const {
         internal::check_not_explicit(*this, "draw_and_print()");
         internal::NestedDraw nested(*this);
-        return gen.do_draw_and_print(*this, printer);
+        internal::start_span(*this, gen.label());
+        T value = gen.do_draw_and_print(*this, printer);
+        internal::stop_span(*this);
+        return value;
     }
 
 } // namespace hegel

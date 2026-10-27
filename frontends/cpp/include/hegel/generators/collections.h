@@ -115,7 +115,6 @@ namespace hegel::generators {
         std::vector<T> draw_printing(const TestCase& tc,
                                      Printer& printer) const override {
             namespace hi = hegel::internal;
-            hi::start_span(tc, label_);
             hi::CollectionHandle collection(
                 tc, params_.min_size,
                 detail::collection_max_size(params_.max_size));
@@ -140,7 +139,6 @@ namespace hegel::generators {
                 result.push_back(std::move(value));
             }
             printer.end_block("}");
-            hi::stop_span(tc);
             return result;
         }
 
@@ -173,7 +171,6 @@ namespace hegel::generators {
         std::set<T> draw_printing(const TestCase& tc,
                                   Printer& printer) const override {
             namespace hi = hegel::internal;
-            hi::start_span(tc, label_);
             hi::CollectionHandle collection(
                 tc, params_.min_size,
                 detail::collection_max_size(params_.max_size));
@@ -194,7 +191,6 @@ namespace hegel::generators {
                 element.commit();
             }
             printer.end_block("}");
-            hi::stop_span(tc);
             return result;
         }
 
@@ -229,7 +225,6 @@ namespace hegel::generators {
         std::map<K, V> draw_printing(const TestCase& tc,
                                      Printer& printer) const override {
             namespace hi = hegel::internal;
-            hi::start_span(tc, label_);
             hi::CollectionHandle collection(
                 tc, params_.min_size,
                 detail::collection_max_size(params_.max_size));
@@ -255,7 +250,6 @@ namespace hegel::generators {
                 result.emplace(std::move(key), std::move(value));
             }
             printer.end_block("}");
-            hi::stop_span(tc);
             return result;
         }
 
@@ -481,12 +475,10 @@ namespace hegel::generators {
         ResultTuple draw_printing(const TestCase& tc,
                                   Printer& printer) const override {
             namespace hi = hegel::internal;
-            hi::start_span(tc, label_);
             printer.begin_block(detail::open_text<ResultTuple>(printer, "{"));
             ResultTuple result =
                 draw_all(tc, printer, std::index_sequence_for<Ts...>{});
             printer.end_block("}");
-            hi::stop_span(tc);
             return result;
         }
 
@@ -573,13 +565,11 @@ namespace hegel::generators {
         std::array<T, N> draw_printing(const TestCase& tc,
                                        Printer& printer) const override {
             namespace hi = hegel::internal;
-            hi::start_span(tc, label_);
             printer.begin_block(
                 detail::open_text<std::array<T, N>>(printer, "{"));
             std::array<T, N> result =
                 draw_all(tc, printer, std::make_index_sequence<N>{});
             printer.end_block("}");
-            hi::stop_span(tc);
             return result;
         }
 
@@ -658,7 +648,6 @@ namespace hegel::generators {
 
         std::vector<T> do_draw(const TestCase& tc) const override {
             namespace hi = hegel::internal;
-            hi::start_span(tc, label());
             std::vector<size_t> remaining(values_.size());
             for (size_t i = 0; i < remaining.size(); ++i) {
                 remaining[i] = i;
@@ -673,7 +662,6 @@ namespace hegel::generators {
                 remaining.erase(remaining.begin() +
                                 static_cast<std::ptrdiff_t>(index));
             }
-            hi::stop_span(tc);
             return result;
         }
 

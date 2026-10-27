@@ -43,7 +43,6 @@ namespace hegel::internal {
     // `hegel.<kind>` string, the same one every Hegel frontend uses for that
     // generator, and derives its label with hegel_label_from_name.
     enum class LabelName {
-        Generator,
         Composite,
         Map,
         FlatMap,
@@ -86,12 +85,18 @@ namespace hegel::internal {
     // per process.
     uint64_t label(LabelName name);
 
+    // The label of a generator that gives none of its own: derived from the
+    // name of its type (hegel_label_from_name), once per type.
+    uint64_t type_label(const std::type_info& type);
+
     // The label of a generator built from other generators: its own label
     // first, then its components' labels (hegel_label_combine).
     uint64_t combine_labels(const std::vector<uint64_t>& labels);
 
     // Open / close a labeled span around a group of draws so the shrinker
-    // can treat them as a unit. stop_span(tc, true) marks the span rejected
+    // can treat them as a unit. Every TestCase draw opens one labelled with
+    // its generator's label, so a generator only opens its own for spans
+    // it closes with stop_span(tc, true), which marks the span rejected
     // (e.g. a filter predicate failed) so the engine retries from before it.
     void start_span(const TestCase& tc, uint64_t label);
     void stop_span(const TestCase& tc, bool discard = false);
@@ -262,7 +267,7 @@ namespace hegel::internal {
     // std::invalid_argument when there is none, or when its type is not
     // `type`.
     const std::any& take_explicit_value(const TestCase& tc,
-                                        std::string_view name, bool repeatable,
+                                        std::string_view name,
                                         const std::type_info& type);
 
     // Whether notes and drawn values of `tc` are recorded in the engine's
@@ -272,11 +277,9 @@ namespace hegel::internal {
     // `tc`'s printer onto its region of the test case's document.
     hegel::Printer test_case_printer(const TestCase& tc);
 
-    // The variable name a draw prints under: `name`, or `name_<n>` for a
-    // repeatable name (and `draw_<n>` for an unnamed draw), skipping names
-    // already taken.
-    std::string draw_display_name(const TestCase& tc, std::string_view name,
-                                  bool repeatable);
+    // The variable name a draw prints under: `name_<n>` for the n-th draw
+    // under `name` (`draw_<n>` for an unnamed draw).
+    std::string draw_display_name(const TestCase& tc, std::string_view name);
 
     // A handle onto `tc`'s own choice sequence whose output is a block
     // nested `indent` columns further in, at the current position of `tc`'s

@@ -174,12 +174,11 @@ namespace hegel {
 
         const std::any& take_explicit_value(const TestCase& tc,
                                             std::string_view name,
-                                            bool repeatable,
                                             const std::type_info& type) {
             impl::test_case::ExplicitState& state = *tc.data()->explicit_state;
             const std::vector<ExplicitTestCase::Value>& values =
                 state.test_case.values();
-            std::string display = draw_display_name(tc, name, repeatable);
+            std::string display = draw_display_name(tc, name);
             std::optional<size_t> chosen;
             for (size_t i = 0; i < values.size() && !chosen; ++i) {
                 if (!state.used[i] && values[i].name == display) {
@@ -220,24 +219,12 @@ namespace hegel {
             return hegel::Printer(data->printer, false);
         }
 
-        std::string draw_display_name(const TestCase& tc, std::string_view name,
-                                      bool repeatable) {
+        std::string draw_display_name(const TestCase& tc,
+                                      std::string_view name) {
             impl::test_case::DrawNames& names = *tc.data()->draw_names;
             std::lock_guard<std::mutex> lock(names.mutex);
             std::string base(name.empty() ? "draw" : name);
-            int count = ++names.counts[base];
-            if (!name.empty() && !repeatable) {
-                // A bare name prints bare on every use; the surrounding
-                // output (e.g. a stateful step header) disambiguates.
-                names.taken.insert(base);
-                return base;
-            }
-            for (int candidate = count;; candidate++) {
-                std::string attempt = base + "_" + std::to_string(candidate);
-                if (names.taken.insert(attempt).second) {
-                    return attempt;
-                }
-            }
+            return base + "_" + std::to_string(++names.counts[base]);
         }
 
         TestCase block(const TestCase& tc, uint64_t indent) {

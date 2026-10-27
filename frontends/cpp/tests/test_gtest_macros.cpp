@@ -71,7 +71,7 @@ TEST(GTestMacros, FailedExpectFailsTheProperty) {
         hegel::Settings{.test_cases = 200});
     EXPECT_TRUE(contains(out.report, "To reproduce this failure"))
         << out.report;
-    EXPECT_TRUE(contains(out.report, "auto x = 51;")) << out.report;
+    EXPECT_TRUE(contains(out.report, "auto x_1 = 51;")) << out.report;
     EXPECT_TRUE(contains(out.rethrown, "test_gtest_macros.cpp:"))
         << out.rethrown;
     EXPECT_TRUE(contains(out.rethrown, "x was 51")) << out.rethrown;
@@ -89,7 +89,7 @@ TEST(GTestMacros, FailedAssertEndsTheBodyAndFailsTheCase) {
         },
         hegel::Settings{.test_cases = 50});
     EXPECT_FALSE(reached_end);
-    EXPECT_TRUE(contains(out.report, "auto x = 0;")) << out.report;
+    EXPECT_TRUE(contains(out.report, "auto x_1 = 0;")) << out.report;
 }
 
 // A case that fails several EXPECT_* raises all of them together, since
@@ -196,7 +196,7 @@ TEST(GTestMacros, AThrownExceptionWinsOverALaterAssertion) {
         },
         hegel::Settings{.test_cases = 5});
     EXPECT_EQ(out.rethrown, "thrown first");
-    EXPECT_TRUE(contains(out.report, "auto x = 0;")) << out.report;
+    EXPECT_TRUE(contains(out.report, "auto x_1 = 0;")) << out.report;
 }
 
 // A property that holds raises nothing. SUCCEED() records a result too, and

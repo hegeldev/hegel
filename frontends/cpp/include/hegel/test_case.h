@@ -80,25 +80,25 @@ namespace hegel {
          * @brief Draw a random value from a printable generator, printed
          *        under @p name.
          *
+         * Each use of @p name prints with a 1-based suffix (`x_1`, `x_2`,
+         * ...), so a draw that runs in a loop, or a helper called more than
+         * once, numbers its values in order.
+         *
          * @tparam T The value type produced by @p gen
          * @param name Variable name for the printed declaration.
          * @param gen The generator to draw from
-         * @param repeatable Pass true to print @p name with a 1-based
-         *             suffix per use (`x_1`, `x_2`, ...). Useful when the
-         *             same draw runs in a loop. A non-repeatable name
-         *             prints bare on every use.
          * @return A freshly generated value of type T
          */
         template <typename T>
-        T draw(std::string_view name, const generators::Generator<T>& gen,
-               bool repeatable = false) const;
+        T draw(std::string_view name,
+               const generators::Generator<T>& gen) const;
 
         /// @cond INTERNAL
         template <typename T>
         T draw(const generators::AnyGenerator<T>& gen) const;
         template <typename T>
-        T draw(std::string_view name, const generators::AnyGenerator<T>& gen,
-               bool repeatable = false) const;
+        T draw(std::string_view name,
+               const generators::AnyGenerator<T>& gen) const;
         /// @endcond
 
         /**

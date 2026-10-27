@@ -80,7 +80,7 @@ failures found in one run are replayed first in the next. (You can also call
 This test will fail! Hegel will produce a minimal failing test case for us:
 
 ```
-auto vec1 = std::vector<int>{0, 0};
+auto vec1_1 = std::vector<int>{0, 0};
 
 To reproduce this failure, add this line above HEGEL_TEST(sort_agrees_with_std_sort):
     HEGEL_REPRODUCE_FAILURE(sort_agrees_with_std_sort, "AXicY2VgYGBkZOBiZEBhMAAAAd8AIQ==")
@@ -90,8 +90,9 @@ The report shows the minimal example and how to replay it, and the test's own
 exception (`sort mismatch`) propagates out of the test.
 
 Each draw is replayed and printed as a C++ declaration. `tc.draw("vec1", gen)`
-names the draw with `vec1` as above. An unnamed `tc.draw(gen)` prints
-(`auto draw_1 = ...;`) instead. A value too wide for one line is broken
+names the draw `vec1_1` as above; each use of a name is numbered in turn
+(`vec1_1`, `vec1_2`, ...). An unnamed `tc.draw(gen)` prints as
+`auto draw_1 = ...;` instead. A value too wide for one line is broken
 across lines, one element per line.
 
 The last line replays this exact failure. Put it above the test to rerun the
@@ -130,7 +131,7 @@ auto ids = gs::integers<int>({.min_value = 0})
                });
 
 // Print a mapped value as a call on the value it was made from:
-// `auto key = KeyData::from_ffi(3);`
+// `auto key_1 = KeyData::from_ffi(3);`
 auto keys = gs::integers<int>()
                 .map([](int raw) { return KeyData::from_ffi(raw); })
                 .print_as_call("KeyData::from_ffi");

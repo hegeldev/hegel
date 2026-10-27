@@ -71,13 +71,13 @@ TEST(Explicit, PositionalValuesAreDrawnInOrderBeforeGeneration) {
 
 TEST(Explicit, NamedValuesGoToTheDrawOfThatName) {
     std::vector<std::vector<int>> seen;
-    auto named = hegel::named("y", 2);
+    auto named = hegel::named("y_1", 2);
     hegel::test(
         [&seen](hegel::TestCase& tc) {
             int x = tc.draw("x", gs::integers<int>());
             int y = tc.draw("y", gs::integers<int>());
-            int z1 = tc.draw("z", gs::integers<int>(), true);
-            int z2 = tc.draw("z", gs::integers<int>(), true);
+            int z1 = tc.draw("z", gs::integers<int>());
+            int z2 = tc.draw("z", gs::integers<int>());
             seen.push_back({x, y, z1, z2});
         },
         quiet_settings(1), {},
@@ -133,10 +133,10 @@ TEST(Explicit, FailureReportShowsTheCase) {
                      },
                      {"explicit_report", "file.cpp", 3},
                      hegel::Settings{.database = hegel::Database::disabled()},
-                     {}, {hegel::ExplicitTestCase(hegel::named("n", 5))}),
+                     {}, {hegel::ExplicitTestCase(hegel::named("n_1", 5))}),
                  std::runtime_error);
     EXPECT_EQ(testing::internal::GetCapturedStderr(),
-              "auto n = 5;\nchecking n\n");
+              "auto n_1 = 5;\nchecking n\n");
 }
 
 TEST(Explicit, FailureWithoutDrawsHasNoBody) {
@@ -159,7 +159,7 @@ TEST(Explicit, AnInvalidArgumentFromTheTestIsAFailure) {
                      hegel::Settings{.database = hegel::Database::disabled()},
                      {}, {hegel::ExplicitTestCase(4)}),
                  std::invalid_argument);
-    EXPECT_EQ(testing::internal::GetCapturedStderr(), "auto n = 4;\n");
+    EXPECT_EQ(testing::internal::GetCapturedStderr(), "auto n_1 = 4;\n");
 }
 
 TEST(Explicit, QuietFailurePrintsNothing) {
@@ -220,9 +220,9 @@ TEST(Explicit, WrongTypeIsAnError) {
 TEST(Explicit, UnusedValuesAreAnError) {
     std::string message = failure_message(
         [](hegel::TestCase& tc) { (void)tc.draw(gs::integers<int>()); },
-        {hegel::ExplicitTestCase(1, 2, hegel::named("y", 3))});
+        {hegel::ExplicitTestCase(1, 2, hegel::named("y_1", 3))});
     EXPECT_NE(message.find("gave values that no draw took: a positional "
-                           "value, y"),
+                           "value, y_1"),
               std::string::npos)
         << message;
 }
@@ -290,7 +290,7 @@ TEST(Explicit, FailureInsideRepeatShowsTheRepetition) {
                      {}, {hegel::ExplicitTestCase(4)}),
                  std::runtime_error);
     EXPECT_EQ(testing::internal::GetCapturedStderr(),
-              "// Repetition #1\nauto n = 4;\n");
+              "// Repetition #1\nauto n_1 = 4;\n");
 }
 
 TEST(Explicit, CloneIsAnError) {
@@ -314,7 +314,7 @@ namespace {
 } // namespace
 
 HEGEL_EXPLICIT_TEST_CASE(explicit_macro_test, 100)
-HEGEL_EXPLICIT_TEST_CASE(explicit_macro_test, hegel::named("n", 200))
+HEGEL_EXPLICIT_TEST_CASE(explicit_macro_test, hegel::named("n_1", 200))
 HEGEL_TEST(explicit_macro_test,
            {.test_cases = 3,
             .verbosity = hegel::Verbosity::Quiet,

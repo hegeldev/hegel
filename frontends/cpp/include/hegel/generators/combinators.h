@@ -72,13 +72,10 @@ namespace hegel::generators {
       protected:
         T draw_printing(const TestCase& tc, Printer& printer) const override {
             namespace hi = hegel::internal;
-            hi::start_span(tc, label_);
             int64_t index =
                 hi::draw_integer(tc, 0, static_cast<int64_t>(gens_.size() - 1));
-            T result = detail::draw_component(
-                tc, gens_[static_cast<size_t>(index)], printer);
-            hi::stop_span(tc);
-            return result;
+            return detail::draw_component(tc, gens_[static_cast<size_t>(index)],
+                                          printer);
         }
 
       private:
@@ -241,7 +238,6 @@ namespace hegel::generators {
                              Printer& printer) const override {
             namespace hi = hegel::internal;
             constexpr size_t N = sizeof...(Ts);
-            hi::start_span(tc, label_);
             int64_t index =
                 hi::draw_integer(tc, 0, static_cast<int64_t>(N - 1));
             printer.begin_block(detail::open_text<Result>(printer, "{"));
@@ -253,7 +249,6 @@ namespace hegel::generators {
             Result result = detail::draw_variant_impl<Result, decltype(gens_)>(
                 gens_, static_cast<size_t>(index), tc, printer);
             printer.end_block("}");
-            hi::stop_span(tc);
             return result;
         }
 
@@ -280,7 +275,6 @@ namespace hegel::generators {
         std::optional<T> draw_printing(const TestCase& tc,
                                        Printer& printer) const override {
             namespace hi = hegel::internal;
-            hi::start_span(tc, label_);
             std::optional<T> result;
             if (hi::draw_boolean(tc, 0.5)) {
                 printer.begin_block(
@@ -291,7 +285,6 @@ namespace hegel::generators {
                 printer.text(
                     detail::open_text<std::optional<T>>(printer, "{}"));
             }
-            hi::stop_span(tc);
             return result;
         }
 
@@ -570,10 +563,7 @@ namespace hegel::generators {
 
       protected:
         T draw_printing(const TestCase& tc, Printer& printer) const override {
-            hegel::internal::start_span(tc, definition_->label);
-            T result = draw_subtree(tc, printer);
-            hegel::internal::stop_span(tc);
-            return result;
+            return draw_subtree(tc, printer);
         }
 
       private:
@@ -611,7 +601,6 @@ namespace hegel::generators {
       protected:
         T draw_printing(const TestCase& tc, Printer& printer) const override {
             namespace hi = hegel::internal;
-            hi::start_span(tc, definition_->label);
             auto recursion = std::make_shared<hi::RecursionHandle>(
                 tc, params_.max_depth, params_.max_leaves);
             SubtreeGenerator<T, Sub, Branch> root(definition_, recursion, 0);
@@ -620,7 +609,6 @@ namespace hegel::generators {
                     Speculation attempt = printer.speculate();
                     T result = root.draw_subtree(tc, printer);
                     attempt.commit();
-                    hi::stop_span(tc);
                     return result;
                 } catch (const hi::LeafBudgetExceeded&) {
                     recursion->retry(tc);

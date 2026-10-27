@@ -212,11 +212,11 @@ TEST(PrintableGenerators, CustomPrintingSurvivesEveryCombinator) {
                   (void)tc.draw("d", d.generator());
                   boom();
               }),
-              (Lines{"auto o = std::optional<int>{#0};",
-                     "auto t = std::tuple<int, bool>{#0, false};",
-                     "auto m = std::map<int, int>{{#0, #0}};", "auto one = #0;",
-                     "auto f = #0;", "auto fm = #0;", "auto r = #0;",
-                     "auto d = #0;"}));
+              (Lines{"auto o_1 = std::optional<int>{#0};",
+                     "auto t_1 = std::tuple<int, bool>{#0, false};",
+                     "auto m_1 = std::map<int, int>{{#0, #0}};",
+                     "auto one_1 = #0;", "auto f_1 = #0;", "auto fm_1 = #0;",
+                     "auto r_1 = #0;", "auto d_1 = #0;"}));
 }
 
 #if HEGEL_HAS_REFLECTION
@@ -277,18 +277,19 @@ TEST(PrintableGenerators, DerivedPrintingMatchesTheValuesRepr) {
 #endif
 
 TEST(PrintableGenerators, ARandomGeneratorPrintsWhatItHandsOutLater) {
-    EXPECT_EQ(failing_lines([](hegel::TestCase& tc) {
-                  auto rngs = tc.draw(
-                      "rngs", gs::vectors(gs::randoms(),
-                                          {.min_size = 2, .max_size = 2}));
-                  (void)rngs[0]();
-                  (void)rngs[0]();
-                  (void)tc.draw("n", zero());
-                  boom();
-              }),
-              (Lines{"auto rngs = std::vector<hegel::generators::HegelRandom>{",
-                     "    HegelRandom{.consumed = {0, 0}},",
-                     "    HegelRandom{.consumed = {}}", "};", "auto n = 0;"}));
+    EXPECT_EQ(
+        failing_lines([](hegel::TestCase& tc) {
+            auto rngs =
+                tc.draw("rngs", gs::vectors(gs::randoms(),
+                                            {.min_size = 2, .max_size = 2}));
+            (void)rngs[0]();
+            (void)rngs[0]();
+            (void)tc.draw("n", zero());
+            boom();
+        }),
+        (Lines{"auto rngs_1 = std::vector<hegel::generators::HegelRandom>{",
+               "    HegelRandom{.consumed = {0, 0}},",
+               "    HegelRandom{.consumed = {}}", "};", "auto n_1 = 0;"}));
 }
 
 TEST(PrintableGenerators, ADeferredPrinterCanBeFilledFromAThread) {
@@ -300,7 +301,7 @@ TEST(PrintableGenerators, ADeferredPrinterCanBeFilledFromAThread) {
                   }).join();
                   boom();
               }),
-              (Lines{"auto draw_1 = Holder(from a thread);", "auto n = 0;"}));
+              (Lines{"auto draw_1 = Holder(from a thread);", "auto n_1 = 0;"}));
 }
 
 TEST(PrintableGenerators, ATrueRandomGeneratorPrintsItsSeed) {
@@ -309,7 +310,7 @@ TEST(PrintableGenerators, ATrueRandomGeneratorPrintsItsSeed) {
         boom();
     });
     ASSERT_EQ(lines.size(), 1u);
-    EXPECT_EQ(lines[0].rfind("auto rng = HegelRandom{.seed = ", 0), 0u)
+    EXPECT_EQ(lines[0].rfind("auto rng_1 = HegelRandom{.seed = ", 0), 0u)
         << lines[0];
 }
 
@@ -321,7 +322,7 @@ TEST(PrintableGenerators, SilentDrawsPrintNothing) {
                   (void)tc.draw("n", zero());
                   boom();
               }),
-              Lines{"auto n = 0;"});
+              Lines{"auto n_1 = 0;"});
 }
 
 TEST(PrintableGenerators, MapPrintsTheFinishedValue) {
@@ -347,8 +348,8 @@ TEST(PrintableGenerators, PrintAsCallPrintsTheMappedExpression) {
                       gs::vectors(key_data(), {.min_size = 2, .max_size = 2}));
                   boom();
               }),
-              (Lines{"auto key = KeyData::from_ffi(0);",
-                     "auto keys = std::vector<KeyData>{KeyData::from_ffi(0), "
+              (Lines{"auto key_1 = KeyData::from_ffi(0);",
+                     "auto keys_1 = std::vector<KeyData>{KeyData::from_ffi(0), "
                      "KeyData::from_ffi(0)};"}));
 }
 
@@ -359,9 +360,9 @@ TEST(PrintableGenerators, PrintAsCallBreaksAWideListOneItemPerLine) {
                                               {.min_size = 4, .max_size = 4}));
             boom();
         }),
-        (Lines{"auto keys = std::vector<KeyData>{", "    KeyData::from_ffi(0),",
+        (Lines{"auto keys_1 = std::vector<KeyData>{",
                "    KeyData::from_ffi(0),", "    KeyData::from_ffi(0),",
-               "    KeyData::from_ffi(0)", "};"}));
+               "    KeyData::from_ffi(0),", "    KeyData::from_ffi(0)", "};"}));
 }
 
 TEST(PrintableGenerators, PrintAsCallWrapsWideInputsInsideTheCall) {
@@ -373,7 +374,7 @@ TEST(PrintableGenerators, PrintAsCallWrapsWideInputsInsideTheCall) {
                   (void)tc.draw("w", wide);
                   boom();
               }),
-              (Lines{"auto w = Wrapped::from_parts(std::vector<std::string>{",
+              (Lines{"auto w_1 = Wrapped::from_parts(std::vector<std::string>{",
                      "                        std::string("
                      "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"),",
                      "                        std::string("
@@ -435,8 +436,8 @@ TEST(PrintableGenerators, SetsAndMapsPrintInDrawOrder) {
                                               {.min_size = 2, .max_size = 2}));
                   boom();
               }),
-              (Lines{"auto s = std::set<int>{9, 8};",
-                     "auto m = std::map<int, int>{{9, 0}, {8, 0}};"}));
+              (Lines{"auto s_1 = std::set<int>{9, 8};",
+                     "auto m_1 = std::map<int, int>{{9, 0}, {8, 0}};"}));
 }
 
 TEST(PrintableGenerators, FilteredDrawsPrintOnlyTheAcceptedValue) {
@@ -479,7 +480,7 @@ TEST(PrintableGenerators, RejectedAttemptsNeverCorruptVerboseOutput) {
                           zero(), {.min_size = 2, .max_size = 2}));
     });
     std::regex shape(
-        R"(auto f = [0369];|auto u = std::vector<int>\{[0-3], [0-3], [0-3]\};|auto s = std::set<int>\{[0-2], [0-2]\};|auto m = std::map<int, int>\{\{[0-2], 0\}, \{[0-2], 0\}\};)");
+        R"(auto f_1 = [0369];|auto u_1 = std::vector<int>\{[0-3], [0-3], [0-3]\};|auto s_1 = std::set<int>\{[0-2], [0-2]\};|auto m_1 = std::map<int, int>\{\{[0-2], 0\}, \{[0-2], 0\}\};)");
     int draws = 0;
     for (const std::string& line : split_lines(out)) {
         if (line.rfind("auto ", 0) == 0) {
@@ -547,7 +548,7 @@ TEST(PrintableGenerators, ADeferredSilentGeneratorDrawsSilently) {
                   (void)tc.draw("n", zero());
                   boom();
               }),
-              Lines{"auto n = 0;"});
+              Lines{"auto n_1 = 0;"});
 }
 
 TEST(PrintableGenerators, ARecursiveGeneratorWithASilentLeafDrawsSilently) {
@@ -564,7 +565,7 @@ TEST(PrintableGenerators, ARecursiveGeneratorWithASilentLeafDrawsSilently) {
                   (void)tc.draw("n", zero());
                   boom();
               }),
-              Lines{"auto n = 0;"});
+              Lines{"auto n_1 = 0;"});
 }
 
 TEST(PrintableGenerators, ARecursiveGeneratorPrintsThroughItsBranches) {

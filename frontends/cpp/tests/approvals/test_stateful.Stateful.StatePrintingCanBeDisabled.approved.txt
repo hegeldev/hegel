@@ -1,8 +1,8 @@
 Initial invariant check.
 Step 1: add
-  auto amount = 3;
+  auto amount_1 = 3;
 Step 2: add
-  auto amount = 9;
+  auto amount_2 = 9;
 
 To reproduce this failure, pass its blob to hegel::test():
     hegel::test(test_fn, settings, {"[blob]"})

@@ -29,9 +29,9 @@ namespace hegel {
      * @brief Give a value of an ExplicitTestCase to the draw named @p name.
      *
      * @tparam T The value type. It must be the type the draw produces.
-     * @param name The draw's name, as in `tc.draw(name, ...)`. A repeatable
-     *             draw and an unnamed draw use the name they print under,
-     *             such as `x_1` or `draw_1`.
+     * @param name The name the draw prints under: `x_1` for the first
+     *             `tc.draw("x", ...)`, `x_2` for the second, `draw_1` for the
+     *             first unnamed draw.
      * @param value The value the draw returns.
      * @return The named value.
      */

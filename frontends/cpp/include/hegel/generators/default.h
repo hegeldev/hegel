@@ -99,7 +99,6 @@ namespace hegel::generators {
           protected:
             T draw_printing(const TestCase& tc,
                             Printer& printer) const override {
-                internal::start_span(tc, label_);
                 T result{};
                 printer.begin_block(open_text<T>(printer, "{"));
                 bool first = true;
@@ -116,13 +115,11 @@ namespace hegel::generators {
                         printer.text("." + std::string(field.name()) + " = ");
                     }
                     if (!draw_override(tc, result, field.value(), printer)) {
-                        *field.value() =
-                            default_generator<FieldType>().do_draw_and_print(
-                                tc, printer);
+                        *field.value() = tc.draw_and_print(
+                            default_generator<FieldType>(), printer);
                     }
                 });
                 printer.end_block("}");
-                internal::stop_span(tc);
                 return result;
             }
 

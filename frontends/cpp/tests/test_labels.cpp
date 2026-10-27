@@ -7,7 +7,9 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <tuple>
+#include <typeinfo>
 #include <vector>
 
 #include <hegel/hegel.h>
@@ -39,6 +41,31 @@ TEST(Labels, CombiningIsOrderSensitive) {
     EXPECT_NE(hi::combine_labels({a}), a);
 }
 
+namespace {
+    uint64_t fnv1a(std::string_view name) {
+        uint64_t hash = 0xcbf29ce484222325ULL;
+        for (char c : name) {
+            hash ^= static_cast<unsigned char>(c);
+            hash *= 0x100000001b3ULL;
+        }
+        return hash;
+    }
+
+    class Custom : public gs::IGenerator<int> {
+      public:
+        int do_draw(const hegel::TestCase& tc) const override {
+            return tc.draw_silent(gs::integers<int>());
+        }
+    };
+} // namespace
+
+TEST(Labels, GeneratorsOfYourOwnUseTheirTypeName) {
+    uint64_t label = Custom().label();
+    EXPECT_EQ(label, fnv1a(typeid(Custom).name()));
+    EXPECT_EQ(Custom().label(), label);
+    EXPECT_NE(gs::dates().label(), label);
+}
+
 TEST(Labels, LeafGeneratorsUseTheirName) {
     EXPECT_EQ(gs::integers<int>().label(), hi::label(hi::LabelName::Integers));
     EXPECT_EQ(gs::floats<double>().label(), hi::label(hi::LabelName::Floats));
@@ -61,7 +88,6 @@ TEST(Labels, LeafGeneratorsUseTheirName) {
     EXPECT_EQ(gs::uuids().label(), hi::label(hi::LabelName::Uuids));
     EXPECT_EQ(gs::deferred<int>().generator().label(),
               hi::label(hi::LabelName::Deferred));
-    EXPECT_EQ(gs::dates().label(), hi::label(hi::LabelName::Generator));
     EXPECT_EQ(gs::compose([](const hegel::TestCase&) { return 0; }).label(),
               hi::label(hi::LabelName::Composite));
 }

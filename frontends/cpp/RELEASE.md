@@ -41,10 +41,10 @@ Every blob given to `HEGEL_REPRODUCE_FAILURE` or to `hegel::test()` is now repla
 
 ### Explicit test cases
 
-Explicit test cases run a test with values you choose, before Hegel generates any, when the `Explicit` phase is enabled. Add one to a `HEGEL_TEST` with `HEGEL_EXPLICIT_TEST_CASE(name, values...)`, or pass a list of `hegel::ExplicitTestCase` to `hegel::test()` as its new `explicit_cases` argument, after `failure_blobs`. Positional values go to the test's draws in order, and `hegel::named("x", value)` gives a value to the draw named `x`:
+Explicit test cases run a test with values you choose, before Hegel generates any, when the `Explicit` phase is enabled. Add one to a `HEGEL_TEST` with `HEGEL_EXPLICIT_TEST_CASE(name, values...)`, or pass a list of `hegel::ExplicitTestCase` to `hegel::test()` as its new `explicit_cases` argument, after `failure_blobs`. Positional values go to the test's draws in order, and `hegel::named("d_1", value)` gives a value to the draw printed as `d_1`, the first `tc.draw("d", ...)`:
 
 ```cpp
-HEGEL_EXPLICIT_TEST_CASE(division, 7, hegel::named("d", 0))
+HEGEL_EXPLICIT_TEST_CASE(division, 7, hegel::named("d_1", 0))
 HEGEL_TEST(division)(hegel::TestCase& tc) {
     auto n = tc.draw(gs::integers<int>());
     auto d = tc.draw("d", gs::integers<int>());
@@ -80,7 +80,7 @@ A generator now prints each value as it draws it, as in hegel-rust, instead of H
   auto keys = gs::integers<int>()
                   .map([](int raw) { return KeyData::from_ffi(raw); })
                   .print_as_call("KeyData::from_ffi");
-  // auto key = KeyData::from_ffi(3);
+  // auto key_1 = KeyData::from_ffi(3);
   ```
 
 - The new `TestCase::draw_silent()` draws from any generator and prints nothing, and `TestCase::draw_and_print()` draws from a printable generator inside another generator's printing. Both are usage errors in an explicit test case.
@@ -107,7 +107,25 @@ This release adds:
 - `hegel::generators::from_lark()`, which generates strings of a grammar written in the syntax of the [Lark](https://lark-parser.readthedocs.io/en/stable/grammar.html) parsing library. `LarkParams` selects the start rule, gives explicit terminals whose values come from your own generators, restricts the characters of the grammar's own terminals with an `alphabet`, limits the size and nesting depth of the strings, and sets the directory that `%import`ed grammar files are read from.
 - Support for integer types wider than 64 bits in `integers()`, such as `__int128` and `unsigned __int128`. Before, their bounds were truncated to 64 bits.
 
-Generators now identify themselves to the engine with the same span labels as the other Hegel frontends: each label comes from a `hegel.<kind>` name (`hegel.lists`, `hegel.one_of`, `hegel.integers`, ...), and a generator built from others combines its own label with theirs. Before, every `vectors()` span had the same label whatever its elements were, so the shrinker treated a vector of integers and a vector of strings as interchangeable. Database entries saved by earlier versions may no longer replay. `compose()` now groups the draws its function makes into one span, as `map()`, `flat_map()` and `filter()` do, so the engine shrinks them as a unit.
+Generators now identify themselves to the engine with the same span labels as the other Hegel frontends: each label comes from a `hegel.<kind>` name (`hegel.lists`, `hegel.one_of`, `hegel.integers`, ...), and a generator built from others combines its own label with theirs. Before, every `vectors()` span had the same label whatever its elements were, so the shrinker treated a vector of integers and a vector of strings as interchangeable. Database entries saved by earlier versions may no longer replay.
+
+Which draws a span groups has changed too, to match the other Hegel frontends. Every draw made through the test case (`TestCase::draw()`, `draw_silent()` and `draw_and_print()`) now runs its generator inside a span labelled with the generator's label, and the generators open none of their own: `vectors()`, `sets()`, `maps()`, `tuples()`, `arrays()`, `one_of()`, `optional()`, `variants()`, `builds()`, `compose()`, `recursive()`, `default_generator<T>()` of a struct, `map()` and `flat_map()` used to open a span of their own around their draws. A generator of your own that draws its components through `tc.draw_silent()` or `tc.draw_and_print()` gets a span for each of them with no code of its own, and `IGenerator<T>::label()` now defaults to a label derived from the name of the generator's type (`typeid(*this).name()`), so two generators of your own shrink apart, instead of the one `hegel.generator` label for all of them (`hegel::internal::LabelName::Generator` is removed). The spans a test case records are part of its failure blob, so a blob printed by an earlier version, or a failure the database saved under one, no longer replays.
+
+### Draw names
+
+Each use of a name in `tc.draw("x", ...)` now prints with a 1-based suffix (`auto x_1 = ...;`, then `x_2`, ...), as in every other Hegel frontend, instead of the first use printing bare and a reused name printing bare again. Each name counts on its own, and an unnamed draw counts under `draw`, so the first draw under a name is always `_1`. The `repeatable` parameter of `TestCase::draw()` is removed: every name is repeatable. `hegel::named()` takes the name a draw prints under, so an explicit test case for the test above gives `d_1` its value where it gave `d` before:
+
+```cpp
+// before
+auto d = tc.draw("d", gs::integers<int>());           // auto d = 0;
+auto x = tc.draw("x", gs::integers<int>(), true);     // auto x_1 = 0;
+HEGEL_EXPLICIT_TEST_CASE(division, hegel::named("d", 0))
+
+// after
+auto d = tc.draw("d", gs::integers<int>());           // auto d_1 = 0;
+auto x = tc.draw("x", gs::integers<int>());           // auto x_1 = 0;
+HEGEL_EXPLICIT_TEST_CASE(division, hegel::named("d_1", 0))
+```
 
 `text()` and `binary()` with no `max_size` now take libhegel's default maximum, the same as every other Hegel frontend: 100, or `min_size + 100` when `min_size` is above 100. Before, a `min_size` above 100 with no `max_size` made every value exactly `min_size` long. A `max_size` too large for any allocation (such as `SIZE_MAX`) now means no upper bound. `text({.alphabet = ...})` now generates only the characters of the alphabet, and `characters({.categories = {}})` allows no category. Before, an empty `categories` list was sent to libhegel as no list, so these generated characters from all of Unicode.
 

@@ -19,11 +19,15 @@
 #include <ios>
 #include <iterator>
 #include <limits>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <typeindex>
+#include <typeinfo>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -877,7 +881,6 @@ namespace hegel::internal {
         // The name each LabelName derives its engine label from, in
         // enumerator order.
         constexpr std::array<const char*, label_name_count> label_names = {
-            "hegel.generator",
             "hegel.composite",
             "hegel.map",
             "hegel.flat_map",
@@ -913,8 +916,8 @@ namespace hegel::internal {
             "hegel.pool.values_reusable",
             "hegel.pool.values_consumed",
         };
-        static_assert(label_names[static_cast<size_t>(LabelName::Generator)] ==
-                      std::string_view("hegel.generator"));
+        static_assert(label_names[static_cast<size_t>(LabelName::Composite)] ==
+                      std::string_view("hegel.composite"));
         static_assert(
             label_names[static_cast<size_t>(LabelName::PoolValuesConsumed)] ==
             std::string_view("hegel.pool.values_consumed"));
@@ -955,6 +958,18 @@ namespace hegel::internal {
 
     uint64_t combine_labels(const std::vector<uint64_t>& labels) {
         return impl::label_combine(impl::thread_context(), labels);
+    }
+
+    uint64_t type_label(const std::type_info& type) {
+        static std::mutex mutex;
+        static std::unordered_map<std::type_index, uint64_t> labels;
+        std::lock_guard<std::mutex> lock(mutex);
+        auto [entry, inserted] = labels.try_emplace(std::type_index(type), 0);
+        if (inserted) {
+            entry->second =
+                impl::label_from_name(impl::thread_context(), type.name());
+        }
+        return entry->second;
     }
 
     void start_span(const TestCase& tc, uint64_t label) {
