@@ -33,15 +33,9 @@ public final class PermutationGenerator<T> extends ValueGenerator<List<T>> {
         tc.startSpan(Label.PERMUTATION);
         try {
             int n = elements.size();
-            List<T> remaining = new ArrayList<>(elements);
             List<T> out = new ArrayList<>(n);
-            long id = tc.newCollection(n, n);
-            try {
-                while (!remaining.isEmpty() && tc.collectionMore(id)) {
-                    out.add(remaining.remove((int) tc.generateInteger(0, remaining.size() - 1)));
-                }
-            } finally {
-                tc.collectionFree(id);
+            for (int i : IndexSamples.draw(tc, n, n, n)) {
+                out.add(elements.get(i));
             }
             return out;
         } finally {

@@ -143,6 +143,38 @@ namespace hegel::generators {
                                       bool fullmatch = true);
 
     /**
+     * @brief Parameters for the from_regex() overload with an alphabet.
+     */
+    struct RegexParams {
+        /// Whether the entire generated string must match the pattern (as if
+        /// anchored with `^` and `$`), or only contain a match.
+        bool fullmatch = true;
+        /// The characters any part of the string may contain: the
+        /// characters a wildcard, a negated class or the padding around a
+        /// partial match draws from, and those a literal or class may
+        /// produce. Default: all of Unicode.
+        std::optional<CharactersParams> alphabet;
+    };
+
+    /**
+     * @brief Generate strings matching a regular expression, restricted to
+     *        an alphabet.
+     *
+     * @code{.cpp}
+     * auto ascii = from_regex(
+     *     "a.c", {.alphabet = CharactersParams{.codec = "ascii"}});
+     * // e.g. "a!c": the wildcard draws only ASCII characters
+     * @endcode
+     *
+     * @param pattern Regex pattern
+     * @param params Match mode and alphabet
+     * @return Generator producing strings that satisfy @p pattern, every
+     *   character of which the alphabet can generate.
+     */
+    Generator<std::string> from_regex(const std::string& pattern,
+                                      const RegexParams& params);
+
+    /**
      * @brief Generate strings of a grammar written in the syntax of the
      * [Lark](https://lark-parser.readthedocs.io/en/stable/grammar.html)
      * parsing library.

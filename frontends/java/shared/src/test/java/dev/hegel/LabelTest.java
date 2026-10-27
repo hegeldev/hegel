@@ -38,6 +38,8 @@ class LabelTest {
         assertEquals(Label.of("hegel.stateful.rule"), Label.STATEFUL_RULE);
         assertEquals(Label.of("hegel.recursive"), Label.RECURSIVE);
         assertEquals(Label.of("hegel.permutation"), Label.PERMUTATION);
+        assertEquals(Label.of("hegel.subsequence"), Label.SUBSEQUENCE);
+        assertEquals(Label.of("hegel.sample"), Label.SAMPLE);
         assertEquals(Label.of("hegel.array"), Label.ARRAY);
         assertEquals(Label.of("hegel.composite"), Label.COMPOSITE);
         assertEquals(Label.of("hegel.deferred"), Label.DEFERRED);

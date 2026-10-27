@@ -101,6 +101,11 @@ TEST(Labels, CompoundGeneratorsCombineTheirComponents) {
         combined(hi::LabelName::Recursive, {ints}));
     EXPECT_EQ(gs::permutations({1, 2}).label(),
               hi::label(hi::LabelName::Permutation));
+    EXPECT_EQ(gs::subsequences({1, 2}).label(),
+              hi::label(hi::LabelName::Subsequence));
+    EXPECT_EQ(gs::samples({1, 2}).label(), hi::label(hi::LabelName::Sample));
+    EXPECT_NE(gs::samples({1, 2}).label(), gs::subsequences({1, 2}).label());
+    EXPECT_NE(gs::samples({1, 2}).label(), gs::permutations({1, 2}).label());
 }
 
 TEST(Labels, SameShapeDifferentComponentsDiffer) {

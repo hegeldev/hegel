@@ -62,6 +62,8 @@ type wrapper = { value : int } [@@deriving hegel_generator]
 (** A type with an option field. *)
 type maybe_int = { data : int option } [@@deriving hegel_generator]
 
+type unit_wrapper = { nothing : unit } [@@deriving hegel_generator]
+
 (** A nested derived type: record containing another derived record. *)
 type line_segment =
   { start_pt : point
@@ -231,6 +233,13 @@ let%hegel_test test_wrapper_e2e tc =
   let w = Hegel.draw_silent tc hegel_generator_wrapper in
   ignore w.value
 [@@settings Hegel.Settings.create ~test_cases:20 ~seed:0 ()]
+;;
+
+let%hegel_test test_unit_wrapper_e2e tc =
+  let w = Hegel.draw tc hegel_generator_unit_wrapper in
+  let () = w.nothing in
+  ()
+[@@settings Hegel.Settings.create ~test_cases:5 ~seed:0 ()]
 ;;
 
 (** Test: derived line_segment (nested record) generates values, resolving the
@@ -717,6 +726,7 @@ let () =
         ; Alcotest.test_case "derived shape covers all" `Quick test_shape_e2e
         ; Alcotest.test_case "derived score (alias)" `Quick test_score_e2e
         ; Alcotest.test_case "derived wrapper (single field)" `Quick test_wrapper_e2e
+        ; Alcotest.test_case "derived unit field" `Quick test_unit_wrapper_e2e
         ; Alcotest.test_case "derived maybe_int (option)" `Quick test_maybe_int_e2e
         ; Alcotest.test_case "derived line_segment (nested)" `Quick test_line_segment_e2e
         ; Alcotest.test_case

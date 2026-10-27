@@ -86,3 +86,13 @@ Giving both `min_value` and `min_value_exclusive` (or both `max_value` and `max_
 `StateMachine.teardown()` is removed. No other Hegel frontend has a per-test-case teardown hook on a state machine, and a fresh instance is made for every test case anyway: do any cleanup a machine needs in a rule or invariant, or run the machine from a `@hegel.test` body with `hegel.run_state_machine(tc, Machine)` and clean up after it there.
 
 A concurrent machine's round header now quotes the group's name with double quotes (`---------------- Round 1: group "deposit" ----------------`), as the other Hegel frontends do, instead of Python's `repr` form.
+
+`text(alphabet=...)` now accepts only what the engine's string generator accepts: a string or sequence of characters, or a `characters()` generator. Passing any other generator, such as `gs.sampled_from("abc") | gs.just("d")`, used to build the string in Python one character at a time; it now raises `InvalidArgument`. To build text from an arbitrary generator of characters, draw a list of them and join it, which draws and shrinks the same way:
+
+```python
+# before
+gs.text(alphabet=gs.sampled_from("abc") | gs.just("d"))
+
+# after
+gs.lists(gs.sampled_from("abc") | gs.just("d")).map("".join)
+```

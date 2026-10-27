@@ -13,9 +13,12 @@ import static dev.hegel.Generators.longs;
 import static dev.hegel.Generators.maps;
 import static dev.hegel.Generators.oneOf;
 import static dev.hegel.Generators.sampledFrom;
+import static dev.hegel.Generators.samples;
 import static dev.hegel.Generators.sets;
+import static dev.hegel.Generators.subsequences;
 import static dev.hegel.Generators.text;
 import static dev.hegel.Generators.times;
+import static dev.hegel.Generators.weightedBooleans;
 import static dev.hegel.Generators.zoneOffsets;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -211,5 +214,31 @@ class GeneratorValidationTest {
     @Test
     void settingsTestCasesPositive() {
         assertThrows(IllegalArgumentException.class, () -> new Settings().testCases(0));
+    }
+
+    @Test
+    void weightedBooleansProbability() {
+        assertThrows(IllegalArgumentException.class, () -> weightedBooleans(-0.1));
+        assertThrows(IllegalArgumentException.class, () -> weightedBooleans(1.1));
+        assertThrows(IllegalArgumentException.class, () -> weightedBooleans(Double.NaN));
+    }
+
+    @Test
+    void subsequenceSizes() {
+        assertThrows(IllegalArgumentException.class, () -> subsequences(1, 2).minSize(3));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> subsequences(1, 2).minSize(2).maxSize(1));
+        assertThrows(IllegalArgumentException.class, () -> subsequences(1, 2).minSize(-1));
+    }
+
+    @Test
+    void sampleSizes() {
+        assertThrows(IllegalArgumentException.class, () -> samples(List.of()).minSize(1));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> samples(1, 2).withoutReplacement().minSize(3));
+        assertThrows(
+                IllegalArgumentException.class, () -> samples(1, 2).minSize(2).maxSize(1));
     }
 }

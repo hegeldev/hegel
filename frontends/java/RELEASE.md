@@ -122,10 +122,14 @@ New generators, matching the other Hegel frontends:
 - `Generators.bigIntegers()` generates `BigInteger` values, narrowed with `min` and `max`, which may be of any magnitude. An unset bound reaches `2^127` values beyond the other bound, or beyond zero when that is further, so `bigIntegers()` alone draws from `[-2^127, 2^127)`, as in the other Hegel frontends. `Generators.forType(BigInteger.class)` derives it.
 - `lists(...).unique()` and `lists(...).uniqueBy(key)` generate lists whose elements, or their keys, are distinct, comparing arrays by their contents.
 - `Generators.permutations(elements)` generates reorderings of a fixed list, shrinking toward the original order.
+- `Generators.subsequences(elements)` generates sublists of a fixed list that keep its order, and `Generators.samples(elements)` lists of elements chosen from it, with replacement by default or without it after `.withoutReplacement()`. Both take `.minSize(n)` and `.maxSize(n)`, and shrink toward fewer elements from earlier in the list.
+- `Generators.weightedBooleans(p)` generates `true` with probability `p`, which must be between 0 and 1.
 - `Generators.arrays(element, length, newArray)` generates arrays of a fixed length, such as `arrays(integers(), 3, Integer[]::new)`.
 - `Generators.nulls()` always generates `null`.
 - `text().alphabet(chars)` draws only from the given characters, and `text().codec(name)` restricts to the characters `"ascii"`, `"latin-1"` (or `"iso-8859-1"`) or `"utf-8"` can encode. An alphabet cannot be combined with the other character restrictions.
 - `fromRegex(pattern).alphabet(characters)` restricts every character of a generated string, padding included, to those `characters` can generate, such as `characters().codec("ascii")`.
+
+`Generators.forType(cls)` and `records(cls)` now reject a record that refers back to itself through its components, directly or through other records and collections, such as `record Node(int value, List<Node> children)`. Deriving a generator for one recursed without bound; it now fails with a `HegelException` naming the record and the cycle, and pointing at `Generators.recursive`, `Generators.deferred()` and `records(Node.class).with(...)`, which remain the ways to build such a generator.
 
 `text()` now leaves character validation to the engine. `text().categories("Cs")` and `text().categories("C")` were rejected when the generator was built because they name surrogates; the engine never generates surrogates, so `categories("C")` now generates the other control, format, private-use and unassigned characters, and a set of categories that leaves no characters fails when drawn from with an `IllegalArgumentException`, as an unknown codec does.
 

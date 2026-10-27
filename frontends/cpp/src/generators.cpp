@@ -196,13 +196,18 @@ namespace hegel::generators {
 
         class BooleansGenerator : public detail::ValuePrinted<bool> {
           public:
+            explicit BooleansGenerator(double p) : p_(p) {}
+
             bool do_draw(const TestCase& tc) const override {
-                return internal::draw_boolean(tc, 0.5);
+                return internal::draw_boolean(tc, p_);
             }
 
             uint64_t label() const override {
                 return internal::label(internal::LabelName::Booleans);
             }
+
+          private:
+            double p_;
         };
 
         /// ISO 8601 `YYYY-MM-DD`.
@@ -375,7 +380,16 @@ namespace hegel::generators {
     } // namespace
 
     Generator<bool> booleans() {
-        return Generator<bool>(new BooleansGenerator());
+        return Generator<bool>(new BooleansGenerator(0.5));
+    }
+
+    Generator<bool> weighted_booleans(double p) {
+        if (!(p >= 0.0 && p <= 1.0)) {
+            throw std::invalid_argument(
+                "weighted_booleans: p must be between 0 and 1, got " +
+                std::to_string(p));
+        }
+        return Generator<bool>(new BooleansGenerator(p));
     }
 
     Generator<std::string> text(const TextParams& params) {
@@ -392,9 +406,23 @@ namespace hegel::generators {
 
     Generator<std::string> from_regex(const std::string& pattern,
                                       bool fullmatch) {
+        return from_regex(pattern, RegexParams{.fullmatch = fullmatch});
+    }
+
+    Generator<std::string> from_regex(const std::string& pattern,
+                                      const RegexParams& params) {
+        if (!params.alphabet) {
+            return Generator<std::string>(new StringDrawGenerator(
+                internal::LabelName::FromRegex,
+                impl::string_generator_regex(pattern, params.fullmatch,
+                                             nullptr)));
+        }
+        StringGeneratorHandle alphabet(
+            build_characters_handle(*params.alphabet, 0));
         return Generator<std::string>(new StringDrawGenerator(
             internal::LabelName::FromRegex,
-            impl::string_generator_regex(pattern, fullmatch)));
+            impl::string_generator_regex(pattern, params.fullmatch,
+                                         alphabet.get())));
     }
 
     Generator<std::string> from_lark(const std::string& grammar,

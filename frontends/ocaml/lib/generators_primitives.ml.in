@@ -30,6 +30,16 @@ let booleans ?(p = 0.5) (): _ MODE(portable) =
     ~print:Printer.bool
 ;;
 
+(** [unit ()] creates a generator for the unit value, printed as [()]. It is
+    the constant generator of [()], labelled as {!just}. *)
+let unit () : _ MODE(portable) =
+  (leaf [@mode portable])
+    ~name:"just"
+    ~draw:(fun _ -> ())
+    ~sexp_of:sexp_of_unit
+    ~print:Printer.unit
+;;
+
 (** [floats ?width ?min_value ?max_value ?min_value_exclusive
      ?max_value_exclusive ?allow_nan ?allow_infinity ?allow_subnormal ()]
     creates a generator for floating-point values.

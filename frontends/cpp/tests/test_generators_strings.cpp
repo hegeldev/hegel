@@ -78,6 +78,30 @@ TEST(Formats, AlphabetRestrictsCharacters) {
                         .database = hegel::Database::disabled()});
 }
 
+TEST(Formats, RegexAlphabetRestrictsCharacters) {
+    hegel::test(
+        [](hegel::TestCase& tc) {
+            std::string s = tc.draw(gs::from_regex(
+                "a.c", {.alphabet = gs::CharactersParams{.codec = "ascii"}}));
+            ASSERT_EQ(s.size(), 3u) << s;
+            EXPECT_EQ(s.front(), 'a') << s;
+            EXPECT_EQ(s.back(), 'c') << s;
+            EXPECT_LT(static_cast<unsigned char>(s[1]), 128) << s;
+            std::string padded = tc.draw(gs::from_regex(
+                "b", {.fullmatch = false,
+                      .alphabet = gs::CharactersParams{.min_codepoint = 'b',
+                                                       .max_codepoint = 'b'}}));
+            EXPECT_FALSE(padded.empty());
+            EXPECT_EQ(padded.find_first_not_of('b'), std::string::npos)
+                << padded;
+            std::string plain =
+                tc.draw(gs::from_regex("[ab]", gs::RegexParams{}));
+            EXPECT_TRUE(plain == "a" || plain == "b") << plain;
+        },
+        hegel::Settings{.test_cases = 50,
+                        .database = hegel::Database::disabled()});
+}
+
 // alphabet cannot be combined with individual character-filtering options.
 TEST(Formats, AlphabetWithCharFilteringThrows) {
     EXPECT_THROW(gs::text({.codec = "ascii", .alphabet = "abc"}),

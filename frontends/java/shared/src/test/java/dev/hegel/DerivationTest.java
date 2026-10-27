@@ -7,6 +7,7 @@ import static dev.hegel.Generators.records;
 import static dev.hegel.Utils.assertAllExamples;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.hegel.generators.Derive;
 import java.util.List;
@@ -160,5 +161,41 @@ class DerivationTest {
         Generator<Point> g = forType(Point.class);
         assertNotNull(g);
         assertAllExamples(g, p -> p.x() >= Integer.MIN_VALUE && p.y() <= Integer.MAX_VALUE);
+    }
+
+    record Node(int value, List<Node> children) {}
+
+    record Wild(List<? extends Node> nodes) {}
+
+    @Test
+    void wildcardComponentsAreNotCycles() {
+        Generator<Wild> g = forType(Wild.class);
+        assertThrows(
+                HegelException.class, () -> Hegel.test(tc -> tc.draw(g), new Settings().database(Database.disabled())));
+    }
+
+    record Ping(Optional<Pong> pong) {}
+
+    record Pong(Map<String, Ping> pings) {}
+
+    @Test
+    void recursiveRecordsAreRejectedWhenDerived() {
+        HegelException direct = assertThrows(HegelException.class, () -> forType(Node.class));
+        assertTrue(direct.getMessage().contains("DerivationTest$Node"), direct.getMessage());
+        assertTrue(direct.getMessage().contains("Node -> Node"), direct.getMessage());
+        assertTrue(direct.getMessage().contains("Generators.recursive"), direct.getMessage());
+        assertTrue(direct.getMessage().contains("records(Node.class).with(...)"), direct.getMessage());
+        HegelException mutual = assertThrows(HegelException.class, () -> forType(Ping.class));
+        assertTrue(mutual.getMessage().contains("Ping -> Pong -> Ping"), mutual.getMessage());
+        assertThrows(
+                HegelException.class,
+                () -> Hegel.test(tc -> tc.draw(records(Node.class)), new Settings().database(Database.disabled())));
+    }
+
+    @Test
+    void recursiveRecordsDeriveWithTheRecursiveComponentOverridden() {
+        assertAllExamples(
+                records(Node.class).with("children", just(List.<Node>of())),
+                node -> node.children().isEmpty());
     }
 }

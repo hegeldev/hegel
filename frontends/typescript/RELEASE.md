@@ -78,6 +78,8 @@ Shrinking labels are now derived by the engine from each generator's kind and it
 - `gs.recursive(base, extend, { maxDepth, maxLeaves })` generates recursively structured data, such as trees or JSON documents. The engine decides where a value branches and keeps it within the limits, so recursive values are distributed the same way as in the other Hegel frontends, and they shrink toward a single leaf.
 - `gs.deferred(() => generator)` defines a generator in terms of generators defined after it, including itself, for mutually recursive definitions.
 - `gs.permutations(elements)` generates reorderings of a list, shrinking toward the original order.
+- `gs.subsequences(elements, { minSize, maxSize })` generates arrays of some of a list's elements, each used at most once, in their original order; `gs.samples(elements, { minSize, maxSize, replacement })` generates arrays of elements chosen from a list, with replacement by default, or without it (`replacement: false`) for a reordered subset. Both shrink toward fewer elements, taken from earlier in the list.
+- `gs.weightedBooleans(p)` generates `true` with probability `p` and `false` otherwise, shrinking toward `false`.
 - `gs.none()` always generates `null`.
 - `gs.arrays` takes `uniqueBy`, a key function or an array of them whose keys must be distinct across the array. Keys are compared structurally, as `unique` compares elements, so a key may be an array or an object.
 - `gs.floats({ width: 32 })` generates only values a 32-bit float holds exactly.

@@ -242,7 +242,15 @@ export function floats(options?: FloatOptions): PrintableGenerator<number> {
 }
 
 class BooleansGenerator extends ValueGenerator<boolean> {
-  private readonly schema = { type: "boolean" };
+  private readonly schema: Record<string, unknown>;
+
+  constructor(p: number) {
+    super();
+    if (typeof p !== "number" || !(p >= 0 && p <= 1)) {
+      throw new Error(`weightedBooleans(p) requires p between 0 and 1, got ${String(p)}`);
+    }
+    this.schema = { type: "boolean", p };
+  }
 
   doDraw(tc: TestCase): boolean {
     return generateRaw(tc, this.schema) as boolean;
@@ -253,7 +261,15 @@ class BooleansGenerator extends ValueGenerator<boolean> {
   }
 }
 
-/** Generate boolean values. */
+/** Generate boolean values, shrinking toward `false`. */
 export function booleans(): PrintableGenerator<boolean> {
-  return new BooleansGenerator();
+  return new BooleansGenerator(0.5);
+}
+
+/**
+ * Generate `true` with probability `p`, in `[0, 1]`, and `false` otherwise,
+ * shrinking toward `false`. A `p` outside that range throws.
+ */
+export function weightedBooleans(p: number): PrintableGenerator<boolean> {
+  return new BooleansGenerator(p);
 }

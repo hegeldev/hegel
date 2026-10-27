@@ -1,5 +1,6 @@
 /**
- * Collection generators: arrays, sets, maps and permutations.
+ * Collection generators: arrays, sets, maps, permutations, subsequences and
+ * samples.
  *
  * @packageDocumentation
  */
@@ -406,6 +407,30 @@ export function maps<K, V>(
   return new MapsGenerator(keys, values, options);
 }
 
+function drawIndexSample(tc: TestCase, n: number, minSize: number, maxSize: number): number[] {
+  const remaining = Array.from({ length: n }, (_, i) => i);
+  const chosen: number[] = [];
+  const collection = new Collection(tc, minSize, maxSize);
+  while (remaining.length > 0 && collection.more()) {
+    const index = generateRaw(tc, {
+      type: "integer",
+      min_value: 0,
+      max_value: remaining.length - 1,
+    }) as number;
+    chosen.push(remaining.splice(index, 1)[0]);
+  }
+  return chosen;
+}
+
+function checkSizes(options?: CollectionOptions): [number, number | null] {
+  const minSize = options?.minSize ?? 0;
+  const maxSize = options?.maxSize ?? null;
+  if (maxSize !== null && minSize > maxSize) {
+    throw new Error("Cannot have maxSize < minSize");
+  }
+  return [minSize, maxSize];
+}
+
 class PermutationsGenerator<T> extends ValueGenerator<T[]> {
   private readonly elements: readonly T[];
 
@@ -416,17 +441,8 @@ class PermutationsGenerator<T> extends ValueGenerator<T[]> {
 
   doDraw(tc: TestCase): T[] {
     tc.startSpan(this.label);
-    const remaining = [...this.elements];
-    const result: T[] = [];
-    const collection = new Collection(tc, remaining.length, remaining.length);
-    while (remaining.length > 0 && collection.more()) {
-      const index = generateRaw(tc, {
-        type: "integer",
-        min_value: 0,
-        max_value: remaining.length - 1,
-      }) as number;
-      result.push(remaining.splice(index, 1)[0]);
-    }
+    const n = this.elements.length;
+    const result = drawIndexSample(tc, n, n, n).map((i) => this.elements[i]);
     tc.stopSpan();
     return result;
   }
@@ -443,4 +459,143 @@ class PermutationsGenerator<T> extends ValueGenerator<T[]> {
  */
 export function permutations<T>(elements: readonly T[]): PrintableGenerator<T[]> {
   return new PermutationsGenerator(elements);
+}
+
+class SubsequencesGenerator<T> extends ValueGenerator<T[]> {
+  private readonly elements: readonly T[];
+  private readonly minSize: number;
+  private readonly maxSize: number;
+
+  constructor(elements: readonly T[], options?: CollectionOptions) {
+    super();
+    this.elements = [...elements];
+    const n = this.elements.length;
+    const [minSize, maxSize] = checkSizes(options);
+    if (minSize > n) {
+      throw new Error(
+        `Cannot generate a subsequence: minSize ${minSize} is larger than the ${n} elements in the sequence`,
+      );
+    }
+    this.minSize = minSize;
+    this.maxSize = maxSize === null ? n : Math.min(maxSize, n);
+  }
+
+  doDraw(tc: TestCase): T[] {
+    tc.startSpan(this.label);
+    const indices = drawIndexSample(tc, this.elements.length, this.minSize, this.maxSize);
+    indices.sort((a, b) => a - b);
+    const result = indices.map((i) => this.elements[i]);
+    tc.stopSpan();
+    return result;
+  }
+
+  /** @internal */
+  protected override makeLabel(): LabelSpec {
+    return labelSpec(LabelNames.SUBSEQUENCE);
+  }
+}
+
+/**
+ * Generate subsequences of `elements`: arrays of some of its elements, each
+ * used at most once, in their original order. Sizes are as for
+ * {@link arrays}, capped at the number of elements; a `minSize` larger than
+ * that throws. Shrinks toward fewer elements, taken from earlier in the
+ * list.
+ */
+export function subsequences<T>(
+  elements: readonly T[],
+  options?: CollectionOptions,
+): PrintableGenerator<T[]> {
+  return new SubsequencesGenerator(elements, options);
+}
+
+export interface SampleOptions extends CollectionOptions {
+  /**
+   * Whether an element may be chosen more than once. With replacement (the
+   * default) each element of the result is chosen independently from the
+   * whole list; without it each element of the list is used at most once,
+   * so the result is a reordered subset of the list.
+   */
+  replacement?: boolean;
+}
+
+class SamplesGenerator<T> extends ValueGenerator<T[]> {
+  private readonly elements: readonly T[];
+  private readonly minSize: number;
+  private readonly maxSize: number | null;
+  private readonly replacement: boolean;
+
+  constructor(elements: readonly T[], options?: SampleOptions) {
+    super();
+    this.elements = [...elements];
+    const n = this.elements.length;
+    const [minSize, maxSize] = checkSizes(options);
+    this.replacement = options?.replacement ?? true;
+    this.minSize = minSize;
+    if (this.replacement) {
+      if (n === 0 && minSize > 0) {
+        throw new Error("Cannot generate a non-empty sample from an empty sequence");
+      }
+      this.maxSize = n === 0 ? 0 : maxSize;
+    } else {
+      if (minSize > n) {
+        throw new Error(
+          `Cannot generate a sample without replacement: minSize ${minSize} is larger than the ${n} elements in the sequence`,
+        );
+      }
+      this.maxSize = maxSize === null ? n : Math.min(maxSize, n);
+    }
+  }
+
+  doDraw(tc: TestCase): T[] {
+    tc.startSpan(this.label);
+    const n = this.elements.length;
+    let result: T[];
+    if (this.replacement) {
+      result = [];
+      const collection = new Collection(tc, this.minSize, this.maxSize ?? undefined);
+      while (collection.more()) {
+        const index = generateRaw(tc, {
+          type: "integer",
+          min_value: 0,
+          max_value: n - 1,
+        }) as number;
+        result.push(this.elements[index]);
+      }
+    } else {
+      result = drawIndexSample(tc, n, this.minSize, this.maxSize as number).map(
+        (i) => this.elements[i],
+      );
+    }
+    tc.stopSpan();
+    return result;
+  }
+
+  /** @internal */
+  protected override makeLabel(): LabelSpec {
+    return labelSpec(LabelNames.SAMPLE);
+  }
+}
+
+/**
+ * Generate samples of `elements`: arrays of between `minSize` and `maxSize`
+ * of its elements.
+ *
+ * With replacement (the default) each element of the result is chosen
+ * independently from the whole list, so the same value can appear any
+ * number of times, and the size is bounded only by `maxSize`. With
+ * `replacement: false` each element of the list is used at most once, in
+ * the order drawn, so the size is capped at the number of elements. A
+ * `minSize` that cannot be met throws. Shrinks toward fewer elements, taken
+ * from earlier in the list.
+ *
+ * To draw a single element, use {@link sampledFrom}; to reorder the whole
+ * list, use {@link permutations}; to pick a subset while preserving the
+ * original order, use {@link subsequences}.
+ */
+export function samples<T>(
+  elements: readonly T[],
+  options?: SampleOptions,
+): PrintableGenerator<T[]> {
+  return new SamplesGenerator(elements, options);
 }

@@ -593,17 +593,8 @@ impl TestCase {
         Ok(Printer::from_raw(raw))
     }
 
-    #[pyo3(signature = (min_size, max_size, text_default=false))]
-    fn new_collection(
-        &self,
-        min_size: u64,
-        max_size: Option<u64>,
-        text_default: bool,
-    ) -> PyResult<Collection> {
-        let max_size = match max_size {
-            None if !text_default => u64::MAX,
-            max_size => max_size_arg(max_size),
-        };
+    fn new_collection(&self, min_size: u64, max_size: Option<u64>) -> PyResult<Collection> {
+        let max_size = max_size.unwrap_or(u64::MAX);
         let mut raw: *mut c::HegelCollection = ptr::null_mut();
         with_ctx(|ctx| {
             check(unsafe { c::hegel_new_collection(ctx, self.tc(), min_size, max_size, &mut raw) })

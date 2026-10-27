@@ -14,6 +14,30 @@
 
 namespace gs = hegel::generators;
 
+TEST(Validation, WeightedBooleansProbability) {
+    EXPECT_THROW(gs::weighted_booleans(-0.1), std::invalid_argument);
+    EXPECT_THROW(gs::weighted_booleans(1.1), std::invalid_argument);
+    EXPECT_THROW(gs::weighted_booleans(std::nan("")), std::invalid_argument);
+    EXPECT_NO_THROW(gs::weighted_booleans(0.0));
+    EXPECT_NO_THROW(gs::weighted_booleans(1.0));
+}
+
+TEST(WeightedBooleans, FollowTheirProbability) {
+    int trues = 0;
+    int cases = 0;
+    hegel::test(
+        [&](hegel::TestCase& tc) {
+            EXPECT_FALSE(tc.draw(gs::weighted_booleans(0.0)));
+            EXPECT_TRUE(tc.draw(gs::weighted_booleans(1.0)));
+            trues += tc.draw(gs::weighted_booleans(0.9)) ? 1 : 0;
+            ++cases;
+        },
+        hegel::Settings{.test_cases = 100,
+                        .database = hegel::Database::disabled()});
+    EXPECT_GT(trues, cases / 2) << trues << " of " << cases;
+    EXPECT_EQ(gs::weighted_booleans(0.9).label(), gs::booleans().label());
+}
+
 TEST(Validation, IntegersMinGreaterThanMax) {
     EXPECT_THROW(gs::integers<int>({.min_value = 10, .max_value = 5}),
                  std::invalid_argument);
