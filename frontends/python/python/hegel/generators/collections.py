@@ -274,34 +274,38 @@ class Sets(Generator[Any]):
         self.label = combine_labels([FROZENSET_LABEL if frozen else SET_LABEL, elements.label])
 
     def _draw(self, tc: TestCase, printer: PrettyPrinter) -> Any:
+        name = "frozenset" if self.frozen else "set"
         open_, close = ("frozenset({", "})") if self.frozen else ("{", "}")
-        printer.begin_group(len(open_), open_)
         result: set[Any] = set()
-        collection = Collection(tc, self.min_size, self.max_size)
-        sampler = _WithoutReplacement.of(self.elements)
-        while _more(collection, sampler):
-            with printer.speculate() as speculation:
-                if result:
-                    printer.text(",")
-                    printer.breakable(" ")
-                if sampler is None:
-                    element = tc.draw_and_print(self.elements, printer)
-                else:
-                    found, element = sampler.draw(tc, printer)
-                    if not found:
+        with printer.speculate() as whole:
+            printer.begin_group(len(open_), open_)
+            collection = Collection(tc, self.min_size, self.max_size)
+            sampler = _WithoutReplacement.of(self.elements)
+            while _more(collection, sampler):
+                with printer.speculate() as speculation:
+                    if result:
+                        printer.text(",")
+                        printer.breakable(" ")
+                    if sampler is None:
+                        element = tc.draw_and_print(self.elements, printer)
+                    else:
+                        found, element = sampler.draw(tc, printer)
+                        if not found:
+                            speculation.abort()
+                            collection.reject("filtered element")
+                            continue
+                    if element in result:
                         speculation.abort()
-                        collection.reject("filtered element")
-                        continue
-                if element in result:
-                    speculation.abort()
-                    collection.reject("duplicate element")
-                else:
-                    speculation.commit()
-                    result.add(element)
-        _short(tc, sampler, len(result), self.min_size)
+                        collection.reject("duplicate element")
+                    else:
+                        speculation.commit()
+                        result.add(element)
+            _short(tc, sampler, len(result), self.min_size)
+            printer.end_group(close)
+            if result:
+                whole.commit()
         if not result:
-            printer.if_break("")
-        printer.end_group(close)
+            printer.text(f"{name}()")
         return frozenset(result) if self.frozen else result
 
     def do_draw(self, tc: TestCase) -> Any:

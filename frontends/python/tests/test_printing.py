@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import collections
 import enum
 import threading
+import typing
 
 import pytest
 
@@ -80,6 +82,38 @@ def test_custom_printed_elements_print_inside_their_containers():
     assert report_of(gs.recursive(ANGLED, lambda inner: gs.lists(inner, max_size=1))) == [
         "draw_1 = <0>"
     ]
+
+
+class Angled:
+    def __init__(self, n):
+        self.n = n
+
+
+gs.register_type_generator(Angled, ANGLED.map(Angled).print_with(lambda v, p: p.text(f"A({v.n})")))
+
+
+class AngledDict(typing.TypedDict):
+    a: Angled
+
+
+def test_from_type_containers_print_their_elements():
+    assert report_of(gs.from_type(tuple[Angled, Angled])) == ["draw_1 = (A(0), A(0))"]
+    assert report_of(gs.from_type(tuple[Angled, ...]).filter(len)) == ["draw_1 = tuple([A(0)])"]
+    assert report_of(gs.from_type(tuple)) == ["draw_1 = tuple([])"]
+    assert report_of(gs.from_type(collections.deque[Angled]).filter(len)) == [
+        "draw_1 = deque([A(0)])"
+    ]
+    assert report_of(gs.from_type(collections.OrderedDict[str, Angled]).filter(len)) == [
+        "draw_1 = OrderedDict({'': A(0)})"
+    ]
+    assert report_of(gs.from_type(AngledDict)) == ["draw_1 = AngledDict({'a': A(0)})"]
+
+
+def test_empty_sets_print_as_calls():
+    assert report_of(gs.sets(ANGLED, max_size=0)) == ["draw_1 = set()"]
+    assert report_of(gs.frozensets(ANGLED, max_size=0)) == ["draw_1 = frozenset()"]
+    assert report_of(gs.sets(ANGLED, min_size=1)) == ["draw_1 = {<0>}"]
+    assert report_of(gs.frozensets(ANGLED, min_size=1)) == ["draw_1 = frozenset({<0>})"]
 
 
 def test_optional_prints_its_inner_generator():

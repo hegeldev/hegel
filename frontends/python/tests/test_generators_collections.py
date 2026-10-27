@@ -91,7 +91,7 @@ def test_sets_print_structurally():
 
     text = notes(failing(body, ValueError))[0]
     assert "s = {0, 1}" in text
-    assert "f = frozenset({})" in text or "f = frozenset()" in text
+    assert "f = frozenset()" in text
 
 
 def test_iterables_are_one_shot_iterators():

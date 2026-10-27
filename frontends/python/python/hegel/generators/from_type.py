@@ -156,7 +156,7 @@ def _generic(origin: Any, args: tuple[Any, ...]) -> Generator[Any] | None:
         element = args[0] if args else object
         result = lists(from_type(element))
         if origin is collections.deque:
-            return result.map(collections.deque)
+            return result.map(collections.deque).print_as_call("deque")
         if origin is collections.abc.Sequence and _bytes_satisfies(element):
             return one_of(result, binary())
         return result
@@ -174,7 +174,9 @@ def _generic(origin: Any, args: tuple[Any, ...]) -> Generator[Any] | None:
         values = from_type(args[1]) if len(args) > 1 else integers()
         mapping = dicts(keys, values)
         return (
-            mapping.map(collections.OrderedDict) if origin is collections.OrderedDict else mapping
+            mapping.map(collections.OrderedDict).print_as_call("OrderedDict")
+            if origin is collections.OrderedDict
+            else mapping
         )
     if origin in (collections.abc.Iterable, collections.abc.Iterator, collections.abc.Collection):
         element = args[0] if args else int
@@ -184,9 +186,9 @@ def _generic(origin: Any, args: tuple[Any, ...]) -> Generator[Any] | None:
         return iterable
     if origin is tuple:
         if not args:
-            return lists(integers()).map(tuple)
+            return lists(integers()).map(tuple).print_as_call("tuple")
         if len(args) == 2 and args[1] is Ellipsis:
-            return lists(from_type(args[0])).map(tuple)
+            return lists(from_type(args[0])).map(tuple).print_as_call("tuple")
         return tuples(*(from_type(a) for a in args))
     if origin in (typing.Union, types.UnionType):
         return one_of(*(from_type(a) for a in args))
@@ -311,7 +313,7 @@ def from_type(type_: Any) -> Generator[Any]:
         required = getattr(type_, "__required_keys__", set(hints))
         mapping = {k: from_type(v) for k, v in hints.items() if k in required}
         extras = {k: from_type(v) for k, v in hints.items() if k not in required}
-        return fixed_dicts(mapping, optional=extras).map(type_)
+        return fixed_dicts(mapping, optional=extras).map(type_).print_as_call(type_.__name__)
     generic = _generic(type_, ())
     if generic is not None:
         return generic  # a bare collection class, such as ``dict`` or ``deque``
