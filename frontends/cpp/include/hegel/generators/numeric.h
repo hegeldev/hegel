@@ -32,16 +32,21 @@ namespace hegel::generators {
      * @tparam T The floating point type
      */
     template <typename T> struct FloatsParams {
-        std::optional<T> min_value; ///< Minimum value. Default: no minimum
-        std::optional<T> max_value; ///< Maximum value. Default: no maximum
-        bool exclude_min =
-            false; ///< If true, exclude min_value (exclusive bound)
-        bool exclude_max =
-            false; ///< If true, exclude max_value (exclusive bound)
+        std::optional<T> min_value; ///< Inclusive minimum. Default: no minimum
+        std::optional<T> max_value; ///< Inclusive maximum. Default: no maximum
+        std::optional<T>
+            min_value_exclusive; ///< A minimum that is itself excluded. Not
+                                 ///< together with min_value
+        std::optional<T>
+            max_value_exclusive; ///< A maximum that is itself excluded. Not
+                                 ///< together with max_value
         std::optional<bool>
             allow_nan; ///< Allow NaN. Default: true if unbounded
         std::optional<bool>
             allow_infinity; ///< Allow infinity. Default: true if unbounded
+        std::optional<bool>
+            allow_subnormal; ///< Allow subnormal values. Default: true when
+                             ///< the bounds admit any
     };
 
     /// @cond INTERNAL
@@ -153,8 +158,22 @@ namespace hegel::generators {
 
       public:
         explicit FloatGenerator(const FloatsParams<T>& params = {}) {
-            bool has_min = params.min_value.has_value();
-            bool has_max = params.max_value.has_value();
+            if (params.min_value && params.min_value_exclusive) {
+                throw std::invalid_argument(
+                    "Cannot give both min_value and min_value_exclusive");
+            }
+            if (params.max_value && params.max_value_exclusive) {
+                throw std::invalid_argument(
+                    "Cannot give both max_value and max_value_exclusive");
+            }
+            bool exclude_min = params.min_value_exclusive.has_value();
+            bool exclude_max = params.max_value_exclusive.has_value();
+            std::optional<T> min_value =
+                exclude_min ? params.min_value_exclusive : params.min_value;
+            std::optional<T> max_value =
+                exclude_max ? params.max_value_exclusive : params.max_value;
+            bool has_min = min_value.has_value();
+            bool has_max = max_value.has_value();
             allow_nan_ = params.allow_nan.value_or(!has_min && !has_max);
             allow_infinity_ =
                 params.allow_infinity.value_or(!has_min || !has_max);
@@ -162,7 +181,7 @@ namespace hegel::generators {
                 throw std::invalid_argument(
                     "Cannot have allow_nan=true with min_value or max_value");
             }
-            if (has_min && has_max && *params.min_value > *params.max_value) {
+            if (has_min && has_max && *min_value > *max_value) {
                 throw std::invalid_argument(
                     "Cannot have max_value < min_value");
             }
@@ -176,26 +195,52 @@ namespace hegel::generators {
             // infinities may be drawn, else the finite extreme of the width
             // drawn at.
             min_ =
-                has_min ? detail::narrow_up<double>(*params.min_value)
+                has_min ? detail::narrow_up<double>(*min_value)
                 : allow_infinity_
                     ? -std::numeric_limits<double>::infinity()
                     : static_cast<double>(std::numeric_limits<Drawn>::lowest());
-            max_ = has_max ? detail::narrow_down<double>(*params.max_value)
+            max_ = has_max ? detail::narrow_down<double>(*max_value)
                    : allow_infinity_
                        ? std::numeric_limits<double>::infinity()
                        : static_cast<double>(std::numeric_limits<Drawn>::max());
-            exclude_min_ =
-                params.exclude_min && static_cast<T>(min_) == *params.min_value;
-            exclude_max_ =
-                params.exclude_max && static_cast<T>(max_) == *params.max_value;
+            exclude_min_ = exclude_min && static_cast<T>(min_) == *min_value;
+            exclude_max_ = exclude_max && static_cast<T>(max_) == *max_value;
+
+            const auto smallest_normal =
+                static_cast<double>(std::numeric_limits<Drawn>::min());
+            bool allow_subnormal = params.allow_subnormal.value_or(
+                subnormal_default(has_min, has_max, smallest_normal));
+            if (allow_subnormal) {
+                if (has_min && min_ >= smallest_normal) {
+                    throw std::invalid_argument(
+                        "allow_subnormal=true, but min_value excludes all "
+                        "values below the smallest positive normal");
+                }
+                if (has_max && max_ <= -smallest_normal) {
+                    throw std::invalid_argument(
+                        "allow_subnormal=true, but max_value excludes all "
+                        "values above the smallest negative normal");
+                }
+            } else if (has_min && has_max) {
+                bool contains_zero = min_ <= 0.0 && max_ >= 0.0;
+                if (!contains_zero && max_ < smallest_normal &&
+                    min_ > -smallest_normal) {
+                    throw std::invalid_argument(
+                        "allow_subnormal=false leaves no floating-point "
+                        "values between min_value and max_value");
+                }
+            }
+            smallest_nonzero_magnitude_ =
+                allow_subnormal ? static_cast<double>(
+                                      std::numeric_limits<Drawn>::denorm_min())
+                                : smallest_normal;
         }
 
         T do_draw(const TestCase& tc) const override {
             constexpr uint32_t width = std::is_same_v<T, float> ? 32 : 64;
             return static_cast<T>(hegel::internal::draw_float(
                 tc, width, min_, max_, allow_nan_, allow_infinity_,
-                exclude_min_, exclude_max_,
-                static_cast<double>(std::numeric_limits<Drawn>::denorm_min())));
+                exclude_min_, exclude_max_, smallest_nonzero_magnitude_));
         }
 
         uint64_t label() const override {
@@ -203,12 +248,30 @@ namespace hegel::generators {
         }
 
       private:
+        bool subnormal_default(bool has_min, bool has_max,
+                               double smallest_normal) const {
+            if (has_min && has_max) {
+                if (min_ == max_) {
+                    return -smallest_normal < min_ && min_ < smallest_normal;
+                }
+                return min_ < smallest_normal && max_ > -smallest_normal;
+            }
+            if (has_min) {
+                return min_ < smallest_normal;
+            }
+            if (has_max) {
+                return max_ > -smallest_normal;
+            }
+            return true;
+        }
+
         double min_;
         double max_;
         bool allow_nan_;
         bool allow_infinity_;
         bool exclude_min_;
         bool exclude_max_;
+        double smallest_nonzero_magnitude_;
     };
     /// @endcond
 
@@ -246,10 +309,17 @@ namespace hegel::generators {
      * auto any_float = floats<double>();
      * auto unit = floats<double>({.min_value = 0.0, .max_value = 1.0});
      * auto open = floats<double>({
-     *     .min_value = 0.0, .max_value = 1.0,
-     *     .exclude_min = true, .exclude_max = true
+     *     .min_value_exclusive = 0.0, .max_value_exclusive = 1.0
      * });
+     * auto flush_to_zero_safe = floats<double>({.allow_subnormal = false});
      * @endcode
+     *
+     * A bound is inclusive (`min_value`, `max_value`) or exclusive
+     * (`min_value_exclusive`, `max_value_exclusive`); giving both forms of
+     * one bound is an error. Subnormal values are drawn whenever the bounds
+     * admit any, unless `allow_subnormal` is `false`; asking for them with
+     * bounds that exclude them all, or excluding them from a range that
+     * holds nothing else, is an error.
      *
      * A `float` is drawn as a 32-bit value, so it shrinks and hits edge
      * cases as a `float`. Every other type is drawn as a `double`. Where
@@ -259,7 +329,7 @@ namespace hegel::generators {
      * error.
      *
      * @tparam T Floating point type (default: double)
-     * @param params Bounds and exclusion constraints
+     * @param params Bounds, exclusion and special-value constraints
      * @return Generator producing floats in the specified range
      */
     template <typename T = double>

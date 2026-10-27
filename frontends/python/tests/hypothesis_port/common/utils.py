@@ -152,13 +152,7 @@ def assert_output_contains_failure(output, test, **kwargs):
         assert f"{k} = {v!r}" in output, (f"{k} = {v!r}", output)
 
 
-def assert_failing_output(
-    test,
-    prefix="Falsifying example",
-    *,
-    expected_exception=AssertionError,
-    **kwargs,
-):
+def assert_failing_output(test, *, expected_exception=AssertionError, **kwargs):
     """Run ``test`` (a Hegel test) expecting it to fail, and check that the
     failure output names each ``kwargs`` draw as ``name = value``."""
     with capture_out() as out:
@@ -171,7 +165,6 @@ def assert_failing_output(
             msg = str(exc_info.value) + "\n" + "\n".join(notes(exc_info.value))
 
     output = out.getvalue() + msg
-    assert f"{prefix}:" in output, (prefix, output)
     assert_output_contains_failure(output, test, **kwargs)
 
 

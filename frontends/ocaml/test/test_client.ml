@@ -701,6 +701,57 @@ let test_run_flaky_strategy () =
 exception A
 exception B
 
+(* Under [Verbose], a test case that stops short says why: a failed
+   assumption, or running out of data (here, while shrinking the failing
+   list). A case that passes prints no line of its own. *)
+let verbose_settings =
+  { (Hegel.Settings.create ~test_cases:20 ~seed:0 ()) with
+    verbosity = Settings.Verbose
+  ; database = Settings.Disabled
+  ; print_blob = false
+  }
+;;
+
+let expect_failure run =
+  match run () with
+  | exception Failure _ -> ()
+  | () -> Alcotest.fail "expected the test to fail"
+;;
+
+let test_verbose_says_why_a_case_stopped_short () =
+  let has output substring = Test_helpers.contains_substring output substring in
+  let output =
+    Test_helpers.capture_stderr (fun () ->
+      run_hegel_test ~settings:verbose_settings (fun tc ->
+        assume tc (Hegel.draw tc (integers ~min_value:0 ~max_value:1 ()) = 0)))
+  in
+  Alcotest.(check bool)
+    "failed assumption"
+    true
+    (has output "Test case stopped: failed assumption\n");
+  Alcotest.(check bool)
+    "no out of data"
+    false
+    (has output "Test case stopped: out of data");
+  let output =
+    Test_helpers.capture_stderr (fun () ->
+      expect_failure (fun () ->
+        run_hegel_test ~settings:verbose_settings (fun tc ->
+          let xs = Hegel.draw tc (lists (integers ()) ~min_size:10 ()) in
+          if List.exists xs ~f:(fun x -> Int.abs x >= 1000) then failwith "large")))
+  in
+  Alcotest.(check bool) "out of data" true (has output "Test case stopped: out of data\n");
+  let output =
+    Test_helpers.capture_stderr (fun () ->
+      run_hegel_test ~settings:verbose_settings (fun tc ->
+        ignore (Hegel.draw tc (booleans ()) : bool)))
+  in
+  Alcotest.(check bool)
+    "no stop line for passing cases"
+    false
+    (has output "Test case stopped")
+;;
+
 (** Two distinct failing assertions surface as an aggregate failure. *)
 let test_run_multiple_failures () =
   match
@@ -879,6 +930,10 @@ let tests =
   ; Alcotest.test_case "run all settings branches" `Quick test_run_all_settings_branches
   ; Alcotest.test_case "run flaky strategy" `Quick test_run_flaky_strategy
   ; Alcotest.test_case "run multiple failures" `Quick test_run_multiple_failures
+  ; Alcotest.test_case
+      "verbose says why a case stopped short"
+      `Quick
+      test_verbose_says_why_a_case_stopped_short
   ; Alcotest.test_case "run health-check failure" `Quick test_run_health_check_failure
   ; Alcotest.test_case "run error kinds" `Quick test_run_error_kinds
   ; Alcotest.test_case "run primitive defaults" `Quick test_run_primitive_defaults

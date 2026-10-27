@@ -180,7 +180,9 @@ def _run_test_case(
             output.block(_format_exception(exception))
     tc._emit_rendered_output()
     if verbose:
-        output.line(_stop_reason(outcome))
+        reason = _stop_reason(outcome.status)
+        if reason is not None:
+            output.line(reason)
     handle.mark_complete(outcome.status, outcome.origin)
     return outcome
 
@@ -247,14 +249,14 @@ def _skip_exceptions() -> tuple[type[BaseException], ...]:
     return tuple(found)
 
 
-def _stop_reason(outcome: _CaseOutcome) -> str:
-    if outcome.status == _native.STATUS_VALID:
-        return "Test case passed"
-    if outcome.status == _native.STATUS_INVALID:
-        return "Test case rejected: assumption failed"
-    if outcome.status == _native.STATUS_OVERRUN:
-        return "Test case stopped: the engine abandoned it"
-    return f"Test case failed: {outcome.origin}"
+def _stop_reason(status: int) -> str | None:
+    """The verbose line saying why a test case stopped short of its end,
+    for one that did."""
+    if status == _native.STATUS_INVALID:
+        return "Test case stopped: failed assumption"
+    if status == _native.STATUS_OVERRUN:
+        return "Test case stopped: out of data"
+    return None
 
 
 Reproducer = Callable[[str], str]
@@ -274,7 +276,7 @@ def _annotate(
 ) -> None:
     notes = []
     if lines:
-        notes.append("Falsifying example:\n" + "\n".join(lines))
+        notes.append("\n".join(lines))
     if caveat is not None:
         notes.append(f"note: {caveat}")
     if reproducer is not None:
@@ -466,12 +468,10 @@ def _run_explicit(
     rather than raised, annotated with the case's drawn values and notes
     (none under quiet verbosity), so the caller can raise it or collect it
     with further failures. A verbose run reports the case as it does a
-    generated one: a heading, the drawn values, and how it ended."""
+    generated one: the drawn values, then the exception when it failed."""
     verbose = verbosity in (Verbosity.verbose, Verbosity.debug)
     explicit = ExplicitTestCase(case)
     tc = TestCase(NO_HANDLE, True, output.resolved_sink(), explicit)
-    if verbose:
-        output.line(f"Running explicit test case: {case!r}")
     outcome = _CaseOutcome(_native.STATUS_VALID, None, None, True)
     try:
         _check_not_awaitable(test_fn(tc))
@@ -493,7 +493,6 @@ def _run_explicit(
         output.lines(explicit.lines)
         if outcome.exception is not None:
             output.block(_format_exception(outcome.exception))
-        output.line(_stop_reason(outcome))
     if outcome.exception is None:
         explicit.check_consumed()
         return outcome

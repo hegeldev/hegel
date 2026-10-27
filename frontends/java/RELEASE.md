@@ -163,3 +163,19 @@ Text and binary generators with no `maxSize` now leave the maximum length to the
 `dev.hegel.lowlevel.Libhegel` gains `grammarBuilderNew`, `grammarBuilderFile`, `grammarBuilderProvide`, `grammarBuilderFree`, `grammarNew`, `grammarFree`, `grammarDrawNew`, `grammarDrawNext`, `grammarDrawProvide`, `grammarDrawResult` and `grammarDrawFree`. A third-party binding needs to implement them.
 
 A draw label containing a newline now fails the run with an `IllegalArgumentException`. Errors the engine reports while printing a test case's output, or for `TestCase.note`, are now raised instead of ignored, except that an error printing a failing test case's output is attached to the test's own exception as a suppressed exception rather than replacing it. Output written after the case's document has been read, such as by a straggling thread, is still silently dropped.
+
+With `Verbosity.VERBOSE` or `Verbosity.DEBUG`, the printing reporter now says why a test case stopped short, as the other Hegel frontends do: `Test case stopped: failed assumption` or `Test case stopped: out of data`. An explicit example is no longer introduced with a `Running explicit Example(...)` line through `Reporter.caseOutput`: its drawn values and notes are reported like a generated case's.
+
+This release also replaces the `excludeMin(boolean)` and `excludeMax(boolean)` methods of `DoubleGenerator` and `FloatGenerator` with `minValueExclusive(v)` and `maxValueExclusive(v)`, which take the bound directly, as the other Hegel frontends do:
+
+```java
+// before
+doubles().min(0).max(1).excludeMin(true).excludeMax(true)
+
+// after
+doubles().minValueExclusive(0).maxValueExclusive(1)
+```
+
+`min` and `minValueExclusive` set the same bound, so whichever is called last wins (likewise `max` and `maxValueExclusive`). An exclusive bound can no longer be set without a bound value, so that `IllegalArgumentException` no longer exists; the remaining validation (an exclusive `+Infinity` minimum, an exclusive `-Infinity` maximum, or exclusive bounds on a single-point range) is unchanged, and its messages now name the new methods. The public six-argument constructors of `DoubleGenerator` and `FloatGenerator` are replaced by no-argument ones; `Generators.doubles()` and `Generators.floats()` are the usual way to get one.
+
+A `java.util.Set` now prints as `Set.of(1, 2)`, where it printed as `[1, 2]`, indistinguishable from a list, and a `UUID` prints as `UUID.fromString("f47ac10b-58cc-4372-a567-0e02b2c3d479")`, where it printed bare. This applies to the values `sets()` and `uuids()` draw and to sets and UUIDs inside any other printed value.

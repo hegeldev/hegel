@@ -614,6 +614,13 @@ function rank(capture: Captured): number {
   return capture.lines.length > 0 ? 1 : 0;
 }
 
+/** The verbose line saying why a test case stopped short of its end, for one that did. */
+function stopReason(outcome: TestCaseResult): string | null {
+  if (outcome.status === "invalid") return "Test case stopped: failed assumption";
+  if (outcome.status === "overrun") return "Test case stopped: out of data";
+  return null;
+}
+
 /** What one engine run concluded. */
 interface RunOutcome {
   /** Whether any failure was reported. */
@@ -952,7 +959,11 @@ export class Hegel {
           const emit = (stamped && !quiet) || verbose;
           const outcome = yield { ds, emit, explicit: null };
           const lines = emit ? ds.render() : [];
-          if (verbose) for (const line of lines) this.output(line);
+          if (verbose) {
+            for (const line of lines) this.output(line);
+            const reason = stopReason(outcome);
+            if (reason !== null) this.output(reason);
+          }
           if (outcome.status === "interesting") {
             const capture: Captured = { lines, stamped, error: outcome.error };
             const stored = captured.get(outcome.origin);

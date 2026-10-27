@@ -29,7 +29,7 @@ def test_plugin_marks_hegel_tests_and_reports_failures(pytester: pytest.Pytester
     pytester.makepyfile(TEST_FILE)
     result = pytester.runpytest("-v", "-m", "hegel")
     result.assert_outcomes(passed=1, failed=1)
-    result.stdout.fnmatch_lines(["*Falsifying example:*", "*xs = [[]0, 0]*"])
+    result.stdout.fnmatch_lines(["*xs = [[]0, 0]*"])
     result = pytester.runpytest("-m", "not hegel")
     result.assert_outcomes(passed=2)
 

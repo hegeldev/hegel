@@ -16,6 +16,8 @@ import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
+import java.util.Set;
+import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -432,9 +434,13 @@ public final class Printer {
             for (int i = 0; i < length; i++) {
                 elements[i] = Array.get(value, i);
             }
-            sequence(Arrays.asList(elements).iterator());
+            sequence("[", Arrays.asList(elements).iterator(), "]");
+        } else if (value instanceof Set<?> set) {
+            sequence("Set.of(", set.iterator(), ")");
         } else if (value instanceof Collection<?> collection) {
-            sequence(collection.iterator());
+            sequence("[", collection.iterator(), "]");
+        } else if (value instanceof UUID uuid) {
+            text("UUID.fromString(" + quote(uuid.toString(), '"') + ")");
         } else if (value instanceof Map<?, ?> map) {
             beginGroup("{");
             boolean first = true;
@@ -496,8 +502,8 @@ public final class Printer {
         }
     }
 
-    private void sequence(Iterator<?> elements) {
-        beginGroup("[");
+    private void sequence(String open, Iterator<?> elements, String close) {
+        beginGroup(open);
         boolean first = true;
         while (elements.hasNext()) {
             if (!first) {
@@ -506,7 +512,7 @@ public final class Printer {
             first = false;
             render(elements.next());
         }
-        endGroup("]");
+        endGroup(close);
     }
 
     /**

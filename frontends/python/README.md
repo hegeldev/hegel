@@ -43,7 +43,6 @@ _____________________________ test_matches_builtin _____________________________
 test_readme.py:12: in test_matches_builtin
     assert my_sort(ls) == sorted(ls)
 E   assert [0] == [0, 0]
-E   Falsifying example:
 E   ls = [0, 0]
 E   To reproduce this failure, add this decorator below @hegel.test:
 E       @hegel.reproduce_failure("AXicY2VgYGBkZOBiZEBhMAAAAd8AIQ==")

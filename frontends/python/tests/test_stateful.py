@@ -461,7 +461,7 @@ def test_concurrent_machine_finds_race(output):
     with pytest.raises(AssertionError) as info:
         hegel.state_machine_test(Bank, test_cases=300)()
     text = notes(info.value)[0]
-    assert text.startswith("Falsifying example:\nConcurrency level: ")
+    assert text.startswith("Concurrency level: ")
     assert "Round 1: group" in text
     assert "[worker " in text
     assert "Invariant non_negative failed:" in text
@@ -676,7 +676,6 @@ def test_concurrent_failure_in_verbose_mode(output):
     with pytest.raises(ValueError):
         hegel.state_machine_test(Boom, test_cases=5, verbosity=hegel.Verbosity.verbose)()
     assert output.text.count("ValueError: concurrent boom") >= 1
-    assert any(line.startswith("Test case failed: ValueError") for line in output.lines)
 
 
 def test_concurrent_failure_in_quiet_mode(output):

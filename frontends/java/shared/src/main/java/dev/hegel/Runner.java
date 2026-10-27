@@ -190,7 +190,6 @@ final class Runner {
             TestCase testCase = TestCase.explicit(draws);
             if (verbose) {
                 reporter.caseStarted(false);
-                reporter.caseOutput("Running explicit " + example, false);
             }
             Throwable failure = null;
             try {

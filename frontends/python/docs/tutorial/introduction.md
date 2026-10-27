@@ -67,16 +67,14 @@ simplest one it can find, and pytest reports the result:
         n = tc.draw(gs.integers())
 >       assert n < 50
 E       assert 50 < 50
-E       Falsifying example:
 E       n = 50
 E       To reproduce this failure, add this decorator below @hegel.test:
 E           @hegel.reproduce_failure("AAEAAAAACgEAAAAy")
 ```
 
 The failing integer Hegel first found was probably much larger, but `50` is the
-smallest counterexample, and it is the one reported. Under `Falsifying
-example:`, Hegel lists every value the test drew, named after the variable it
-was assigned to. {doc}`failures` covers the rest of the report.
+smallest counterexample, and it is the one reported. The report lists every
+value the test drew, named after the variable it was assigned to. {doc}`failures` covers the rest of the report.
 
 To fix this test, constrain the integers you generate with the `min_value`
 and `max_value` arguments:

@@ -65,7 +65,7 @@ def test_unique_lists_report_only_accepted_elements():
         xs = tc.draw(gs.lists(gs.integers(0, 1), unique=True, min_size=2))
         assert xs != [0, 1]
 
-    assert notes(failing(body))[0] == "Falsifying example:\nxs = [0, 1]"
+    assert notes(failing(body))[0] == "xs = [0, 1]"
 
 
 def test_sets_and_frozensets():
@@ -195,7 +195,7 @@ def test_unique_collections_sample_without_replacement():
         xs = tc.draw(gs.sets(gs.sampled_from([3, 2, 1]).map(str), min_size=2))
         assert len(xs) < 2
 
-    assert notes(failing(body))[0] == "Falsifying example:\nxs = {'3', '2'}"
+    assert notes(failing(body))[0] == "xs = {'3', '2'}"
 
 
 def test_dicts():
@@ -328,4 +328,4 @@ def test_large_collections_wrap_in_output():
     lines = text.splitlines()
     assert len(lines) > 3
     assert all(len(line) <= 79 for line in lines)
-    assert lines[1].startswith("xs = [")
+    assert lines[0].startswith("xs = [")

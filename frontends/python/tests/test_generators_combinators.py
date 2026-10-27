@@ -150,7 +150,7 @@ def test_one_of_prints_chosen_branch():
         value = tc.draw(gs.one_of(gs.lists(gs.just(1), min_size=1, max_size=1), gs.just("x")))
         assert value != [1]
 
-    assert notes(failing(body))[0] == "Falsifying example:\nvalue = [1]"
+    assert notes(failing(body))[0] == "value = [1]"
 
 
 def test_optional():
@@ -163,13 +163,13 @@ def test_optional():
         value = tc.draw(gs.optional(gs.just([1])))
         assert value is None
 
-    assert notes(failing(body))[0] == "Falsifying example:\nvalue = [1]"
+    assert notes(failing(body))[0] == "value = [1]"
 
     def body2(tc):
         value = tc.draw(gs.optional(gs.just([1])))
         assert value is not None
 
-    assert notes(failing(body2))[0] == "Falsifying example:\nvalue = None"
+    assert notes(failing(body2))[0] == "value = None"
 
 
 def test_map_flat_map_filter():
@@ -195,7 +195,7 @@ def test_filter_prints_only_accepted_value():
         x = tc.draw(gs.integers(0, 10).filter(lambda v: v >= 3))
         assert x == 100
 
-    assert notes(failing(body))[0] == "Falsifying example:\nx = 3"
+    assert notes(failing(body))[0] == "x = 3"
 
 
 def test_filter_rejects_after_three_attempts():
@@ -230,7 +230,7 @@ def test_flat_map_prints_inner_value():
         v = tc.draw(gs.just(2).flat_map(lambda n: gs.lists(gs.just(n), min_size=n, max_size=n)))
         raise ValueError(v)
 
-    assert notes(failing(body, ValueError))[0] == "Falsifying example:\nv = [2, 2]"
+    assert notes(failing(body, ValueError))[0] == "v = [2, 2]"
 
 
 def test_print_with_and_print_as_call():

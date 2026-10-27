@@ -11,6 +11,7 @@ final class PrintingReporter implements Reporter {
     private boolean printBlob;
     private boolean annotated;
     private boolean quiet;
+    private boolean verbose;
     private boolean multiple;
 
     PrintingReporter(PrintStream out) {
@@ -22,6 +23,7 @@ final class PrintingReporter implements Reporter {
         printBlob = Boolean.TRUE.equals(settings.printBlob);
         annotated = settings.annotated;
         quiet = settings.verbosity == Verbosity.QUIET;
+        verbose = settings.verbosity == Verbosity.VERBOSE || settings.verbosity == Verbosity.DEBUG;
     }
 
     @Override
@@ -41,6 +43,18 @@ final class PrintingReporter implements Reporter {
     public void caseOutput(String line, boolean finalReplay) {
         if (!quiet) {
             out.println(line);
+        }
+    }
+
+    @Override
+    public void caseFinished(CaseOutcome outcome, boolean finalReplay) {
+        if (!verbose || finalReplay) {
+            return;
+        }
+        if (outcome == CaseOutcome.INVALID) {
+            out.println("Test case stopped: failed assumption");
+        } else if (outcome == CaseOutcome.OVERRUN) {
+            out.println("Test case stopped: out of data");
         }
     }
 
