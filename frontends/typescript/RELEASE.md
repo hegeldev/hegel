@@ -1,6 +1,6 @@
 RELEASE_TYPE: minor
 
-This release makes the engine the source of every setting a TypeScript test does not set itself, adds the settings that were missing, changes what a failing or aborted run throws and how a failure is reported, and adds the test-case features the other Hegel frontends have.
+This release makes the engine the source of every setting a TypeScript test does not set itself, adds the settings that were missing, changes what a failing or aborted run throws and how a failure is reported, makes printing a drawn value the job of the generator that drew it (so `tc.draw` now needs a generator that can print), and adds the test-case features the other Hegel frontends have.
 
 **Settings.** A run now starts from the settings the engine resolves (the default profile, `hegel.toml` and the `HEGEL_*` environment variables) and sets only the fields you give. Previously every run overwrote the test count, verbosity, derandomization and multiple-failure reporting with the frontend's own defaults, so `HEGEL_TEST_CASES` or a `hegel.toml` profile had no effect on them, and the frontend detected CI itself. CI and Antithesis detection is now the engine's: on a CI server the shipped `ci` profile applies (derandomized, database off, `too_slow` suppressed).
 
@@ -25,7 +25,7 @@ new hegel.Hegel((tc) => {
 
 **Errors.** A failing test now throws its own error, with its class, `cause` and an assertion library's expected and actual values intact, instead of a new `Error` whose message was the original message followed by the failure's origin. With `reportMultipleFailures`, several distinct failures are thrown together as an `AggregateError` whose message is `Property-based test failed with N distinct failures.`, rather than only the last one. A failure the engine could only confirm as nondeterministic prints its caveat on a `note: ` line, as the other Hegel frontends do, and reports the error seen while searching if replaying it does not fail again. A run the engine aborts throws a `RunError`: `FailedHealthCheckError` (with the failed `healthCheck`), `FlakyError`, `UnsatisfiableError`, or a plain `RunError`.
 
-**Failure reports.** A failing example is now printed the same way on Node and in browsers, laid out by the engine: each drawn value as a line of JavaScript (`const draw_1 = [0, 0];`), numbered in draw order, with the notes between them, and with the `printBlob` setting (on by default) the line that replays the failure. Values print as JavaScript expressions (`-0`, `1n`, `new Map([[1, "a"]])`, `new Date("…")`, `Point { x: 1 }`), with their structure given to the engine's layout: an array, object, `Map` or `Set` too long for the line breaks one item per line, indented, with a trailing comma. A class can print its own instances with a `[hegel.prettyPrint](printer)` method, writing through the new `hegel.PrettyPrinter` (text, break points, groups, comments and nested values). Previously Node printed values with `util.inspect` and browsers with `console.error`'s own formatting. The test body now runs once per test case: the frontend no longer replays the failing example a final time to print it, and `TestCase.isLastRun` is removed. A stateful test reports each step as `Step N: <rule> {`, with the step's draws and notes indented beneath it, and names a failing rule or invariant (`Rule pop failed:`, `Invariant nonNegative failed:`).
+**Failure reports.** A failing example is now printed the same way on Node and in browsers, laid out by the engine: each drawn value as a line of JavaScript (`const draw_1 = [0, 0];`), numbered in draw order, with the notes between them, and with the `printBlob` setting (on by default) the line that replays the failure. Previously Node printed values with `util.inspect` and browsers with `console.error`'s own formatting. The test body now runs once per test case: the frontend no longer replays the failing example a final time to print it, and `TestCase.isLastRun` is removed. A stateful test reports each step as `Step N: <rule> {`, with the step's draws and notes indented beneath it, and names a failing rule or invariant (`Rule pop failed:`, `Invariant nonNegative failed:`).
 
 ```text
 const draw_1 = [0, 0];
@@ -33,6 +33,27 @@ const draw_1 = [0, 0];
 To reproduce this failure, replay it with the Hegel builder:
     .reproduceFailure("AXicY2VgYGBkZOBiZEBhMAAAAd8AIQ==")
 ```
+
+**Printing is the generator's job.** Each generator prints the values it draws, as it draws them, through the engine's layout: an array, object, `Map` or `Set` too long for the line breaks one item per line, indented, with a trailing comma. Leaves print their value as JavaScript (`-0`, `1n`, `new Date("…")`). Collections, tuples, records, `optional`, `oneOf`, `filter`, `flatMap`, `recursive` and `deferred` print element by element through the generators they are built from, so an element's own printing shows up inside its container. `map`, `just`, `sampledFrom`, `permutations` and `composite` print the value they produce as JavaScript (a `composite`'s inner draws are not printed), and instances of a class print as `Point { x: 1 }`, or through the class's `[hegel.prettyPrint](printer)` method where it has one.
+
+- New `generator.printWith((value, printer) => …)` prints a generator's values your own way, and `mapped.printAsCall(name)` prints a `map`'s input as a call (`makeKey(3)`) instead of its output.
+- New `gs.PrintableGenerator`, a generator that prints as it draws: implement `doDrawAndPrint(tc, printer)`, drawing inner generators with the new `tc.drawAndPrint(generator, printer)` so that they print in place. `gs.Generator`'s `doDraw` is now documented for writing generators that draw silently, and `generator.printAsValue()` makes one printable.
+- New `hegel.PrettyPrinter` for writing a printed form: text (a newline in it starts a new line), break points, groups, `seq`, `separator`, `ifBreak`, `hardBreak`, `comment` (printed as `  // text`), `shiftIndent`, `reflow`, `value`, `speculate` (output a rejected draw can retract), `deferred` (a hole written later, for a value the test only learns how to describe after drawing it, such as a stub function that records its calls), `shouldPrint` and `PrettyPrinter.noop()`. `hegel.Document` is a standalone document for trying printing code out outside a test.
+
+This changes what can be drawn with `tc.draw`: it now takes a `gs.PrintableGenerator`, and throws a `TypeError` for a generator that cannot print. Every built-in generator is printable whenever the generators it is built from are, but a generator you wrote by extending `gs.Generator` and implementing only `doDraw` is not: give it a printer with `.printAsValue()` or `.printWith(…)`, extend `gs.PrintableGenerator` instead, or draw it with `tc.drawSilent`. A helper function declared to return `Generator<T>` must be declared to return `PrintableGenerator<T>` for its result to be drawn with `tc.draw`.
+
+```ts
+class Evens extends gs.Generator<number> {
+  doDraw(tc: hegel.TestCase): number {
+    return tc.drawSilent(gs.integers()) & ~1;
+  }
+}
+
+tc.draw(new Evens()); // TypeError: Evens cannot print the values it draws. …
+tc.draw(new Evens().printAsValue()); // const draw_1 = 0;
+```
+
+A `gs.maps` whose keys collide after a `map` now keeps the first of the colliding entries, where it kept the last value under the first key's position.
 
 **Replaying and explicit examples.** New builder methods on `Hegel`:
 

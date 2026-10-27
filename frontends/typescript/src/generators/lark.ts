@@ -7,7 +7,7 @@
 import type { TestCase } from "../testCase.js";
 import type { GrammarSpec } from "../generate.js";
 import { LabelNames, labelSpec, type LabelSpec } from "../labels.js";
-import { Generator } from "./core.js";
+import { ValueGenerator, type Generator, type PrintableGenerator } from "./core.js";
 import { alphabetSchema } from "./strings.js";
 
 /** Options for {@link fromLark}. */
@@ -59,7 +59,7 @@ function positiveInteger(value: number | undefined, name: string): number {
   return value;
 }
 
-class LarkGenerator extends Generator<string> {
+class LarkGenerator extends ValueGenerator<string> {
   private readonly spec: GrammarSpec;
   private readonly terminals: readonly Generator<string>[];
 
@@ -145,6 +145,6 @@ class LarkGenerator extends Generator<string> {
  * `);
  * ```
  */
-export function fromLark(grammar: string, options: LarkOptions = {}): Generator<string> {
+export function fromLark(grammar: string, options: LarkOptions = {}): PrintableGenerator<string> {
   return new LarkGenerator(grammar, options);
 }

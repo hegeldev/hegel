@@ -524,7 +524,7 @@ describe("WasmEngine real run lifecycle", () => {
           p.breakable("");
           p.shiftIndent(9);
         });
-        p.comment("  // half-open");
+        p.comment("half-open");
       }
     }
     const body = (tc: import("../src/testCase.js").TestCase) => {
@@ -872,5 +872,34 @@ describe("WasmEngine settings, profiles and run errors", () => {
     ).toThrow("big");
     expect(setTestLocation.mock.calls[0][2].function).toBe("located");
     expect(caveat).toHaveReturnedWith(null);
+  });
+});
+
+describe.each([
+  ["Wasm", () => wasmFixture().engine],
+  ["native", () => Libhegel.load(testLibPath())],
+])("deferred printer regions on the %s engine", (_name, load) => {
+  it("splice in where they were opened, and die when the document is resolved", () => {
+    const engine = load();
+    const ctx = engine.newContext();
+    const printer = engine.newPrinter(ctx, null);
+    try {
+      engine.printerText(ctx, printer, "f(");
+      const slot = engine.printerDeferred(ctx, printer);
+      engine.printerText(ctx, printer, ")");
+      expect(engine.printerIsLive(ctx, printer)).toBe(true);
+      expect(engine.printerIsLive(ctx, slot)).toBe(true);
+      const inner = engine.printerDeferred(ctx, slot);
+      engine.printerText(ctx, inner, "1");
+      engine.printerResolve(ctx, printer);
+      expect(engine.printerIsLive(ctx, slot)).toBe(false);
+      expect(engine.printerValue(ctx, printer)).toBe("f(1)");
+      expect(() => engine.printerDeferred(ctx, slot)).toThrow(/hegel_printer_deferred/);
+      engine.freePrinter(inner);
+      engine.freePrinter(slot);
+    } finally {
+      engine.freePrinter(printer);
+      engine.freeContext(ctx);
+    }
   });
 });

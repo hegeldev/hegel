@@ -116,10 +116,11 @@ Neither adapter frees anything implicitly. Every handle the ABI writes back is
 released with its matching free, in `finally` blocks so error paths release
 too: the runner frees `Context`, `Settings` and `Run`, each test case, the run
 result and each failure; `EngineDataSource` frees the collections, pools,
-recursions, state machines, printers and cloned or block test cases of its
-test case; an explicit example's `EngineDocument` (`src/pretty.ts`) frees the
-standalone printer from `hegel_printer_new` and the
-`hegel_printer_options_t` it was made with;
+recursions, state machines, printers, deferred printer regions
+(`hegel_printer_deferred`) and cloned or block test cases of its test case;
+an explicit example's `EngineDocument` (`src/pretty.ts`, also behind the
+public `Document`) frees the standalone printer from `hegel_printer_new`, its
+deferred regions and the `hegel_printer_options_t` it was made with;
 engine-owned buffers (`hegel_generate_bytes`, `hegel_generate_string`,
 `hegel_printer_value`, `hegel_grammar_draw_result`) are copied out
 immediately and then freed. A grammar builder is freed as soon as its grammar

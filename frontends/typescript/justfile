@@ -54,6 +54,7 @@ check-lint: check-format check-libhegel-version
     npx eslint .
     npx tsc --noEmit
     npm run typecheck:portable
+    npm run typecheck:tests
 
 # typedoc, with warnings as errors.
 check-docs:

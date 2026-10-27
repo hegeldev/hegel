@@ -16,7 +16,7 @@ in the root `AGENTS.md`.
 just typescript::setup            # npm ci
 just typescript::build-libhegel   # cargo-build the engine natively and for wasm32-unknown-unknown
 just typescript::check-test       # vitest with coverage against both builds (fails if < 100%)
-just typescript::check-lint       # prettier --check + libhegel-version check + eslint + tsc + typecheck:portable
+just typescript::check-lint       # prettier --check + libhegel-version check + eslint + tsc + typecheck:portable + typecheck:tests
 just typescript::format           # prettier --write
 just typescript::check-docs       # typedoc (treatWarningsAsErrors)
 just typescript::check-packaging  # node --test scripts/packaging.test.mjs
@@ -164,16 +164,27 @@ so a Node import creeping into a shared module fails `check-lint`.
    replay of each failure included; the runner never replays. A test case
    the engine stamps (`hegel_test_case_should_capture`), or every one in a
    verbose run, prints its draws and notes into the engine's printer
-   document (`src/pretty.ts` prints values as JavaScript, giving the engine
-   their structure with `hegel_printer_begin_group`/`breakable`/`if_break`,
-   calling a class's `[prettyPrint]` method where it has one, and reflowing
-   only text it can render flat); the runner keeps each failure origin's
+   document. Printing is the generator's job: `TestCase.draw` hands the
+   document's `PrettyPrinter` to the generator's `doDrawAndPrint`, which
+   prints as it draws (containers element by element, through
+   `TestCase.drawAndPrint`), so only a `PrintableGenerator` can be drawn
+   with `draw`; nothing renders the drawn value afterwards. `src/pretty.ts`
+   holds the printer (structure through `hegel_printer_begin_group` /
+   `breakable` / `if_break`, speculation, deferred regions from
+   `hegel_printer_deferred`, which die at resolve and are probed with
+   `hegel_printer_is_live`) and `PrettyPrinter.value`, the JavaScript
+   representation value-producing generators (`map`, `just`, leaves,
+   `printAsValue`) print with, which calls a class's `[prettyPrint]` method
+   where it has one; the runner keeps each failure origin's
    best capture and, on `FAILED`, prints it with the caveat and the
    `.reproduceFailure(...)` line, then rethrows the test's own error (an
    `AggregateError` of them for several distinct failures). An errored run
    throws a `RunError` subclass chosen by `hegel_run_result_error_kind`
    (`src/errors.ts`). `EngineDataSource` implements `DataSource` against an
-   engine test case, owning the clones, blocks and printers derived from it.
+   engine test case, owning the clones, blocks, printers and deferred
+   printer regions derived from it. Once the document is read or released,
+   writes to any of its printers do nothing, so a value holding a deferred
+   region may outlive its test case.
    Span labels come from the engine (`hegel_label_from_name` /
    `hegel_label_combine`, `src/labels.ts`), never hard-coded numbers.
    `createRunner(runtime)` produces `test`/`testAsync`.

@@ -1,13 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
+  Document,
   EngineDocument,
   prettyPrint,
   PrettyPrinter,
-  printValue,
+  Speculation,
   printedLine,
   splitLines,
 } from "../src/pretty.js";
 import { getLibhegel } from "../src/session.js";
+import { installRuntime } from "../src/runnerCore.js";
+import { nodeRuntime } from "../src/nodeRuntime.js";
+import { browserRuntime } from "../src/browser/runtime.js";
 import * as hegel from "@hegeldev/hegel";
 import type { Engine } from "../src/engine.js";
 import { wasmFixture } from "./wasmFixture.js";
@@ -16,7 +20,7 @@ const lib = getLibhegel();
 const ctx = lib.newContext();
 
 function repr(value: unknown): string {
-  return printedLine(lib, ctx, (printer) => printValue(printer, value));
+  return printedLine(lib, ctx, (printer) => printer.value(value));
 }
 
 function document(body: (document: EngineDocument) => void): string[] {
@@ -157,7 +161,7 @@ describe("EngineDocument", () => {
     const lines = document((doc) => {
       const printer = doc.view(2);
       printer.text("const xs = ");
-      printValue(printer, long);
+      new PrettyPrinter(printer).value(long);
       printer.text(";");
     });
     expect(lines).toEqual(["  const xs = [", ...long.map((item) => `      "${item}",`), "  ];"]);
@@ -173,7 +177,7 @@ describe.each([
     const wide = engine();
     const wideCtx = wide.newContext();
     const long = Array.from({ length: 40 }, (_, i) => i);
-    expect(printedLine(wide, wideCtx, (printer) => printValue(printer, long))).toBe(
+    expect(printedLine(wide, wideCtx, (printer) => printer.value(long))).toBe(
       `[${long.join(", ")}]`,
     );
   });
@@ -208,7 +212,7 @@ describe("printing through a class's own prettyPrint method", () => {
         p.shiftIndent(5);
       });
       p.reflow(" /* ok */");
-      p.comment("  // pair");
+      p.comment("pair");
     }
   }
 
@@ -235,14 +239,13 @@ describe("printing through a class's own prettyPrint method", () => {
       [prettyPrint](p: PrettyPrinter): void {
         p.text("a");
         p.hardBreak();
-        p.text("b");
+        p.text("b\n\nc");
       }
     }
-    expect(repr(new Lines())).toBe("a\nb");
+    expect(repr(new Lines())).toBe("a\nb\n\nc");
   });
 
   it.each([
-    ["text", (p: PrettyPrinter) => p.text("a\nb"), "text must not contain a newline"],
     [
       "a separator",
       (p: PrettyPrinter) => p.breakable("\n"),
@@ -267,5 +270,183 @@ describe("printing through a class's own prettyPrint method", () => {
     } finally {
       doc.dispose();
     }
+  });
+});
+
+describe("PrettyPrinter", () => {
+  function render(body: (p: PrettyPrinter) => void, maxWidth?: number): string {
+    const doc = new Document(maxWidth === undefined ? {} : { maxWidth });
+    body(doc.printer);
+    return doc.finish();
+  }
+
+  it.each([79, 20, 8, 1])("lays out seq as an array value prints at width %i", (width) => {
+    const items = [1000, "two", [3, 4], null];
+    expect(render((p) => p.seq("[", "]", items, (q, item) => q.value(item)), width)).toBe(
+      render((p) => p.value(items), width),
+    );
+    expect(render((p) => p.seq("[", "]", [], (q, item) => q.value(item)), width)).toBe("[]");
+  });
+
+  it("separates group items with a comma and a break point", () => {
+    const pair = (p: PrettyPrinter) =>
+      p.group(1, "(", ")", () => {
+        p.text("first");
+        p.separator();
+        p.text("second");
+      });
+    expect(render(pair)).toBe("(first, second)");
+    expect(render(pair, 8)).toBe("(first,\n second)");
+  });
+
+  it("returns the group body's result and passes it the printer", () => {
+    let seen: PrettyPrinter | null = null;
+    expect(
+      render((p) => {
+        expect(
+          p.group(1, "<", ">", (q) => {
+            seen = q;
+            return 7;
+          }),
+        ).toBe(7);
+        expect(seen).toBe(p);
+      }),
+    ).toBe("<>");
+  });
+
+  it("keeps a committed speculation and drops an aborted one", () => {
+    expect(
+      render((p) => {
+        const dropped = p.speculate();
+        dropped.printer.text("dropped");
+        dropped.abort();
+        dropped.commit();
+        const kept = p.speculate();
+        kept.printer.text("kept");
+        kept.commit();
+        kept.abort();
+      }),
+    ).toBe("kept");
+  });
+
+  it("prefixes a comment and keeps text's newlines", () => {
+    expect(render((p) => (p.text("a\nb"), p.comment("why")))).toBe("a\nb  // why");
+  });
+
+  it("splices deferred regions, nested ones included, in where they were opened", () => {
+    expect(
+      render((p) => {
+        p.text("f(");
+        const outer = p.deferred();
+        p.text(")");
+        outer.value(1);
+        const inner = outer.deferred();
+        outer.text("!");
+        inner.text(" and 2");
+        expect(inner.shouldPrint()).toBe(true);
+      }),
+    ).toBe("f(1 and 2!)");
+  });
+
+  it("discards everything printed to the no-op printer", () => {
+    const p = PrettyPrinter.noop();
+    expect(p.shouldPrint()).toBe(false);
+    p.text("a\nb");
+    p.breakable();
+    p.ifBreak(",");
+    p.comment("c");
+    p.hardBreak();
+    p.shiftIndent(2);
+    p.reflow("r");
+    p.value([1]);
+    p.seq("[", "]", [1], (q, n) => q.value(n));
+    expect(p.group(1, "(", ")", () => 3)).toBe(3);
+    const speculation = p.speculate();
+    speculation.commit();
+    p.speculate().abort();
+    expect(p.deferred().shouldPrint()).toBe(false);
+  });
+
+  it("stops printing once its document is read", () => {
+    const doc = new EngineDocument(lib, ctx);
+    try {
+      const view = doc.view();
+      const p = new PrettyPrinter(view);
+      p.text("kept");
+      const slot = p.deferred();
+      expect(doc.lines()).toEqual(["kept"]);
+      expect(p.shouldPrint()).toBe(false);
+      expect(slot.shouldPrint()).toBe(false);
+      p.text("late");
+      p.hardBreak();
+      p.shiftIndent(1);
+      slot.text("late");
+      expect(p.deferred().shouldPrint()).toBe(false);
+      expect(view.deferred()).toBeNull();
+      expect(doc.lines()).toEqual(["kept"]);
+    } finally {
+      doc.dispose();
+    }
+  });
+});
+
+describe("Document", () => {
+  it("is laid out to its width, 79 by default", () => {
+    const long = Array.from({ length: 20 }, (_, i) => i);
+    const doc = new Document();
+    doc.printer.value(long);
+    expect(doc.finish()).toBe(`[${long.join(", ")}]`);
+    const narrow = new Document({ maxWidth: 8 });
+    narrow.printer.seq("[", "]", [1, 2, 3], (p, n) => p.value(n));
+    expect(narrow.finish()).toBe("[\n    1,\n    2,\n    3,\n]");
+  });
+
+  it("can only be finished once", () => {
+    const doc = new Document();
+    expect(doc.finish()).toBe("");
+    expect(() => doc.finish()).toThrow("Document.finish was already called");
+    expect(doc.printer.shouldPrint()).toBe(false);
+  });
+
+  it.each([0, -1, 1.5, NaN])("rejects a width of %s", (maxWidth) => {
+    expect(() => new Document({ maxWidth })).toThrow(
+      `maxWidth must be a positive integer, got ${String(maxWidth)}`,
+    );
+  });
+
+  it.each([
+    ["native", () => nodeRuntime],
+    ["Wasm", () => browserRuntime(wasmFixture().engine)],
+  ])("is laid out by the installed %s engine, deferred regions included", (_, runtime) => {
+    const installed = runtime();
+    const engine = installed.getEngine();
+    const newContext = vi.spyOn(engine, "newContext");
+    installRuntime(installed);
+    try {
+      const doc = new Document({ maxWidth: 12 });
+      doc.printer.beginGroup(9, "recorder(");
+      const slot = doc.printer.deferred();
+      doc.printer.endGroup(")");
+      [1, 2].forEach((n, i) => {
+        if (i > 0) slot.separator();
+        slot.value(n);
+      });
+      expect(doc.finish()).toBe("recorder(1,\n         2)");
+      expect(newContext).toHaveBeenCalledOnce();
+      const narrow = new Document({ maxWidth: 8 });
+      narrow.printer.text("f(");
+      const hole = narrow.printer.deferred();
+      narrow.printer.text(")");
+      hole.seq("[", "]", [1, 2, 3], (p, n) => p.value(n));
+      expect(narrow.finish()).toBe("f([\n    1,\n    2,\n    3,\n])");
+    } finally {
+      newContext.mockRestore();
+      installRuntime(nodeRuntime);
+    }
+  });
+
+  it("is exported from the package", () => {
+    expect(hegel.Document).toBe(Document);
+    expect(hegel.Speculation).toBe(Speculation);
   });
 });

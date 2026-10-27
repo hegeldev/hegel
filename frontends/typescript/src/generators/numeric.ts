@@ -5,7 +5,7 @@
  */
 
 import { TestCase, generateRaw } from "../testCase.js";
-import { Generator, BasicGenerator } from "./core.js";
+import { BasicGenerator, ValueGenerator, type PrintableGenerator } from "./core.js";
 
 export interface IntegerOptions {
   minValue?: number;
@@ -20,7 +20,7 @@ function parseInteger(raw: unknown): number {
   return raw as number;
 }
 
-class IntegersGenerator extends Generator<number> {
+class IntegersGenerator extends ValueGenerator<number> {
   private readonly schema: Record<string, unknown>;
 
   constructor(options?: IntegerOptions) {
@@ -50,7 +50,7 @@ class IntegersGenerator extends Generator<number> {
  * Throws if bounds are outside Number.MAX_SAFE_INTEGER.
  * Use bigIntegers() for arbitrary-precision integers.
  */
-export function integers(options?: IntegerOptions): Generator<number> {
+export function integers(options?: IntegerOptions): PrintableGenerator<number> {
   return new IntegersGenerator(options);
 }
 
@@ -66,7 +66,7 @@ function parseBigInt(raw: unknown): bigint {
 
 const UNBOUNDED_MAGNITUDE = 2n ** 127n;
 
-class BigIntegersGenerator extends Generator<bigint> {
+class BigIntegersGenerator extends ValueGenerator<bigint> {
   private readonly schema: Record<string, unknown>;
 
   constructor(options?: BigIntegerOptions) {
@@ -104,7 +104,7 @@ class BigIntegersGenerator extends Generator<bigint> {
  * `bigIntegers({ minValue: 2n ** 200n })` draws values from `2n ** 200n`
  * upward. Values shrink toward zero, or toward the bound nearest zero.
  */
-export function bigIntegers(options?: BigIntegerOptions): Generator<bigint> {
+export function bigIntegers(options?: BigIntegerOptions): PrintableGenerator<bigint> {
   return new BigIntegersGenerator(options);
 }
 
@@ -123,7 +123,7 @@ export interface FloatOptions {
   allowInfinity?: boolean;
 }
 
-class FloatsGenerator extends Generator<number> {
+class FloatsGenerator extends ValueGenerator<number> {
   private readonly schema: Record<string, unknown>;
 
   constructor(options?: FloatOptions) {
@@ -169,11 +169,11 @@ class FloatsGenerator extends Generator<number> {
  * is allowed when at least one bound is missing. Pass `width: 32` for values
  * a `Float32Array` holds exactly.
  */
-export function floats(options?: FloatOptions): Generator<number> {
+export function floats(options?: FloatOptions): PrintableGenerator<number> {
   return new FloatsGenerator(options);
 }
 
-class BooleansGenerator extends Generator<boolean> {
+class BooleansGenerator extends ValueGenerator<boolean> {
   private readonly schema = { type: "boolean" };
 
   doDraw(tc: TestCase): boolean {
@@ -186,6 +186,6 @@ class BooleansGenerator extends Generator<boolean> {
 }
 
 /** Generate boolean values. */
-export function booleans(): Generator<boolean> {
+export function booleans(): PrintableGenerator<boolean> {
   return new BooleansGenerator();
 }

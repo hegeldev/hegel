@@ -24,6 +24,26 @@ describe("generator labels", () => {
     expect(names(gs.composite((tc) => tc.draw(gs.integers())).label)).toBe(LabelNames.COMPOSITE);
   });
 
+  it("keep a generator's label when it is given a printer", () => {
+    const source = gs.integers();
+    expect(source.printWith(() => {}).label).toBe(source.label);
+    expect(source.printAsValue().label).toBe(source.label);
+    expect(source.printWith(() => {}).asBasic()!.schema).toBe(source.asBasic()!.schema);
+    const filtered = source.filter(() => true);
+    expect(filtered.printAsValue().label).toBe(filtered.label);
+  });
+
+  it("label a map printed as a call as the map", () => {
+    const mapped = gs.integers().map(String);
+    expect(mapped.printAsCall("String").label).toBe(mapped.label);
+    const unschema = gs
+      .integers()
+      .filter(() => true)
+      .map(String);
+    expect(unschema.printAsCall("String").label).toBe(unschema.label);
+    expect(names(unschema.label)).toEqual([LabelNames.MAP, [LabelNames.FILTER, "hegel.integer"]]);
+  });
+
   it("label a generator of no known kind as a plain generator", () => {
     class Custom extends Generator<number> {
       doDraw(): number {

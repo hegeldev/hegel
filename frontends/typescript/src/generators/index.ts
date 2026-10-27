@@ -4,7 +4,7 @@
  * @packageDocumentation
  */
 
-export { Generator, BasicGenerator } from "./core.js";
+export { Generator, PrintableGenerator, BasicGenerator, Mapped } from "./core.js";
 export { integers, bigIntegers, floats, booleans } from "./numeric.js";
 export type { IntegerOptions, BigIntegerOptions, FloatOptions } from "./numeric.js";
 export { text, characters, binary, fromRegex } from "./strings.js";

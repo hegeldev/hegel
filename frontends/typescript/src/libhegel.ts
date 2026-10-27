@@ -240,6 +240,8 @@ export interface Bindings {
   printerBeginSpeculative: (ctx: Ptr, p: Ptr) => number;
   printerCommitSpeculative: (ctx: Ptr, p: Ptr) => number;
   printerAbortSpeculative: (ctx: Ptr, p: Ptr) => number;
+  printerDeferred: (ctx: Ptr, p: Ptr, out: Ptr[]) => number;
+  printerIsLive: (ctx: Ptr, p: Ptr, out: boolean[]) => number;
   printerResolve: (ctx: Ptr, p: Ptr) => number;
   printerValue: (ctx: Ptr, p: Ptr, out: NativeBuffer[]) => number;
   printerValueResultFree: (result: NativeBuffer) => void;
@@ -587,6 +589,10 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
   const printerAbortSpeculative = f(
     "int hegel_printer_abort_speculative(void* ctx, void* printer)",
   );
+  const printerDeferred = f(
+    "int hegel_printer_deferred(void* ctx, void* printer, _Out_ void** out)",
+  );
+  const printerIsLive = f("int hegel_printer_is_live(void* ctx, void* printer, _Out_ bool* out)");
   const printerResolve = f("int hegel_printer_resolve(void* ctx, void* printer)");
   const printerValue = fs("hegel_printer_value", [
     "void*",
@@ -1012,6 +1018,8 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     printerBeginSpeculative: (ctx, p) => printerBeginSpeculative(ctx, p),
     printerCommitSpeculative: (ctx, p) => printerCommitSpeculative(ctx, p),
     printerAbortSpeculative: (ctx, p) => printerAbortSpeculative(ctx, p),
+    printerDeferred: (ctx, p, out) => printerDeferred(ctx, p, out),
+    printerIsLive: (ctx, p, out) => printerIsLive(ctx, p, out),
     printerResolve: (ctx, p) => printerResolve(ctx, p),
     printerValue: (ctx, p, out) => printerValue(ctx, p, out),
     printerValueResultFree: (result) =>
@@ -1701,6 +1709,27 @@ export class Libhegel implements Engine {
       this.fns.printerAbortSpeculative(this.ptr(ctx), this.ptr(p)),
       "hegel_printer_abort_speculative",
     );
+  }
+
+  /** A child region at `p`'s current position: released with {@link freePrinter}. */
+  printerDeferred(ctx: Ptr, p: Ptr): PrinterHandle {
+    const out: Ptr[] = [null];
+    this.check(
+      ctx,
+      this.fns.printerDeferred(this.ptr(ctx), this.ptr(p), out),
+      "hegel_printer_deferred",
+    );
+    return this.requireHandle<PrinterHandle>(out[0], "hegel_printer_deferred");
+  }
+
+  printerIsLive(ctx: Ptr, p: Ptr): boolean {
+    const out: boolean[] = [false];
+    this.check(
+      ctx,
+      this.fns.printerIsLive(this.ptr(ctx), this.ptr(p), out),
+      "hegel_printer_is_live",
+    );
+    return out[0];
   }
 
   printerResolve(ctx: Ptr, p: Ptr): void {

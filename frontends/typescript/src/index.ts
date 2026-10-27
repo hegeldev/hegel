@@ -212,6 +212,13 @@
  * only printed for the failing example (and for every test case of a
  * verbose run), so they cost nothing while Hegel searches.
  *
+ * Each value is printed by the generator that drew it, as it draws it, so
+ * `draw` takes a {@link generators.PrintableGenerator}: every built-in
+ * generator is one whenever the generators it is built from are. Give a
+ * generator a printed form of your own with
+ * {@link generators.Generator.printWith | printWith}, and see
+ * {@link PrettyPrinter} for the printer it writes to.
+ *
  * To replay a failure, pass the blob to {@link Hegel.reproduceFailure |
  * reproduceFailure}; to always run some inputs first, give them as
  * {@link Hegel.example | explicit examples}:
@@ -345,7 +352,14 @@ export {
   DidNotReproduceError,
 } from "./errors.js";
 export { Hegel } from "./runnerCore.js";
-export { PrettyPrinter, prettyPrint, type PrettyPrintable } from "./pretty.js";
+export {
+  Document,
+  PrettyPrinter,
+  Speculation,
+  prettyPrint,
+  type DocumentOptions,
+  type PrettyPrintable,
+} from "./pretty.js";
 
 import {
   test as nodeTest,

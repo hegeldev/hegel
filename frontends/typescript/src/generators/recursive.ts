@@ -5,8 +5,9 @@
  */
 
 import type { TestCase } from "../testCase.js";
+import type { PrettyPrinter } from "../pretty.js";
 import { LabelNames, labelSpec, type LabelSpec } from "../labels.js";
-import { Generator } from "./core.js";
+import { Generator, PrintableGenerator } from "./core.js";
 
 const DEFAULT_MAX_DEPTH = 32;
 const DEFAULT_MAX_LEAVES = 100;
@@ -44,7 +45,7 @@ export interface RecursiveOptions {
  * draws is a sub-value of the value under construction, itself a leaf or a
  * further branch.
  */
-class SubtreeGenerator<T> extends Generator<T> {
+class SubtreeGenerator<T> extends PrintableGenerator<T> {
   constructor(
     private readonly owner: RecursiveGenerator<T>,
     private readonly recursionId: number,
@@ -57,24 +58,24 @@ class SubtreeGenerator<T> extends Generator<T> {
     return this.owner.label;
   }
 
-  doDraw(tc: TestCase): T {
+  doDrawAndPrint(tc: TestCase, printer: PrettyPrinter): T {
     tc.startSpan(this.label);
-    const value = this.drawSubtree(tc);
+    const value = this.drawSubtree(tc, printer);
     tc.stopSpan();
     return value;
   }
 
   /** @internal */
-  drawSubtree(tc: TestCase): T {
+  drawSubtree(tc: TestCase, printer: PrettyPrinter): T {
     let value: T;
     if (tc.dataSource().recursionBranch(this.recursionId, this.depth)) {
       const child = new SubtreeGenerator(this.owner, this.recursionId, this.depth + 1);
-      value = this.owner.extend(child).doDraw(tc);
+      value = tc.drawAndPrint(this.owner.extend(child) as PrintableGenerator<T>, printer);
     } else {
       if (!tc.dataSource().recursionLeaf(this.recursionId)) {
         throw new LeafBudgetExceeded(this.recursionId);
       }
-      value = this.owner.base.doDraw(tc);
+      value = tc.drawAndPrint(this.owner.base as PrintableGenerator<T>, printer);
     }
     if (this.depth === 0 && !tc.dataSource().recursionFinish(this.recursionId)) {
       throw new AttemptMispriced();
@@ -83,23 +84,25 @@ class SubtreeGenerator<T> extends Generator<T> {
   }
 }
 
-class RecursiveGenerator<T> extends Generator<T> {
+class RecursiveGenerator<T> extends PrintableGenerator<T> {
   constructor(
     readonly base: Generator<T>,
-    readonly extend: (children: Generator<T>) => Generator<T>,
+    readonly extend: (children: PrintableGenerator<T>) => Generator<T>,
     private readonly maxDepth: number,
     private readonly maxLeaves: number,
   ) {
     super();
   }
 
-  doDraw(tc: TestCase): T {
+  doDrawAndPrint(tc: TestCase, printer: PrettyPrinter): T {
     tc.startSpan(this.label);
     const baseDepth = tc.openSpanDepth;
     const recursionId = tc.dataSource().newRecursion(this.maxDepth, this.maxLeaves);
     for (;;) {
+      const speculation = printer.speculate();
       try {
-        const value = new SubtreeGenerator(this, recursionId, 0).drawSubtree(tc);
+        const value = new SubtreeGenerator(this, recursionId, 0).drawSubtree(tc, printer);
+        speculation.commit();
         tc.stopSpan();
         return value;
       } catch (error) {
@@ -111,6 +114,8 @@ class RecursiveGenerator<T> extends Generator<T> {
         } else {
           throw error;
         }
+      } finally {
+        speculation.abort();
       }
     }
   }
@@ -142,6 +147,9 @@ function checkCount(name: string, value: number, min: number): number {
  * values branch, so recursive values are distributed the same way in every
  * Hegel frontend. Values shrink toward a single leaf.
  *
+ * A value prints as its leaves and branches do, through `base` and the
+ * generators `extend` returns, so it is printable when they are.
+ *
  * Throws if `maxDepth` is negative or `maxLeaves` is less than 1. For
  * mutually recursive definitions, use {@link deferred}.
  *
@@ -155,8 +163,18 @@ function checkCount(name: string, value: number, min: number): number {
  * ```
  */
 export function recursive<T>(
+  base: PrintableGenerator<T>,
+  extend: (children: PrintableGenerator<T>) => PrintableGenerator<T>,
+  options?: RecursiveOptions,
+): PrintableGenerator<T>;
+export function recursive<T>(
   base: Generator<T>,
-  extend: (children: Generator<T>) => Generator<T>,
+  extend: (children: PrintableGenerator<T>) => Generator<T>,
+  options?: RecursiveOptions,
+): Generator<T>;
+export function recursive<T>(
+  base: Generator<T>,
+  extend: (children: PrintableGenerator<T>) => Generator<T>,
   options?: RecursiveOptions,
 ): Generator<T> {
   const maxDepth = checkCount("maxDepth", options?.maxDepth ?? DEFAULT_MAX_DEPTH, 0);
@@ -167,7 +185,7 @@ export function recursive<T>(
 const DEFERRED = labelSpec(LabelNames.DEFERRED);
 const calculating = new Set<DeferredGenerator<unknown>>();
 
-class DeferredGenerator<T> extends Generator<T> {
+class DeferredGenerator<T> extends PrintableGenerator<T> {
   private generator: Generator<T> | undefined;
   private resolvedLabel: LabelSpec | undefined;
 
@@ -211,8 +229,8 @@ class DeferredGenerator<T> extends Generator<T> {
     return this.resolvedLabel;
   }
 
-  doDraw(tc: TestCase): T {
-    return this.resolve().doDraw(tc);
+  doDrawAndPrint(tc: TestCase, printer: PrettyPrinter): T {
+    return tc.drawAndPrint(this.resolve() as PrintableGenerator<T>, printer);
   }
 }
 
@@ -229,8 +247,11 @@ class DeferredGenerator<T> extends Generator<T> {
  * A definition that always refers back to itself is cut off by the engine's
  * limit on nested spans, which rejects the test case. A definition that
  * resolves only to itself throws when drawn from. For recursive data with
- * engine-controlled size, prefer {@link recursive}.
+ * engine-controlled size, prefer {@link recursive}. It prints as the
+ * generator `definition` returns does.
  */
+export function deferred<T>(definition: () => PrintableGenerator<T>): PrintableGenerator<T>;
+export function deferred<T>(definition: () => Generator<T>): Generator<T>;
 export function deferred<T>(definition: () => Generator<T>): Generator<T> {
   return new DeferredGenerator(definition);
 }
