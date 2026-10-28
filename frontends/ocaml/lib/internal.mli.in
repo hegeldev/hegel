@@ -19,6 +19,10 @@ exception Assume_rejected
     id the engine drew is unknown to the client). The case is marked invalid. *)
 exception Flaky_strategy
 
+(** Raised by [Hegel.repeat] once the engine ends the loop: the test case
+    completed normally. *)
+exception Repeat_done
+
 (** An opaque per-test-case handle, threaded to the test function and to the
     drawing primitives. Created and owned by the run loop.
 
@@ -38,6 +42,35 @@ type test_location =
   ; begin_line : int (** 1-based line number of the test's [let] binding. *)
   }
 
+(** A span label: identifies a generator to the engine, which treats two spans
+    with the same label as coming from the same generator when it shrinks and
+    mutates test cases. A label is described here and computed by libhegel
+    ([hegel_label_from_name] / [hegel_label_combine]) the first time a span uses
+    it, so building a generator does not load libhegel. *)
+module Label : sig
+  type t
+#ifdef OXCAML
+    : value mod portable contended
+#endif
+
+  (** [of_name name] is the label of a generator identified by [name]. *)
+  val of_name : string -> t
+
+  (** [combine labels] is the label of a generator built from others: its own
+      label first, then its components'. *)
+  val combine : t list -> t
+
+  (** [deferred ()] is a label to be defined later, for a generator whose
+      definition can refer to itself, and the function that defines it as
+      standing for another label. Until it is defined, and wherever it is met
+      again while it is being resolved, it stands for the label of
+      ["hegel.deferred"]. *)
+  val deferred : unit -> t * (t -> unit)
+
+  (** [resolve context label] is the engine's value for [label]. *)
+  val resolve : Hegel_ffi.Ffi.context -> t -> int64
+end
+
 (**/**)
 
 val is_high_verbosity : test_case -> bool
@@ -49,23 +82,47 @@ val set_test_aborted : test_case -> bool -> unit
 
 (** [clone tc] forks a fresh clone of [tc] on an independent choice stream (its
     own native handle and context), owned and freed by the test case once it
-    completes.
+    completes. A clone of an explicit example's test case draws the example's
+    values, in sequence with [tc]'s draws.
     Re-exported as [Hegel.clone]. *)
 val clone : test_case -> test_case
 
 (** [with_block tc ~indent f] runs [f] on a test case onto the same choice
     stream as [tc] whose print region is a block nested in [tc]'s: every
     {!note}/draw line it prints is indented [indent] columns further than [tc]'s
-    lines. The block is freed when [f] returns or raises, so it must not escape
-    [f]. *)
-val with_block : test_case -> indent:int -> (test_case -> 'a) MODE(local) -> 'a
+    lines. The block numbers its draw names afresh, as a stateful step does,
+    unless [share_names] is true, when it carries on [tc]'s counts, as a
+    repetition of {!Hegel.repeat} does. The block is freed when [f] returns or
+    raises, so it must not escape [f]. *)
+val with_block
+  :  ?share_names:bool
+  -> test_case
+  -> indent:int
+  -> (test_case -> 'a) MODE(local)
+  -> 'a
 
 (** [owned_clone_count tc] is the number of clone handles the test case
     currently owns; they are freed together once the case completes. *)
 val owned_clone_count : test_case -> int
 
-(** Tags subsequent output from [tc] with a concurrent worker index. *)
+(** Tags subsequent output from [tc] with a concurrent worker index. Does
+    nothing on an explicit example's test case, which has no output to tag. *)
 val set_worker_index : test_case -> int -> unit
+
+(** [is_explicit tc] is [true] when [tc] is an explicit example's test case,
+    which has no engine behind it. *)
+val is_explicit : test_case -> bool
+
+(** [check_drawable tc ~label] raises {!Usage_error} when [tc] is an explicit
+    example's test case, where only the draws the example gives values for may
+    run (through {!explicit_draw}). [label] names the draw in the message. *)
+val check_drawable : test_case -> label:string -> unit
+
+(** [explicit_draw tc ~name ~source value] is [value]: the value an explicit
+    example gives, written [source], for the draw bound to [name]. It records
+    the draw for the example's failure report. Raises {!Usage_error} outside an
+    explicit example. *)
+val explicit_draw : test_case -> name:string -> source:string -> 'a -> 'a
 
 (** [extract_origin exn] extracts an InterestingOrigin string from an exception.
     Uses the backtrace if available; derived from the assertion's location so
@@ -84,10 +141,12 @@ val generate_boolean : test_case -> float -> bool option -> bool
     inclusive range. Raises {!Stop_test} on StopTest. *)
 val generate_integer : test_case -> min_value:int -> max_value:int -> int
 
-(** [generate_float tc ...] draws a width-64 float under the given NaN /
-    infinity / exclusion policy. Raises {!Stop_test} on StopTest. *)
+(** [generate_float tc ~width ...] draws a float of [width] bits (32 or 64)
+    under the given NaN / infinity / exclusion policy. Raises {!Stop_test} on
+    StopTest. *)
 val generate_float
   :  test_case
+  -> width:int
   -> min_value:float
   -> max_value:float
   -> allow_nan:bool
@@ -116,9 +175,58 @@ val generate_text
   -> exclude_characters:string option
   -> string
 
-(** [generate_regex tc ~pattern ~fullmatch] draws a string matching [pattern]
-    (Python-[re] syntax). Raises {!Stop_test} on StopTest. *)
-val generate_regex : test_case -> pattern:string -> fullmatch:bool -> string
+(** The character set of a text generator, as {!generate_text} takes it. *)
+type alphabet =
+  { codec : string option
+  ; min_codepoint : int
+  ; max_codepoint : int
+  ; categories : string list option
+  ; exclude_categories : string list option
+  ; include_characters : string option
+  ; exclude_characters : string option
+  }
+
+(** [generate_regex tc ~pattern ~fullmatch ~alphabet] draws a string matching
+    [pattern] (Python-[re] syntax), every character of it, padding included,
+    from [alphabet] when one is given. Raises {!Stop_test} on StopTest. *)
+val generate_regex
+  :  test_case
+  -> pattern:string
+  -> fullmatch:bool
+  -> alphabet:alphabet option
+  -> string
+
+(** What a Lark grammar draws from: its text, the start rule ([None] for
+    [start]), the size and depth caps ([0] for the engine's defaults), the
+    alphabet of its terminals' characters, the explicit terminals whose values
+    the caller draws, and the directory [%import]ed grammars are read from. *)
+type grammar_spec
+#ifdef OXCAML
+  : value mod portable contended
+#endif
+  =
+  { grammar_text : string
+  ; start : string option
+  ; grammar_max_size : int
+  ; max_depth : int
+  ; grammar_alphabet : alphabet option
+  ; explicit_terminals : string list
+  ; import_path : string option
+  }
+
+(** A grammar, compiled by the engine on its first draw. *)
+type grammar
+#ifdef OXCAML
+  : value mod portable contended
+#endif
+
+(** [grammar spec] is a grammar to draw strings of [spec] from. *)
+val grammar : grammar_spec -> grammar
+
+(** [generate_grammar tc g ~provide] draws a string of [g], calling
+    [provide i] for the value of each occurrence of the [i]th explicit
+    terminal. A grammar or option the engine rejects raises {!Usage_error}. *)
+val generate_grammar : test_case -> grammar -> provide:(int -> string) -> string
 
 (** [generate_email tc] draws an RFC 5321/5322 email address. Raises
     {!Assume_rejected} when the draw rejects itself. *)
@@ -167,6 +275,45 @@ val generate_ipv4 : test_case -> string
 (** [generate_ipv6 tc] draws an IPv6 address as its 16 network-order bytes. *)
 val generate_ipv6 : test_case -> string
 
+(** [generate_uuid tc ~version] draws a UUID as its 16 big-endian bytes: of
+    RFC 4122 version [v] for [Some v], and any but the nil UUID for [None]. *)
+val generate_uuid : test_case -> version:int option -> string
+
+(** [generate_integer_big tc ~min_value ~max_value] draws an integer in the
+    inclusive range. The bounds and the result are non-empty two's-complement
+    little-endian byte strings. *)
+val generate_integer_big : test_case -> min_value:string -> max_value:string -> string
+
+(** A recursive generation scope (see {!new_recursion}). *)
+type recursion = Hegel_ffi.Ffi.recursion
+
+(** Raised by {!recursion_leaf} and {!recursion_finish} when the engine
+    discards the current attempt at a recursive value. *)
+exception Retry
+
+(** [new_recursion tc ~max_depth ~max_leaves] opens a recursive generation
+    scope at this point of [tc]'s draws. Free it with {!recursion_free}. *)
+val new_recursion : test_case -> max_depth:int -> max_leaves:int -> recursion
+
+(** [recursion_branch tc recursion ~depth] decides whether the sub-value at
+    [depth] branches. *)
+val recursion_branch : test_case -> recursion -> depth:int -> bool
+
+(** [recursion_leaf tc recursion] counts a leaf against the attempt's budget;
+    raises {!Retry} when the attempt has outgrown it. *)
+val recursion_leaf : test_case -> recursion -> unit
+
+(** [recursion_retry tc recursion] discards an attempt that outgrew its
+    budget; raises {!Assume_rejected} when the attempts are exhausted. *)
+val recursion_retry : test_case -> recursion -> unit
+
+(** [recursion_finish tc recursion] reports the recursive value complete;
+    raises {!Retry} when the engine discarded the attempt as mispriced. *)
+val recursion_finish : test_case -> recursion -> unit
+
+(** [recursion_free tc recursion] releases [recursion]. *)
+val recursion_free : test_case -> recursion -> unit
+
 (**/**)
 
 (** [assume tc condition] rejects the current test case if [condition] is
@@ -181,23 +328,6 @@ val assume : test_case -> bool -> unit
     the failure report), and on every test case under [Verbose] or [Debug]. *)
 val note : test_case -> string -> unit
 
-(**/**)
-
-(** [color_enabled ~override ~isatty] decides whether ANSI colors are on: an
-    [override] of ["1"]/["0"] (the [HEGEL_COLOR] variable) forces it on/off;
-    otherwise follow [isatty]. *)
-val color_enabled : override:string option -> isatty:bool -> bool
-
-(** [stderr_color_enabled ()] is {!color_enabled} for the failure report's
-    stream, reading the environment and stderr's tty state afresh. *)
-val stderr_color_enabled : unit -> bool
-
-(** [stderr_color code s] wraps [s] in the ANSI SGR [code] when colors are
-    enabled for stderr, else returns [s] unchanged. *)
-val stderr_color : string -> string -> string
-
-(**/**)
-
 (** [require tc ?msg condition] fails the current test case when [condition] is
     [false] by raising [Failure msg]. Unlike [assert] the failure message is
     yours to choose, and unlike {!assume} the case counts as a genuine failure
@@ -209,8 +339,10 @@ val require : test_case -> ?msg:string -> bool -> unit
 
 (** [draw_display_name tc ~label ~repeatable] returns the display name to print
     for a drawn value, bumping the per-test-case occurrence counter for [label].
-    A [repeatable] name is numbered on every occurrence ([label_1], [label_2],
-    …), while a non-repeatable name is printed bare. *)
+    The name is numbered ([label_1], [label_2], …) when [repeatable] is set,
+    when [label] has been drawn under before, or when the bare [label] is
+    already taken, skipping any numbered name already taken; otherwise it is
+    printed bare. *)
 val draw_display_name : test_case -> label:string -> repeatable:bool -> string
 
 (**/**)
@@ -219,24 +351,12 @@ val draw_display_name : test_case -> label:string -> repeatable:bool -> string
     search engine toward higher values. *)
 val target : test_case -> label:string -> value:float -> unit
 
-(** [render_sexp ctx printer sexp] writes [sexp] to [printer] in s-expression
-    syntax. Lists are printed with breaks between elements when the line
-    overflows. *)
-val render_sexp
-  :  Hegel_ffi.Ffi.context
-  -> Hegel_ffi.Ffi.printer
-  -> Sexplib0.Sexp.t
-  -> unit
+(** [print_line tc print] prints one line to the test case's print region
+    with [print], subject to the run's verbosity (like [note]). *)
+val print_line : test_case -> (Printer.Out.t -> unit) -> unit
 
-(** One piece of a printed draw line: literal text, or a sexp laid out by the
-    engine. *)
-type draw_segment =
-  | Text of string
-  | Value of Sexplib0.Sexp.t
-
-(** [print_line tc segments] appends one line assembled from [segments] to the
-    test case's print region, subject to the run's verbosity (like [note]). *)
-val print_line : test_case -> draw_segment list -> unit
+(** [printer tc] is the printer onto the test case's print region. *)
+val printer : test_case -> Printer.Out.t
 
 (** [event tc ~label] records [label] as observed on this test case for the
     end-of-run statistics report. *)
@@ -248,8 +368,8 @@ val event_value : test_case -> label:string -> value:float -> unit
 
 (**/**)
 
-(** [start_span ?label tc] starts a generation span for better shrinking. *)
-val start_span : ?label:int64 -> test_case -> unit
+(** [start_span ~label tc] starts a generation span for better shrinking. *)
+val start_span : label:Label.t -> test_case -> unit
 
 (** [stop_span ?discard tc] ends the current generation span. *)
 val stop_span : ?discard:bool -> test_case -> unit
@@ -277,6 +397,31 @@ val collection_reject : test_case -> collection:collection -> unit
 (** [collection_free tc ~collection] releases [collection]. Safe after the test
     case has aborted. *)
 val collection_free : test_case -> collection:collection -> unit
+
+(** {2 Repeat loops}
+
+    The engine decides how many times {!Hegel.repeat} runs its body and is
+    told which repetition failed, so that a failure shrinks to the fewest
+    repetitions. *)
+
+(** The engine's side of one {!Hegel.repeat} loop. Each one must be released
+    exactly once with {!repeat_free}. *)
+type repeat = Hegel_ffi.Ffi.repeat
+
+(** [new_repeat tc] starts a repeat loop at this point of [tc]'s draws. *)
+val new_repeat : test_case -> repeat
+
+(** [repeat_more tc ~repeat] returns whether the engine wants another
+    repetition. *)
+val repeat_more : test_case -> repeat:repeat -> bool
+
+(** [repeat_failed tc ~repeat] reports that the repetition just run failed,
+    before the failure propagates. *)
+val repeat_failed : test_case -> repeat:repeat -> unit
+
+(** [repeat_free tc ~repeat] releases [repeat]. Safe after the test case has
+    aborted. *)
+val repeat_free : test_case -> repeat:repeat -> unit
 
 (** {2 Variable pools}
 
@@ -361,9 +506,51 @@ val state_machine_should_check_invariant
     the test case has aborted, and safe in any order relative to freeing it. *)
 val state_machine_free : test_case -> state_machine:state_machine -> unit
 
+(** {2 Run errors}
+
+    A run that ends without a verdict on the property raises one of these,
+    chosen by the engine's classification of the error. Each carries the
+    engine's message. *)
+
+(** A health check failed: the run was likely to test poorly or slowly, such
+    as one that rejects nearly every test case. [check] is the health check
+    that failed; suppress it with [suppress_health_check] if the behaviour is
+    intentional. *)
+exception
+  Failed_health_check of
+    { check : Settings.health_check option
+    ; message : string
+    }
+
+(** The test behaved nondeterministically under the [Error]
+    [nondeterminism_strictness]: it gave different outcomes, or generated
+    different data, when replayed. *)
+exception Flaky of string
+
+(** No valid test case was generated: the test's assumptions and filters
+    rejected everything. *)
+exception Unsatisfiable of string
+
+(** Any other run error: a misuse of the engine at run scope, or a violated
+    engine invariant (a bug in Hegel). *)
+exception Run_error of string
+
+(** A run found several distinct failures (with [report_multiple_failures]).
+    Each is reported before this is raised; it carries their exceptions. *)
+exception Multiple_failures of exn list
+
+(** None of the [failure_blobs] reproduced a failure: the failure is fixed, or
+    a nondeterministic failure did not occur again in the replays. *)
+exception Did_not_reproduce of string
+
 (**/**)
 
-(** How a failing run's [rerun with:] prints *)
+(** [run_error_exn (kind, health_check) message] is the exception for a run
+    that errored with [kind] (and, for a health check, the failed check's
+    bit). *)
+val run_error_exn : Hegel_ffi.Ffi.run_error_kind * int -> string -> exn
+
+(** Which way of replaying a failure its report's reproduce line shows *)
 type rerun_hint =
   | Argument
   | Attribute
@@ -380,18 +567,27 @@ type rerun_hint =
     @param database_key
       optional key scoping persisted/replayed failing examples and, under
       [derandomize], the per-test seed. Defaults to the test's [test_location]
-      (as [file:function_name]) so each [let%hegel_test] gets a stable, distinct
+      (as [file::function_name]) so each [let%hegel_test] gets a stable, distinct
       key; pass an explicit key to override. When both are absent, the engine
       uses its own default key.
     @param rerun_hint
-      the form of the [rerun with:] hint. Defaults to [Argument].
+      the form of the reproduce line. Defaults to [Argument].
     @param on_failure
       called after a failure is reported and before its exception is
       re-raised. [Hegel.main] exits from it.
     @param failure_blobs
       a list of base64 encoded strings (blobs), where each string encodes the
-      choices made in a failing test run. Only the first blob is used. The blob 
-      is only guaranteed to reproduce a failure within a specific version of Hegel *)
+      choices made in a failing test run. Each blob is replayed in turn, and
+      every failure they reproduce is reported. A blob is only guaranteed to
+      reproduce a failure within a specific version of Hegel. A run that
+      replays blobs replays only them: the explicit examples do not run.
+    @param examples
+      explicit examples, run first when [settings.phases] includes [Explicit]
+      and no [failure_blobs] are given:
+      each is the names of the draws it gives values for, and the test body
+      with those values substituted (see {!explicit_draw}). A failing example
+      is reported and ends the run, unless [settings.report_multiple_failures]
+      is set, when the run goes on and reports it with the others. *)
 val run_test
   :  settings:Settings.t
   -> ?test_location:test_location
@@ -399,6 +595,7 @@ val run_test
   -> ?on_failure:(unit -> unit)
   -> ?database_key:string
   -> ?failure_blobs:string list
+  -> ?examples:(string list * (test_case -> unit)) list
   -> (test_case -> unit)
   -> unit
 
@@ -419,5 +616,6 @@ val run_hegel_test
   -> ?rerun_hint:rerun_hint
   -> ?database_key:string
   -> ?failure_blobs:string list
+  -> ?examples:(string list * (test_case -> unit)) list
   -> (test_case -> unit)
   -> unit

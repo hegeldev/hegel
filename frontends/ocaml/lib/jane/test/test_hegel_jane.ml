@@ -7,16 +7,25 @@ let check_printer name gen value expected =
     (Core.Sexp.to_string ((Generators.printer gen) value))
 ;;
 
+(** [check_shown name gen expected] draws from [gen] and checks that each drawn
+    value prints as [expected value] renders. *)
+let check_shown name gen expected =
+  run_hegel_test ~settings:(Settings.create ~test_cases:10 ~seed:0 ()) (fun tc ->
+    let value, shown = Generators.Private.render_draw tc gen in
+    Alcotest.(check string) name (Printer.to_string (expected value)) shown)
+;;
+
 (** Test: chars draws [Core.Char.t] values across the full Latin-1 range
     (codepoints 0-255) — not just the ASCII subset — printed via
-    [Core.Char.sexp_of_t]. *)
+    [Core.Char.sexp_of_t] and displayed as character literals. *)
 let test_chars_e2e () =
   let saw_above_ascii = ref false in
   run_hegel_test ~settings:(Settings.create ~test_cases:100 ~seed:0 ()) (fun tc ->
     let c = draw tc (Hegel_jane.chars ()) in
     if Core.Char.to_int c > 127 then saw_above_ascii := true);
   assert !saw_above_ascii;
-  check_printer "chars" (Hegel_jane.chars ()) 'a' "a"
+  check_printer "chars" (Hegel_jane.chars ()) 'a' "a";
+  check_shown "chars" (Hegel_jane.chars ()) Printer.char
 ;;
 
 let expect_usage_error gen =
@@ -109,7 +118,11 @@ let test_ofdays_default_bounds () =
     if Ofday.equal t Ofday.start_of_next_day
     then saw_end_of_day := true
     else saw_within_day := true);
-  assert (!saw_end_of_day && !saw_within_day)
+  assert (!saw_end_of_day && !saw_within_day);
+  check_shown
+    "ofdays"
+    (Hegel_jane.ofdays ~max_ofday:(Ofday.of_string "12:00") ())
+    (Printer.of_sexp Ofday.sexp_of_t)
 ;;
 
 (** Test: lower bound to end of day always generates it *)
@@ -163,7 +176,20 @@ let test_printer_times () =
     "times"
     (Hegel_jane.times ())
     (Core.Time_ns.of_int63_ns_since_epoch (Core.Int63.of_int 12345))
-    {|"1970-01-01 00:00:00.000012345Z"|}
+    {|"1970-01-01 00:00:00.000012345Z"|};
+  check_shown
+    "time_spans"
+    (Hegel_jane.time_spans ())
+    (Printer.of_sexp Core.Time_ns.Span.sexp_of_t);
+  check_shown
+    "times"
+    (Hegel_jane.times ())
+    (Printer.of_sexp Core.Time_ns.Alternate_sexp.sexp_of_t);
+  check_shown "dates" (Hegel_jane.dates ()) (Printer.of_sexp Core.Date.sexp_of_t);
+  check_shown
+    "ofdays"
+    (Hegel_jane.ofdays ())
+    (Printer.of_sexp Core.Time_ns.Ofday.sexp_of_t)
 ;;
 
 (** Test: hash_tables produces a [Core.Hashtbl.t] within the size bounds,
@@ -191,13 +217,23 @@ let test_hash_tables_min_greater_than_max () =
 ;;
 
 (* Hash tables render through [Hashtbl.Poly.sexp_of_t]; a single entry keeps the
-   iteration order deterministic. *)
+   iteration order deterministic. A drawn hash table shows as the
+   [Hashtbl.Poly.of_alist_exn] call that builds it. *)
 let test_printer_hash_table () =
   check_printer
     "hash table"
     (Hegel_jane.hash_tables (integers ()) (integers ()) ())
     (Core.Hashtbl.Poly.of_alist_exn [ 1, 2 ])
-    "((1 2))"
+    "((1 2))";
+  check_shown
+    "hash table"
+    (Hegel_jane.hash_tables
+       (integers ~min_value:1 ~max_value:1 ())
+       (integers ~min_value:2 ~max_value:2 ())
+       ~min_size:1
+       ~max_size:1
+       ())
+    (fun _ -> Printer.text "Hashtbl.Poly.of_alist_exn [(1, 2)]")
 ;;
 
 let () =

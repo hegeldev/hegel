@@ -71,8 +71,9 @@ val time_spans
   -> (Core.Time_ns.Span.t, Hegel.printable) Hegel.generator MODE(portable)
 
 (** [hash_tables keys values ?min_size ?max_size ()] creates a generator for
-    polymorphic [Core.Hashtbl.t] tables over printable [keys] and [values].
-    [Hegel.make_hash_tables] closed over [Core.Hashtbl]. *)
+    polymorphic [Core.Hashtbl.t] tables over printable [keys] and [values]:
+    [Hegel.make_hash_tables] closed over [Core.Hashtbl]. A drawn table shows
+    as [Hashtbl.Poly.of_alist_exn \[(k1, v1); …\]]. *)
 val%template hash_tables
   :  ('a, Hegel.printable) Hegel.generator MODE(m)
   -> ('b, Hegel.printable) Hegel.generator MODE(m)

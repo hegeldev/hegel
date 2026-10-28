@@ -86,13 +86,11 @@ module Stateful = struct
         ~invariants
         ?min_concurrency
         ?max_concurrency
-        ?sexp_of_state
         ?step_count
         tc
     =
     Concurrent_in_async.schedule_with_concurrent Await.Terminator.unkillable ~f:(fun conc ->
       Hegel.Stateful.run_concurrent_core
-        ~init
         ~rule_names:(List.map Concurrent_rule.name rules)
         ~rule_groups:(List.map Concurrent_rule.group rules)
         ~rule_weights:(List.map Concurrent_rule.weight rules)
@@ -122,7 +120,6 @@ module Stateful = struct
           [@nontail])
         ?min_concurrency
         ?max_concurrency
-        ?sexp_of_state
         ?step_count
         tc [@nontail])
   ;;
@@ -132,7 +129,6 @@ module Stateful = struct
         ?min_concurrency
         ?max_concurrency
         ?step_count
-        ?sexp_of_state
         tc
         (module Machine : Concurrent_state_machine with type state = s)
         ~(init : s)
@@ -143,7 +139,6 @@ module Stateful = struct
       ~invariants:Machine.invariants
       ?min_concurrency
       ?max_concurrency
-      ?sexp_of_state
       ?step_count
       tc
   ;;

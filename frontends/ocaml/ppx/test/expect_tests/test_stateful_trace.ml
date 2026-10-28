@@ -15,11 +15,10 @@ let run_failing body =
 ;;
 
 (* A state machine module: [inc] and [my_inv] are collected into its [rules]
-   and [invariants], and the derived [sexp_of_state] traces the state. *)
+   and [invariants]. *)
 module%hegel_state_machine Counter = struct
   type state = int ref
 
-  let sexp_of_state n = sexp_of_int !n
   let inc _tc n = incr n [@@rule]
 
   let my_inv tc n =
@@ -29,29 +28,28 @@ module%hegel_state_machine Counter = struct
   ;;
 end
 
-let%expect_test "state trace; invariant marks the failing step" =
+let%expect_test "an invariant failure names the invariant after the steps" =
   run_failing (fun tc -> Counter.run tc ~init:(ref 0));
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
-    state = 0
+    Checking invariants on the initial state.
       checking n = 0
-    Step 1: inc
-    state = 1
+    Step 1: inc {
+    }
       checking n = 1
-    Step 2: inc
-    state = 2
+    Step 2: inc {
+    }
       checking n = 2
-    Invariant my_inv violated after step 2.
-
+    Invariant my_inv failed:
     Exception: File "ppx/test/expect_tests/test_stateful_trace.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
-let%expect_test "invariant violated in the initial state" =
+let%expect_test "invariant failure in the initial state" =
   let module M = struct
     type state = unit
 
@@ -66,19 +64,17 @@ let%expect_test "invariant violated in the initial state" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
-    Invariant silly_inv violated in the initial state.
-
+    Checking invariants on the initial state.
+    Invariant silly_inv failed:
     Exception: File "ppx/test/expect_tests/test_stateful_trace.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
 module%hegel_state_machine Stack = struct
   type state = int list ref
-
-  let sexp_of_state stack = [%sexp_of: int list] !stack
 
   let push tc stack =
     let n = Hegel.draw tc (integers ~min_value:0 ~max_value:100 ()) in
@@ -96,21 +92,61 @@ module%hegel_state_machine Stack = struct
   ;;
 end
 
-let%expect_test "state trace across multiple rules" =
+let%expect_test "a rule failure names the rule across multiple steps" =
   run_failing (fun tc -> Stack.run tc ~init:(ref []));
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
-    state = ()
-    Step 1: push
-      n = 50
-    state = (50)
-    Step 2: pop
-
+    Step 1: push {
+      let n = 50 in
+    }
+    Step 2: pop {
+    }
+    Rule pop failed:
     Exception: File "ppx/test/expect_tests/test_stateful_trace.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;
+
+(* The only rule rejects its first application, so swarm testing cannot hide
+   the rejection. *)
+module%hegel_state_machine Rejecting = struct
+  type state = int ref
+
+  let step tc n =
+    incr n;
+    Hegel.assume tc (!n > 1)
+  [@@rule]
+  ;;
+end
+
+let%hegel_test rejecting_steps tc = Rejecting.run tc ~init:(ref 0) ~step_count:3
+[@@settings
+  { (Settings.create ~test_cases:1 ~seed:0 ()) with
+    verbosity = Settings.Verbose
+  ; phases = [ Settings.Generate ]
+  }]
+;;
+
+let%expect_test "a rejected rule notes the rejection under its heading" =
+  rejecting_steps ();
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    Starting phase: Generate
+    Running test case
+    Step 1: step {
+      Rule stopped early due to violated assumption.
+    }
+    Step 2: step {
+    }
+    Step 3: step {
+    }
+    Step 4: step {
+    }
+    Ending phase: Generate
     |}]
 ;;
 
@@ -146,13 +182,14 @@ let%expect_test "a rule failure keeps its origin between replays" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
-    Step 1: boom
-      draw_1 = 0
-
+    Step 1: boom {
+      let draw_1 = 0 in
+    }
+    Rule boom failed:
     Exception: Failure("tail boom")
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     tail boom
     |}]
 ;;
@@ -189,21 +226,22 @@ let%expect_test "one concurrent worker remains deterministic" =
   print_string (Expect_scrub.scrub_concurrent_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
+    Concurrency level: 1
     ---------------- Round 1: group "<anonymous>" ----------------
-    [worker 0 +time] Rule: boom
-    [worker 0 +time]   draw_1 = 0
-
+    [worker 0 +time] Rule: boom {
+    [worker 0 +time]   let draw_1 = 0 in
+    [worker 0 +time] }
+    [worker 0 +time] Rule boom failed:
     Exception: Failure("concurrent boom")
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
 module%hegel_concurrent_state_machine Concurrent_counter = struct
   type state = int Atomic.t
 
-  let sexp_of_state state = Sexplib0.Sexp.Atom (Int.to_string (Atomic.get state))
   let increment _tc () state = Atomic.incr state [@@rule { group = "writes" }]
 
   let stays_zero _tc state = if Atomic.get state <> 0 then failwith "invariant boom"
@@ -227,15 +265,15 @@ let%expect_test "concurrent invariant failures retain their names" =
   print_string (Expect_scrub.scrub_concurrent_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
-    state = 0
+    Concurrency level: 1
+    Checking invariants on the initial state.
     ---------------- Round 1: group "writes" ----------------
-    [worker 0 +time] Rule: increment
-    state = 1
-    Invariant stays_zero violated after round 1.
-
+    [worker 0 +time] Rule: increment {
+    [worker 0 +time] }
+    Invariant stays_zero failed:
     Exception: Failure("invariant boom")
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;

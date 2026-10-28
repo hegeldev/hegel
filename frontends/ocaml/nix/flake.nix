@@ -43,7 +43,6 @@
           duneVersion = "3";
           nativeBuildInputs = [ ocamlPackages.cppo ];
           propagatedBuildInputs = with ocamlPackages; [
-            cmdliner
             core
             core_unix
             ctypes
