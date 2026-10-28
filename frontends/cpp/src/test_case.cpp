@@ -1,5 +1,6 @@
+#include <hegel/explicit.h>
 #include <hegel/internal.h>
-#include <hegel/settings.h>
+#include <hegel/printer.h>
 #include <hegel/test_case.h>
 
 #include <engine.h>
@@ -7,26 +8,47 @@
 
 #include <hegel.h>
 
-#include <chrono>
+#include <any>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
-#include <iomanip>
-#include <iostream>
 #include <memory>
 #include <mutex>
-#include <ratio>
+#include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
+#include <typeinfo>
 #include <utility>
+#include <vector>
 
 namespace hegel::impl::test_case {
 
     TestCaseData::~TestCaseData() {
+        hegel_context_t* ctx = thread_context();
+        printer_free(ctx, printer);
         if (tc != nullptr) {
-            hegel_test_case_free(thread_context(), tc);
+            hegel_test_case_free(ctx, tc);
         }
+    }
+
+    std::vector<std::string> rendered_output(const TestCaseData& data) {
+        struct RootPrinter {
+            hegel_context_t* ctx;
+            hegel_printer_t* handle;
+            ~RootPrinter() { printer_free(ctx, handle); }
+        };
+        hegel_context_t* ctx = thread_context();
+        RootPrinter root{ctx, test_case_printer(ctx, data.tc)};
+        std::string document = read_document(ctx, root.handle);
+        std::vector<std::string> lines;
+        std::istringstream in(document);
+        std::string line;
+        while (std::getline(in, line)) {
+            lines.push_back(line);
+        }
+        return lines;
     }
 
 } // namespace hegel::impl::test_case
@@ -41,17 +63,23 @@ namespace hegel {
     TestCase::~TestCase() = default;
 
     TestCase TestCase::clone() const {
-        hegel_test_case_t* handle =
-            impl::test_case_clone(impl::thread_context(), data_->tc);
-        auto cloned = std::unique_ptr<impl::test_case::TestCaseData>(
-            new impl::test_case::TestCaseData{
-                handle, data_->is_final, data_->verbosity, data_->note_indent,
-                data_->in_report, data_->printed_output});
-        cloned->output_mutex = data_->output_mutex;
-        cloned->buffer_output = data_->buffer_output;
-        cloned->output_lines = data_->output_lines;
-        cloned->stateful_step_count = data_->stateful_step_count;
+        hegel_test_case_t* handle = nullptr;
+        if (!data_->explicit_state) {
+            handle = impl::test_case_clone(impl::thread_context(), data_->tc);
+        }
+        auto cloned = std::make_unique<impl::test_case::TestCaseData>(
+            handle, data_->emit);
+        cloned->draw_names = data_->draw_names;
+        cloned->explicit_state = data_->explicit_state;
         return TestCase(std::move(cloned));
+    }
+
+    void TestCase::set_worker(std::size_t worker_index) {
+        if (data_->explicit_state) {
+            return;
+        }
+        impl::test_case_set_worker(impl::thread_context(), data_->tc,
+                                   static_cast<int64_t>(worker_index));
     }
 
     void TestCase::assume(bool condition) const {
@@ -63,129 +91,189 @@ namespace hegel {
     void TestCase::reject() const { throw internal::HegelReject(); }
 
     void TestCase::target(double score, std::string_view label) const {
+        if (data_->explicit_state) {
+            return;
+        }
         impl::target(*this, score, label);
     }
 
+    void TestCase::event(std::string_view label) const {
+        if (data_->explicit_state) {
+            return;
+        }
+        impl::event(*this, label);
+    }
+
+    void TestCase::event_value(std::string_view label, double value) const {
+        if (data_->explicit_state) {
+            return;
+        }
+        impl::event_value(*this, label, value);
+    }
+
+    namespace {
+        // Routes `outer`'s draws, notes and printing through `inner`'s
+        // engine handle for the scope's lifetime.
+        class HandleSwap {
+          public:
+            HandleSwap(impl::test_case::TestCaseData& outer,
+                       impl::test_case::TestCaseData& inner)
+                : outer_(outer), inner_(inner) {
+                swap();
+            }
+            ~HandleSwap() { swap(); }
+            HandleSwap(const HandleSwap&) = delete;
+            HandleSwap& operator=(const HandleSwap&) = delete;
+
+          private:
+            void swap() noexcept {
+                std::swap(outer_.tc, inner_.tc);
+                std::swap(outer_.printer, inner_.printer);
+                std::swap(outer_.draw_depth, inner_.draw_depth);
+            }
+
+            impl::test_case::TestCaseData& outer_;
+            impl::test_case::TestCaseData& inner_;
+        };
+
+        void run_repetition(const TestCase& tc,
+                            const std::function<void()>& body) {
+            TestCase block = internal::block(tc, 2);
+            HandleSwap swap(*tc.data(), *block.data());
+            body();
+        }
+    } // namespace
+
     void TestCase::repeat(const std::function<void()>& body) const {
-        // Seed the loop's minimum length, then let the engine decide each
-        // iteration: the count is drawn like any collection, so it shrinks.
-        int64_t min_size = internal::draw_integer(*this, 0, int64_t{1} << 20);
-        internal::CollectionHandle collection(
-            *this, static_cast<uint64_t>(min_size), internal::no_max_size);
+        if (data_->explicit_state) {
+            note("// Repetition #1");
+            body();
+            throw internal::HegelLoopDone();
+        }
+        internal::RepeatHandle repeat(*this);
         uint64_t iteration = 0;
-        while (collection.more(*this)) {
+        while (repeat.more(*this)) {
             note("// Repetition #" + std::to_string(++iteration));
             try {
-                body();
+                run_repetition(*this, body);
             } catch (const internal::HegelReject&) {
-                // Iteration rejected; discard it and keep looping.
                 continue;
+            } catch (const internal::HegelStopTest&) {
+                throw;
+            } catch (const internal::HegelLoopDone&) {
+                throw;
+            } catch (const std::invalid_argument&) {
+                throw;
+            } catch (...) {
+                repeat.failed(*this);
+                throw;
             }
         }
+        throw internal::HegelLoopDone();
     }
 
     void TestCase::note(std::string_view message) const {
-        if (!data_->should_log()) {
+        if (data_->explicit_state) {
+            std::istringstream lines{std::string(message)};
+            std::string line;
+            std::lock_guard<std::mutex> lock(data_->explicit_state->mutex);
+            while (std::getline(lines, line)) {
+                data_->explicit_state->lines.push_back(line);
+            }
             return;
         }
-        std::lock_guard<std::mutex> lock(*data_->output_mutex);
-        bool emit_live = !data_->buffer_output ||
-                         data_->verbosity == Verbosity::Verbose ||
-                         data_->verbosity == Verbosity::Debug;
-        if (data_->in_report && !*data_->printed_output && emit_live) {
-            std::cerr << "\n";
+        if (!data_->emit) {
+            return;
         }
-        *data_->printed_output = true;
-        // Every line of a multi-line message keeps the body's indent.
-        std::string indent = data_->indent_prefix();
-        std::string prefix;
-        if (data_->worker_index.has_value()) {
-            std::size_t worker_index = data_->worker_index.value_or(0);
-            double elapsed =
-                std::chrono::duration<double, std::milli>(
-                    std::chrono::steady_clock::now() - data_->worker_started)
-                    .count();
-            std::ostringstream out;
-            out << "[worker " << worker_index << " +" << std::fixed
-                << std::setprecision(3) << elapsed << "ms] ";
-            prefix = out.str();
-        }
-        std::string_view rest = message;
-        while (true) {
-            size_t end = rest.find('\n');
-            std::string line =
-                prefix + indent + std::string(rest.substr(0, end));
-            if (data_->buffer_output) {
-                data_->output_lines->push_back({data_->worker_index, line});
-            }
-            if (emit_live) {
-                std::cerr << line;
-            }
-            if (end == std::string_view::npos) {
-                if (emit_live) {
-                    std::cerr << std::endl;
-                }
-                return;
-            }
-            if (emit_live) {
-                std::cerr << "\n";
-            }
-            rest.remove_prefix(end + 1);
-        }
+        impl::note(impl::thread_context(), data_->tc, message);
     }
 
     namespace internal {
 
-        void set_concurrent_worker(TestCase& tc, std::size_t worker_index) {
-            tc.data()->worker_index = worker_index;
-            tc.data()->worker_started = std::chrono::steady_clock::now();
+        NestedDraw::NestedDraw(const TestCase& tc)
+            : tc_(tc), outermost_(tc.data()->draw_depth == 0) {
+            tc_.data()->draw_depth++;
         }
 
-        NoteIndentScope::NoteIndentScope(const TestCase& tc) : tc_(tc) {
-            tc_.data()->note_indent++;
+        NestedDraw::~NestedDraw() { tc_.data()->draw_depth--; }
+
+        bool records_output(const TestCase& tc) { return tc.data()->emit; }
+
+        bool is_explicit(const TestCase& tc) {
+            return tc.data()->explicit_state != nullptr;
         }
 
-        NoteIndentScope::~NoteIndentScope() { tc_.data()->note_indent--; }
+        void check_not_explicit(const TestCase& tc, const char* what) {
+            if (is_explicit(tc)) {
+                throw UsageError(std::string(what) +
+                                 " is not supported in explicit test cases");
+            }
+        }
 
-        DrawLogScope::DrawLogScope(const TestCase& tc, std::string_view name,
-                                   bool repeatable)
-            : tc_(tc) {
-            auto* data = tc_.data();
-            outermost_ = data->draw_depth == 0;
-            if (outermost_) {
-                std::string base(name.empty() ? "draw" : name);
-                bool base_repeatable = name.empty() || repeatable;
-
-                int count = ++data->draw_name_counts[base];
-                if (!base_repeatable) {
-                    // A bare name prints bare on every use; the surrounding
-                    // output (e.g. a stateful step header) disambiguates.
-                    display_ = base;
-                    data->taken_display_names.insert(display_);
-                } else {
-                    int candidate = count;
-                    while (true) {
-                        std::string attempt =
-                            base + "_" + std::to_string(candidate);
-                        if (data->taken_display_names.insert(attempt).second) {
-                            display_ = attempt;
-                            break;
-                        }
-                        candidate++;
-                    }
+        const std::any& take_explicit_value(const TestCase& tc,
+                                            std::string_view name,
+                                            const std::type_info& type) {
+            impl::test_case::ExplicitState& state = *tc.data()->explicit_state;
+            const std::vector<ExplicitTestCase::Value>& values =
+                state.test_case.values();
+            std::string display = draw_display_name(tc, name);
+            std::lock_guard<std::mutex> lock(state.mutex);
+            std::optional<size_t> chosen;
+            for (size_t i = 0; i < values.size() && !chosen; ++i) {
+                if (!state.used[i] && values[i].name == display) {
+                    chosen = i;
                 }
             }
-            data->draw_depth++;
+            for (size_t i = 0; i < values.size() && !chosen; ++i) {
+                if (!state.used[i] && !values[i].name) {
+                    chosen = i;
+                }
+            }
+            if (!chosen) {
+                throw UsageError(
+                    "The explicit test case has no value for the draw " +
+                    display + ". Give one with hegel::named(\"" + display +
+                    "\", value), or add a positional value.");
+            }
+            const ExplicitTestCase::Value& value = values[*chosen];
+            if (value.value.type() != type) {
+                throw UsageError("The explicit test case value for the draw " +
+                                 display + " has type " +
+                                 impl::demangle(value.value.type().name()) +
+                                 ", but the draw produces " +
+                                 impl::demangle(type.name()) + ".");
+            }
+            state.used[*chosen] = true;
+            state.lines.push_back("auto " + display + " = " +
+                                  value.render(value.value) + ";");
+            return value.value;
         }
 
-        DrawLogScope::~DrawLogScope() { tc_.data()->draw_depth--; }
-
-        bool DrawLogScope::should_log() const {
-            return outermost_ && tc_.data()->should_log();
+        hegel::Printer test_case_printer(const TestCase& tc) {
+            impl::test_case::TestCaseData* data = tc.data();
+            if (data->printer == nullptr) {
+                data->printer =
+                    impl::test_case_printer(impl::thread_context(), data->tc);
+            }
+            return hegel::Printer(data->printer, false);
         }
 
-        void DrawLogScope::log(const std::string& rendered) const {
-            tc_.note("auto " + display_ + " = " + rendered + ";");
+        std::string draw_display_name(const TestCase& tc,
+                                      std::string_view name) {
+            impl::test_case::DrawNames& names = *tc.data()->draw_names;
+            std::lock_guard<std::mutex> lock(names.mutex);
+            std::string base(name.empty() ? "draw" : name);
+            return base + "_" + std::to_string(++names.counts[base]);
+        }
+
+        TestCase block(const TestCase& tc, uint64_t indent) {
+            const impl::test_case::TestCaseData* data = tc.data();
+            hegel_test_case_t* handle =
+                impl::test_case_block(impl::thread_context(), data->tc, indent);
+            auto block = std::make_unique<impl::test_case::TestCaseData>(
+                handle, data->emit);
+            block->draw_names = data->draw_names;
+            return TestCase(std::move(block));
         }
 
     } // namespace internal

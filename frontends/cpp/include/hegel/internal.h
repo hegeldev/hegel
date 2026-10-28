@@ -1,13 +1,17 @@
 #pragma once
 
+#include "printer.h"
 #include "test_case.h"
 
+#include <any>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
+#include <typeinfo>
 #include <vector>
 
 /// @cond INTERNAL
@@ -15,6 +19,8 @@
 struct hegel_collection_t;
 struct hegel_pool_t;
 struct hegel_state_machine_t;
+struct hegel_recursion_t;
+struct hegel_repeat_t;
 /// @endcond
 
 /**
@@ -31,30 +37,71 @@ namespace hegel::internal {
      * any other engine failure.
      */
 
-    // The kinds of compound draw the generators open spans around. The
-    // engine identifies a span only by its label: spans with the same label
-    // come from the same kind of generator, which makes them candidates for
-    // swapping and reordering when it shrinks. src/engine.cpp derives one
-    // stable label per kind from a name.
-    enum class SpanLabel {
-        List,
-        Set,
+    // The names the generators derive their span labels from. The engine
+    // identifies a span only by its label: spans with the same label come
+    // from the same generator, which makes them candidates for swapping and
+    // reordering when it shrinks. src/engine.cpp maps each name to a
+    // `hegel.<kind>` string, the same one every Hegel frontend uses for that
+    // generator, and derives its label with hegel_label_from_name.
+    enum class LabelName {
+        Composite,
         Map,
-        Tuple,
-        OneOf,
-        Optional,
         FlatMap,
         Filter,
-        Mapped,
+        FilterAttempt,
+        Just,
+        SampledFrom,
+        OneOf,
+        Optional,
+        Deferred,
+        Integers,
+        Floats,
+        Booleans,
+        Text,
+        Characters,
+        FromRegex,
+        FromLark,
+        Binary,
+        Emails,
+        Urls,
+        Domains,
+        IpAddressesV4,
+        IpAddressesV6,
+        Uuids,
+        Lists,
+        Sets,
+        Dicts,
+        Tuples,
+        Array,
+        Permutation,
+        Subsequence,
+        Sample,
+        Recursive,
         StatefulRule,
+        PoolValuesReusable,
+        PoolValuesConsumed,
     };
-    inline constexpr std::size_t span_label_count =
-        static_cast<std::size_t>(SpanLabel::StatefulRule) + 1;
+    inline constexpr std::size_t label_name_count =
+        static_cast<std::size_t>(LabelName::PoolValuesConsumed) + 1;
+
+    // The label of a generator with no component generators, derived once
+    // per process.
+    uint64_t label(LabelName name);
+
+    // The label of a generator that gives none of its own: derived from the
+    // name of its type (hegel_label_from_name), once per type.
+    uint64_t type_label(const std::type_info& type);
+
+    // The label of a generator built from other generators: its own label
+    // first, then its components' labels (hegel_label_combine).
+    uint64_t combine_labels(const std::vector<uint64_t>& labels);
 
     // Open / close a labeled span around a group of draws so the shrinker
-    // can treat them as a unit. stop_span(tc, true) marks the span rejected
+    // can treat them as a unit. Every TestCase draw opens one labelled with
+    // its generator's label, so a generator only opens its own for spans
+    // it closes with stop_span(tc, true), which marks the span rejected
     // (e.g. a filter predicate failed) so the engine retries from before it.
-    void start_span(const TestCase& tc, SpanLabel label);
+    void start_span(const TestCase& tc, uint64_t label);
     void stop_span(const TestCase& tc, bool discard = false);
 
     int64_t draw_integer(const TestCase& tc, int64_t min_value,
@@ -62,12 +109,23 @@ namespace hegel::internal {
     // Uses the engine's big-integer draw when the range exceeds int64_t.
     uint64_t draw_integer_unsigned(const TestCase& tc, uint64_t min_value,
                                    uint64_t max_value);
+    // Draws an integer between `min_value` and `max_value` inclusive. All
+    // three buffers hold `len` bytes of two's-complement little-endian
+    // integer, and the drawn value is sign-filled to `len` bytes.
+    void draw_integer_bytes(const TestCase& tc, const uint8_t* min_value,
+                            const uint8_t* max_value, std::size_t len,
+                            uint8_t* out);
     bool draw_boolean(const TestCase& tc, double p,
                       std::optional<bool> forced = std::nullopt);
     double draw_float(const TestCase& tc, uint32_t width, double min_value,
                       double max_value, bool allow_nan, bool allow_infinity,
                       bool exclude_min, bool exclude_max,
                       double smallest_nonzero_magnitude);
+
+    // How many values a filter() draws before it rejects the test case:
+    // the engine's HEGEL_FILTER_ATTEMPTS, which src/engine.cpp checks it
+    // against.
+    inline constexpr int filter_attempts = 3;
 
     inline constexpr uint64_t no_max_size = ~uint64_t{0};
     class CollectionHandle {
@@ -86,6 +144,23 @@ namespace hegel::internal {
         hegel_collection_t* handle_ = nullptr;
     };
 
+    // The engine's loop behind TestCase::repeat (hegel_new_repeat): it
+    // decides how many repetitions run and is told which one failed.
+    class RepeatHandle {
+      public:
+        explicit RepeatHandle(const TestCase& tc);
+        ~RepeatHandle();
+        RepeatHandle(const RepeatHandle&) = delete;
+        RepeatHandle& operator=(const RepeatHandle&) = delete;
+
+        bool more(const TestCase& tc);
+
+        void failed(const TestCase& tc);
+
+      private:
+        hegel_repeat_t* handle_ = nullptr;
+    };
+
     class PoolHandle {
       public:
         explicit PoolHandle(const TestCase& tc);
@@ -98,10 +173,49 @@ namespace hegel::internal {
         // Returns the variable id the engine picked, removing it from the
         // pool when consume is true.
         int64_t draw_variable(const TestCase& tc, bool consume);
+        // Puts back a variable that a consuming draw_variable removed.
+        void restore(const TestCase& tc, int64_t variable);
+        void restore_unchecked(const TestCase& tc, int64_t variable) noexcept;
 
       private:
         hegel_pool_t* handle_ = nullptr;
     };
+
+    // The engine's scope for one recursive value (hegel_new_recursion):
+    // it decides where the value branches and when an attempt has grown too
+    // large and must start again from the root.
+    class RecursionHandle {
+      public:
+        RecursionHandle(const TestCase& tc, uint64_t max_depth,
+                        uint64_t max_leaves);
+        ~RecursionHandle();
+        RecursionHandle(const RecursionHandle&) = delete;
+        RecursionHandle& operator=(const RecursionHandle&) = delete;
+
+        // Whether the sub-value at `depth` branches (true) or is a leaf.
+        bool branch(const TestCase& tc, uint64_t depth);
+        // Counts one leaf against the attempt's budget. Throws
+        // LeafBudgetExceeded when the attempt is over the budget.
+        void leaf(const TestCase& tc);
+        // Discards an attempt that threw LeafBudgetExceeded. Throws
+        // HegelReject when the engine gives up on the test case.
+        void retry(const TestCase& tc);
+        // Reports that the value is complete. Throws AttemptMispriced when
+        // the engine discards the attempt.
+        void finish(const TestCase& tc);
+
+      private:
+        hegel_recursion_t* handle_ = nullptr;
+    };
+
+    // Thrown out of the generators of a recursive value when its attempt
+    // has more leaves than its budget. The recursive generator catches it,
+    // discards the attempt and starts again.
+    class LeafBudgetExceeded : public std::exception {};
+
+    // Thrown when the engine discards a completed recursive value. The
+    // recursive generator catches it and starts again.
+    class AttemptMispriced : public std::exception {};
 
     inline constexpr int64_t state_machine_done = INT64_MIN;
     class StateMachineHandle {
@@ -109,8 +223,11 @@ namespace hegel::internal {
         StateMachineHandle(const TestCase& tc,
                            const std::vector<std::string>& rule_names,
                            const std::vector<int64_t>& rule_groups,
+                           const std::vector<double>& rule_weights,
                            const std::vector<std::string>& invariant_names,
-                           int64_t min_concurrency, int64_t max_concurrency);
+                           const std::vector<bool>& invariant_always_check,
+                           int64_t min_concurrency, int64_t max_concurrency,
+                           int64_t step_count);
         ~StateMachineHandle();
         StateMachineHandle(const StateMachineHandle&) = delete;
         StateMachineHandle& operator=(const StateMachineHandle&) = delete;
@@ -135,8 +252,6 @@ namespace hegel::internal {
         int64_t concurrency_ = 0;
     };
 
-    void set_concurrent_worker(TestCase& tc, std::size_t worker_index);
-
     struct CapturedException {
         std::exception_ptr exception;
         std::string origin;
@@ -146,34 +261,55 @@ namespace hegel::internal {
 
     CapturedException capture_current_exception();
 
-    class NoteIndentScope {
+    // Marks a draw in progress on `tc`. A draw made inside another one
+    // (a generator that draws from the test case itself) prints nothing:
+    // the outermost draw prints the whole value.
+    class NestedDraw {
       public:
-        explicit NoteIndentScope(const TestCase& tc);
-        ~NoteIndentScope();
-        NoteIndentScope(const NoteIndentScope&) = delete;
-        NoteIndentScope& operator=(const NoteIndentScope&) = delete;
+        explicit NestedDraw(const TestCase& tc);
+        ~NestedDraw();
+        NestedDraw(const NestedDraw&) = delete;
+        NestedDraw& operator=(const NestedDraw&) = delete;
 
-      private:
-        const TestCase& tc_;
-    };
-
-    class DrawLogScope {
-      public:
-        DrawLogScope(const TestCase& tc, std::string_view name,
-                     bool repeatable);
-        ~DrawLogScope();
-        DrawLogScope(const DrawLogScope&) = delete;
-        DrawLogScope& operator=(const DrawLogScope&) = delete;
-
-        bool should_log() const;
-
-        void log(const std::string& rendered) const;
+        bool outermost() const { return outermost_; }
 
       private:
         const TestCase& tc_;
         bool outermost_;
-        std::string display_;
     };
+
+    // Whether `tc` runs an explicit test case, whose draws take the values
+    // it was given instead of generating them.
+    bool is_explicit(const TestCase& tc);
+
+    void check_not_explicit(const TestCase& tc, const char* what);
+
+    // Takes the value that the explicit test case `tc` gives a draw, and
+    // records the draw for the failure report: the value named for the
+    // draw's display name, else the next positional value. Throws
+    // std::invalid_argument when there is none, or when its type is not
+    // `type`.
+    const std::any& take_explicit_value(const TestCase& tc,
+                                        std::string_view name,
+                                        const std::type_info& type);
+
+    // Whether notes and drawn values of `tc` are recorded in the engine's
+    // document (see TestCase::note).
+    bool records_output(const TestCase& tc);
+
+    // `tc`'s printer onto its region of the test case's document.
+    hegel::Printer test_case_printer(const TestCase& tc);
+
+    // The variable name a draw prints under: `name_<n>` for the n-th draw
+    // under `name` (`draw_<n>` for an unnamed draw).
+    std::string draw_display_name(const TestCase& tc, std::string_view name);
+
+    // A handle onto `tc`'s own choice sequence whose output is a block
+    // nested `indent` columns further in, at the current position of `tc`'s
+    // output (hegel_test_case_block). Draw through either, never both at
+    // once.
+    TestCase block(const TestCase& tc, uint64_t indent);
+
     /* Exception thrown when a test case is rejected and should be
      * discarded (e.g. by `TestCase::assume(false)`, an exhausted
      * `filter()`, or an `UnsatisfiedAssumption` from the engine).
@@ -186,6 +322,11 @@ namespace hegel::internal {
         }
     };
 
+    class UsageError : public std::invalid_argument {
+      public:
+        using std::invalid_argument::invalid_argument;
+    };
+
     /* Exception thrown when the backend tells us to abandon the current
      * test iteration entirely (StopTest, Overflow, FlakyStrategyDefinition,
      * FlakyReplay). The runner unwinds the test body and skips
@@ -195,6 +336,16 @@ namespace hegel::internal {
       public:
         const char* what() const noexcept override {
             return "test case stopped by backend";
+        }
+    };
+
+    /* Exception thrown by TestCase::repeat when the engine ends its loop.
+     * The runner records the case as VALID: code after the loop never runs.
+     */
+    class HegelLoopDone : public std::exception {
+      public:
+        const char* what() const noexcept override {
+            return "test case ended by repeat";
         }
     };
 

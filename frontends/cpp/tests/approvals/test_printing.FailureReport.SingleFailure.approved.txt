@@ -1,9 +1,6 @@
---- Failure: FailureReport.SingleFailure ([location]) ---
-Falsified after 1 test case (0 discarded):
+auto draw_1 = 0;
 
-  auto draw_1 = 0;
-
-Exception: std::runtime_error: intentional failure: 0
-rerun with: hegel::test(test_fn, settings, {"[blob]"})
+To reproduce this failure, pass its blob to hegel::test():
+    hegel::test(test_fn, settings, {"[blob]"})
 --- rethrown: intentional failure: 0
 
