@@ -47,6 +47,7 @@ names and arguments. The ones that change:
 | `st.dictionaries(k, v)` | `gs.dicts(k, v)` |
 | `st.fixed_dictionaries(m)` | `gs.fixed_dicts(m)` |
 | `st.from_regex(p)` | `gs.from_regex(p, fullmatch=False)` |
+| `hypothesis.extra.lark.from_lark(Lark(grammar))` | `gs.from_lark(grammar)` |
 | `st.data()` | the test case itself |
 | `@st.composite` with `draw` as the first argument | `@hegel.composite` with the test case as the first argument, drawing with `tc.draw` |
 
