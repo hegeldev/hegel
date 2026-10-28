@@ -22,6 +22,54 @@ pub enum HealthCheck {
     LargeInitialTestCase,
 }
 
+impl HealthCheck {
+    /// Every health check, in the order `all` expands to.
+    pub(crate) const ALL: [HealthCheck; 4] = [
+        HealthCheck::FilterTooMuch,
+        HealthCheck::TooSlow,
+        HealthCheck::TestCasesTooLarge,
+        HealthCheck::LargeInitialTestCase,
+    ];
+
+    /// The snake_case name vocabulary of the `suppress_health_check`
+    /// profile key and the `HEGEL_SUPPRESS_HEALTH_CHECK` variable.
+    pub(crate) fn parse(s: &str) -> Option<Self> {
+        match s {
+            "filter_too_much" => Some(Self::FilterTooMuch),
+            "too_slow" => Some(Self::TooSlow),
+            "test_cases_too_large" => Some(Self::TestCasesTooLarge),
+            "large_initial_test_case" => Some(Self::LargeInitialTestCase),
+            _ => None,
+        }
+    }
+}
+
+/// The health-check list vocabulary shared by the `suppress_health_check`
+/// profile key, the `HEGEL_SUPPRESS_HEALTH_CHECK` variable and the
+/// frontends' `--suppress-health-check` flags: the four snake_case check
+/// names, or `all` as the only element. `what` names the source in the
+/// error message.
+pub(crate) fn parse_health_checks(items: &[&str], what: &str) -> Result<Vec<HealthCheck>, String> {
+    if items.contains(&"all") {
+        if items.len() != 1 {
+            return Err(format!("\"all\" must be the only element of {what}"));
+        }
+        return Ok(HealthCheck::ALL.to_vec());
+    }
+    items
+        .iter()
+        .map(|item| {
+            HealthCheck::parse(item).ok_or_else(|| {
+                format!(
+                    "{what} does not recognise {item:?}. \
+                     Known names: all, filter_too_much, too_slow, \
+                     test_cases_too_large, large_initial_test_case"
+                )
+            })
+        })
+        .collect()
+}
+
 /// Controls which phases of the test lifecycle are executed.
 ///
 /// By default, all phases run. Use [`Settings::phases`] to restrict which
@@ -44,6 +92,37 @@ pub enum Phase {
     Target,
     /// Shrink failing examples to a minimal counterexample.
     Shrink,
+}
+
+impl Phase {
+    /// The name vocabulary of the `phases` profile key and the
+    /// `HEGEL_PHASES` variable.
+    pub(crate) fn parse(s: &str) -> Option<Self> {
+        match s {
+            "explicit" => Some(Self::Explicit),
+            "reuse" => Some(Self::Reuse),
+            "generate" => Some(Self::Generate),
+            "target" => Some(Self::Target),
+            "shrink" => Some(Self::Shrink),
+            _ => None,
+        }
+    }
+}
+
+/// The phase list vocabulary shared by the `phases` profile key and the
+/// `HEGEL_PHASES` variable. `what` names the source in the error message.
+pub(crate) fn parse_phases(items: &[&str], what: &str) -> Result<Vec<Phase>, String> {
+    items
+        .iter()
+        .map(|item| {
+            Phase::parse(item).ok_or_else(|| {
+                format!(
+                    "{what} does not recognise {item:?}. \
+                     Known names: explicit, reuse, generate, target, shrink"
+                )
+            })
+        })
+        .collect()
 }
 
 /// Selects the source of randomness the engine draws from.
@@ -75,6 +154,18 @@ pub enum Backend {
     /// back to an OS-seeded PRNG. You almost certainly don't want this backend
     /// unless you are running under Antithesis.
     Urandom,
+}
+
+impl Backend {
+    /// The vocabulary of the `backend` profile key and the `HEGEL_BACKEND`
+    /// variable: `default` or `urandom`.
+    pub(crate) fn parse(s: &str) -> Option<Self> {
+        match s {
+            "default" => Some(Self::Default),
+            "urandom" => Some(Self::Urandom),
+            _ => None,
+        }
+    }
 }
 
 /// Where engine-emitted output (verbose / debug progress traces, warnings)
@@ -125,18 +216,40 @@ impl core::fmt::Debug for Output {
     }
 }
 
-/// Controls how much output Hegel produces during test runs.
+/// How much the engine says about a run through its output. The frontend
+/// reads the level back for the output it produces itself (which test
+/// cases it prints, how it reports a failure); the variants describe the
+/// engine's own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Verbosity {
-    /// Suppress all output.
+    /// Nothing at all from the engine.
     Quiet,
-    /// Default output level.
+    /// The run's notices only: the statistics report, a warning when
+    /// shrinking ran out of time, the nondeterminism notice, and where a
+    /// blob replay first diverged from its recording.
     Normal,
-    /// Show more detail about the test run.
+    /// As normal, plus a line as each phase starts and ends and one as each
+    /// test case starts.
     Verbose,
-    /// Show protocol-level debug information.
+    /// As verbose, plus the engine's own trace: the configuration loaded,
+    /// the shrinker's progress and profile, and the replay and
+    /// nondeterminism bookkeeping.
     Debug,
+}
+
+impl Verbosity {
+    /// The vocabulary of the `verbosity` profile key and the
+    /// `HEGEL_VERBOSITY` variable: `quiet`, `normal`, `verbose` or `debug`.
+    pub(crate) fn parse(s: &str) -> Option<Self> {
+        match s {
+            "quiet" => Some(Self::Quiet),
+            "normal" => Some(Self::Normal),
+            "verbose" => Some(Self::Verbose),
+            "debug" => Some(Self::Debug),
+            _ => None,
+        }
+    }
 }
 
 /// How a run reacts when it detects nondeterministic test behavior — a test
@@ -442,8 +555,12 @@ impl Settings {
     /// Apply the settings environment variables, read through `env`, over
     /// these settings: `HEGEL_TEST_CASES`, `HEGEL_DATABASE`,
     /// `HEGEL_STATISTICS`, `HEGEL_SEED`, `HEGEL_DERANDOMIZE`,
-    /// `HEGEL_PRINT_BLOB`, `HEGEL_STOP_ON_FIRST_FAILURE` and
-    /// `HEGEL_NONDETERMINISM_STRICTNESS`. Profile
+    /// `HEGEL_PRINT_BLOB`, `HEGEL_STOP_ON_FIRST_FAILURE`,
+    /// `HEGEL_UNBOUNDED_CHOICES`, `HEGEL_REPORT_MULTIPLE_FAILURES`,
+    /// `HEGEL_NONDETERMINISM_STRICTNESS`, `HEGEL_VERBOSITY`,
+    /// `HEGEL_BACKEND`, `HEGEL_PHASES` and `HEGEL_SUPPRESS_HEALTH_CHECK`.
+    /// Each takes its `hegel.toml` key's vocabulary, with the two lists
+    /// given as comma-separated names or `none` for the empty list. Profile
     /// resolution calls this last, so the
     /// variables win over every profile and `hegel.toml`, while a setter
     /// called on the resulting handle still wins over them. An unset or
@@ -498,6 +615,12 @@ impl Settings {
         if let Some(b) = env_bool(&env, "HEGEL_STOP_ON_FIRST_FAILURE")? {
             self.stop_on_first_failure = b;
         }
+        if let Some(b) = env_bool(&env, "HEGEL_UNBOUNDED_CHOICES")? {
+            self.unbounded_choices = b;
+        }
+        if let Some(b) = env_bool(&env, "HEGEL_REPORT_MULTIPLE_FAILURES")? {
+            self.report_multiple_failures = b;
+        }
         if let Some(value) = env_value(&env, "HEGEL_NONDETERMINISM_STRICTNESS") {
             self.nondeterminism_strictness = match NondeterminismStrictness::parse(&value) {
                 Some(s) => s,
@@ -508,6 +631,35 @@ impl Settings {
                 }
             };
         }
+        if let Some(value) = env_value(&env, "HEGEL_VERBOSITY") {
+            self.verbosity = match Verbosity::parse(&value) {
+                Some(v) => v,
+                None => {
+                    return Err(format!(
+                        "HEGEL_VERBOSITY must be quiet, normal, verbose or debug, got {value:?}"
+                    ));
+                }
+            };
+        }
+        if let Some(value) = env_value(&env, "HEGEL_BACKEND") {
+            self.backend = match Backend::parse(&value) {
+                Some(b) => b,
+                None => {
+                    return Err(format!(
+                        "HEGEL_BACKEND must be default or urandom, got {value:?}"
+                    ));
+                }
+            };
+        }
+        if let Some(items) = env_list(&env, "HEGEL_PHASES") {
+            let items: Vec<&str> = items.iter().map(String::as_str).collect();
+            self.phases = parse_phases(&items, "HEGEL_PHASES")?;
+        }
+        if let Some(items) = env_list(&env, "HEGEL_SUPPRESS_HEALTH_CHECK") {
+            let items: Vec<&str> = items.iter().map(String::as_str).collect();
+            self.suppress_health_check =
+                parse_health_checks(&items, "HEGEL_SUPPRESS_HEALTH_CHECK")?;
+        }
         Ok(self)
     }
 }
@@ -516,6 +668,17 @@ impl Settings {
 /// settings variable counts as unset.
 fn env_value(env: impl Fn(&str) -> Option<String>, key: &str) -> Option<String> {
     env(key).filter(|value| !value.is_empty())
+}
+
+/// The list-valued settings variable `key`: `None` when unset or empty, the
+/// empty list for `none`, and otherwise its comma-separated elements with
+/// the whitespace around each trimmed.
+fn env_list(env: impl Fn(&str) -> Option<String>, key: &str) -> Option<Vec<String>> {
+    let value = env_value(env, key)?;
+    if value == "none" {
+        return Some(Vec::new());
+    }
+    Some(value.split(',').map(|item| item.trim().into()).collect())
 }
 
 /// The boolean vocabulary of the settings environment variables and the

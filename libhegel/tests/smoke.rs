@@ -190,6 +190,10 @@ type FnTarget = unsafe extern "C" fn(*mut u8, *mut u8, f64, hegel_string_t) -> c
 type FnNewCollection = unsafe extern "C" fn(*mut u8, *mut u8, u64, u64, *mut *mut u8) -> c_int;
 type FnCollectionMore = unsafe extern "C" fn(*mut u8, *mut u8, *mut u8, *mut bool) -> c_int;
 type FnCollectionFree = unsafe extern "C" fn(*mut u8, *mut u8) -> c_int;
+type FnNewRepeat = unsafe extern "C" fn(*mut u8, *mut u8, *mut *mut u8) -> c_int;
+type FnRepeatMore = unsafe extern "C" fn(*mut u8, *mut u8, *mut u8, *mut bool) -> c_int;
+type FnRepeatFailed = unsafe extern "C" fn(*mut u8, *mut u8, *mut u8) -> c_int;
+type FnRepeatFree = unsafe extern "C" fn(*mut u8, *mut u8) -> c_int;
 type FnRunResultStatus = unsafe extern "C" fn(*mut u8, *const u8, *mut CRunStatus) -> c_int;
 type FnRunResultError =
     unsafe extern "C" fn(*mut u8, *const u8, *mut *const hegel_string_t) -> c_int;
@@ -244,6 +248,10 @@ struct Api<'a> {
     new_collection: Symbol<'a, FnNewCollection>,
     collection_more: Symbol<'a, FnCollectionMore>,
     collection_free: Symbol<'a, FnCollectionFree>,
+    new_repeat: Symbol<'a, FnNewRepeat>,
+    repeat_more: Symbol<'a, FnRepeatMore>,
+    repeat_failed: Symbol<'a, FnRepeatFailed>,
+    repeat_free: Symbol<'a, FnRepeatFree>,
     run_result_status: Symbol<'a, FnRunResultStatus>,
     run_result_error: Symbol<'a, FnRunResultError>,
     run_result_error_kind: Symbol<'a, FnRunResultErrorKind>,
@@ -293,6 +301,10 @@ unsafe fn bind(lib: &Library) -> Api<'_> {
             new_collection: lib.get(b"hegel_new_collection\0").unwrap(),
             collection_more: lib.get(b"hegel_collection_more\0").unwrap(),
             collection_free: lib.get(b"hegel_collection_free\0").unwrap(),
+            new_repeat: lib.get(b"hegel_new_repeat\0").unwrap(),
+            repeat_more: lib.get(b"hegel_repeat_more\0").unwrap(),
+            repeat_failed: lib.get(b"hegel_repeat_failed\0").unwrap(),
+            repeat_free: lib.get(b"hegel_repeat_free\0").unwrap(),
             run_result_status: lib.get(b"hegel_run_result_status\0").unwrap(),
             run_result_error: lib.get(b"hegel_run_result_error\0").unwrap(),
             run_result_error_kind: lib.get(b"hegel_run_result_error_kind\0").unwrap(),
@@ -731,6 +743,19 @@ fn caller_usage_errors_return_error_not_abort() {
             }
         }
         assert_eq!((a.collection_free)(ctx, collection), HEGEL_OK);
+
+        assert_eq!(
+            (a.repeat_more)(ctx, tc, ptr::null_mut(), &mut more),
+            HEGEL_E_INVALID_HANDLE
+        );
+        assert_eq!((a.repeat_free)(ctx, ptr::null_mut()), HEGEL_OK);
+        let mut repeat: *mut u8 = ptr::null_mut();
+        assert_eq!((a.new_repeat)(ctx, tc, &mut repeat), HEGEL_OK);
+        assert!(!repeat.is_null());
+        if (a.repeat_more)(ctx, tc, repeat, &mut more) == HEGEL_OK && more {
+            assert_eq!((a.repeat_failed)(ctx, tc, repeat), HEGEL_OK);
+        }
+        assert_eq!((a.repeat_free)(ctx, repeat), HEGEL_OK);
 
         a.complete_and_free(ctx, tc, CStatus::Valid, ptr::null());
         a.run_free(ctx, run);

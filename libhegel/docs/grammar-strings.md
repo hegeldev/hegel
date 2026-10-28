@@ -166,18 +166,20 @@ not.
 - A terminal the user supplies the values of (`explicit`) stands in the
   string as a placeholder marker (`generate::placeholder`): the string
   holds the marker, the values are drawn as choices of their own after
-  it and spliced in by the frontend, and the lexing checks never see
-  them. A grammar with an ignorable has one between every marker and
+  it and spliced in (`lark/explicit.rs`, driven through
+  `hegel_grammar_draw_*`: the frontend only draws each value), and the
+  lexing checks never see them. A grammar with an ignorable has one between every marker and
   any token beside it (a marker at an edge of the string has nothing on
   that side): the generator insists on it, the constraint accepts no
   string without, and the shrinker never cuts one; whether a value reads as its
   terminal where it lands is the user's generator's affair. So is its
   size: a marker counts for nothing toward the grammar's size cap, which
   is on the characters outside the markers (the string choice's own
-  length bound is left open for such a grammar), and the frontend keeps
-  the spliced string under the cap the user set by drawing again under a
-  smaller cap of its own (`hegel_generate_grammar`'s `max_size`) when
-  the values pushed it over, in a span it discards, as a filter does.
+  length bound is left open for such a grammar), and `GrammarDraw`
+  keeps the spliced string under the draw's cap by drawing again under
+  a smaller cap of its own (`generate_grammar`'s `max_size`) when the
+  values pushed it over, in a span it discards, as a filter does, and
+  rejecting the test case after `HEGEL_FILTER_ATTEMPTS` attempts.
   Replaying a string that exceeds this smaller cap rejects the test case.
   Ignored placeholders also count for nothing toward the grammar's cap.
 - Mutation only reuses parts of the string being mutated, not of other

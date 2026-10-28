@@ -71,6 +71,7 @@
  *
  *     hegel_context_new          ->  hegel_context_free
  *     hegel_settings_new         ->  hegel_settings_free
+ *     hegel_settings_new_for_profile  ->  hegel_settings_free
  *     hegel_run_start            ->  hegel_run_free
  *     hegel_run_start_blob       ->  hegel_run_free
  *     hegel_test_case_from_blob  ->  hegel_test_case_free
@@ -81,12 +82,16 @@
  *     hegel_string_generator_*   ->  hegel_string_generator_free
  *     hegel_grammar_builder_new  ->  hegel_grammar_builder_free
  *     hegel_grammar_new          ->  hegel_grammar_free
+ *     hegel_grammar_draw_new     ->  hegel_grammar_draw_free
  *     hegel_new_collection       ->  hegel_collection_free
+ *     hegel_new_repeat           ->  hegel_repeat_free
  *     hegel_new_pool             ->  hegel_pool_free
+ *     hegel_new_recursion        ->  hegel_recursion_free
  *     hegel_new_state_machine    ->  hegel_state_machine_free
  *     hegel_generate_bytes       ->  hegel_generate_bytes_result_free
  *     hegel_generate_string      ->  hegel_owned_string_free
  *     hegel_generate_grammar     ->  hegel_owned_string_free
+ *     hegel_grammar_draw_result  ->  hegel_owned_string_free
  *     hegel_printer_options_new  ->  hegel_printer_options_free
  *     hegel_reflow_options_new   ->  hegel_reflow_options_free
  *     hegel_printer_new          ->  hegel_printer_free
@@ -114,6 +119,10 @@
  *   Concurrent operations on it return HEGEL_E_CONCURRENT_USE. To generate
  *   from several threads, hegel_test_case_clone the handle and give each
  *   thread its own clone.
+ * - A grammar draw handle may be used by at most one thread at a time.
+ *   Concurrent calls on it return HEGEL_E_CONCURRENT_USE. It belongs to the
+ *   test-case handle it is first advanced with: start a new draw for each
+ *   test case.
  */
 
 #ifndef HEGEL_H
@@ -124,6 +133,25 @@
 #include <stdbool.h>
 
 /*
+ How many times a filtered generator draws a value and tests it before
+ rejecting the test case: draw inside a span, close the span discarded
+ when the predicate fails, and after this many failures in a row reject
+ the test case as a failed assumption does. Every frontend's `filter`
+ uses this number, so a filter rejects equally often in every language.
+ */
+#define HEGEL_FILTER_ATTEMPTS 3
+
+/*
+ How many attempts one recursive value (`hegel_new_recursion`) gets
+ before libhegel gives up on it: an attempt that outgrows its leaf
+ budget is discarded and retried steering toward a smaller value, and
+ once this many attempts in a row have failed to fit the test case is
+ rejected as a failed assumption is. The limit lives in the engine, so
+ a recursive generator gives up equally often in every language.
+ */
+#define HEGEL_RECURSION_ATTEMPTS 9
+
+/*
  Value written to `*out_rule_index` by `hegel_state_machine_next_rule`
  when the calling worker's round budget is exhausted (stop running rules
  and wait for the next group / join point), and to `*out_group_id` by
@@ -131,6 +159,20 @@
  (run no further rounds).
  */
 #define HEGEL_STATE_MACHINE_DONE INT64_MIN
+
+/*
+ Pass as the `max_size` of `hegel_string_generator_text`,
+ `hegel_generate_bytes` or `hegel_new_collection` when the user gave no
+ maximum for text or bytes, for libhegel to
+ apply its default: 100, or `min_size + 100` when `min_size` is above
+ 100. Distinct from `UINT64_MAX`, which means no upper bound.
+
+ The value is reserved: it is never read as an explicit maximum. A
+ frontend passing a maximum the user gave must pass `UINT64_MAX` for
+ any maximum at or above this one, which no allocation could reach
+ anyway, so that the user's size is not taken for "no maximum given".
+ */
+#define HEGEL_MAX_SIZE_DEFAULT (UINT64_MAX - 1)
 
 /*
  Result of a libhegel call. See "Calling convention" in the header
@@ -171,8 +213,9 @@ typedef enum {
     HEGEL_E_ALREADY_COMPLETE = -6,
     /*
      Something was read before it was ready: `hegel_next_test_case`
-     without first completing the previous test case, or
-     `hegel_run_result` before the run finished.
+     without first completing the previous test case,
+     `hegel_run_result` before the run finished, or
+     `hegel_grammar_draw_result` before the string was complete.
      */
     HEGEL_E_NOT_COMPLETE = -7,
     /*
@@ -182,8 +225,8 @@ typedef enum {
      */
     HEGEL_E_INTERNAL = -8,
     /*
-     A single test-case handle was used from two threads at once. Clone
-     the handle instead.
+     A single test-case or grammar draw handle was used from two threads
+     at once. Clone a test-case handle instead; start a draw per thread.
      */
     HEGEL_E_CONCURRENT_USE = -9,
     /*
@@ -197,32 +240,43 @@ typedef enum {
      */
     HEGEL_E_RETRY = -10,
     /*
-     There is nothing at the index asked for:
-     `hegel_grammar_builder_file` past the end of the list of files.
+     There is nothing at the index asked for, or nothing left:
+     `hegel_grammar_builder_file` past the end of the list of files, or
+     `hegel_grammar_draw_next` once no explicit terminal is left to
+     supply.
      */
     HEGEL_E_NOT_FOUND = -11,
 } hegel_result_t;
 
 /*
- Verbosity of engine-emitted output (logs, per-case traces). Set via
- `hegel_settings_set_verbosity`.
+ How much libhegel says about a run through the output callback of
+ `hegel_run_start`. Set via `hegel_settings_set_verbosity`. The setting
+ is also the frontend's to read back (`hegel_settings_get_verbosity`)
+ for the output it produces itself — which test cases it prints and
+ how it reports a failure — so each level names the engine's own
+ output and leaves the frontend's to the frontend.
  */
 typedef enum {
     /*
-     A short summary line per run. The default.
+     The run's notices only: the statistics report when
+     `show_statistics` is on, a warning when shrinking ran out of time,
+     the nondeterminism notice under `HEGEL_ND_WARN`, and where a blob
+     replay first diverged from its recording. The default.
      */
     HEGEL_VERBOSITY_NORMAL = 0,
     /*
-     Nothing besides the final result.
+     None of those notices; libhegel emits nothing.
      */
     HEGEL_VERBOSITY_QUIET = 1,
     /*
-     Per-test-case progress and drawn values, plus panic diagnostics as
-     they happen.
+     As normal, plus a line as each phase starts and ends and one as
+     each test case starts.
      */
     HEGEL_VERBOSITY_VERBOSE = 2,
     /*
-     As verbose, plus shrinker trace output.
+     As verbose, plus the engine's own trace: the configuration it
+     loaded, the shrinker's progress and profile, and the replay and
+     nondeterminism bookkeeping.
      */
     HEGEL_VERBOSITY_DEBUG = 3,
 } hegel_verbosity_t;
@@ -405,8 +459,8 @@ typedef enum {
      */
     HEGEL_HC_TEST_CASES_TOO_LARGE = (1 << 2),
     /*
-     Warns if the first generated test case is already disproportionately
-     large.
+     Aborts the run if the first generated test case is already
+     disproportionately large.
      */
     HEGEL_HC_LARGE_INITIAL_TEST_CASE = (1 << 3),
 } hegel_health_check_t;
@@ -514,6 +568,55 @@ typedef struct hegel_grammar_t hegel_grammar_t;
  it are absolute. Relative imports require a frontend file.
  */
 typedef struct hegel_grammar_builder_t hegel_grammar_builder_t;
+
+/*
+ Opaque handle to one draw of a grammar string whose explicit terminals
+ take values the caller draws: libhegel draws the string, and the
+ caller supplies a value for each occurrence of an explicit terminal,
+ which libhegel splices in where the terminal's placeholder marker
+ stood.
+
+ Create one with `hegel_grammar_draw_new` for each string to draw, then
+ loop:
+
+ ```c
+ size_t terminal;
+ hegel_result_t rc;
+ while ((rc = hegel_grammar_draw_next(ctx, tc, draw, &terminal)) == HEGEL_OK) {
+     // draw a value for explicit_names[terminal] from tc
+     hegel_grammar_draw_provide(ctx, draw, value);
+ }
+ if (rc == HEGEL_E_NOT_FOUND)
+     hegel_grammar_draw_result(ctx, draw, &string);
+ hegel_grammar_draw_free(ctx, draw);
+ ```
+
+ The values count toward the draw's size cap like the grammar's own
+ characters. When they push the string over it, libhegel discards the
+ attempt and draws the string again, with less of the cap for the
+ grammar's own text, and `hegel_grammar_draw_next` asks for values for
+ the new string's terminals from the start. After `HEGEL_FILTER_ATTEMPTS`
+ attempts that do not fit, it rejects the test case. The values are
+ beyond the lexing checks libhegel makes on the rest of the string: it
+ is the caller's part to draw values that read as the terminal where
+ they land.
+
+ A draw belongs to the choice stream of the test-case handle it is
+ first advanced with: `hegel_grammar_draw_next` accepts that handle and
+ any handle sharing its stream (such as a block handle from
+ `hegel_test_case_block`), and returns `HEGEL_E_INVALID_ARG` for a
+ handle on another stream, such as a clone from `hegel_test_case_clone`
+ or a handle for a later test case, so start a new draw for each test
+ case. Draw each value it asks for from that same test case too.
+
+ A draw handle may be used by at most one thread at a time. Concurrent
+ calls on it return `HEGEL_E_CONCURRENT_USE`.
+
+ The handle keeps what it needs of the grammar alive, so the grammar
+ may be freed first. Free the handle with `hegel_grammar_draw_free`
+ exactly once.
+ */
+typedef struct hegel_grammar_draw_t hegel_grammar_draw_t;
 
 /*
  Opaque handle to an engine-managed *variable pool* for stateful testing.
@@ -628,7 +731,7 @@ typedef struct hegel_printer_options_t hegel_printer_options_t;
  or after the test case or run is freed, in any order relative to other
  frees.
  */
-typedef struct HegelRecursion HegelRecursion;
+typedef struct hegel_recursion_t hegel_recursion_t;
 
 /*
  Options for `hegel_printer_reflow`.
@@ -640,6 +743,37 @@ typedef struct HegelRecursion HegelRecursion;
  default, and a NULL options pointer means "all defaults".
  */
 typedef struct hegel_reflow_options_t hegel_reflow_options_t;
+
+/*
+ Opaque handle to an engine-managed *repeat loop*: a test body that runs
+ again and again, each run an *iteration*, for as long as libhegel wants
+ another one. It is what a frontend's `repeat` is made of, so that every
+ language runs the same number of iterations from the same choices and
+ shrinks a failing loop the same way.
+
+ Created by `hegel_new_repeat` on a test case; driven by
+ `hegel_repeat_more` / `hegel_repeat_failed` through any handle of the
+ *same* test-case family (the root or any clone) — the decisions are
+ drawn from whichever handle makes the call. A loop must not be used from
+ two threads at once: the operations take an internal non-blocking lock
+ and return `HEGEL_E_CONCURRENT_USE` on contention.
+
+ The protocol: call `hegel_repeat_more`; on `true` run the body once,
+ then call `hegel_repeat_more` again. An iteration that ends on a failed
+ assumption is simply over — the loop goes on, and the iteration still
+ counts. An iteration that ends on any other failure ends the loop: call
+ `hegel_repeat_failed`, then complete the test case as interesting. On
+ `false` the loop is over and the body must not run again; what the
+ caller does then (typically end the test case as valid) is its own. The
+ caller prints each iteration's heading and indents its output itself;
+ libhegel prints nothing.
+
+ The handle is independent of the test case and run it was created under:
+ free it with `hegel_repeat_free` exactly once, at any point — before or
+ after the test case or run is freed, in any order relative to other
+ frees.
+ */
+typedef struct hegel_repeat_t hegel_repeat_t;
 
 /*
  In-flight property-test run.
@@ -893,11 +1027,22 @@ hegel_string_t hegel_context_last_error(const hegel_context_t *ctx);
    is its path.
  - `HEGEL_STATISTICS`: anything but `0` turns `show_statistics` on.
  - `HEGEL_SEED`: an integer fixes the seed; `none` clears one.
- - `HEGEL_DERANDOMIZE`, `HEGEL_PRINT_BLOB` and
-   `HEGEL_STOP_ON_FIRST_FAILURE`: `true`, `1` or `yes`, or `false`, `0`
-   or `no`.
+ - `HEGEL_DERANDOMIZE`, `HEGEL_PRINT_BLOB`,
+   `HEGEL_STOP_ON_FIRST_FAILURE`, `HEGEL_UNBOUNDED_CHOICES` and
+   `HEGEL_REPORT_MULTIPLE_FAILURES`: `true`, `1` or `yes`, or `false`,
+   `0` or `no`.
  - `HEGEL_NONDETERMINISM_STRICTNESS`: `quiet`, `warn` or `error`, the
    `nondeterminism_strictness` value.
+ - `HEGEL_VERBOSITY`: `quiet`, `normal`, `verbose` or `debug`, the
+   `verbosity` value.
+ - `HEGEL_BACKEND`: `default` or `urandom`, the `backend` value.
+ - `HEGEL_PHASES`: the `phases` value as comma-separated phase names
+   (`explicit`, `reuse`, `generate`, `target`, `shrink`), or `none` for
+   no phases.
+ - `HEGEL_SUPPRESS_HEALTH_CHECK`: the `suppress_health_check` value as
+   comma-separated check names (`filter_too_much`, `too_slow`,
+   `test_cases_too_large`, `large_initial_test_case`), `all` for every
+   check, or `none` for no checks.
 
  An empty variable is ignored. A malformed one makes this function (and
  `hegel_settings_new_for_profile`) fail with `HEGEL_E_INVALID_ARG` and a
@@ -1161,6 +1306,48 @@ hegel_result_t hegel_settings_set_suppress_health_check(hegel_context_t *ctx,
 hegel_result_t hegel_settings_set_print_blob(hegel_context_t *ctx, hegel_settings_t *s, bool yes);
 
 /*
+ Set one setting from text, as a command line gives it: what the
+ settings' other setters do, under the names and with the values a
+ `hegel.toml` profile uses. A value is text rather than TOML, so it is
+ read with the spellings below, not by the `hegel.toml` parser. A frontend's
+ command-line interface passes each flag through, so every setting is
+ settable from it without the frontend knowing the vocabulary.
+
+ Parameters:
+ `key`: The setting's `hegel.toml` key: `test_cases`, `seed`,
+   `derandomize`, `database`, `verbosity`, `phases`,
+   `suppress_health_check`, `report_multiple_failures`,
+   `stop_on_first_failure`, `show_statistics`, `print_blob`, `backend`,
+   `nondeterminism_strictness`, `unbounded_choices`; or, though
+   `hegel.toml` has no key for it, `database_key` (what
+   `hegel_settings_set_database_key` sets). The test location is the one
+   setting this does not reach: it has four parts, so set it with
+   `hegel_settings_set_test_location`.
+ `value`: The value, in that key's `hegel.toml` vocabulary (`database`
+   takes a path, `disabled`, or `default` for the default location;
+   `database_key` takes the key itself, and only
+   `hegel_settings_set_database_key` clears it), with these spellings
+   for values that are not strings there:
+   - an integer (`test_cases`, `seed`) as decimal digits, optionally
+     after a `+`, with no `_` separators, `0x` prefix or surrounding
+     whitespace; `seed` also takes `none`, which unsets it;
+   - a boolean as `true`, `1`, `yes`, `false`, `0` or `no`, as the
+     `HEGEL_*` environment variables take it;
+   - a list (`phases`, `suppress_health_check`) as its names separated
+     by commas, whitespace around each name ignored, with the empty
+     string for none; `suppress_health_check`
+     also takes `all`.
+
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown key or a
+ value outside its vocabulary, with a message naming the key and what
+ it accepts. On error the settings are unchanged.
+ */
+hegel_result_t hegel_settings_set_from_string(hegel_context_t *ctx,
+                                              hegel_settings_t *s,
+                                              hegel_string_t key,
+                                              hegel_string_t value);
+
+/*
  Parameters:
  `name`: The profile name to register: ASCII letters, digits, `-` and
    `_` only. The reserved names `base` and `default` are rejected.
@@ -1276,7 +1463,8 @@ hegel_result_t hegel_settings_get_derandomize(hegel_context_t *ctx,
  `out_database`: Receives NULL for the default database, a pointer to an
    empty string for disabled, or a pointer to the root directory string.
    The string borrows the handle and stays valid until
-   the next `hegel_settings_set_database` call on it or
+   the next `hegel_settings_set_database` call on it, the next
+   `hegel_settings_set_from_string` call on it that sets `database`, or
    `hegel_settings_free`.
 
  Returns `HEGEL_OK`.
@@ -1666,8 +1854,9 @@ hegel_result_t hegel_start_span(hegel_context_t *ctx, hegel_test_case_t *tc, uin
 /*
  Parameters:
  `discard`: Pass `true` to mark the span rejected (e.g. a `filter`
-   predicate didn't hold) so libhegel retries from before the span
-   opened.
+   predicate didn't hold, and the caller is about to draw again), so
+   the shrinker knows its draws did not contribute to the value and can
+   delete them.
 
  Returns `HEGEL_OK`.
 
@@ -1724,7 +1913,9 @@ hegel_result_t hegel_label_combine(hegel_context_t *ctx,
 
  Parameters:
  `min_size` / `max_size`: Inclusive size bounds. Pass `UINT64_MAX` as
-   `max_size` for no upper bound.
+   `max_size` for no upper bound, or `HEGEL_MAX_SIZE_DEFAULT` for the
+   default maximum of text and bytes, for a collection that builds one
+   (such as text over an arbitrary alphabet).
  `out_collection`: Receives a caller-owned handle to pass to the calls
    below (through any handle of the same test-case family). Release it
    with `hegel_collection_free` exactly once.
@@ -1776,6 +1967,60 @@ hegel_result_t hegel_collection_reject(hegel_context_t *ctx,
 hegel_result_t hegel_collection_free(hegel_context_t *ctx, hegel_collection_t *collection);
 
 /*
+ Start a repeat loop: libhegel decides how many times the body runs, so
+ that the count shrinks like the length of a collection. Draws the
+ loop's minimum number of iterations from `tc`'s stream, so it must be
+ called at the point in the draw sequence where the loop begins. See
+ `hegel_repeat_t` for the protocol.
+
+ Parameters:
+ `out_repeat`: Receives a caller-owned handle to pass to the calls below
+   (through any handle of the same test-case family). Release it with
+   `hegel_repeat_free` exactly once.
+
+ Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`.
+ */
+hegel_result_t hegel_new_repeat(hegel_context_t *ctx,
+                                hegel_test_case_t *tc,
+                                hegel_repeat_t **out_repeat);
+
+/*
+ Parameters:
+ `out_more`: Receives whether libhegel wants another iteration, drawn
+   from `tc`'s stream. Call before each iteration and run the body only
+   on `true`; on `false` the loop is over.
+
+ Returns `HEGEL_OK`, `HEGEL_E_STOP_TEST`, or `HEGEL_E_CONCURRENT_USE`
+ when another thread is mid-operation on the loop.
+ */
+hegel_result_t hegel_repeat_more(hegel_context_t *ctx,
+                                 hegel_test_case_t *tc,
+                                 hegel_repeat_t *repeat,
+                                 bool *out_more);
+
+/*
+ Tells libhegel the iteration just run failed — the body raised anything
+ other than a failed assumption — and so ends the loop. Call it before
+ completing the test case as interesting: it draws from `tc`'s stream
+ what marks the failing iteration, so that the shrinker can tell the
+ iterations before the failure from the one that failed.
+
+ Returns `HEGEL_OK`, `HEGEL_E_STOP_TEST`, or `HEGEL_E_CONCURRENT_USE`
+ when another thread is mid-operation on the loop.
+ */
+hegel_result_t hegel_repeat_failed(hegel_context_t *ctx,
+                                   hegel_test_case_t *tc,
+                                   hegel_repeat_t *repeat);
+
+/*
+ Release a repeat handle from `hegel_new_repeat`. Safe to call with NULL
+ (a no-op that returns `HEGEL_OK`), and safe at any point in any order
+ relative to freeing the test case or the run. Each handle must be freed
+ exactly once; freeing the same handle twice is undefined behaviour.
+ */
+hegel_result_t hegel_repeat_free(hegel_context_t *ctx, hegel_repeat_t *repeat);
+
+/*
  Open a recursive generation scope: libhegel decides where the value
  branches, where it bottoms out in leaves, and when an attempt has grown
  too large and must be retried. See `hegel_recursion_t` for the protocol.
@@ -1789,8 +2034,9 @@ hegel_result_t hegel_collection_free(hegel_context_t *ctx, hegel_collection_t *c
  `max_leaves`: The most leaves one generated value may contain. Each
    value steers toward a target size drawn from this range. Attempts
    that outgrow the budget are discarded and retried steering toward a
-   smaller target, and the test case is rejected as invalid when several
-   attempts in a row fail to fit.
+   smaller target, and the test case is rejected as invalid (as a failed
+   assumption is) once `HEGEL_RECURSION_ATTEMPTS` attempts in a row fail
+   to fit.
  `out_recursion`: Receives a caller-owned handle to pass to the calls
    below (through any handle of the same test-case family). Release it
    with `hegel_recursion_free` exactly once.
@@ -1801,7 +2047,7 @@ hegel_result_t hegel_new_recursion(hegel_context_t *ctx,
                                    hegel_test_case_t *tc,
                                    uint64_t max_depth,
                                    uint64_t max_leaves,
-                                   HegelRecursion **out_recursion);
+                                   hegel_recursion_t **out_recursion);
 
 /*
  Parameters:
@@ -1815,7 +2061,7 @@ hegel_result_t hegel_new_recursion(hegel_context_t *ctx,
  */
 hegel_result_t hegel_recursion_branch(hegel_context_t *ctx,
                                       hegel_test_case_t *tc,
-                                      HegelRecursion *recursion,
+                                      hegel_recursion_t *recursion,
                                       uint64_t depth,
                                       bool *out_branch);
 
@@ -1829,7 +2075,7 @@ hegel_result_t hegel_recursion_branch(hegel_context_t *ctx,
  */
 hegel_result_t hegel_recursion_leaf(hegel_context_t *ctx,
                                     hegel_test_case_t *tc,
-                                    HegelRecursion *recursion);
+                                    hegel_recursion_t *recursion);
 
 /*
  Discard a generation attempt that returned `HEGEL_E_RETRY`: the spans it
@@ -1845,7 +2091,7 @@ hegel_result_t hegel_recursion_leaf(hegel_context_t *ctx,
  */
 hegel_result_t hegel_recursion_retry(hegel_context_t *ctx,
                                      hegel_test_case_t *tc,
-                                     HegelRecursion *recursion);
+                                     hegel_recursion_t *recursion);
 
 /*
  Report that the recursive value has finished generating: its root
@@ -1861,7 +2107,7 @@ hegel_result_t hegel_recursion_retry(hegel_context_t *ctx,
  */
 hegel_result_t hegel_recursion_finish(hegel_context_t *ctx,
                                       hegel_test_case_t *tc,
-                                      HegelRecursion *recursion);
+                                      hegel_recursion_t *recursion);
 
 /*
  Release a recursion handle from `hegel_new_recursion`. Safe to call with
@@ -1869,7 +2115,7 @@ hegel_result_t hegel_recursion_finish(hegel_context_t *ctx,
  order relative to freeing the test case or the run. Each handle must be
  freed exactly once; freeing the same handle twice is undefined behaviour.
  */
-hegel_result_t hegel_recursion_free(hegel_context_t *ctx, HegelRecursion *recursion);
+hegel_result_t hegel_recursion_free(hegel_context_t *ctx, hegel_recursion_t *recursion);
 
 /*
  A pool tracks a set of variable ids libhegel can draw from and shrink
@@ -2260,7 +2506,9 @@ hegel_result_t hegel_generate_float(hegel_context_t *ctx,
 
 /*
  Parameters:
- `min_size` / `max_size`: Inclusive length bounds.
+ `min_size` / `max_size`: Inclusive length bounds. Pass
+   `HEGEL_MAX_SIZE_DEFAULT` as `max_size` for the default maximum, or
+   `UINT64_MAX` for no upper bound.
  `out_result`: Receives a libhegel-allocated
    `{uint8_t *data; size_t len;}` the caller owns. `data` is never NULL
    after a successful draw. Release with
@@ -2288,7 +2536,9 @@ hegel_result_t hegel_generate_bytes_result_free(hegel_context_t *ctx,
 
 /*
  Parameters:
- `min_size` / `max_size`: Inclusive length bounds, in characters.
+ `min_size` / `max_size`: Inclusive length bounds, in characters. Pass
+   `HEGEL_MAX_SIZE_DEFAULT` as `max_size` for the default maximum, or
+   `UINT64_MAX` for no upper bound.
  `codec`: The alphabet's starting range: `"ascii"`, `"latin-1"` /
    `"iso-8859-1"`, or `"utf-8"` / NULL for Unicode.
  `min_codepoint` / `max_codepoint`: Intersected with the codec's range.
@@ -2510,9 +2760,11 @@ hegel_result_t hegel_grammar_builder_free(hegel_context_t *ctx, hegel_grammar_bu
    character class, wildcard or literal outside it is never drawn.
  `explicit_names`, `explicit_len`: `explicit_len` terminals whose values
    the caller supplies. Every terminal the grammar `%declare`s must be
-   named; a terminal with a pattern may be named to override it. Each
-   occurrence of such a terminal in a drawn string is a placeholder
-   marker (see `hegel_grammar_placeholder`) for the caller to replace.
+   named; a terminal with a pattern may be named to override it. Draw
+   strings with these terminals' values filled in through
+   `hegel_grammar_draw_t`; in a string from `hegel_generate_grammar`,
+   each occurrence of such a terminal is a placeholder marker (see
+   `hegel_grammar_placeholder`).
  `out_grammar`: Receives the grammar handle.
 
  The terminals' patterns follow the Unicode version set with
@@ -2572,7 +2824,9 @@ hegel_result_t hegel_grammar_placeholder(hegel_context_t *ctx,
  Draw a string of a grammar: a string the grammar's start rule accepts,
  aiming at a length drawn up to the size cap, as many as 8192
  characters by default, with each explicit terminal standing as its
- placeholder marker (see `hegel_grammar_placeholder`). The string is
+ placeholder marker (see `hegel_grammar_placeholder`). To have the
+ markers replaced by values the caller draws, use
+ `hegel_grammar_draw_t` instead. The string is
  one choice of the test case, holding the string itself: a replay
  checks a stored string by parsing it (one the grammar does not derive
  is replaced by the grammar's simplest string), and the shrinker edits
@@ -2582,10 +2836,7 @@ hegel_result_t hegel_grammar_placeholder(hegel_context_t *ctx,
  `grammar`: A grammar built by `hegel_grammar_new`.
  `max_size`: A cap on this draw's characters, placeholder markers
    counting as none, or 0 for the grammar's own cap. One below the
-   grammar's smallest string, or above its cap, is read as that. A
-   caller replacing markers with values of its own uses it to draw
-   again, under a smaller cap, when the values pushed the string past
-   the cap it has in mind.
+   grammar's smallest string, or above its cap, is read as that.
  `out_result`: Receives a libhegel-allocated UTF-8 buffer with a trailing
    NUL outside its reported length. Release with
    `hegel_owned_string_free`.
@@ -2605,6 +2856,100 @@ hegel_result_t hegel_generate_grammar(hegel_context_t *ctx,
                                       const hegel_grammar_t *grammar,
                                       uint64_t max_size,
                                       hegel_owned_string_t *out_result);
+
+/*
+ Start a draw of a string of `grammar` whose explicit terminals take
+ values the caller supplies. See `hegel_grammar_draw_t`. Nothing is
+ drawn until `hegel_grammar_draw_next`.
+
+ Parameters:
+ `grammar`: A grammar built by `hegel_grammar_new`. The draw does not
+   need it to stay alive.
+ `max_size`: The most characters the string may have, the values the
+   caller supplies included, or 0 for the grammar's own cap. As in
+   `hegel_generate_grammar`, one below the grammar's smallest string,
+   or above its cap, is read as that.
+ `out_draw`: Receives a caller-owned handle. Release it with
+   `hegel_grammar_draw_free`.
+
+ Returns `HEGEL_OK`; `HEGEL_E_INVALID_HANDLE` when `grammar` is NULL;
+ or `HEGEL_E_INVALID_ARG` when `out_draw` is NULL.
+ */
+hegel_result_t hegel_grammar_draw_new(hegel_context_t *ctx,
+                                      const hegel_grammar_t *grammar,
+                                      uint64_t max_size,
+                                      hegel_grammar_draw_t **out_draw);
+
+/*
+ Advance a grammar draw to the next explicit terminal that needs a
+ value, drawing the string from `tc` when an attempt starts. `tc` must
+ be the test case every earlier call on this draw was given.
+
+ Parameters:
+ `out_terminal`: Receives, on `HEGEL_OK`, the index in the
+   `explicit_names` given to `hegel_grammar_new` of the terminal whose
+   value is due. Supply it with `hegel_grammar_draw_provide` before
+   calling this again.
+
+ Returns `HEGEL_OK` when a value is due; `HEGEL_E_NOT_FOUND` when no
+ terminal is left and the string is complete (read it with
+ `hegel_grammar_draw_result`); `HEGEL_E_ASSUME` when the values
+ overflowed the size cap `HEGEL_FILTER_ATTEMPTS` times in a row, or the
+ grammar draw itself rejected the test case (see
+ `hegel_generate_grammar`), and the test case has been concluded
+ invalid; `HEGEL_E_STOP_TEST`; `HEGEL_E_INVALID_ARG` when a value is
+ still due or `tc` is not on the stream of the handle the draw was
+ first advanced with;
+ or `HEGEL_E_CONCURRENT_USE` when `tc` or `draw` is in use on another
+ thread.
+ */
+hegel_result_t hegel_grammar_draw_next(hegel_context_t *ctx,
+                                       hegel_test_case_t *tc,
+                                       hegel_grammar_draw_t *draw,
+                                       size_t *out_terminal);
+
+/*
+ Supply the value of the explicit terminal `hegel_grammar_draw_next`
+ asked for. The value is copied.
+
+ Parameters:
+ `value`: The terminal's value, as UTF-8.
+
+ Returns `HEGEL_OK`; `HEGEL_E_INVALID_ARG` for a value that is not
+ valid UTF-8 or when no value is due; or `HEGEL_E_CONCURRENT_USE` when
+ `draw` is in use on another thread.
+ */
+hegel_result_t hegel_grammar_draw_provide(hegel_context_t *ctx,
+                                          hegel_grammar_draw_t *draw,
+                                          hegel_string_t value);
+
+/*
+ The string a grammar draw produced, once `hegel_grammar_draw_next` has
+ returned `HEGEL_E_NOT_FOUND`: the grammar's string with each explicit
+ terminal's placeholder marker replaced by the value supplied for it.
+
+ Parameters:
+ `out_result`: Receives a libhegel-allocated UTF-8 buffer with a
+   trailing NUL outside its reported length. Release with
+   `hegel_owned_string_free`.
+
+ Returns `HEGEL_OK`; `HEGEL_E_NOT_COMPLETE` when the string is not
+ complete yet; or `HEGEL_E_CONCURRENT_USE` when `draw` is in use on
+ another thread.
+ */
+hegel_result_t hegel_grammar_draw_result(hegel_context_t *ctx,
+                                         const hegel_grammar_draw_t *draw,
+                                         hegel_owned_string_t *out_result);
+
+/*
+ Parameters:
+ `draw`: The grammar draw to release. Safe to call with NULL.
+
+ Returns `HEGEL_OK`.
+
+ Each draw handle must be freed exactly once.
+ */
+hegel_result_t hegel_grammar_draw_free(hegel_context_t *ctx, hegel_grammar_draw_t *draw);
 
 /*
  Parameters:
