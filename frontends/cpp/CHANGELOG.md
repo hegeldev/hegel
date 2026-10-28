@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.13.3 - 2026-10-28
+
+This release updates the bundled libhegel engine to 0.49.0.
+
 ## 0.13.2 - 2026-10-22
 
 This patch moves Hegel for C++ into the [hegeldev/hegel](https://github.com/hegeldev/hegel) monorepo, next to the engine it drives. Fetch it from there now, with the frontend as the source subdirectory:

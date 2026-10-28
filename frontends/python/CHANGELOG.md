@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.2 - 2026-10-28
+
+This release updates the bundled libhegel engine to 0.49.0.
+
 ## 0.2.1 - 2026-10-20
 
 This release fixes the source distribution. PyPI rejected `hegeltest-0.2.0.tar.gz` because its metadata declared a `LICENSE` file at the archive's root while maturin, which builds a Cargo workspace member's sdist with the whole workspace as its root, had put the file under `frontends/python/`, so 0.2.0 is on PyPI as wheels only. `pyproject.toml` now lists the license file explicitly in `license-files` and gives the license as the SPDX expression `MIT`, which puts `LICENSE` at the root of the sdist and the license in the metadata's `License-Expression` field. Building from the sdist now requires maturin 1.9.3 or newer.

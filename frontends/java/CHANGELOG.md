@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.10.4 - 2026-10-28
+
+This release updates the bundled libhegel engine to 0.49.0.
+
 ## 0.10.3 - 2026-10-22
 
 This patch moves Hegel for Java into the [hegeldev/hegel](https://github.com/hegeldev/hegel) monorepo, next to the engine it drives. The artifacts are used exactly as before, but they are now built and tested against the in-tree libhegel, so this release also updates the bundled engine from 0.45.0 to 0.48.0. The engine changes a Java user can see:
