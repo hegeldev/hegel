@@ -425,6 +425,10 @@ let resolve_draw values ~consume variable_id =
     variable_id
 ;;
 
+(** [all_values values clone] lists the [clone] of each value in [values], in
+    no particular order. *)
+let all_values values clone = Int_table.fold (fun _ value acc -> clone value :: acc) values []
+
 (** [Int_pool] is the pool for a sequential machine *)
 module Int_pool = struct
   module Tbl = Int_table
@@ -443,6 +447,7 @@ module Int_pool = struct
   ;;
 
   let size t = Tbl.length t.values
+  let to_list t = all_values t.values t.clone
 
   let pool_values { pool; values; clone } ~consume =
     let clone = if consume then Fun.id else clone in
@@ -511,6 +516,7 @@ module%template Int_pool_concurrent = struct
   ;;
 
   let size t = L.protect t.values Tbl.length
+  let to_list t = L.protect t.values (fun values -> all_values values t.clone)
 
   let pool_values { pool; values; clone } ~consume =
     let clone = if consume then Fun.id else clone in

@@ -924,6 +924,10 @@ module Int_pool : sig
   val add : 'a t -> Internal.test_case -> 'a -> unit
   val size : _ t -> int
 
+  (** The pool's values, in no particular order, each through the pool's
+      clone function. *)
+  val to_list : 'a t -> 'a list
+
   (** Reusable draws apply the pool's clone function. Consumed draws return
       the stored value directly. *)
   val pool_values : 'a t -> consume:bool -> ('a, unprintable) generator
@@ -946,6 +950,10 @@ module%template Int_pool_concurrent : sig
 
   val add : 'a t -> Internal.test_case -> 'a -> unit
   val size : _ t -> int
+
+  (** The pool's values, in no particular order, each through the pool's
+      clone function, taken under its lock. *)
+  val to_list : 'a t -> 'a list
 
   (** Reusable draws use the pool's clone function under its lock, if present.
       Consumed draws return the stored value directly. *)
