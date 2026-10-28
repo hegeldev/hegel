@@ -176,6 +176,43 @@ depends: [
 """
 
 
+JAVA_README = """\
+<dependency>
+  <groupId>dev.hegel</groupId>
+  <artifactId>hegel</artifactId>
+  <version>0.10.2</version>
+</dependency>
+
+testImplementation("dev.hegel:hegel:0.10.2") // or "dev.hegel:hegel-jna:0.10.2"
+
+Requires Java 10.10.2.1 or 0.10.20.
+"""
+
+
+CPP_README = """\
+FetchContent_Declare(
+    hegel
+    GIT_REPOSITORY https://github.com/hegeldev/hegel.git
+    GIT_TAG frontends/cpp/0.13.1
+    SOURCE_SUBDIR frontends/cpp
+)
+"""
+
+
+CPP_HEGEL_H = """\
+/**
+ * @code{.cmake}
+ * FetchContent_Declare(
+ *     hegel
+ *     GIT_REPOSITORY https://github.com/hegeldev/hegel.git
+ *     GIT_TAG frontends/cpp/0.13.1
+ *     SOURCE_SUBDIR frontends/cpp
+ * )
+ * @endcode
+ */
+"""
+
+
 PATCH = ("patch", "This patch does a thing.")
 MINOR = ("minor", "This release breaks the C ABI.")
 
@@ -193,10 +230,13 @@ class ApplyVersionBumpTest(unittest.TestCase):
             ("frontends/typescript/package-lock.json", json.dumps(TYPESCRIPT_LOCK, indent=2) + "\n"),
             ("frontends/typescript/src/libhegel-version.ts", TYPESCRIPT_PIN),
             ("frontends/cpp/CMakeLists.txt", CPP_CMAKE),
+            ("frontends/cpp/README.md", CPP_README),
+            ("frontends/cpp/include/hegel/hegel.h", CPP_HEGEL_H),
             ("frontends/java/pom.xml", JAVA_PARENT_POM),
             ("frontends/java/hegel-lowlevel/pom.xml", JAVA_MODULE_POM),
             ("frontends/java/hegel/pom.xml", JAVA_MODULE_POM),
             ("frontends/java/hegel-jna/pom.xml", JAVA_MODULE_POM),
+            ("frontends/java/README.md", JAVA_README),
             ("frontends/ocaml/dune-project", OCAML_DUNE_PROJECT),
             *((f"frontends/ocaml/{name}.opam", ocaml_opam(name)) for name in OCAML.crates),
         ]:
@@ -249,6 +289,39 @@ class ApplyVersionBumpTest(unittest.TestCase):
         )
         for rel in JAVA.manifests[1:]:
             self.assertEqual(self.read(rel), JAVA_MODULE_POM.replace("0.10.2", "0.10.3"), rel)
+
+    def test_rewrites_the_version_in_install_docs(self) -> None:
+        # Only whole mentions of the old version move, not longer numbers
+        # that contain it.
+        release.apply_version_bump(self.root, {JAVA: "0.11.0"})
+        self.assertEqual(
+            self.read("frontends/java/README.md"),
+            JAVA_README.replace("<version>0.10.2<", "<version>0.11.0<")
+            .replace("hegel:0.10.2", "hegel:0.11.0")
+            .replace("hegel-jna:0.10.2", "hegel-jna:0.11.0"),
+        )
+
+    def test_rewrites_the_cpp_fetchcontent_tags(self) -> None:
+        release.apply_version_bump(self.root, {CPP: "0.14.0"})
+        self.assertEqual(
+            self.read("frontends/cpp/README.md"),
+            CPP_README.replace("frontends/cpp/0.13.1", "frontends/cpp/0.14.0"),
+        )
+        self.assertEqual(
+            self.read("frontends/cpp/include/hegel/hegel.h"),
+            CPP_HEGEL_H.replace("frontends/cpp/0.13.1", "frontends/cpp/0.14.0"),
+        )
+
+    def test_install_docs_in_the_checkout_name_the_current_version(self) -> None:
+        for component in release.COMPONENTS:
+            version = release.current_version(component.manifest())
+            for doc in component.install_docs:
+                self.assertIn(version, (release.ROOT / doc).read_text(), doc)
+
+    def test_an_install_doc_without_the_version_is_an_error(self) -> None:
+        (self.root / "frontends/java/README.md").write_text("no version here\n")
+        with self.assertRaises(ValueError):
+            release.apply_version_bump(self.root, {JAVA: "0.11.0"})
 
     def test_bumps_the_dune_project_and_every_opam_file(self) -> None:
         release.apply_version_bump(self.root, {OCAML: "0.26.4"})
@@ -507,6 +580,8 @@ class ComponentTest(unittest.TestCase):
             self.assertIn(component.changelog, release.RELEASE_PATHS)
             if component.engine_pin is not None:
                 self.assertIn(component.engine_pin, release.RELEASE_PATHS)
+            for doc in component.install_docs:
+                self.assertIn(doc, release.RELEASE_PATHS)
         self.assertIn("Cargo.lock", release.RELEASE_PATHS)
         self.assertIn(TYPESCRIPT.engine_pin, release.RELEASE_PATHS)
 

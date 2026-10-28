@@ -73,6 +73,7 @@ header = """
  *
  *     hegel_context_new          ->  hegel_context_free
  *     hegel_settings_new         ->  hegel_settings_free
+ *     hegel_settings_new_for_profile  ->  hegel_settings_free
  *     hegel_run_start            ->  hegel_run_free
  *     hegel_run_start_blob       ->  hegel_run_free
  *     hegel_test_case_from_blob  ->  hegel_test_case_free
@@ -83,12 +84,16 @@ header = """
  *     hegel_string_generator_*   ->  hegel_string_generator_free
  *     hegel_grammar_builder_new  ->  hegel_grammar_builder_free
  *     hegel_grammar_new          ->  hegel_grammar_free
+ *     hegel_grammar_draw_new     ->  hegel_grammar_draw_free
  *     hegel_new_collection       ->  hegel_collection_free
+ *     hegel_new_repeat           ->  hegel_repeat_free
  *     hegel_new_pool             ->  hegel_pool_free
+ *     hegel_new_recursion        ->  hegel_recursion_free
  *     hegel_new_state_machine    ->  hegel_state_machine_free
  *     hegel_generate_bytes       ->  hegel_generate_bytes_result_free
  *     hegel_generate_string      ->  hegel_owned_string_free
  *     hegel_generate_grammar     ->  hegel_owned_string_free
+ *     hegel_grammar_draw_result  ->  hegel_owned_string_free
  *     hegel_printer_options_new  ->  hegel_printer_options_free
  *     hegel_reflow_options_new   ->  hegel_reflow_options_free
  *     hegel_printer_new          ->  hegel_printer_free
@@ -116,6 +121,10 @@ header = """
  *   Concurrent operations on it return HEGEL_E_CONCURRENT_USE. To generate
  *   from several threads, hegel_test_case_clone the handle and give each
  *   thread its own clone.
+ * - A grammar draw handle may be used by at most one thread at a time.
+ *   Concurrent calls on it return HEGEL_E_CONCURRENT_USE. It belongs to the
+ *   test-case handle it is first advanced with: start a new draw for each
+ *   test case.
  */"""
 include_guard = "HEGEL_H"
 pragma_once = false
@@ -157,7 +166,10 @@ include = [
 "HegelStringGenerator" = "hegel_string_generator_t"
 "HegelGrammar" = "hegel_grammar_t"
 "HegelGrammarBuilder" = "hegel_grammar_builder_t"
+"HegelGrammarDraw" = "hegel_grammar_draw_t"
 "HegelCollection" = "hegel_collection_t"
+"HegelRepeat" = "hegel_repeat_t"
+"HegelRecursion" = "hegel_recursion_t"
 "HegelPool" = "hegel_pool_t"
 "HegelStateMachine" = "hegel_state_machine_t"
 "HegelPrinter" = "hegel_printer_t"

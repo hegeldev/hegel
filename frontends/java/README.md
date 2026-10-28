@@ -31,7 +31,7 @@ Add the dependency with Maven:
 <dependency>
   <groupId>dev.hegel</groupId>
   <artifactId>hegel</artifactId> <!-- or "hegel-jna" for Java 17-21 -->
-  <version>0.1.0</version>
+  <version>0.10.3</version>
   <scope>test</scope>
 </dependency>
 ```
@@ -39,7 +39,7 @@ Add the dependency with Maven:
 or with Gradle:
 
 ```kotlin
-testImplementation("dev.hegel:hegel:0.1.0") // or "dev.hegel:hegel-jna:0.1.0"
+testImplementation("dev.hegel:hegel:0.10.3") // or "dev.hegel:hegel-jna:0.10.3"
 ```
 
 Depend on exactly one of the two — they contain the same classes and differ only in how they call

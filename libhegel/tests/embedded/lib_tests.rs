@@ -187,6 +187,41 @@ fn concurrent_use_of_one_collection_is_rejected() {
     }
 }
 
+/// A repeat loop used from two threads at once reports
+/// `HEGEL_E_CONCURRENT_USE`, stood in for as in
+/// [`concurrent_use_of_one_collection_is_rejected`] by holding the loop's
+/// own state lock on this thread.
+#[test]
+fn concurrent_use_of_one_repeat_is_rejected() {
+    unsafe {
+        let (ctx, s, run, tc) = start_run_and_first_case();
+
+        let mut repeat: *mut HegelRepeat = ptr::null_mut();
+        ok(hegel_new_repeat(ctx, tc, &mut repeat));
+        let mut clone: *mut HegelTestCase = ptr::null_mut();
+        ok(hegel_test_case_clone(ctx, tc, &mut clone));
+
+        let held = (&*repeat).state.try_lock().unwrap();
+        let mut more = false;
+        assert_eq!(
+            hegel_repeat_more(ctx, clone, repeat, &mut more),
+            HEGEL_E_CONCURRENT_USE
+        );
+        assert_eq!(
+            hegel_repeat_failed(ctx, clone, repeat),
+            HEGEL_E_CONCURRENT_USE
+        );
+        drop(held);
+
+        ok(hegel_repeat_more(ctx, clone, repeat, &mut more));
+        ok(hegel_repeat_failed(ctx, clone, repeat));
+
+        ok(hegel_repeat_free(ctx, repeat));
+        ok(hegel_test_case_free(ctx, clone));
+        finish(ctx, s, run, tc);
+    }
+}
+
 #[test]
 fn size_arg_is_lossless_within_usize_and_saturates_beyond() {
     assert_eq!(size_arg(0), 0);
@@ -459,4 +494,87 @@ fn last_error_view_preserves_interior_nuls() {
         b"before\0after"
     );
     unsafe { ok(hegel_context_free(ctx)) };
+}
+
+/// A grammar draw handle used from two threads at once reports
+/// `HEGEL_E_CONCURRENT_USE` from each of its calls, standing in for the
+/// other thread by holding the draw's own state lock here.
+#[test]
+fn concurrent_use_of_one_grammar_draw_is_rejected() {
+    use crate::native::lark::builder::NoImports;
+    use crate::native::lark::generate::{GrammarOptions, from_lark};
+    use crate::native::lark::grammar_draw::GrammarDraw;
+    unsafe {
+        let (ctx, s, run, tc) = start_run_and_first_case();
+        let spec = from_lark(
+            "start: X\n%declare X",
+            &NoImports,
+            GrammarOptions {
+                explicit: vec!["X".to_string()],
+                ..GrammarOptions::default()
+            },
+        )
+        .unwrap();
+        let draw = HegelGrammarDraw {
+            state: Mutex::new(GrammarDrawState {
+                draw: GrammarDraw::new(Arc::new(spec), 0),
+                stream: None,
+            }),
+        };
+        let draw_ptr = &draw as *const HegelGrammarDraw as *mut HegelGrammarDraw;
+
+        let held = draw.state.try_lock().unwrap();
+        let mut terminal = usize::MAX;
+        assert_eq!(
+            hegel_grammar_draw_next(ctx, tc, draw_ptr, &mut terminal),
+            HEGEL_E_CONCURRENT_USE
+        );
+        assert_eq!(
+            hegel_grammar_draw_provide(ctx, draw_ptr, "v".into()),
+            HEGEL_E_CONCURRENT_USE
+        );
+        let mut result = hegel_owned_string_t {
+            data: ptr::null(),
+            len: 0,
+        };
+        assert_eq!(
+            hegel_grammar_draw_result(ctx, draw_ptr, &mut result),
+            HEGEL_E_CONCURRENT_USE
+        );
+        drop(held);
+
+        ok(hegel_grammar_draw_next(ctx, tc, draw_ptr, &mut terminal));
+        ok(hegel_grammar_draw_provide(ctx, draw_ptr, "v".into()));
+        assert_eq!(
+            hegel_grammar_draw_next(ctx, tc, draw_ptr, &mut terminal),
+            HEGEL_E_NOT_FOUND
+        );
+
+        finish(ctx, s, run, tc);
+    }
+}
+
+/// `hegel_settings_set_from_string` sets the database key, which the ABI has
+/// no getter for, under `database_key`.
+#[test]
+fn settings_set_from_string_sets_the_database_key() {
+    unsafe {
+        let ctx = hegel_context_new();
+        let mut s: *mut HegelSettings = ptr::null_mut();
+        ok(hegel_settings_new(ctx, &mut s));
+        assert_eq!((&*s).database_key, None);
+        ok(hegel_settings_set_from_string(
+            ctx,
+            s,
+            "database_key".into(),
+            "my_test".into(),
+        ));
+        assert_eq!((&*s).database_key.as_deref(), Some("my_test"));
+        assert_eq!(
+            hegel_settings_set_from_string(ctx, s, "test_location".into(), "x".into()),
+            HEGEL_E_INVALID_ARG
+        );
+        ok(hegel_settings_free(ctx, s));
+        ok(hegel_context_free(ctx));
+    }
 }

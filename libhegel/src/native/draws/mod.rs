@@ -209,6 +209,17 @@ pub(crate) fn choose_from(ntc: &mut NativeTestCase, members: &[i64]) -> Result<i
     spanned(ntc, LABEL_SET_CHOICE, |ntc| ntc.draw_from_set(members))
 }
 
+/// The maximum length of a text or bytes draw whose caller gave none: 100,
+/// or `min_size + 100` when `min_size` is above 100.
+pub(crate) fn default_max_size(min_size: usize) -> usize {
+    const DEFAULT_MAX_SIZE: usize = 100;
+    if min_size > DEFAULT_MAX_SIZE {
+        min_size.saturating_add(DEFAULT_MAX_SIZE)
+    } else {
+        DEFAULT_MAX_SIZE
+    }
+}
+
 /// Draw a byte string with length in `[min_size, max_size]`, validating the
 /// sizes.
 pub fn generate_bytes(
@@ -421,8 +432,9 @@ pub(crate) fn many_reject<D: Draws>(d: &mut D, state: &mut ManyState) -> Result<
 /// The number of budget-exceeded retries one recursive draw gets before
 /// the test case is rejected: attempt `k` prices branches as if each had
 /// `k` more children than observed, so nine attempts push any branch
-/// function down to a fitting probability.
-pub(crate) const RECURSION_MAX_ATTEMPTS: u64 = 9;
+/// function down to a fitting probability. Published in the C header as
+/// `HEGEL_RECURSION_ATTEMPTS`.
+pub(crate) const RECURSION_MAX_ATTEMPTS: u64 = crate::HEGEL_RECURSION_ATTEMPTS;
 
 /// The number of completed-but-mispriced attempts one recursive draw
 /// discards (see [`recursion_finish`]) before accepting whatever the
