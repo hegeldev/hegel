@@ -9,7 +9,8 @@ import java.util.function.IntFunction;
 
 /**
  * Generates arrays of a fixed length, drawing each element from one generator. It prints as {@code
- * [a, b]}, each element printed by the element generator as it is drawn.
+ * new Integer[] {a, b}}, named for the array's component type, each element printed by the element
+ * generator as it is drawn.
  *
  * @param <T> the element type
  */
@@ -54,14 +55,14 @@ public final class ArrayGenerator<T> implements PrintableGenerator<T[]> {
     private T[] draw(TestCase tc, Printer printer) {
         Printer p = Components.out(printer);
         T[] out = newArray.apply(length);
-        p.beginGroup("[");
+        p.beginGroup("new " + out.getClass().getComponentType().getSimpleName() + "[] {");
         for (int i = 0; i < length; i++) {
             if (i > 0) {
                 p.separator();
             }
             out[i] = Components.draw(tc, element, printer);
         }
-        p.endGroup("]");
+        p.endGroup("}");
         return out;
     }
 }

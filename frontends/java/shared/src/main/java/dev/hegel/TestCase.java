@@ -544,10 +544,8 @@ public final class TestCase {
     private void repeatOnce(long id, Runnable body) {
         Throwable failure;
         DataSource outer = source;
-        Names outerNames = names;
         DataSource block = outer.block(2);
         swapSource(block);
-        names = new Names();
         try {
             body.run();
             return;
@@ -555,7 +553,6 @@ public final class TestCase {
             failure = e;
         } finally {
             swapSource(outer);
-            names = outerNames;
             block.release();
         }
         if (failure instanceof AssumeRejected && !isAborted()) {

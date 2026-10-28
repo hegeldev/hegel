@@ -83,22 +83,23 @@ class PrinterTest {
 
     @Test
     void containersRenderStructurally() {
-        assertEquals("[1, 2]", render(new byte[] {1, 2}));
-        assertEquals("[1, 2, 3]", render(new int[] {1, 2, 3}));
-        assertEquals("[\"a\", null]", render(new String[] {"a", null}));
-        assertEquals("[1, \"x\"]", render(List.of(1, "x")));
-        assertEquals("[]", render(List.of()));
+        assertEquals("new byte[] {1, 2}", render(new byte[] {1, 2}));
+        assertEquals("new int[] {1, 2, 3}", render(new int[] {1, 2, 3}));
+        assertEquals("new String[] {\"a\", null}", render(new String[] {"a", null}));
+        assertEquals("new int[][] {new int[] {1}, new int[] {}}", render(new int[][] {{1}, {}}));
+        assertEquals("List.of(1, \"x\")", render(List.of(1, "x")));
+        assertEquals("List.of()", render(List.of()));
         assertEquals("Set.of(\"s\")", render(new LinkedHashSet<>(List.of("s"))));
         assertEquals("Set.of()", render(Set.of()));
         assertEquals(
                 "UUID.fromString(\"f47ac10b-58cc-4372-a567-0e02b2c3d479\")",
                 render(UUID.fromString("f47ac10b-58cc-4372-a567-0e02b2c3d479")));
-        assertEquals("{1: 2}", render(Map.of(1, 2)));
-        assertEquals("{}", render(Map.of()));
+        assertEquals("Map.of(1, 2)", render(Map.of(1, 2)));
+        assertEquals("Map.of()", render(Map.of()));
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("a", List.of(1));
         m.put("b", 'c');
-        assertEquals("{\"a\": [1], \"b\": 'c'}", render(m));
+        assertEquals("Map.of(\"a\", List.of(1), \"b\", 'c')", render(m));
     }
 
     @Test
@@ -106,7 +107,7 @@ class PrinterTest {
         assertEquals("new Point(1, 2)", render(new Point(1, 2)));
         assertEquals("new Empty()", render(new Empty()));
         assertEquals("new Tuple2(\"a b\", \"\")", render(new Tuple2<>("a b", "")));
-        assertEquals("new Named(\"x\\ny\", [\"p, q\", \"]\"])", render(new Named("x\ny", List.of("p, q", "]"))));
+        assertEquals("new Named(\"x\\ny\", List.of(\"p, q\", \")\"))", render(new Named("x\ny", List.of("p, q", ")"))));
         assertEquals("new Tuple3('c', null, new Point(0, 0))", render(new Tuple3<>('c', null, new Point(0, 0))));
     }
 
@@ -132,7 +133,7 @@ class PrinterTest {
         assertEquals("OptionalLong.empty()", render(OptionalLong.empty()));
         assertEquals("OptionalDouble.of(0.5)", render(OptionalDouble.of(0.5)));
         assertEquals("OptionalDouble.empty()", render(OptionalDouble.empty()));
-        assertEquals("[Optional.of(new Point(1, 2))]", render(List.of(Optional.of(new Point(1, 2)))));
+        assertEquals("List.of(Optional.of(new Point(1, 2)))", render(List.of(Optional.of(new Point(1, 2)))));
     }
 
     @Test
@@ -212,12 +213,26 @@ class PrinterTest {
         String out = render(words);
         String[] lines = out.split("\n");
         assertEquals(12, lines.length, out);
-        assertEquals("[\"element0\",", lines[0]);
-        assertEquals(" \"element1\",", lines[1]);
-        assertEquals(" \"element11\"]", lines[11]);
+        assertEquals("List.of(\"element0\",", lines[0]);
+        assertEquals("        \"element1\",", lines[1]);
+        assertEquals("        \"element11\")", lines[11]);
         for (String line : lines) {
             assertTrue(line.length() <= 79, line);
         }
+    }
+
+    @Test
+    void longMapsBreakOneEntryPerLine() {
+        Map<String, String> entries = new LinkedHashMap<>();
+        for (int i = 0; i < 12; i++) {
+            entries.put("key" + i, "value" + i);
+        }
+        String out = render(entries);
+        String[] lines = out.split("\n");
+        assertEquals(12, lines.length, out);
+        assertEquals("Map.of(\"key0\", \"value0\",", lines[0]);
+        assertEquals("       \"key1\", \"value1\",", lines[1]);
+        assertEquals("       \"key11\", \"value11\")", lines[11]);
     }
 
     @Test

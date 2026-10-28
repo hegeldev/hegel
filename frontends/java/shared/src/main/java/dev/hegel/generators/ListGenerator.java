@@ -22,7 +22,7 @@ import java.util.function.Function;
  * {@link #maxSize(int)} methods. {@link #unique()} and {@link #uniqueBy(Function)} make the
  * elements distinct: a drawn duplicate is rejected and the engine draws another in its place.
  *
- * <p>It prints as {@code [a, b]}, each element printed by the element generator as it is drawn;
+ * <p>It prints as {@code List.of(a, b)}, each element printed by the element generator as it is drawn;
  * a rejected duplicate prints nothing.
  */
 public final class ListGenerator<T> implements PrintableGenerator<List<T>> {
@@ -105,7 +105,7 @@ public final class ListGenerator<T> implements PrintableGenerator<List<T>> {
         try {
             List<T> out = new ArrayList<>();
             Set<Object> keys = new HashSet<>();
-            p.beginGroup("[");
+            p.beginGroup("List.of(");
             while (tc.collectionMore(id)) {
                 try (Printer.Speculation speculation = p.speculate()) {
                     if (!out.isEmpty()) {
@@ -121,7 +121,7 @@ public final class ListGenerator<T> implements PrintableGenerator<List<T>> {
                     }
                 }
             }
-            p.endGroup("]");
+            p.endGroup(")");
             return out;
         } finally {
             tc.collectionFree(id);

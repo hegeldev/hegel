@@ -90,7 +90,7 @@ class PrintingTest {
     @Test
     void anElementsOwnPrintingAppearsInsideItsContainer() {
         assertEquals(
-                List.of("var xs_1 = [pt(0), pt(0)];"),
+                List.of("var xs_1 = List.of(pt(0), pt(0));"),
                 failingOutput(tc -> tc.draw(lists(POINTS).minSize(2).maxSize(2), "xs")));
         assertEquals(
                 List.of("var p_1 = new Point(pt(0), 0);"),
@@ -111,7 +111,10 @@ class PrintingTest {
     @Test
     void deferredValuesStayInsideTheirContainer() {
         assertEquals(
-                List.of("var cs_1 = [Counter[calls=[0]], Counter[calls=[0, 1]], Counter[calls=[]]];"),
+                List.of(
+                        "var cs_1 = List.of(Counter[calls=[0]],",
+                        "        Counter[calls=[0, 1]],",
+                        "        Counter[calls=[]]);"),
                 failingOutput(tc -> {
                     List<IntSupplier> cs = tc.draw(lists(COUNTERS).minSize(3).maxSize(3), "cs");
                     cs.get(0).getAsInt();
@@ -143,7 +146,7 @@ class PrintingTest {
                 List.of("var n_1 = 2;"),
                 failingOutput(tc -> tc.draw(lists(silent).minSize(2).maxSize(2).map(List::size), "n")));
         assertEquals(
-                List.of("var xs_1 = [4];"),
+                List.of("var xs_1 = List.of(4);"),
                 failingOutput(tc -> tc.draw(lists(silent).minSize(1).maxSize(1).printAsRepr(), "xs")));
     }
 
@@ -152,9 +155,9 @@ class PrintingTest {
         String element = "a".repeat(20);
         assertEquals(
                 List.of(
-                        "var draw_1 = [\"aaaaaaaaaaaaaaaaaaaa\",",
-                        " \"aaaaaaaaaaaaaaaaaaaa\",",
-                        " \"aaaaaaaaaaaaaaaaaaaa\"];"),
+                        "var draw_1 = List.of(\"aaaaaaaaaaaaaaaaaaaa\",",
+                        "        \"aaaaaaaaaaaaaaaaaaaa\",",
+                        "        \"aaaaaaaaaaaaaaaaaaaa\");"),
                 failingOutput(tc -> tc.draw(lists(just(element)).minSize(3).maxSize(3))));
     }
 
@@ -163,9 +166,9 @@ class PrintingTest {
         String element = "a".repeat(20);
         assertEquals(
                 List.of(
-                        "var draw_1 = concat_all([\"aaaaaaaaaaaaaaaaaaaa\",",
-                        "            \"aaaaaaaaaaaaaaaaaaaa\",",
-                        "            \"aaaaaaaaaaaaaaaaaaaa\"]);"),
+                        "var draw_1 = concat_all(List.of(\"aaaaaaaaaaaaaaaaaaaa\",",
+                        "                   \"aaaaaaaaaaaaaaaaaaaa\",",
+                        "                   \"aaaaaaaaaaaaaaaaaaaa\"));"),
                 failingOutput(tc -> tc.draw(lists(just(element))
                         .minSize(3)
                         .maxSize(3)
@@ -180,7 +183,7 @@ class PrintingTest {
                 failingOutput(
                         tc -> tc.draw(integers().min(3).max(3).map(Key::of).printAsCall("Key.of"), "k")));
         assertEquals(
-                List.of("var ks_1 = [Key.of(0), Key.of(0)];"),
+                List.of("var ks_1 = List.of(Key.of(0), Key.of(0));"),
                 failingOutput(tc -> tc.draw(
                         lists(integers().min(0).max(0).map(Key::of).printAsCall("Key.of"))
                                 .minSize(2)
@@ -221,7 +224,7 @@ class PrintingTest {
     @Test
     void aCompositePrintsOnlyTheValueItReturns() {
         assertEquals(
-                List.of("var pair_1 = [1, 2];"),
+                List.of("var pair_1 = List.of(1, 2);"),
                 failingOutput(tc -> tc.draw(
                         composite(inner -> List.of(
                                 inner.draw(integers().min(1).max(1), "a"),
@@ -272,7 +275,8 @@ class PrintingTest {
         List<String> unique =
                 failingOutput(tc -> tc.draw(lists(small).unique().minSize(2).maxSize(2), "xs"));
         assertTrue(
-                unique.equals(List.of("var xs_1 = [e0, e1];")) || unique.equals(List.of("var xs_1 = [e1, e0];")),
+                unique.equals(List.of("var xs_1 = List.of(e0, e1);"))
+                        || unique.equals(List.of("var xs_1 = List.of(e1, e0);")),
                 unique.toString());
         List<String> set = failingOutput(tc -> tc.draw(sets(small).minSize(2).maxSize(2), "s"));
         assertTrue(
@@ -281,8 +285,8 @@ class PrintingTest {
         List<String> map =
                 failingOutput(tc -> tc.draw(maps(small, booleans()).minSize(2).maxSize(2), "m"));
         assertTrue(
-                map.equals(List.of("var m_1 = {e0: false, e1: false};"))
-                        || map.equals(List.of("var m_1 = {e1: false, e0: false};")),
+                map.equals(List.of("var m_1 = Map.of(e0, false, e1, false);"))
+                        || map.equals(List.of("var m_1 = Map.of(e1, false, e0, false);")),
                 map.toString());
     }
 
@@ -307,7 +311,8 @@ class PrintingTest {
                 },
                 SETTINGS.testCases(200),
                 Reporter.silent());
-        assertEquals(List.of("var t_1 = [L, L];"), report.failures().get(0).output());
+        assertEquals(
+                List.of("var t_1 = List.of(L, L);"), report.failures().get(0).output());
     }
 
     @Test
@@ -336,12 +341,13 @@ class PrintingTest {
                     tc.draw(optionalLongs(Generators.longs()), "l");
                     tc.draw(optionalDoubles(Generators.doubles()), "d");
                 }));
-        assertEquals(List.of("var t_1 = new Tuple2(pt(0), \"\");", "var u_1 = [pt(0), false];"), failingOutput(tc -> {
-            tc.draw(tuples(POINTS, text()), "t");
-            tc.draw(tuples(new Generator<?>[] {POINTS, booleans()}), "u");
-        }));
         assertEquals(
-                List.of("var a_1 = [pt(0), pt(0)];"),
+                List.of("var t_1 = new Tuple2(pt(0), \"\");", "var u_1 = List.of(pt(0), false);"), failingOutput(tc -> {
+                    tc.draw(tuples(POINTS, text()), "t");
+                    tc.draw(tuples(new Generator<?>[] {POINTS, booleans()}), "u");
+                }));
+        assertEquals(
+                List.of("var a_1 = new Integer[] {pt(0), pt(0)};"),
                 failingOutput(tc -> tc.draw(arrays(POINTS, 2, Integer[]::new), "a")));
         assertEquals(List.of("var x_1 = pt(0);"), failingOutput(tc -> tc.draw(oneOf(POINTS, POINTS), "x")));
         assertEquals(

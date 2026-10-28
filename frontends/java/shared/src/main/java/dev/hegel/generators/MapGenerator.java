@@ -15,8 +15,8 @@ import java.util.Map;
  * <p>The entry-count range defaults to any size; narrow it with the fluent {@link #minSize(int)} /
  * {@link #maxSize(int)} methods.
  *
- * <p>It prints as {@code {k: v}}, each key and value printed by its generator as it is drawn; an
- * entry with a rejected duplicate key prints nothing.
+ * <p>It prints as {@code Map.of(k, v)}, each key and value printed by its generator as it is drawn;
+ * an entry with a rejected duplicate key prints nothing.
  */
 public final class MapGenerator<K, V> implements PrintableGenerator<Map<K, V>> {
     private final Generator<K> keys;
@@ -72,7 +72,7 @@ public final class MapGenerator<K, V> implements PrintableGenerator<Map<K, V>> {
         long id = tc.newCollection(minSize, maxSize);
         try {
             Map<K, V> out = new LinkedHashMap<>();
-            p.beginGroup("{");
+            p.beginGroup("Map.of(");
             while (tc.collectionMore(id)) {
                 try (Printer.Speculation speculation = p.speculate()) {
                     if (!out.isEmpty()) {
@@ -83,13 +83,13 @@ public final class MapGenerator<K, V> implements PrintableGenerator<Map<K, V>> {
                         speculation.abort();
                         tc.collectionReject(id, "duplicate key");
                     } else {
-                        p.text(": ");
+                        p.text(", ");
                         out.put(key, Components.draw(tc, values, printer));
                         speculation.commit();
                     }
                 }
             }
-            p.endGroup("}");
+            p.endGroup(")");
             return out;
         } finally {
             tc.collectionFree(id);

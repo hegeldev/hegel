@@ -135,12 +135,15 @@ public final class Printer {
     }
 
     /**
-     * Print {@code value} as Java: strings and characters as escaped literals, records as a call
-     * of their canonical constructor, {@code new Name(x, y)}, and optionals as {@code
-     * Optional.of(x)} or {@code Optional.empty()}; arrays and collections print as {@code [a, b]}
-     * and maps as {@code {k: v}}. Each is a group that breaks one element per line when it does not
-     * fit, with every element printed the same way. Anything else is its {@code toString()}, laid out by {@link
-     * #reflow}; so is a record whose components cannot be read, such as one whose accessor throws.
+     * Print {@code value} as a Java expression: strings and characters as escaped literals,
+     * records as a call of their canonical constructor, {@code new Name(x, y)}, optionals as
+     * {@code Optional.of(x)} or {@code Optional.empty()}, arrays as {@code new int[] {a, b}}
+     * (named for their component type), sets as {@code Set.of(a, b)}, other collections as {@code
+     * List.of(a, b)}, maps as {@code Map.of(k, v)} and UUIDs as {@code UUID.fromString("...")}.
+     * Each is a group that breaks one element (one entry, for a map) per line when it does not fit,
+     * with every element printed the same way. Anything else is its {@code toString()}, laid out by
+     * {@link #reflow}; so is a record whose components cannot be read, such as one whose accessor
+     * throws.
      * Nothing is formatted when {@link #shouldPrint()} is false.
      *
      * <p>This is how the value-producing generators ({@code map}, {@code just}, {@code
@@ -434,15 +437,16 @@ public final class Printer {
             for (int i = 0; i < length; i++) {
                 elements[i] = Array.get(value, i);
             }
-            sequence("[", Arrays.asList(elements).iterator(), "]");
+            String component = value.getClass().getComponentType().getSimpleName();
+            sequence("new " + component + "[] {", Arrays.asList(elements).iterator(), "}");
         } else if (value instanceof Set<?> set) {
             sequence("Set.of(", set.iterator(), ")");
         } else if (value instanceof Collection<?> collection) {
-            sequence("[", collection.iterator(), "]");
+            sequence("List.of(", collection.iterator(), ")");
         } else if (value instanceof UUID uuid) {
             text("UUID.fromString(" + quote(uuid.toString(), '"') + ")");
         } else if (value instanceof Map<?, ?> map) {
-            beginGroup("{");
+            beginGroup("Map.of(");
             boolean first = true;
             for (Map.Entry<?, ?> entry : map.entrySet()) {
                 if (!first) {
@@ -450,10 +454,10 @@ public final class Printer {
                 }
                 first = false;
                 render(entry.getKey());
-                text(": ");
+                text(", ");
                 render(entry.getValue());
             }
-            endGroup("}");
+            endGroup(")");
         } else if (value instanceof Record record) {
             record(record);
         } else if (value instanceof Optional<?> optional) {

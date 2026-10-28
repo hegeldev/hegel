@@ -156,9 +156,9 @@ class TestCaseApiTest {
                         "// Repetition #1",
                         "  var x_1 = 0;",
                         "// Repetition #2",
-                        "  var x_1 = 0;",
+                        "  var x_2 = 0;",
                         "// Repetition #3",
-                        "  var x_1 = 0;"),
+                        "  var x_3 = 0;"),
                 failure.output());
     }
 
