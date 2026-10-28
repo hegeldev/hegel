@@ -261,6 +261,19 @@ class JnaLibhegelTest {
     }
 
     @Test
+    void stringArraysCarryEmptyEntriesAsNullData() {
+        // An empty name inside a list crosses as {NULL, 0}: the engine reads it as the empty
+        // string and rejects it as a category by name, proving the entry survived the trip.
+        JnaLibhegel lib = real();
+        long[] out = new long[1];
+        assertEquals(
+                Abi.E_INVALID_ARG,
+                lib.stringGeneratorText(
+                        0, 5, "ascii", 0, Abi.NO_MAX_CODEPOINT, List.of("Lu", ""), null, null, null, out));
+        assertTrue(lib.lastErrorMessage().contains("\"\" is not a valid Unicode category"), lib.lastErrorMessage());
+    }
+
+    @Test
     void regexPatternCrossesAsALengthDelimitedBuffer() {
         // A NUL inside the pattern must survive the call (the pattern crosses as a hegel_string_t:
         // pointer + byte length), and a null pattern crosses as {NULL, 0}, which the engine reads

@@ -1024,19 +1024,18 @@ fn register_machine(
         Ok(handle) => handle,
         Err(rc) => raise_for_rc(rc),
     };
-    for rule in rules {
-        if let Err(rc) = tc.with_ctc(|ctc| {
-            ctc.state_machine_add_rule(&machine, rule.name, rule.weight, &rule.groups)
-        }) {
+    let declare = |declared: Result<(), crate::ffi::sys::hegel_result_t>| {
+        if let Err(rc) = declared {
             raise_for_rc(rc);
         }
+    };
+    for rule in rules {
+        declare(tc.with_ctc(|ctc| {
+            ctc.state_machine_add_rule(&machine, rule.name, rule.weight, &rule.groups)
+        }));
     }
     for &(name, always_check) in invariants {
-        if let Err(rc) =
-            tc.with_ctc(|ctc| ctc.state_machine_add_invariant(&machine, name, always_check))
-        {
-            raise_for_rc(rc);
-        }
+        declare(tc.with_ctc(|ctc| ctc.state_machine_add_invariant(&machine, name, always_check)));
     }
     match tc.with_ctc(|ctc| ctc.state_machine_start(&machine)) {
         Ok(concurrency) => (machine, concurrency),

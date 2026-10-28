@@ -323,8 +323,7 @@ final class LiveDataSource implements DataSource {
     @Override
     public void stateMachineAddInvariant(long stateMachineId, String name, boolean alwaysCheck) {
         checkLive();
-        translate(
-                lib.stateMachineAddInvariant(tc, stateMachineId, name, alwaysCheck), "state_machine_add_invariant");
+        translate(lib.stateMachineAddInvariant(tc, stateMachineId, name, alwaysCheck), "state_machine_add_invariant");
     }
 
     @Override

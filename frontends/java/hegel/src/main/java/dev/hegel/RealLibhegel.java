@@ -1194,14 +1194,8 @@ final class RealLibhegel implements Libhegel {
             for (int i = 0; i < groups.length; i++) {
                 ids.setAtIndex(JAVA_LONG, i, groups[i]);
             }
-            return rc(
-                    stateMachineAddRule,
-                    segment(tc),
-                    stateMachineId,
-                    str(arena, name),
-                    weight,
-                    ids,
-                    (long) groups.length);
+            return rc(stateMachineAddRule, segment(tc), stateMachineId, str(arena, name), weight, ids, (long)
+                    groups.length);
         }
     }
 
