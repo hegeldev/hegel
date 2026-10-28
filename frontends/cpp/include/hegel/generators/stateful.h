@@ -1093,6 +1093,8 @@ namespace hegel::stateful {
                 std::rethrow_exception(event.exception->exception);
             } catch (const internal::HegelStopTest&) {
                 event.kind = EventKind::Overrun;
+            } catch (const internal::HegelLoopDone&) {
+                event.kind = EventKind::Control;
             } catch (const internal::HegelReject&) {
                 // not the same as rule rejection - entire test case is rejected
                 // requires some worker race on cloned test cases with same
@@ -1398,6 +1400,10 @@ namespace hegel::stateful {
                     tc.note("}");
                     internal::stop_span(tc, true);
                 } catch (const internal::HegelStopTest&) {
+                    tc.note("}");
+                    internal::stop_span(tc);
+                    throw;
+                } catch (const internal::HegelLoopDone&) {
                     tc.note("}");
                     internal::stop_span(tc);
                     throw;

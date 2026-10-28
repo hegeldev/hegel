@@ -131,8 +131,18 @@ TEST(Pools, FilteredConsumeRestoresValuesWhenThePredicateThrows) {
             pool.add(2);
             pool.add(3);
             bool threw = false;
+            bool drained = false;
             tc.repeat([&] {
+                if (drained) {
+                    return;
+                }
                 if (threw) {
+                    int a = tc.draw(hegel::stateful::values_consumed(pool));
+                    int b = tc.draw(hegel::stateful::values_consumed(pool));
+                    int c = tc.draw(hegel::stateful::values_consumed(pool));
+                    EXPECT_EQ(a + b + c, 6);
+                    checked++;
+                    drained = true;
                     return;
                 }
                 int calls = 0;
@@ -145,14 +155,6 @@ TEST(Pools, FilteredConsumeRestoresValuesWhenThePredicateThrows) {
                         return false;
                     }));
             });
-            if (!threw) {
-                return;
-            }
-            int a = tc.draw(hegel::stateful::values_consumed(pool));
-            int b = tc.draw(hegel::stateful::values_consumed(pool));
-            int c = tc.draw(hegel::stateful::values_consumed(pool));
-            EXPECT_EQ(a + b + c, 6);
-            checked++;
         },
         hegel::Settings{.test_cases = 100,
                         .database = hegel::Database::disabled()});
@@ -196,6 +198,21 @@ namespace {
     struct Empty : hegel::stateful::StateMachine<Empty, int> {
         Empty() : StateMachine({.initial_state = 0}) {}
         std::vector<hegel::stateful::Rule<Empty>> rules() { return {}; }
+    };
+
+    struct Looping : hegel::stateful::StateMachine<Looping, int> {
+        explicit Looping(int* repetitions)
+            : StateMachine({.initial_state = 0}), repetitions(repetitions) {}
+        int* repetitions;
+        std::vector<hegel::stateful::Rule<Looping>> rules() {
+            return {hegel::stateful::Rule<Looping>(
+                "loop", [](hegel::TestCase& tc, Looping& m) {
+                    tc.repeat([&] {
+                        (void)tc.draw(gs::booleans());
+                        (*m.repetitions)++;
+                    });
+                })};
+        }
     };
 
     struct BoundedCounter : hegel::stateful::StateMachine<BoundedCounter, int> {
@@ -416,6 +433,23 @@ TEST(Stateful, BasicRun) {
         Stack machine;
         hegel::stateful::run(machine, tc);
     });
+}
+
+// A rule whose repeat() loop the engine ends ends the test case, as passing:
+// neither the rest of the sequence nor the code after run() runs.
+TEST(Stateful, LoopEndingInsideARuleEndsTheCase) {
+    int repetitions = 0;
+    bool returned = false;
+    hegel::test(
+        [&](hegel::TestCase& tc) {
+            Looping machine(&repetitions);
+            hegel::stateful::run(machine, tc);
+            returned = true;
+        },
+        hegel::Settings{.test_cases = 3,
+                        .database = hegel::Database::disabled()});
+    EXPECT_FALSE(returned);
+    EXPECT_GT(repetitions, 0);
 }
 
 TEST(Stateful, EmptyRulesThrows) {
@@ -784,7 +818,39 @@ namespace {
     struct NoRules : hs::ConcurrentStateMachine<NoRules> {
         std::vector<hs::ConcurrentRule<NoRules>> rules() { return {}; }
     };
+
+    struct LoopingWorker : hs::ConcurrentStateMachine<LoopingWorker> {
+        explicit LoopingWorker(std::atomic<int>* repetitions)
+            : repetitions(repetitions) {}
+        std::atomic<int>* repetitions;
+        std::vector<hs::ConcurrentRule<LoopingWorker>> rules() {
+            return {hs::ConcurrentRule<LoopingWorker>(
+                "loop", [](hegel::TestCase& tc, LoopingWorker& m) {
+                    tc.repeat([&] {
+                        (void)tc.draw(gs::booleans());
+                        m.repetitions->fetch_add(1, std::memory_order_relaxed);
+                    });
+                })};
+        }
+    };
 } // namespace
+
+// A worker whose repeat() loop the engine ends ends the test case, as
+// passing: the code after run_concurrent() never runs.
+TEST(ConcurrentStateful, LoopEndingInAWorkerEndsTheCase) {
+    std::atomic<int> repetitions{0};
+    bool returned = false;
+    hegel::test(
+        [&](hegel::TestCase& tc) {
+            LoopingWorker machine(&repetitions);
+            hs::run_concurrent(machine, tc, 1, 1);
+            returned = true;
+        },
+        hegel::Settings{.test_cases = 3,
+                        .database = hegel::Database::disabled()});
+    EXPECT_FALSE(returned);
+    EXPECT_GT(repetitions.load(), 0);
+}
 
 TEST(ConcurrentStateful, FixedSingleWorkerPasses) {
     hegel::test(

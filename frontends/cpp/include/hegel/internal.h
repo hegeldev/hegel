@@ -339,6 +339,16 @@ namespace hegel::internal {
         }
     };
 
+    /* Exception thrown by TestCase::repeat when the engine ends its loop.
+     * The runner records the case as VALID: code after the loop never runs.
+     */
+    class HegelLoopDone : public std::exception {
+      public:
+        const char* what() const noexcept override {
+            return "test case ended by repeat";
+        }
+    };
+
 } // namespace hegel::internal
 
 /// @endcond

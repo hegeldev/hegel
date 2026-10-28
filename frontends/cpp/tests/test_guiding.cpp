@@ -123,8 +123,9 @@ TEST(Targeting, DuplicateLabelThrows) {
 // ---------------------------------------------------------------------------
 
 // repeat() runs its body in an engine-managed loop that can iterate more than
-// once, and control returns to the caller after the loop completes.
-TEST(Loop, RunsBodyAndReturns) {
+// once, and when the engine ends the loop the test case ends as passing: the
+// code after the call never runs.
+TEST(Loop, NeverReturns) {
     int max_iters = 0;
     bool returned = false;
     hegel::test(
@@ -132,19 +133,39 @@ TEST(Loop, RunsBodyAndReturns) {
             int iters = 0;
             tc.repeat([&] {
                 (void)tc.draw(gs::integers<int>());
-                ++iters;
+                if (++iters > max_iters) {
+                    max_iters = iters;
+                }
             });
-            // Reached only because repeat() returns after the loop.
             returned = true;
-            if (iters > max_iters) {
-                max_iters = iters;
-            }
         },
         hegel::Settings{.test_cases = 10,
                         .derandomize = true,
                         .database = hegel::Database::disabled()});
-    EXPECT_TRUE(returned);
+    EXPECT_FALSE(returned);
     EXPECT_GT(max_iters, 1) << "repeat() never iterated more than once";
+}
+
+// A nested repeat() whose loop the engine ends ends the test case too, as
+// passing, without marking the outer repetition failed.
+TEST(Loop, NestedLoopEndingEndsTheCase) {
+    bool inner_ran = false;
+    bool returned = false;
+    hegel::test(
+        [&](hegel::TestCase& tc) {
+            tc.repeat([&] {
+                tc.repeat([&] {
+                    (void)tc.draw(gs::booleans());
+                    inner_ran = true;
+                });
+                returned = true;
+            });
+        },
+        hegel::Settings{.test_cases = 3,
+                        .derandomize = true,
+                        .database = hegel::Database::disabled()});
+    EXPECT_TRUE(inner_ran);
+    EXPECT_FALSE(returned);
 }
 
 // A failure raised inside a repeat() iteration is reported like any other
@@ -217,14 +238,18 @@ TEST(Loop, RejectInsideContinues) {
     bool completed = false;
     hegel::test(
         [&](hegel::TestCase& tc) {
+            bool rejected = false;
             tc.repeat([&] {
                 int n = tc.draw(
                     gs::integers<int>({.min_value = 0, .max_value = 3}));
                 if (n % 2 != 0) {
+                    rejected = true;
                     tc.reject();
                 }
+                if (rejected) {
+                    completed = true;
+                }
             });
-            completed = true;
         },
         hegel::Settings{
             .test_cases = 3,

@@ -440,6 +440,8 @@ TEST(Diagnostics, InternalExceptionMessages) {
     EXPECT_STREQ(hegel::internal::HegelReject().what(), "test case rejected");
     EXPECT_STREQ(hegel::internal::HegelStopTest().what(),
                  "test case stopped by backend");
+    EXPECT_STREQ(hegel::internal::HegelLoopDone().what(),
+                 "test case ended by repeat");
 }
 
 // ---------------------------------------------------------------------------

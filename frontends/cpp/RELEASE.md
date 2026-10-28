@@ -60,7 +60,7 @@ HEGEL_TEST(division)(hegel::TestCase& tc) {
 }
 ```
 
-A failing explicit test case prints what it drew and noted (nothing under `Verbosity::Quiet`), and its exception propagates. With `report_multiple_failures` on it does not end the run: every explicit test case runs, the generated test cases follow, and every distinct failure is reported together, under `Property-based test failed with N distinct failures.`, as a `hegel::MultipleFailures`, the explicit test cases' failures first. A generated failure with the same origin as an explicit one is the same bug, and is dropped; a run error after an explicit failure (a failed health check, say) is reported after it as one more failure rather than hiding it. A misuse of an explicit test case is a usage error, which makes `hegel::test()` throw `std::invalid_argument` without reporting a failure: a rejection (its message begins `Explicit test cases must not be rejected`), a draw with no value or a value of another type, a value that no draw takes, and anything that needs generated data other than a draw, such as `TestCase::draw_silent()` (`draw_silent is not supported in explicit test cases`) or stateful testing. `TestCase::repeat()` runs its body once, so a rejection inside it is reported like any other. `TestCase::clone()` draws the test case's values, in sequence with the test case it was cloned from, so a test that draws from several threads runs in an explicit test case too, and `TestCase::set_worker()` does nothing there.
+A failing explicit test case prints what it drew and noted (nothing under `Verbosity::Quiet`), and its exception propagates. With `report_multiple_failures` on it does not end the run: every explicit test case runs, the generated test cases follow, and every distinct failure is reported together, under `Property-based test failed with N distinct failures.`, as a `hegel::MultipleFailures`, the explicit test cases' failures first. A generated failure with the same origin as an explicit one is the same bug, and is dropped; a run error after an explicit failure (a failed health check, say) is reported after it as one more failure rather than hiding it. A misuse of an explicit test case is a usage error, which makes `hegel::test()` throw `std::invalid_argument` without reporting a failure: a rejection (its message begins `Explicit test cases must not be rejected`), a draw with no value or a value of another type, a value that no draw takes, and anything that needs generated data other than a draw, such as `TestCase::draw_silent()` (`draw_silent is not supported in explicit test cases`) or stateful testing. `TestCase::repeat()` runs its body once and then ends the test case, so a rejection inside it is reported like any other. `TestCase::clone()` draws the test case's values, in sequence with the test case it was cloned from, so a test that draws from several threads runs in an explicit test case too, and `TestCase::set_worker()` does nothing there.
 
 ### Output
 
@@ -177,3 +177,19 @@ Giving both `min_value` and `min_value_exclusive` (or both `max_value` and `max_
 ### `TestCase::repeat()`
 
 `TestCase::repeat()` now has the engine decide how many repetitions run and which one failed, through libhegel's new `hegel_repeat_t` functions, as the other Hegel frontends do, rather than drawing a loop length of its own. Each repetition's draws and notes now print indented under its `// Repetition #N` note, and a failing repetition is marked for the engine before its exception propagates, so a failure shrinks to the fewest repetitions. The loop makes different choices from before (its minimum length is drawn from a larger range), so a reproduce blob from an earlier release that went through `repeat()` no longer replays.
+
+`TestCase::repeat()` also no longer returns, as in every other Hegel frontend: the loop is logically infinite, and when the engine ends it the test case ends as passing, so code after the call never runs. A test that did something after its loop now does it in the body, on a later repetition:
+
+```cpp
+// before
+tc.repeat([&] { stack.push(tc.draw(gs::integers<int>())); });
+EXPECT_EQ(stack.size(), stack.pushed());
+
+// after
+tc.repeat([&] {
+    stack.push(tc.draw(gs::integers<int>()));
+    EXPECT_EQ(stack.size(), stack.pushed());
+});
+```
+
+In an explicit test case it still runs its body once, and then ends the test case the same way.
