@@ -31,6 +31,7 @@ nonportable version.
 
 These modules declare [@@ portable] as their default:
 {!Hegel}, {!Hegel.Generators}, {!Hegel.Derive}, {!Hegel.Settings},
+{!Hegel.Printer},
 {!Hegel_jane}, {{!page-hegel_jane_concurrent}[Hegel_jane_concurrent]}, and the
 {!Hegel.Stateful} submodules {!Hegel.Stateful.Concurrent_pool},
 {!Hegel.Stateful.Rule}, {!Hegel.Stateful.Invariant}, and
@@ -67,18 +68,23 @@ val%template sampled_from
 [@@mode (m, c) = ((nonportable, uncontended), (portable, contended))]
 ]}
 
-[with_printer], [printer], [composite], [flat_map], [filter], [one_of],
-[optional], [tuples2]/[tuples3]/[tuples4], [lists], [assoc_lists],
-[hash_tables], [make_hash_tables], [make_characters], [make_dates],
-[make_times], [make_datetimes], [functions]/[functions2]/[functions3], and
-{!Hegel_jane.hash_tables} use the same template as [map].
+[with_printer], [printer], [composite], [flat_map], [filter], [one_of], [optional],
+[tuples2] to [tuples8], [lists] (including [~unique_by]), [arrays],
+[assoc_lists], [hash_tables], [make_hash_tables], [make_characters],
+[make_dates], [make_times], [make_datetimes],
+[functions]/[functions2]/[functions3], [recursive], [from_lark] (including
+[~explicit]), and {!Hegel_jane.hash_tables} use the same template as [map].
+[permutations] uses the same template as [sampled_from].
 
 The primitives return [@ portable] and have one version: {!Hegel.booleans},
 {!Hegel.integers}, {!Hegel.floats}, {!Hegel.text}, {!Hegel.characters},
 {!Hegel.chars}, {!Hegel.binary}, {!Hegel.emails}, {!Hegel.urls},
-{!Hegel.domains}, {!Hegel.from_regex}, {!Hegel.dates}, {!Hegel.times},
-{!Hegel.datetimes}, {!Hegel.ip_addresses}, and the {!Hegel_jane} generators
-other than {!Hegel_jane.hash_tables}.
+{!Hegel.domains}, {!Hegel.from_regex}, {!Hegel.uuids}, {!Hegel.dates},
+{!Hegel.times}, {!Hegel.datetimes}, {!Hegel.ip_addresses}, and the
+{!Hegel_jane} generators other than {!Hegel_jane.hash_tables}.
+
+{!Hegel.sets}, {!Hegel.deferred} and [Hegel_zarith.integers] have no portable
+version.
 
 {1 Hegel.Stateful}
 

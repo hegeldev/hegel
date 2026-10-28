@@ -1,6 +1,13 @@
 (** The current version of Hegel for OCaml. *)
 let version = Hegel_version.version
 
+let engine_version () =
+  let ctx = Hegel_ffi.Ffi.context_new () in
+  Fun.protect
+    ~finally:(fun () -> Hegel_ffi.Ffi.context_free ctx)
+    (fun () -> Hegel_ffi.Ffi.version ctx)
+;;
+
 (** Generators for composable test data generation. *)
 module Generators = Generators
 
@@ -11,6 +18,7 @@ module Stateful = Stateful
 module Concurrency = Concurrency
 
 module Settings = Settings
+module Printer = Printer
 
 (** Auxiliary submodule for [@@deriving hegel_generator]. Included
     below so [open Hegel] alone makes derived code resolve. *)
@@ -50,6 +58,12 @@ type test_location = Internal.test_location =
 
 exception Assume_rejected = Internal.Assume_rejected
 exception Usage_error = Internal.Usage_error
+exception Failed_health_check = Internal.Failed_health_check
+exception Flaky = Internal.Flaky
+exception Unsatisfiable = Internal.Unsatisfiable
+exception Run_error = Internal.Run_error
+exception Multiple_failures = Internal.Multiple_failures
+exception Did_not_reproduce = Internal.Did_not_reproduce
 
 (** {2 Convenience re-exports} *)
 
@@ -63,13 +77,21 @@ let run_hegel_test ?settings ?test_location ?database_key ?failure_blobs test_fn
 
 (** [run_hegel_test_ppx] is {!run_hegel_test} with the PPX replay hint enabled;
     the [let%hegel_test] PPX targets it. Not for direct use. *)
-let run_hegel_test_ppx ?settings ?test_location ?database_key ?failure_blobs test_fn =
+let run_hegel_test_ppx
+      ?settings
+      ?test_location
+      ?database_key
+      ?failure_blobs
+      ?examples
+      test_fn
+  =
   Internal.run_hegel_test
     ?settings
     ?test_location
     ~rerun_hint:Attribute
     ?database_key
     ?failure_blobs
+    ?examples
     test_fn
 ;;
 
@@ -82,6 +104,9 @@ let main ?settings ?test_location ?database_key test_fn =
 (** [assume tc condition] rejects the current test case if [condition] is
     [false]. *)
 let assume = Internal.assume
+
+(** [reject tc] rejects the current test case unconditionally. *)
+let reject _tc = raise Internal.Assume_rejected
 
 (** [note tc message] prints [message] to stderr subject to the run's verbosity:
     never under [Quiet], only on the final (failing) replay under [Normal], and
@@ -128,8 +153,66 @@ let draw_silent_named = Generators.draw_silent_named
     once the case completes. See {!Internal.clone}. *)
 let clone = Internal.clone
 
+(** [set_worker tc worker_index] attributes [tc]'s output to a concurrent
+    worker. See {!Internal.set_worker_index}. *)
+let set_worker = Internal.set_worker_index
+
+(** [run_iteration tc ~repeat body] runs one iteration of {!repeat}: [body]
+    on a block of [tc]. A rejected iteration is skipped; any other failure is
+    reported to the engine before it propagates. *)
+let run_iteration tc ~repeat body =
+  match Internal.with_block ~share_names:true tc ~indent:2 body with
+  | () | (exception Assume_rejected) -> ()
+  | exception
+      ((Internal.Stop_test | Usage_error _ | Internal.Internal_error _) as control) ->
+    raise control
+  | exception exn ->
+    let backtrace = Printexc.get_raw_backtrace () in
+    Internal.repeat_failed tc ~repeat;
+    Printexc.raise_with_backtrace exn backtrace
+;;
+
+(** [repeat_generated tc body] runs [body] on a block of [tc] until the
+    engine ends the loop, then ends the test case. *)
+let repeat_generated tc body =
+  let repeat = Internal.new_repeat tc in
+  Fun.protect
+    ~finally:(fun () -> Internal.repeat_free tc ~repeat)
+    (fun () ->
+       let rec loop iteration =
+         if Internal.repeat_more tc ~repeat
+         then (
+           note tc (Printf.sprintf "(* Repetition #%d *)" iteration);
+           run_iteration tc ~repeat body;
+           loop (iteration + 1))
+       in
+       loop 1);
+  raise Internal.Repeat_done
+;;
+
+(** [repeat_explicit tc body] is {!repeat} in an explicit example: [body]
+    runs once, as an explicit value can be drawn only once. *)
+let repeat_explicit tc body =
+  note tc "(* Repetition #1 *)";
+  body tc;
+  raise Internal.Repeat_done
+;;
+
+(** [repeat tc body] is {!repeat_explicit} in an explicit example and
+    {!repeat_generated} otherwise. *)
+let repeat tc body =
+  if Internal.is_explicit tc then repeat_explicit tc body else repeat_generated tc body
+;;
+
 (** [with_printer sexp_of gen] attaches [sexp_of] so [gen] can be drawn with
     {!draw}. See {!Generators.with_printer}. *)
 let%template with_printer = Generators.with_printer [@mode m]
+[@@mode m = (nonportable, portable)]
+;;
+
+(** [with_ocaml_printer print gen] attaches [print] so [gen] can be drawn with
+    {!draw}, its values printing as [print]'s documents. See
+    {!Generators.with_ocaml_printer}. *)
+let%template with_ocaml_printer = Generators.with_ocaml_printer [@mode m]
 [@@mode m = (nonportable, portable)]
 ;;

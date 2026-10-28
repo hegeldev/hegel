@@ -94,6 +94,79 @@ let test_floats_infinity_with_both_bounds () =
     "Cannot have allow_infinity=true with both min_value and max_value"
 ;;
 
+let expect_construction_usage_error make substring =
+  match make () with
+  | exception Hegel.Usage_error msg ->
+    Alcotest.(check bool)
+      (Printf.sprintf "diagnostic %S contains %S" msg substring)
+      true
+      (Test_helpers.contains_substring msg substring)
+  | _ -> Alcotest.fail "expected Usage_error"
+;;
+
+(** Test: floats raises when both forms of one bound are given. *)
+let test_floats_both_forms_of_one_bound () =
+  expect_construction_usage_error
+    (fun () -> floats ~min_value:0.0 ~min_value_exclusive:0.0 ())
+    "min_value and min_value_exclusive are mutually exclusive";
+  expect_construction_usage_error
+    (fun () -> floats ~max_value:1.0 ~max_value_exclusive:1.0 ())
+    "max_value and max_value_exclusive are mutually exclusive"
+;;
+
+(** Test: exclusive bounds exclude the bound itself. *)
+let test_floats_exclusive_bounds () =
+  Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:200 ()) (fun tc ->
+    let f = Hegel.draw tc (floats ~min_value_exclusive:0.0 ~max_value_exclusive:1.0 ()) in
+    assert (f > 0.0 && f < 1.0);
+    let above = Hegel.draw tc (floats ~min_value_exclusive:(-1.0) ~max_value:0.0 ()) in
+    assert (above > -1.0 && above <= 0.0);
+    let below = Hegel.draw tc (floats ~min_value:0.0 ~max_value_exclusive:1.0 ()) in
+    assert (below >= 0.0 && below < 1.0))
+;;
+
+(** Test: allow_subnormal:false keeps subnormal values out. *)
+let test_floats_allow_subnormal_false () =
+  Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:300 ()) (fun tc ->
+    let f =
+      Hegel.draw tc (floats ~min_value:(-1.0) ~max_value:1.0 ~allow_subnormal:false ())
+    in
+    assert (f = 0.0 || Float.abs f >= Float.min_float);
+    let g =
+      Hegel.draw
+        tc
+        (floats ~width:`W32 ~min_value_exclusive:0.0 ~allow_subnormal:false ())
+    in
+    assert (g >= Float.ldexp 1.0 (-126));
+    let any = Hegel.draw tc (floats ~allow_subnormal:false ()) in
+    assert (any = 0.0 || Float.is_nan any || Float.abs any >= Float.min_float))
+;;
+
+(** Test: subnormals are allowed by default exactly when the bounds admit any. *)
+let test_floats_subnormal_default () =
+  Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:20 ()) (fun tc ->
+    assert (Hegel.draw tc (floats ~min_value:1e-310 ~max_value:1e-310 ()) = 1e-310);
+    assert (Hegel.draw tc (floats ~min_value:1.0 ~max_value:1.0 ()) = 1.0);
+    assert (Hegel.draw tc (floats ~min_value:(-1e-310) ~max_value:1.0 ()) >= -1e-310);
+    assert (Hegel.draw tc (floats ~min_value:1.0 ()) >= 1.0);
+    assert (Hegel.draw tc (floats ~max_value:(-1.0) ()) <= -1.0))
+;;
+
+(** Test: allow_subnormal is checked against the bounds. *)
+let test_floats_allow_subnormal_validation () =
+  expect_construction_usage_error
+    (fun () -> floats ~min_value:1.0 ~allow_subnormal:true ())
+    "allow_subnormal=true, but min_value excludes";
+  expect_construction_usage_error
+    (fun () -> floats ~max_value:(-1.0) ~allow_subnormal:true ())
+    "allow_subnormal=true, but max_value excludes";
+  expect_construction_usage_error
+    (fun () -> floats ~min_value:1e-310 ~max_value:2e-310 ~allow_subnormal:false ())
+    "allow_subnormal=false leaves no floating-point values";
+  ignore (floats ~min_value:(-1e-310) ~max_value:0.0 ~allow_subnormal:false ());
+  ignore (floats ~min_value:1e-310 ~max_value:1.0 ~allow_subnormal:false ())
+;;
+
 (** Test: text raises when min_size is negative. *)
 let test_text_negative_min_size () =
   match text ~min_size:(-1) () with
@@ -157,18 +230,19 @@ let test_text_categories_and_exclude_categories () =
   | _ -> Alcotest.fail "expected Usage_error"
 ;;
 
-(** Test: text raises when categories include surrogate category Cs. *)
+(** Test: the surrogate category alone leaves no characters, which the engine
+    reports when the generator is drawn from. *)
 let test_text_categories_surrogate_cs () =
-  match text ~categories:[ "Cs" ] () with
-  | exception Hegel.Usage_error _ -> ()
-  | _ -> Alcotest.fail "expected Usage_error"
+  Test_helpers.expect_usage_error
+    (text ~categories:[ "Cs" ] ~min_size:1 ())
+    "No valid characters"
 ;;
 
-(** Test: text raises when categories include surrogate category C. *)
+(** Test: a category that contains the surrogates draws valid UTF-8. *)
 let test_text_categories_surrogate_c () =
-  match text ~categories:[ "C" ] () with
-  | exception Hegel.Usage_error _ -> ()
-  | _ -> Alcotest.fail "expected Usage_error"
+  Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:10 ()) (fun tc ->
+    let v = Hegel.draw tc (text ~categories:[ "C" ] ~max_size:5 ()) in
+    assert (String.is_valid_utf_8 v))
 ;;
 
 (** The alphabet shortcut cannot be combined with any character filter. *)
@@ -203,18 +277,34 @@ let test_floats_default_e2e () =
     ())
 ;;
 
-(** Test: default text() E2E — the default form omits max_size *)
-let test_text_default_e2e () =
-  Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:20 ()) (fun tc ->
-    let s = Hegel.draw tc (text ()) in
-    assert (String.is_valid_utf_8 s))
+let utf_8_length s =
+  let rec go i n =
+    if i >= String.length s
+    then n
+    else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1)
+  in
+  go 0 0
 ;;
 
-(** Smoke test: the engine accepts a binary generator without a size limit. *)
+(** Test: without max_size, text takes the engine's default maximum of 100
+    characters, or min_size + 100 above a min_size of 100. *)
+let test_text_default_e2e () =
+  Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:50 ()) (fun tc ->
+    let s = Hegel.draw tc (text ()) in
+    assert (String.is_valid_utf_8 s);
+    assert (utf_8_length s <= 100);
+    let long = Hegel.draw tc (text ~min_size:150 ()) in
+    let n = utf_8_length long in
+    assert (n >= 150 && n <= 250))
+;;
+
+(** Test: without max_size, binary takes the engine's default maximum of 100
+    bytes, or min_size + 100 above a min_size of 100. *)
 let test_binary_default_e2e () =
-  Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:20 ()) (fun tc ->
-    let (_ : string) = Hegel.draw tc (binary ()) in
-    ())
+  Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:50 ()) (fun tc ->
+    assert (String.length (Hegel.draw tc (binary ())) <= 100);
+    let n = String.length (Hegel.draw tc (binary ~min_size:150 ())) in
+    assert (n >= 150 && n <= 250))
 ;;
 
 (** Test: just always returns the constant. *)
@@ -538,6 +628,20 @@ let tests =
       "floats infinity with both bounds"
       `Quick
       test_floats_infinity_with_both_bounds
+  ; Alcotest.test_case
+      "floats both forms of one bound"
+      `Quick
+      test_floats_both_forms_of_one_bound
+  ; Alcotest.test_case "floats exclusive bounds" `Quick test_floats_exclusive_bounds
+  ; Alcotest.test_case
+      "floats allow_subnormal false"
+      `Quick
+      test_floats_allow_subnormal_false
+  ; Alcotest.test_case "floats subnormal default" `Quick test_floats_subnormal_default
+  ; Alcotest.test_case
+      "floats allow_subnormal validation"
+      `Quick
+      test_floats_allow_subnormal_validation
   ; Alcotest.test_case "text negative min_size" `Quick test_text_negative_min_size
   ; Alcotest.test_case "text negative max_size" `Quick test_text_negative_max_size
   ; Alcotest.test_case "text min > max" `Quick test_text_min_greater_than_max

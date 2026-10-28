@@ -1,0 +1,5 @@
+(executable
+ (name test_hegel_zarith)
+ (modules test_hegel_zarith)
+ (optional)
+ (libraries hegel hegel_zarith alcotest zarith))

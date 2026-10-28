@@ -2,15 +2,14 @@
     [draw] prints its value through the [note] channel (stderr, captured here by
     ppx_expect). [draw_silent] never prints, and draws nested inside a span
     (depth > 0) are suppressed so only the outermost value shows. The printer is
-    carried on primitive generators; combinators that hand the output type to
-    user code ([map], [sampled_from]) carry none, and [with_printer] attaches
-    one (and is what [draw] requires). *)
+    carried on primitive generators and prints values as OCaml syntax;
+    combinators that hand the output type to user code ([map], [sampled_from])
+    carry none, and [with_printer] attaches one (and is what [draw] requires),
+    printing as the s-expressions it returns. *)
 
 open! Core
 open Hegel
 open Generators
-
-(* ---- draw / draw_silent through the engine ---- *)
 
 (* Seeded run at normal verbosity; swallow the failure the property raises so the
    expect block only sees what we printed. *)
@@ -42,13 +41,12 @@ let%expect_test "explicit draw locations print on final replay" =
   print_string (Expect_scrub.scrub_report ~hide_draw_positions:false [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
-    x @ ppx/test/expect_tests/test_draw_printing.ml:<LINE> = 7
-    draw_1 @ ppx/test/expect_tests/test_draw_printing.ml:<LINE> = 7
-
+    let x_1 = 7 in  (* ppx/test/expect_tests/test_draw_printing.ml:<LINE> *)
+    let draw_1 = 7 in  (* ppx/test/expect_tests/test_draw_printing.ml:<LINE> *)
     Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
@@ -60,12 +58,11 @@ let%expect_test "labeled draw without explicit location prints on final replay" 
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
-    x = 7
-
+    let x_1 = 7 in
     Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
@@ -76,12 +73,11 @@ let%expect_test "unlabeled draw is auto-named draw_N on final replay" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
-    draw_1 = 123456
-
+    let draw_1 = 123456 in
     Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
@@ -95,12 +91,11 @@ let%expect_test "draw positions preserve explicit overrides" =
   print_string (Expect_scrub.scrub_blobs [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
-    explicit @ helper.ml:123 = 7
-
+    let explicit_1 = 7 in  (* helper.ml:123 *)
     Exception: Failure("stop")
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
@@ -112,13 +107,12 @@ let%expect_test "successive unlabeled draws number draw_1, draw_2" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
-    draw_1 = 1
-    draw_2 = 2
-
+    let draw_1 = 1 in
+    let draw_2 = 2 in
     Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
@@ -136,12 +130,11 @@ let%expect_test "with_printer supplies the printer draw renders with" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
-    h = 0xff
-
+    let h_1 = 0xff in
     Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
@@ -152,12 +145,11 @@ let%expect_test "with_printer makes an unprintable sampled_from drawable" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
-    c = 9
-
+    let c_1 = 9 in
     Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
@@ -173,16 +165,15 @@ let%expect_test "draw nested in a span (depth > 0) is suppressed" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
     ran
-
     Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
-let%expect_test "a tuple draw prints as one sexp" =
+let%expect_test "a tuple draw prints as an OCaml tuple" =
   run_failing (fun tc ->
     let _ =
       Hegel.draw
@@ -196,16 +187,15 @@ let%expect_test "a tuple draw prints as one sexp" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
-    pair = (7 8)
-
+    let pair_1 = (7, 8) in
     Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
-let%expect_test "a list draw prints as one sexp" =
+let%expect_test "a list draw prints as an OCaml list" =
   run_failing (fun tc ->
     let _ =
       Hegel.draw
@@ -217,12 +207,135 @@ let%expect_test "a list draw prints as one sexp" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
-    xs = (7 7)
-
+    let xs_1 = [7; 7] in
     Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;
+
+let%expect_test "strings are always quoted" =
+  run_failing (fun tc ->
+    let _ = Hegel.draw ~label:"word" tc (text ~alphabet:"h" ~min_size:5 ~max_size:5 ()) in
+    let _ =
+      Hegel.draw
+        ~label:"words"
+        tc
+        (map (fun s -> s ^ " " ^ s) (text ~alphabet:"h" ~min_size:5 ~max_size:5 ())
+         |> with_printer String.sexp_of_t)
+    in
+    assert false);
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    let word_1 = "hhhhh" in
+    let words_1 = "hhhhh hhhhh" in
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;
+
+let%expect_test "a with_printer printer prints its s-expressions" =
+  run_failing (fun tc ->
+    let _ =
+      Hegel.draw
+        ~label:"m"
+        tc
+        (with_printer
+           [%sexp_of: int list * string]
+           (map (fun n -> [ n; n ], "a b") (integers ~min_value:7 ~max_value:7 ())))
+    in
+    let _ =
+      Hegel.draw
+        ~label:"pair"
+        tc
+        (tuples2
+           (with_printer [%sexp_of: [ `A ]] (sampled_from [ `A ]))
+           (integers ~min_value:7 ~max_value:7 ()))
+    in
+    assert false);
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    let m_1 = ((7 7) "a b") in
+    let pair_1 = (A, 7) in
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;
+
+let%expect_test "options and one_of print what they drew" =
+  run_failing (fun tc ->
+    let _ =
+      Hegel.draw
+        ~label:"o"
+        tc
+        (filter Option.is_some (optional (integers ~min_value:(-7) ~max_value:(-7) ())))
+    in
+    let _ =
+      Hegel.draw
+        ~label:"either"
+        tc
+        (one_of [ text ~alphabet:"a" ~min_size:1 ~max_size:1 () ])
+    in
+    let _ =
+      Hegel.draw
+        ~label:"dependent"
+        tc
+        (with_printer
+           [%sexp_of: int list]
+           (flat_map
+              (fun n ->
+                 lists (integers ~min_value:n ~max_value:n ()) ~min_size:2 ~max_size:2 ())
+              (integers ~min_value:3 ~max_value:3 ())))
+    in
+    assert false);
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    let o_1 = Some (-7) in
+    let either_1 = "a" in
+    let dependent_1 = (3 3) in
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;
+
+let%expect_test "a long value wraps one element per line" =
+  run_failing (fun tc ->
+    let _ =
+      Hegel.draw
+        ~label:"xs"
+        tc
+        (lists
+           (text ~alphabet:"x" ~min_size:12 ~max_size:12 ())
+           ~min_size:8
+           ~max_size:8
+           ())
+    in
+    assert false);
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    let xs_1 = ["xxxxxxxxxxxx";
+     "xxxxxxxxxxxx";
+     "xxxxxxxxxxxx";
+     "xxxxxxxxxxxx";
+     "xxxxxxxxxxxx";
+     "xxxxxxxxxxxx";
+     "xxxxxxxxxxxx";
+     "xxxxxxxxxxxx"] in
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
@@ -246,13 +359,14 @@ let%expect_test "a stateful rule's drawn arguments appear in its trace" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
-    Step 1: push
-      n = 7
-
+    Step 1: push {
+      let n_1 = 7 in
+    }
+    Rule push failed:
     Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
@@ -284,50 +398,66 @@ let%expect_test "verbose stateful tests print drawn values on passing runs" =
     {|
     Starting phase: Generate
     Running test case
-    _x = 42
-    Step 1: push
-      _n = 7
-    Step 2: push
-      _n = 7
-    Step 3: push
-      _n = 7
+    let _x = 42 in
+    Step 1: push {
+      let _n = 7 in
+    }
+    Step 2: push {
+      let _n = 7 in
+    }
+    Step 3: push {
+      let _n = 7 in
+    }
     Ending phase: Generate
     |}]
 ;;
 
-type only = Only [@@deriving sexp_of, hegel_generator]
-type wrap = { tag : only } [@@deriving sexp_of, hegel_generator]
+type only = Only [@@deriving hegel_generator]
+type wrap = { tag : only } [@@deriving hegel_generator]
 type bare = Bare [@@deriving hegel_generator]
 
-let%expect_test "a derived value prints as one sexp via with_printer" =
+let%expect_test "a derived value prints as OCaml syntax" =
   run_failing (fun tc ->
-    let _ = Hegel.draw tc (with_printer sexp_of_only hegel_generator_only) in
+    let _ = Hegel.draw tc hegel_generator_only in
     assert false);
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
-    draw_1 = Only
-
+    let draw_1 = Only in
     Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
-let%expect_test "a nested derived record prints as one sexp via with_printer" =
+let%expect_test "a nested derived record prints as an OCaml record" =
+  run_failing (fun tc ->
+    let _ = Hegel.draw tc hegel_generator_wrap in
+    assert false);
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    let draw_1 = { tag = Only } in
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;
+
+let%expect_test "a derived value prints as one sexp via with_printer" =
   run_failing (fun tc ->
     let _ = Hegel.draw tc (with_printer sexp_of_wrap hegel_generator_wrap) in
     assert false);
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
-    draw_1 = ((tag Only))
-
+    let draw_1 = ((tag Only)) in
     Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
@@ -337,13 +467,14 @@ let%expect_test
   run_failing (fun tc ->
     let _ = Hegel.draw_silent tc hegel_generator_bare in
     assert false);
-  (* [draw_silent] suppresses the value even though the derived generator is printable. *)
+  (* [draw_silent] suppresses the value even though the derived generator prints. *)
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
     Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
@@ -376,13 +507,12 @@ let%expect_test "ppx injects ~label from the binding name and preserves ~loc" =
   print_string (Expect_scrub.scrub_report ~hide_draw_positions:false [%expect.output]);
   [%expect
     {|
-    --- Failure: label_injection_from_binding (ppx/test/expect_tests/test_draw_printing.ml:<LINE>) ---
-
-    x @ explicit_draw:123 = 7
-    y = 7
-
+    let x = 7 in  (* explicit_draw:123 *)
+    let y = 7 in
     Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: [@@failure_blobs [ "<BLOB>" ]]
+
+    To reproduce this failure, add this attribute to the let%hegel_test:
+        [@@failure_blobs [ "<BLOB>" ]]
     |}]
 ;;
 
@@ -404,12 +534,11 @@ let%expect_test "a Generators-qualified draw is labeled (prefix preserved)" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure: qualified_generators_draw (ppx/test/expect_tests/test_draw_printing.ml:<LINE>) ---
-
-    g = 9
-
+    let g = 9 in
     Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: [@@failure_blobs [ "<BLOB>" ]]
+
+    To reproduce this failure, add this attribute to the let%hegel_test:
+        [@@failure_blobs [ "<BLOB>" ]]
     |}]
 ;;
 
@@ -438,12 +567,11 @@ let%expect_test "a local non-Hegel draw (not on tc) is not rewritten" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure: local_draw_not_on_tc_untouched (ppx/test/expect_tests/test_draw_printing.ml:<LINE>) ---
-
-    z = 1
-
+    let z = 1 in
     Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: [@@failure_blobs [ "<BLOB>" ]]
+
+    To reproduce this failure, add this attribute to the let%hegel_test:
+        [@@failure_blobs [ "<BLOB>" ]]
     |}]
 ;;
 
@@ -469,14 +597,13 @@ let%expect_test "a reused binding name numbers x_1, x_2, x_3" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure: repeated_binding_numbers (ppx/test/expect_tests/test_draw_printing.ml:<LINE>) ---
-
-    x_1 = 1
-    x_2 = 2
-    x_3 = 3
-
+    let x_1 = 1 in
+    let x_2 = 2 in
+    let x_3 = 3 in
     Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: [@@failure_blobs [ "<BLOB>" ]]
+
+    To reproduce this failure, add this attribute to the let%hegel_test:
+        [@@failure_blobs [ "<BLOB>" ]]
     |}]
 ;;
 
@@ -499,13 +626,12 @@ let%expect_test "a draw inside a loop numbers x_1, x_2" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure: looped_binding_numbers (ppx/test/expect_tests/test_draw_printing.ml:<LINE>) ---
-
-    x_1 = 1
-    x_2 = 2
-
+    let x_1 = 1 in
+    let x_2 = 2 in
     Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: [@@failure_blobs [ "<BLOB>" ]]
+
+    To reproduce this failure, add this attribute to the let%hegel_test:
+        [@@failure_blobs [ "<BLOB>" ]]
     |}]
 ;;
 
@@ -528,7 +654,155 @@ let%expect_test "verbose prints draws on a passing run" =
     {|
     Starting phase: Generate
     Running test case
-    draw_1 = 5
+    let draw_1 = 5 in
     Ending phase: Generate
+    |}]
+;;
+
+type tree =
+  | Leaf of int
+  | Node of tree list
+[@@deriving sexp_of]
+
+let%expect_test "a recursive value prints as its leaves and branches print" =
+  run_failing ~settings:(Settings.create ~test_cases:200 ~seed:0 ()) (fun tc ->
+    let t =
+      draw
+        ~label:"t"
+        tc
+        (recursive
+           (map (fun n -> Leaf n) (integers ~min_value:0 ~max_value:9 ())
+            |> with_printer sexp_of_tree)
+           (fun subtrees ->
+              map (fun children -> Node children) (lists subtrees ~min_size:2 ())
+              |> with_printer sexp_of_tree))
+    in
+    match t with
+    | Node _ -> assert false
+    | Leaf _ -> ());
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    let t_1 = (Node ((Leaf 0) (Leaf 0))) in
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;
+
+type negative =
+  | Negative of
+      (int
+      [@hegel.generator
+        Hegel.with_ocaml_printer
+          Hegel.Printer.int
+          (Hegel.map (fun n -> -n) (Hegel.integers ~min_value:5 ~max_value:5 ()))])
+[@@deriving hegel_generator]
+
+let%expect_test "a negative constructor argument is parenthesized" =
+  run_failing (fun tc ->
+    let _ = Hegel.draw tc hegel_generator_negative in
+    assert false);
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    let draw_1 = Negative (-5) in
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;
+
+type dependent =
+  { inner_printed :
+      (int
+      [@hegel.generator
+        Hegel.flat_map
+          (fun n ->
+             Hegel.with_ocaml_printer
+               Hegel.Printer.int
+               (Hegel.map (fun m -> m + 1) (Hegel.integers ~min_value:n ~max_value:n ())))
+          (Hegel.integers ~min_value:4 ~max_value:4 ())])
+  ; filtered :
+      (int
+      [@hegel.generator
+        Hegel.filter
+          (fun _ -> true)
+          (Hegel.flat_map
+             (fun n ->
+                Hegel.map_as_call
+                  "Int.neg"
+                  (fun m -> -m)
+                  (Hegel.integers ~min_value:n ~max_value:n ()))
+             (Hegel.integers ~min_value:6 ~max_value:6 ()))])
+  ; printed :
+      (int list
+      [@hegel.generator
+        Hegel.flat_map
+          (fun n ->
+             Hegel.lists
+               (Hegel.integers ~min_value:n ~max_value:n ())
+               ~min_size:1
+               ~max_size:1
+               ())
+          (Hegel.integers ~min_value:2 ~max_value:2 ())])
+  }
+[@@deriving hegel_generator]
+
+type dependent_alias =
+  (int
+  [@hegel.generator
+    Hegel.flat_map
+      (fun n ->
+         Hegel.with_ocaml_printer
+           Hegel.Printer.int
+           (Hegel.map (fun m -> m * 10) (Hegel.integers ~min_value:n ~max_value:n ())))
+      (Hegel.integers ~min_value:7 ~max_value:7 ())])
+[@@deriving hegel_generator]
+
+let%expect_test "a flat_map field prints as the generator its function returns" =
+  run_failing (fun tc ->
+    let _ = Hegel.draw tc hegel_generator_dependent in
+    let _ = Hegel.draw tc hegel_generator_dependent_alias in
+    let _ =
+      Hegel.draw
+        tc
+        (Hegel.lists hegel_generator_dependent_alias ~min_size:1 ~max_size:1 ())
+    in
+    assert false);
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    let draw_1 = { inner_printed = 5; filtered = Int.neg 6; printed = [2] } in
+    let draw_2 = 70 in
+    let draw_3 = [70] in
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;
+
+let%expect_test "with_ocaml_printer prints a mapped value as OCaml syntax" =
+  let pair =
+    with_ocaml_printer
+      Printer.(pair int string)
+      (map (fun n -> n, Int.to_string n) (integers ~min_value:3 ~max_value:3 ()))
+  in
+  print_endline (Sexplib0.Sexp.to_string (Generators.printer pair (4, "four")));
+  run_failing (fun tc ->
+    let _ = Hegel.draw tc pair in
+    assert false);
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    "(4, \"four\")"
+    let draw_1 = (3, "3") in
+    Exception: File "ppx/test/expect_tests/test_draw_printing.ml", line LINE, characters C1-C2: Assertion failed
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;

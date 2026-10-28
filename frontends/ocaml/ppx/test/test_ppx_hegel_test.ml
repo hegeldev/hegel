@@ -276,6 +276,263 @@ let test_no_settings_runs_with_defaults () =
       Alcotest.(check bool) "sdk.jsonl exists" true (Stdlib.Sys.file_exists path)))
 ;;
 
+let example_calls = ref []
+let generated_calls = ref 0
+
+let%hegel_test with_examples tc =
+  let x = Hegel.draw tc (Hegel.integers ~min_value:0 ~max_value:9 ()) in
+  let s = Hegel.draw_silent tc (Hegel.text ~max_size:3 ()) in
+  if x < 0 then example_calls := (x, s) :: !example_calls else Int.incr generated_calls
+[@@example { x = -1; s = "four" }]
+[@@example { s = "five!"; x = -2 }]
+[@@settings Hegel.Settings.create ~test_cases:5 ()]
+;;
+
+let test_examples_run_first () =
+  example_calls := [];
+  generated_calls := 0;
+  with_examples ();
+  Alcotest.(check (list (pair int string)))
+    "examples ran, in order"
+    [ -2, "five!"; -1, "four" ]
+    !example_calls;
+  Alcotest.(check bool) "generation ran too" true (!generated_calls > 0)
+;;
+
+let%hegel_test failing_example tc =
+  let n = Hegel.draw tc (Hegel.integers ~min_value:0 ~max_value:9 ()) in
+  Hegel.note tc "checking n";
+  Hegel.target tc ~label:"n" ~value:(Float.of_int n);
+  Hegel.event tc ~label:"seen";
+  Hegel.event_value tc ~label:"n" ~value:(Float.of_int n);
+  Int.incr generated_calls;
+  assert (n <> 100)
+[@@example { n = 100 }]
+;;
+
+let test_failing_example_ends_the_run () =
+  generated_calls := 0;
+  (match failing_example () with
+   | () -> Alcotest.fail "expected the example to fail"
+   | exception Assert_failure _ -> ());
+  Alcotest.(check int) "only the example ran" 1 !generated_calls
+;;
+
+let%hegel_test example_and_generated_failures tc =
+  let n = Hegel.draw tc (Hegel.integers ~min_value:0 ~max_value:9 ()) in
+  if n = 100 then failwith "the example";
+  if n > 5 then invalid_arg "generated"
+[@@example { n = 100 }]
+[@@settings { (Hegel.Settings.create ~seed:0 ()) with report_multiple_failures = true }]
+;;
+
+let%hegel_test example_failure_only tc =
+  let n = Hegel.draw tc (Hegel.integers ~min_value:0 ~max_value:9 ()) in
+  if n = 100 then failwith "the example"
+[@@example { n = 100 }]
+[@@settings
+  { (Hegel.Settings.create ~test_cases:5 ()) with report_multiple_failures = true }]
+;;
+
+let%hegel_test examples_skipped tc =
+  let n = Hegel.draw tc (Hegel.integers ~min_value:0 ~max_value:9 ()) in
+  assert (n <> 100)
+[@@example { n = 100 }]
+[@@settings
+  { (Hegel.Settings.create ~test_cases:5 ()) with
+    phases = [ Hegel.Settings.Generate ]
+  ; verbosity = Hegel.Settings.Quiet
+  }]
+;;
+
+let%hegel_test quiet_failing_example tc =
+  let n = Hegel.draw tc (Hegel.integers ()) in
+  assert (n <> 100)
+[@@example { n = 100 }]
+[@@settings { (Hegel.Settings.create ()) with verbosity = Hegel.Settings.Quiet }]
+;;
+
+let test_multiple_failures_with_examples () =
+  (match example_and_generated_failures () with
+   | () -> Alcotest.fail "expected failures"
+   | exception Hegel.Multiple_failures exns ->
+     Alcotest.(check int) "both failures" 2 (List.length exns));
+  (match example_failure_only () with
+   | () -> Alcotest.fail "expected the example to fail"
+   | exception Failure msg -> Alcotest.(check string) "the example" "the example" msg);
+  examples_skipped ();
+  match quiet_failing_example () with
+  | () -> Alcotest.fail "expected the example to fail"
+  | exception Assert_failure _ -> ()
+;;
+
+let%hegel_test unused_example_value tc =
+  let b = Hegel.draw tc (Hegel.booleans ()) in
+  if b
+  then (
+    let n = Hegel.draw tc (Hegel.integers ()) in
+    ignore (n : int))
+[@@example { b = false; n = 3 }]
+;;
+
+let%hegel_test missing_example_value tc =
+  let a = Hegel.draw tc (Hegel.integers ()) in
+  let b = Hegel.draw tc (Hegel.integers ()) in
+  ignore (a + b : int)
+[@@example { a = 1 }]
+;;
+
+let%hegel_test silent_draw_in_example tc =
+  let n = Hegel.draw tc (Hegel.integers ()) in
+  ignore (n + Hegel.draw_silent tc (Hegel.integers ()) : int)
+[@@example { n = 0 }]
+;;
+
+let%hegel_test function_in_example tc =
+  let n = Hegel.draw tc (Hegel.integers ()) in
+  let f = Hegel.draw_silent tc (Hegel.functions ~returns:(Hegel.integers ()) ()) in
+  ignore (f n : int)
+[@@example { n = 0 }]
+;;
+
+let test_example_usage_errors () =
+  let expect name run substring =
+    match run () with
+    | () -> Alcotest.fail (name ^ ": expected Usage_error")
+    | exception Hegel.Usage_error msg ->
+      Alcotest.(check bool)
+        (Printf.sprintf "%s: %S mentions %S" name msg substring)
+        true
+        (String.is_substring msg ~substring)
+  in
+  expect "unused value" unused_example_value "never drawn: n";
+  expect "missing value" missing_example_value "no value for the draw b";
+  expect "draw_silent" silent_draw_in_example "draw_silent";
+  expect
+    "block in an example"
+    (fun () ->
+       Hegel.run_hegel_test_ppx
+         ~examples:
+           [ ([], fun tc -> Hegel.Internal.with_block tc ~indent:2 (fun _ -> ())) ]
+         (fun _ -> ()))
+    "generated data";
+  expect "silently drawn function" function_in_example "no value for the draw f";
+  expect
+    "explicit_draw outside an example"
+    (fun () ->
+       Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:1 ()) (fun tc ->
+         ignore
+           (Hegel.Generators.Ppx_internal.explicit_draw
+              tc
+              ~name:"x"
+              ~source:"1"
+              1
+              (Hegel.integers ())
+            : int)))
+    "only be drawn in an explicit example"
+;;
+
+let test_clone_in_example () =
+  let seen = ref [] in
+  let explicit_draw tc name value =
+    Hegel.Generators.Ppx_internal.explicit_draw
+      tc
+      ~name
+      ~source:(string_of_int value)
+      value
+      (Hegel.integers ())
+  in
+  match
+    Hegel.run_hegel_test_ppx
+      ~settings:(Hegel.Settings.create ~test_cases:1 ())
+      ~examples:
+        [ ( [ "n"; "m" ]
+          , fun tc ->
+              let n = explicit_draw tc "n" 0 in
+              let worker = Hegel.clone tc in
+              Hegel.set_worker worker 1;
+              let m = explicit_draw worker "m" 1 in
+              Hegel.note worker "from the clone";
+              seen := [ n; m ];
+              failwith "boom" )
+        ]
+      (fun _ -> ())
+  with
+  | () -> Alcotest.fail "expected the example to fail"
+  | exception Failure msg ->
+    Alcotest.(check string) "the example" "boom" msg;
+    Alcotest.(check (list int)) "the values" [ 0; 1 ] !seen
+;;
+
+let test_examples_without_location () =
+  match
+    Hegel.run_hegel_test_ppx
+      ~examples:[ ([], fun _ -> failwith "no location") ]
+      (fun _ -> ())
+  with
+  | () -> Alcotest.fail "expected the example to fail"
+  | exception Failure msg -> Alcotest.(check string) "the example" "no location" msg
+;;
+
+let%hegel_test examples_and_blobs tc =
+  let n = Hegel.draw tc (Hegel.integers ~min_value:0 ~max_value:9 ()) in
+  assert (n <> 100)
+[@@example { n = 100 }] [@@failure_blobs [ "AAEAAAAACgEAAAAy" ]]
+;;
+
+let test_examples_with_failure_blobs () =
+  match examples_and_blobs () with
+  | () -> Alcotest.fail "expected the blob not to reproduce"
+  | exception Hegel.Did_not_reproduce _ -> ()
+;;
+
+let%hegel_test rejecting_example tc =
+  let n = Hegel.draw tc (Hegel.integers ()) in
+  Hegel.assume tc (n <> 0);
+  assert (n <> 0)
+[@@example { n = 0 }]
+[@@settings { (Hegel.Settings.create ()) with phases = [ Hegel.Settings.Explicit ] }]
+;;
+
+let%hegel_test explicit_reject_in_repeat tc =
+  let n = Hegel.draw tc (Hegel.integers ()) in
+  Hegel.repeat tc (fun tc ->
+    Int.incr generated_calls;
+    if n = 0 then Hegel.reject tc)
+[@@example { n = 1 }]
+[@@example { n = 0 }]
+[@@settings { (Hegel.Settings.create ()) with phases = [ Hegel.Settings.Explicit ] }]
+;;
+
+let%hegel_test failing_repeat_example tc =
+  let n = Hegel.draw tc (Hegel.integers ()) in
+  Hegel.repeat tc (fun _ -> assert (n <> 7))
+[@@example { n = 7 }]
+[@@settings { (Hegel.Settings.create ()) with phases = [ Hegel.Settings.Explicit ] }]
+;;
+
+let check_rejected_example ~index test =
+  match test () with
+  | () -> Alcotest.fail "expected the rejected example to raise"
+  | exception Hegel.Usage_error msg ->
+    Alcotest.(check string)
+      "message"
+      (Printf.sprintf
+         "Explicit test cases must not be rejected, but explicit example %d was rejected"
+         index)
+      msg
+;;
+
+let test_explicit_rejection_and_repeat () =
+  check_rejected_example ~index:1 rejecting_example;
+  generated_calls := 0;
+  check_rejected_example ~index:2 explicit_reject_in_repeat;
+  Alcotest.(check int) "both examples ran their iteration" 2 !generated_calls;
+  match failing_repeat_example () with
+  | () -> Alcotest.fail "expected the example to fail"
+  | exception Assert_failure _ -> ()
+;;
+
 let () =
   Alcotest.run
     "hegel-ppx-hegel-test"
@@ -289,6 +546,29 @@ let () =
             `Quick
             test_failing_writes_condition_false
         ; Alcotest.test_case "let%hegel_main" `Quick test_main_reports
+        ; Alcotest.test_case "examples run first" `Quick test_examples_run_first
+        ; Alcotest.test_case
+            "a failing example ends the run"
+            `Quick
+            test_failing_example_ends_the_run
+        ; Alcotest.test_case
+            "examples with multiple failures"
+            `Quick
+            test_multiple_failures_with_examples
+        ; Alcotest.test_case "example usage errors" `Quick test_example_usage_errors
+        ; Alcotest.test_case "clone in an example" `Quick test_clone_in_example
+        ; Alcotest.test_case
+            "examples without a location"
+            `Quick
+            test_examples_without_location
+        ; Alcotest.test_case
+            "examples with failure blobs"
+            `Quick
+            test_examples_with_failure_blobs
+        ; Alcotest.test_case
+            "explicit rejection and repeat"
+            `Quick
+            test_explicit_rejection_and_repeat
         ; Alcotest.test_case
             "no [@@settings] uses defaults"
             `Quick

@@ -93,23 +93,43 @@ module Invariant = struct
   let name invariant = invariant.name
 end
 
+(* A rejected assumption or exhausted data is not a failure of the rule or
+   invariant it escaped from, so it gets no trailer naming it. *)
+let note_failure tc trailer = function
+  | Internal.Assume_rejected | Internal.Stop_test -> ()
+  | _ -> Internal.note tc trailer
+;;
+
+let note_indented tc message =
+  if Internal.should_print tc
+  then Internal.with_block tc ~indent:2 (fun tc -> Internal.note tc message)
+;;
+
 let run_rules tc ~state_machine ~worker_index LOCAL_CTX ~heading ~rule =
   let rec loop LOCAL(ctx) rejected =
     match Internal.state_machine_next_rule_for_worker tc ~state_machine ~worker_index with
     | None -> rejected
     | Some rule_index ->
       let name, body = rule rule_index in
-      Internal.note tc (heading name);
+      Internal.note tc (heading name ^ " {");
       (match
          if Internal.should_print tc
          then Internal.with_block tc ~indent:2 (fun tc -> body tc ctx)
          else body tc ctx
        with
-       | () -> loop ctx rejected
+       | () ->
+         Internal.note tc "}";
+         loop ctx rejected
        | exception Internal.Assume_rejected ->
          Internal.state_machine_rule_rejected_for_worker tc ~state_machine ~worker_index;
-         Internal.note tc "Rule stopped early due to violated assumption.";
-         loop ctx true)
+         note_indented tc "Rule stopped early due to violated assumption.";
+         Internal.note tc "}";
+         loop ctx true
+       | exception e ->
+         let backtrace = Printexc.get_raw_backtrace () in
+         Internal.note tc "}";
+         note_failure tc (Printf.sprintf "Rule %s failed:" name) e;
+         Printexc.raise_with_backtrace e backtrace)
   in
   loop ctx false
 ;;
@@ -217,8 +237,7 @@ let run_machine
       ~step_count
       ~min_concurrency
       ~max_concurrency
-      ~sexp_of_state
-      ~init
+      ~concurrent
       run_steps
   =
   let state_machine, num_workers =
@@ -233,12 +252,7 @@ let run_machine
       ~min_concurrency
       ~max_concurrency
   in
-  let print_state () =
-    Option.iter
-      (fun sexp_of -> Internal.print_line tc [ Text "state = "; Value (sexp_of init) ])
-      sexp_of_state
-  in
-  let check_invariants ~where ~sample =
+  let check_invariants ~sample =
     iteri_local
       (fun i name ->
          if
@@ -255,20 +269,22 @@ let run_machine
            with
            | () -> ()
            | exception e ->
-             Internal.note tc (Printf.sprintf "Invariant %s violated %s." name where);
-             raise e))
+             let backtrace = Printexc.get_raw_backtrace () in
+             note_failure tc (Printf.sprintf "Invariant %s failed:" name) e;
+             Printexc.raise_with_backtrace e backtrace))
       0
       invariant_names NONTAIL
   in
+  let announce message = if invariant_names <> [] then Internal.note tc message in
   (* Can't use Fun.protect because its body must be a global closure *)
   let free () = Internal.state_machine_free tc ~state_machine in
   let run_test () =
-    if num_workers > 1
-    then Internal.note tc (Printf.sprintf "Concurrency level: %d" num_workers);
-    print_state ();
-    check_invariants ~where:"in the initial state" ~sample:false;
-    run_steps ~state_machine ~num_workers ~print_state ~check_invariants;
-    check_invariants ~where:"in the final state" ~sample:false
+    if concurrent then Internal.note tc (Printf.sprintf "Concurrency level: %d" num_workers);
+    announce "Checking invariants on the initial state.";
+    check_invariants ~sample:false;
+    run_steps ~state_machine ~num_workers ~check_invariants;
+    announce "Checking invariants on the final state.";
+    check_invariants ~sample:false
   in
   match run_test () with
   | () -> free ()
@@ -277,8 +293,8 @@ let run_machine
     raise exn
 ;;
 
-let run_internal ~init ~rules ~invariants ?sexp_of_state ?(step_count = 50) tc =
-  let run_steps ~state_machine ~num_workers:_ ~print_state ~check_invariants:LOCAL(check_invariants) =
+let run_internal ~init ~rules ~invariants ?(step_count = 50) tc =
+  let run_steps ~state_machine ~num_workers:_ ~check_invariants:LOCAL(check_invariants) =
     let rec loop LOCAL(check_invariants) steps_attempted =
       Internal.start_span ~label:Generators.Private.Labels.stateful_rule tc;
       match Internal.state_machine_next_group tc ~state_machine with
@@ -303,8 +319,7 @@ let run_internal ~init ~rules ~invariants ?sexp_of_state ?(step_count = 50) tc =
             raise e
         in
         Internal.stop_span ~discard:rejected tc;
-        print_state ();
-        check_invariants ~where:(Printf.sprintf "after step %d" step) ~sample:true;
+        check_invariants ~sample:true;
         loop check_invariants step
     in
     loop check_invariants 0
@@ -320,8 +335,7 @@ let run_internal ~init ~rules ~invariants ?sexp_of_state ?(step_count = 50) tc =
     ~step_count
     ~min_concurrency:1
     ~max_concurrency:1
-    ~sexp_of_state
-    ~init
+    ~concurrent:false
     run_steps
 ;;
 
@@ -332,15 +346,8 @@ module type State_machine = sig
   val invariants : state Invariant.t list
 end
 
-let run
-      (type s)
-      ?step_count
-      ?sexp_of_state
-      tc
-      (module M : State_machine with type state = s)
-      ~(init : s)
-  =
-  run_internal ~init ~rules:M.rules ~invariants:M.invariants ?sexp_of_state ?step_count tc
+let run (type s) ?step_count tc (module M : State_machine with type state = s) ~(init : s) =
+  run_internal ~init ~rules:M.rules ~invariants:M.invariants ?step_count tc
 ;;
 
 module type Concurrent_state_machine = sig
@@ -352,7 +359,6 @@ module type Concurrent_state_machine = sig
 end
 
 let run_concurrent_core
-      ~init
       ~rule_names
       ~rule_groups
       ~rule_weights
@@ -362,12 +368,11 @@ let run_concurrent_core
       ~run_round:LOCAL(run_round)
       ?(min_concurrency = 1)
       ?(max_concurrency = min_concurrency)
-      ?sexp_of_state
       ?(step_count = 50)
       tc
   =
   let group_names = unique_groups rule_groups in
-  let run_steps ~state_machine ~num_workers ~print_state ~check_invariants:LOCAL(check_invariants) =
+  let run_steps ~state_machine ~num_workers ~check_invariants:LOCAL(check_invariants) =
     (* Local closures are passed down rather than captured. *)
     let rec loop LOCAL(run_round) LOCAL(check_invariants) round =
       match Internal.state_machine_next_group tc ~state_machine with
@@ -380,8 +385,7 @@ let run_concurrent_core
              round
              (List.nth group_names group));
         reraise_worker_failure (run_round ~state_machine ~num_workers);
-        print_state ();
-        check_invariants ~where:(Printf.sprintf "after round %d" round) ~sample:true;
+        check_invariants ~sample:true;
         loop run_round check_invariants (round + 1)
     in
     loop run_round check_invariants 1
@@ -397,8 +401,7 @@ let run_concurrent_core
     ~step_count
     ~min_concurrency
     ~max_concurrency
-    ~sexp_of_state
-    ~init
+    ~concurrent:true
     run_steps
   NONTAIL
 ;;
@@ -410,12 +413,10 @@ let run_concurrent_internal
       CONCURRENCY_PARAM
       ?min_concurrency
       ?max_concurrency
-      ?sexp_of_state
       ?step_count
       tc
   =
   run_concurrent_core
-    ~init
     ~rule_names:(List.map Concurrent_rule.name rules)
     ~rule_groups:(List.map Concurrent_rule.group rules)
     ~rule_weights:(List.map Concurrent_rule.weight rules)
@@ -431,7 +432,6 @@ let run_concurrent_internal
       (dispatch_round [@mode portable]) concurrency.spawn_join_n tc ~num_workers ~work)
     ?min_concurrency
     ?max_concurrency
-    ?sexp_of_state
     ?step_count
     tc
   NONTAIL
@@ -443,7 +443,6 @@ let run_concurrent
       ?min_concurrency
       ?max_concurrency
       ?step_count
-      ?sexp_of_state
       tc
       (module M : Concurrent_state_machine with type ctx = c and type state = s)
       ~(init : s)
@@ -455,7 +454,6 @@ let run_concurrent
     ~concurrency
     ?min_concurrency
     ?max_concurrency
-    ?sexp_of_state
     ?step_count
     tc
 ;;
