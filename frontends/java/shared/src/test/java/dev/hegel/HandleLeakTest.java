@@ -256,7 +256,7 @@ class HandleLeakTest {
         assertFalse(report.passed());
         List<String> output = report.failures().get(0).output();
         assertEquals("var draw_1 = slot(filled);", output.get(0));
-        assertEquals("  var draw_1 = slot();", output.get(output.size() - 1));
+        assertEquals("  var draw_3 = slot();", output.get(output.size() - 1));
         assertTrue(tracker.deferredPrintersCreated > 0);
         tracker.assertNothingLeaked();
     }

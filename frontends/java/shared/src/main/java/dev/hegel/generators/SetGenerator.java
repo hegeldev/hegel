@@ -15,7 +15,7 @@ import java.util.Set;
  * <p>The size range defaults to any size; narrow it with the fluent {@link #minSize(int)} / {@link
  * #maxSize(int)} methods.
  *
- * <p>It prints as {@code [a, b]}, each element printed by the element generator as it is drawn;
+ * <p>It prints as {@code Set.of(a, b)}, each element printed by the element generator as it is drawn;
  * a rejected duplicate prints nothing.
  */
 public final class SetGenerator<T> implements PrintableGenerator<Set<T>> {

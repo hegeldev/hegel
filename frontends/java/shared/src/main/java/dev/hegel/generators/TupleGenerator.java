@@ -14,7 +14,7 @@ import java.util.function.Function;
  * to an {@code assembler} that packs them into the user-facing type {@code
  * T} (a {@code TupleN} record, or the raw {@code List<Object>} for the variadic factory). Each
  * element prints itself as it is drawn: a tuple record as its constructor call, {@code new Tuple2(a,
- * b)}, a list as {@code [a, b]}.
+ * b)}, a list as {@code List.of(a, b)}.
  *
  * @param <T> the assembled tuple type
  */
@@ -25,7 +25,7 @@ public final class TupleGenerator<T> implements PrintableGenerator<T> {
     private final CachedLabel label = new CachedLabel();
 
     /**
-     * A generator of tuples that print as a list, {@code [a, b]}.
+     * A generator of tuples that print as a list, {@code List.of(a, b)}.
      *
      * @param elements one generator per position
      * @param assembler packs the drawn values into a tuple
@@ -69,14 +69,14 @@ public final class TupleGenerator<T> implements PrintableGenerator<T> {
     private T draw(TestCase tc, Printer printer) {
         Printer p = Components.out(printer);
         List<Object> out = new ArrayList<>(elements.size());
-        p.beginGroup(record == null ? "[" : "new " + record + "(");
+        p.beginGroup(record == null ? "List.of(" : "new " + record + "(");
         for (Generator<?> g : elements) {
             if (!out.isEmpty()) {
                 p.separator();
             }
             out.add(Components.draw(tc, g, printer));
         }
-        p.endGroup(record == null ? "]" : ")");
+        p.endGroup(")");
         return assembler.apply(out);
     }
 }

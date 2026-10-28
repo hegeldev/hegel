@@ -35,7 +35,7 @@ final class ExplicitDraws implements AutoCloseable {
                     if (IGNORED.contains(method.getName())) {
                         return null;
                     }
-                    throw new InvalidExample(method.getName() + " is not supported in an explicit example");
+                    throw new InvalidExample(method.getName() + " is not supported in explicit test cases");
                 });
     }
 

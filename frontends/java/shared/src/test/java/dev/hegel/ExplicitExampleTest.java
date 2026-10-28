@@ -62,10 +62,10 @@ class ExplicitExampleTest {
                 recorder);
         Failure failure = report.failures().get(0);
         assertTrue(failure.exception().getMessage().startsWith("two"));
-        assertEquals(List.of("var xs_1 = [3, 4];", "checking"), failure.output());
+        assertEquals(List.of("var xs_1 = List.of(3, 4);", "checking"), failure.output());
         assertEquals(Map.of("xs_1", List.of(3, 4)), failure.draws());
         assertTrue(failure.reproduceBlob().isEmpty());
-        assertEquals(List.of("failures: 1", "final: var xs_1 = [3, 4];", "final: checking"), recorder.events);
+        assertEquals(List.of("failures: 1", "final: var xs_1 = List.of(3, 4);", "final: checking"), recorder.events);
     }
 
     @Test
