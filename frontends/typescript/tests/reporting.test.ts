@@ -455,7 +455,7 @@ describe("explicit examples", () => {
         .settings({ ...deterministic, reportMultipleFailures: true })
         .example(1)
         .runSync(),
-    ).toThrow(new ExplicitExampleError("drawSilent is not supported in explicit examples"));
+    ).toThrow(new ExplicitExampleError("drawSilent is not supported in explicit test cases"));
     expect(lines).toEqual([]);
   });
 

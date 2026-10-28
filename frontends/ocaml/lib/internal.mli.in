@@ -90,9 +90,16 @@ val clone : test_case -> test_case
 (** [with_block tc ~indent f] runs [f] on a test case onto the same choice
     stream as [tc] whose print region is a block nested in [tc]'s: every
     {!note}/draw line it prints is indented [indent] columns further than [tc]'s
-    lines. The block is freed when [f] returns or raises, so it must not escape
-    [f]. *)
-val with_block : test_case -> indent:int -> (test_case -> 'a) MODE(local) -> 'a
+    lines. The block numbers its draw names afresh, as a stateful step does,
+    unless [share_names] is true, when it carries on [tc]'s counts, as a
+    repetition of {!Hegel.repeat} does. The block is freed when [f] returns or
+    raises, so it must not escape [f]. *)
+val with_block
+  :  ?share_names:bool
+  -> test_case
+  -> indent:int
+  -> (test_case -> 'a) MODE(local)
+  -> 'a
 
 (** [owned_clone_count tc] is the number of clone handles the test case
     currently owns; they are freed together once the case completes. *)

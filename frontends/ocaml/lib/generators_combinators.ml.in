@@ -474,34 +474,6 @@ let%template tuples8
 [@@mode m = (nonportable, portable)]
 ;;
 
-(** [permutations values] creates a generator for permutations of [values]:
-    for each position in turn, it draws which of the remaining values goes
-    there, so it shrinks toward [values] in its original order. The values are
-    the caller's, so the result carries no printer; use {!with_printer} to draw
-    it with {!draw}. *)
-let%template permutations ABSTRACT(a, value mod c) (values : a list MODE(m))
-  : (a list, unprintable) generator MODE(m)
-  =
-  Unprintable
-    { core =
-        Composite
-          { label = Labels.permutation
-          ; generate_fn =
-              (fun data _ ->
-                let arr = Array.of_list values in
-                let n = Array.length arr in
-                for i = 0 to n - 2 do
-                  let j = Internal.generate_integer data ~min_value:i ~max_value:(n - 1) in
-                  let x = arr.(i) in
-                  arr.(i) <- arr.(j);
-                  arr.(j) <- x
-                done;
-                Array.to_list arr)
-          }
-    }
-[@@mode (m, c) = ((nonportable, uncontended), (portable, contended))]
-;;
-
 (** [draw_index_sample data ~n ~min_size ~max_size] draws between [min_size]
     and [max_size] distinct indices below [n] without replacement, in draw
     order: for each position, which of the indices not yet taken comes next,
@@ -523,6 +495,31 @@ let draw_index_sample data ~n ~min_size ~max_size =
       remaining := List.filteri (fun i _ -> i <> j) !remaining
     done);
   List.rev !chosen
+;;
+
+(** [permutations values] creates a generator for permutations of [values]:
+    for each position in turn, it draws which of the remaining values goes
+    there (an index sample of every element, as in the other Hegel
+    frontends), so it shrinks toward [values] in its original order. The
+    values are the caller's, so the result carries no printer; use
+    {!with_printer} to draw it with {!draw}. *)
+let%template permutations ABSTRACT(a, value mod c) (values : a list MODE(m))
+  : (a list, unprintable) generator MODE(m)
+  =
+  Unprintable
+    { core =
+        Composite
+          { label = Labels.permutation
+          ; generate_fn =
+              (fun data _ ->
+                let arr = Array.of_list values in
+                let n = Array.length arr in
+                List.map
+                  (fun i -> arr.(i))
+                  (draw_index_sample data ~n ~min_size:n ~max_size:n))
+          }
+    }
+[@@mode (m, c) = ((nonportable, uncontended), (portable, contended))]
 ;;
 
 (** [subsequences ?min_size ?max_size values] creates a generator for

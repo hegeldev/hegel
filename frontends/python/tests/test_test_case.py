@@ -129,9 +129,8 @@ def test_repeat_runs_body_and_reports_repetitions():
     error = failing(body)
     assert counts == []
     text = notes(error)[0]
-    assert "# Repetition #1" in text
-    assert "# Repetition #2" in text
-    assert "  x = " in text
+    assert "# Repetition #1\n  x_1 = " in text
+    assert "# Repetition #2\n  x_2 = " in text
 
 
 def test_repeat_with_assumption_and_control_signals():
@@ -159,16 +158,23 @@ def test_repeat_with_assumption_and_control_signals():
     failing(invalid, hegel.InvalidArgument, test_cases=20)
 
 
-def test_repeat_can_run_zero_times(monkeypatch):
-    # A body that draws nothing is stopped only by the test case's choice
-    # limit, about a million forced repetitions, which is far too slow under
-    # coverage on CI; have the collection stop at once instead.
-    monkeypatch.setattr(Collection, "more", lambda self: False)
+def test_repeat_runs_until_the_engine_stops_it():
+    repetitions = 0
+    after = 0
 
     def body(tc):
-        tc.repeat(lambda: None)
+        nonlocal after
+
+        def step():
+            nonlocal repetitions
+            repetitions += 1
+
+        tc.repeat(step)
+        after += 1
 
     run_test(body, test_cases=3)
+    assert repetitions > 0
+    assert after == 0
 
 
 def test_child_and_clone_handles():

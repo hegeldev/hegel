@@ -278,7 +278,7 @@ let clone (tc : test_case) =
 
 (** [with_block tc ~indent f] runs [f] on a {!test_case} for an indented
     section of [tc]'s output. *)
-let with_block (tc : test_case) ~indent LOCAL(f) =
+let with_block ?(share_names = false) (tc : test_case) ~indent LOCAL(f) =
   require_engine tc;
   let context = Ffi.context_new () in
   let handle = Ffi.test_case_block tc.context tc.handle ~indent in
@@ -289,7 +289,7 @@ let with_block (tc : test_case) ~indent LOCAL(f) =
     ; verbosity = tc.verbosity
     ; test_aborted = Atomic.make false
     ; draw_depth = Atomic.make 0
-    ; draw_state = new_draw_state ()
+    ; draw_state = (if share_names then tc.draw_state else new_draw_state ())
     ; owned = tc.owned
     ; explicit = None
     ; printer = Atomic.make None

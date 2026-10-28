@@ -24,6 +24,22 @@ let test_repeat_runs_until_engine_stops () =
   Alcotest.(check bool) "body ran" true (!iterations > 0)
 ;;
 
+let test_repeat_continues_draw_names () =
+  let names = ref [] in
+  Hegel.run_hegel_test ~settings:(settings ~test_cases:1 ()) (fun tc ->
+    let repetitions = ref 0 in
+    names := [];
+    Hegel.repeat tc (fun tc ->
+      incr repetitions;
+      if !repetitions <= 3
+      then
+        names := Hegel.Internal.draw_display_name tc ~label:"x" ~repeatable:true :: !names));
+  Alcotest.(check (list string))
+    "numbered across repetitions"
+    [ "x_1"; "x_2"; "x_3" ]
+    (List.rev !names)
+;;
+
 let test_repeat_skips_rejected_iterations () =
   let kept = ref 0 in
   Hegel.run_hegel_test ~settings:(settings ()) (fun tc ->
@@ -110,6 +126,10 @@ let tests =
       "repeat runs until the engine stops"
       `Quick
       test_repeat_runs_until_engine_stops
+  ; Alcotest.test_case
+      "repeat continues draw names across repetitions"
+      `Quick
+      test_repeat_continues_draw_names
   ; Alcotest.test_case
       "repeat skips rejected iterations"
       `Quick

@@ -44,7 +44,7 @@ describe.each([
     ];
     for (const [operation, call] of refused) {
       expect(call).toThrow(
-        new ExplicitExampleError(`${operation} is not supported in explicit examples`),
+        new ExplicitExampleError(`${operation} is not supported in explicit test cases`),
       );
     }
     ds.markComplete();

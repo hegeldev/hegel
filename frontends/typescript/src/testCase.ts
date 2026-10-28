@@ -341,7 +341,7 @@ export class TestCase {
    */
   drawSilent<T>(generator: Generator<T>): T {
     if (this.shared.explicit !== null) {
-      throw new ExplicitExampleError("drawSilent is not supported in explicit examples");
+      throw new ExplicitExampleError("drawSilent is not supported in explicit test cases");
     }
     this.startSpan(generator.label);
     const value = generator.doDraw(this);
@@ -358,7 +358,7 @@ export class TestCase {
    */
   drawAndPrint<T>(generator: PrintableGenerator<T>, printer: PrettyPrinter): T {
     if (this.shared.explicit !== null && this.printingDepth === 0) {
-      throw new ExplicitExampleError("drawAndPrint is not supported in explicit examples");
+      throw new ExplicitExampleError("drawAndPrint is not supported in explicit test cases");
     }
     if (!isPrintable(generator)) {
       if (printer.region === null) return this.drawSilent(generator);

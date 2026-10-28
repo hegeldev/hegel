@@ -161,7 +161,7 @@ let set_worker = Internal.set_worker_index
     on a block of [tc]. A rejected iteration is skipped; any other failure is
     reported to the engine before it propagates. *)
 let run_iteration tc ~repeat body =
-  match Internal.with_block tc ~indent:2 body with
+  match Internal.with_block ~share_names:true tc ~indent:2 body with
   | () | (exception Assume_rejected) -> ()
   | exception
       ((Internal.Stop_test | Usage_error _ | Internal.Internal_error _) as control) ->

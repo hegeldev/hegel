@@ -55,7 +55,7 @@ Notation: R = Rust, P = Python, T = TypeScript, C = C++, J = Java, O = OCaml. A 
 - A name captured statically from a single-use binding (R macro, P AST, O PPX) prints bare: `let x = …`.
 - A name that may repeat — an explicitly supplied name, or a captured name bound in a loop/closure/helper or bound by more than one draw — prints numbered from 1: `x_1`, `x_2`, skipping names already taken.
 - A nameless draw prints `draw_1`, `draw_2`, …
-- Numbering is per naming scope: shared with clones, fresh per block (repetition, stateful step).
+- Numbering is per naming scope: shared with clones and carried on across the repetitions of `repeat` (`x_1` under the first, `x_2` under the second, as Rust does), fresh per stateful step.
 
 | | R | P | T | C | J | O |
 |---|---|---|---|---|---|---|

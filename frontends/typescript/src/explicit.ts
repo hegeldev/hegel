@@ -9,7 +9,7 @@ import type { EngineDocument, Printer } from "./pretty.js";
 import { ExplicitExampleError, type DataSource } from "./testCase.js";
 
 function unsupported(operation: string): never {
-  throw new ExplicitExampleError(`${operation} is not supported in explicit examples`);
+  throw new ExplicitExampleError(`${operation} is not supported in explicit test cases`);
 }
 
 /**
