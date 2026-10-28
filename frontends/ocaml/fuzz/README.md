@@ -299,8 +299,10 @@ than by the text of the source:
   `Dead variable in bound pattern`.
 - **oxcaml/oxcaml#7737:** with the reaper (`-flambda2-reaper`, or `-O4`),
   `-dcmm-invariants` reports `Continuation N was declared with 0 arguments but
-  called with 1`, though the program runs correctly. Rather than filter it,
-  the toggles backend drops `-dcmm-invariants` whenever it draws either flag,
+  called with 1`, though the program runs correctly. When the call that loses
+  its result is a function's last, `-dcfg-invariants` instead reports `return
+  with 0 argument(s), expected 1`. Rather than filter it, the toggles backend
+  drops both checks whenever it draws either flag,
   so those programs still have their output checked.
 - **`-dcmm-invariants` and unboxed products:** the check counts a call that
   returns an unboxed tuple or record as one value, so it rejects the handler
@@ -317,6 +319,11 @@ than by the text of the source:
   another module (`camlM1__const_block_4`, `camlM1__immstring_0`) can dangle
   the same way. The toggles backend never combines phantom lets with the
   reaper.
+- **Unreported OxCaml match-in-match free variable:** at `-O3` with
+  `-flambda2-match-in-match`, an `as` alias of a match captured by a
+  `let rec ... lazy` can be left free, and the compiler stops with `Variable
+  ... not expected to be free in whole-compilation-unit term`. Filtered by
+  that message.
 - **Unreported OxCaml `-Oclassic` regalloc check failure:** a `try` whose body
   cannot raise (such as `Float.rem`) and whose handler reads a local `ref`
   keeps a dead trap handler, and linscan's validator fails with

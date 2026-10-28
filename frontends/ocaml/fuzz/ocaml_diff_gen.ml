@@ -402,6 +402,19 @@ let span ctx f =
   draw_silent ctx.tc (Generators.Ppx_internal.composite_with_label ~label (fun _ -> f ()))
 ;;
 
+(* Between lo and hi elements, each past lo behind a continue bit and each in
+   its own span, so the shrinker can delete any one of them. *)
+let repeat ctx lo hi f =
+  let rec go i =
+    if i < hi && (i < lo || draw_silent ctx.tc (booleans ~p:0.7 ()))
+    then (
+      let x = span ctx (fun () -> f i) in
+      x :: go (i + 1))
+    else []
+  in
+  go 0
+;;
+
 (* With [~unboxed], the type may be a [restricted] one, which only a binding,
    a function argument or result, or a record field can have. *)
 let rec gen_ty ?(unboxed = false) ctx ~first_order depth =
@@ -622,9 +635,9 @@ let string_literal ctx =
   p
     "%S"
     (String.init n (fun _ ->
-       if draw_silent ctx.tc (booleans ~p:0.8 ())
-       then Char.chr (int_in ctx (Char.code 'a') (Char.code 'e'))
-       else Char.chr (int_in ctx 0 255)))
+       if draw_silent ctx.tc (booleans ~p:0.2 ())
+       then Char.chr (int_in ctx 0 255)
+       else Char.chr (int_in ctx (Char.code 'a') (Char.code 'e'))))
 ;;
 
 let rec literal ctx ty =
@@ -702,7 +715,7 @@ let gen_decl ctx =
       if on "numbers" then U (List.nth all_ub (int_in ctx 0 (List.length all_ub - 1))) else float_u
     in
     Record
-      (List.init (int_in ctx 1 4) (fun _ ->
+      (repeat ctx 1 4 (fun _ ->
          let f = fresh ctx "f" in
          let t =
            if all_float
@@ -715,9 +728,9 @@ let gen_decl ctx =
   else (
     let poly = (not !ox_mode) && on "poly" && draw_silent ctx.tc (booleans ~p:0.35 ()) in
     let own () =
-      List.init (int_in ctx 1 4) (fun _ ->
+      repeat ctx 1 4 (fun _ ->
         let c = fresh ctx (if poly then "`C" else "C") in
-        c, List.init (int_in ctx 0 3) (fun _ -> fo_ty ctx))
+        c, repeat ctx 0 3 (fun _ -> fo_ty ctx))
     in
     let polys =
       List.filter_map
@@ -926,11 +939,12 @@ let rec expr ctx env ty depth =
       x
     in
     let leaf () =
+      (* i = 0 is the literal, so shrinking turns variable uses into constants. *)
       let i = int_in ctx 0 (List.length vars) in
       if unused <> [] && draw_silent ctx.tc (booleans ~p:0.7 ())
       then use (List.nth unused (int_in ctx 0 (List.length unused - 1)))
-      else if i < List.length vars
-      then use (List.nth vars i)
+      else if i > 0
+      then use (List.nth vars (i - 1))
       else (
         let l = literal ctx ty in
         (* Sys.opaque_identity keeps the compiler from folding the value away. *)
@@ -1770,8 +1784,8 @@ and specific ctx env ty e =
           let op = choose ctx (List.map (fun o () -> o) [ "lsl"; "lsr"; "asr" ]) in
           let amount =
             if draw_silent ctx.tc (booleans ())
-            then string_of_int (int_in ctx 0 62)
-            else p "(%s land 31)" (e env Int)
+            then p "(%s land 31)" (e env Int)
+            else string_of_int (int_in ctx 0 62)
           in
           p "(%s %s %s)" (e env Int) op amount)
       ; (fun () -> p "(List.length %s)" (e env (List (env_ty ctx env elem))))
@@ -2643,7 +2657,7 @@ let program ?(ox = false) ?(effect_syntax = false) tc =
     i
   in
   let urecords = ox && on "urecords" in
-  for _ = 1 to int_in ctx 0 4 do
+  ignore @@ repeat ctx 0 4 (fun _ ->
     let decl = gen_decl ctx in
     let i = add decl in
     (match decl with
@@ -2660,14 +2674,12 @@ let program ?(ox = false) ?(effect_syntax = false) tc =
                  ( fresh ctx "uf"
                  , match gen_ty ~unboxed:true ctx ~first_order:false 1 with
                    | Or_null _ -> Int
-                   | t -> t )))))
-  done;
+                   | t -> t ))))));
   let depth = int_in ctx 2 7 in
-  let count = int_in ctx 1 6 in
   if (not ox) && on "effects"
   then
     ctx.effects
-    <- List.init (int_in ctx 1 3) (fun _ ->
+    <- repeat ctx 1 3 (fun _ ->
          let c = fresh ctx "E" in
          let base () = choose ctx [ (fun () -> Int); (fun () -> Bool); (fun () -> fo_ty ctx) ] in
          let a = base () in
@@ -2699,9 +2711,12 @@ let program ?(ox = false) ?(effect_syntax = false) tc =
            (printer ty)
            g)
   in
-  let boundary = if on "modules" then int_in ctx 1 count else 0 in
-  for i = 1 to count do
-    if i = boundary then Buffer.add_string buf module_boundary;
+  let boundary = ref (not (on "modules")) in
+  ignore @@ repeat ctx 1 6 (fun _ ->
+    if (not !boundary) && draw_silent ctx.tc (booleans ~p:0.3 ())
+    then (
+      boundary := true;
+      Buffer.add_string buf module_boundary);
     if draw_silent ctx.tc (booleans ~p:0.4 ()) then statement ();
     let ty =
       match !poly_parent with
@@ -2718,8 +2733,7 @@ let program ?(ox = false) ?(effect_syntax = false) tc =
          (expr ctx !env ty depth)
          (printer ty)
          v);
-    env := bind !env v ty
-  done;
+    env := bind !env v ty);
   let conversions =
     String.concat
       ""

@@ -369,7 +369,9 @@ end
    #7683: -Oclassic, a float# read in an unreachable match arm.
    #7701, #7702: -use-ssa's validator rejects the SSA pipeline's CFG.
    Unreported: OxCaml on arm64 emits fmov with a float32# constant it cannot
-   encode, (1 + m/16) * 2^k for k in 61..68, and the assembler rejects it. *)
+   encode, (1 + m/16) * 2^k for k in 61..68, and the assembler rejects it.
+   Unreported: OxCaml -flambda2-match-in-match at -O3 leaves a match alias
+   free in the unit (not expected to be free in whole-compilation-unit term). *)
 let known_compile_crash msg =
   contains msg "Selection.size_expr"
   || contains msg "Matching: impossible empty matrix in a Total match"
@@ -379,6 +381,7 @@ let known_compile_crash msg =
   || contains msg "Duplicate order for bindings when flushing"
   || contains msg "Illegal move between registers of differing types"
   || contains msg "CFG comparison MISMATCH"
+  || contains msg "not expected to be free in whole-compilation-unit term"
   || (contains msg "expected compatible register or floating-point constant" && contains msg "fmov");;
 
 let known_bug backends results source =
@@ -548,10 +551,10 @@ let with_toggles tc backends =
          in
          let reaper = List.mem "-flambda2-reaper" flags || List.mem "-O4" flags in
          (* The reaper with phantom lets leaves dangling symbols (#7684 and
-            unreported link failures), so the two are never combined. *)
-         let flags = if reaper then List.filter (( <> ) "-flambda2-expert-phantom-lets") flags else flags in
-         (* The reaper (also on at -O4) trips -dcmm-invariants with
-            oxcaml/oxcaml#7737, so with it the output is what gets checked. *)
+            unreported link failures), so the two are never combined. The
+            reaper (also on at -O4) trips -dcmm-invariants and -dcfg-invariants
+            with oxcaml/oxcaml#7737, so with it the output is what gets checked. *)
+         let flags = if reaper then List.filter (fun f -> f <> "-flambda2-expert-phantom-lets" && f <> "-dcfg-invariants") flags else flags in
          let argv =
            if reaper
            then List.filter (( <> ) "-dcmm-invariants") b.argv
