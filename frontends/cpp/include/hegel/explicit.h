@@ -52,7 +52,8 @@ namespace hegel {
      * A string literal is a `std::string`.
      *
      * Every value must be drawn. TestCase::target() and TestCase::event()
-     * do nothing, TestCase::repeat() runs its body once, a TestCase::clone()
+     * do nothing, TestCase::repeat() runs its body once and then ends the
+     * test case, a TestCase::clone()
      * draws the same values and names its draws in the same sequence as the
      * test case it was cloned from, and TestCase::set_worker() does nothing.
      * Anything else is a usage error, which makes hegel::test() throw

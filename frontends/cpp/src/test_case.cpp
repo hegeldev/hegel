@@ -148,7 +148,7 @@ namespace hegel {
         if (data_->explicit_state) {
             note("// Repetition #1");
             body();
-            return;
+            throw internal::HegelLoopDone();
         }
         internal::RepeatHandle repeat(*this);
         uint64_t iteration = 0;
@@ -160,6 +160,8 @@ namespace hegel {
                 continue;
             } catch (const internal::HegelStopTest&) {
                 throw;
+            } catch (const internal::HegelLoopDone&) {
+                throw;
             } catch (const std::invalid_argument&) {
                 throw;
             } catch (...) {
@@ -167,6 +169,7 @@ namespace hegel {
                 throw;
             }
         }
+        throw internal::HegelLoopDone();
     }
 
     void TestCase::note(std::string_view message) const {

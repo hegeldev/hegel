@@ -290,6 +290,8 @@ namespace hegel {
                 throw;
             } catch (const internal::HegelStopTest&) {
                 return {HEGEL_STATUS_OVERRUN, "", nullptr};
+            } catch (const internal::HegelLoopDone&) {
+                return {HEGEL_STATUS_VALID, "", nullptr};
             } catch (const internal::HegelReject&) {
                 return {HEGEL_STATUS_INVALID, "", nullptr};
             } catch (const std::exception& e) {

@@ -262,17 +262,20 @@ TEST(Explicit, RejectionInsideRepeatIsAnError) {
         << message;
 }
 
-TEST(Explicit, RepeatRunsItsBodyOnce) {
+TEST(Explicit, RepeatRunsItsBodyOnceAndEndsTheCase) {
     std::vector<int> seen;
+    bool returned = false;
     hegel::test(
-        [&seen](hegel::TestCase& tc) {
+        [&](hegel::TestCase& tc) {
             tc.repeat([&] { seen.push_back(tc.draw(gs::integers<int>())); });
+            returned = true;
         },
         hegel::Settings{.verbosity = hegel::Verbosity::Quiet,
                         .database = hegel::Database::disabled(),
                         .phases = {hegel::Phase::Explicit}},
         {}, {hegel::ExplicitTestCase(4)});
     EXPECT_EQ(seen, std::vector<int>{4});
+    EXPECT_FALSE(returned);
 }
 
 TEST(Explicit, FailureInsideRepeatShowsTheRepetition) {

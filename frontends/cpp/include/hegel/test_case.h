@@ -223,15 +223,22 @@ namespace hegel {
         void event_value(std::string_view label, double value) const;
 
         /**
-         * @brief Run @p body in an engine-managed loop.
+         * @brief Run @p body over and over until the engine ends the test
+         *        case. It never returns.
          *
-         * The engine decides how many iterations to run, exploring and
-         * shrinking the count like any other drawn quantity. Control returns to
-         * the caller once the loop completes. A rejected iteration (via
-         * @c assume / @c reject) is discarded and the loop continues; any other
-         * exception propagates out as a failure.
+         * The loop is logically infinite: the engine decides how many
+         * repetitions run, so a failing loop shrinks to the fewest, and when
+         * the engine ends the loop the test case ends as passing. Code after
+         * the call never runs. Use it for workload-style tests that drive a
+         * system with a stream of random operations. Each repetition's draws
+         * and notes print indented under a `// Repetition #N` note. A
+         * repetition rejected with assume() or reject() is skipped and the
+         * loop goes on; any other exception fails the test case.
          *
-         * @param body Callable invoked once per iteration.
+         * In an explicit test case the body runs once, and the test case
+         * ends.
+         *
+         * @param body Callable invoked once per repetition.
          *
          * @code{.cpp}
          * int total = 0;
@@ -241,7 +248,7 @@ namespace hegel {
          * });
          * @endcode
          */
-        void repeat(const std::function<void()>& body) const;
+        [[noreturn]] void repeat(const std::function<void()>& body) const;
 
         /**
          * @brief Record a message that will be printed on the final replay
