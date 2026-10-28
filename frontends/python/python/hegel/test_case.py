@@ -108,7 +108,6 @@ class TestCase:
         "_handle",
         "_printer",
         "_printing_depth",
-        "_repeating",
         "_span_depth",
         "_span_frames",
     )
@@ -127,7 +126,6 @@ class TestCase:
         self._printing_depth = 0
         self._printer: PrettyPrinter | None = None
         self._draw_state = _DrawState()
-        self._repeating = 0
 
     @classmethod
     def _derive(
@@ -141,7 +139,6 @@ class TestCase:
         tc._printing_depth = 0
         tc._printer = None
         tc._draw_state = _DrawState() if draw_state is None else draw_state
-        tc._repeating = 0
         return tc
 
     # -- drawing ---------------------------------------------------------
@@ -253,7 +250,7 @@ class TestCase:
             state.counts[name] = count
             if not self._global.emit:
                 return None
-            if draw_name.repeatable or self._repeating or count > 1 or name in state.allocated:
+            if draw_name.repeatable or count > 1 or name in state.allocated:
                 # A name inferred as drawn once that is drawn again (from a
                 # helper called twice, say) carries on from its count.
                 suffix = count
@@ -402,11 +399,7 @@ class TestCase:
         """
         if self._global.explicit is not None:
             self.note("# Repetition #1")
-            self._repeating += 1
-            try:
-                body()
-            finally:
-                self._repeating -= 1
+            body()
             raise LoopDone()
         repeat = self._handle.new_repeat()
         iteration = 0
@@ -414,7 +407,6 @@ class TestCase:
             iteration += 1
             self.note(f"# Repetition #{iteration}")
             outer = self._enter_block(2)
-            self._repeating += 1
             try:
                 body()
             except AssumeFailed:
@@ -426,7 +418,6 @@ class TestCase:
                 repeat.failed(self._handle)
                 raise
             finally:
-                self._repeating -= 1
                 self._restore_handle(outer)
         raise LoopDone()
 

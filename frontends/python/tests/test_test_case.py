@@ -114,6 +114,7 @@ def test_target_event_and_event_value(output):
 def test_repeat_runs_body_and_reports_repetitions():
     counts = []
 
+    @hegel.test
     def body(tc):
         n = 0
 
@@ -126,7 +127,9 @@ def test_repeat_runs_body_and_reports_repetitions():
         tc.repeat(step)
         counts.append(n)  # unreachable: repeat raises LoopDone
 
-    error = failing(body)
+    with pytest.raises(AssertionError) as info:
+        body()
+    error = info.value
     assert counts == []
     text = notes(error)[0]
     assert "# Repetition #1\n  x_1 = " in text
