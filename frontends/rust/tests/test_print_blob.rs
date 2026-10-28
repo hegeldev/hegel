@@ -9,6 +9,7 @@
 mod common;
 
 use common::exec::self_test;
+use common::utils::capture_hegel_output;
 use hegel::TestCase;
 use hegel::generators as gs;
 
@@ -55,4 +56,43 @@ fn ci_profile_prints_reproducer_line() {
         .env("HEGEL_DEFAULT_PROFILE", "ci")
         .expect_failure(REPRODUCER_MARKER)
         .run();
+}
+
+fn reproducer_output(f: impl FnOnce() + std::panic::UnwindSafe) -> String {
+    let (lines, result) = capture_hegel_output(f);
+    assert!(result.is_err());
+    lines.join("\n")
+}
+
+#[test]
+fn standalone_function_reproducer_names_its_attribute() {
+    #[hegel::standalone_function(print_blob = true, database = None)]
+    fn fails(tc: TestCase) {
+        let x: i32 = tc.draw(gs::integers());
+        assert!(x < 5, "x was {x}");
+    }
+    let output = reproducer_output(fails);
+    assert!(
+        output.contains(
+            "To reproduce this failure, add the attribute below #[hegel::standalone_function]:"
+        ),
+        "{output}"
+    );
+}
+
+#[test]
+fn builder_reproducer_points_at_the_builder() {
+    let output = reproducer_output(|| {
+        hegel::Hegel::new(|tc: TestCase| {
+            let x: i32 = tc.draw(gs::integers());
+            assert!(x < 5, "x was {x}");
+        })
+        .settings(hegel::Settings::new().print_blob(true).database(None))
+        .run();
+    });
+    assert!(
+        output.contains("To reproduce this failure, call this on the Hegel builder before run():"),
+        "{output}"
+    );
+    assert!(output.contains("    .reproduce_failure(\""), "{output}");
 }

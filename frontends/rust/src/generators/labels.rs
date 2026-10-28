@@ -1,51 +1,40 @@
-const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
-const FNV_PRIME: u64 = 0x100000001b3;
-
-const fn fnv1a(mut hash: u64, bytes: &[u8]) -> u64 {
-    let mut i = 0;
-    while i < bytes.len() {
-        hash ^= bytes[i] as u64;
-        hash = hash.wrapping_mul(FNV_PRIME);
-        i += 1;
-    }
-    hash
-}
-
 /// The span label for a generator identified by a name.
 ///
 /// A label is an opaque value identifying a generator to the engine, which
 /// treats two spans with the same label as coming from the same generator
-/// (see [`Generator::label`](super::Generator::label)). This derives one
-/// from a name — the 64-bit FNV-1a hash of its UTF-8 bytes, the same
-/// function libhegel exports as `hegel_label_from_name` — so it can be
-/// computed at compile time:
+/// (see [`Generator::label`](super::Generator::label)). This asks the engine
+/// for the label of a name (`hegel_label_from_name`), so every frontend
+/// derives the same label from the same name. Compute it once and keep it,
+/// for example in a [`LazyLock`](std::sync::LazyLock):
 ///
 /// ```
 /// use hegel::generators as gs;
+/// use std::sync::LazyLock;
 ///
-/// const PAIRS_LABEL: u64 = gs::label_from_name("mycrate.pairs");
+/// static PAIRS_LABEL: LazyLock<u64> = LazyLock::new(|| gs::label_from_name("mycrate.pairs"));
 /// ```
 ///
 /// A name only has to be stable and unique to its generator; prefixing it
 /// with the crate's name keeps it clear of Hegel's own `hegel.<kind>` names.
-pub const fn label_from_name(name: &str) -> u64 {
-    fnv1a(FNV_OFFSET_BASIS, name.as_bytes())
+pub fn label_from_name(name: &str) -> u64 {
+    crate::ffi::label_from_name(name)
 }
 
 /// The span label for a generator built from other generators.
 ///
-/// Combines the given labels, in order, into one — the same function
-/// libhegel exports as `hegel_label_combine`. Pass the generator's own label
-/// (from [`label_from_name`]) first and its components' labels after it, so
-/// that a pair of integers and a pair of strings get different labels while
+/// Combines the given labels, in order, into one, through the engine's
+/// `hegel_label_combine`. Pass the generator's own label (from
+/// [`label_from_name`]) first and its components' labels after it, so that
+/// a pair of integers and a pair of strings get different labels while
 /// every pair of integers gets the same one. Combine once, when the
 /// generator is built, and keep the result: `label` is asked for on every
 /// draw.
 ///
 /// ```
 /// use hegel::generators::{self as gs, Generator};
+/// use std::sync::LazyLock;
 ///
-/// const PAIRS_LABEL: u64 = gs::label_from_name("mycrate.pairs");
+/// static PAIRS_LABEL: LazyLock<u64> = LazyLock::new(|| gs::label_from_name("mycrate.pairs"));
 ///
 /// struct Pairs<G> {
 ///     inner: G,
@@ -53,7 +42,7 @@ pub const fn label_from_name(name: &str) -> u64 {
 /// }
 ///
 /// fn pairs<T, G: Generator<T>>(inner: G) -> Pairs<G> {
-///     let label = gs::combine_labels(&[PAIRS_LABEL, inner.label()]);
+///     let label = gs::combine_labels(&[*PAIRS_LABEL, inner.label()]);
 ///     Pairs { inner, label }
 /// }
 ///
@@ -70,14 +59,8 @@ pub const fn label_from_name(name: &str) -> u64 {
 ///
 /// Combining is order-sensitive, and combining a single label does not
 /// return it unchanged.
-pub const fn combine_labels(labels: &[u64]) -> u64 {
-    let mut hash = FNV_OFFSET_BASIS;
-    let mut i = 0;
-    while i < labels.len() {
-        hash = fnv1a(hash, &labels[i].to_le_bytes());
-        i += 1;
-    }
-    hash
+pub fn combine_labels(labels: &[u64]) -> u64 {
+    crate::ffi::combine_labels(labels)
 }
 
 #[cfg(test)]
