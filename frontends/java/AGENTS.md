@@ -244,18 +244,22 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   JUnit 5 `TestTemplateInvocationContextProvider` that drives the engine loop
   and invokes the user method per case).
 - **Stateful testing** — `Stateful.run(machine, tc[, options])` reflects
-  `@Rule`/`@Invariant` methods (sorted by name for determinism) and registers
-  them via `hegel_new_state_machine`: `@Rule(group = "g")` names become
-  `rule_groups` ids (0.. in first-appearance order; rules that name none share
-  `Stateful.ANONYMOUS_GROUP`, so a plain machine is all-zeros),
-  `@Rule(weight = w)` becomes the `rule_weights` array (validated finite and
-  positive in Java; `null` — the engine's all-equal default — when every rule
-  is at 1; the engine samples proportionally among the *enabled* rules, so
-  weights are hints, and tests check them per case, not in aggregate), and
+  `@Rule`/`@Invariant` methods (sorted by name for determinism) and declares
+  them to the engine's builder: `hegel_new_state_machine` takes the
+  concurrency bounds and `step_count`, then one `hegel_state_machine_add_rule`
+  per rule in name order (so the engine's rule indices are positions in the
+  sorted list) and one `hegel_state_machine_add_invariant` per invariant, and
+  `hegel_state_machine_start` seals the declaration and draws the concurrency
+  level. `@Rule(group = "g")` names become group ids (0.. in first-appearance
+  order, one id per rule; rules that name none share `Stateful.ANONYMOUS_GROUP`,
+  so a plain machine is all-zeros), `@Rule(weight = w)` becomes the rule's
+  weight (validated finite and positive in Java before the machine is created;
+  the engine samples proportionally among the *enabled* rules, so weights are
+  hints, and tests check them per case, not in aggregate), and
   `Stateful.Options` carries the per-machine `step_count`
   (`Stateful.DEFAULT_STEP_COUNT` = 50; the engine has no default) and the
-  concurrency bounds (default `1, 1`). The engine draws the concurrency level
-  and the driver runs exactly that many workers. Two drivers share the
+  concurrency bounds (default `1, 1`). The driver runs exactly as many workers
+  as the engine drew. Two drivers share the
   registration and the round protocol — `hegel_state_machine_next_group` opens
   each round on the root handle (or reports `HEGEL_STATE_MACHINE_DONE`, which
   is `INT64_MIN`), `hegel_state_machine_next_rule(worker)` hands out the

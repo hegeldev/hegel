@@ -540,30 +540,69 @@ val pool_restore : context -> test_case -> pool:pool -> variable_id:int -> unit
 (** [pool_free ctx pool] releases [pool]. *)
 val pool_free : context -> pool -> unit
 
-(** [new_state_machine ctx tc ~rule_names ~rule_groups ~rule_weights ~invariant_names ~invariants_always_check ~min_concurrency ~max_concurrency ~step_count]
-    registers an engine-owned state machine with the named rules (each in the
-    concurrency group given by the parallel [rule_groups]) and invariants.
-    [step_count] is the target number of rounds per test case: every case runs
-    at least one round and at most [step_count], and each sampled invariant is
-    checked with probability [1 / step_count] per join point (the engine has no
-    default). Returns the machine with the concurrency level the engine drew in
-    [[min_concurrency, max_concurrency]]. The engine owns rule selection. Raises
-    {!Usage_error} if [rule_names] is empty, a group id is
-    [HEGEL_STATE_MACHINE_DONE], the concurrency bounds are invalid, or
-    [step_count] is below 1, and {!Stop_test} when the engine's choice budget is
-    exhausted. *)
+(** [new_state_machine ctx tc ~min_concurrency ~max_concurrency ~step_count]
+    creates an empty engine-owned state machine with its concurrency bounds
+    and step count. Declare its rules and invariants with
+    {!state_machine_add_rule} and {!state_machine_add_invariant}, then seal
+    them with {!state_machine_start} before driving any round. [step_count]
+    is the target number of rounds per test case: every case runs at least
+    one round and at most [step_count], and each sampled invariant is checked
+    with probability [1 / step_count] per join point (the engine has no
+    default). Raises {!Usage_error} if the concurrency bounds are invalid or
+    [step_count] is below 1, and {!Stop_test} when the engine's choice budget
+    is exhausted. *)
 val new_state_machine
   :  context
   -> test_case
-  -> rule_names:string list
-  -> rule_groups:int list
-  -> rule_weights:float list
-  -> invariant_names:string list
-  -> invariants_always_check:bool list
   -> min_concurrency:int
   -> max_concurrency:int
   -> step_count:int
-  -> state_machine * int
+  -> state_machine
+
+(** [state_machine_add_rule ctx tc ~state_machine ~name ~weight ~groups]
+    declares the machine's next rule: its index (the value
+    {!state_machine_next_rule} hands out for it) is the number of rules
+    declared before it. [weight] is its selection weight (finite and strictly
+    positive) and [groups] the ids of the concurrency groups it belongs to
+    (at least one, distinct; the machine has one group per distinct id).
+    Raises {!Usage_error} if the machine has started, [weight] is not finite
+    and positive, [groups] is empty or repeats an id, or an id is
+    [HEGEL_STATE_MACHINE_DONE], and {!Stop_test} when the engine's choice
+    budget is exhausted. *)
+val state_machine_add_rule
+  :  context
+  -> test_case
+  -> state_machine:state_machine
+  -> name:string
+  -> weight:float
+  -> groups:int list
+  -> unit
+
+(** [state_machine_add_invariant ctx tc ~state_machine ~name ~always_check]
+    declares the machine's next invariant: its index (the value
+    {!state_machine_should_check_invariant} takes for it) is the number of
+    invariants declared before it. With [always_check],
+    {!state_machine_should_check_invariant} always returns [true] for it.
+    Raises {!Usage_error} if the machine has started, and {!Stop_test} when
+    the engine's choice budget is exhausted. *)
+val state_machine_add_invariant
+  :  context
+  -> test_case
+  -> state_machine:state_machine
+  -> name:string
+  -> always_check:bool
+  -> unit
+
+(** [state_machine_start ctx tc ~state_machine] seals the declared rules and
+    invariants and returns the concurrency level the engine drew in
+    [[min_concurrency, max_concurrency]]. The engine owns rule selection.
+    Raises {!Usage_error} if no rule was declared or the machine was already
+    started, and {!Stop_test} when the engine's choice budget is exhausted. *)
+val state_machine_start
+  :  context
+  -> test_case
+  -> state_machine:state_machine
+  -> int
 
 (** [state_machine_next_group ctx tc ~state_machine] starts the machine's next
     round on the root handle, returning the round's concurrency group id, or
@@ -601,8 +640,8 @@ val state_machine_rule_rejected
   -> unit
 
 (** [state_machine_should_check_invariant ctx tc ~state_machine ~invariant_index] decides whether to run invariant [invariant_index] at the
-    current join point. It always returns [true] for an invariant flagged at
-    creation. Otherwise, it returns the engine's sampling decision. Raises
+    current join point. It always returns [true] for an invariant declared
+    with [always_check]. Otherwise, it returns the engine's sampling decision. Raises
     {!Stop_test} when the engine's choice budget is exhausted. *)
 val state_machine_should_check_invariant
   :  context

@@ -46,7 +46,7 @@ macro_rules! for_each_hegel_fn {
             fn hegel_new_collection(ctx: *mut HegelContext, tc: *mut HegelTestCase, min_size: u64, max_size: u64, out_collection: *mut *mut HegelCollection) -> hegel_result_t;
             fn hegel_new_pool(ctx: *mut HegelContext, tc: *mut HegelTestCase, out_pool: *mut *mut HegelPool) -> hegel_result_t;
             fn hegel_new_recursion(ctx: *mut HegelContext, tc: *mut HegelTestCase, max_depth: u64, max_leaves: u64, out_recursion: *mut *mut HegelRecursion) -> hegel_result_t;
-            fn hegel_new_state_machine(ctx: *mut HegelContext, tc: *mut HegelTestCase, rule_names: *const hegel_string_t, rule_groups: *const i64, rule_weights: *const f64, num_rules: usize, invariant_names: *const hegel_string_t, invariant_always_check: *const bool, num_invariants: usize, min_concurrency: i64, max_concurrency: i64, step_count: i64, out_state_machine: *mut *mut HegelStateMachine, out_concurrency: *mut i64) -> hegel_result_t;
+            fn hegel_new_state_machine(ctx: *mut HegelContext, tc: *mut HegelTestCase, min_concurrency: i64, max_concurrency: i64, step_count: i64, out_state_machine: *mut *mut HegelStateMachine) -> hegel_result_t;
             fn hegel_next_test_case(ctx: *mut HegelContext, run: *mut HegelRun, out_test_case: *mut *mut HegelTestCase) -> hegel_result_t;
             fn hegel_note(ctx: *mut HegelContext, tc: *mut HegelTestCase, text: hegel_string_t) -> hegel_result_t;
             fn hegel_owned_string_free(ctx: *mut HegelContext, result: *mut hegel_owned_string_t) -> hegel_result_t;
@@ -130,11 +130,14 @@ macro_rules! for_each_hegel_fn {
             fn hegel_settings_set_unbounded_choices(ctx: *mut HegelContext, s: *mut HegelSettings, yes: bool) -> hegel_result_t;
             fn hegel_settings_set_verbosity(ctx: *mut HegelContext, s: *mut HegelSettings, v: u32) -> hegel_result_t;
             fn hegel_start_span(ctx: *mut HegelContext, tc: *mut HegelTestCase, label: u64) -> hegel_result_t;
+            fn hegel_state_machine_add_invariant(ctx: *mut HegelContext, tc: *mut HegelTestCase, state_machine: *mut HegelStateMachine, name: hegel_string_t, always_check: bool) -> hegel_result_t;
+            fn hegel_state_machine_add_rule(ctx: *mut HegelContext, tc: *mut HegelTestCase, state_machine: *mut HegelStateMachine, name: hegel_string_t, weight: f64, groups: *const i64, num_groups: usize) -> hegel_result_t;
             fn hegel_state_machine_free(ctx: *mut HegelContext, state_machine: *mut HegelStateMachine) -> hegel_result_t;
             fn hegel_state_machine_next_group(ctx: *mut HegelContext, tc: *mut HegelTestCase, state_machine: *mut HegelStateMachine, out_group_id: *mut i64) -> hegel_result_t;
             fn hegel_state_machine_next_rule(ctx: *mut HegelContext, tc: *mut HegelTestCase, state_machine: *mut HegelStateMachine, worker_index: i64, out_rule_index: *mut i64) -> hegel_result_t;
             fn hegel_state_machine_rule_rejected(ctx: *mut HegelContext, tc: *mut HegelTestCase, state_machine: *mut HegelStateMachine, worker_index: i64) -> hegel_result_t;
             fn hegel_state_machine_should_check_invariant(ctx: *mut HegelContext, tc: *mut HegelTestCase, state_machine: *mut HegelStateMachine, invariant_index: i64, out_should_check: *mut bool) -> hegel_result_t;
+            fn hegel_state_machine_start(ctx: *mut HegelContext, tc: *mut HegelTestCase, state_machine: *mut HegelStateMachine, out_concurrency: *mut i64) -> hegel_result_t;
             fn hegel_stop_span(ctx: *mut HegelContext, tc: *mut HegelTestCase, discard: bool) -> hegel_result_t;
             fn hegel_string_generator_domain(ctx: *mut HegelContext, max_length: u64, out_generator: *mut *mut HegelStringGenerator) -> hegel_result_t;
             fn hegel_string_generator_email(ctx: *mut HegelContext, out_generator: *mut *mut HegelStringGenerator) -> hegel_result_t;

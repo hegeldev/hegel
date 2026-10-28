@@ -196,47 +196,68 @@ pub trait DataSource: Send + Sync {
     /// value and regenerate it from the root.
     fn recursion_finish(&self, state: &mut RecursionState) -> Result<bool, DataSourceError>;
 
-    /// Register a state machine for engine-owned (swarm) rule selection:
-    /// rules (each assigned to a concurrency group via `rule_groups`,
-    /// parallel to `rule_names`) and a selection weight (`rule_weights`,
-    /// also parallel to `rule_names`; every weight finite and strictly
-    /// positive, applied among the rules a worker's swarm subset enables),
-    /// invariants (each flagged always-check or
-    /// sampled via `invariant_always_check`, parallel to
-    /// `invariant_names`), and concurrency bounds.
-    /// Groups are identified by arbitrary `i64` ids: the machine has one
-    /// group per distinct value of `rule_groups`. Draws the machine's
-    /// concurrency level in
-    /// `[min_concurrency, max_concurrency]`, weighted toward the maximum
-    /// (concurrency bugs need concurrency); `min == max` fixes the level
-    /// without consuming entropy. The caller owns the returned
-    /// [`NativeStateMachine`] and passes it back to
-    /// [`Self::state_machine_next_group`] /
-    /// [`Self::state_machine_next_rule`] /
-    /// [`Self::state_machine_rule_rejected`]; any stream of the same family
-    /// may drive it. `step_count` is the target number of counted rounds
-    /// the machine runs per test case: each case runs at least one round
-    /// and at most `step_count`. Errors with `InvalidArgument` if
-    /// `rule_names` is empty, `rule_groups` or `rule_weights` is not
-    /// parallel to `rule_names`, a weight is not finite and positive,
-    /// `invariant_always_check` is not parallel to `invariant_names`,
-    /// `min_concurrency < 1`, `max_concurrency < min_concurrency`, or
-    /// `step_count < 1`.
+    /// Create an empty *state machine* for engine-owned stateful (rule-based)
+    /// testing, sequential or concurrent, with its concurrency bounds and
+    /// step count. Rules and invariants are then declared with
+    /// [`Self::state_machine_add_rule`] and
+    /// [`Self::state_machine_add_invariant`], and
+    /// [`Self::state_machine_start`] seals them and draws the machine's
+    /// concurrency level. `step_count` is the target number of counted
+    /// rounds the machine runs per test case: each case runs at least one
+    /// round and at most `step_count`. The caller owns the returned
+    /// [`NativeStateMachine`] and passes it back to every other
+    /// `state_machine_*` method; any stream of the same family may drive
+    /// it. Errors with `InvalidArgument` if `min_concurrency < 1`,
+    /// `max_concurrency < min_concurrency`, or `step_count < 1`.
     fn new_state_machine(
         &self,
-        rule_names: Vec<String>,
-        rule_groups: Vec<i64>,
-        rule_weights: Vec<f64>,
-        invariant_names: Vec<String>,
-        invariant_always_check: Vec<bool>,
         min_concurrency: i64,
         max_concurrency: i64,
         step_count: i64,
     ) -> Result<NativeStateMachine, DataSourceError>;
 
+    /// Declare the machine's next rule, named `name` for diagnostics: its
+    /// index is the number of rules declared before it. `weight` is its
+    /// selection weight relative to the other rules of whichever group is
+    /// current (finite and strictly positive, applied among the rules a
+    /// worker's swarm subset enables); `groups` lists the ids of the
+    /// concurrency groups it belongs to — at least one, without
+    /// duplicates. Group ids are arbitrary `i64`s: the machine has one
+    /// group per distinct id across every declared rule. Errors with
+    /// `InvalidArgument` on a bad weight or group list, or once the
+    /// machine has started.
+    fn state_machine_add_rule(
+        &self,
+        machine: &mut NativeStateMachine,
+        name: &str,
+        weight: f64,
+        groups: Vec<i64>,
+    ) -> Result<(), DataSourceError>;
+
+    /// Declare the machine's next invariant, named `name` for diagnostics:
+    /// its index is the number of invariants declared before it. With
+    /// `always_check`, [`Self::state_machine_should_check_invariant`]
+    /// answers `true` for it unconditionally instead of sampling. Errors
+    /// with `InvalidArgument` once the machine has started.
+    fn state_machine_add_invariant(
+        &self,
+        machine: &mut NativeStateMachine,
+        name: &str,
+        always_check: bool,
+    ) -> Result<(), DataSourceError>;
+
+    /// Seal the machine's rules and invariants and draw its concurrency
+    /// level in `[min_concurrency, max_concurrency]` from this stream,
+    /// weighted toward the maximum (concurrency bugs need concurrency);
+    /// `min == max` fixes the level without consuming entropy. Returns the
+    /// level. Errors with `InvalidArgument` if no rule was declared or the
+    /// machine was already started.
+    fn state_machine_start(&self, machine: &mut NativeStateMachine)
+    -> Result<i64, DataSourceError>;
+
     /// Start the machine's next round, drawing the stop decision and which
     /// concurrency group is current for it from this stream. Returns that
-    /// group's id (a value of `rule_groups`), or `None` once the test case
+    /// group's id (as passed to `state_machine_add_rule`), or `None` once the test case
     /// has run enough rounds. Must be called (from the root stream) at
     /// every join point, including before the first
     /// [`Self::state_machine_next_rule`] call.

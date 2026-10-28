@@ -31,23 +31,16 @@ fn capturing_test_case() -> (RunHandle, TestCase, Captured) {
 
 /// Register a single-group, concurrency-`concurrency` machine over `rules`
 /// on `tc` and return its handle.
-fn register_machine(tc: &TestCase, rules: &[&str], concurrency: i64) -> StateMachineHandle {
-    let rule_groups = vec![0i64; rules.len()];
-    let rule_weights = vec![1.0f64; rules.len()];
-    let (machine, level) = tc
-        .with_ctc(|ctc| {
-            ctc.new_state_machine(
-                rules,
-                &rule_groups,
-                &rule_weights,
-                &[],
-                &[],
-                concurrency,
-                concurrency,
-                50,
-            )
+fn single_group_machine(tc: &TestCase, rules: &[&str], concurrency: i64) -> StateMachineHandle {
+    let specs: Vec<RuleSpec<'_>> = rules
+        .iter()
+        .map(|name| RuleSpec {
+            name,
+            weight: 1.0,
+            groups: vec![0],
         })
-        .unwrap();
+        .collect();
+    let (machine, level) = register_machine(tc, &specs, &[], concurrency, concurrency, 50);
     assert_eq!(level, concurrency);
     machine
 }
@@ -241,7 +234,7 @@ fn run_worker_round_executes_the_rounds_rule_and_finishes() {
         hits: AtomicI64::new(0),
     };
     let rules = m.rules();
-    let machine = register_machine(&tc, &["hit"], 1);
+    let machine = single_group_machine(&tc, &["hit"], 1);
     assert!(
         tc.with_ctc(|ctc| ctc.state_machine_next_group(&machine))
             .unwrap()
@@ -266,7 +259,7 @@ fn run_worker_round_ferries_a_rule_panic_with_its_capture() {
     let (_run, tc, lines) = capturing_test_case();
     let m = AlwaysPanics;
     let rules = m.rules();
-    let machine = register_machine(&tc, &["boom"], 1);
+    let machine = single_group_machine(&tc, &["boom"], 1);
     assert!(
         tc.with_ctc(|ctc| ctc.state_machine_next_group(&machine))
             .unwrap()
@@ -296,7 +289,7 @@ fn run_worker_round_reports_an_exhausted_budget_as_overrun() {
         hits: AtomicI64::new(0),
     };
     let rules = m.rules();
-    let machine = register_machine(&tc, &["hit"], 1);
+    let machine = single_group_machine(&tc, &["hit"], 1);
     assert!(
         tc.with_ctc(|ctc| ctc.state_machine_next_group(&machine))
             .unwrap()
@@ -318,11 +311,19 @@ fn run_worker_round_reports_an_exhausted_budget_as_overrun() {
 #[test]
 fn machine_next_group_reports_an_exhausted_budget_as_overrun() {
     let (_run, tc, _lines) = capturing_test_case();
-    let (machine, _) = tc
-        .with_ctc(|ctc| {
-            ctc.new_state_machine(&["r0", "r1"], &[0, 1], &[1.0, 1.0], &[], &[], 1, 1, 50)
-        })
-        .unwrap();
+    let specs = [
+        RuleSpec {
+            name: "r0",
+            weight: 1.0,
+            groups: vec![0],
+        },
+        RuleSpec {
+            name: "r1",
+            weight: 1.0,
+            groups: vec![1],
+        },
+    ];
+    let (machine, _) = register_machine(&tc, &specs, &[], 1, 1, 50);
     let exhausted = with_test_context(|| {
         catch_unwind(AssertUnwindSafe(|| {
             loop {
@@ -344,7 +345,7 @@ fn worker_loop_exits_when_the_event_channel_is_gone() {
         hits: AtomicI64::new(0),
     };
     let rules = m.rules();
-    let machine = register_machine(&tc, &["hit"], 1);
+    let machine = single_group_machine(&tc, &["hit"], 1);
     let (round_tx, round_rx) = mpsc::channel();
     let (event_tx, event_rx) = mpsc::channel();
     drop(event_rx);

@@ -156,6 +156,9 @@ final class RealLibhegel implements Libhegel {
     private final MethodHandle poolAdd;
     private final MethodHandle poolGenerate;
     private final MethodHandle newStateMachine;
+    private final MethodHandle stateMachineAddRule;
+    private final MethodHandle stateMachineAddInvariant;
+    private final MethodHandle stateMachineStart;
     private final MethodHandle stateMachineNextGroup;
     private final MethodHandle stateMachineNextRule;
     private final MethodHandle stateMachineRuleRejected;
@@ -437,9 +440,23 @@ final class RealLibhegel implements Libhegel {
                 linker,
                 lookup,
                 "hegel_new_state_machine",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, JAVA_LONG, JAVA_LONG, ADDRESS));
+        this.stateMachineAddRule = h(
+                linker,
+                lookup,
+                "hegel_state_machine_add_rule",
                 FunctionDescriptor.of(
-                        JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, JAVA_LONG, ADDRESS, ADDRESS, JAVA_LONG,
-                        JAVA_LONG, JAVA_LONG, JAVA_LONG, ADDRESS, ADDRESS));
+                        JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, STRING_LAYOUT, JAVA_DOUBLE, ADDRESS, JAVA_LONG));
+        this.stateMachineAddInvariant = h(
+                linker,
+                lookup,
+                "hegel_state_machine_add_invariant",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, STRING_LAYOUT, JAVA_BOOLEAN));
+        this.stateMachineStart = h(
+                linker,
+                lookup,
+                "hegel_state_machine_start",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, ADDRESS));
         this.stateMachineNextGroup = h(
                 linker,
                 lookup,
@@ -1161,60 +1178,48 @@ final class RealLibhegel implements Libhegel {
     }
 
     @Override
-    public int newStateMachine(
-            long tc,
-            List<String> ruleNames,
-            long[] ruleGroups,
-            double[] ruleWeights,
-            List<String> invariantNames,
-            boolean[] invariantAlwaysCheck,
-            long minConcurrency,
-            long maxConcurrency,
-            long stepCount,
-            long[] outId,
-            long[] outConcurrency) {
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment rules = strArray(arena, ruleNames);
-            MemorySegment groups = arena.allocate(JAVA_LONG, Math.max(ruleGroups.length, 1));
-            for (int i = 0; i < ruleGroups.length; i++) {
-                groups.setAtIndex(JAVA_LONG, i, ruleGroups[i]);
-            }
-            // NULL keeps every rule at the same weight.
-            MemorySegment weights = MemorySegment.NULL;
-            if (ruleWeights != null) {
-                weights = arena.allocate(JAVA_DOUBLE, Math.max(ruleWeights.length, 1));
-                for (int i = 0; i < ruleWeights.length; i++) {
-                    weights.setAtIndex(JAVA_DOUBLE, i, ruleWeights[i]);
-                }
-            }
-            MemorySegment invariants = strArray(arena, invariantNames);
-            MemorySegment alwaysCheck = arena.allocate(JAVA_BOOLEAN, Math.max(invariantAlwaysCheck.length, 1));
-            for (int i = 0; i < invariantAlwaysCheck.length; i++) {
-                alwaysCheck.setAtIndex(JAVA_BOOLEAN, i, invariantAlwaysCheck[i]);
-            }
-            MemorySegment id = arena.allocate(JAVA_LONG);
-            MemorySegment concurrency = arena.allocate(JAVA_LONG);
-            int code = rc(
-                    newStateMachine,
-                    segment(tc),
-                    rules,
-                    groups,
-                    weights,
-                    (long) ruleNames.size(),
-                    invariants,
-                    alwaysCheck,
-                    (long) invariantNames.size(),
-                    minConcurrency,
-                    maxConcurrency,
-                    stepCount,
-                    id,
-                    concurrency);
-            if (code == Abi.OK) {
-                outId[0] = id.get(JAVA_LONG, 0);
-                outConcurrency[0] = concurrency.get(JAVA_LONG, 0);
-            }
-            return code;
+    public int newStateMachine(long tc, long minConcurrency, long maxConcurrency, long stepCount, long[] outId) {
+        MemorySegment id = Arena.ofAuto().allocate(JAVA_LONG);
+        int code = rc(newStateMachine, segment(tc), minConcurrency, maxConcurrency, stepCount, id);
+        if (code == Abi.OK) {
+            outId[0] = id.get(JAVA_LONG, 0);
         }
+        return code;
+    }
+
+    @Override
+    public int stateMachineAddRule(long tc, long stateMachineId, String name, double weight, long[] groups) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment ids = arena.allocate(JAVA_LONG, Math.max(groups.length, 1));
+            for (int i = 0; i < groups.length; i++) {
+                ids.setAtIndex(JAVA_LONG, i, groups[i]);
+            }
+            return rc(
+                    stateMachineAddRule,
+                    segment(tc),
+                    stateMachineId,
+                    str(arena, name),
+                    weight,
+                    ids,
+                    (long) groups.length);
+        }
+    }
+
+    @Override
+    public int stateMachineAddInvariant(long tc, long stateMachineId, String name, boolean alwaysCheck) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(stateMachineAddInvariant, segment(tc), stateMachineId, str(arena, name), alwaysCheck);
+        }
+    }
+
+    @Override
+    public int stateMachineStart(long tc, long stateMachineId, long[] outConcurrency) {
+        MemorySegment seg = Arena.ofAuto().allocate(JAVA_LONG);
+        int code = rc(stateMachineStart, segment(tc), stateMachineId, seg);
+        if (code == Abi.OK) {
+            outConcurrency[0] = seg.get(JAVA_LONG, 0);
+        }
+        return code;
     }
 
     @Override

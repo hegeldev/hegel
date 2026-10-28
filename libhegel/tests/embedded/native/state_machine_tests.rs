@@ -30,7 +30,7 @@ fn machine_concurrent_steps(
     concurrency: i64,
     step_count: i64,
 ) -> NativeStateMachine {
-    NativeStateMachine::new(
+    build(
         ntc,
         vec![0; num_rules],
         vec![1.0; num_rules],
@@ -43,7 +43,7 @@ fn machine_concurrent_steps(
 }
 
 fn grouped_machine(ntc: &mut NativeTestCase, rule_groups: &[i64]) -> NativeStateMachine {
-    NativeStateMachine::new(
+    build(
         ntc,
         rule_groups.to_vec(),
         vec![1.0; rule_groups.len()],
@@ -53,6 +53,51 @@ fn grouped_machine(ntc: &mut NativeTestCase, rule_groups: &[i64]) -> NativeState
         50,
     )
     .unwrap()
+}
+
+/// Declare one single-group rule per entry of `rule_groups` (weighted by
+/// `rule_weights`), one invariant per entry of `invariant_always_check`,
+/// and start the machine.
+fn build(
+    ntc: &mut NativeTestCase,
+    rule_groups: Vec<i64>,
+    rule_weights: Vec<f64>,
+    invariant_always_check: Vec<bool>,
+    min_concurrency: i64,
+    max_concurrency: i64,
+    step_count: i64,
+) -> Result<NativeStateMachine, EngineError> {
+    let memberships: Vec<Vec<i64>> = rule_groups.into_iter().map(|g| vec![g]).collect();
+    build_multi(
+        ntc,
+        memberships,
+        rule_weights,
+        invariant_always_check,
+        min_concurrency,
+        max_concurrency,
+        step_count,
+    )
+}
+
+/// [`build`] with each rule's full group list.
+fn build_multi(
+    ntc: &mut NativeTestCase,
+    memberships: Vec<Vec<i64>>,
+    rule_weights: Vec<f64>,
+    invariant_always_check: Vec<bool>,
+    min_concurrency: i64,
+    max_concurrency: i64,
+    step_count: i64,
+) -> Result<NativeStateMachine, EngineError> {
+    let mut sm = NativeStateMachine::new(min_concurrency, max_concurrency, step_count)?;
+    for (groups, weight) in memberships.iter().zip(rule_weights) {
+        sm.add_rule(weight, groups)?;
+    }
+    for always in invariant_always_check {
+        sm.add_invariant(always)?;
+    }
+    sm.start(ntc)?;
+    Ok(sm)
 }
 
 fn replay(prefix: &[ChoiceValue], max_size: usize) -> NativeTestCase {
@@ -344,9 +389,7 @@ fn selection_follows_the_rule_weights_among_enabled_rules() {
     let mut counts = [0usize; 2];
     for seed in 0..10 {
         let mut ntc = NativeTestCase::for_probe(&[int(0)], EngineRng::seeded(seed), 4096).unwrap();
-        let mut sm =
-            NativeStateMachine::new(&mut ntc, vec![0, 0], vec![1.0, 9.0], Vec::new(), 1, 1, 200)
-                .unwrap();
+        let mut sm = build(&mut ntc, vec![0, 0], vec![1.0, 9.0], Vec::new(), 1, 1, 200).unwrap();
         while sm.next_group(&mut ntc).unwrap().is_some() {
             while let Some(rule) = sm.next_rule(&mut ntc, 0).unwrap() {
                 counts[rule as usize] += 1;
@@ -367,7 +410,7 @@ fn weights_are_conditioned_on_the_enabled_rules() {
     for seed in 0..10 {
         let prefix = [int(1), go(), int(0), ChoiceValue::Boolean(true)]; // disable 100 weight rule
         let mut ntc = NativeTestCase::for_probe(&prefix, EngineRng::seeded(seed), 4096).unwrap();
-        let mut sm = NativeStateMachine::new(
+        let mut sm = build(
             &mut ntc,
             vec![0, 0, 0],
             vec![100.0, 1.0, 1.0],
@@ -671,11 +714,18 @@ fn a_rule_outstanding_at_the_join_point_is_not_rejectable_next_round() {
     ));
 }
 
+/// A one-rule machine declared but not started.
+fn unstarted(min_concurrency: i64, max_concurrency: i64) -> NativeStateMachine {
+    let mut sm = NativeStateMachine::new(min_concurrency, max_concurrency, 50).unwrap();
+    sm.add_rule(1.0, &[0]).unwrap();
+    sm
+}
+
 #[test]
 fn fixed_concurrency_bounds_consume_no_entropy() {
     let mut ntc = replay(&[int(0), int(0), int(0)], 8);
-    let sm = NativeStateMachine::new(&mut ntc, vec![0], vec![1.0], Vec::new(), 3, 3, 50).unwrap();
-    assert_eq!(sm.concurrency(), 3);
+    let mut sm = unstarted(3, 3);
+    assert_eq!(sm.start(&mut ntc).unwrap(), 3);
     assert_eq!(ntc.nodes.len(), 3);
 }
 
@@ -683,8 +733,8 @@ fn fixed_concurrency_bounds_consume_no_entropy() {
 fn concurrency_draw_is_max_when_the_weighted_choice_hits() {
     let prefix = [ChoiceValue::Boolean(true), int(0), int(0), int(0), int(0)];
     let mut ntc = replay(&prefix, 8);
-    let sm = NativeStateMachine::new(&mut ntc, vec![0], vec![1.0], Vec::new(), 1, 4, 50).unwrap();
-    assert_eq!(sm.concurrency(), 4);
+    let mut sm = unstarted(1, 4);
+    assert_eq!(sm.start(&mut ntc).unwrap(), 4);
     assert_eq!(
         ntc.spans[0usize].label,
         crate::native::draws::LABEL_CONCURRENCY
@@ -695,27 +745,191 @@ fn concurrency_draw_is_max_when_the_weighted_choice_hits() {
 fn concurrency_draw_falls_back_to_a_uniform_level() {
     let prefix = [ChoiceValue::Boolean(false), int(2), int(0), int(0)];
     let mut ntc = replay(&prefix, 8);
-    let sm = NativeStateMachine::new(&mut ntc, vec![0], vec![1.0], Vec::new(), 1, 4, 50).unwrap();
-    assert_eq!(sm.concurrency(), 2);
+    let mut sm = unstarted(1, 4);
+    assert_eq!(sm.start(&mut ntc).unwrap(), 2);
 }
 
 #[test]
 fn drawn_concurrency_respects_bounds() {
     for seed in 0..20 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
-        let sm =
-            NativeStateMachine::new(&mut ntc, vec![0], vec![1.0], Vec::new(), 2, 5, 50).unwrap();
-        assert!((2..=5).contains(&sm.concurrency()));
+        let mut sm = unstarted(2, 5);
+        assert!((2..=5).contains(&sm.start(&mut ntc).unwrap()));
     }
 }
 
 #[test]
 fn overrun_while_drawing_the_concurrency_level_propagates() {
     let mut ntc = replay(&[], 0);
+    let mut sm = unstarted(1, 4);
+    assert!(matches!(sm.start(&mut ntc), Err(EngineError::Overrun)));
+}
+
+#[test]
+fn nothing_is_drawn_before_start() {
+    let ntc = replay(&[], 0);
+    let mut sm = NativeStateMachine::new(1, 4, 50).unwrap();
+    sm.add_rule(1.0, &[0, 1]).unwrap();
+    sm.add_rule(2.0, &[1]).unwrap();
+    sm.add_invariant(true).unwrap();
+    assert_eq!(ntc.nodes.len(), 0);
+    assert_eq!(sm.rule_count(), 2);
+}
+
+#[test]
+fn rules_cannot_be_added_after_start() {
+    let mut ntc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
+    let mut sm = unstarted(1, 1);
+    sm.start(&mut ntc).unwrap();
     assert!(matches!(
-        NativeStateMachine::new(&mut ntc, vec![0], vec![1.0], Vec::new(), 1, 4, 50),
-        Err(EngineError::Overrun)
+        sm.add_rule(1.0, &[0]),
+        Err(EngineError::InvalidArgument(_))
     ));
+    assert!(matches!(
+        sm.add_invariant(false),
+        Err(EngineError::InvalidArgument(_))
+    ));
+    assert!(matches!(
+        sm.start(&mut ntc),
+        Err(EngineError::InvalidArgument(_))
+    ));
+}
+
+#[test]
+fn the_machine_cannot_be_driven_before_start() {
+    let mut ntc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
+    let mut sm = NativeStateMachine::new(1, 1, 50).unwrap();
+    sm.add_rule(1.0, &[0]).unwrap();
+    sm.add_invariant(false).unwrap();
+    assert!(matches!(
+        sm.next_group(&mut ntc),
+        Err(EngineError::InvalidArgument(_))
+    ));
+    assert!(matches!(
+        sm.next_rule(&mut ntc, 0),
+        Err(EngineError::InvalidArgument(_))
+    ));
+    assert!(matches!(
+        sm.rule_rejected(0),
+        Err(EngineError::InvalidArgument(_))
+    ));
+    assert!(matches!(
+        sm.should_check_invariant(&mut ntc, 0),
+        Err(EngineError::InvalidArgument(_))
+    ));
+    assert_eq!(ntc.nodes.len(), 0);
+}
+
+#[test]
+fn a_rule_in_several_groups_is_handed_out_in_each() {
+    let memberships = vec![vec![0], vec![0, 1], vec![1]];
+    let mut seen = [[false; 2]; 3];
+    for seed in 0..40 {
+        let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
+        let mut sm = build_multi(
+            &mut ntc,
+            memberships.clone(),
+            vec![1.0; 3],
+            Vec::new(),
+            1,
+            1,
+            50,
+        )
+        .unwrap();
+        for _ in 0..30 {
+            let Some(group) = sm.next_group(&mut ntc).unwrap() else {
+                break;
+            };
+            let rule = sm.next_rule(&mut ntc, 0).unwrap().unwrap() as usize;
+            assert!(
+                memberships[rule].contains(&group),
+                "rule {rule} in group {group}"
+            );
+            seen[rule][group as usize] = true;
+        }
+    }
+    assert_eq!(seen, [[true, false], [true, true], [false, true]]);
+}
+
+/// Rules 0 `{0, 1}`, 1 `{0, 2}`, 2 `{2}`, 3 `{1}`. A round of group 2
+/// disables rule 1, which leaves rule 0 the last candidate of group 0 even
+/// though no round of group 0 has run. Rule 0 is then queried during a
+/// round of group 1, where rule 3 is still undecided — and is forced
+/// enabled anyway, because group 0 would otherwise be left without a
+/// rule.
+#[test]
+fn a_rules_last_candidate_status_in_any_of_its_groups_forces_it_enabled() {
+    let prefix = [
+        int(254),
+        go(),
+        int(2),
+        int(0),
+        ChoiceValue::Boolean(true),
+        int(1),
+        ChoiceValue::Boolean(false),
+        go(),
+        int(1),
+        int(0),
+        ChoiceValue::Boolean(false),
+    ];
+    let mut ntc = replay(&prefix, 16);
+    let mut sm = build_multi(
+        &mut ntc,
+        vec![vec![0, 1], vec![0, 2], vec![2], vec![1]],
+        vec![1.0; 4],
+        Vec::new(),
+        1,
+        1,
+        50,
+    )
+    .unwrap();
+    assert_eq!(sm.next_group(&mut ntc).unwrap(), Some(2));
+    assert_eq!(sm.next_rule(&mut ntc, 0).unwrap(), Some(2));
+    assert_eq!(ntc.nodes.len(), 7);
+    assert!(ntc.nodes[6].was_forced);
+    assert_eq!(ntc.nodes[6].value(), ChoiceValue::Boolean(false));
+    assert_eq!(sm.next_group(&mut ntc).unwrap(), Some(1));
+    assert_eq!(sm.next_rule(&mut ntc, 0).unwrap(), Some(0));
+    assert_eq!(ntc.nodes.len(), 11);
+    assert!(ntc.nodes[10].was_forced);
+    assert_eq!(ntc.nodes[10].value(), ChoiceValue::Boolean(false));
+}
+
+/// Enabling a rule satisfies the guarantee of every group it belongs to:
+/// once rule 1 (in both groups) is enabled, rule 0 and rule 2 are free to
+/// be disabled.
+#[test]
+fn an_enabled_rule_releases_every_group_it_belongs_to() {
+    let prefix = [
+        int(254),
+        go(),
+        int(1),
+        int(0),
+        ChoiceValue::Boolean(false),
+        go(),
+        int(0),
+        int(0),
+        ChoiceValue::Boolean(true),
+        int(1),
+    ];
+    let mut ntc = replay(&prefix, 16);
+    let mut sm = build_multi(
+        &mut ntc,
+        vec![vec![0], vec![0, 1], vec![1]],
+        vec![1.0; 3],
+        Vec::new(),
+        1,
+        1,
+        50,
+    )
+    .unwrap();
+    assert_eq!(sm.next_group(&mut ntc).unwrap(), Some(1));
+    assert_eq!(sm.next_rule(&mut ntc, 0).unwrap(), Some(1));
+    assert_eq!(sm.next_group(&mut ntc).unwrap(), Some(0));
+    assert_eq!(sm.next_rule(&mut ntc, 0).unwrap(), Some(1));
+    assert_eq!(ntc.nodes.len(), 11);
+    assert!(!ntc.nodes[8].was_forced, "rule 0 was free to be disabled");
+    assert!(ntc.nodes[10].was_forced, "rule 1 is already decided");
 }
 
 #[test]
@@ -747,7 +961,7 @@ fn try_machine(
     ntc: &mut NativeTestCase,
     num_rules: usize,
 ) -> Result<NativeStateMachine, EngineError> {
-    NativeStateMachine::new(
+    build(
         ntc,
         vec![0; num_rules],
         vec![1.0; num_rules],
@@ -872,35 +1086,43 @@ fn no_rules_is_error() {
 #[test]
 #[should_panic(expected = "Stateful testing: concurrency bounds must satisfy 1 <= min <= max")]
 fn zero_min_concurrency_is_error() {
-    let mut ntc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
-    NativeStateMachine::new(&mut ntc, vec![0], vec![1.0], Vec::new(), 0, 1, 50).unwrap();
+    NativeStateMachine::new(0, 1, 50).unwrap();
 }
 
 #[test]
 #[should_panic(expected = "Stateful testing: concurrency bounds must satisfy 1 <= min <= max")]
 fn inverted_concurrency_bounds_is_error() {
-    let mut ntc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
-    NativeStateMachine::new(&mut ntc, vec![0], vec![1.0], Vec::new(), 2, 1, 50).unwrap();
+    NativeStateMachine::new(2, 1, 50).unwrap();
 }
 
 #[test]
-#[should_panic(expected = "Stateful testing: rule weights must be parallel to rule groups")]
-fn non_parallel_rule_weights_is_error() {
-    let mut ntc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
-    NativeStateMachine::new(&mut ntc, vec![0, 0], vec![1.0], Vec::new(), 1, 1, 50).unwrap();
+#[should_panic(expected = "Stateful testing: step count must be at least 1")]
+fn zero_step_count_is_error() {
+    NativeStateMachine::new(1, 1, 0).unwrap();
 }
 
 #[test]
 #[should_panic(expected = "Stateful testing: rule weights must be finite and positive")]
 fn non_positive_rule_weight_is_error() {
-    let mut ntc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
-    NativeStateMachine::new(&mut ntc, vec![0, 0], vec![1.0, 0.0], Vec::new(), 1, 1, 50).unwrap();
+    unstarted(1, 1).add_rule(0.0, &[0]).unwrap();
+}
+
+#[test]
+#[should_panic(expected = "Stateful testing: a rule must belong to at least one group")]
+fn a_rule_without_groups_is_error() {
+    unstarted(1, 1).add_rule(1.0, &[]).unwrap();
+}
+
+#[test]
+#[should_panic(expected = "Stateful testing: a rule's groups must be distinct")]
+fn a_rule_with_a_repeated_group_is_error() {
+    unstarted(1, 1).add_rule(1.0, &[3, 1, 3]).unwrap();
 }
 
 #[test]
 fn rule_weights_are_kept_in_registration_order() {
     let mut ntc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
-    let sm = NativeStateMachine::new(
+    let sm = build(
         &mut ntc,
         vec![0, 1, 0],
         vec![3.0, 0.5, 1.0],
@@ -916,9 +1138,7 @@ fn rule_weights_are_kept_in_registration_order() {
 #[test]
 fn should_check_invariant_rejects_out_of_range_indices() {
     let mut ntc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
-    let mut sm =
-        NativeStateMachine::new(&mut ntc, vec![0], vec![1.0], vec![false, false], 1, 1, 50)
-            .unwrap();
+    let mut sm = build(&mut ntc, vec![0], vec![1.0], vec![false, false], 1, 1, 50).unwrap();
     assert!(matches!(
         sm.should_check_invariant(&mut ntc, 2),
         Err(EngineError::InvalidArgument(_))
@@ -932,8 +1152,7 @@ fn should_check_invariant_rejects_out_of_range_indices() {
 #[test]
 fn should_check_invariant_is_always_true_at_step_count_one() {
     let mut ntc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
-    let mut sm =
-        NativeStateMachine::new(&mut ntc, vec![0], vec![1.0], vec![false], 1, 1, 1).unwrap();
+    let mut sm = build(&mut ntc, vec![0], vec![1.0], vec![false], 1, 1, 1).unwrap();
     for _ in 0..10 {
         assert!(sm.should_check_invariant(&mut ntc, 0).unwrap());
     }
@@ -944,8 +1163,7 @@ fn should_check_invariant_samples_at_one_over_step_count() {
     let mut trues = 0;
     for seed in 0..20 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
-        let mut sm =
-            NativeStateMachine::new(&mut ntc, vec![0], vec![1.0], vec![false], 1, 1, 50).unwrap();
+        let mut sm = build(&mut ntc, vec![0], vec![1.0], vec![false], 1, 1, 50).unwrap();
         for _ in 0..100 {
             if sm.should_check_invariant(&mut ntc, 0).unwrap() {
                 trues += 1;
@@ -961,8 +1179,7 @@ fn should_check_invariant_samples_at_one_over_step_count() {
 #[test]
 fn always_check_invariants_are_checked_without_consuming_entropy() {
     let mut ntc = NativeTestCase::new_random(EngineRng::seeded(0)).unwrap();
-    let mut sm =
-        NativeStateMachine::new(&mut ntc, vec![0], vec![1.0], vec![true, false], 1, 1, 50).unwrap();
+    let mut sm = build(&mut ntc, vec![0], vec![1.0], vec![true, false], 1, 1, 50).unwrap();
     let nodes_before = ntc.nodes.len();
     for _ in 0..20 {
         assert!(sm.should_check_invariant(&mut ntc, 0).unwrap());

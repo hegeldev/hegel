@@ -267,22 +267,33 @@ def _check_invariants(
             raise
 
 
+def _register_machine(
+    tc: TestCase,
+    rules: list[tuple[Rule, list[int]]],
+    invariants: list[Invariant],
+    min_concurrency: int,
+    max_concurrency: int,
+    step_count: int,
+) -> NativeMachine:
+    """Create an engine state machine and declare every rule (with its
+    concurrency-group ids) and invariant in order, so the engine's indices
+    are positions in ``rules`` and ``invariants``. The caller starts it."""
+    machine = tc._handle.new_state_machine(min_concurrency, max_concurrency, step_count)
+    for rule, groups in rules:
+        machine.add_rule(tc._handle, rule.name, rule.weight, groups)
+    for inv in invariants:
+        machine.add_invariant(tc._handle, inv.name, inv.always_run)
+    return machine
+
+
 def _run_sequential(
     tc: TestCase,
     rules: list[Rule],
     invariants: list[Invariant],
     step_count: int,
 ) -> None:
-    machine, _ = tc._handle.new_state_machine(
-        [r.name for r in rules],
-        [0] * len(rules),
-        [r.weight for r in rules],
-        [i.name for i in invariants],
-        [i.always_run for i in invariants],
-        1,
-        1,
-        step_count,
-    )
+    machine = _register_machine(tc, [(r, [0]) for r in rules], invariants, 1, 1, step_count)
+    machine.start(tc._handle)
     if invariants:
         tc.note("Checking invariants on the initial state.")
     _check_invariants(tc, invariants, None)
@@ -446,21 +457,15 @@ def _run_concurrent(
     step_count: int,
 ) -> None:
     group_names: list[str] = []
-    rule_groups: list[int] = []
+    rule_specs: list[tuple[Rule, list[int]]] = []
     for r in rules:
         if r.group not in group_names:
             group_names.append(r.group)
-        rule_groups.append(group_names.index(r.group))
-    machine, concurrency = tc._handle.new_state_machine(
-        [r.name for r in rules],
-        rule_groups,
-        [r.weight for r in rules],
-        [i.name for i in invariants],
-        [i.always_run for i in invariants],
-        min_concurrency,
-        max_concurrency,
-        step_count,
+        rule_specs.append((r, [group_names.index(r.group)]))
+    machine = _register_machine(
+        tc, rule_specs, invariants, min_concurrency, max_concurrency, step_count
     )
+    concurrency = machine.start(tc._handle)
     tc.note(f"Concurrency level: {concurrency}")
     if invariants:
         tc.note("Checking invariants on the initial state.")

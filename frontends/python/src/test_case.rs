@@ -1,8 +1,7 @@
 use crate::printer::{Printer, with_options};
 use crate::{
     InternalError, OutputBuffer, SendPtr, Settings, StringGenerator, big_from_le, big_to_le, check,
-    hstr, hstr_bytes, hstrs, opt_string_from, output_trampoline, output_user_data, string_from,
-    with_ctx,
+    hstr, hstr_bytes, opt_string_from, output_trampoline, output_user_data, string_from, with_ctx,
 };
 use hegel_c as c;
 use hegel_c::hegel_result_t as Rc;
@@ -620,46 +619,28 @@ impl TestCase {
         Ok(Pool { raw: SendPtr(raw) })
     }
 
-    /// Register a state machine; returns `(machine, concurrency)`.
-    #[pyo3(signature = (rule_names, rule_groups, rule_weights, invariant_names, invariant_always_check, min_concurrency, max_concurrency, step_count))]
+    /// Create an empty state machine with its concurrency bounds and step
+    /// count; declare rules and invariants on it, then `start` it.
     fn new_state_machine(
         &self,
-        rule_names: Vec<String>,
-        rule_groups: Vec<i64>,
-        rule_weights: Option<Vec<f64>>,
-        invariant_names: Vec<String>,
-        invariant_always_check: Option<Vec<bool>>,
         min_concurrency: i64,
         max_concurrency: i64,
         step_count: i64,
-    ) -> PyResult<(StateMachine, i64)> {
-        let rules = hstrs(&rule_names);
-        let invariants = hstrs(&invariant_names);
+    ) -> PyResult<StateMachine> {
         let mut raw: *mut c::HegelStateMachine = ptr::null_mut();
-        let mut concurrency = 0i64;
         with_ctx(|ctx| {
             check(unsafe {
                 c::hegel_new_state_machine(
                     ctx,
                     self.tc(),
-                    rules.as_ptr(),
-                    rule_groups.as_ptr(),
-                    rule_weights.as_ref().map_or(ptr::null(), |w| w.as_ptr()),
-                    rules.len(),
-                    invariants.as_ptr(),
-                    invariant_always_check
-                        .as_ref()
-                        .map_or(ptr::null(), |a| a.as_ptr()),
-                    invariants.len(),
                     min_concurrency,
                     max_concurrency,
                     step_count,
                     &mut raw,
-                    &mut concurrency,
                 )
             })
         })?;
-        Ok((StateMachine { raw: SendPtr(raw) }, concurrency))
+        Ok(StateMachine { raw: SendPtr(raw) })
     }
 }
 
@@ -787,6 +768,51 @@ impl Drop for StateMachine {
 
 #[pymethods]
 impl StateMachine {
+    /// Declare the next rule: its index is the number of rules declared
+    /// before it. `groups` lists the ids of the concurrency groups it
+    /// belongs to.
+    fn add_rule(&self, tc: &TestCase, name: &str, weight: f64, groups: Vec<i64>) -> PyResult<()> {
+        with_ctx(|ctx| {
+            check(unsafe {
+                c::hegel_state_machine_add_rule(
+                    ctx,
+                    tc.tc(),
+                    self.raw.0,
+                    hstr(name),
+                    weight,
+                    groups.as_ptr(),
+                    groups.len(),
+                )
+            })
+        })
+    }
+
+    /// Declare the next invariant: its index is the number of invariants
+    /// declared before it.
+    fn add_invariant(&self, tc: &TestCase, name: &str, always_check: bool) -> PyResult<()> {
+        with_ctx(|ctx| {
+            check(unsafe {
+                c::hegel_state_machine_add_invariant(
+                    ctx,
+                    tc.tc(),
+                    self.raw.0,
+                    hstr(name),
+                    always_check,
+                )
+            })
+        })
+    }
+
+    /// Seal the declared rules and invariants and draw the concurrency
+    /// level, returning it.
+    fn start(&self, tc: &TestCase) -> PyResult<i64> {
+        let mut out = 0i64;
+        with_ctx(|ctx| {
+            check(unsafe { c::hegel_state_machine_start(ctx, tc.tc(), self.raw.0, &mut out) })
+        })?;
+        Ok(out)
+    }
+
     /// The next round's group id, or `None` once the machine is done.
     fn next_group(&self, tc: &TestCase) -> PyResult<Option<i64>> {
         let mut out = 0i64;

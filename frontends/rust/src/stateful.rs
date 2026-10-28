@@ -997,29 +997,69 @@ impl<M: ConcurrentStateMachine + Sync> Machine<M> {
     }
 }
 
-fn run_sequential<M: StateMachine>(mut m: M, tc: TestCase, step_count: i64) {
-    let rules = m.rules();
-    let rule_names: Vec<&str> = rules.iter().map(|r| r.name.as_str()).collect();
-    let rule_groups = vec![0i64; rules.len()];
-    let rule_weights: Vec<f64> = rules.iter().map(|r| r.weight).collect();
-    let invariants = m.invariants();
-    let invariant_names: Vec<&str> = invariants.iter().map(|r| r.name.as_str()).collect();
-    let invariant_always_check: Vec<bool> = invariants.iter().map(|r| r.always_run).collect();
-    let machine = match tc.with_ctc(|ctc| {
-        ctc.new_state_machine(
-            &rule_names,
-            &rule_groups,
-            &rule_weights,
-            &invariant_names,
-            &invariant_always_check,
-            1,
-            1,
-            step_count,
-        )
-    }) {
-        Ok((handle, _)) => handle,
+/// One rule as declared to the engine: its name, selection weight, and the
+/// ids of the concurrency groups it belongs to.
+struct RuleSpec<'a> {
+    name: &'a str,
+    weight: f64,
+    groups: Vec<i64>,
+}
+
+/// Build and start an engine state machine: create it with the bounds and
+/// step count, declare every rule and invariant in order (so the engine's
+/// rule and invariant indices are positions in `rules` and `invariants`),
+/// and start it. Returns the machine and the concurrency level the engine
+/// drew.
+fn register_machine(
+    tc: &TestCase,
+    rules: &[RuleSpec<'_>],
+    invariants: &[(&str, bool)],
+    min_concurrency: i64,
+    max_concurrency: i64,
+    step_count: i64,
+) -> (StateMachineHandle, i64) {
+    let machine = match tc
+        .with_ctc(|ctc| ctc.new_state_machine(min_concurrency, max_concurrency, step_count))
+    {
+        Ok(handle) => handle,
         Err(rc) => raise_for_rc(rc),
     };
+    for rule in rules {
+        if let Err(rc) = tc.with_ctc(|ctc| {
+            ctc.state_machine_add_rule(&machine, rule.name, rule.weight, &rule.groups)
+        }) {
+            raise_for_rc(rc);
+        }
+    }
+    for &(name, always_check) in invariants {
+        if let Err(rc) =
+            tc.with_ctc(|ctc| ctc.state_machine_add_invariant(&machine, name, always_check))
+        {
+            raise_for_rc(rc);
+        }
+    }
+    match tc.with_ctc(|ctc| ctc.state_machine_start(&machine)) {
+        Ok(concurrency) => (machine, concurrency),
+        Err(rc) => raise_for_rc(rc),
+    }
+}
+
+fn run_sequential<M: StateMachine>(mut m: M, tc: TestCase, step_count: i64) {
+    let rules = m.rules();
+    let rule_specs: Vec<RuleSpec<'_>> = rules
+        .iter()
+        .map(|r| RuleSpec {
+            name: r.name.as_str(),
+            weight: r.weight,
+            groups: vec![0],
+        })
+        .collect();
+    let invariants = m.invariants();
+    let invariant_specs: Vec<(&str, bool)> = invariants
+        .iter()
+        .map(|r| (r.name.as_str(), r.always_run))
+        .collect();
+    let (machine, _) = register_machine(&tc, &rule_specs, &invariant_specs, 1, 1, step_count);
 
     if !invariants.is_empty() {
         tc.note("Checking invariants on the initial state.");
@@ -1367,11 +1407,8 @@ fn run_concurrent_machine<M: ConcurrentStateMachine + Sync>(
 ) {
     let rules = m.rules();
     let invariants = m.invariants();
-    let rule_names: Vec<&str> = rules.iter().map(|r| r.name.as_str()).collect();
-    let invariant_names: Vec<&str> = invariants.iter().map(|r| r.name.as_str()).collect();
-    let invariant_always_check: Vec<bool> = invariants.iter().map(|r| r.always_run).collect();
     let mut group_names: Vec<&str> = Vec::new();
-    let mut rule_groups: Vec<i64> = Vec::with_capacity(rules.len());
+    let mut rule_specs: Vec<RuleSpec<'_>> = Vec::with_capacity(rules.len());
     for rule in &rules {
         let index = group_names
             .iter()
@@ -1380,25 +1417,25 @@ fn run_concurrent_machine<M: ConcurrentStateMachine + Sync>(
                 group_names.push(rule.group.as_str());
                 group_names.len() - 1
             });
-        rule_groups.push(index as i64);
+        rule_specs.push(RuleSpec {
+            name: rule.name.as_str(),
+            weight: rule.weight,
+            groups: vec![index as i64],
+        });
     }
-    let rule_weights: Vec<f64> = rules.iter().map(|r| r.weight).collect();
+    let invariant_specs: Vec<(&str, bool)> = invariants
+        .iter()
+        .map(|r| (r.name.as_str(), r.always_run))
+        .collect();
 
-    let (machine, concurrency) = match tc.with_ctc(|ctc| {
-        ctc.new_state_machine(
-            &rule_names,
-            &rule_groups,
-            &rule_weights,
-            &invariant_names,
-            &invariant_always_check,
-            min_concurrency,
-            max_concurrency,
-            step_count,
-        )
-    }) {
-        Ok(created) => created,
-        Err(rc) => raise_for_rc(rc),
-    };
+    let (machine, concurrency) = register_machine(
+        &tc,
+        &rule_specs,
+        &invariant_specs,
+        min_concurrency,
+        max_concurrency,
+        step_count,
+    );
     tc.note(&format!("Concurrency level: {concurrency}"));
 
     if !invariants.is_empty() {

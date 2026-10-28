@@ -544,17 +544,42 @@ let new_state_machine_with_concurrency
       ~max_concurrency
   =
   with_stop_guard tc (fun () ->
-    Ffi.new_state_machine
-      tc.context
-      tc.handle
-      ~rule_names
-      ~rule_groups
-      ~rule_weights
-      ~invariant_names
-      ~invariants_always_check
-      ~step_count
-      ~min_concurrency
-      ~max_concurrency)
+    let state_machine =
+      Ffi.new_state_machine
+        tc.context
+        tc.handle
+        ~min_concurrency
+        ~max_concurrency
+        ~step_count
+    in
+    match
+      List.iter2
+        (fun name (group, weight) ->
+           Ffi.state_machine_add_rule
+             tc.context
+             tc.handle
+             ~state_machine
+             ~name
+             ~weight
+             ~groups:[ group ])
+        rule_names
+        (List.combine rule_groups rule_weights);
+      List.iter2
+        (fun name always_check ->
+           Ffi.state_machine_add_invariant
+             tc.context
+             tc.handle
+             ~state_machine
+             ~name
+             ~always_check)
+        invariant_names
+        invariants_always_check;
+      Ffi.state_machine_start tc.context tc.handle ~state_machine
+    with
+    | concurrency -> state_machine, concurrency
+    | exception exn ->
+      Ffi.state_machine_free tc.context state_machine;
+      raise exn)
 ;;
 
 (** [new_collection tc ~min_size ~max_size] starts an engine-managed collection.

@@ -669,19 +669,36 @@ let c_new_state_machine =
     "hegel_new_state_machine"
     (handle_t
      @-> handle_t
-     @-> ptr Str.t
-     @-> ptr int64_t
-     @-> ptr double
-     @-> size_t
-     @-> ptr Str.t
-     @-> ptr bool
-     @-> size_t
      @-> int64_t
      @-> int64_t
      @-> int64_t
      @-> ptr handle_t
-     @-> ptr int64_t
      @-> returning int)
+;;
+
+let c_state_machine_add_rule =
+  foreign
+    "hegel_state_machine_add_rule"
+    (handle_t
+     @-> handle_t
+     @-> handle_t
+     @-> str
+     @-> double
+     @-> ptr int64_t
+     @-> size_t
+     @-> returning int)
+;;
+
+let c_state_machine_add_invariant =
+  foreign
+    "hegel_state_machine_add_invariant"
+    (handle_t @-> handle_t @-> handle_t @-> str @-> bool @-> returning int)
+;;
+
+let c_state_machine_start =
+  foreign
+    "hegel_state_machine_start"
+    (handle_t @-> handle_t @-> handle_t @-> ptr int64_t @-> returning int)
 ;;
 
 let c_state_machine_next_group =
@@ -1596,46 +1613,42 @@ let pool_restore ctx tc ~pool ~variable_id =
 
 let pool_free ctx pool = check_rc ctx (c_pool_free ctx pool)
 
-let new_state_machine
-      ctx
-      tc
-      ~rule_names
-      ~rule_groups
-      ~rule_weights
-      ~invariant_names
-      ~invariants_always_check
-      ~min_concurrency
-      ~max_concurrency
-      ~step_count
-  =
-  let rules_ptr, rules_root = to_string_array rule_names in
-  let groups = CArray.of_list int64_t (List.map Int64.of_int rule_groups) in
-  let weights = CArray.of_list double rule_weights in
-  let invariants_always_check = CArray.of_list bool invariants_always_check in
-  let invs_ptr, invs_root = to_string_array invariant_names in
+let new_state_machine ctx tc ~min_concurrency ~max_concurrency ~step_count =
   let out = allocate handle_t null_handle in
-  let out_concurrency = allocate int64_t 0L in
-  let rc =
-    c_new_state_machine
-      ctx
-      tc
-      rules_ptr
-      (CArray.start groups)
-      (CArray.start weights)
-      (Unsigned.Size_t.of_int (List.length rule_names))
-      invs_ptr
-      (CArray.start invariants_always_check)
-      (Unsigned.Size_t.of_int (List.length invariant_names))
-      (Int64.of_int min_concurrency)
-      (Int64.of_int max_concurrency)
-      (Int64.of_int step_count)
-      out
-      out_concurrency
-  in
-  Root.release rules_root;
-  Root.release invs_root;
-  check_rc ctx rc;
-  !@out, Int64.to_int !@out_concurrency
+  check_rc
+    ctx
+    (c_new_state_machine
+       ctx
+       tc
+       (Int64.of_int min_concurrency)
+       (Int64.of_int max_concurrency)
+       (Int64.of_int step_count)
+       out);
+  !@out
+;;
+
+let state_machine_add_rule ctx tc ~state_machine ~name ~weight ~groups =
+  let groups = CArray.of_list int64_t (List.map Int64.of_int groups) in
+  check_rc
+    ctx
+    (c_state_machine_add_rule
+       ctx
+       tc
+       state_machine
+       name
+       weight
+       (CArray.start groups)
+       (Unsigned.Size_t.of_int (CArray.length groups)))
+;;
+
+let state_machine_add_invariant ctx tc ~state_machine ~name ~always_check =
+  check_rc ctx (c_state_machine_add_invariant ctx tc state_machine name always_check)
+;;
+
+let state_machine_start ctx tc ~state_machine =
+  let out = allocate int64_t 0L in
+  check_rc ctx (c_state_machine_start ctx tc state_machine out);
+  Int64.to_int !@out
 ;;
 
 (* [HEGEL_STATE_MACHINE_DONE]: written to the out parameter by
@@ -1922,6 +1935,9 @@ let pool_generate = Obj.magic_portable pool_generate
 let pool_restore = Obj.magic_portable pool_restore
 let pool_free = Obj.magic_portable pool_free
 let new_state_machine = Obj.magic_portable new_state_machine
+let state_machine_add_rule = Obj.magic_portable state_machine_add_rule
+let state_machine_add_invariant = Obj.magic_portable state_machine_add_invariant
+let state_machine_start = Obj.magic_portable state_machine_start
 let state_machine_next_group = Obj.magic_portable state_machine_next_group
 let state_machine_next_rule = Obj.magic_portable state_machine_next_rule
 let state_machine_rule_rejected = Obj.magic_portable state_machine_rule_rejected
