@@ -88,14 +88,75 @@ class SortTest {
 This test will fail when run with `mvn test`! Hegel will produce a minimal failing test case for us:
 
 ```
-xs = [0, 0];
+var xs_1 = List.of(0, 0);
 
 org.opentest4j.AssertionFailedError: expected: <2> but was: <1>
 ```
 
-Hegel reports the minimal example showing that our sort is incorrectly dropping duplicates: `[0, 0]`, two equal elements, which `mySort` collapses into one. If we replace the `TreeSet`-based body of `mySort()` with a sort that keeps duplicates, this test will then pass.
+Hegel reports the minimal example showing that our sort is incorrectly dropping duplicates: `List.of(0, 0)`, two equal elements, which `mySort` collapses into one. If we replace the `TreeSet`-based body of `mySort()` with a sort that keeps duplicates, this test will then pass.
 
-The optional `"xs"` label passed to `draw` names the value in the falsifying-example output. See the [API documentation](https://javadoc.io/doc/dev.hegel/hegel) for a full tour of generators, combinators, control functions, and settings.
+The optional `"xs"` label passed to `draw` names the value in the falsifying-example output. The generator prints the value as it draws it, so `draw` needs a `PrintableGenerator`, as every built-in generator is; make a hand-written generator printable with `printWith` or `printAsRepr`, or draw it with `drawSilent`. See the [API documentation](https://javadoc.io/doc/dev.hegel/hegel) for a full tour of generators, combinators, control functions, and settings.
+
+## Generators
+
+`Generators` has a generator for each common Java type, plus combinators (`map`, `filter`,
+`flatMap`, `oneOf`, `lists(...).unique()`, `records(...)`, ...). A few that go beyond the basics:
+
+```java
+BigInteger n = tc.draw(bigIntegers().min(BigInteger.ONE.shiftLeft(200)));   // past the range of long
+List<String> order = tc.draw(permutations(List.of("a", "b", "c")));         // shrinks toward the original order
+String expr = tc.draw(fromLark("""
+        ?start: sum
+        ?sum: NUMBER | sum "+" NUMBER
+        %import common.NUMBER
+        """));                                                                 // strings matching a Lark grammar
+Object tree = tc.draw(recursive(
+        integers().map(x -> (Object) x),
+        children -> lists(children).map(xs -> (Object) xs)));                  // recursive data, such as trees
+```
+
+## Explicit examples
+
+Give values a test must always be run with, before any are generated. A draw takes the value named
+for it, or else the example's next positional value:
+
+```java
+static List<Example> edgeCases() {
+  return List.of(Example.of(List.of()), Example.of().with("xs", List.of(0, 0)));
+}
+
+@HegelTest(examples = "edgeCases")
+void sortingPreservesLength(TestCase tc) { ... }
+```
+
+or `new Settings().examples(...)` with `Hegel.test`. An example that does not fit the test, or that
+the test rejects with `assume` or `reject`, is a usage error: explicit test cases must not be rejected.
+
+## Settings and profiles
+
+Every engine setting has an `@HegelTest` attribute and a `Settings` method (a test's location, its
+infrastructure packages and string-form settings are `Settings`-only). A `Settings` resolves every
+setting through the engine when it is created, so anything a test does not set comes from the
+engine's settings profile: a `hegel.toml` file, the `HEGEL_*` environment variables, or the shipped
+`development`, `ci` and `workload` profiles, picked automatically. Reach
+any engine setting by its `hegel.toml` key with `Settings.set`, and name, register and select
+profiles from Java:
+
+```java
+Hegel.test(body, new Settings().set("suppress_health_check", "too_slow"));
+
+Settings.registerProfile("nightly", Settings.fromProfile("ci").testCases(10_000));
+Settings.setDefaultProfile("nightly");
+
+@HegelTest(profile = "ci")
+void property(TestCase tc) { ... }
+```
+
+## Reproducing failures
+
+A failure report ends with a reproducer, such as `reproduceFailure = "..."` for an `@HegelTest`.
+Add it to the annotation (or call `Settings.reproduceFailure(...)` for `Hegel.test`) to replay
+exactly that failure instead of generating; give several blobs to replay several failures at once.
 
 ## Stateful testing
 
@@ -136,6 +197,7 @@ report.status();                        // PASSED, FAILED, or ERROR
 report.statistics();                    // valid / invalid / overrun / interesting case counts
 for (Failure f : report.failures()) {   // one per distinct counterexample
   f.draws();                            // labelled draws of the minimal example, as Java values
+  f.output();                           // the printed report of the minimal example, line by line
   f.exception();                        // the body's own throwable
   f.reproduceBlob();                    // Optional: replay it later with Settings.reproduceFailure
   f.caveat();                           // Optional: how reliably a nondeterministic failure reproduced
@@ -153,7 +215,7 @@ frontend's own stack frames out of failure origins.
 audiences that do not want the Java frontend:
 
 - **Writing a binding** — implement `dev.hegel.lowlevel.Libhegel` (one method per `hegel_*`
-  function in `hegel.h`, with raw handles and return codes) over your FFI mechanism, and register
+  function in `hegel.h` that the Java frontend uses, with raw handles and return codes) over your FFI mechanism, and register
   it as a `dev.hegel.lowlevel.LibhegelBackend` service provider. The two bundled bindings are
   registered the same way.
 - **Building a frontend from scratch** — depend on `hegel-lowlevel` plus one binding, call

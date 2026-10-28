@@ -1,6 +1,10 @@
 package dev.hegel;
 
 import static dev.hegel.Generators.integers;
+import static dev.hegel.Generators.just;
+import static dev.hegel.Generators.optional;
+import static dev.hegel.Generators.text;
+import static dev.hegel.Generators.tuples;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -36,8 +40,8 @@ class LibraryApiTest {
         assertEquals(RunStatus.FAILED, report.status());
         assertEquals(1, report.failures().size());
         Failure f = report.failures().get(0);
-        assertEquals(Map.of("x", 11), f.draws());
-        assertEquals(List.of("observed x=11"), f.notes());
+        assertEquals(Map.of("x_1", 11), f.draws());
+        assertEquals(List.of("var x_1 = 11;", "observed x=11"), f.output());
         assertTrue(f.exception() instanceof AssertionError);
         assertTrue(f.exception().getMessage().contains("x was too big: 11"));
         assertTrue(f.origin().startsWith("AssertionFailedError at "), f.origin());
@@ -49,6 +53,23 @@ class LibraryApiTest {
         assertTrue(finals.get() >= 1, "stamped cases: " + finals.get());
         assertTrue(report.statistics().interesting() >= 2, report.statistics().toString());
         assertTrue(report.statistics().total() > report.statistics().interesting());
+    }
+
+    @Test
+    void stringsInsideRecordsAndOptionalsPrintAsLiterals() {
+        RunReport report = Hegel.run(
+                tc -> {
+                    tc.draw(tuples(text(), text()), "pair");
+                    tc.draw(tuples(just("a b\nc"), optional(just("d e"))), "nested");
+                    throw new AssertionError("always");
+                },
+                QUIET,
+                Reporter.silent());
+        assertEquals(
+                List.of(
+                        "var pair_1 = new Tuple2(\"\", \"\");",
+                        "var nested_1 = new Tuple2(\"a b\\nc\", Optional.empty());"),
+                report.failures().get(0).output());
     }
 
     @Test
@@ -85,9 +106,14 @@ class LibraryApiTest {
         assertTrue(report.statistics().invalid() > 0);
     }
 
-    /** A foreign composite generator: two draws enclosed in a custom-labelled span. */
-    private static final Generator<int[]> PAIR = tc -> tc.span(Label.of("dev.hegel.test.pair"), () -> new int[] {
-        tc.draw(integers().min(0).max(50)), tc.draw(integers().min(0).max(50))
+    /** A foreign printable generator: two draws enclosed in a custom-labelled span. */
+    private static final PrintableGenerator<int[]> PAIR = (tc, p) -> tc.span(Label.of("dev.hegel.test.pair"), () -> {
+        p.beginGroup("pair(");
+        int a = tc.drawAndPrint(integers().min(0).max(50), p);
+        p.separator();
+        int b = tc.drawAndPrint(integers().min(0).max(50), p);
+        p.endGroup(")");
+        return new int[] {a, b};
     });
 
     @Test
@@ -100,9 +126,12 @@ class LibraryApiTest {
                 QUIET,
                 Reporter.silent());
         assertEquals(RunStatus.FAILED, report.status());
-        int[] shrunk = (int[]) report.failures().get(0).draws().get("p");
+        int[] shrunk = (int[]) report.failures().get(0).draws().get("p_1");
         // The engine shrinks the pair as a unit toward the boundary.
         assertEquals(60, shrunk[0] + shrunk[1]);
+        assertEquals(
+                List.of("var p_1 = pair(" + shrunk[0] + ", " + shrunk[1] + ");"),
+                report.failures().get(0).output());
     }
 
     @Test

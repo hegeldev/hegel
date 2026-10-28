@@ -2,6 +2,8 @@ package dev.hegel.generators;
 
 import dev.hegel.Generator;
 import dev.hegel.Label;
+import dev.hegel.PrintableGenerator;
+import dev.hegel.Printer;
 import dev.hegel.TestCase;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -12,12 +14,16 @@ import java.util.Map;
  *
  * <p>The entry-count range defaults to any size; narrow it with the fluent {@link #minSize(int)} /
  * {@link #maxSize(int)} methods.
+ *
+ * <p>It prints as {@code Map.of(k, v)}, each key and value printed by its generator as it is drawn;
+ * an entry with a rejected duplicate key prints nothing.
  */
-public final class MapGenerator<K, V> implements Generator<Map<K, V>> {
+public final class MapGenerator<K, V> implements PrintableGenerator<Map<K, V>> {
     private final Generator<K> keys;
     private final Generator<V> values;
     private final long minSize;
     private final long maxSize;
+    private final CachedLabel label = new CachedLabel();
 
     public MapGenerator(Generator<K> keys, Generator<V> values, long minSize, long maxSize) {
         Sizes.validate(minSize, maxSize, "maps");
@@ -45,22 +51,48 @@ public final class MapGenerator<K, V> implements Generator<Map<K, V>> {
 
     /** @hidden */
     @Override
+    public long label() {
+        return label.get(() -> Label.combine(Label.MAP, keys.label(), values.label()));
+    }
+
+    /** @hidden */
+    @Override
     public Map<K, V> doDraw(TestCase tc) {
-        tc.startSpan(Label.MAP);
+        return draw(tc, null);
+    }
+
+    /** @hidden */
+    @Override
+    public Map<K, V> doDrawAndPrint(TestCase tc, Printer printer) {
+        return draw(tc, printer);
+    }
+
+    private Map<K, V> draw(TestCase tc, Printer printer) {
+        Printer p = Components.out(printer);
+        long id = tc.newCollection(minSize, maxSize);
         try {
-            long id = tc.newCollection(minSize, maxSize);
             Map<K, V> out = new LinkedHashMap<>();
+            p.beginGroup("Map.of(");
             while (tc.collectionMore(id)) {
-                K key = keys.doDraw(tc);
-                if (out.containsKey(key)) {
-                    tc.collectionReject(id, "duplicate key");
-                } else {
-                    out.put(key, values.doDraw(tc));
+                try (Printer.Speculation speculation = p.speculate()) {
+                    if (!out.isEmpty()) {
+                        p.separator();
+                    }
+                    K key = Components.draw(tc, keys, printer);
+                    if (out.containsKey(key)) {
+                        speculation.abort();
+                        tc.collectionReject(id, "duplicate key");
+                    } else {
+                        p.text(", ");
+                        out.put(key, Components.draw(tc, values, printer));
+                        speculation.commit();
+                    }
                 }
             }
+            p.endGroup(")");
             return out;
         } finally {
-            tc.stopSpan(false);
+            tc.collectionFree(id);
         }
     }
 }

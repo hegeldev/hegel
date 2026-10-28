@@ -13,12 +13,17 @@ import static dev.hegel.Generators.longs;
 import static dev.hegel.Generators.maps;
 import static dev.hegel.Generators.oneOf;
 import static dev.hegel.Generators.sampledFrom;
+import static dev.hegel.Generators.samples;
 import static dev.hegel.Generators.sets;
+import static dev.hegel.Generators.subsequences;
 import static dev.hegel.Generators.text;
 import static dev.hegel.Generators.times;
+import static dev.hegel.Generators.weightedBooleans;
 import static dev.hegel.Generators.zoneOffsets;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.hegel.generators.TextGenerator;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -61,24 +66,36 @@ class GeneratorValidationTest {
     }
 
     @Test
+    void subnormalDefaultsFollowTheBounds() {
+        doubles().max(1.0);
+        doubles().max(-1.0);
+        doubles().min(1.0).allowSubnormal(false);
+        doubles().allowSubnormal(false);
+    }
+
+    @Test
     void floatExclusiveBoundEdges() {
-        assertThrows(IllegalArgumentException.class, () -> doubles().excludeMin(true));
-        assertThrows(IllegalArgumentException.class, () -> doubles().excludeMax(true));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> doubles().min(1.0).max(1.0).excludeMin(true));
+                () -> doubles().minValueExclusive(1.0).max(1.0));
+        assertThrows(IllegalArgumentException.class, () -> doubles().min(1.0).maxValueExclusive(1.0));
+        assertThrows(IllegalArgumentException.class, () -> doubles().minValueExclusive(Double.POSITIVE_INFINITY));
+        assertThrows(IllegalArgumentException.class, () -> doubles().maxValueExclusive(Double.NEGATIVE_INFINITY));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> doubles().min(1.0).max(1.0).excludeMax(true));
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> doubles().min(Double.POSITIVE_INFINITY).excludeMin(true));
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> doubles().max(Double.NEGATIVE_INFINITY).excludeMax(true));
+                () -> floats().minValueExclusive(1.0f).max(1.0f));
+        assertThrows(IllegalArgumentException.class, () -> floats().min(1.0f).maxValueExclusive(1.0f));
         assertThrows(IllegalArgumentException.class, () -> doubles().min(0.0).max(-0.0));
         // The mirror direction (-0.0 to +0.0) is legal.
         doubles().min(-0.0).max(0.0);
+        doubles().minValueExclusive(1.0).min(1.0).max(1.0);
+        doubles().maxValueExclusive(1.0).max(1.0).min(1.0);
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> doubles().min(1.0).max(1.0).minValueExclusive(1.0));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> doubles().min(1.0).max(1.0).maxValueExclusive(1.0));
     }
 
     @Test
@@ -115,8 +132,15 @@ class GeneratorValidationTest {
         assertThrows(IllegalArgumentException.class, () -> text().minSize(-1));
         assertThrows(IllegalArgumentException.class, () -> text().minSize(5).maxSize(2));
         assertThrows(IllegalArgumentException.class, () -> text().codepoints(10, 1));
-        assertThrows(IllegalArgumentException.class, () -> text().categories("Cs"));
-        assertThrows(IllegalArgumentException.class, () -> text().categories("C"));
+        TextGenerator surrogates = text().categories("Cs").minSize(1);
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> Hegel.test(
+                        tc -> tc.draw(surrogates), new Settings().testCases(1).database(Database.disabled())));
+        Hegel.test(
+                tc -> assertTrue(
+                        tc.draw(text().categories("C")).codePoints().noneMatch(cp -> cp >= 0xD800 && cp <= 0xDFFF)),
+                new Settings().testCases(20).database(Database.disabled()));
     }
 
     @Test
@@ -190,5 +214,31 @@ class GeneratorValidationTest {
     @Test
     void settingsTestCasesPositive() {
         assertThrows(IllegalArgumentException.class, () -> new Settings().testCases(0));
+    }
+
+    @Test
+    void weightedBooleansProbability() {
+        assertThrows(IllegalArgumentException.class, () -> weightedBooleans(-0.1));
+        assertThrows(IllegalArgumentException.class, () -> weightedBooleans(1.1));
+        assertThrows(IllegalArgumentException.class, () -> weightedBooleans(Double.NaN));
+    }
+
+    @Test
+    void subsequenceSizes() {
+        assertThrows(IllegalArgumentException.class, () -> subsequences(1, 2).minSize(3));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> subsequences(1, 2).minSize(2).maxSize(1));
+        assertThrows(IllegalArgumentException.class, () -> subsequences(1, 2).minSize(-1));
+    }
+
+    @Test
+    void sampleSizes() {
+        assertThrows(IllegalArgumentException.class, () -> samples(List.of()).minSize(1));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> samples(1, 2).withoutReplacement().minSize(3));
+        assertThrows(
+                IllegalArgumentException.class, () -> samples(1, 2).minSize(2).maxSize(1));
     }
 }

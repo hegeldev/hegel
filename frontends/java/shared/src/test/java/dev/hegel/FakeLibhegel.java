@@ -5,10 +5,16 @@ import dev.hegel.lowlevel.Libhegel;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Deque;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalLong;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 /**
@@ -26,6 +32,117 @@ final class FakeLibhegel implements Libhegel {
     static final long STRING_GEN = 0x600;
     /** Clone handles are {@code CLONE_BASE + n} for the n-th clone made, so they are distinct from {@link #TC}. */
     static final long CLONE_BASE = 0x1000;
+    /** Block handles are {@code BLOCK_BASE + n} for the n-th block opened. */
+    static final long BLOCK_BASE = 0x8000;
+    /** Printer handles are {@code PRINTER_BASE + n} for the n-th printer fetched. */
+    static final long PRINTER_BASE = 0x20000;
+    /** A deferred printer's region is keyed {@code DEFERRED_BASE + n} for the n-th one opened. */
+    static final long DEFERRED_BASE = 0x40000;
+
+    // Output. Like the engine, the fake keeps one document per test case made of regions: the
+    // root handle's region is the body, and a clone or block opens a child region at its source's
+    // current position, so concurrent workers never interleave. Text, group delimiters and
+    // separators are appended as they come (groups never break); a line starts with its region's
+    // block indentation and, for a worker's region, "[worker N] "; notes made inside a speculative
+    // region are held back until the outermost one closes.
+    private Region root = new Region(0, null);
+
+    private final Map<Long, Region> regions = new HashMap<>();
+    /** The handle each block was opened on. */
+    final Map<Long, Long> blockParents = new HashMap<>();
+    /** The test-case handle each printer was fetched for. */
+    final Map<Long, Long> printerOwners = new LinkedHashMap<>();
+    /** Printer handles released through printerFree, in order. */
+    final List<Long> freedPrinters = new ArrayList<>();
+    /** Block handles released through testCaseFree, in order. */
+    final List<Long> freedBlocks = new ArrayList<>();
+    /** Every note, as received. */
+    final List<String> notes = java.util.Collections.synchronizedList(new ArrayList<>());
+
+    /** One handle's print region: its own text and the regions anchored in it, in order. */
+    private static final class Region {
+        final long indent;
+        Long worker;
+        private final List<Object> parts = new ArrayList<>();
+        private boolean atLineStart = true;
+        private final Deque<int[]> speculations = new ArrayDeque<>();
+        private final List<String> held = new ArrayList<>();
+
+        Region(long indent, Long worker) {
+            this.indent = indent;
+            this.worker = worker;
+        }
+
+        synchronized Region child(long extraIndent) {
+            Region child = new Region(indent + extraIndent, worker);
+            parts.add(child);
+            return child;
+        }
+
+        synchronized void text(String text) {
+            if (atLineStart) {
+                parts.add(" ".repeat((int) indent) + (worker == null ? "" : "[worker " + worker + "] "));
+                atLineStart = false;
+            }
+            parts.add(text);
+        }
+
+        synchronized void newline() {
+            parts.add("\n");
+            atLineStart = true;
+        }
+
+        synchronized void note(String text) {
+            if (!speculations.isEmpty()) {
+                held.add(text);
+                return;
+            }
+            for (String line : text.split("\n", -1)) {
+                text(line);
+                newline();
+            }
+        }
+
+        synchronized void beginSpeculative() {
+            speculations.push(new int[] {parts.size(), atLineStart ? 1 : 0});
+        }
+
+        synchronized void endSpeculative(boolean commit) {
+            int[] mark = speculations.pop();
+            if (!commit) {
+                parts.subList(mark[0], parts.size()).clear();
+                atLineStart = mark[1] == 1;
+            }
+            if (speculations.isEmpty()) {
+                List<String> notes = new ArrayList<>(held);
+                held.clear();
+                for (String note : notes) {
+                    note(note);
+                }
+            }
+        }
+
+        synchronized void render(StringBuilder out) {
+            for (Object part : parts) {
+                if (part instanceof Region region) {
+                    region.render(out);
+                } else {
+                    out.append(part);
+                }
+            }
+        }
+    }
+
+    private Region region(long tc) {
+        return tc == TC ? root : regions.get(tc);
+    }
+
+    int testCaseBlockRc = Abi.OK;
+    int testCasePrinterRc = Abi.OK;
+    int printerValueRc = Abi.OK;
+    int printerTextRc = Abi.OK;
+    int printerAbortRc = Abi.OK;
+    int noteRc = Abi.OK;
 
     // Test-case clones (concurrent stateful workers).
     int cloneRc = Abi.OK;
@@ -47,6 +164,8 @@ final class FakeLibhegel implements Libhegel {
     boolean nextTestCaseFails;
     int runStatus = Abi.RUN_STATUS_PASSED;
     String runError = "run error";
+    int runErrorKind = Abi.RUN_ERROR_NONE;
+    int runErrorHealthCheck;
     final List<String> failureBlobs = new ArrayList<>(); // one entry per distinct failure
     final List<String> failureCaveats = new ArrayList<>(); // parallel to failureBlobs; missing = null
     // The origin of each distinct failure. Like the engine, the fake echoes back the origins marked
@@ -55,6 +174,8 @@ final class FakeLibhegel implements Libhegel {
     int fromBlobRc = Abi.OK;
     final List<String> replayedBlobs = new ArrayList<>();
     String startedBlob; // what runStartBlob received; null = the run explored
+    final List<String> startedBlobs = new ArrayList<>();
+    final java.util.ArrayDeque<Integer> runStatusQueue = new java.util.ArrayDeque<>();
     Consumer<String> output; // the callback runStart / runStartBlob registered
     // The engine's capture stamp per served case: the i-th case is stamped when captureSequence
     // has an i-th entry and it is true; past the end of the sequence every case is stamped, so
@@ -76,9 +197,26 @@ final class FakeLibhegel implements Libhegel {
     int suppressMask = -1;
     Integer backendCode;
     Long testCases;
-    String databasePath = "unset";
+    Long seed; // what settingsSeed received, null = no seed
+    boolean seedSent;
+    String databasePath;
+    boolean databaseSent;
     String databaseKey;
     Boolean derandomize;
+    Integer verbosity;
+    Boolean reportMultipleFailures;
+    Boolean stopOnFirstFailure;
+    Boolean showStatistics;
+    Boolean unboundedChoices;
+    TestLocation testLocation;
+    // Profiles.
+    String profileRequested; // the name settingsNewForProfile was last called with
+    int settingsNewForProfileRc = Abi.OK;
+    int registerProfileRc = Abi.OK;
+    final List<String> stringSettings = new ArrayList<>();
+    final List<String> registeredProfiles = new ArrayList<>();
+    int setDefaultProfileRc = Abi.OK;
+    String defaultProfile;
 
     // Per-primitive return codes and canned values.
     int generateBooleanRc = Abi.OK;
@@ -123,8 +261,8 @@ final class FakeLibhegel implements Libhegel {
 
     int startSpanRc = Abi.OK;
     int stopSpanRc = Abi.OK;
-    int stoppedSpans;
-    final List<Long> startedSpans = new ArrayList<>();
+    final AtomicInteger stoppedSpans = new AtomicInteger();
+    final List<Long> startedSpans = Collections.synchronizedList(new ArrayList<>());
     int newCollectionRc = Abi.OK;
     long collectionId = 7;
     Long collectionMinSize;
@@ -133,7 +271,41 @@ final class FakeLibhegel implements Libhegel {
     boolean[] moreSequence = {false};
     private int moreIndex;
     int collectionRejectRc = Abi.OK;
+    /** Collection handles released through collectionFree, in order. */
+    final List<Long> freedCollections = new ArrayList<>();
+
+    // Repeat loops answer repeat_more from `moreSequence`, like collections do.
+    int newRepeatRc = Abi.OK;
+    long repeatId = 11;
+    int repeatMoreRc = Abi.OK;
+    int repeatFailedRc = Abi.OK;
+    /** Whether repeat_failed was ever called. */
+    boolean repeatFailed;
+    /** Repeat handles released through repeatFree, in order. */
+    final List<Long> freedRepeats = new ArrayList<>();
+
     int targetRc = Abi.OK;
+    /** Whether generate_boolean was ever called. */
+    boolean booleanDrawn;
+
+    int eventRc = Abi.OK;
+    /** Every event and event value, as {@code label} or {@code label=value}. */
+    final List<String> events = new ArrayList<>();
+
+    int generateIntegerBigRc = Abi.OK;
+    byte[] integerBigValue; // null = echo the lower bound
+
+    // Recursion. Each recursion_* call returns the next code of its queue, or OK once it is empty;
+    // recursion_branch answers from `branchSequence` (false once it is exhausted).
+    int newRecursionRc = Abi.OK;
+    long recursionId = 9;
+    final Deque<Integer> recursionBranchRcs = new ArrayDeque<>();
+    final Deque<Boolean> branchSequence = new ArrayDeque<>();
+    final Deque<Integer> recursionLeafRcs = new ArrayDeque<>();
+    final Deque<Integer> recursionRetryRcs = new ArrayDeque<>();
+    final Deque<Integer> recursionFinishRcs = new ArrayDeque<>();
+    /** Recursion handles released through recursionFree, in order. */
+    final List<Long> freedRecursions = new ArrayList<>();
 
     int newPoolRc = Abi.OK;
     long poolId = 3;
@@ -141,6 +313,18 @@ final class FakeLibhegel implements Libhegel {
     private long nextVariableId;
     int poolGenerateRc = Abi.OK;
     Long poolGenerateValue; // null = the first added variable id (0)
+    /** Answers to consuming pool_generate calls, in order, before falling back to poolGenerateValue. */
+    final Deque<Long> poolGenerateSequence = new ArrayDeque<>();
+    /** Codes pool_generate returns before its OK answers, in order. */
+    final Deque<Integer> poolGenerateRcs = new ArrayDeque<>();
+
+    int poolRestoreRc = Abi.OK;
+    /** Variable ids put back through poolRestore, in order. */
+    final List<Long> restoredVariables = new ArrayList<>();
+    /** Pool handles released through poolFree, in order. */
+    final List<Long> freedPools = new ArrayList<>();
+    /** Names of the threads that released their context, in order. */
+    final List<String> contextReleases = new ArrayList<>();
     // State machines. The fake plays the engine's round protocol. Sequentially, each round
     // (next_group) hands out exactly one rule from `ruleSequence` (next_rule), then the join
     // point; once the sequence is exhausted next_group reports DONE. Concurrently, set
@@ -185,7 +369,17 @@ final class FakeLibhegel implements Libhegel {
     int settingsNewRc = Abi.OK;
     long resolvedTestCases = 100;
     boolean resolvedPrintBlob = false;
+    int resolvedPhases = Abi.PHASE_ALL;
+    boolean resolvedReportMultipleFailures = false;
     int resolvedStrictness = Abi.NONDETERMINISM_QUIET;
+    Long resolvedSeed; // null = no seed fixed
+    boolean resolvedDerandomize;
+    String resolvedDatabase; // null = the default location
+    int resolvedSuppressMask;
+    boolean resolvedStopOnFirstFailure = true;
+    boolean resolvedShowStatistics;
+    boolean resolvedUnboundedChoices;
+    int resolvedBackend = Abi.BACKEND_DEFAULT;
     Boolean printBlob; // what the setter received; null = never set
     Integer strictness; // what the setter received; null = never set
 
@@ -223,6 +417,113 @@ final class FakeLibhegel implements Libhegel {
     }
 
     @Override
+    public int settingsGetVerbosity(long s) {
+        return verbosity == null ? Abi.VERBOSITY_NORMAL : verbosity;
+    }
+
+    @Override
+    public int settingsGetPhases(long s) {
+        return phasesMask == -1 ? resolvedPhases : phasesMask;
+    }
+
+    @Override
+    public boolean settingsGetReportMultipleFailures(long s) {
+        return reportMultipleFailures == null ? resolvedReportMultipleFailures : reportMultipleFailures;
+    }
+
+    @Override
+    public OptionalLong settingsGetSeed(long s) {
+        Long value = seedSent ? seed : resolvedSeed;
+        return value == null ? OptionalLong.empty() : OptionalLong.of(value);
+    }
+
+    @Override
+    public boolean settingsGetDerandomize(long s) {
+        return derandomize == null ? resolvedDerandomize : derandomize;
+    }
+
+    @Override
+    public String settingsGetDatabase(long s) {
+        return databaseSent ? databasePath : resolvedDatabase;
+    }
+
+    @Override
+    public int settingsGetSuppressHealthCheck(long s) {
+        return suppressMask == -1 ? resolvedSuppressMask : suppressMask;
+    }
+
+    @Override
+    public boolean settingsGetStopOnFirstFailure(long s) {
+        return stopOnFirstFailure == null ? resolvedStopOnFirstFailure : stopOnFirstFailure;
+    }
+
+    @Override
+    public boolean settingsGetShowStatistics(long s) {
+        return showStatistics == null ? resolvedShowStatistics : showStatistics;
+    }
+
+    @Override
+    public boolean settingsGetUnboundedChoices(long s) {
+        return unboundedChoices == null ? resolvedUnboundedChoices : unboundedChoices;
+    }
+
+    @Override
+    public int settingsGetBackend(long s) {
+        return backendCode == null ? resolvedBackend : backendCode;
+    }
+
+    @Override
+    public int settingsNewForProfile(String name, long[] out) {
+        profileRequested = name;
+        if (settingsNewForProfileRc == Abi.OK) {
+            out[0] = SETTINGS;
+        }
+        return settingsNewForProfileRc;
+    }
+
+    @Override
+    public int settingsRegisterProfile(String name, long s) {
+        if (registerProfileRc == Abi.OK) {
+            registeredProfiles.add(name);
+        }
+        return registerProfileRc;
+    }
+
+    @Override
+    public int settingsSetFromString(long s, String key, String value) {
+        stringSettings.add(key + "=" + value);
+        return Abi.OK;
+    }
+
+    @Override
+    public int setDefaultProfile(String name) {
+        if (setDefaultProfileRc == Abi.OK) {
+            defaultProfile = name;
+        }
+        return setDefaultProfileRc;
+    }
+
+    @Override
+    public void settingsStopOnFirstFailure(long s, boolean yes) {
+        stopOnFirstFailure = yes;
+    }
+
+    @Override
+    public void settingsShowStatistics(long s, boolean yes) {
+        showStatistics = yes;
+    }
+
+    @Override
+    public void settingsUnboundedChoices(long s, boolean yes) {
+        unboundedChoices = yes;
+    }
+
+    @Override
+    public void settingsTestLocation(long s, String file, int beginLine, String className, String function) {
+        testLocation = new TestLocation(file, beginLine, className, function);
+    }
+
+    @Override
     public void settingsFree(long s) {
         settingsFreed = true;
     }
@@ -238,10 +539,15 @@ final class FakeLibhegel implements Libhegel {
     }
 
     @Override
-    public void settingsVerbosity(long s, int v) {}
+    public void settingsVerbosity(long s, int v) {
+        verbosity = v;
+    }
 
     @Override
-    public void settingsSeed(long s, long seed, boolean hasSeed) {}
+    public void settingsSeed(long s, long seed, boolean hasSeed) {
+        this.seed = hasSeed ? seed : null;
+        seedSent = true;
+    }
 
     @Override
     public void settingsDerandomize(long s, boolean derandomize) {
@@ -249,11 +555,14 @@ final class FakeLibhegel implements Libhegel {
     }
 
     @Override
-    public void settingsReportMultipleFailures(long s, boolean yes) {}
+    public void settingsReportMultipleFailures(long s, boolean yes) {
+        reportMultipleFailures = yes;
+    }
 
     @Override
     public void settingsDatabase(long s, String path) {
         databasePath = path;
+        databaseSent = true;
     }
 
     @Override
@@ -277,8 +586,19 @@ final class FakeLibhegel implements Libhegel {
             throw new HegelException("hegel_run_start failed: " + lastError);
         }
         this.output = output;
+        nextRun();
         return RUN;
     }
+
+    private void nextRun() {
+        if (!runStatusQueue.isEmpty()) {
+            runStatus = runStatusQueue.poll();
+            casesServed = 0;
+            runMarksFrom = markedOrigins.size();
+        }
+    }
+
+    private int runMarksFrom;
 
     @Override
     public long runStartBlob(long settings, String blob, Consumer<String> output) {
@@ -286,7 +606,9 @@ final class FakeLibhegel implements Libhegel {
             throw new HegelException("hegel_run_start_blob failed: " + lastError);
         }
         startedBlob = blob;
+        startedBlobs.add(blob);
         this.output = output;
+        nextRun();
         return RUN;
     }
 
@@ -299,6 +621,7 @@ final class FakeLibhegel implements Libhegel {
             return 0;
         }
         casesServed++;
+        resetDocument();
         return TC;
     }
 
@@ -327,38 +650,216 @@ final class FakeLibhegel implements Libhegel {
     public int testCaseFromBlob(long settings, String blob, Consumer<String> output, long[] out) {
         if (fromBlobRc == Abi.OK) {
             replayedBlobs.add(blob);
+            resetDocument();
             out[0] = TC;
         }
         return fromBlobRc;
     }
 
     @Override
-    public void testCaseFree(long tc) {
+    public synchronized void testCaseFree(long tc) {
         freedTestCases++;
-        if (tc != TC) {
+        if (blockParents.containsKey(tc)) {
+            freedBlocks.add(tc);
+        } else if (tc != TC) {
             freedClones.add(tc);
         }
     }
 
     @Override
-    public int testCaseClone(long tc, long[] out) {
+    public synchronized int testCaseBlock(long tc, long indent, long[] out) {
+        if (testCaseBlockRc == Abi.OK) {
+            long block = BLOCK_BASE + blockParents.size();
+            blockParents.put(block, tc);
+            regions.put(block, region(tc).child(indent));
+            out[0] = block;
+        }
+        return testCaseBlockRc;
+    }
+
+    private void resetDocument() {
+        root = new Region(0, null);
+    }
+
+    @Override
+    public int note(long tc, String text) {
+        if (noteRc != Abi.OK) {
+            return noteRc;
+        }
+        notes.add(text);
+        region(tc).note(text);
+        return Abi.OK;
+    }
+
+    @Override
+    public synchronized int testCasePrinter(long tc, long[] out) {
+        if (testCasePrinterRc == Abi.OK) {
+            long printer = PRINTER_BASE + printerOwners.size();
+            printerOwners.put(printer, tc);
+            out[0] = printer;
+        }
+        return testCasePrinterRc;
+    }
+
+    @Override
+    public long printerNew() {
+        throw new UnsupportedOperationException("the fake has no standalone documents");
+    }
+
+    @Override
+    public long printerNew(long options) {
+        throw new UnsupportedOperationException("the fake has no standalone documents");
+    }
+
+    @Override
+    public long printerOptionsNew() {
+        throw new UnsupportedOperationException("the fake has no standalone documents");
+    }
+
+    @Override
+    public int printerOptionsSetMaxWidth(long options, long maxWidth) {
+        throw new UnsupportedOperationException("the fake has no standalone documents");
+    }
+
+    @Override
+    public void printerOptionsFree(long options) {
+        throw new UnsupportedOperationException("the fake has no standalone documents");
+    }
+
+    @Override
+    public int printerIfBreak(long printer, String text) {
+        return Abi.OK;
+    }
+
+    @Override
+    public int printerComment(long printer, String text) {
+        return printerText(printer, text);
+    }
+
+    @Override
+    public int printerShiftIndent(long printer, long delta) {
+        return Abi.OK;
+    }
+
+    @Override
+    public synchronized int printerDeferred(long printer, long[] out) {
+        long region = DEFERRED_BASE + regions.size();
+        regions.put(region, printerRegion(printer).child(0));
+        out[0] = PRINTER_BASE + printerOwners.size();
+        printerOwners.put(out[0], region);
+        return Abi.OK;
+    }
+
+    @Override
+    public int printerIsLive(long printer, boolean[] out) {
+        out[0] = true;
+        return Abi.OK;
+    }
+
+    @Override
+    public synchronized void printerFree(long printer) {
+        freedPrinters.add(printer);
+    }
+
+    private synchronized Region printerRegion(long printer) {
+        return region(printerOwners.get(printer));
+    }
+
+    @Override
+    public int printerText(long printer, String text) {
+        if (printerTextRc != Abi.OK) {
+            return printerTextRc;
+        }
+        printerRegion(printer).text(text);
+        return Abi.OK;
+    }
+
+    @Override
+    public int printerBreakable(long printer, String sep) {
+        return printerText(printer, sep);
+    }
+
+    @Override
+    public int printerHardBreak(long printer) {
+        printerRegion(printer).newline();
+        return Abi.OK;
+    }
+
+    @Override
+    public int printerBeginGroup(long printer, long indent, String open) {
+        return printerText(printer, open);
+    }
+
+    @Override
+    public int printerEndGroup(long printer, String close) {
+        return printerText(printer, close);
+    }
+
+    @Override
+    public int printerReflow(long printer, String text) {
+        return printerText(printer, text);
+    }
+
+    @Override
+    public int printerBeginSpeculative(long printer) {
+        printerRegion(printer).beginSpeculative();
+        return Abi.OK;
+    }
+
+    @Override
+    public int printerCommitSpeculative(long printer) {
+        printerRegion(printer).endSpeculative(true);
+        return Abi.OK;
+    }
+
+    @Override
+    public int printerAbortSpeculative(long printer) {
+        printerRegion(printer).endSpeculative(false);
+        return printerAbortRc;
+    }
+
+    /** The current case's document as the engine would hand it back. */
+    String document() {
+        StringBuilder out = new StringBuilder();
+        root.render(out);
+        return out.toString();
+    }
+
+    @Override
+    public int printerResolve(long printer) {
+        return Abi.OK;
+    }
+
+    @Override
+    public int printerValue(long printer, String[] out) {
+        if (printerValueRc == Abi.OK) {
+            out[0] = document();
+        }
+        return printerValueRc;
+    }
+
+    @Override
+    public synchronized int testCaseClone(long tc, long[] out) {
         if (cloneRc == Abi.OK) {
             out[0] = CLONE_BASE + clonesMade.size();
             clonesMade.add(tc);
+            regions.put(out[0], region(tc).child(0));
         }
         return cloneRc;
     }
 
     @Override
-    public void testCaseSetWorker(long tc, long workerIndex) {
+    public synchronized void testCaseSetWorker(long tc, long workerIndex) {
         if (setWorkerFails) {
             throw new HegelException("hegel_test_case_set_worker failed: " + lastError);
         }
         workersSet.put(tc, workerIndex);
+        region(tc).worker = workerIndex;
     }
 
     @Override
     public int generateBoolean(long tc, double p, boolean[] out) {
+        booleanDrawn = true;
         if (generateBooleanRc == Abi.OK) {
             out[0] = booleanValue;
         }
@@ -373,6 +874,14 @@ final class FakeLibhegel implements Libhegel {
             out[0] = integerValue == null ? min : integerValue;
         }
         return generateIntegerRc;
+    }
+
+    @Override
+    public int generateIntegerBig(long tc, byte[] min, byte[] max, byte[][] out) {
+        if (generateIntegerBigRc == Abi.OK) {
+            out[0] = integerBigValue == null ? min.clone() : integerBigValue;
+        }
+        return generateIntegerBigRc;
     }
 
     @Override
@@ -523,6 +1032,75 @@ final class FakeLibhegel implements Libhegel {
         freedStringGenerators++;
     }
 
+    /** Return code of every grammar-draw advance: by default the string is complete at once. */
+    int grammarDrawNextRc = Abi.E_NOT_FOUND;
+    /** Grammars compiled through grammarNew. */
+    int grammarsBuilt;
+    /** Grammar draw handles released through grammarDrawFree. */
+    int freedGrammarDraws;
+
+    @Override
+    public int grammarBuilderNew(String text, long[] out) {
+        out[0] = 0x700;
+        return Abi.OK;
+    }
+
+    @Override
+    public int grammarBuilderFile(long builder, long index, String[] outPath) {
+        return Abi.E_NOT_FOUND;
+    }
+
+    @Override
+    public int grammarBuilderProvide(long builder, long index, String text) {
+        return Abi.OK;
+    }
+
+    @Override
+    public void grammarBuilderFree(long builder) {}
+
+    @Override
+    public int grammarNew(
+            long builder,
+            String start,
+            long maxSize,
+            int maxDepth,
+            long alphabet,
+            List<String> explicitNames,
+            long[] out) {
+        grammarsBuilt++;
+        out[0] = 0x710;
+        return Abi.OK;
+    }
+
+    @Override
+    public void grammarFree(long grammar) {}
+
+    @Override
+    public long grammarDrawNew(long grammar, long maxSize) {
+        return 0x720;
+    }
+
+    @Override
+    public int grammarDrawNext(long tc, long draw, long[] outTerminal) {
+        return grammarDrawNextRc;
+    }
+
+    @Override
+    public int grammarDrawProvide(long draw, String value) {
+        return Abi.OK;
+    }
+
+    @Override
+    public int grammarDrawResult(long draw, String[] out) {
+        out[0] = "";
+        return Abi.OK;
+    }
+
+    @Override
+    public void grammarDrawFree(long draw) {
+        freedGrammarDraws++;
+    }
+
     @Override
     public int startSpan(long tc, long label) {
         if (startSpanRc == Abi.OK) {
@@ -533,7 +1111,7 @@ final class FakeLibhegel implements Libhegel {
 
     @Override
     public int stopSpan(long tc, boolean discard) {
-        stoppedSpans++;
+        stoppedSpans.incrementAndGet();
         return stopSpanRc;
     }
 
@@ -561,6 +1139,38 @@ final class FakeLibhegel implements Libhegel {
     }
 
     @Override
+    public void collectionFree(long id) {
+        freedCollections.add(id);
+    }
+
+    @Override
+    public int newRepeat(long tc, long[] outId) {
+        if (newRepeatRc == Abi.OK) {
+            outId[0] = repeatId;
+        }
+        return newRepeatRc;
+    }
+
+    @Override
+    public int repeatMore(long tc, long id, boolean[] outMore) {
+        if (repeatMoreRc == Abi.OK) {
+            outMore[0] = moreIndex < moreSequence.length && moreSequence[moreIndex++];
+        }
+        return repeatMoreRc;
+    }
+
+    @Override
+    public int repeatFailed(long tc, long id) {
+        repeatFailed = true;
+        return repeatFailedRc;
+    }
+
+    @Override
+    public void repeatFree(long id) {
+        freedRepeats.add(id);
+    }
+
+    @Override
     public int newPool(long tc, long[] outId) {
         if (newPoolRc == Abi.OK) {
             outId[0] = poolId;
@@ -578,10 +1188,67 @@ final class FakeLibhegel implements Libhegel {
 
     @Override
     public int poolGenerate(long tc, long poolId, boolean consume, long[] outVariableId) {
-        if (poolGenerateRc == Abi.OK) {
-            outVariableId[0] = poolGenerateValue == null ? 0 : poolGenerateValue;
+        Integer queued = poolGenerateRcs.poll();
+        int rc = queued != null ? queued : poolGenerateRc;
+        if (rc == Abi.OK) {
+            Long next = poolGenerateSequence.poll();
+            outVariableId[0] = next != null ? next : poolGenerateValue == null ? 0 : poolGenerateValue;
         }
-        return poolGenerateRc;
+        return rc;
+    }
+
+    @Override
+    public int poolRestore(long tc, long poolId, long variableId) {
+        if (poolRestoreRc == Abi.OK) {
+            restoredVariables.add(variableId);
+        }
+        return poolRestoreRc;
+    }
+
+    @Override
+    public int newRecursion(long tc, long maxDepth, long maxLeaves, long[] out) {
+        out[0] = newRecursionRc == Abi.OK ? recursionId : 0;
+        return newRecursionRc;
+    }
+
+    @Override
+    public int recursionBranch(long tc, long recursion, long depth, boolean[] outBranch) {
+        int rc = next(recursionBranchRcs);
+        if (rc == Abi.OK) {
+            Boolean branch = branchSequence.poll();
+            outBranch[0] = branch != null && branch;
+        }
+        return rc;
+    }
+
+    @Override
+    public int recursionLeaf(long tc, long recursion) {
+        return next(recursionLeafRcs);
+    }
+
+    @Override
+    public int recursionRetry(long tc, long recursion) {
+        return next(recursionRetryRcs);
+    }
+
+    @Override
+    public int recursionFinish(long tc, long recursion) {
+        return next(recursionFinishRcs);
+    }
+
+    private static int next(Deque<Integer> rcs) {
+        Integer rc = rcs.poll();
+        return rc == null ? Abi.OK : rc;
+    }
+
+    @Override
+    public void recursionFree(long recursion) {
+        freedRecursions.add(recursion);
+    }
+
+    @Override
+    public void poolFree(long poolId) {
+        freedPools.add(poolId);
     }
 
     @Override
@@ -672,6 +1339,22 @@ final class FakeLibhegel implements Libhegel {
     }
 
     @Override
+    public int event(long tc, String label) {
+        if (eventRc == Abi.OK) {
+            events.add(label);
+        }
+        return eventRc;
+    }
+
+    @Override
+    public int eventValue(long tc, double value, String label) {
+        if (eventRc == Abi.OK) {
+            events.add(label + "=" + value);
+        }
+        return eventRc;
+    }
+
+    @Override
     public int markComplete(long tc, int status, String origin) {
         markedStatuses.add(status);
         markedOrigins.add(origin);
@@ -704,7 +1387,7 @@ final class FakeLibhegel implements Libhegel {
             return failureOrigins.get((int) index);
         }
         List<String> distinct = new ArrayList<>();
-        for (String origin : markedOrigins) {
+        for (String origin : markedOrigins.subList(runMarksFrom, markedOrigins.size())) {
             if (origin != null && !distinct.contains(origin)) {
                 distinct.add(origin);
             }
@@ -720,6 +1403,27 @@ final class FakeLibhegel implements Libhegel {
     @Override
     public String lastErrorMessage() {
         return lastError;
+    }
+
+    @Override
+    public int runResultErrorKind(long result, int[] outHealthCheck) {
+        outHealthCheck[0] = runErrorHealthCheck;
+        return runErrorKind;
+    }
+
+    @Override
+    public long labelFromName(String name) {
+        throw new UnsupportedOperationException("labels are computed by the real engine");
+    }
+
+    @Override
+    public long labelCombine(long[] labels) {
+        throw new UnsupportedOperationException("labels are computed by the real engine");
+    }
+
+    @Override
+    public synchronized void releaseThreadContext() {
+        contextReleases.add(Thread.currentThread().getName());
     }
 
     @Override

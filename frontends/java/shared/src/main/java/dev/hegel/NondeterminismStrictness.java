@@ -15,15 +15,16 @@ import dev.hegel.lowlevel.Abi;
  */
 public enum NondeterminismStrictness {
     /**
-     * Leave the choice to the engine's settings profile and the {@code HEGEL_NONDETERMINISM_STRICTNESS}
-     * environment variable ({@code quiet} unless configured otherwise).
+     * The {@link HegelTest} default: leave the resolved choice in place ({@code quiet} unless the
+     * engine's settings profile or {@code HEGEL_NONDETERMINISM_STRICTNESS} says otherwise). {@link
+     * Settings#nondeterminismStrictness(NondeterminismStrictness)} rejects it.
      */
     DEFAULT(null),
     /** Switch to nondeterministic handling silently. The engine's default. */
     QUIET(Abi.NONDETERMINISM_QUIET),
     /** Switch to nondeterministic handling, printing a one-line notice once per run. */
     WARN(Abi.NONDETERMINISM_WARN),
-    /** Abort the run with a flaky-test error ({@link HegelException}). */
+    /** Abort the run with a flaky-test error ({@link FlakyTestException}). */
     ERROR(Abi.NONDETERMINISM_ERROR);
 
     /** The {@code hegel_nondeterminism_strictness_t} value to send, or {@code null} to leave the profile's choice. */

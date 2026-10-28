@@ -1,6 +1,6 @@
 package dev.hegel.generators;
 
-import dev.hegel.Generator;
+import dev.hegel.Label;
 import dev.hegel.TestCase;
 
 /**
@@ -9,7 +9,7 @@ import dev.hegel.TestCase;
  * <p>The default range is the full {@code int} range; narrow it with the fluent {@link #min(int)} /
  * {@link #max(int)} methods.
  */
-public final class IntegerGenerator implements Generator<Integer> {
+public final class IntegerGenerator extends ValueGenerator<Integer> {
     private final int min;
     private final int max;
 
@@ -35,6 +35,12 @@ public final class IntegerGenerator implements Generator<Integer> {
      */
     public IntegerGenerator max(int max) {
         return new IntegerGenerator(min, max);
+    }
+
+    /** @hidden */
+    @Override
+    public long label() {
+        return Label.of("hegel.integers");
     }
 
     /** @hidden */

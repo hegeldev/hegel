@@ -6,6 +6,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Iterator;
 import java.util.List;
+import java.util.OptionalLong;
 import java.util.ServiceLoader;
 import java.util.function.Consumer;
 
@@ -25,7 +26,7 @@ import java.util.function.Consumer;
  * Handles are caller-owned: every handle a method returns must be released with its matching
  * {@code *Free} method. A binding keeps one {@code hegel_context_t} per thread internally, so the
  * C API's leading context argument does not appear here; its last error message is read with
- * {@link #lastErrorMessage()}.
+ * {@link #lastErrorMessage()}, and a thread releases it with {@link #releaseThreadContext()}.
  *
  * <p>Two calling conventions coexist here, mirroring how a frontend consumes the ABI:
  *
@@ -97,13 +98,49 @@ public interface Libhegel {
      * (a {@code hegel.toml} in the working directory or an ancestor, {@code HEGEL_DEFAULT_PROFILE},
      * and the shipped {@code development}/{@code ci}/{@code workload} profiles) with the {@code
      * HEGEL_TEST_CASES}, {@code HEGEL_DATABASE}, {@code HEGEL_STATISTICS}, {@code HEGEL_SEED},
-     * {@code HEGEL_DERANDOMIZE}, {@code HEGEL_PRINT_BLOB} and {@code HEGEL_NONDETERMINISM_STRICTNESS}
-     * environment variables applied over it.
+     * {@code HEGEL_DERANDOMIZE}, {@code HEGEL_PRINT_BLOB}, {@code HEGEL_NONDETERMINISM_STRICTNESS},
+     * {@code HEGEL_STOP_ON_FIRST_FAILURE}, {@code HEGEL_UNBOUNDED_CHOICES}, {@code HEGEL_VERBOSITY},
+     * {@code HEGEL_PHASES}, {@code HEGEL_SUPPRESS_HEALTH_CHECK}, {@code
+     * HEGEL_REPORT_MULTIPLE_FAILURES} and {@code HEGEL_BACKEND} environment variables applied over
+     * it.
      * Returns {@link Abi#E_INVALID_ARG} (with the message in {@link #lastErrorMessage()}) when a
      * {@code hegel.toml} or one of those variables is malformed; {@code out[0]} receives the handle
      * on {@link Abi#OK} and {@code 0} otherwise.
      */
     int settingsNew(long[] out);
+
+    /**
+     * {@code hegel_settings_new_for_profile}: a handle initialized from the named profile
+     * (reserved, shipped, defined in {@code hegel.toml}, or registered with {@link
+     * #settingsRegisterProfile}), with the settings environment variables applied over it. Returns
+     * the raw code: {@link Abi#E_INVALID_ARG} (with the message in {@link #lastErrorMessage()}) for
+     * an unknown profile or a malformed {@code hegel.toml} or variable; {@code out[0]} receives the
+     * handle on {@link Abi#OK} and {@code 0} otherwise.
+     */
+    int settingsNewForProfile(String name, long[] out);
+
+    /**
+     * {@code hegel_settings_register_profile}: register a snapshot of handle {@code s} as the
+     * profile {@code name}, process-wide. Returns the raw code: {@link Abi#E_INVALID_ARG} for an
+     * invalid or reserved name.
+     */
+    int settingsRegisterProfile(String name, long s);
+
+    /**
+     * {@code hegel_settings_set_from_string}: set the setting {@code key} (its {@code hegel.toml}
+     * key, or {@code unbounded_choices} or {@code database_key}) on handle {@code s} from {@code
+     * value}, spelled as {@code hegel.toml} and the {@code HEGEL_*} variables spell it. Returns the
+     * raw code: {@link Abi#E_INVALID_ARG} (with the message in {@link #lastErrorMessage()}) for an
+     * unknown key or a value outside its vocabulary, leaving the handle unchanged.
+     */
+    int settingsSetFromString(long s, String key, String value);
+
+    /**
+     * {@code hegel_set_default_profile}: the profile {@link #settingsNew} resolves from now on, or
+     * {@code ""} to clear an earlier call. Returns the raw code: {@link Abi#E_INVALID_ARG} for an
+     * invalid name.
+     */
+    int setDefaultProfile(String name);
 
     void settingsFree(long s);
 
@@ -120,6 +157,48 @@ public interface Libhegel {
      */
     int settingsGetNondeterminismStrictness(long s);
 
+    /** {@code hegel_settings_get_verbosity}: the resolved verbosity (an {@code Abi.VERBOSITY_*} value). */
+    int settingsGetVerbosity(long s);
+
+    /** {@code hegel_settings_get_phases}: the resolved phases, as a mask of {@code Abi.PHASE_*} bits. */
+    int settingsGetPhases(long s);
+
+    /** {@code hegel_settings_get_report_multiple_failures}: whether every distinct failure is reported. */
+    boolean settingsGetReportMultipleFailures(long s);
+
+    /**
+     * {@code hegel_settings_get_seed}: the fixed seed, the engine's unsigned 64-bit value read as a
+     * {@code long}, or empty when none is fixed.
+     */
+    OptionalLong settingsGetSeed(long s);
+
+    /** {@code hegel_settings_get_derandomize}: whether the resolved settings derandomize. */
+    boolean settingsGetDerandomize(long s);
+
+    /**
+     * {@code hegel_settings_get_database}: the resolved example database: {@code null} for the
+     * default location, {@code ""} for disabled, else the root directory.
+     */
+    String settingsGetDatabase(long s);
+
+    /**
+     * {@code hegel_settings_get_suppress_health_check}: the suppressed health checks, as a mask of
+     * {@code Abi.HC_*} bits.
+     */
+    int settingsGetSuppressHealthCheck(long s);
+
+    /** {@code hegel_settings_get_stop_on_first_failure}: whether the run stops at its first failure. */
+    boolean settingsGetStopOnFirstFailure(long s);
+
+    /** {@code hegel_settings_get_show_statistics}: whether the run prints its statistics. */
+    boolean settingsGetShowStatistics(long s);
+
+    /** {@code hegel_settings_get_unbounded_choices}: whether the per-test-case choice limit is lifted. */
+    boolean settingsGetUnboundedChoices(long s);
+
+    /** {@code hegel_settings_get_backend}: the resolved randomness backend (an {@code Abi.BACKEND_*} value). */
+    int settingsGetBackend(long s);
+
     void settingsBackend(long s, int backend);
 
     void settingsTestCases(long s, long n);
@@ -132,8 +211,23 @@ public interface Libhegel {
 
     void settingsReportMultipleFailures(long s, boolean yes);
 
+    /** {@code hegel_settings_set_stop_on_first_failure}. */
+    void settingsStopOnFirstFailure(long s, boolean yes);
+
+    /** {@code hegel_settings_set_show_statistics}. */
+    void settingsShowStatistics(long s, boolean yes);
+
+    /** {@code hegel_settings_set_unbounded_choices}. */
+    void settingsUnboundedChoices(long s, boolean yes);
+
     /**
-     * {@code path == null} leaves the engine default; {@code ""} disables; otherwise sets the dir.
+     * {@code hegel_settings_set_test_location}: where the test under these settings lives, which
+     * the engine reports its verdict under inside Antithesis.
+     */
+    void settingsTestLocation(long s, String file, int beginLine, String className, String function);
+
+    /**
+     * {@code path == null} selects the default location; {@code ""} disables; otherwise sets the dir.
      */
     void settingsDatabase(long s, String path);
 
@@ -224,10 +318,144 @@ public interface Libhegel {
      */
     void testCaseSetWorker(long tc, long workerIndex);
 
+    /**
+     * {@code hegel_test_case_block}: a caller-owned handle onto the <em>same</em> choice stream as
+     * {@code tc} whose print region is a block nested in {@code tc}'s at the current position, every
+     * line of it {@code indent} columns further in. Drawing through it is drawing through {@code tc},
+     * so the two must not be driven concurrently. Returns the raw rc and on OK writes the handle into
+     * {@code out[0]}; release it with {@link #testCaseFree}.
+     */
+    int testCaseBlock(long tc, long indent, long[] out);
+
+    /**
+     * {@code hegel_note}: append {@code text} to {@code tc}'s print region, each {@code \n}-separated
+     * line its own output line. Returns the raw rc ({@link Abi#E_INVALID_HANDLE} once the
+     * document has been read).
+     */
+    int note(long tc, String text);
+
+    /**
+     * {@code hegel_test_case_printer} with default options: a caller-owned printer onto {@code
+     * tc}'s print region. Returns the raw rc and on OK writes the handle into {@code out[0]};
+     * release it with {@link #printerFree}.
+     */
+    int testCasePrinter(long tc, long[] out);
+
+    /**
+     * {@code hegel_printer_new} with default options: a caller-owned standalone document, released
+     * with {@link #printerFree}.
+     */
+    long printerNew();
+
+    /**
+     * {@code hegel_printer_new}: a caller-owned standalone document laid out per {@code options}
+     * (from {@link #printerOptionsNew}; 0 for the defaults), released with {@link #printerFree}.
+     */
+    long printerNew(long options);
+
+    /**
+     * {@code hegel_printer_options_new}: a caller-owned options handle with every option at its
+     * default, released with {@link #printerOptionsFree}.
+     */
+    long printerOptionsNew();
+
+    /**
+     * {@code hegel_printer_options_set_max_width}: the line width documents made with {@code
+     * options} are laid out to. Returns the raw rc: {@link Abi#E_INVALID_ARG} for a width of 0.
+     */
+    int printerOptionsSetMaxWidth(long options, long maxWidth);
+
+    /** {@code hegel_printer_options_free}. */
+    void printerOptionsFree(long options);
+
+    /** {@code hegel_printer_free}. Freeing never discards document content. */
+    void printerFree(long printer);
+
+    /**
+     * {@code hegel_printer_text}: unbreakable text, which must not contain newlines. The printer
+     * calls return the raw rc: {@link Abi#E_INVALID_HANDLE} once the region is dead.
+     */
+    int printerText(long printer, String text);
+
+    /** {@code hegel_printer_breakable}: {@code sep} when the enclosing group fits, a line break when not. */
+    int printerBreakable(long printer, String sep);
+
+    /** {@code hegel_printer_hard_break}: an unconditional newline. */
+    int printerHardBreak(long printer);
+
+    /**
+     * {@code hegel_printer_if_break}: {@code text}, which must not contain newlines, only when the
+     * innermost open group breaks.
+     */
+    int printerIfBreak(long printer, String text);
+
+    /**
+     * {@code hegel_printer_comment}: attach {@code text}, the comment's full rendered form (such as
+     * {@code "  // note"}), to the end of the current line, forcing every open group to break.
+     */
+    int printerComment(long printer, String text);
+
+    /** {@code hegel_printer_shift_indent}: adjust the indentation of later break points by {@code delta}. */
+    int printerShiftIndent(long printer, long delta);
+
+    /** {@code hegel_printer_begin_group}: emit {@code open} and indent break points by {@code indent}. */
+    int printerBeginGroup(long printer, long indent, String open);
+
+    /** {@code hegel_printer_end_group}: close the innermost group and emit {@code close}. */
+    int printerEndGroup(long printer, String close);
+
+    /**
+     * {@code hegel_printer_reflow} with default options: lay out a flat one-line representation
+     * (a {@code toString()}) through groups recovered from its brackets.
+     */
+    int printerReflow(long printer, String text);
+
+    /** {@code hegel_printer_begin_speculative}: buffer later writes until committed or aborted. */
+    int printerBeginSpeculative(long printer);
+
+    /** {@code hegel_printer_commit_speculative}: keep the innermost speculative region. */
+    int printerCommitSpeculative(long printer);
+
+    /** {@code hegel_printer_abort_speculative}: discard the innermost speculative region. */
+    int printerAbortSpeculative(long printer);
+
+    /**
+     * {@code hegel_printer_deferred}: open a hole at {@code printer}'s current position. Returns the
+     * raw rc ({@link Abi#E_INVALID_HANDLE} for a dead region) and on OK writes a caller-owned handle
+     * onto the hole into {@code out[0]}; release it with {@link #printerFree}.
+     */
+    int printerDeferred(long printer, long[] out);
+
+    /**
+     * {@code hegel_printer_is_live}: whether {@code printer} can still be written to. Returns the
+     * raw rc and on OK writes the answer into {@code out[0]}.
+     */
+    int printerIsLive(long printer, boolean[] out);
+
+    /**
+     * {@code hegel_printer_resolve}: splice every deferred region (a clone's output) in at its anchor
+     * and seal the document, through its root handle. Returns the raw rc: {@link
+     * Abi#E_INVALID_ARG} when there is nothing to resolve.
+     */
+    int printerResolve(long printer);
+
+    /**
+     * {@code hegel_printer_value}: read (and seal) the whole document through its root handle.
+     * Returns the raw rc and on OK writes the text into {@code out[0]}.
+     */
+    int printerValue(long printer, String[] out);
+
     // Per-test-case draws. Each returns the raw rc.
     int generateBoolean(long tc, double p, boolean[] out);
 
     int generateInteger(long tc, long min, long max, long[] out);
+
+    /**
+     * {@code hegel_generate_integer_big}: an integer in {@code [min, max]}, for bounds outside the
+     * {@code long} range. The bounds and the result are two's-complement <em>little-endian</em>
+     * byte arrays, each non-empty; on OK {@code out[0]} receives the value's minimal encoding.
+     */
+    int generateIntegerBig(long tc, byte[] min, byte[] max, byte[][] out);
 
     int generateFloat(
             long tc,
@@ -290,6 +518,82 @@ public interface Libhegel {
 
     void stringGeneratorFree(long generator);
 
+    /**
+     * {@code hegel_grammar_builder_new}: start gathering a grammar in Lark's syntax and the files
+     * its {@code %import}s need. Returns the raw rc ({@link Abi#E_INVALID_ARG} for a grammar that
+     * does not parse); {@code out[0]} receives the handle on {@link Abi#OK} and {@code 0}
+     * otherwise. Release it with {@link #grammarBuilderFree}.
+     */
+    int grammarBuilderNew(String text, long[] out);
+
+    /**
+     * {@code hegel_grammar_builder_file}: the path of the {@code index}-th file the grammar needs.
+     * Returns the raw rc: {@link Abi#E_NOT_FOUND} past the end of the list, which grows as files
+     * are provided. {@code outPath[0]} receives the path on {@link Abi#OK} and {@code null}
+     * otherwise.
+     */
+    int grammarBuilderFile(long builder, long index, String[] outPath);
+
+    /**
+     * {@code hegel_grammar_builder_provide}: supply the {@code index}-th file's text, or {@code
+     * null} for a missing file. Returns the raw rc ({@link Abi#E_INVALID_ARG} for text that does
+     * not parse, or a missing file with no bundled grammar to stand in for it).
+     */
+    int grammarBuilderProvide(long builder, long index, String text);
+
+    /** {@code hegel_grammar_builder_free}. {@code 0} is a no-op. */
+    void grammarBuilderFree(long builder);
+
+    /**
+     * {@code hegel_grammar_new}: compile the gathered grammar. {@code start} is the rule to
+     * generate ({@code null} for {@code start}), {@code maxSize} and {@code maxDepth} take the
+     * engine's defaults at {@code 0}, {@code alphabet} is a text generator handle or {@code 0}, and
+     * {@code explicitNames} are the terminals whose values the caller supplies through a grammar
+     * draw. Returns the raw rc ({@link Abi#E_INVALID_ARG} with the engine's description of what
+     * is wrong); {@code out[0]} receives the handle on {@link Abi#OK} and {@code 0} otherwise.
+     * Release it with {@link #grammarFree} once no draw uses it.
+     */
+    int grammarNew(
+            long builder,
+            String start,
+            long maxSize,
+            int maxDepth,
+            long alphabet,
+            List<String> explicitNames,
+            long[] out);
+
+    /** {@code hegel_grammar_free}. {@code 0} is a no-op. */
+    void grammarFree(long grammar);
+
+    /**
+     * {@code hegel_grammar_draw_new}: start a draw of a string of {@code grammar} of at most
+     * {@code maxSize} characters, the explicit terminals' values included ({@code 0} for the
+     * grammar's own cap). The handle borrows the grammar; release it with {@link
+     * #grammarDrawFree}.
+     */
+    long grammarDrawNew(long grammar, long maxSize);
+
+    /**
+     * {@code hegel_grammar_draw_next}: advance the draw, drawing from {@code tc}. Returns the raw
+     * rc: {@link Abi#OK} when a value is due for the explicit terminal whose index {@code
+     * outTerminal[0]} receives, {@link Abi#E_NOT_FOUND} when the string is complete, or the
+     * test-case codes a draw returns ({@link Abi#E_ASSUME}, {@link Abi#E_STOP_TEST}, ...).
+     */
+    int grammarDrawNext(long tc, long draw, long[] outTerminal);
+
+    /** {@code hegel_grammar_draw_provide}: the value of the terminal last asked for. Returns the raw rc. */
+    int grammarDrawProvide(long draw, String value);
+
+    /**
+     * {@code hegel_grammar_draw_result}: the finished string, once {@link #grammarDrawNext} has
+     * returned {@link Abi#E_NOT_FOUND}. Returns the raw rc ({@link Abi#E_NOT_COMPLETE} before
+     * then); on OK {@code out[0]} receives the string.
+     */
+    int grammarDrawResult(long draw, String[] out);
+
+    /** {@code hegel_grammar_draw_free}. {@code 0} is a no-op. */
+    void grammarDrawFree(long draw);
+
     // Structure: spans, collections, pools, state machines. Each returns the raw rc.
     int startSpan(long tc, long label);
 
@@ -301,11 +605,54 @@ public interface Libhegel {
 
     int collectionReject(long tc, long id, String why);
 
+    /**
+     * {@code hegel_collection_free}: release a collection handle from {@link #newCollection}. The
+     * handle is independent of its test case and run, so this is safe at any point, including after
+     * the case was concluded; each handle must be freed exactly once. {@code 0} is a no-op.
+     */
+    void collectionFree(long id);
+
+    /**
+     * {@code hegel_new_repeat}: start the engine-driven loop behind {@code TestCase.repeat} on
+     * {@code tc}, writing its handle to {@code outId}; release it with {@link #repeatFree}.
+     */
+    int newRepeat(long tc, long[] outId);
+
+    /** {@code hegel_repeat_more}: whether the engine wants another repetition of the loop. */
+    int repeatMore(long tc, long id, boolean[] outMore);
+
+    /**
+     * {@code hegel_repeat_failed}: report that the repetition just run failed, before the failure
+     * propagates out of the loop.
+     */
+    int repeatFailed(long tc, long id);
+
+    /**
+     * {@code hegel_repeat_free}: release a repeat handle from {@link #newRepeat}. The handle is
+     * independent of its test case and run, so this is safe at any point; each handle must be freed
+     * exactly once. {@code 0} is a no-op.
+     */
+    void repeatFree(long id);
+
     int newPool(long tc, long[] outId);
 
     int poolAdd(long tc, long poolId, long[] outVariableId);
 
     int poolGenerate(long tc, long poolId, boolean consume, long[] outVariableId);
+
+    /**
+     * {@code hegel_pool_restore}: put back {@code variableId}, which a consuming {@link
+     * #poolGenerate} removed, so it can be drawn again. Returns {@link Abi#E_INVALID_ARG} when it
+     * is not a consumed variable of the pool.
+     */
+    int poolRestore(long tc, long poolId, long variableId);
+
+    /**
+     * {@code hegel_pool_free}: release a pool handle from {@link #newPool}. Safe at any point
+     * relative to freeing the test case or the run, provided no pool operation is in flight on
+     * another thread; each handle must be freed exactly once. {@code 0} is a no-op.
+     */
+    void poolFree(long poolId);
 
     /**
      * {@code hegel_new_state_machine}: {@code ruleGroups} is parallel to {@code ruleNames} (any
@@ -343,7 +690,31 @@ public interface Libhegel {
     /** {@code hegel_state_machine_free}: the handle is independent of its test case and run. */
     void stateMachineFree(long stateMachineId);
 
+    /** {@code hegel_new_recursion}: {@code out[0]} receives the handle, freed with {@link #recursionFree}. */
+    int newRecursion(long tc, long maxDepth, long maxLeaves, long[] out);
+
+    /** {@code hegel_recursion_branch}: whether the sub-value at {@code depth} is a branch. */
+    int recursionBranch(long tc, long recursion, long depth, boolean[] outBranch);
+
+    /** {@code hegel_recursion_leaf}: {@link Abi#E_RETRY} when the attempt outgrew its budget. */
+    int recursionLeaf(long tc, long recursion);
+
+    /** {@code hegel_recursion_retry}: {@link Abi#E_ASSUME} when the attempts are exhausted. */
+    int recursionRetry(long tc, long recursion);
+
+    /** {@code hegel_recursion_finish}: {@link Abi#E_RETRY} when the attempt was mispriced. */
+    int recursionFinish(long tc, long recursion);
+
+    /** {@code hegel_recursion_free}: safe at any point; each handle is freed exactly once. {@code 0} is a no-op. */
+    void recursionFree(long recursion);
+
     int target(long tc, double value, String label);
+
+    /** {@code hegel_event}: record {@code label} for the end-of-run statistics report. */
+    int event(long tc, String label);
+
+    /** {@code hegel_event_value}: record a finite numeric observation under {@code label}. */
+    int eventValue(long tc, double value, String label);
 
     int markComplete(long tc, int status, String origin);
 
@@ -352,6 +723,14 @@ public interface Libhegel {
 
     /** The run-level error message, or {@code null} when the run completed normally. */
     String runResultError(long result);
+
+    /**
+     * {@code hegel_run_result_error_kind}: why the run errored, one of the {@code Abi.RUN_ERROR_*}
+     * values ({@link Abi#RUN_ERROR_NONE} unless its status is {@link Abi#RUN_STATUS_ERROR}). For
+     * {@link Abi#RUN_ERROR_HEALTH_CHECK}, {@code outHealthCheck[0]} receives the {@code Abi.HC_*}
+     * bit of the check that failed; for every other kind it receives {@code 0}.
+     */
+    int runResultErrorKind(long result, int[] outHealthCheck);
 
     long runResultFailureCount(long result);
 
@@ -371,8 +750,24 @@ public interface Libhegel {
      */
     String failureCaveat(long result, long index);
 
+    /** {@code hegel_label_from_name}: the span label for a generator identified by {@code name}. */
+    long labelFromName(String name);
+
+    /** {@code hegel_label_combine}: the span label for a generator built from {@code labels}, in order. */
+    long labelCombine(long[] labels);
+
     // Diagnostics.
     String lastErrorMessage();
+
+    /**
+     * {@code hegel_context_free} on the calling thread's error context, if it has one. A binding
+     * creates a context lazily for each thread that calls into the engine, and must free it once
+     * the thread has ended even if the thread never calls this, since user threads draw through
+     * {@code TestCase} forks without knowing about contexts. A thread that is about to end may call
+     * this to free its context at once rather than when the thread is collected. A later call on
+     * the same thread creates a fresh context.
+     */
+    void releaseThreadContext();
 
     String version();
 }

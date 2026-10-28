@@ -2,11 +2,16 @@ package dev.hegel;
 
 import dev.hegel.lowlevel.Abi;
 import dev.hegel.lowlevel.Libhegel;
+import java.lang.ref.Reference;
+import java.math.BigInteger;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Function;
+import java.util.function.IntFunction;
 
 /**
  * A {@link DataSource} backed by the real engine for one in-flight test case.
@@ -19,16 +24,37 @@ import java.util.UUID;
 final class LiveDataSource implements DataSource {
     private final Libhegel lib;
     private final long tc;
-    private boolean aborted;
+    /** The pools created anywhere in this test-case family, shared by the root and its clones. */
+    private final List<Long> pools;
+    /**
+     * Whether the choice stream has been concluded, shared by the source and the blocks opened on
+     * it (they draw from the same stream); a clone draws from its own stream and has its own.
+     */
+    private final boolean[] aborted;
+    /**
+     * Whether a recursive generator's attempt outgrew its leaf budget and is unwinding back to the
+     * generator, shared like {@link #aborted}. Spans are left open meanwhile: {@code
+     * hegel_recursion_retry} closes the attempt's spans itself, as discarded.
+     */
+    private final boolean[] unwinding;
+
+    private boolean released;
 
     LiveDataSource(Libhegel lib, long tc) {
+        this(lib, tc, new ArrayList<>(), new boolean[1], new boolean[1]);
+    }
+
+    private LiveDataSource(Libhegel lib, long tc, List<Long> pools, boolean[] aborted, boolean[] unwinding) {
         this.lib = lib;
         this.tc = tc;
+        this.pools = pools;
+        this.aborted = aborted;
+        this.unwinding = unwinding;
     }
 
     @Override
     public boolean isAborted() {
-        return aborted;
+        return aborted[0];
     }
 
     private void translate(int rc, String op) {
@@ -36,13 +62,13 @@ final class LiveDataSource implements DataSource {
             case Abi.OK:
                 return;
             case Abi.E_STOP_TEST:
-                aborted = true;
+                aborted[0] = true;
                 throw new StopTest();
             case Abi.E_ASSUME:
-                aborted = true;
+                aborted[0] = true;
                 throw new AssumeRejected();
             case Abi.E_INVALID_ARG:
-                throw new IllegalArgumentException(nullToEmpty(lib.lastErrorMessage()));
+                throw new InvalidArgument(nullToEmpty(lib.lastErrorMessage()));
             case Abi.E_CONCURRENT_USE:
                 throw new HegelException("hegel_" + op
                         + ": the test-case handle was used from two threads at once. In a concurrent"
@@ -59,8 +85,16 @@ final class LiveDataSource implements DataSource {
     }
 
     private void checkLive() {
-        if (aborted) {
+        checkNotReleased();
+        if (aborted[0]) {
             throw new StopTest();
+        }
+    }
+
+    private void checkNotReleased() {
+        if (released) {
+            throw new InvalidArgument("This TestCase belonged to a stateful rule that has ended and can no longer be"
+                    + " used: draw through the TestCase the current rule was given.");
         }
     }
 
@@ -78,6 +112,32 @@ final class LiveDataSource implements DataSource {
         long[] out = new long[1];
         translate(lib.generateInteger(tc, min, max, out), "generate_integer");
         return out[0];
+    }
+
+    @Override
+    public BigInteger generateIntegerBig(BigInteger min, BigInteger max) {
+        if (min.bitLength() < 64 && max.bitLength() < 64) {
+            return BigInteger.valueOf(generateInteger(min.longValueExact(), max.longValueExact()));
+        }
+        checkLive();
+        byte[][] out = new byte[1][];
+        translate(lib.generateIntegerBig(tc, littleEndian(min), littleEndian(max), out), "generate_integer_big");
+        byte[] value = out[0];
+        byte[] bigEndian = new byte[Math.max(value.length, 1)];
+        for (int i = 0; i < value.length; i++) {
+            bigEndian[bigEndian.length - 1 - i] = value[i];
+        }
+        return new BigInteger(bigEndian);
+    }
+
+    /** {@code value}'s minimal two's-complement encoding, least significant byte first. */
+    private static byte[] littleEndian(BigInteger value) {
+        byte[] bigEndian = value.toByteArray();
+        byte[] out = new byte[bigEndian.length];
+        for (int i = 0; i < bigEndian.length; i++) {
+            out[i] = bigEndian[bigEndian.length - 1 - i];
+        }
+        return out;
     }
 
     @Override
@@ -120,7 +180,11 @@ final class LiveDataSource implements DataSource {
     public String generateString(StringGeneratorHandle generator) {
         checkLive();
         String[] out = new String[1];
-        translate(lib.generateString(tc, generator.handle, out), "generate_string");
+        try {
+            translate(lib.generateString(tc, generator.handle, out), "generate_string");
+        } finally {
+            Reference.reachabilityFence(generator);
+        }
         return out[0];
     }
 
@@ -211,9 +275,13 @@ final class LiveDataSource implements DataSource {
     public StringGeneratorHandle regexGenerator(String pattern, boolean fullmatch, StringGeneratorHandle alphabet) {
         checkLive();
         long[] out = new long[1];
-        translate(
-                lib.stringGeneratorRegex(pattern, fullmatch, alphabet == null ? 0 : alphabet.handle, out),
-                "string_generator_regex");
+        try {
+            translate(
+                    lib.stringGeneratorRegex(pattern, fullmatch, alphabet == null ? 0 : alphabet.handle, out),
+                    "string_generator_regex");
+        } finally {
+            Reference.reachabilityFence(alphabet);
+        }
         return new StringGeneratorHandle(lib, out[0]);
     }
 
@@ -247,6 +315,73 @@ final class LiveDataSource implements DataSource {
     }
 
     @Override
+    public GrammarHandle grammar(
+            String text,
+            String start,
+            long maxSize,
+            int maxDepth,
+            StringGeneratorHandle alphabet,
+            List<String> explicitNames,
+            Function<String, String> files) {
+        checkLive();
+        long[] builder = new long[1];
+        translate(lib.grammarBuilderNew(text, builder), "grammar_builder_new");
+        try {
+            String[] path = new String[1];
+            for (long index = 0; ; index++) {
+                int rc = lib.grammarBuilderFile(builder[0], index, path);
+                if (rc == Abi.E_NOT_FOUND) {
+                    break;
+                }
+                translate(rc, "grammar_builder_file");
+                translate(
+                        lib.grammarBuilderProvide(builder[0], index, files.apply(path[0])), "grammar_builder_provide");
+            }
+            long[] grammar = new long[1];
+            translate(
+                    lib.grammarNew(
+                            builder[0],
+                            start,
+                            maxSize,
+                            maxDepth,
+                            alphabet == null ? 0 : alphabet.handle,
+                            explicitNames,
+                            grammar),
+                    "grammar_new");
+            return new GrammarHandle(lib, grammar[0]);
+        } finally {
+            lib.grammarBuilderFree(builder[0]);
+            Reference.reachabilityFence(alphabet);
+        }
+    }
+
+    @Override
+    public String generateGrammar(GrammarHandle grammar, IntFunction<String> terminal) {
+        checkLive();
+        long draw = lib.grammarDrawNew(grammar.handle, 0);
+        try {
+            long[] index = new long[1];
+            int rc;
+            while ((rc = lib.grammarDrawNext(tc, draw, index)) == Abi.OK) {
+                String value = terminal.apply((int) index[0]);
+                translate(lib.grammarDrawProvide(draw, value), "grammar_draw_provide");
+            }
+            translate(rc == Abi.E_NOT_FOUND ? Abi.OK : rc, "grammar_draw_next");
+            String[] out = new String[1];
+            translate(lib.grammarDrawResult(draw, out), "grammar_draw_result");
+            return out[0];
+        } finally {
+            lib.grammarDrawFree(draw);
+            Reference.reachabilityFence(grammar);
+        }
+    }
+
+    @Override
+    public boolean ownsGrammar(GrammarHandle grammar) {
+        return grammar.lib == lib;
+    }
+
+    @Override
     public void startSpan(long label) {
         checkLive();
         translate(lib.startSpan(tc, label), "start_span");
@@ -254,7 +389,7 @@ final class LiveDataSource implements DataSource {
 
     @Override
     public void stopSpan(boolean discard) {
-        if (aborted) {
+        if (aborted[0] || unwinding[0]) {
             return;
         }
         translate(lib.stopSpan(tc, discard), "stop_span");
@@ -283,11 +418,61 @@ final class LiveDataSource implements DataSource {
     }
 
     @Override
+    public void collectionFree(long id) {
+        lib.collectionFree(id);
+    }
+
+    @Override
+    public long newRepeat() {
+        checkLive();
+        long[] id = new long[1];
+        translate(lib.newRepeat(tc, id), "new_repeat");
+        return id[0];
+    }
+
+    @Override
+    public boolean repeatMore(long id) {
+        checkLive();
+        boolean[] more = new boolean[1];
+        translate(lib.repeatMore(tc, id, more), "repeat_more");
+        return more[0];
+    }
+
+    @Override
+    public void repeatFailed(long id) {
+        checkLive();
+        translate(lib.repeatFailed(tc, id), "repeat_failed");
+    }
+
+    @Override
+    public void repeatFree(long id) {
+        lib.repeatFree(id);
+    }
+
+    @Override
     public long newPool() {
         checkLive();
         long[] id = new long[1];
         translate(lib.newPool(tc, id), "new_pool");
+        synchronized (pools) {
+            pools.add(id[0]);
+        }
         return id[0];
+    }
+
+    @Override
+    public void releasePools() {
+        synchronized (pools) {
+            for (long pool : pools) {
+                lib.poolFree(pool);
+            }
+            pools.clear();
+        }
+    }
+
+    @Override
+    public void releaseThreadContext() {
+        lib.releaseThreadContext();
     }
 
     @Override
@@ -304,6 +489,65 @@ final class LiveDataSource implements DataSource {
         long[] id = new long[1];
         translate(lib.poolGenerate(tc, poolId, consume, id), "pool_generate");
         return id[0];
+    }
+
+    @Override
+    public void poolRestore(long poolId, long variableId) {
+        if (aborted[0]) {
+            return;
+        }
+        translate(lib.poolRestore(tc, poolId, variableId), "pool_restore");
+    }
+
+    @Override
+    public long newRecursion(long maxDepth, long maxLeaves) {
+        checkLive();
+        long[] recursion = new long[1];
+        translate(lib.newRecursion(tc, maxDepth, maxLeaves, recursion), "new_recursion");
+        return recursion[0];
+    }
+
+    @Override
+    public boolean recursionBranch(long recursion, long depth) {
+        checkLive();
+        boolean[] branch = new boolean[1];
+        translate(lib.recursionBranch(tc, recursion, depth, branch), "recursion_branch");
+        return branch[0];
+    }
+
+    @Override
+    public boolean recursionLeaf(long recursion) {
+        checkLive();
+        int rc = lib.recursionLeaf(tc, recursion);
+        if (rc == Abi.E_RETRY) {
+            unwinding[0] = true;
+            return false;
+        }
+        translate(rc, "recursion_leaf");
+        return true;
+    }
+
+    @Override
+    public void recursionRetry(long recursion) {
+        unwinding[0] = false;
+        checkLive();
+        translate(lib.recursionRetry(tc, recursion), "recursion_retry");
+    }
+
+    @Override
+    public boolean recursionFinish(long recursion) {
+        checkLive();
+        int rc = lib.recursionFinish(tc, recursion);
+        if (rc == Abi.E_RETRY) {
+            return false;
+        }
+        translate(rc, "recursion_finish");
+        return true;
+    }
+
+    @Override
+    public void recursionFree(long recursion) {
+        lib.recursionFree(recursion);
     }
 
     @Override
@@ -359,24 +603,48 @@ final class LiveDataSource implements DataSource {
     }
 
     @Override
-    public DataSource cloneForWorker(long workerIndex) {
+    public DataSource clone() {
         checkLive();
         // Cloning consumes a choice position, so it is a draw: on a replay of a shorter sequence
         // it reports STOP_TEST like any other draw, and the case is an overrun.
         long[] clone = new long[1];
         translate(lib.testCaseClone(tc, clone), "test_case_clone");
-        try {
-            lib.testCaseSetWorker(clone[0], workerIndex);
-        } catch (RuntimeException e) {
-            lib.testCaseFree(clone[0]);
-            throw e;
+        return new LiveDataSource(lib, clone[0], pools, new boolean[1], new boolean[1]);
+    }
+
+    @Override
+    public void setWorker(long workerIndex) {
+        checkNotReleased();
+        lib.testCaseSetWorker(tc, workerIndex);
+    }
+
+    @Override
+    public DataSource block(long indent) {
+        long[] block = new long[1];
+        translate(lib.testCaseBlock(tc, indent, block), "test_case_block");
+        return new LiveDataSource(lib, block[0], pools, aborted, unwinding);
+    }
+
+    @Override
+    public void note(String message) {
+        checkNotReleased();
+        int rc = lib.note(tc, message);
+        if (rc != Abi.E_INVALID_HANDLE) {
+            translate(rc, "note");
         }
-        return new LiveDataSource(lib, clone[0]);
+    }
+
+    @Override
+    public Printer printer(Printer.Regions regions) {
+        checkNotReleased();
+        long[] printer = new long[1];
+        translate(lib.testCasePrinter(tc, printer), "test_case_printer");
+        return new Printer(lib, printer[0], regions);
     }
 
     @Override
     public void release() {
-        // Not gated on `aborted`: the clone handle is caller-owned and must be released exactly once.
+        released = true;
         lib.testCaseFree(tc);
     }
 
@@ -400,5 +668,17 @@ final class LiveDataSource implements DataSource {
     public void target(double value, String label) {
         checkLive();
         translate(lib.target(tc, value, label), "target");
+    }
+
+    @Override
+    public void event(String label) {
+        checkLive();
+        translate(lib.event(tc, label), "event");
+    }
+
+    @Override
+    public void eventValue(String label, double value) {
+        checkLive();
+        translate(lib.eventValue(tc, value, label), "event_value");
     }
 }

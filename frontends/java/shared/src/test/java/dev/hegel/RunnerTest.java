@@ -2,6 +2,8 @@ package dev.hegel;
 
 import static dev.hegel.Generators.integers;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -12,6 +14,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
@@ -21,6 +24,11 @@ class RunnerTest {
 
     private static PrintStream capture(ByteArrayOutputStream buf) {
         return new PrintStream(buf, true, StandardCharsets.UTF_8);
+    }
+
+    /** The captured output with platform line endings normalised, so multi-line assertions hold on Windows. */
+    private static String normalizedOutput(ByteArrayOutputStream buf) {
+        return buf.toString(StandardCharsets.UTF_8).replace("\r\n", "\n");
     }
 
     private static void run(FakeLibhegel fake, Settings s, Consumer<TestCase> body) {
@@ -109,7 +117,7 @@ class RunnerTest {
     @Test
     void failedRunReplaysTheBlobAndRethrowsTheOriginalException() {
         // The default (report_multiple_failures off) surfaces the body's own exception instance —
-        // no "Hegel found ..." wrapper — so the stack trace and type are the user's. Covers both an
+        // no "Property-based test failed with ..." wrapper — so the stack trace and type are the user's. Covers both an
         // Error (e.g. an assertion failure) and a RuntimeException.
         AssertionError err = new AssertionError("boom-error");
         assertSame(
@@ -186,8 +194,8 @@ class RunnerTest {
                 Reporter.printing(capture(buf)));
         assertSame(err, report.failures().get(0).exception());
         assertTrue(report.failures().get(0).draws().isEmpty());
-        assertTrue(report.failures().get(0).notes().isEmpty());
-        assertEquals("", buf.toString(StandardCharsets.UTF_8));
+        assertTrue(report.failures().get(0).output().isEmpty());
+        assertEquals("", normalizedOutput(buf));
     }
 
     @Test
@@ -212,11 +220,40 @@ class RunnerTest {
                                 },
                                 Reporter.printing(capture(buf)))
                         .throwIfFailed());
-        assertTrue(e.getMessage().contains("2 distinct failing examples"), e.getMessage());
+        assertTrue(e.getMessage().startsWith("Property-based test failed with 2 distinct failures."), e.getMessage());
         assertTrue(e.getMessage().contains("bug one"), e.getMessage());
         assertTrue(e.getMessage().contains("bug two"), e.getMessage());
         assertEquals(2, e.getSuppressed().length);
-        assertTrue(buf.toString(StandardCharsets.UTF_8).contains("2 distinct failures"), buf.toString());
+        assertTrue(normalizedOutput(buf).contains("2 distinct failures"), normalizedOutput(buf));
+    }
+
+    @Test
+    void quietMultipleFailuresPrintNoHeaderOrSeparators() {
+        FakeLibhegel fake = new FakeLibhegel();
+        fake.caseCount = 2;
+        fake.runStatus = Abi.RUN_STATUS_FAILED;
+        fake.failureBlobs.add("blob-1");
+        fake.failureBlobs.add("blob-2");
+        AtomicInteger replay = new AtomicInteger();
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        assertThrows(
+                AssertionError.class,
+                () -> Runner.run(
+                                fake,
+                                new Settings()
+                                        .database(Database.disabled())
+                                        .reportMultipleFailures(true)
+                                        .printBlob(false)
+                                        .verbosity(Verbosity.QUIET),
+                                tc -> {
+                                    if (replay.incrementAndGet() % 2 == 1) {
+                                        throw new AssertionError("bug one");
+                                    }
+                                    throw new IllegalStateException("bug two");
+                                },
+                                Reporter.printing(capture(buf)))
+                        .throwIfFailed());
+        assertEquals("", normalizedOutput(buf));
     }
 
     @Test
@@ -255,8 +292,31 @@ class RunnerTest {
                                 },
                                 Reporter.printing(capture(buf)))
                         .throwIfFailed());
-        String out = buf.toString(StandardCharsets.UTF_8);
-        assertTrue(out.contains("reproduceFailure = \"blob-b64\""), out);
+        String out = normalizedOutput(buf);
+        assertTrue(
+                out.contains("To reproduce this failure, call this on the test's Settings:\n"
+                        + "    .reproduceFailure(\"blob-b64\")"),
+                out);
+    }
+
+    @Test
+    void anAnnotatedTestIsToldToReplayThroughItsAnnotation() {
+        FakeLibhegel fake = new FakeLibhegel();
+        fake.runStatus = Abi.RUN_STATUS_FAILED;
+        fake.failureBlobs.add("blob-b64");
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        Runner.run(
+                fake,
+                new Settings().database(Database.disabled()).printBlob(true).annotated(),
+                tc -> {
+                    throw new AssertionError("always");
+                },
+                Reporter.printing(capture(buf)));
+        String out = normalizedOutput(buf);
+        assertTrue(
+                out.contains("To reproduce this failure, add this to the test's @HegelTest annotation:\n"
+                        + "    reproduceFailure = \"blob-b64\""),
+                out);
     }
 
     @Test
@@ -264,6 +324,8 @@ class RunnerTest {
         FakeLibhegel fake = new FakeLibhegel();
         fake.runStatus = Abi.RUN_STATUS_ERROR;
         fake.runError = "FailedHealthCheck: FilterTooMuch — too many rejected";
+        fake.runErrorKind = Abi.RUN_ERROR_HEALTH_CHECK;
+        fake.runErrorHealthCheck = Abi.HC_FILTER_TOO_MUCH;
         HealthCheckFailure e = assertThrows(
                 HealthCheckFailure.class,
                 () -> run(fake, new Settings().database(Database.disabled()), tc -> tc.assume(false)));
@@ -313,28 +375,78 @@ class RunnerTest {
     void reproduceFailureReportsAStaleBlob() {
         // The engine's blob run passed: none of its replays failed.
         FakeLibhegel fake = new FakeLibhegel();
-        HegelException e =
-                assertThrows(HegelException.class, () -> run(fake, new Settings().reproduceFailure("stale"), tc -> {}));
+        DidNotReproduceException e = assertThrows(
+                DidNotReproduceException.class,
+                () -> run(fake, new Settings().reproduceFailure("stale", "staler"), tc -> {}));
         assertEquals(Runner.STALE_BLOB, e.getMessage());
-        assertTrue(e.getMessage().contains("did not reproduce"), e.getMessage());
+        assertEquals(List.of("stale", "staler"), fake.startedBlobs);
+    }
+
+    @Test
+    void reproduceFailureReplaysEveryBlobAndReportsEveryFailure() {
+        FakeLibhegel fake = new FakeLibhegel();
+        fake.runStatusQueue.addAll(List.of(Abi.RUN_STATUS_FAILED, Abi.RUN_STATUS_PASSED, Abi.RUN_STATUS_FAILED));
+        fake.failureBlobs.add(null);
+        int[] calls = {0};
+        RunReport report = Runner.run(
+                fake,
+                new Settings().reproduceFailure("a", "b", "c"),
+                tc -> {
+                    if (++calls[0] == 1) {
+                        throw new IllegalStateException("first");
+                    }
+                    if (calls[0] == 3) {
+                        throw new AssertionError("third");
+                    }
+                },
+                Reporter.silent());
+        assertEquals(List.of("a", "b", "c"), fake.startedBlobs);
+        assertEquals(RunStatus.FAILED, report.status());
+        assertEquals(2, report.failures().size());
+        assertInstanceOf(IllegalStateException.class, report.failures().get(0).exception());
+        assertInstanceOf(AssertionError.class, report.failures().get(1).exception());
+    }
+
+    @Test
+    void anErroredReplayAfterAReproducedFailureStillReportsTheFailure() {
+        FakeLibhegel fake = new FakeLibhegel();
+        fake.runStatusQueue.addAll(List.of(Abi.RUN_STATUS_FAILED, Abi.RUN_STATUS_ERROR, Abi.RUN_STATUS_FAILED));
+        fake.runError = "health check failed";
+        fake.runErrorKind = Abi.RUN_ERROR_HEALTH_CHECK;
+        fake.runErrorHealthCheck = Abi.HC_FILTER_TOO_MUCH;
+        fake.failureBlobs.add(null);
+        RunReport report = Runner.run(
+                fake,
+                new Settings().reproduceFailure("a", "b", "c"),
+                tc -> {
+                    throw new IllegalStateException("always");
+                },
+                Reporter.silent());
+        assertEquals(List.of("a", "b"), fake.startedBlobs);
+        assertEquals(RunStatus.FAILED, report.status());
+        assertEquals(1, report.failures().size());
+        assertEquals(Optional.of(HealthCheck.FILTER_TOO_MUCH), report.failedHealthCheck());
     }
 
     @Test
     void reproduceFailureSurfacesAnErroredReplay() {
         FakeLibhegel fake = new FakeLibhegel();
         fake.runStatus = Abi.RUN_STATUS_ERROR;
-        fake.runError = "engine panicked";
-        HegelException e =
-                assertThrows(HegelException.class, () -> run(fake, new Settings().reproduceFailure("???"), tc -> {}));
-        assertTrue(e.getMessage().contains("ended in an error"), e.getMessage());
-        assertTrue(e.getMessage().contains("engine panicked"), e.getMessage());
+        fake.runError = "health check failed";
+        fake.runErrorKind = Abi.RUN_ERROR_HEALTH_CHECK;
+        fake.runErrorHealthCheck = Abi.HC_FILTER_TOO_MUCH;
+        HealthCheckFailure e = assertThrows(
+                HealthCheckFailure.class, () -> run(fake, new Settings().reproduceFailure("???"), tc -> {}));
+        assertEquals("health check failed", e.getMessage());
+        assertEquals(Optional.of(HealthCheck.FILTER_TOO_MUCH), e.healthCheck());
     }
 
     @Test
-    void nondeterminismStrictnessIsSentOnlyWhenSet() {
+    void nondeterminismStrictnessIsAlwaysSent() {
         FakeLibhegel fake = new FakeLibhegel();
-        run(fake, new Settings().database(Database.disabled()), tc -> {});
-        assertNull(fake.strictness);
+        fake.resolvedStrictness = Abi.NONDETERMINISM_ERROR;
+        run(fake, Settings.resolved(fake, null).database(Database.disabled()), tc -> {});
+        assertEquals(Integer.valueOf(Abi.NONDETERMINISM_ERROR), fake.strictness);
         run(
                 fake,
                 new Settings().database(Database.disabled()).nondeterminismStrictness(NondeterminismStrictness.WARN),
@@ -343,34 +455,44 @@ class RunnerTest {
     }
 
     @Test
-    void effectiveStrictnessIsReadBackFromTheEngine() {
+    void resolvedStrictnessIsReadFromTheEngine() {
         FakeLibhegel fake = new FakeLibhegel();
         fake.resolvedStrictness = Abi.NONDETERMINISM_ERROR;
-        Settings[] seen = new Settings[1];
-        Reporter reporter = new Reporter() {
-            @Override
-            public void runStarted(Settings settings) {
-                seen[0] = settings;
-            }
-        };
-        Runner.run(fake, new Settings().database(Database.disabled()), tc -> {}, reporter);
-        assertEquals(NondeterminismStrictness.ERROR, seen[0].nondeterminismStrictness);
-        assertEquals(NondeterminismStrictness.DEFAULT, new Settings().nondeterminismStrictness);
+        assertEquals(NondeterminismStrictness.ERROR, Settings.resolved(fake, null).nondeterminismStrictness);
+        assertEquals(
+                NondeterminismStrictness.QUIET, Settings.resolved(new FakeLibhegel(), null).nondeterminismStrictness);
 
         FakeLibhegel unknown = new FakeLibhegel();
         unknown.resolvedStrictness = 99;
-        HegelException e = assertThrows(HegelException.class, () -> run(unknown, new Settings(), tc -> {}));
+        HegelException e = assertThrows(HegelException.class, () -> Settings.resolved(unknown, null));
         assertTrue(e.getMessage().contains("99"), e.getMessage());
     }
 
     @Test
-    void autoBackendLeavesTheChoiceToTheEngineProfile() {
+    void theResolvedBackendIsSentUnlessReplaced() {
         FakeLibhegel fake = new FakeLibhegel();
-        run(fake, new Settings().backend(Backend.AUTO), tc -> {});
-        assertNull(fake.backendCode);
+        fake.resolvedBackend = Abi.BACKEND_URANDOM;
+        Settings resolved = Settings.resolved(fake, null);
+        assertEquals(Backend.URANDOM, resolved.backend);
+        run(fake, resolved, tc -> {});
+        assertEquals(Abi.BACKEND_URANDOM, fake.backendCode);
         FakeLibhegel explicit = new FakeLibhegel();
         run(explicit, new Settings().backend(Backend.DEFAULT), tc -> {});
         assertEquals(Abi.BACKEND_DEFAULT, explicit.backendCode);
+
+        FakeLibhegel unknown = new FakeLibhegel();
+        unknown.resolvedBackend = 99;
+        HegelException e = assertThrows(HegelException.class, () -> Settings.resolved(unknown, null));
+        assertTrue(e.getMessage().contains("99"), e.getMessage());
+    }
+
+    @Test
+    void theAnnotationSentinelsAreRejected() {
+        assertThrows(IllegalArgumentException.class, () -> new Settings().backend(Backend.AUTO));
+        assertThrows(IllegalArgumentException.class, () -> new Settings().verbosity(Verbosity.DEFAULT));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new Settings().nondeterminismStrictness(NondeterminismStrictness.DEFAULT));
     }
 
     @Test
@@ -397,6 +519,18 @@ class RunnerTest {
     }
 
     @Test
+    void suppressingNoHealthChecksIsSentAndReplacesEarlierSuppressions() {
+        FakeLibhegel resolved = new FakeLibhegel();
+        resolved.resolvedSuppressMask = Abi.HC_TOO_SLOW;
+        run(resolved, Settings.resolved(resolved, null), tc -> {});
+        assertEquals(Abi.HC_TOO_SLOW, resolved.suppressMask);
+
+        FakeLibhegel none = new FakeLibhegel();
+        run(none, new Settings().suppressHealthCheck(HealthCheck.TOO_SLOW).suppressHealthCheck(), tc -> {});
+        assertEquals(0, none.suppressMask);
+    }
+
+    @Test
     void databaseDisabledAndCiDefaults() {
         // A disabled database still sends the key: the engine derives the derandomized seed from it.
         FakeLibhegel disabled = new FakeLibhegel();
@@ -404,13 +538,24 @@ class RunnerTest {
         assertEquals("", disabled.databasePath);
         assertEquals("d", disabled.databaseKey);
 
-        // Unset settings are not sent at all: the engine's profile (which disables the database
-        // and derandomizes in CI) and the HEGEL_* variables stand. A name still derives a key.
+        FakeLibhegel defaultLocation = new FakeLibhegel();
+        run(defaultLocation, new Settings().database(Database.defaultLocation()), tc -> {});
+        assertNull(defaultLocation.databasePath);
+
+        // What the settings resolved from the engine's profile (which disables the database and
+        // derandomizes in CI) is sent back as it was read. A name derives a key.
         FakeLibhegel named = new FakeLibhegel();
-        Runner.run(named, new Settings().name("t"), tc -> {}, Reporter.printing(capture(new ByteArrayOutputStream())));
-        assertEquals("unset", named.databasePath);
-        assertNull(named.derandomize);
-        assertNull(named.testCases);
+        named.resolvedDatabase = "";
+        named.resolvedDerandomize = true;
+        named.resolvedTestCases = 7;
+        Runner.run(
+                named,
+                Settings.resolved(named, null).name("t"),
+                tc -> {},
+                Reporter.printing(capture(new ByteArrayOutputStream())));
+        assertEquals("", named.databasePath);
+        assertEquals(Boolean.TRUE, named.derandomize);
+        assertEquals(Long.valueOf(7), named.testCases);
         assertEquals("t", named.databaseKey);
     }
 
@@ -441,13 +586,13 @@ class RunnerTest {
                 seen[0] = settings;
             }
         };
-        // Unset: the values the engine resolved (profile + HEGEL_* variables) are reported.
+        // The values the engine resolved (profile + HEGEL_* variables) are reported.
         FakeLibhegel fromEngine = new FakeLibhegel();
         fromEngine.resolvedTestCases = 250;
         fromEngine.resolvedPrintBlob = true;
-        Runner.run(fromEngine, new Settings(), tc -> {}, recording);
-        assertEquals(Long.valueOf(250), seen[0].testCases);
-        assertEquals(Boolean.TRUE, seen[0].printBlob);
+        Runner.run(fromEngine, Settings.resolved(fromEngine, null), tc -> {}, recording);
+        assertEquals(250L, seen[0].testCases);
+        assertTrue(seen[0].printBlob);
 
         // Explicit: the caller's values win, and the test-case budget reaches the engine.
         FakeLibhegel explicit = new FakeLibhegel();
@@ -455,8 +600,8 @@ class RunnerTest {
         Runner.run(explicit, new Settings().testCases(3).printBlob(false), tc -> {}, recording);
         assertEquals(Long.valueOf(3), explicit.testCases);
         assertEquals(Boolean.FALSE, explicit.printBlob);
-        assertEquals(Long.valueOf(3), seen[0].testCases);
-        assertEquals(Boolean.FALSE, seen[0].printBlob);
+        assertEquals(3L, seen[0].testCases);
+        assertFalse(seen[0].printBlob);
     }
 
     @Test
@@ -500,8 +645,8 @@ class RunnerTest {
                 },
                 Reporter.printing(capture(buf)));
         assertTrue(report.failures().get(0).nondeterministic());
-        String out = buf.toString(StandardCharsets.UTF_8).replace("\r\n", "\n");
-        assertEquals("x = 0;\nnote: nondeterministic failure, unconfirmed: failed 0 of 20 replays\n", out);
+        String out = normalizedOutput(buf);
+        assertEquals("var x_1 = 0;\nnote: nondeterministic failure, unconfirmed: failed 0 of 20 replays\n", out);
     }
 
     @Test
@@ -518,8 +663,8 @@ class RunnerTest {
                     throw new AssertionError("sometimes");
                 },
                 Reporter.printing(capture(buf)));
-        String out = buf.toString(StandardCharsets.UTF_8);
+        String out = normalizedOutput(buf);
         assertTrue(!out.contains("note:"), out);
-        assertTrue(out.contains("reproduceFailure = \"nd-blob\""), out);
+        assertTrue(out.contains(".reproduceFailure(\"nd-blob\")"), out);
     }
 }
