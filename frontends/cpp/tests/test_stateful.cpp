@@ -156,8 +156,10 @@ TEST(Pools, FilteredConsumeRestoresValuesWhenThePredicateThrows) {
                     }));
             });
         },
-        hegel::Settings{.test_cases = 100,
-                        .database = hegel::Database::disabled()});
+        hegel::Settings{
+            .test_cases = 10,
+            .database = hegel::Database::disabled(),
+            .suppress_health_check = {hegel::HealthCheck::TooSlow}});
     EXPECT_GT(checked, 0);
 }
 

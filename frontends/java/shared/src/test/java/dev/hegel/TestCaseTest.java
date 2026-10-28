@@ -231,14 +231,14 @@ class TestCaseTest {
         TestCase tc = newCase(fake, false);
         assertEquals(7, tc.span(Label.of("test.pair"), () -> 7));
         assertEquals(List.of(Label.of("test.pair")), fake.startedSpans);
-        assertEquals(1, fake.stoppedSpans);
+        assertEquals(1, fake.stoppedSpans.get());
         // The span is closed on the exceptional path too.
         assertThrows(
                 IllegalStateException.class,
                 () -> tc.span(Label.TUPLE, () -> {
                     throw new IllegalStateException("inside");
                 }));
-        assertEquals(2, fake.stoppedSpans);
+        assertEquals(2, fake.stoppedSpans.get());
     }
 
     @Test

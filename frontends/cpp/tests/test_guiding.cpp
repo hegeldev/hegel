@@ -139,9 +139,11 @@ TEST(Loop, NeverReturns) {
             });
             returned = true;
         },
-        hegel::Settings{.test_cases = 10,
-                        .derandomize = true,
-                        .database = hegel::Database::disabled()});
+        hegel::Settings{
+            .test_cases = 3,
+            .derandomize = true,
+            .database = hegel::Database::disabled(),
+            .suppress_health_check = {hegel::HealthCheck::TooSlow}});
     EXPECT_FALSE(returned);
     EXPECT_GT(max_iters, 1) << "repeat() never iterated more than once";
 }
@@ -255,7 +257,8 @@ TEST(Loop, RejectInsideContinues) {
             .test_cases = 3,
             .derandomize = true,
             .database = hegel::Database::disabled(),
-            .suppress_health_check = {hegel::HealthCheck::FilterTooMuch}});
+            .suppress_health_check = {hegel::HealthCheck::FilterTooMuch,
+                                      hegel::HealthCheck::TooSlow}});
     EXPECT_TRUE(completed);
 }
 

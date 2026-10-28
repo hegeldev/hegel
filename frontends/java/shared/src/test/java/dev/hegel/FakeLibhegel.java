@@ -7,12 +7,14 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalLong;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
 /**
@@ -259,8 +261,8 @@ final class FakeLibhegel implements Libhegel {
 
     int startSpanRc = Abi.OK;
     int stopSpanRc = Abi.OK;
-    int stoppedSpans;
-    final List<Long> startedSpans = new ArrayList<>();
+    final AtomicInteger stoppedSpans = new AtomicInteger();
+    final List<Long> startedSpans = Collections.synchronizedList(new ArrayList<>());
     int newCollectionRc = Abi.OK;
     long collectionId = 7;
     Long collectionMinSize;
@@ -1109,7 +1111,7 @@ final class FakeLibhegel implements Libhegel {
 
     @Override
     public int stopSpan(long tc, boolean discard) {
-        stoppedSpans++;
+        stoppedSpans.incrementAndGet();
         return stopSpanRc;
     }
 

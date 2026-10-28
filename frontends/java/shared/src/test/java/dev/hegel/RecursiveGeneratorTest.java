@@ -103,7 +103,7 @@ class RecursiveGeneratorTest {
         assertEquals(0, value);
         // The retried attempt's map, list and subtree spans were left open for the engine; only the
         // second attempt's leaf span, its map span and the generator's own span were closed.
-        assertEquals(3, fake.stoppedSpans);
+        assertEquals(3, fake.stoppedSpans.get());
         assertEquals(List.of(fake.recursionId), fake.freedRecursions);
     }
 
