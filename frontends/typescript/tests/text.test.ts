@@ -26,11 +26,29 @@ describe("gs.text()", () => {
       { testCases: 20 },
     ));
 
-  test("generates strings without maxSize", () =>
+  test("without maxSize the engine's default maximum of 100 applies", () =>
     hegel.test(
       (tc) => {
         const v = tc.draw(gs.text());
-        expect(typeof v).toBe("string");
+        expect([...v].length).toBeLessThanOrEqual(100);
+      },
+      { testCases: 100 },
+    ));
+
+  test("without maxSize a minSize above 100 allows 100 more", () =>
+    hegel.test(
+      (tc) => {
+        const length = [...tc.draw(gs.text({ minSize: 150 }))].length;
+        expect(length).toBeGreaterThanOrEqual(150);
+        expect(length).toBeLessThanOrEqual(250);
+      },
+      { testCases: 50 },
+    ));
+
+  test("a maxSize at or above the engine's reserved default means no bound", () =>
+    hegel.test(
+      (tc) => {
+        expect(typeof tc.draw(gs.text({ maxSize: 2 ** 64 }))).toBe("string");
       },
       { testCases: 10 },
     ));

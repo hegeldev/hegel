@@ -4,10 +4,18 @@
  * @packageDocumentation
  */
 
-import { TestCase, Labels } from "../testCase.js";
-import { Generator, BasicGenerator } from "./core.js";
+import { TestCase } from "../testCase.js";
+import { Block, propertyKey, type PrettyPrinter } from "../pretty.js";
+import { LabelNames, labelSpec, type LabelSpec } from "../labels.js";
+import {
+  PrintableGenerator,
+  ValueGenerator,
+  composedBasic,
+  type BasicGenerator,
+  type Generator,
+} from "./core.js";
 
-class ComposedGenerator<T> extends Generator<T> {
+class ComposedGenerator<T> extends ValueGenerator<T> {
   constructor(private readonly fn: (tc: TestCase) => T) {
     super();
   }
@@ -15,14 +23,42 @@ class ComposedGenerator<T> extends Generator<T> {
   doDraw(tc: TestCase): T {
     return this.fn(tc);
   }
+
+  /** @internal */
+  protected override makeLabel(): LabelSpec {
+    return labelSpec(LabelNames.COMPOSITE);
+  }
 }
 
-/** Create a generator from an imperative function. */
-export function composite<T>(fn: (tc: TestCase) => T): Generator<T> {
+/**
+ * Create a generator from an imperative function, drawing from `tc`. The
+ * draws it makes are not printed: the value it returns prints as
+ * {@link PrettyPrinter.value} prints it. To print it some other way, use
+ * {@link Generator.printWith}, or write a {@link PrintableGenerator}.
+ */
+export function composite<T>(fn: (tc: TestCase) => T): PrintableGenerator<T> {
   return new ComposedGenerator(fn);
 }
 
-class RecordGenerator<T extends Record<string, unknown>> extends Generator<T> {
+/** An object literal, `{ key: value }`, each field's value drawn by `field`. */
+function printFields<T>(
+  printer: PrettyPrinter,
+  keys: readonly string[],
+  field: (index: number) => unknown,
+): T {
+  const obj: Record<string, unknown> = {};
+  const block = new Block(printer, "{", "}", " ");
+  for (let i = 0; i < keys.length; i++) {
+    block.next();
+    printer.text(`${propertyKey(keys[i])}: `);
+    obj[keys[i]] = field(i);
+    block.accept();
+  }
+  block.end();
+  return obj as T;
+}
+
+class RecordGenerator<T extends Record<string, unknown>> extends PrintableGenerator<T> {
   private readonly keys: (keyof T & string)[];
   private readonly generators: Generator<T[keyof T & string]>[];
   private readonly basic: BasicGenerator<T> | null;
@@ -36,17 +72,11 @@ class RecordGenerator<T extends Record<string, unknown>> extends Generator<T> {
     if (basics.every((b) => b !== null)) {
       const validBasics = basics as BasicGenerator<unknown>[];
       const keys = this.keys;
-      this.basic = new BasicGenerator(
+      this.basic = composedBasic(
         { type: "tuple", elements: validBasics.map((b) => b.schema) },
-        (raw) => {
-          /* v8 ignore start: server always returns array for tuple schema */
+        (raw, printer) => {
           if (!Array.isArray(raw)) throw new Error(`Expected array, got ${typeof raw}`);
-          /* v8 ignore stop */
-          const obj: Record<string, unknown> = {};
-          for (let i = 0; i < keys.length; i++) {
-            obj[keys[i]] = validBasics[i].parseRaw(raw[i]);
-          }
-          return obj as T;
+          return printFields(printer, keys, (i) => validBasics[i].parseAndPrint(raw[i], printer));
         },
       );
     } else {
@@ -54,26 +84,27 @@ class RecordGenerator<T extends Record<string, unknown>> extends Generator<T> {
     }
   }
 
-  doDraw(tc: TestCase): T {
-    if (this.basic) return this.basic.doDraw(tc);
-    tc.startSpan(Labels.FIXED_DICT);
-    const obj: Record<string, unknown> = {};
-    for (let i = 0; i < this.keys.length; i++) {
-      obj[this.keys[i]] = this.generators[i].doDraw(tc);
-    }
-    tc.stopSpan();
-    return obj as T;
+  doDrawAndPrint(tc: TestCase, printer: PrettyPrinter): T {
+    if (this.basic) return this.basic.doDrawAndPrint(tc, printer);
+    return printFields<T>(printer, this.keys, (i) =>
+      tc.drawAndPrint(this.generators[i] as PrintableGenerator<unknown>, printer),
+    );
   }
 
   override asBasic(): BasicGenerator<T> | null {
     return this.basic;
+  }
+
+  /** @internal */
+  protected override makeLabel(): LabelSpec {
+    return labelSpec(LabelNames.FIXED_DICTS, ...this.generators.map((g) => g.label));
   }
 }
 
 /**
  * Generate plain objects by drawing each field from its generator.
  * Uses the schema-based path (tuple schema) when all fields have asBasic(),
- * otherwise falls back to composite draws with a FIXED_DICT span.
+ * otherwise draws each field through the test case.
  *
  * @example
  * ```ts
@@ -83,7 +114,15 @@ class RecordGenerator<T extends Record<string, unknown>> extends Generator<T> {
  *   active: booleans(),
  * });
  * ```
+ *
+ * A record prints as an object literal, each field as its generator prints it.
  */
+export function record<T extends Record<string, unknown>>(schema: {
+  [K in keyof T]: PrintableGenerator<T[K]>;
+}): PrintableGenerator<T>;
+export function record<T extends Record<string, unknown>>(schema: {
+  [K in keyof T]: Generator<T[K]>;
+}): Generator<T>;
 export function record<T extends Record<string, unknown>>(schema: {
   [K in keyof T]: Generator<T[K]>;
 }): Generator<T> {
