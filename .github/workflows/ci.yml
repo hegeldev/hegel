@@ -16,6 +16,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  merge_group:
 
 permissions: {}
 
@@ -26,27 +27,36 @@ concurrency:
 jobs:
   # Which parts of the repo changed. On a push to main everything is treated
   # as changed, so the release job always has a complete run behind it; on a
-  # pull request only the affected components' workflows run. Branch
-  # protection requires `ci-ok` below rather than the component jobs, since a
-  # skipped reusable workflow reports no check runs at all.
+  # pull request or a merge queue run only the affected components' workflows
+  # run. Branch protection requires `ci-ok` below rather than the component
+  # jobs, since a skipped reusable workflow reports no check runs at all.
   changes:
     name: changes
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       pull-requests: read
     outputs:
-      libhegel: ${{ github.event_name != 'pull_request' || steps.filter.outputs.libhegel == 'true' }}
-      rust: ${{ github.event_name != 'pull_request' || steps.filter.outputs.rust == 'true' }}
-      python: ${{ github.event_name != 'pull_request' || steps.filter.outputs.python == 'true' }}
-      typescript: ${{ github.event_name != 'pull_request' || steps.filter.outputs.typescript == 'true' }}
-      cpp: ${{ github.event_name != 'pull_request' || steps.filter.outputs.cpp == 'true' }}
-      java: ${{ github.event_name != 'pull_request' || steps.filter.outputs.java == 'true' }}
-      ocaml: ${{ github.event_name != 'pull_request' || steps.filter.outputs.ocaml == 'true' }}
+      libhegel: ${{ github.event_name == 'push' || steps.filter.outputs.libhegel == 'true' }}
+      rust: ${{ github.event_name == 'push' || steps.filter.outputs.rust == 'true' }}
+      python: ${{ github.event_name == 'push' || steps.filter.outputs.python == 'true' }}
+      typescript: ${{ github.event_name == 'push' || steps.filter.outputs.typescript == 'true' }}
+      cpp: ${{ github.event_name == 'push' || steps.filter.outputs.cpp == 'true' }}
+      java: ${{ github.event_name == 'push' || steps.filter.outputs.java == 'true' }}
+      ocaml: ${{ github.event_name == 'push' || steps.filter.outputs.ocaml == 'true' }}
     steps:
+      # Outside a pull request the filter diffs with git, so it needs a
+      # repository to run in.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        if: github.event_name == 'merge_group'
+        with:
+          persist-credentials: false
       - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
-        if: github.event_name == 'pull_request'
+        if: github.event_name != 'push'
         id: filter
         with:
+          base: ${{ github.event.merge_group.base_sha }}
+          ref: ${{ github.event.merge_group.head_sha }}
           # `shared` is everything the Cargo workspace members have in common:
           # a change there re-runs every component. libhegel is a dependency
           # of every frontend, so a libhegel change re-runs the frontends too.
@@ -238,15 +248,16 @@ jobs:
       pull-requests: write  # needed for creating PRs on main
     steps:
       # For fork PRs, head_ref points to a branch that doesn't exist on the base repo,
-      # so we fall back to the default ref (the merge commit).
+      # so we fall back to the default ref (the merge commit). A merge queue run
+      # only measures coverage, so it checks out the same way.
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        if: ${{ github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) }}
         with:
           persist-credentials: false
 
       # use an app token so that the commit re-triggers CI. GITHUB_TOKEN pushes don't trigger CI
       - name: Generate app token
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        if: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
         uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
         id: app-token
         with:
@@ -254,7 +265,7 @@ jobs:
           private-key: ${{ secrets.HEGEL_RELEASE_APP_PRIVATE_KEY }}
           repositories: hegel
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2 # zizmor: ignore[artipacked]
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        if: ${{ github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
         with:
           ref: ${{ github.head_ref || github.ref }}
           token: ${{ steps.app-token.outputs.token }}
@@ -272,7 +283,7 @@ jobs:
         run: just check-coverage
 
       - name: Auto-update coverage annotations and ratchet
-        if: success() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        if: success() && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |

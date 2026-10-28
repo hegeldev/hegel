@@ -3,13 +3,17 @@ name: CI
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
+  # The merge queue requires this check too. The pull request already ran it,
+  # and a merge queue run cannot see the PR's labels, so there the job is
+  # skipped, which counts as passing.
+  merge_group:
 
 permissions: {}
 
 jobs:
   check-release:
     name: check release
-    if: "!contains(github.event.pull_request.labels.*.name, 'skip release')"
+    if: "github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'skip release')"
     runs-on: ubuntu-latest
     permissions:
       contents: read
