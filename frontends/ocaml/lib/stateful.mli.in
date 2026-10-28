@@ -309,6 +309,14 @@ module Pool : sig
       ]} *)
   val size : _ t -> int
 
+  (** Returns the values in the pool, in no particular order, each
+      passed through the pool's clone function.
+
+      {[
+      List.iter (Stateful.Pool.to_list pool) ~f:(fun h -> assert (is_open h))
+      ]} *)
+  val to_list : 'a t -> 'a list
+
   (** Draws a value without removing it. A draw from an empty pool rejects the
       current rule, or the test case when drawn outside a rule.
 
@@ -343,6 +351,10 @@ module Concurrent_pool : sig PORTABLE
 
   (** Returns the number of values in the pool. *)
   val size : _ t -> int
+
+  (** Returns the values in the pool, in no particular order, each
+      passed through the pool's clone function. *)
+  val to_list : 'a t -> 'a list
 
   (** Draws a value without removing it. A draw from an empty pool rejects the
       current rule, or the test case when drawn outside a rule. *)

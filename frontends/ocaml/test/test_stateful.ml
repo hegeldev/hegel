@@ -665,6 +665,32 @@ let pool_reusable_clones_test () =
     Alcotest.(check int) "consume empties pool" 0 (P.size pool))
 ;;
 
+let pool_to_list_test () =
+  let module P = Hegel.Stateful.Pool in
+  Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:10 ()) (fun tc ->
+    let pool = P.create tc in
+    Alcotest.(check (list int)) "starts empty" [] (P.to_list pool);
+    List.iter (List.range 0 20) ~f:(P.add pool tc);
+    Alcotest.(check (list int))
+      "every added value"
+      (List.range 0 20)
+      (P.to_list pool |> List.sort ~compare:Int.compare);
+    let consumed = Hegel.draw_silent tc (P.values_consumed pool) in
+    Alcotest.(check (list int))
+      "consumed value gone"
+      (List.filter (List.range 0 20) ~f:(fun v -> v <> consumed))
+      (P.to_list pool |> List.sort ~compare:Int.compare);
+    let original = Atomic.make 10 in
+    let cloned_pool =
+      P.create ~clone:(fun (value : int Atomic.t) -> Atomic.make (Atomic.get value)) tc
+    in
+    P.add cloned_pool tc original;
+    let copy = List.hd_exn (P.to_list cloned_pool) in
+    Atomic.set copy 99;
+    Alcotest.(check bool) "clones" false (phys_equal copy original);
+    Alcotest.(check int) "original untouched" 10 (Atomic.get original))
+;;
+
 let pool_empty_draw_rejects_test () =
   let module P = Hegel.Stateful.Pool in
   Test_helpers.expect_unsatisfiable (fun () ->
@@ -798,6 +824,10 @@ let pool_parallel_adds_test ~concurrency () =
          "all additions retained"
          value_count
          (S.Concurrent_pool.size pool);
+       Alcotest.(check (list int))
+         "to_list holds every added value"
+         (List.range 0 value_count)
+         (S.Concurrent_pool.to_list pool |> List.sort ~compare:Int.compare);
        (* a reusable draw leaves the pool as it found it *)
        let reused = Hegel.draw_silent tc (S.Concurrent_pool.values_reusable pool) in
        Alcotest.(check bool)
@@ -1369,6 +1399,7 @@ let tests =
       "stateful: pool reusable draws clone"
       `Quick
       pool_reusable_clones_test
+  ; Alcotest.test_case "stateful: pool to_list" `Quick pool_to_list_test
   ; Alcotest.test_case
       "stateful: pool empty draw rejects"
       `Quick
