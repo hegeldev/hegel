@@ -1,6 +1,6 @@
 # AGENTS.md
 
-The Hegel monorepo. `libhegel/` is the native property-based testing engine (the `hegeltest-c` crate, shipped as the `libhegel` C-ABI library), and `frontends/<language>/` are the language frontends that drive it through that C ABI. Each component has its own `AGENTS.md` with its specifics; this file covers what spans the repo.
+The Hegel monorepo. `libhegel/` is the native property-based testing engine (the `hegeltest-c` crate, shipped as the `libhegel` C-ABI library), `frontends/<language>/` are the language frontends that drive it through that C ABI, and `website/` is hegel.dev. Each component has its own `AGENTS.md` with its specifics; this file covers what spans the repo.
 
 ## Layout
 
@@ -11,10 +11,11 @@ The Hegel monorepo. `libhegel/` is the native property-based testing engine (the
 - `frontends/cpp/` — the C++ frontend: the `hegel` CMake library, driving libhegel in-process through its C ABI. Needs CMake 3.14+ and a C++20 compiler. See `frontends/cpp/AGENTS.md`.
 - `frontends/java/` — the Java frontend: the `dev.hegel:hegel` (FFM, Java 22+), `dev.hegel:hegel-jna` (JNA, Java 17+) and `dev.hegel:hegel-lowlevel` Maven artifacts, one multi-module Maven build. Needs a JDK (22+ for the whole reactor) and Maven. See `frontends/java/AGENTS.md`.
 - `frontends/ocaml/` — the OCaml frontend: the `hegel` opam package (plus `ppx_hegel_compat`, `ppx_hegel_generator`, `ppx_hegel_test`), driving libhegel in-process through ctypes. Needs opam (OCaml >= 5.1). See `frontends/ocaml/AGENTS.md`.
+- `website/` — hegel.dev: an Astro/Starlight site that Vercel deploys from `main`. Not a released component. Its `public/{cpp,typescript,ocaml}/` API references are committed by the release jobs. Needs Node. See `website/AGENTS.md`.
 - `Cargo.toml` — one Cargo workspace for every Rust crate in the repo (`libhegel`, `frontends/rust`, `frontends/rust/macros`, `frontends/python`); one `Cargo.lock`. The TypeScript, C++, Java and OCaml frontends are not crates: they build `hegeltest-c` from the workspace with cargo (`just typescript::build-libhegel`, `just java::build-libhegel`, `just ocaml::build-libhegel`; the C++ frontend's `cmake/libhegel.cmake` runs cargo itself).
 - `scripts/` — lints that span the Cargo workspace. Component-specific scripts live in `<component>/scripts/`.
-- `justfile` — workspace-wide recipes; `libhegel/justfile`, `frontends/rust/justfile`, `frontends/python/justfile`, `frontends/typescript/justfile`, `frontends/cpp/justfile`, `frontends/java/justfile` and `frontends/ocaml/justfile` are `just` modules (`just libhegel::<recipe>`, `just rust::<recipe>`, `just python::<recipe>`, `just typescript::<recipe>`, `just cpp::<recipe>`, `just java::<recipe>`, `just ocaml::<recipe>`) whose recipes run from their own directory.
-- `.github/workflows/ci.yml` — the CI entry point. Its `changes` job works out which components a PR touches; `libhegel.yml`, `frontend-rust.yml`, `frontend-python.yml`, `frontend-typescript.yml`, `frontend-cpp.yml`, `frontend-java.yml` and `frontend-ocaml.yml` are reusable per-component workflows that only run when their paths (or the shared workspace files) changed. Every Rust job starts with `.github/actions/setup-rust`; `.github/actions/build-python-wheels` builds the Python wheels for both PR checks and releases; every OCaml job starts with `.github/actions/setup-opam` (`.github/ocaml/` holds its CI-only opam and dune files).
+- `justfile` — workspace-wide recipes; `libhegel/justfile`, `frontends/rust/justfile`, `frontends/python/justfile`, `frontends/typescript/justfile`, `frontends/cpp/justfile`, `frontends/java/justfile`, `frontends/ocaml/justfile` and `website/justfile` are `just` modules (`just libhegel::<recipe>`, `just rust::<recipe>`, `just python::<recipe>`, `just typescript::<recipe>`, `just cpp::<recipe>`, `just java::<recipe>`, `just ocaml::<recipe>`, `just website::<recipe>`) whose recipes run from their own directory.
+- `.github/workflows/ci.yml` — the CI entry point. Its `changes` job works out which components a PR touches; `libhegel.yml`, `frontend-rust.yml`, `frontend-python.yml`, `frontend-typescript.yml`, `frontend-cpp.yml`, `frontend-java.yml`, `frontend-ocaml.yml` and `website.yml` are reusable per-component workflows that only run when their paths (or the shared workspace files) changed. A change confined to `website/` runs only `website.yml`. Every Rust job starts with `.github/actions/setup-rust`; `.github/actions/build-python-wheels` builds the Python wheels for both PR checks and releases; every OCaml job starts with `.github/actions/setup-opam` (`.github/ocaml/` holds its CI-only opam and dune files).
 - `.claude/skills/` (also reachable as `.agents/skills/`) — skills shared by every component.
 
 ## Commands
@@ -31,6 +32,7 @@ just typescript::check    # needs `just typescript::setup` once (npm ci) and the
 just cpp::check           # needs CMake, a C++20 compiler, uv, clang-tidy, doxygen and llvm-cov
 just java::check          # needs a JDK 22+ and Maven
 just ocaml::check         # needs `just ocaml::setup` once (opam, in a switch with OCaml >= 5.1)
+just website::build       # needs `just website::setup` once (npm ci); not part of `just check`
 just --list libhegel      # a component's recipes
 ```
 
