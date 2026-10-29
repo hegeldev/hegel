@@ -24,14 +24,16 @@ class Component:
     `pom.xml` files, or dune's `dune-project` and the `.opam` files it
     generates; the first is the one its version is read from) and `crates` the
     packages those manifests declare, all at the component's version;
-    `source_dirs` are the paths whose changes require a `<path>/RELEASE.md` on
-    a PR.
+    `source_dirs` are the paths whose changes require a release file
+    (`<path>/RELEASE/<slug>.md`, one per pull request so that two pull
+    requests releasing the same component never conflict in the merge
+    queue) on a PR.
 
     A frontend ships the engine (the Rust frontend pins the `hegeltest-c`
     crate exactly, the Python frontend compiles libhegel into its wheels, the
     TypeScript, Java and OCaml frontends bundle the libhegel binaries, the C++
     frontend builds the in-tree libhegel it is fetched with), so a libhegel release
-    also patch-bumps every frontend without a RELEASE.md of its own, giving it
+    also patch-bumps every frontend without a release file of its own, giving it
     `engine_bump_entry` (with `{version}` filled in) as its changelog entry.
     libhegel itself has no such entry. A frontend that records the engine
     version it ships in a generated source file names it in `engine_pin`;
@@ -51,8 +53,37 @@ class Component:
     install_docs: tuple[str, ...] = ()
 
     @property
-    def release_file(self) -> str:
+    def release_dir(self) -> str:
+        return f"{self.path}/RELEASE"
+
+    @property
+    def legacy_release_file(self) -> str:
+        """The single per-component release file the directory replaced. It
+        is still released when found on main, so a pull request written
+        before the change releases as intended, but `check` refuses new ones:
+        two pull requests adding it conflict with each other."""
         return f"{self.path}/RELEASE.md"
+
+    def is_release_file(self, rel: str) -> bool:
+        return rel == self.legacy_release_file or (
+            rel.startswith(self.release_dir + "/") and rel.endswith(".md")
+        )
+
+    def release_files(self, root: Path) -> list[str]:
+        """The component's pending release files in the tree at `root`,
+        relative to it: the legacy file if it is still there, then the
+        `RELEASE/<slug>.md` files in name order."""
+        files = []
+        if (root / self.legacy_release_file).is_file():
+            files.append(self.legacy_release_file)
+        release_dir = root / self.release_dir
+        if release_dir.is_dir():
+            files.extend(
+                f"{self.release_dir}/{path.name}"
+                for path in sorted(release_dir.iterdir())
+                if path.is_file() and path.suffix == ".md"
+            )
+        return files
 
     @property
     def changelog(self) -> str:
@@ -403,9 +434,10 @@ def plan_release(
     """Decide the new versions and changelog bodies for a release.
 
     `current` maps every component to its current version and `releases`
-    maps it to the `(release_type, content)` pair parsed from its RELEASE.md,
-    or None when that file is absent. At least one must be present (the
-    release only runs when one exists).
+    maps it to the `(release_type, content)` pair of its release files
+    (combined by `combine_entries` when there are several), or None when it
+    has none. At least one must be present (the release only runs when one
+    exists).
 
     The components version independently: each bumps by its own release file.
     A frontend without one still takes a patch bump when libhegel releases,
@@ -439,6 +471,102 @@ def plan_release(
     return plan
 
 
+RELEASE_TYPES = ("patch", "minor", "major")
+
+
+def combine_entries(entries: list[tuple[str, str]]) -> tuple[str, str]:
+    """Fold a component's release files into one release: the largest
+    `RELEASE_TYPE` wins and the entries follow each other as paragraphs, in
+    the order given (`Component.release_files` order, by file name)."""
+    assert entries
+    release_type = max((t for t, _ in entries), key=RELEASE_TYPES.index)
+    return release_type, "\n\n".join(content for _, content in entries)
+
+
+def pending_release_files(root: Path) -> dict[Component, list[str]]:
+    """Every component with a release file in the tree, with its files."""
+    pending = {c: c.release_files(root) for c in COMPONENTS}
+    return {c: files for c, files in pending.items() if files}
+
+
+def set_output(name: str, value: str) -> None:
+    """Expose a value to later workflow steps, when running in one."""
+    output = os.environ.get("GITHUB_OUTPUT")
+    if output:
+        with open(output, "a") as f:
+            f.write(f"{name}={value}\n")
+
+
+def pending() -> None:
+    files = [f for fs in pending_release_files(ROOT).values() for f in fs]
+    print("\n".join(files) if files else "No release files pending.")
+    set_output("skip", "false" if files else "true")
+
+
+def missing_release_file_box(lines: list[str]) -> str:
+    width = max(len(l) for l in lines) + 6
+    border = " ".join("*" * ((width + 1) // 2))
+    empty = "*" + " " * (width - 2) + "*"
+    inner = "\n".join("*" + l.center(width - 2) + "*" for l in lines)
+    pad = "\t"
+    box = f"\n{pad}{border}\n{pad}{empty}\n{pad}{empty}\n"
+    box += "\n".join(f"{pad}" + l for l in inner.split("\n"))
+    box += f"\n{pad}{empty}\n{pad}{empty}\n{pad}{border}\n"
+    return box
+
+
+def check_release_files(root: Path, changed_files: list[str]) -> list[str]:
+    """The problems with a pull request's release files, given the files it
+    changes relative to its base. Empty when the pull request is fine.
+
+    Only the pull request's own release files count: release files that are
+    already on main belong to pull requests merged ahead of it whose release
+    has not landed yet (the release job runs after the merge's CI, and only
+    the run for the latest push to main gets to release), and are neither an
+    error nor this pull request's documentation of its changes.
+
+    A libhegel release auto-generates each frontend's engine-bump entry, so
+    when the pull request releases libhegel a frontend's release file is
+    optional: the author writes one only when there are functional frontend
+    changes to document. A frontend change with no libhegel release has no
+    such fallback, so its release file is required.
+    """
+    present = [f for f in changed_files if (root / f).is_file()]
+    own = {c: [f for f in present if c.is_release_file(f)] for c in COMPONENTS}
+
+    def changed(component: Component) -> bool:
+        return any(f.startswith(d) for f in changed_files for d in component.source_dirs)
+
+    errors = []
+    for component in COMPONENTS:
+        if component.legacy_release_file in own[component]:
+            errors.append(
+                f"{component.legacy_release_file} is one file per component, so "
+                "two pull requests releasing the component conflict in the merge "
+                f"queue. Write {component.release_dir}/<slug>.md instead, named "
+                "after the change."
+            )
+        for rel in own[component]:
+            try:
+                parse_release_file(root / rel)
+            except ValueError as e:
+                errors.append(f"{rel}: {e}")
+        required = changed(component)
+        if component is not LIBHEGEL:
+            required = required and not own[LIBHEGEL]
+        if required and not own[component]:
+            errors.append(
+                missing_release_file_box(
+                    [
+                        f"Every pull request changing {component.path} requires a "
+                        f"{component.release_dir}/<slug>.md file.",
+                        "You can find an example and instructions in CONTRIBUTING.md.",
+                    ]
+                )
+            )
+    return errors
+
+
 def check(base_ref: str) -> None:
     missing = [rel for rel in RELEASE_PATHS if not (ROOT / rel).exists()]
     if missing:
@@ -453,91 +581,58 @@ def check(base_ref: str) -> None:
         cwd=ROOT,
     )
     changed_files = [line for line in output.splitlines() if line.strip()]
-
-    def changed(component: Component) -> bool:
-        return any(
-            f.startswith(d) for f in changed_files for d in component.source_dirs
-        )
-
-    # A libhegel release auto-generates each frontend's engine-bump entry, so
-    # when libhegel is releasing (its RELEASE.md is present) a frontend's
-    # RELEASE.md is optional — the author writes one only when there are
-    # functional frontend changes to document. A frontend change with no
-    # libhegel release has no such fallback, so its RELEASE.md is required.
-    c_release_present = (ROOT / LIBHEGEL.release_file).exists()
-
-    for component in COMPONENTS:
-        required = changed(component)
-        if component is not LIBHEGEL:
-            required = required and not c_release_present
-        require_release_file(
-            base_ref,
-            component.release_file,
-            changed_files,
-            [
-                f"Every pull request changing {component.path} requires a "
-                f"{component.release_file} file.",
-                "You can find an example and instructions in CONTRIBUTING.md.",
-            ],
-            required=required,
-        )
+    errors = check_release_files(ROOT, changed_files)
+    if errors:
+        raise ValueError("\n".join(errors))
 
 
-def require_release_file(
-    base_ref: str,
-    rel_path: str,
-    changed_files: list[str],
-    missing_lines: list[str],
-    *,
-    required: bool,
-) -> None:
-    """Validate a release file, erroring if it is `required` but absent.
-
-    A present file is always validated (and guarded against being a leftover
-    from a failed release); an absent file errors only when `required`.
-    """
-    release_file = ROOT / rel_path
-    if not release_file.exists():
-        if not required:
-            return
-        width = max(len(l) for l in missing_lines) + 6
-        border = " ".join("*" * ((width + 1) // 2))
-        empty = "*" + " " * (width - 2) + "*"
-        inner = "\n".join("*" + l.center(width - 2) + "*" for l in missing_lines)
-        pad = "\t"
-        box = f"\n{pad}{border}\n{pad}{empty}\n{pad}{empty}\n"
-        box += "\n".join(f"{pad}" + l for l in inner.split("\n"))
-        box += f"\n{pad}{empty}\n{pad}{empty}\n{pad}{border}\n"
-        raise ValueError(box)
-
-    process = subprocess.run(
-        ["git", "cat-file", "-e", f"origin/{base_ref}:{rel_path}"],
-        capture_output=True,
-        cwd=ROOT,
+def existing_remote_tags(tags: list[str]) -> list[str]:
+    output = subprocess.check_output(
+        ["git", "ls-remote", "--tags", "origin", *tags], text=True, cwd=ROOT
     )
-    if process.returncode == 0 and rel_path not in changed_files:
-        raise ValueError(
-            f"{rel_path} already exists on {base_ref}. It's possible the CI job "
-            "responsible for cutting a new release is in progress, or has failed."
-        )
-
-    parse_release_file(release_file)
+    remote = {line.split("\t", 1)[1].removeprefix("refs/tags/") for line in output.splitlines() if "\t" in line}
+    return [tag for tag in tags if tag in remote]
 
 
 def release() -> None:
-    releases = {
+    """Release everything pending on the commit checked out, if it is still
+    the head of main.
+
+    The run for every push to main gets here, and two merges in quick
+    succession give two runs whose trees both carry the first merge's release
+    files. Pushing the release commit to main is what decides between them:
+    it is a fast-forward only for the run whose commit is main's head, and
+    tags are pushed and packages published only after it succeeds. The other
+    run's push is rejected and it stops having changed nothing; the winner's
+    tree is a superset of its release files, so nothing is lost. A failed
+    release leaves its files on main for the next push's run to pick up.
+    """
+    pending = pending_release_files(ROOT)
+    if not pending:
+        print("No release files pending.")
+        set_output("released", "false")
+        return
+
+    releases: dict[Component, tuple[str, str] | None] = {
         component: (
-            parse_release_file(ROOT / component.release_file)
-            if (ROOT / component.release_file).exists()
+            combine_entries([parse_release_file(ROOT / rel) for rel in pending[component]])
+            if component in pending
             else None
         )
         for component in COMPONENTS
     }
-    assert any(release is not None for release in releases.values())
 
     current = {component: current_version(component.manifest()) for component in COMPONENTS}
     plan = plan_release(current, releases)
     versions = {component: version for component, (version, _) in plan.items()}
+    tags = release_tags(versions)
+
+    existing = existing_remote_tags(tags)
+    if existing:
+        raise ValueError(
+            f"already tagged on origin: {' and '.join(existing)}. The version bump "
+            "of an earlier release is missing from this tree."
+        )
 
     apply_version_bump(ROOT, versions)
 
@@ -559,21 +654,30 @@ def release() -> None:
         cwd=ROOT,
     )
     git("add", *RELEASE_PATHS, cwd=ROOT)
-    for component, release in releases.items():
-        if release is not None:
-            git("rm", component.release_file, cwd=ROOT)
+    for files in pending.values():
+        git("rm", "--quiet", *files, cwd=ROOT)
 
-    tags = release_tags(versions)
     git("commit", "-m", release_commit_message(tags), cwd=ROOT)
+
+    pushed = subprocess.run(["git", "push", "origin", "HEAD:refs/heads/main"], cwd=ROOT)
+    if pushed.returncode != 0:
+        print(
+            "main has moved on since this run's commit, so the run for its new "
+            f"head releases instead. Nothing was tagged or published for {' and '.join(tags)}."
+        )
+        set_output("released", "false")
+        return
 
     # Every released component gets its `<path>/<version>` tag. The GitHub
     # release carries the libhegel binaries, so it is the libhegel release:
     # it is tagged with the libhegel version and only cut when libhegel
     # changed. A frontend-only release publishes to its package index,
     # updates the changelog and pushes its tag — no GitHub release.
+    # None of the tags is on origin (checked above), so a local one of the
+    # same name is stale and is overwritten.
     for tag in tags:
-        git("tag", tag, cwd=ROOT)
-    git("push", "origin", *tags, cwd=ROOT)
+        git("tag", "--force", tag, cwd=ROOT)
+    git("push", "--atomic", "origin", *tags, cwd=ROOT)
     if LIBHEGEL in plan:
         c_version, c_content = plan[LIBHEGEL]
         subprocess.run(
@@ -591,6 +695,7 @@ def release() -> None:
             check=True,
             cwd=ROOT,
         )
+    set_output("released", "true")
 
 
 def release_tags(versions: dict[Component, str]) -> list[str]:
@@ -603,85 +708,19 @@ def release_commit_message(tags: list[str]) -> str:
     return f"Release {' and '.join(tags)}\n\n[skip ci]"
 
 
-def release_branch(tags: list[str]) -> str:
-    """The branch for the fallback PR: the release tags, made branch-safe."""
-    return "release/" + "+".join(tag.replace("/", "-") for tag in tags)
-
-
-def release_pr_details(tags: list[str]) -> tuple[str, str]:
-    """Title and body for the fallback PR opened when the release push races a
-    concurrent merge to main.
-
-    `tags` is whatever release tags point at the release commit — one
-    `<path>/<version>` per released component — all of which were pushed
-    before the failed push to main.
-    """
-    joined = " and ".join(tags)
-    title = f"Release {joined}"
-    body = (
-        f"The push to main after tagging {joined} failed because "
-        f"main had diverged. The tags and package publishes succeeded.\n\n"
-        f"This PR merges the release commit (version bump, changelog, "
-        f"RELEASE.md removal) into main."
-    )
-    return title, body
-
-
-def push_or_pr() -> None:
-    result = subprocess.run(
-        ["git", "push", "origin", "main"], cwd=ROOT
-    )
-    if result.returncode == 0:
-        return
-
-    tags = subprocess.check_output(
-        ["git", "tag", "--points-at", "HEAD"], cwd=ROOT, text=True
-    ).split()
-    print(f"Push to main failed, creating PR for release {' and '.join(tags)}")
-
-    branch = release_branch(tags)
-    git("checkout", "-b", branch, cwd=ROOT)
-    git("push", "origin", branch, cwd=ROOT)
-
-    # Ensure the "skip release" label exists so check-release doesn't run on this PR
-    subprocess.run(
-        [
-            "gh", "label", "create", "skip release",
-            "--force",
-            "--description", "Skip the release check on this PR",
-        ],
-        cwd=ROOT,
-    )
-
-    title, body = release_pr_details(tags)
-    subprocess.run(
-        [
-            "gh", "pr", "create",
-            "--base", "main",
-            "--head", branch,
-            "--title", title,
-            "--body", body,
-            "--label", "skip release",
-        ],
-        check=True,
-        cwd=ROOT,
-    )
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Release automation for the hegel monorepo.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     check_parser = subparsers.add_parser("check")
     check_parser.add_argument("base_ref", help="Git ref to diff against.")
+    subparsers.add_parser("pending")
     subparsers.add_parser("release")
-
-    subparsers.add_parser("push-or-pr")
 
     args = parser.parse_args()
     if args.command == "check":
         check(args.base_ref)
+    elif args.command == "pending":
+        pending()
     elif args.command == "release":
         release()
-    elif args.command == "push-or-pr":
-        push_or_pr()

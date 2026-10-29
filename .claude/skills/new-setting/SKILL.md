@@ -15,4 +15,4 @@ A setting is not done until it is reachable every way the others are. Pick an ex
 6. **Environment variable** — `HEGEL_<SETTING>` applied in `Settings::with_env_overrides_from` (`libhegel/src/settings.rs`), using the same vocabulary as the profile key. An empty value is ignored; a malformed value is rejected with a message naming the variable. Never add a setting without its variable: libtest owns the command line, so the variable is the only way to change a setting for one run of a `#[hegel::test]` without editing it.
 7. **Docs** — `frontends/rust/src/docs/settings.md` (the settings table and both environment-variable tables) and the `hegel_settings_new` doc comment in `libhegel/src/lib.rs`.
 8. **Tests** — in `frontends/rust/tests/` (frontend) and `libhegel/tests/` (engine), never inline: builder, profile parsing, `hegel_settings_set_from_string` (accepted and rejected values), C-ABI get/set round trip, env-var override (empty ignored, malformed rejected). The `coverage` skill applies.
-9. **Release notes** — a `RELEASE.md` entry per the `changelog` skill.
+9. **Release notes** — a `RELEASE/<slug>.md` file per the `changelog` skill.
