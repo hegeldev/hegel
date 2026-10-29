@@ -96,6 +96,10 @@ header = """
  *     hegel_grammar_draw_result  ->  hegel_owned_string_free
  *     hegel_printer_options_new  ->  hegel_printer_options_free
  *     hegel_reflow_options_new   ->  hegel_reflow_options_free
+ *     hegel_timezone_spec_new    ->  hegel_timezone_spec_free
+ *     hegel_zoned_spec_new       ->  hegel_zoned_spec_free
+ *     hegel_date_options_new     ->  hegel_date_options_free
+ *     hegel_span_spec_new        ->  hegel_span_spec_free
  *     hegel_printer_new          ->  hegel_printer_free
  *     hegel_printer_deferred     ->  hegel_printer_free
  *     hegel_test_case_printer    ->  hegel_printer_free
@@ -154,6 +158,12 @@ include = [
     "hegel_verbosity_t",
     "hegel_nondeterminism_strictness_t",
     "hegel_status_t",
+    "hegel_precision_t",
+    "hegel_imaginary_t",
+    "hegel_ambiguous_t",
+    "hegel_offset_granularity_t",
+    "hegel_span_unit_t",
+    "hegel_span_sign_t",
 ]
 
 [export.rename]
@@ -175,6 +185,10 @@ include = [
 "HegelPrinter" = "hegel_printer_t"
 "HegelPrinterOptions" = "hegel_printer_options_t"
 "HegelReflowOptions" = "hegel_reflow_options_t"
+"HegelTimezoneSpec" = "hegel_timezone_spec_t"
+"HegelZonedSpec" = "hegel_zoned_spec_t"
+"HegelDateOptions" = "hegel_date_options_t"
+"HegelSpanSpec" = "hegel_span_spec_t"
 
 # Enum types are named hegel_*_t directly in the Rust source, with each
 # variant pre-prefixed (HEGEL_STATUS_VALID etc.), so cbindgen's automatic

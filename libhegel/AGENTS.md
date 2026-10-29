@@ -14,6 +14,8 @@ just libhegel::check-lark     # parse engine-generated strings with Lark itself 
 just libhegel::check-parse    # compare the engine's grammar parser with Lark's (needs uv)
 just libhegel::lark-fixtures  # regenerate the Lark fixtures' .expected files (needs uv)
 just libhegel::unicodedata    # regenerate the Unicode tables and per-version deltas (downloads older UCD files; needs uv)
+just libhegel::tzdata         # regenerate the bundled time zone table in src/tzdata/ from the pinned tzdata release (needs uv)
+just libhegel::check-tzdata   # check that the bundled time zone table is what `just libhegel::tzdata` would write (needs uv)
 cargo test -p hegeltest-c test_name
 ```
 

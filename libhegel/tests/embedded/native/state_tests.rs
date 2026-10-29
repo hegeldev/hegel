@@ -3,8 +3,10 @@ use super::*;
 use crate::native::HashSet;
 use crate::native::bignum::{BigUint, ToPrimitive};
 use crate::native::core::BUFFER_SIZE;
-use crate::native::core::GenerationParameters;
 use crate::native::core::choices::{BooleanChoice, ChoiceKind};
+use crate::native::core::{
+    DatetimeGenerationParameters, GenerationParameters, TARGETED_PROBABILITY,
+};
 use crate::native::rng::EngineRng;
 use alloc::string::ToString;
 
@@ -3899,4 +3901,63 @@ fn shaped_sample_over_a_span_just_past_a_power_of_two_does_not_pile_up_there() {
             "2^{k} + 1: widths seen: {widths:?}"
         );
     }
+}
+
+#[test]
+fn datetime_parameters_are_a_beta_around_the_targeted_probability() {
+    let mut rng = EngineRng::seeded(91);
+    let total = 10_000;
+    let mut sum = 0.0;
+    let mut concentrated = 0;
+    for _ in 0..total {
+        let p = DatetimeGenerationParameters::draw(&mut rng).unwrap();
+        assert!((0.0..=1.0).contains(&p.targeted_probability));
+        sum += p.targeted_probability;
+        concentrated += usize::from(p.targeted_probability > 0.5);
+    }
+    let mean = sum / total as f64;
+    assert!((mean - TARGETED_PROBABILITY).abs() < 0.01, "{mean}");
+    assert!(concentrated > 0);
+    assert_eq!(
+        DatetimeGenerationParameters::default().targeted_probability,
+        TARGETED_PROBABILITY
+    );
+}
+
+#[test]
+fn datetime_parameters_are_drawn_once_per_family_on_first_use() {
+    let mut tc = NativeTestCase::new_random(EngineRng::seeded(3)).unwrap();
+    let before = tc.draw_integer::<i64>(0, 1000).unwrap();
+    let first = tc.datetime_parameters().unwrap();
+    assert_ne!(first, DatetimeGenerationParameters::default());
+    assert_eq!(tc.datetime_parameters().unwrap(), first);
+    let mut other = NativeTestCase::new_random(EngineRng::seeded(4)).unwrap();
+    assert_ne!(other.datetime_parameters().unwrap(), first);
+    let mut untouched = NativeTestCase::new_random(EngineRng::seeded(3)).unwrap();
+    assert_eq!(untouched.draw_integer::<i64>(0, 1000).unwrap(), before);
+    let mut replay = NativeTestCase::for_choices(&[], None, None);
+    assert_eq!(
+        replay.datetime_parameters().unwrap(),
+        DatetimeGenerationParameters::default()
+    );
+}
+
+#[test]
+fn weighted_as_records_one_probability_and_samples_with_another() {
+    let mut tc = NativeTestCase::new_random(EngineRng::seeded(5)).unwrap();
+    let mut trues = 0;
+    for _ in 0..200 {
+        trues += usize::from(tc.weighted_as(0.05, 1.0).unwrap());
+    }
+    assert_eq!(trues, 200);
+    for node in &tc.nodes {
+        assert_eq!(node.kind(), ChoiceKind::Boolean(BooleanChoice { p: 0.05 }));
+        assert!(!node.was_forced);
+    }
+    let mut tc = NativeTestCase::new_random(EngineRng::seeded(6)).unwrap();
+    for _ in 0..200 {
+        assert!(!tc.weighted_as(0.05, 0.0).unwrap());
+    }
+    let mut tc = NativeTestCase::for_choices(&[ChoiceValue::Boolean(true)], None, None);
+    assert!(tc.weighted_as(0.05, 0.0).unwrap());
 }
