@@ -30,6 +30,9 @@ mod csharp 'frontends/csharp'
 # The OCaml frontend (needs opam; `just ocaml::setup` first)
 mod ocaml 'frontends/ocaml'
 
+# hegel.dev (needs Node; `just website::setup` first)
+mod website
+
 # Definition of done for the whole repo: lint + every component's tests.
 check: check-lint libhegel::check rust::check python::check typescript::check cpp::check java::check csharp::check ocaml::check
 
