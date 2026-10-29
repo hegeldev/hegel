@@ -10,7 +10,7 @@
 * [Documentation](https://docs.rs/hegeltest)
 * [Website](https://hegel.dev)
 
-`hegel-rust` is a property-based testing library for Rust. `hegel-rust` is based on [Hypothesis](https://github.com/hypothesisworks/hypothesis), using the [Hegel](https://hegel.dev/) protocol.
+`hegeltest` is a property-based testing library for Rust. `hegeltest` is based on [Hypothesis](https://github.com/hypothesisworks/hypothesis), using the [Hegel](https://hegel.dev/) protocol.
 
 ## Installation
 

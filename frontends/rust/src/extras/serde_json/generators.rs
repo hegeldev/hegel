@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 use serde_json::{Number, Value};
 
@@ -16,13 +17,16 @@ pub struct NumberGenerator {
     inner: BoxedPrintableGenerator<'static, Number>,
 }
 
-const NUMBER_LABEL: u64 = gs::label_from_name("hegel.serde_json.numbers");
-const VALUE_LABEL: u64 = gs::label_from_name("hegel.serde_json.values");
-const RAW_VALUE_LABEL: u64 = gs::label_from_name("hegel.serde_json.raw_values");
+static NUMBER_LABEL: LazyLock<u64> =
+    LazyLock::new(|| gs::label_from_name("hegel.serde_json.numbers"));
+static VALUE_LABEL: LazyLock<u64> =
+    LazyLock::new(|| gs::label_from_name("hegel.serde_json.values"));
+static RAW_VALUE_LABEL: LazyLock<u64> =
+    LazyLock::new(|| gs::label_from_name("hegel.serde_json.raw_values"));
 
 impl Generator<Number> for NumberGenerator {
     fn label(&self) -> u64 {
-        NUMBER_LABEL
+        *NUMBER_LABEL
     }
 
     fn do_draw(&self, tc: &crate::TestCase) -> Number {
@@ -72,7 +76,7 @@ pub struct ValueGenerator {
 
 impl Generator<Value> for ValueGenerator {
     fn label(&self) -> u64 {
-        VALUE_LABEL
+        *VALUE_LABEL
     }
 
     fn do_draw(&self, tc: &crate::TestCase) -> Value {
@@ -153,7 +157,7 @@ pub struct RawValueGenerator {
 #[cfg(feature = "serde_json_raw_value")]
 impl Generator<Box<serde_json::value::RawValue>> for RawValueGenerator {
     fn label(&self) -> u64 {
-        RAW_VALUE_LABEL
+        *RAW_VALUE_LABEL
     }
 
     fn do_draw(&self, tc: &crate::TestCase) -> Box<serde_json::value::RawValue> {

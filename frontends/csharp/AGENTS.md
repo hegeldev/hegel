@@ -195,9 +195,10 @@ There is no engine version pin to keep in step in this directory.
   the real libhegel; fakes exist only for the result-code and error paths
   the engine cannot be driven into.
 - **Engine divergences are fixed in the engine.** When libhegel misbehaves,
-  fix it in `../../libhegel` (with a `libhegel/RELEASE.md`) in the same PR
+  fix it in `../../libhegel` (with a `libhegel/RELEASE/<slug>.md`) in the same PR
   rather than working around it in the bindings.
-- **Every PR that changes what ships needs a `RELEASE.md` here.** That means
+- **Every PR that changes what ships needs a release file here**
+  (`RELEASE/<slug>.md`, named after the change). That means
   any change to `src/` or `Directory.Build.props`. See the root
   `CONTRIBUTING.md` for the format and the semver rules (on 0.x, breaking
   changes are `minor`, everything else `patch`). CI checks this
@@ -207,7 +208,7 @@ There is no engine version pin to keep in step in this directory.
   job publishes both packages to nuget.org (`.github/scripts/publish_csharp.py`,
   `Hegel` first, through NuGet trusted publishing, bundling the libhegel
   GitHub release's binaries in `Hegel`). A libhegel release re-releases this frontend too, with an
-  auto-generated engine-bump entry unless the PR writes a `RELEASE.md` here.
+  auto-generated engine-bump entry unless the PR writes a release file here.
   Never edit `CHANGELOG.md` by hand.
 
 ## Conventions

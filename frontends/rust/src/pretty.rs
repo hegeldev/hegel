@@ -139,7 +139,9 @@
 //! [`PrettyPrinter::begin_group`] / [`PrettyPrinter::end_group`] delimit
 //! the groups those decisions are made over. A group either fits — every
 //! breakable renders as its separator — or breaks as a whole, outermost
-//! groups first. On top of those sit the conveniences most printing code
+//! groups first. [`PrettyPrinter::if_break`] emits text only when its
+//! group breaks, such as a trailing comma that only the multi-line form
+//! needs. On top of those sit the conveniences most printing code
 //! wants: [`PrettyPrinter::debug`] prints any `Debug` value with its
 //! bracket structure recovered by libhegel's reflower, so it wraps like a
 //! structurally printed one; [`PrettyPrinter::group`] and
@@ -394,6 +396,40 @@ impl PrettyPrinter {
     pub fn breakable(&mut self, sep: &str) {
         let Some(handle) = &self.handle else { return };
         tolerate(handle.breakable(sep));
+    }
+
+    /// Emit `text` only if the innermost open group breaks across lines; a
+    /// group that fits on one line renders nothing here. The text never
+    /// counts toward the line width.
+    ///
+    /// This is how a layout writes text that only its multi-line form needs,
+    /// such as a trailing comma after the last element:
+    ///
+    /// ```
+    /// use hegel::Document;
+    ///
+    /// fn print(printer: &mut hegel::PrettyPrinter) {
+    ///     printer.group(1, "[", "]", |printer| {
+    ///         printer.text("1000,");
+    ///         printer.breakable(" ");
+    ///         printer.text("2000");
+    ///         printer.if_break(",");
+    ///     });
+    /// }
+    ///
+    /// let mut doc = Document::new();
+    /// print(doc.printer());
+    /// assert_eq!(doc.finish(), "[1000, 2000]");
+    ///
+    /// let mut doc = Document::new().max_width(8);
+    /// print(doc.printer());
+    /// assert_eq!(doc.finish(), "[1000,\n 2000,]");
+    /// ```
+    ///
+    /// `text` must not contain newlines.
+    pub fn if_break(&mut self, text: &str) {
+        let Some(handle) = &self.handle else { return };
+        tolerate(handle.if_break(text));
     }
 
     /// Emit an unconditional newline followed by the current indentation.

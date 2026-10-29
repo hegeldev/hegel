@@ -55,7 +55,7 @@ fn finishing_a_recursive_value_on_an_exhausted_stream_is_an_overrun() {
         core: Arc::new(ExhaustingCore),
         recursion,
         depth: 0,
-        label: RECURSIVE_LABEL,
+        label: *RECURSIVE_LABEL,
     };
     let payload = catch_unwind(AssertUnwindSafe(|| {
         root.draw_subtree(&tc, &mut PrettyPrinter::noop())
