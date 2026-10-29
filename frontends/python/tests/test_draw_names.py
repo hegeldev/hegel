@@ -76,6 +76,28 @@ def test_repeatable_names(tmp_path):
             async for _ in xs:
                 looped = tc.draw(g)
             after = tc.draw(g)
+
+        @hegel.test
+        def test_property(tc):
+            top = tc.draw(g)
+
+            def step():
+                inner = tc.draw(g)
+
+                def deeper():
+                    deepest = tc.draw(g)
+
+            tc.repeat(step)
+
+        @test(test_cases=5)
+        def test_bare_decorator(tc):
+            def step():
+                inner = tc.draw(g)
+
+        @other_decorator
+        def not_a_test(tc):
+            def step():
+                inner = tc.draw(g)
         """,
     )
     assert name_for_call(path, 3) == DrawName("once", False)
@@ -84,9 +106,14 @@ def test_repeatable_names(tmp_path):
     assert name_for_call(path, 7) == DrawName("looped", True)
     assert name_for_call(path, 10) == DrawName("nested", True)
     assert name_for_call(path, 11) == DrawName("item", True)
-    assert name_for_call(path, 14) == DrawName("once", False)  # its own scope
+    assert name_for_call(path, 14) == DrawName("once", False)  # not inside a hegel test
     assert name_for_call(path, 18) == DrawName("looped", True)
     assert name_for_call(path, 19) == DrawName("after", False)
+    assert name_for_call(path, 23) == DrawName("top", False)
+    assert name_for_call(path, 26) == DrawName("inner", True)
+    assert name_for_call(path, 29) == DrawName("deepest", True)
+    assert name_for_call(path, 36) == DrawName("inner", True)
+    assert name_for_call(path, 41) == DrawName("inner", False)
 
 
 def test_unparseable_or_missing_sources(tmp_path):

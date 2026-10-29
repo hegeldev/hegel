@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.12 - 2026-10-28
+
+This release updates the bundled libhegel engine to 0.49.0.
+
 ## 0.4.11 - 2026-10-22
 
 This patch moves Hegel for TypeScript into the [hegeldev/hegel](https://github.com/hegeldev/hegel) monorepo, next to the engine it drives. The package is used exactly as before, but it is now built and tested against the in-tree libhegel, so this release also updates the bundled engine from 0.45.4 to 0.48.0. The engine changes a TypeScript user can see:

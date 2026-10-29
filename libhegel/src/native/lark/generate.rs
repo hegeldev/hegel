@@ -702,6 +702,12 @@ impl GrammarSpec {
         self.analysis.rules[self.start].min_size
     }
 
+    /// The most characters a string may have, a placeholder marker
+    /// counting as none.
+    pub fn max_size(&self) -> u64 {
+        self.max_size
+    }
+
     /// The names of the terminals, indexed by [`TermId`].
     #[cfg(test)]
     pub fn terminal_names(&self) -> &[String] {

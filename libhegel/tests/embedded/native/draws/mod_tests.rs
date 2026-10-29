@@ -537,3 +537,11 @@ fn recursion_retry_discards_partial_observations_and_halves_the_target() {
         recursion_branch_probability(3.0, 20)
     );
 }
+
+#[test]
+fn default_max_size_is_100_or_100_past_the_minimum() {
+    assert_eq!(default_max_size(0), 100);
+    assert_eq!(default_max_size(100), 100);
+    assert_eq!(default_max_size(101), 201);
+    assert_eq!(default_max_size(usize::MAX), usize::MAX);
+}

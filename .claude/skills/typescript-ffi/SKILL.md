@@ -157,9 +157,9 @@ exception: `hegel_string_generator_t` handles are cached per schema object
    cd frontends/typescript && HEGEL_LIBHEGEL_PATH=$(node scripts/engine.mjs native) node tests/smoke/run-hegel-test.mjs
    ```
 
-7. **Release notes.** The change ships: write `frontends/typescript/RELEASE.md`
-   (see the `changelog` skill) alongside the `libhegel/RELEASE.md` for the
-   ABI change, describing what a TypeScript user can observe, not the binding
+7. **Release notes.** The change ships: write a
+   `frontends/typescript/RELEASE/<slug>.md` (see the `changelog` skill)
+   alongside the `libhegel/RELEASE/<slug>.md` for the ABI change, describing what a TypeScript user can observe, not the binding
    mechanics.
 
 ## Validation gate: an independent audit

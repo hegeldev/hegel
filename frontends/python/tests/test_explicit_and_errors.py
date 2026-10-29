@@ -36,6 +36,16 @@ def test_explicit_test_case_consumption():
         tc.draw(hegel.generators.integers(), name="y")
 
 
+def test_explicit_test_case_clones_share_the_values():
+    explicit = ExplicitTestCase(ExplicitCase((1, 2), {}))
+    tc = TestCase(NO_HANDLE, True, None, explicit)
+    clone = tc.clone()
+    clone.set_worker(1)
+    assert tc.draw(hegel.generators.integers(), name="x") == 1
+    assert clone.draw(hegel.generators.integers(), name="x") == 2
+    assert explicit.lines == ["x_1 = 1", "x_2 = 2"]
+
+
 def test_explicit_test_case_unused_values():
     explicit = ExplicitTestCase(ExplicitCase((1,), {"x": 3}))
     with pytest.raises(hegel.InvalidArgument) as info:
@@ -51,7 +61,7 @@ def test_explicit_target_and_events_are_ignored():
     tc.target(1.0)
     tc.event("e")
     tc.event_value("v", 2.0)
-    with pytest.raises(hegel.InvalidArgument):
+    with pytest.raises(hegel.InvalidArgument, match="Explicit test cases must not be rejected"):
         tc.reject()
 
 

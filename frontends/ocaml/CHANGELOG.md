@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.26.7 - 2026-10-28
+
+This patch adds `Stateful.Pool.to_list` and `Stateful.Concurrent_pool.to_list`, which return a pool's values, each passed to the pool's `clone`.
+
 ## 0.26.6 - 2026-10-27
 
 This patch fixes an OxCaml mode error in the `run` that `module%hegel_concurrent_state_machine` generates when it is passed a concurrency capability `@ local`.

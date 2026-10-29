@@ -156,6 +156,7 @@ module Stateful = struct
     let create ?(clone = Fun.id) tc = Gen.create tc ~clone
     let add = Gen.add
     let size = Gen.size
+    let to_list = Gen.to_list
     let values_reusable t = Gen.pool_values t ~consume:false
     let values_consumed t = Gen.pool_values t ~consume:true
   end

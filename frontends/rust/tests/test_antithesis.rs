@@ -165,12 +165,12 @@ fn antithesis_plain_run_fixture() {
 }
 
 /// `ANTITHESIS_OUTPUT_DIR` pointing at a nonexistent path is a launch
-/// configuration error, reported as a plain panic.
+/// configuration error, reported as a `RunError` panic.
 #[test]
 fn test_nonexistent_antithesis_output_dir_panics() {
     self_test("antithesis_plain_run_fixture")
         .env("ANTITHESIS_OUTPUT_DIR", "/nonexistent/antithesis-output")
-        .expect_failure("to exist when running inside of Antithesis")
+        .expect_failure("RunError: hegel_run_start: Expected ANTITHESIS_OUTPUT_DIR=/nonexistent/antithesis-output to exist")
         .run();
 }
 

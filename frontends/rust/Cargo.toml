@@ -1,6 +1,6 @@
 [package]
 name = "hegeltest"
-version = "0.50.3"
+version = "0.51.0"
 edition = "2024"
 # if you bump this, also bump .github/workflows/frontend-rust.yml, macros/Cargo.toml, and libhegel/Cargo.toml
 rust-version = "1.86"
@@ -60,6 +60,10 @@ name = "fixture_main_failing"
 path = "tests/fixtures/main_failing.rs"
 
 [[bin]]
+name = "fixture_main_reproduce"
+path = "tests/fixtures/main_reproduce.rs"
+
+[[bin]]
 name = "fixture_main_rewrite"
 path = "tests/fixtures/main_rewrite.rs"
 
@@ -97,13 +101,13 @@ path = "tests/fixtures/target_nan.rs"
 
 [dependencies]
 parking_lot = "0.12"
-hegeltest-macros = { version = "=0.50.3", path = "macros" }
+hegeltest-macros = { version = "=0.51.0", path = "macros" }
 # The native engine + C ABI ("libhegel"). hegeltest drives it through the
 # C ABI (the hegel_* extern "C" functions), exactly like other language
 # bindings. Optional: by default build.rs builds it as a shared library the
 # frontend loads at runtime, and only the `static-engine` feature links this
 # crate (lib name `hegel_c`) into the dependency graph.
-hegeltest-c = { version = "=0.48.0", path = "../../libhegel", default-features = false, optional = true }
+hegeltest-c = { version = "=0.49.0", path = "../../libhegel", default-features = false, optional = true }
 # optional feature dependencies
 serde_json = { version = "1.0.61", optional = true }
 rand = { version = "0.10", optional = true }

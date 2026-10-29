@@ -43,4 +43,4 @@ def test_no_failing_test_case_if_unittest_skip(skip_exception):
         suite = unittest.defaultTestLoader.loadTestsFromTestCase(DemoTest)
         unittest.TextTestRunner(stream=o).run(suite)
 
-    assert "Falsifying example" not in o.getvalue()
+    assert "xs = " not in o.getvalue()

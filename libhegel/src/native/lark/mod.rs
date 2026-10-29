@@ -20,6 +20,7 @@ pub mod compile;
 pub mod constraint;
 pub mod escape;
 pub mod generate;
+pub mod grammar_draw;
 pub mod layout;
 pub mod lexer;
 pub mod lexsim;

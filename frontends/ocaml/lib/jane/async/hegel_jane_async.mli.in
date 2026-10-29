@@ -92,6 +92,7 @@ module Stateful : sig
     val create : ?clone:('a -> 'a) -> Hegel.test_case -> 'a t
     val add : 'a t -> Hegel.test_case -> 'a -> unit
     val size : _ t -> int
+    val to_list : 'a t -> 'a list
     val values_reusable : 'a t -> ('a, Hegel.unprintable) Hegel.generator
     val values_consumed : 'a t -> ('a, Hegel.unprintable) Hegel.generator
   end

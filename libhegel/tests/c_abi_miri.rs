@@ -20,12 +20,13 @@ mod common;
 use common::ok;
 use hegel_c::hegel_result_t::*;
 use hegel_c::{
-    HegelCollection, HegelContext, HegelPool, HegelRun, HegelRunResult, HegelSettings,
+    HegelCollection, HegelContext, HegelPool, HegelRepeat, HegelRun, HegelRunResult, HegelSettings,
     HegelStateMachine, HegelTestCase, hegel_collection_free, hegel_collection_more,
     hegel_context_free, hegel_context_new, hegel_failure_caveat, hegel_failure_free,
     hegel_failure_reproduction_blob, hegel_generate_integer, hegel_mark_complete,
-    hegel_new_collection, hegel_new_pool, hegel_new_state_machine, hegel_next_test_case,
-    hegel_pool_add, hegel_pool_free, hegel_run_free, hegel_run_result, hegel_run_result_failure,
+    hegel_new_collection, hegel_new_pool, hegel_new_repeat, hegel_new_state_machine,
+    hegel_next_test_case, hegel_pool_add, hegel_pool_free, hegel_repeat_failed, hegel_repeat_free,
+    hegel_repeat_more, hegel_run_free, hegel_run_result, hegel_run_result_failure,
     hegel_run_result_failure_count, hegel_run_result_free, hegel_run_result_status,
     hegel_run_start, hegel_run_status_t, hegel_settings_free, hegel_settings_new,
     hegel_settings_set_database, hegel_settings_set_seed, hegel_settings_set_test_cases,
@@ -243,6 +244,8 @@ fn object_handles_outlive_the_run_and_free_in_any_order() {
 
         let mut collection: *mut HegelCollection = ptr::null_mut();
         ok(hegel_new_collection(ctx, tc, 0, 3, &mut collection));
+        let mut repeat: *mut HegelRepeat = ptr::null_mut();
+        ok(hegel_new_repeat(ctx, tc, &mut repeat));
         let mut pool: *mut HegelPool = ptr::null_mut();
         ok(hegel_new_pool(ctx, tc, &mut pool));
         let rule = CString::new("only").unwrap();
@@ -270,6 +273,8 @@ fn object_handles_outlive_the_run_and_free_in_any_order() {
         ok(hegel_pool_add(ctx, tc, pool, &mut var_id));
         let mut more = false;
         ok(hegel_collection_more(ctx, tc, collection, &mut more));
+        ok(hegel_repeat_more(ctx, tc, repeat, &mut more));
+        ok(hegel_repeat_failed(ctx, tc, repeat));
 
         ok(hegel_mark_complete(
             ctx,
@@ -283,6 +288,7 @@ fn object_handles_outlive_the_run_and_free_in_any_order() {
 
         ok(hegel_state_machine_free(ctx, machine));
         ok(hegel_collection_free(ctx, collection));
+        ok(hegel_repeat_free(ctx, repeat));
         ok(hegel_pool_free(ctx, pool));
         ok(hegel_context_free(ctx));
     }

@@ -31,6 +31,7 @@ module Pool = struct
   let create ?(clone = Fun.id) tc = Pool_gen.create tc ~clone
   let add = Pool_gen.add
   let size = Pool_gen.size
+  let to_list = Pool_gen.to_list
   let values_reusable t = Pool_gen.pool_values t ~consume:false
   let values_consumed t = Pool_gen.pool_values t ~consume:true
 end
@@ -46,6 +47,7 @@ module Concurrent_pool = struct
   let create ?(clone = Fun.id) tc = Concurrent_pool_gen.create tc ~clone
   let add = Concurrent_pool_gen.add
   let size = Concurrent_pool_gen.size
+  let to_list = Concurrent_pool_gen.to_list
   let values_reusable t = Concurrent_pool_gen.pool_values t ~consume:false
   let values_consumed t = Concurrent_pool_gen.pool_values t ~consume:true
 end

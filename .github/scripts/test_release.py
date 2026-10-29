@@ -176,6 +176,43 @@ depends: [
 """
 
 
+JAVA_README = """\
+<dependency>
+  <groupId>dev.hegel</groupId>
+  <artifactId>hegel</artifactId>
+  <version>0.10.2</version>
+</dependency>
+
+testImplementation("dev.hegel:hegel:0.10.2") // or "dev.hegel:hegel-jna:0.10.2"
+
+Requires Java 10.10.2.1 or 0.10.20.
+"""
+
+
+CPP_README = """\
+FetchContent_Declare(
+    hegel
+    GIT_REPOSITORY https://github.com/hegeldev/hegel.git
+    GIT_TAG frontends/cpp/0.13.1
+    SOURCE_SUBDIR frontends/cpp
+)
+"""
+
+
+CPP_HEGEL_H = """\
+/**
+ * @code{.cmake}
+ * FetchContent_Declare(
+ *     hegel
+ *     GIT_REPOSITORY https://github.com/hegeldev/hegel.git
+ *     GIT_TAG frontends/cpp/0.13.1
+ *     SOURCE_SUBDIR frontends/cpp
+ * )
+ * @endcode
+ */
+"""
+
+
 PATCH = ("patch", "This patch does a thing.")
 MINOR = ("minor", "This release breaks the C ABI.")
 
@@ -193,10 +230,13 @@ class ApplyVersionBumpTest(unittest.TestCase):
             ("frontends/typescript/package-lock.json", json.dumps(TYPESCRIPT_LOCK, indent=2) + "\n"),
             ("frontends/typescript/src/libhegel-version.ts", TYPESCRIPT_PIN),
             ("frontends/cpp/CMakeLists.txt", CPP_CMAKE),
+            ("frontends/cpp/README.md", CPP_README),
+            ("frontends/cpp/include/hegel/hegel.h", CPP_HEGEL_H),
             ("frontends/java/pom.xml", JAVA_PARENT_POM),
             ("frontends/java/hegel-lowlevel/pom.xml", JAVA_MODULE_POM),
             ("frontends/java/hegel/pom.xml", JAVA_MODULE_POM),
             ("frontends/java/hegel-jna/pom.xml", JAVA_MODULE_POM),
+            ("frontends/java/README.md", JAVA_README),
             ("frontends/ocaml/dune-project", OCAML_DUNE_PROJECT),
             *((f"frontends/ocaml/{name}.opam", ocaml_opam(name)) for name in OCAML.crates),
         ]:
@@ -249,6 +289,39 @@ class ApplyVersionBumpTest(unittest.TestCase):
         )
         for rel in JAVA.manifests[1:]:
             self.assertEqual(self.read(rel), JAVA_MODULE_POM.replace("0.10.2", "0.10.3"), rel)
+
+    def test_rewrites_the_version_in_install_docs(self) -> None:
+        # Only whole mentions of the old version move, not longer numbers
+        # that contain it.
+        release.apply_version_bump(self.root, {JAVA: "0.11.0"})
+        self.assertEqual(
+            self.read("frontends/java/README.md"),
+            JAVA_README.replace("<version>0.10.2<", "<version>0.11.0<")
+            .replace("hegel:0.10.2", "hegel:0.11.0")
+            .replace("hegel-jna:0.10.2", "hegel-jna:0.11.0"),
+        )
+
+    def test_rewrites_the_cpp_fetchcontent_tags(self) -> None:
+        release.apply_version_bump(self.root, {CPP: "0.14.0"})
+        self.assertEqual(
+            self.read("frontends/cpp/README.md"),
+            CPP_README.replace("frontends/cpp/0.13.1", "frontends/cpp/0.14.0"),
+        )
+        self.assertEqual(
+            self.read("frontends/cpp/include/hegel/hegel.h"),
+            CPP_HEGEL_H.replace("frontends/cpp/0.13.1", "frontends/cpp/0.14.0"),
+        )
+
+    def test_install_docs_in_the_checkout_name_the_current_version(self) -> None:
+        for component in release.COMPONENTS:
+            version = release.current_version(component.manifest())
+            for doc in component.install_docs:
+                self.assertIn(version, (release.ROOT / doc).read_text(), doc)
+
+    def test_an_install_doc_without_the_version_is_an_error(self) -> None:
+        (self.root / "frontends/java/README.md").write_text("no version here\n")
+        with self.assertRaises(ValueError):
+            release.apply_version_bump(self.root, {JAVA: "0.11.0"})
 
     def test_bumps_the_dune_project_and_every_opam_file(self) -> None:
         release.apply_version_bump(self.root, {OCAML: "0.26.4"})
@@ -492,8 +565,17 @@ class ComponentTest(unittest.TestCase):
 
     def test_release_files_live_in_the_component(self) -> None:
         for component in release.COMPONENTS:
-            self.assertEqual(component.release_file, f"{component.path}/RELEASE.md")
+            self.assertEqual(component.release_dir, f"{component.path}/RELEASE")
+            self.assertEqual(component.legacy_release_file, f"{component.path}/RELEASE.md")
             self.assertEqual(component.changelog, f"{component.path}/CHANGELOG.md")
+
+    def test_release_files_are_markdown_in_the_release_dir_or_the_legacy_file(self) -> None:
+        self.assertTrue(RUST.is_release_file("frontends/rust/RELEASE/pool-iter.md"))
+        self.assertTrue(RUST.is_release_file("frontends/rust/RELEASE.md"))
+        self.assertFalse(RUST.is_release_file("frontends/rust/RELEASE/notes.txt"))
+        self.assertFalse(RUST.is_release_file("frontends/rust/RELEASED/x.md"))
+        self.assertFalse(RUST.is_release_file("frontends/rust/src/RELEASE/x.md"))
+        self.assertFalse(LIBHEGEL.is_release_file("frontends/rust/RELEASE/pool-iter.md"))
 
     def test_every_frontend_has_an_engine_bump_entry(self) -> None:
         self.assertIsNone(LIBHEGEL.engine_bump_entry)
@@ -507,6 +589,8 @@ class ComponentTest(unittest.TestCase):
             self.assertIn(component.changelog, release.RELEASE_PATHS)
             if component.engine_pin is not None:
                 self.assertIn(component.engine_pin, release.RELEASE_PATHS)
+            for doc in component.install_docs:
+                self.assertIn(doc, release.RELEASE_PATHS)
         self.assertIn("Cargo.lock", release.RELEASE_PATHS)
         self.assertIn(TYPESCRIPT.engine_pin, release.RELEASE_PATHS)
 
@@ -562,26 +646,129 @@ class ReleaseTagsTest(unittest.TestCase):
             message, "Release libhegel/0.24.0 and frontends/rust/0.23.3\n\n[skip ci]"
         )
 
-    def test_release_branch_is_branch_safe(self) -> None:
-        branch = release.release_branch(["libhegel/0.24.0", "frontends/python/0.2.0"])
-        self.assertEqual(branch, "release/libhegel-0.24.0+frontends-python-0.2.0")
 
 
-class ReleasePrDetailsTest(unittest.TestCase):
-    def test_rust_only_release_names_its_tag(self) -> None:
-        title, body = release.release_pr_details(["frontends/rust/0.23.3"])
-        self.assertEqual(title, "Release frontends/rust/0.23.3")
-        self.assertIn("after tagging frontends/rust/0.23.3 failed", body)
-        self.assertIn("The tags and package publishes succeeded.", body)
+def write(root: Path, rel: str, text: str) -> None:
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
 
-    def test_c_release_names_every_tag(self) -> None:
-        title, body = release.release_pr_details(
-            ["libhegel/0.24.0", "frontends/rust/0.23.3", "frontends/python/0.2.0"]
+
+RUST_ENTRY = "RELEASE_TYPE: patch\n\nThis patch does a thing.\n"
+C_ENTRY = "RELEASE_TYPE: minor\n\nThis release breaks the C ABI.\n"
+
+
+class ReleaseFilesTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_finds_the_legacy_file_then_the_directory_in_name_order(self) -> None:
+        write(self.root, "frontends/rust/RELEASE/zeta.md", RUST_ENTRY)
+        write(self.root, "frontends/rust/RELEASE/alpha.md", RUST_ENTRY)
+        write(self.root, "frontends/rust/RELEASE/notes.txt", "not a release file")
+        write(self.root, "frontends/rust/RELEASE.md", RUST_ENTRY)
+        self.assertEqual(
+            RUST.release_files(self.root),
+            [
+                "frontends/rust/RELEASE.md",
+                "frontends/rust/RELEASE/alpha.md",
+                "frontends/rust/RELEASE/zeta.md",
+            ],
+        )
+        self.assertEqual(LIBHEGEL.release_files(self.root), [])
+
+    def test_pending_lists_only_components_with_files(self) -> None:
+        write(self.root, "libhegel/RELEASE/abi.md", C_ENTRY)
+        write(self.root, "frontends/python/RELEASE/.gitkeep", "")
+        self.assertEqual(
+            release.pending_release_files(self.root),
+            {LIBHEGEL: ["libhegel/RELEASE/abi.md"]},
+        )
+
+    def test_combining_entries_takes_the_largest_bump_and_keeps_every_entry(self) -> None:
+        self.assertEqual(
+            release.combine_entries([("patch", "One."), ("minor", "Two."), ("patch", "Three.")]),
+            ("minor", "One.\n\nTwo.\n\nThree."),
         )
         self.assertEqual(
-            title, "Release libhegel/0.24.0 and frontends/rust/0.23.3 and frontends/python/0.2.0"
+            release.combine_entries([("minor", "One."), ("major", "Two.")]), ("major", "One.\n\nTwo.")
         )
-        self.assertIn("after tagging libhegel/0.24.0 and frontends/rust/0.23.3", body)
+        self.assertEqual(release.combine_entries([("patch", "Only.")]), ("patch", "Only."))
+
+
+class CheckReleaseFilesTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def check(self, changed: list[str]) -> list[str]:
+        return release.check_release_files(self.root, changed)
+
+    def test_a_shipped_change_without_a_release_file_is_an_error(self) -> None:
+        errors = self.check(["frontends/rust/src/lib.rs"])
+        self.assertEqual(len(errors), 1)
+        self.assertIn("frontends/rust/RELEASE/<slug>.md", errors[0])
+
+    def test_a_shipped_change_with_a_release_file_passes(self) -> None:
+        write(self.root, "frontends/rust/RELEASE/pool-iter.md", RUST_ENTRY)
+        self.assertEqual(
+            self.check(["frontends/rust/src/lib.rs", "frontends/rust/RELEASE/pool-iter.md"]), []
+        )
+
+    def test_tests_docs_and_ci_need_no_release_file(self) -> None:
+        self.assertEqual(
+            self.check(["frontends/rust/tests/a.rs", "README.md", ".github/workflows/ci.yml"]), []
+        )
+
+    def test_the_legacy_single_file_is_refused(self) -> None:
+        write(self.root, "frontends/rust/RELEASE.md", RUST_ENTRY)
+        errors = self.check(["frontends/rust/src/lib.rs", "frontends/rust/RELEASE.md"])
+        self.assertEqual(len(errors), 1)
+        self.assertIn("frontends/rust/RELEASE.md", errors[0])
+        self.assertIn("frontends/rust/RELEASE/<slug>.md", errors[0])
+
+    def test_a_malformed_release_file_is_an_error(self) -> None:
+        write(self.root, "frontends/rust/RELEASE/bad.md", "RELEASE_TYPE: huge\n\nNope.\n")
+        errors = self.check(["frontends/rust/RELEASE/bad.md"])
+        self.assertEqual(len(errors), 1)
+        self.assertIn("frontends/rust/RELEASE/bad.md", errors[0])
+        self.assertIn("RELEASE_TYPE", errors[0])
+
+    def test_an_own_libhegel_release_makes_frontend_files_optional(self) -> None:
+        write(self.root, "libhegel/RELEASE/abi.md", C_ENTRY)
+        self.assertEqual(
+            self.check(
+                ["libhegel/src/lib.rs", "libhegel/RELEASE/abi.md", "frontends/rust/src/ffi.rs"]
+            ),
+            [],
+        )
+
+    def test_a_libhegel_change_always_needs_its_own_file(self) -> None:
+        write(self.root, "frontends/rust/RELEASE/x.md", RUST_ENTRY)
+        errors = self.check(["libhegel/src/lib.rs", "frontends/rust/RELEASE/x.md"])
+        self.assertEqual(len(errors), 1)
+        self.assertIn("libhegel/RELEASE/<slug>.md", errors[0])
+
+    def test_release_files_already_on_main_do_not_count(self) -> None:
+        # Another pull request's pending libhegel release is in the tree but
+        # not in this pull request's diff: it documents nothing here.
+        write(self.root, "libhegel/RELEASE/other-pr.md", C_ENTRY)
+        write(self.root, "frontends/rust/RELEASE/other-pr.md", RUST_ENTRY)
+        errors = self.check(["frontends/rust/src/lib.rs"])
+        self.assertEqual(len(errors), 1)
+        self.assertIn("frontends/rust/RELEASE/<slug>.md", errors[0])
+
+    def test_a_deleted_release_file_is_not_this_pull_requests_file(self) -> None:
+        errors = self.check(["frontends/rust/src/lib.rs", "frontends/rust/RELEASE/gone.md"])
+        self.assertEqual(len(errors), 1)
+        self.assertIn("frontends/rust/RELEASE/<slug>.md", errors[0])
 
 
 if __name__ == "__main__":
