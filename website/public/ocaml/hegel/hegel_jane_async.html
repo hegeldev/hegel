@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml"><head>
+<base href="/ocaml/hegel/"><title>hegel_jane_async (hegel.hegel_jane_async)</title><meta charset="utf-8"/><link rel="stylesheet" href="../odoc.support/odoc.css"/><meta name="generator" content="odoc 3.2.1"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><script src="../odoc.support/highlight.pack.js"></script><script>hljs.initHighlightingOnLoad();</script></head><body class="odoc"><nav class="odoc-nav"><a href="index.html">Up</a> – <a href="../index.html">Index</a> &#x00BB; <a href="index.html">hegel</a> &#x00BB; hegel_jane_async</nav><header class="odoc-preamble"><h1 id="hegel_jane_async"><a href="#hegel_jane_async" class="anchor"></a>Hegel_jane_async</h1></header><div class="odoc-tocs"><nav class="odoc-toc odoc-local-toc"><ul><li><a href="#introduction">Introduction</a></li><li><a href="#sequential-state-machines">Sequential state machines</a></li><li><a href="#concurrent-state-machines">Concurrent state machines</a></li><li><a href="#interface">Interface</a></li></ul></nav></div><div class="odoc-content"><h3 id="introduction"><a href="#introduction" class="anchor"></a>Introduction</h3><p>Runs Hegel on tests that are Jane Street Async code.</p><p>A test body, rule, or invariant returns <code>unit Deferred.t</code>. Hegel waits on each one before moving on. Test bodies run in the execution context of the code that started the test.</p><pre class="language-ocaml"><code>let test () =
+  Hegel_jane_async.run_hegel_test (fun tc -&gt;
+    let n = Hegel.draw tc (Hegel.integers ~min_value:0 ~max_value:9 ()) in
+    Store.put_and_get store n &gt;&gt;| fun stored -&gt; assert (stored = n))
+;;</code></pre><h3 id="sequential-state-machines"><a href="#sequential-state-machines" class="anchor"></a>Sequential state machines</h3><p>Sequential state machines have rules and invariants that return <code>unit Deferred.t</code>:</p><pre class="language-ocaml"><code>module Counter_machine = struct
+  type state =
+    { counter : Counter.t
+    ; mutable model : int
+    }
+
+  let rules =
+    [ Hegel_jane_async.Stateful.Rule.create
+        ~name:&quot;incr&quot;
+        ~step:(fun _tc s -&gt;
+          s.model &lt;- s.model + 1;
+          Counter.incr s.counter)
+        ()
+    ]
+  ;;
+
+  let invariants =
+    [ Hegel_jane_async.Stateful.Invariant.create
+        ~name:&quot;matches&quot;
+        ~inv:(fun _tc s -&gt; Counter.read s.counter &gt;&gt;| fun n -&gt; assert (n = s.model))
+        ()
+    ]
+  ;;
+end
+
+let test () =
+  Hegel_jane_async.run_hegel_test (fun tc -&gt;
+    Counter.create ()
+    &gt;&gt;= fun counter -&gt;
+    Hegel_jane_async.Stateful.run
+      tc
+      (module Counter_machine)
+      ~init:{ counter; model = 0 })
+;;</code></pre><p>With the PPX, mark a <code>let%hegel_test</code> or a <code>module%hegel_state_machine</code> <code>[@async]</code>. Rule, invariant, and test bodies then return <code>unit Deferred.t</code>, and the test is <code>unit -&gt; unit Deferred.t</code>:</p><pre class="language-ocaml"><code>module%hegel_state_machine [@async] Counter_machine = struct
+  type state =
+    { counter : Counter.t
+    ; mutable model : int
+    }
+
+  let incr _tc s =
+    s.model &lt;- s.model + 1;
+    Counter.incr s.counter
+  [@@rule]
+  ;;
+
+  let matches _tc s = Counter.read s.counter &gt;&gt;| fun n -&gt; assert (n = s.model)
+  [@@invariant]
+  ;;
+end
+
+let%hegel_test [@async] counter tc =
+  Counter.create () &gt;&gt;= fun counter -&gt; Counter_machine.run tc ~init:{ counter; model = 0 }
+;;</code></pre><h3 id="concurrent-state-machines"><a href="#concurrent-state-machines" class="anchor"></a>Concurrent state machines</h3><p>On OxCaml with Jane Street's <code>concurrent</code> library installed, <code>Hegel_jane_async.Stateful</code> also runs concurrent state machines on Async rules.</p><p>Each worker runs as a task on the Async scheduler. Workers interleave only when a rule waits on a Deferred that has not yet completed.</p><p>With the PPX, mark a <code>module%hegel_concurrent_state_machine</code> <code>[@async]</code>. Rules and invariants return <code>unit Deferred.t</code>, and rules take the test case and the state:</p><pre class="language-ocaml"><code>module%hegel_concurrent_state_machine [@async] Counter_machine = struct
+  type state =
+    { counter : Counter.t
+    ; mutable model : int
+    }
+
+  let incr _tc s =
+    s.model &lt;- s.model + 1;
+    Counter.incr s.counter
+  [@@rule { group = &quot;ops&quot; }]
+  ;;
+
+  let matches _tc s =
+    Counter.read s.counter &gt;&gt;| fun n -&gt; if n &lt;&gt; s.model then failwith &quot;lost update&quot;
+  [@@invariant { always_check = true }]
+  ;;
+end
+
+let%hegel_test [@async] counter tc =
+  Counter.create ()
+  &gt;&gt;= fun counter -&gt;
+  Counter_machine.run tc ~init:{ counter; model = 0 } ~max_concurrency:4
+;;</code></pre><p>The generated <code>run</code> takes <code>?min_concurrency</code>, <code>?max_concurrency</code>, <code>?step_count</code>, and <code>?sexp_of_state</code>.</p><p>Without the PPX, create rules with <code>Hegel_jane_async.Stateful.Concurrent_rule.create</code> and the invariants with <code>Hegel_jane_async.Stateful.Invariant.create</code>, then pass the module to <code>Hegel_jane_async.Stateful.run_concurrent</code>.</p><p>Invariants run between rounds and may wait on `Deferred`s.</p><p>Use <code>Hegel_jane_async.Stateful.Concurrent_pool</code> for pools. Unlike <a href="Hegel/Stateful/Concurrent_pool/index.html"><code>Hegel.Stateful.Concurrent_pool</code></a>, it takes any element type, such as an Async handle.</p><h3 id="interface"><a href="#interface" class="anchor"></a>Interface</h3><pre class="language-ocaml"><code>val run_hegel_test
+  :  ?settings:Hegel.Settings.t
+  -&gt; ?test_location:Hegel.test_location
+  -&gt; ?database_key:string
+  -&gt; ?failure_blobs:string list
+  -&gt; (Hegel.test_case -&gt; unit Async.Deferred.t)
+  -&gt; unit Async.Deferred.t</code></pre><p>Same as <a href="Hegel/index.html#val-run_hegel_test"><code>Hegel.run_hegel_test</code></a>, for a body returning <code>unit Deferred.t</code>.</p><pre class="language-ocaml"><code>module Stateful : sig
+  module Pool = Hegel.Stateful.Pool
+
+  module Rule : sig
+    type 'state t
+
+    val create
+      :  name:string
+      -&gt; ?weight:float
+      -&gt; step:(Hegel.test_case -&gt; 'state -&gt; unit Async.Deferred.t)
+      -&gt; unit
+      -&gt; 'state t
+
+    val name : _ t -&gt; string
+    val weight : _ t -&gt; float
+  end
+
+  module Invariant : sig
+    type 'state t = private
+      { name : string
+      ; inv : Hegel.test_case -&gt; 'state -&gt; unit Async.Deferred.t
+      ; always_check : bool
+      }
+
+    val create
+      :  name:string
+      -&gt; inv:(Hegel.test_case -&gt; 'state -&gt; unit Async.Deferred.t)
+      -&gt; ?always_check:bool
+      -&gt; unit
+      -&gt; 'state t
+
+    val name : _ t -&gt; string
+  end
+
+  module type State_machine = sig
+    type state
+
+    val rules : state Rule.t list
+    val invariants : state Invariant.t list
+  end
+
+  val run
+    :  ?step_count:int
+    -&gt; ?sexp_of_state:('state -&gt; Sexplib0.Sexp.t)
+    -&gt; Hegel.test_case
+    -&gt; (module State_machine with type state = 'state)
+    -&gt; init:'state
+    -&gt; unit Async.Deferred.t
+end</code></pre><p>The same as the sequential <a href="Hegel/Stateful/index.html"><code>Hegel.Stateful</code></a> interface, but for rules and invariants returning <code>unit Deferred.t</code>. <code>Pool</code> is <a href="Hegel/Stateful/Pool/index.html"><code>Hegel.Stateful.Pool</code></a>. <code>run</code> runs each rule and invariant to completion before it starts the next one.</p><p>On OxCaml with <code>concurrent</code> installed, <code>Hegel_jane_async.Stateful</code> also has:</p><pre class="language-ocaml"><code>module Concurrent_rule : sig
+  type 'state t
+
+  val create
+    :  ?group:string
+    -&gt; ?weight:float
+    -&gt; name:string
+    -&gt; step:(Hegel.test_case -&gt; 'state -&gt; unit Async.Deferred.t)
+    -&gt; unit
+    -&gt; 'state t
+
+  val name : _ t -&gt; string
+  val group : _ t -&gt; string
+  val weight : _ t -&gt; float
+end
+
+module type Concurrent_state_machine = sig
+  type state
+
+  val rules : state Concurrent_rule.t list
+  val invariants : state Invariant.t list
+end
+
+val run_concurrent
+  :  ?min_concurrency:int
+  -&gt; ?max_concurrency:int
+  -&gt; ?step_count:int
+  -&gt; ?sexp_of_state:('state -&gt; Sexplib0.Sexp.t)
+  -&gt; Hegel.test_case
+  -&gt; (module Concurrent_state_machine with type state = 'state)
+  -&gt; init:'state
+  -&gt; unit Async.Deferred.t
+
+module Concurrent_pool : sig
+  type 'a t
+
+  val create : ?clone:('a -&gt; 'a) -&gt; Hegel.test_case -&gt; 'a t
+  val add : 'a t -&gt; Hegel.test_case -&gt; 'a -&gt; unit
+  val size : _ t -&gt; int
+  val values_reusable : 'a t -&gt; ('a, Hegel.unprintable) Hegel.generator
+  val values_consumed : 'a t -&gt; ('a, Hegel.unprintable) Hegel.generator
+end</code></pre><p>This is almost the same as the concurrent <a href="Hegel/Stateful/index.html"><code>Hegel.Stateful</code></a> interface, but `run_concurrent` does not take a concurrency capability, so `Concurrent_rule.create` does not take a `ctx` either.</p></div></body></html>
