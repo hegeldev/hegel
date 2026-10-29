@@ -129,22 +129,42 @@ fn format_backtrace_short_strips_through_filter() {
 fn reproducer_line_none_when_print_blob_disabled() {
     let settings = Settings::from_profile("base").print_blob(false);
     assert!(!settings.print_blob);
-    assert!(reproducer_line(&settings, Some("AAEC")).is_none());
+    assert!(reproducer_line(&settings, Some("AAEC"), Some("#[hegel::test]")).is_none());
 }
 
 #[test]
 fn reproducer_line_none_when_no_blob_attached() {
     let settings = Settings::new().print_blob(true);
-    assert!(reproducer_line(&settings, None).is_none());
+    assert!(reproducer_line(&settings, None, Some("#[hegel::test]")).is_none());
 }
 
 #[test]
-fn reproducer_line_emits_attribute_when_enabled_and_present() {
+fn reproducer_line_names_the_attribute_the_run_came_from() {
     let settings = Settings::new().print_blob(true);
-    let line = reproducer_line(&settings, Some("AAEC")).unwrap();
-    assert!(
-        line.contains("#[hegel::reproduce_failure(\"AAEC\")]"),
-        "expected the reproducer attribute, got: {line}"
+    for attribute in [
+        "#[hegel::test]",
+        "#[hegel::main]",
+        "#[hegel::standalone_function]",
+    ] {
+        let line = reproducer_line(&settings, Some("AAEC"), Some(attribute)).unwrap();
+        assert_eq!(
+            line,
+            format!(
+                "\nTo reproduce this failure, add the attribute below {attribute}:\n    \
+                 #[hegel::reproduce_failure(\"AAEC\")]"
+            )
+        );
+    }
+}
+
+#[test]
+fn reproducer_line_points_a_builder_run_at_the_builder() {
+    let settings = Settings::new().print_blob(true);
+    let line = reproducer_line(&settings, Some("AAEC"), None).unwrap();
+    assert_eq!(
+        line,
+        "\nTo reproduce this failure, call this on the Hegel builder before run():\n    \
+         .reproduce_failure(\"AAEC\")"
     );
 }
 
@@ -232,7 +252,7 @@ fn run_case_capturing(
 /// Drive a real run of `body` and return the message it panics with.
 fn drive_panic_message(body: impl FnMut(TestCase), settings: &Settings) -> String {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        drive(body, settings, None, None)
+        drive(body, settings, None, None, None, Vec::new())
     }));
     let payload = result.expect_err("drive should panic on a failing run");
     payload
@@ -296,6 +316,17 @@ fn drive_run_error_panics_with_the_engines_message() {
 }
 
 #[test]
+fn drive_usage_error_panics_with_its_own_message() {
+    let msg = drive_panic_message(
+        |tc| {
+            let _: i32 = tc.draw(gs::integers().min_value(1).max_value(0));
+        },
+        &test_settings(),
+    );
+    assert_eq!(msg, "Cannot have max_value < min_value");
+}
+
+#[test]
 fn drive_passing_run_does_not_panic() {
     drive(
         |tc| {
@@ -304,6 +335,8 @@ fn drive_passing_run_does_not_panic() {
         &test_settings(),
         None,
         None,
+        None,
+        Vec::new(),
     );
 }
 
@@ -507,5 +540,47 @@ fn quiet_final_replay_emits_no_draw_or_note_output() {
         lines.lock().unwrap().is_empty(),
         "quiet mode must suppress final-replay output, got {:?}",
         lines.lock().unwrap()
+    );
+}
+
+#[test]
+fn run_error_message_keeps_an_engine_message_that_already_names_its_kind() {
+    let message = "FailedHealthCheck: TooSlow — input generation is slow".to_string();
+    assert_eq!(
+        run_error_message(
+            RunErrorKind::HealthCheck(crate::HealthCheck::TooSlow),
+            message.clone()
+        ),
+        message
+    );
+    assert_eq!(
+        run_error_message(RunErrorKind::Unsatisfiable, "Unsatisfiable: no".to_string()),
+        "Unsatisfiable: no"
+    );
+}
+
+#[test]
+fn run_error_message_prefixes_an_engine_message_with_its_kind() {
+    assert_eq!(
+        run_error_message(
+            RunErrorKind::HealthCheck(crate::HealthCheck::FilterTooMuch),
+            "too many rejections".to_string()
+        ),
+        "FailedHealthCheck: FilterTooMuch: too many rejections"
+    );
+    assert_eq!(
+        run_error_message(
+            RunErrorKind::Flaky,
+            "Your test is non-deterministic".to_string()
+        ),
+        "Flaky: Your test is non-deterministic"
+    );
+    assert_eq!(
+        run_error_message(RunErrorKind::Unsatisfiable, "no valid input".to_string()),
+        "Unsatisfiable: no valid input"
+    );
+    assert_eq!(
+        run_error_message(RunErrorKind::Other, "misuse".to_string()),
+        "RunError: misuse"
     );
 }

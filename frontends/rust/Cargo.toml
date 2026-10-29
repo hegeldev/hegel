@@ -60,6 +60,10 @@ name = "fixture_main_failing"
 path = "tests/fixtures/main_failing.rs"
 
 [[bin]]
+name = "fixture_main_reproduce"
+path = "tests/fixtures/main_reproduce.rs"
+
+[[bin]]
 name = "fixture_main_rewrite"
 path = "tests/fixtures/main_rewrite.rs"
 

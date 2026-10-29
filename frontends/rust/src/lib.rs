@@ -6,7 +6,7 @@
 //!
 //! ## Install Hegel
 //!
-//! Add `hegel-rust` to your `Cargo.toml` as a dev dependency using cargo:
+//! Add `hegeltest` to your `Cargo.toml` as a dev dependency using cargo:
 //!
 //! ```bash
 //! cargo add --dev hegeltest
@@ -335,11 +335,21 @@ pub mod stateful;
 mod test_case;
 #[doc(hidden)]
 pub use control::currently_in_test_context;
+#[doc(hidden)]
+pub use explicit_test_case::ExplicitRun;
 pub use explicit_test_case::ExplicitTestCase;
 pub use generators::Generator;
 pub use generators::PrintableGenerator;
 pub use pretty::{Document, PrettyPrinter};
 pub use test_case::TestCase;
+
+/// The version of the libhegel engine this crate drives, as
+/// `"major.minor.patch"` (`hegel_version`). The crate pins its engine
+/// exactly, so this is the version of the `hegeltest-c` crate it was built
+/// with.
+pub fn engine_version() -> String {
+    crate::ffi::engine_version()
+}
 
 /// The imports nearly every hegel test wants in scope.
 ///
@@ -533,7 +543,12 @@ pub use hegel_macros::explicit_test_case;
 /// ```
 ///
 /// Paste that attribute **below** `#[hegel::test]` and the next run will
-/// replay the blob instead of generating fresh test cases. A deterministic
+/// replay the blob instead of generating fresh test cases. The attribute
+/// works the same way below [`#[hegel::main]`](macro@main) and
+/// [`#[hegel::standalone_function]`](macro@standalone_function), and the
+/// reproducer line names whichever of the three the failing run came from.
+/// A run built with the [`Hegel`] builder directly is told to call
+/// [`Hegel::reproduce_failure`] instead. A deterministic
 /// blob decodes to one choice sequence, replayed up to four times, stopping
 /// at the first failure. A nondeterministic blob decodes to its stored
 /// failing timelines, replayed until one fails, under a replay budget.
@@ -558,14 +573,16 @@ pub use hegel_macros::explicit_test_case;
 /// fn my_test(tc: hegel::TestCase) { /* ... */ }
 /// ```
 ///
-/// The attribute may be stacked to keep track of several failures, but only
-/// the **first** one replays — the rest are bookkeeping. Delete them one by
-/// one as the failures are fixed:
+/// The attribute may be stacked to replay several failures. Every blob
+/// replays, one after another, and every failure they reproduce is
+/// reported, as a run reports several distinct failures. A blob that no
+/// longer reproduces its failure is not an error while another one does,
+/// so delete each attribute once its failure is fixed:
 ///
 /// ```no_run
 /// #[hegel::test]
-/// #[hegel::reproduce_failure("AAEC…")] // replayed
-/// #[hegel::reproduce_failure("AAED…")] // kept for later
+/// #[hegel::reproduce_failure("AAEC…")]
+/// #[hegel::reproduce_failure("AAED…")]
 /// fn my_test(tc: hegel::TestCase) { /* ... */ }
 /// ```
 ///
@@ -573,8 +590,8 @@ pub use hegel_macros::explicit_test_case;
 /// for a nondeterministic failure, its stored failing timelines — so it is
 /// only guaranteed to reproduce a failure within a specific version of
 /// Hegel. A blob that can't be decoded (corrupt or from an incompatible
-/// version), or that does not reproduce a failure, panics with an
-/// explanatory message.
+/// version) panics with an explanatory message, as does a run in which no
+/// blob reproduces a failure.
 pub use hegel_macros::reproduce_failure;
 
 #[doc(hidden)]
@@ -689,6 +706,21 @@ pub use hegel_macros::concurrent_state_machine;
 /// cannot be combined with a positional settings expression, which is
 /// already a complete starting point.
 ///
+/// A failing test panics with the failure's own panic. A run that errors
+/// instead, such as one failing a health check, panics with a message
+/// starting `FailedHealthCheck: <check>`, `Flaky`, `Unsatisfiable` or
+/// `RunError`, which `#[should_panic(expected = "...")]` can match. A
+/// usage error inside the test, such as a generator with invalid bounds,
+/// panics with its own message alone (see [`Hegel::run`]):
+///
+/// ```no_run
+/// #[hegel::test]
+/// #[should_panic(expected = "Unsatisfiable")]
+/// fn rejects_everything(tc: hegel::TestCase) {
+///     tc.assume(false);
+/// }
+/// ```
+///
 /// You can use other test attribute macros, like `tokio::test`, by putting them *before* `hegel::test`:
 ///
 /// ```no_run
@@ -757,9 +789,17 @@ pub use hegel_macros::test_helper;
 /// machine — so it is never stopped as an overrun. See
 /// [`Settings::suppress_health_check`].
 ///
-/// Supported CLI flags (with defaults taken from the attribute args):
-/// `--profile`, `--seed`, `--verbosity`, `--derandomize`, `--database`,
-/// `--suppress-health-check`, `--backend`, `-h` / `--help`. `--profile`
+/// Every setting but the test-case count is a CLI flag (with defaults
+/// taken from the attribute args), named after its `hegel.toml` key with
+/// `-` for `_`: `--seed`, `--verbosity`, `--derandomize`, `--database`,
+/// `--database-key`, `--phases`, `--suppress-health-check`,
+/// `--report-multiple-failures`, `--stop-on-first-failure`,
+/// `--show-statistics`, `--print-blob`, `--backend`,
+/// `--nondeterminism-strictness` and `--unbounded-choices`, each taking
+/// its value as `--flag VALUE` or `--flag=VALUE` in the vocabulary
+/// `hegel.toml` uses (see [`docs::settings`]);
+/// the engine parses them. `--profile` and `-h` / `--help` complete the
+/// list. `--profile`
 /// sets the process's default settings profile before the attribute args
 /// are evaluated, exactly like the `HEGEL_DEFAULT_PROFILE` environment
 /// variable, so compiled-in settings apply on top of the named profile.
@@ -808,5 +848,6 @@ pub use cli::apply_cli_args as __apply_cli_args;
 #[doc(hidden)]
 pub use runner::hegel;
 pub use runner::{
-    Backend, HealthCheck, Hegel, NondeterminismStrictness, Phase, ProfileError, Settings, Verbosity,
+    Backend, Database, HealthCheck, Hegel, NondeterminismStrictness, Phase, ProfileError, Settings,
+    Verbosity,
 };

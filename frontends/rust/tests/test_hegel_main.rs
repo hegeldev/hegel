@@ -40,13 +40,15 @@ fn test_main_persists_failures_to_the_database() {
 }
 
 #[test]
-fn test_main_removed_flags_are_unknown_arguments() {
-    for args in [&["--test-cases", "3"][..], &["--single-test-case"][..]] {
-        fixture(BASIC_MAIN)
-            .args(args)
-            .expect_failure("Unknown argument")
-            .run();
-    }
+fn test_main_removed_flags_are_rejected() {
+    fixture(BASIC_MAIN)
+        .args(&["--test-cases", "3"])
+        .expect_failure("runs exactly one test case")
+        .run();
+    fixture(BASIC_MAIN)
+        .arg("--single-test-case")
+        .expect_failure("Unknown argument")
+        .run();
 }
 
 #[test]

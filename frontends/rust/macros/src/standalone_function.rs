@@ -5,8 +5,8 @@ use syn::token::Comma;
 use syn::{FnArg, ItemFn};
 
 use crate::common::{
-    SettingsAttrArgs, build_explicit_blocks, extract_explicit_test_cases, extract_ident_from_pat,
-    rewrite_draws_in_block,
+    SettingsAttrArgs, build_explicit_run, extract_explicit_test_cases, extract_ident_from_pat,
+    extract_reproduce_failure, reproduce_failure_calls, rewrite_draws_in_block,
 };
 
 pub fn expand_standalone_function(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -74,6 +74,12 @@ pub fn expand_standalone_function(attr: TokenStream, item: TokenStream) -> Token
         Err(err) => return err,
     };
 
+    let reproduce_blobs = match extract_reproduce_failure(&mut func.attrs) {
+        Ok(blobs) => blobs,
+        Err(err) => return err,
+    };
+    let reproduce_call = reproduce_failure_calls(&reproduce_blobs);
+
     let body = {
         let mut body = (*func.block).clone();
         if let Some(test_case_name) = extract_ident_from_pat(&tc_pat) {
@@ -84,19 +90,30 @@ pub fn expand_standalone_function(attr: TokenStream, item: TokenStream) -> Token
 
     let fn_name = func.sig.ident.to_string();
     let settings_expr = settings_args.to_settings_expr();
-    let explicit_blocks = build_explicit_blocks(&explicit_cases, &tc_pat, &body);
+    let explicit = build_explicit_run(
+        if reproduce_blobs.is_empty() {
+            &explicit_cases
+        } else {
+            &[]
+        },
+        &tc_pat,
+        &body,
+    );
+    let explicit_section = explicit.section;
+    let explicit_call = explicit.builder_call;
 
     let passthrough: Punctuated<FnArg, Comma> = func.sig.inputs.iter().skip(1).cloned().collect();
 
     let new_body: TokenStream = quote! {
         {
             let __hegel_settings = #settings_expr;
-            if __hegel_settings.has_phase(::hegel::Phase::Explicit) {
-                #(#explicit_blocks)*
-            }
+            #explicit_section
 
             ::hegel::Hegel::new(move |#tc_pat: #tc_ty| #body)
             .settings(__hegel_settings)
+            #reproduce_call
+            #explicit_call
+            .__reproduce_attribute("#[hegel::standalone_function]")
             .__database_key(format!("{}::{}", module_path!(), #fn_name))
             .test_location(::hegel::TestLocation {
                 function: #fn_name.to_string(),
