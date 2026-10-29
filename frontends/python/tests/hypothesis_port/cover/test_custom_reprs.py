@@ -95,7 +95,7 @@ def test_reprs_as_created():
         assert foo.x <= 0 or bar.x >= 0
 
     output = _get_output(inner)
-    assert output.startswith("Falsifying example:\nfoo = Foo(x=1)\nbar = Bar(x=-1)\nbaz = <")
+    assert output.startswith("foo = Foo(x=1)\nbar = Bar(x=-1)\nbaz = <")
 
 
 def test_reprs_as_created_interactive():
@@ -104,7 +104,7 @@ def test_reprs_as_created_interactive():
         bar = tc.draw(gs.builds(Bar, gs.just(10)))
         assert not bar.x
 
-    assert _get_output(inner) == "Falsifying example:\nbar = Bar(10)"
+    assert _get_output(inner) == "bar = Bar(10)"
 
 
 CONSTANT_FOO = Foo(None)
@@ -126,9 +126,7 @@ def test_reprs_as_created_consistent_calls_despite_indentation():
         b = tc.draw(gs.builds(Bar, strat))
         assert a == b
 
-    assert _get_output(inner) == (
-        f"Falsifying example:\na = some_foo({aas!r})\nb = Bar(some_foo({aas!r}))"
-    )
+    assert _get_output(inner) == (f"a = some_foo({aas!r})\nb = Bar(some_foo({aas!r}))")
 
 
 @pytest.mark.parametrize(
@@ -164,7 +162,7 @@ def test_map_to_str_prints_as_repr():
         s = tc.draw(gs.integers().map(str))  # noqa: F841 (names the draw)
         raise AssertionError
 
-    assert _get_output(inner) == "Falsifying example:\ns = '0'"
+    assert _get_output(inner) == "s = '0'"
 
 
 def test_map_to_bytes_prints_as_repr():
@@ -174,7 +172,7 @@ def test_map_to_bytes_prints_as_repr():
         raise AssertionError
 
     digest = hashlib.sha256(b"").digest()
-    assert _get_output(inner) == f"Falsifying example:\nb = {digest!r}"
+    assert _get_output(inner) == f"b = {digest!r}"
 
 
 def test_invalid_call_syntax_falls_back_to_repr():
@@ -192,4 +190,4 @@ def test_invalid_call_syntax_falls_back_to_repr():
         x = tc.draw(gs.builds(_BadName))  # noqa: F841 (names the draw)
         raise AssertionError
 
-    assert _get_output(inner) == "Falsifying example:\nx = a b()"
+    assert _get_output(inner) == "x = a b()"

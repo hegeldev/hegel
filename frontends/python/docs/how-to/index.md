@@ -10,5 +10,6 @@ port-from-hypothesis
 ci
 statistics
 health-checks
+threads
 antithesis
 ```

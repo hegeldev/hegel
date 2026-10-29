@@ -16,18 +16,8 @@ import pytest
 import hegel
 from hegel import generators as gs
 
-_filter_too_much = pytest.mark.xfail(
-    strict=True,
-    reason="engine: rejecting every input after a draw fails the filter_too_much health "
-    "check rather than raising Unsatisfiable, as Hegel does not detect an exhausted "
-    "finite space (docs/explanation/comparison-with-hypothesis.md)",
-)
 
-
-@_filter_too_much
 def test_exceptiongroup_discard_frozen():
-    """Basic test that raises Frozen+Unsatisfiable.
-    Frozen is thrown out, and Unsatisfiable is raised"""
 
     @hegel.test
     def test_function(tc):
@@ -41,11 +31,10 @@ def test_exceptiongroup_discard_frozen():
 
         asyncio.run(_main())
 
-    with pytest.raises(hegel.Unsatisfiable):
+    with pytest.raises(hegel.FailedHealthCheck):
         test_function()
 
 
-@_filter_too_much
 def test_exceptiongroup_nested() -> None:
     @hegel.test
     def test_function(tc: hegel.TestCase) -> None:
@@ -59,7 +48,7 @@ def test_exceptiongroup_nested() -> None:
 
         asyncio.run(_main())
 
-    with pytest.raises(hegel.Unsatisfiable):
+    with pytest.raises(hegel.FailedHealthCheck):
         test_function()
 
 

@@ -24,4 +24,4 @@ just website::build   # production build into dist/
 
 ## CI
 
-`.github/workflows/website.yml` builds the site. A change confined to `website/` runs only that job: the lints, component tests and release are skipped (see the `changes` job of `ci.yml`). The site is not a released component and needs no `RELEASE.md`.
+`.github/workflows/website.yml` builds the site. A change confined to `website/` runs only that job: the lints, component tests and release are skipped (see the `changes` job of `ci.yml`). The site is not a released component and needs no release file.

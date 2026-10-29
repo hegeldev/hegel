@@ -1,4 +1,5 @@
 use std::convert::Infallible;
+use std::sync::LazyLock;
 
 use rand::Rng;
 use rand::SeedableRng;
@@ -10,7 +11,7 @@ use crate::generators::{
 };
 use crate::pretty::PrettyPrinter;
 
-const RANDOMS_LABEL: u64 = label_from_name("hegel.rand.randoms");
+static RANDOMS_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.rand.randoms"));
 
 /// Generator for random number generators. Created by [`randoms()`].
 ///
@@ -33,7 +34,7 @@ impl RandomsGenerator {
 
 impl Generator<HegelRandom> for RandomsGenerator {
     fn label(&self) -> u64 {
-        RANDOMS_LABEL
+        *RANDOMS_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> HegelRandom {

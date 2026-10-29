@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as _dt
+import inspect
 import sys
 import threading
 from collections.abc import Callable
@@ -11,7 +12,7 @@ from typing import TYPE_CHECKING, Any, NoReturn, TypeVar
 from hegel import _native
 from hegel._draw_names import DrawName, name_for_call
 from hegel.errors import AssumeFailed, InternalError, InvalidArgument, LoopDone, StopTest
-from hegel.pretty import DEFAULT_MAX_WIDTH, PrettyPrinter, pretty_repr
+from hegel.pretty import _SILENT_PRINTER, DEFAULT_MAX_WIDTH, PrettyPrinter
 
 if TYPE_CHECKING:
     from hegel.generators.base import Generator
@@ -22,9 +23,14 @@ T = TypeVar("T")
 
 OutputSink = Callable[[str], None]
 
-# Deeper nesting than this ends the test case as too large, well before
-# Python's own recursion limit would turn it into a RecursionError.
-MAX_DRAW_DEPTH = 100
+RECURSION_HEADROOM = 200
+SHALLOW_SPANS = 32
+_RESUMABLE = (
+    inspect.CO_GENERATOR
+    | inspect.CO_COROUTINE
+    | inspect.CO_ASYNC_GENERATOR
+    | inspect.CO_ITERABLE_COROUTINE
+)
 
 MIN_DATE = (1, 1, 1)
 MAX_DATE = (9999, 12, 31)
@@ -36,19 +42,7 @@ MAX_DATETIME = MAX_DATE + LAST_NANOSECOND
 
 _UNNAMED = DrawName("draw", repeatable=True)
 
-# Exceptions that end a draw as part of normal control flow (a rejection,
-# an abandoned test case, a misuse error) rather than as a failure of the
-# draw to report.
-_SIGNALS: tuple[type[BaseException], ...] = (
-    AssumeFailed,
-    StopTest,
-    LoopDone,
-    InvalidArgument,
-    InternalError,
-    _native.RetrySignal,
-    KeyboardInterrupt,
-    SystemExit,
-)
+_UNREPORTED = PrettyPrinter.noop()
 
 
 def _generator_class() -> type:
@@ -93,7 +87,8 @@ class TestCase:
     its first argument, once per test case; tests never construct one.
     An instance belongs to the test case it was passed for and must not be
     kept and used after the test returns. It may be driven by one thread
-    at a time.
+    at a time: to draw from several threads, give each thread its own
+    :meth:`clone`.
 
     ::
 
@@ -111,10 +106,10 @@ class TestCase:
         "_draw_state",
         "_global",
         "_handle",
-        "_nested_draws",
         "_printer",
         "_printing_depth",
         "_span_depth",
+        "_span_frames",
     )
 
     def __init__(
@@ -127,21 +122,23 @@ class TestCase:
         self._handle = handle
         self._global = _Global(emit, sink, explicit)
         self._span_depth = 0
+        self._span_frames: list[tuple[Any, int]] = []
         self._printing_depth = 0
         self._printer: PrettyPrinter | None = None
         self._draw_state = _DrawState()
-        self._nested_draws: list[tuple[str, Any]] | None = None
 
     @classmethod
-    def _derive(cls, parent: TestCase, handle: _native.TestCase) -> TestCase:
+    def _derive(
+        cls, parent: TestCase, handle: _native.TestCase, draw_state: _DrawState | None = None
+    ) -> TestCase:
         tc = cls.__new__(cls)
         tc._handle = handle
         tc._global = parent._global
         tc._span_depth = 0
+        tc._span_frames = []
         tc._printing_depth = 0
         tc._printer = None
-        tc._draw_state = _DrawState()
-        tc._nested_draws = None
+        tc._draw_state = _DrawState() if draw_state is None else draw_state
         return tc
 
     # -- drawing ---------------------------------------------------------
@@ -163,9 +160,22 @@ class TestCase:
         Names are inferred from the test's source, so draws in code whose
         source is unavailable report as ``draw_N``.
 
+        The generator prints the value as it draws it, so it must be
+        printable: every built-in generator is, and so is a
+        :class:`~hegel.generators.Generator` subclass that implements
+        ``do_draw_and_print``. A subclass that implements only ``do_draw``
+        (or a structure containing one) raises
+        :class:`~hegel.NotPrintable` on the first test case that draws it.
+        Implement ``do_draw_and_print``, make it printable with
+        :meth:`~hegel.generators.Generator.print_with` or
+        :meth:`~hegel.generators.Generator.print_as_repr`, or draw it with
+        :meth:`draw_silent`.
+
         Draws made inside a :func:`~hegel.composite` generator, or while
-        another draw is in progress, are not printed separately: they are
-        part of the outer value.
+        another draw is in progress, are never printed on their own, not
+        even when the outer draw raises: they are part of the outer value,
+        and a draw that raises prints nothing at all. They still need a
+        printable generator.
         """
         if not isinstance(generator, _generator_class()):
             raise InvalidArgument(
@@ -175,15 +185,7 @@ class TestCase:
             )
         explicit = self._global.explicit
         if explicit is None and (self._span_depth > 0 or self._printing_depth > 0):
-            value = self.draw_silent(generator)
-            if self._nested_draws is not None:
-                # Kept in case the enclosing draw fails, to show what it drew.
-                if name is None:
-                    frame = sys._getframe(1)
-                    inferred = name_for_call(frame.f_code.co_filename, frame.f_lineno)
-                    name = "draw" if inferred is None else inferred.name
-                self._nested_draws.append((name, value))
-            return value
+            return self.draw_and_print(generator, _UNREPORTED)
         if name is not None:
             draw_name = DrawName(str(name), repeatable=True)
         else:
@@ -193,17 +195,15 @@ class TestCase:
 
     def _draw_as(self, generator: Generator[T], draw_name: DrawName, separator: str = " = ") -> T:
         """Draw a value reported as ``<name><separator><value>``, under the
-        name allocated for ``draw_name``. Nested draws are silent: callers
-        check for them first."""
+        name allocated for ``draw_name``. Nested draws are not reported:
+        callers check for them first."""
         explicit = self._global.explicit
         if explicit is not None:
             return explicit.draw(self, generator, draw_name)
         display = self._allocate_display_name(draw_name)
         if display is None:
-            return self.draw_silent(generator)
+            return self.draw_and_print(generator, _UNREPORTED)
         self._printing_depth += 1
-        outer_capture = self._nested_draws
-        self._nested_draws = []
         try:
             printer = self._with_printer()
             with printer.speculate() as speculation:
@@ -212,46 +212,31 @@ class TestCase:
                 printer.hard_break()
                 speculation.commit()
             return value
-        except _SIGNALS:
-            raise
-        except BaseException as error:
-            self._report_failed_draw(f"{display}{separator}", generator, error)
-            raise
         finally:
             self._printing_depth -= 1
-            self._nested_draws = outer_capture
-
-    def _report_failed_draw(
-        self, prefix: str, generator: Generator[Any], error: BaseException
-    ) -> None:
-        """Report a draw that raised: the draw itself, then the values
-        drawn inside it (a composite's, say) before it did."""
-        printer = self._with_printer()
-        printer.text(f"{prefix}<{type(error).__name__} raised while drawing from {generator!r}>")
-        printer.hard_break()
-        for name, value in self._nested_draws or ():
-            printer.text(f"  {name} = {pretty_repr(value)}")
-            printer.hard_break()
 
     def draw_silent(self, generator: Generator[T]) -> T:
         """Draw a value from ``generator`` without printing it in the
-        failure report. Use it for values that would only clutter the
-        report, or in a custom :class:`~hegel.generators.Generator`'s
-        ``do_draw``."""
+        failure report. Any generator can be drawn silently, printable or
+        not. Use it for values that would only clutter the report, or in a
+        custom :class:`~hegel.generators.Generator`'s ``do_draw``."""
         explicit = self._global.explicit
         if explicit is not None:
             return explicit.draw_silent(self, generator)
-        self.start_span(generator.label)
-        value = generator.do_draw(self)
-        self.stop_span(False)
-        return value
+        return self.draw_and_print(generator, _SILENT_PRINTER)
 
     def draw_and_print(self, generator: Generator[T], printer: PrettyPrinter) -> T:
         """Draw a value, printing its representation through ``printer``.
-        This is how a custom generator's ``do_draw_and_print`` draws its
-        components, so they print as part of its own value."""
+        This is how a printable generator's ``do_draw_and_print`` draws its
+        components, so they print as part of its own value: ``generator``
+        must be printable, or this raises :class:`~hegel.NotPrintable`.
+        When the enclosing generator is itself being drawn silently, so is
+        ``generator``."""
         self.start_span(generator.label)
-        value = generator.do_draw_and_print(self, printer)
+        if printer._silent:
+            value = generator.do_draw(self)
+        else:
+            value = generator.do_draw_and_print(self, printer)
         self.stop_span(False)
         return value
 
@@ -393,7 +378,8 @@ class TestCase:
         :meth:`assume`) is skipped and the next one runs. A failure in any
         repetition fails the test case, and shrinking reduces the number of
         repetitions along with the values each drew. Each repetition is
-        reported under a ``// Repetition #N`` heading.
+        reported under a ``# Repetition #N`` heading. In an explicit test
+        case, ``body`` runs once.
 
         ``repeat`` never returns normally: it raises an internal
         control-flow signal that ends the test body, so code after it does
@@ -411,14 +397,15 @@ class TestCase:
 
                 tc.repeat(step)
         """
-        from hegel.generators import booleans, integers
-
-        min_size = self.draw_silent(integers(min_value=0, max_value=1 << 40))
-        collection = Collection(self, min_size, None)
+        if self._global.explicit is not None:
+            self.note("# Repetition #1")
+            body()
+            raise LoopDone()
+        repeat = self._handle.new_repeat()
         iteration = 0
-        while collection.more():
+        while repeat.more(self._handle):
             iteration += 1
-            self.note(f"// Repetition #{iteration}")
+            self.note(f"# Repetition #{iteration}")
             outer = self._enter_block(2)
             try:
                 body()
@@ -427,10 +414,8 @@ class TestCase:
             except (StopTest, InvalidArgument, InternalError, LoopDone):
                 raise
             except BaseException:
-                # Back on the test's own handle before the draw that marks
-                # the failing repetition.
                 self._restore_handle(outer)
-                self.draw_silent(booleans())
+                repeat.failed(self._handle)
                 raise
             finally:
                 self._restore_handle(outer)
@@ -444,11 +429,62 @@ class TestCase:
         every line it prints is nested ``extra_indent`` columns further in."""
         return TestCase._derive(self, self._handle.block(extra_indent))
 
-    def _clone(self) -> TestCase:
-        """A handle with an independent choice stream, for another thread."""
-        return TestCase._derive(self, self._handle.clone())
+    def clone(self) -> TestCase:
+        """Another ``TestCase`` for the same test case, to draw from on
+        another thread.
 
-    def _set_worker(self, index: int) -> None:
+        A ``TestCase`` may be driven by one thread at a time, so a test
+        that draws from several threads gives each its own clone. A clone
+        draws from a choice stream of its own, so the threads' draws do not
+        perturb each other and the whole test case still shrinks and
+        replays. Its drawn values and notes appear in the failure report
+        in a section of their own, placed where the clone was made, and
+        it shares draw names with this one (a draw named ``x`` on each
+        prints as ``x_1`` and ``x_2``).
+        Everything else, such as the test case's outcome, is shared.
+
+        A draw on a clone can end the test case by raising, like any
+        other draw, so a thread should hand its exception back to the test
+        to re-raise rather than let it escape the thread::
+
+            @hegel.test
+            def test_list_append_is_thread_safe(tc):
+                shared = []
+                clones = [tc.clone() for _ in range(4)]
+                errors = []
+
+                def worker(i):
+                    try:
+                        clones[i].set_worker(i)
+                        for _ in range(clones[i].draw(gs.integers(0, 100), name="n")):
+                            shared.append(i)
+                    except BaseException as error:
+                        errors.append(error)
+
+                threads = [threading.Thread(target=worker, args=(i,)) for i in range(4)]
+                for thread in threads:
+                    thread.start()
+                for thread in threads:
+                    thread.join()
+                if errors:
+                    raise errors[0]
+                assert len(shared) == sum(shared.count(i) for i in range(4))
+        """
+        handle = self._handle if self._global.explicit is not None else self._handle.clone()
+        return TestCase._derive(self, handle, self._draw_state)
+
+    def set_worker(self, index: int) -> None:
+        """Attribute this ``TestCase``'s output to worker ``index``: every
+        line it prints from now on, drawn values and notes alike, is
+        prefixed with ``[worker N +X.XXXms]``, the time since the test case
+        started, so a report from several threads shows how their lines
+        interleaved. Clones made from it afterwards inherit the
+        attribution. ``index`` is a non-negative integer, or it is an
+        :class:`~hegel.InvalidArgument`."""
+        if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < 1 << 63:
+            raise InvalidArgument(f"index={index!r} must be a non-negative integer")
+        if self._global.explicit is not None:
+            return
         self._handle.set_worker(index)
 
     def _enter_block(self, indent: int) -> _native.TestCase:
@@ -472,7 +508,7 @@ class TestCase:
         if not self._global.emit:
             return
         try:
-            output = PrettyPrinter(self._handle.printer(DEFAULT_MAX_WIDTH)).value()
+            output = PrettyPrinter(self._handle.printer(DEFAULT_MAX_WIDTH))._value()
         except Exception as error:  # nocov
             self._global.sink(
                 "Failed to render this test case's drawn values "
@@ -491,16 +527,46 @@ class TestCase:
         matching :meth:`stop_span`. Spans tell the shrinker which choices
         belong together; :meth:`draw` and :meth:`draw_silent` open one per
         draw, so only a low-level custom generator needs this. Nesting
-        deeper than ``MAX_DRAW_DEPTH`` abandons the test case as too
-        large."""
-        if self._span_depth >= MAX_DRAW_DEPTH:
-            raise StopTest(f"draws nested more than {MAX_DRAW_DEPTH} deep")
+        so deep that Python's recursion limit (``sys.getrecursionlimit()``)
+        is in sight abandons the test case as too large, rather than
+        failing it with a ``RecursionError``."""
+        if self._span_depth >= SHALLOW_SPANS:
+            self._check_stack_headroom(sys._getframe(1))
         self._span_depth += 1
         try:
             self._handle.start_span(label)
         except BaseException:
             self._span_depth -= 1
+            self._drop_span_frames()
             raise
+
+    def _check_stack_headroom(self, caller: Any) -> None:
+        """Measure the stack below ``caller`` incrementally: walk up to the
+        frame anchoring the innermost measured span and add its depth. Only
+        frames whose depth cannot change are anchors: a generator or
+        coroutine frame is resumed from wherever its next caller is, so
+        the anchor is the first other frame below ``caller``."""
+        anchor, depth = self._span_frames[-1] if self._span_frames else (None, 0)
+        frame = caller
+        frames = 0
+        stable: tuple[Any, int] | None = None
+        while frame is not None and frame is not anchor:
+            if stable is None and not frame.f_code.co_flags & _RESUMABLE:
+                stable = (frame, frames)
+            frames += 1
+            frame = frame.f_back
+        if frame is None:
+            depth = 0
+        total = depth + frames
+        if total >= sys.getrecursionlimit() - RECURSION_HEADROOM:
+            raise StopTest("draws nested too deeply for Python's recursion limit")
+        if stable is None:
+            self._span_frames.append((frame, depth))
+        else:
+            self._span_frames.append((stable[0], total - stable[1]))
+
+    def _drop_span_frames(self) -> None:
+        del self._span_frames[max(0, self._span_depth - SHALLOW_SPANS) :]
 
     def stop_span(self, discard: bool = False) -> None:
         """Close the span opened by the matching :meth:`start_span`. With
@@ -509,6 +575,7 @@ class TestCase:
         if self._span_depth <= 0:
             raise InternalError("stop_span called with no open span")
         self._span_depth -= 1
+        self._drop_span_frames()
         self._handle.stop_span(discard)
 
     @property
@@ -519,6 +586,7 @@ class TestCase:
         if self._span_depth < depth:
             raise InternalError("open span depth decreased unexpectedly")
         self._span_depth = depth
+        self._drop_span_frames()
 
     # -- primitive draws -------------------------------------------------
     # The engine's primitive choices, which the built-in generators are made
@@ -553,11 +621,21 @@ class TestCase:
             smallest_nonzero_magnitude,
         )
 
-    def _generate_bytes(self, min_size: int, max_size: int) -> bytes:
+    def _generate_bytes(self, min_size: int, max_size: int | None) -> bytes:
         return self._handle.generate_bytes(min_size, max_size)
 
     def _generate_string(self, generator: _native.StringGenerator) -> str:
         return self._handle.generate_string(generator).decode("utf-8", "surrogatepass")
+
+    def _generate_grammar(self, grammar: _native.Grammar, value: Callable[[int], str]) -> str:
+        """A string of ``grammar`` with the value of each explicit terminal
+        occurrence, by its index among the grammar's explicit terminals,
+        from ``value``. The engine splices the values in and redraws when
+        they overflow the grammar's size cap."""
+        draw = _native.GrammarDraw(grammar, 0)
+        while (terminal := draw.next(self._handle)) is not None:
+            draw.provide(value(terminal))
+        return draw.result()
 
     def _generate_date(self, min_value: _dt.date, max_value: _dt.date) -> _dt.date:
         year, month, day = self._handle.generate_date(
@@ -633,8 +711,11 @@ class Collection:
 
     def _ensure(self) -> _native.Collection:
         if self._handle is None:
-            self._handle = self._tc._handle.new_collection(self._min_size, self._max_size)
+            self._handle = self._new_handle()
         return self._handle
+
+    def _new_handle(self) -> _native.Collection:
+        return self._tc._handle.new_collection(self._min_size, self._max_size)
 
     def more(self) -> bool:
         """Whether to draw another element."""
