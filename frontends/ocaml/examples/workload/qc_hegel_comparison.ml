@@ -60,6 +60,13 @@
       in a [.corrected] file. [let%hegel_test] defines a
       plain [unit -> unit] function that raises on failure, so it runs under
       any test framework (or none, like {!Workload}).
+    - {b Health checks.} Hegel fails a test that rejects most of its inputs,
+      takes too long per input, or generates inputs too large to test well,
+      rather than passing after testing almost nothing (see the health check
+      tests at the end). Base_quickcheck has no such checks.
+      [Generator.filter] retries until a value passes, so the [Filter_too_much]
+      test below passes under Base_quickcheck after about 10,000 retries per
+      input, and the [Too_slow] one would run 10,000 four-second tests.
     - {b Beyond single properties.} Hegel also runs stateful and concurrent
       state machines ([module%hegel_state_machine],
       [module%hegel_concurrent_state_machine], see {!Workload}). Base_quickcheck
@@ -153,3 +160,73 @@ let%quick_test "corruption is detected" =
 ;;
 
 let%expect_test "corruption is detected (Hegel)" = corruption_is_detected ()
+
+(* Health checks: each test below is written so that Hegel refuses to run it.
+   The comment after each shows the failure it raises. *)
+
+(* Filter_too_much: 1 in 10,001 inputs passes the [assume]. *)
+let%hegel_test rare_assume tc =
+  let x = draw tc (integers ~min_value:0 ~max_value:10_000 ()) in
+  assume tc (x = 42)
+;;
+
+(* FailedHealthCheck: FilterTooMuch — it looks like this test is filtering out
+   too many inputs. 50 inputs were rejected by assume() or a filter while only 0
+   valid inputs were generated. If this is expected, suppress the FilterTooMuch
+   health check with the suppress_health_check setting. *)
+
+(* Filter_too_much through [filter]: after 3 failed attempts it rejects the
+   input like [assume false]. Few 5-element lists are sorted. *)
+let%hegel_test sorted_by_filter tc =
+  let l =
+    draw
+      tc
+      (filter (fun l -> List.sort compare l = l) (lists (integers ()) ~min_size:5 ()))
+  in
+  assert (List.sort compare l = l)
+;;
+
+(* FailedHealthCheck: FilterTooMuch — it looks like this test is filtering out
+   too many inputs. 50 inputs were rejected by assume() or a filter while only 2
+   valid inputs were generated. If this is expected, suppress the FilterTooMuch
+   health check with the suppress_health_check setting. *)
+
+(* Too_slow: 30 seconds of generation with fewer than 10 valid inputs. *)
+let%hegel_test slow tc =
+  let (_ : int) = draw tc (integers ()) in
+  Unix.sleepf 4.0
+;;
+
+(* FailedHealthCheck: TooSlow — input generation is slow: only 8 valid inputs
+   after 32.029687s (threshold 30s). Slow generation makes property testing much
+   less effective. If this is expected, suppress the TooSlow health check with
+   the suppress_health_check setting. *)
+
+(* Test_cases_too_large: the smallest input (100,000 empty lists) fits, but
+   random inner lists push most inputs past the 2^20 choice limit. *)
+let%hegel_test nested_lists tc =
+  let m = draw_silent tc (lists (lists (integers ()) ()) ~min_size:100_000 ()) in
+  assert (List.length m >= 100_000)
+;;
+
+(* FailedHealthCheck: TestCasesTooLarge — generated inputs routinely exceeded
+   the maximum size: 1 inputs were generated successfully, while 20 inputs
+   overran the choice limit during generation. Testing with inputs this large
+   is slow and shrinks poorly. Try reducing the amount of data generated, e.g. a
+   smaller minimum size on collections. If this is expected, suppress the
+   TestCasesTooLarge health check with the suppress_health_check setting, which
+   also removes the limit on the size of a test case. *)
+
+(* Large_initial_test_case: even the smallest input uses more than half the
+   choice limit. *)
+let%hegel_test huge_minimum tc =
+  let l = draw_silent tc (lists (integers ()) ~min_size:600_000 ()) in
+  assert (List.length l >= 600_000)
+;;
+
+(* FailedHealthCheck: LargeInitialTestCase — the smallest natural input for this
+   test is very large, which makes it hard to generate and shrink good inputs.
+   Consider reducing the amount of data generated, or introducing small
+   alternatives (e.g. a one_of with an empty option). If this is expected,
+   suppress the LargeInitialTestCase health check with the suppress_health_check
+   setting. *)
