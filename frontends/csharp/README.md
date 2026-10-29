@@ -201,7 +201,6 @@ dotnet add package Hegel.FSharp --version 0.1.4
 ```
 
 ```fsharp
-open Hegel
 open Hegel.FSharp
 open Xunit
 
@@ -222,7 +221,7 @@ Expected: 2
 Actual:   1
 ```
 
-`Hegel.test` takes the body last, after optional `Settings` and a `Reporter`, so a settings override reads `Hegel.test (Settings(TestCases = 1000L), fun tc -> ...)`; `Hegel.run` returns the `RunReport` instead of throwing. The `TestCase` is the C# one, so `tc.Draw`, `tc.Assume`, `tc.Note`, `tc.Target`, `tc.Repeat` and `Stateful.Run` all work as above.
+`Hegel.FSharp` names every type of the `Hegel` package too, so that one `open` is all an F# test file needs. `Hegel.test` takes the body last, after optional `Settings` and a `Reporter`, so a settings override reads `Hegel.test (Settings(TestCases = 1000L), fun tc -> ...)`; `Hegel.run` returns the `RunReport` instead of throwing. The `TestCase` is the C# one, so `tc.Draw`, `tc.Assume`, `tc.Note`, `tc.Target`, `tc.Repeat` and `Stateful.Run` all work as above.
 
 `Gen` holds the generators. The scalars are the C# ones, narrowed by their builder methods, and the structured ones draw F# values:
 

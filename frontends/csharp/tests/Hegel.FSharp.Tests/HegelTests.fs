@@ -4,7 +4,6 @@ open System
 open System.IO
 open Xunit
 open Hegel.FSharp.Tests.Support
-open Hegel
 open Hegel.FSharp
 
 type Counter() =

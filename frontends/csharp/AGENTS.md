@@ -154,7 +154,9 @@ There is no engine version pin to keep in step in this directory.
   strings as the Java frontend; `Pool<T>`/`ConcurrentPool<T>` track values
   over the engine's pool primitives.
 
-- `src/Hegel.FSharp/` — the F# package, compiled in this order: `Repr.fs`
+- `src/Hegel.FSharp/` — the F# package, compiled in this order: `Types.fs`
+  (abbreviations for every public type of `Hegel`, so F# code opens
+  `Hegel.FSharp` alone), `Repr.fs`
   (`Repr.render`, F# literals for every value by runtime type with the
   static type deciding how `null` prints, and `Repr.dialect`, the
   `Dialect` that prints `let name = value`), `Generators.fs` (the F#
