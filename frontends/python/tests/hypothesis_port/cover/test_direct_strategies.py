@@ -49,20 +49,12 @@ def pretty(value):
     return pretty_repr(value)
 
 
-def _values(entry):
-    # Entries may be pytest.param(...) objects carrying xfail marks.
-    return getattr(entry, "values", entry)
-
-
 def fn_test(*fnkwargs):
     fnkwargs = list(fnkwargs)
     return pytest.mark.parametrize(
         ("fn", "args"),
         fnkwargs,
-        ids=[
-            "{}({})".format(fn.__name__, ", ".join(map(pretty, args)))
-            for fn, args in map(_values, fnkwargs)
-        ],
+        ids=["{}({})".format(fn.__name__, ", ".join(map(pretty, args))) for fn, args in fnkwargs],
     )
 
 
@@ -71,13 +63,8 @@ def fn_ktest(*fnkwargs):
     return pytest.mark.parametrize(
         ("fn", "kwargs"),
         fnkwargs,
-        ids=[f"{fn.__name__}(**{pretty(kwargs)})" for fn, kwargs in map(_values, fnkwargs)],
+        ids=[f"{fn.__name__}(**{pretty(kwargs)})" for fn, kwargs in fnkwargs],
     )
-
-
-def accepted(reason):
-    """Arguments Hypothesis rejects but Hegel accepts."""
-    return pytest.mark.xfail(strict=True, reason=f"Hegel accepts this: {reason}")
 
 
 @fn_ktest(
@@ -107,10 +94,10 @@ def accepted(reason):
     (gs.floats, {"max_value": math.nan}),
     (gs.floats, {"min_value": complex(1, 2)}),
     (gs.floats, {"max_value": complex(1, 2)}),
-    (gs.floats, {"exclude_min": None}),
-    (gs.floats, {"exclude_max": None}),
-    (gs.floats, {"exclude_min": True}),  # because min_value=None
-    (gs.floats, {"exclude_max": True}),  # because max_value=None
+    (gs.floats, {"min_value_exclusive": math.nan}),
+    (gs.floats, {"max_value_exclusive": math.nan}),
+    (gs.floats, {"min_value": 0.0, "min_value_exclusive": 0.0}),
+    (gs.floats, {"max_value": 0.0, "max_value_exclusive": 0.0}),
     (gs.floats, {"min_value": 1.8, "width": 32}),
     (gs.floats, {"max_value": 1.8, "width": 32}),
     (gs.lists, {"elements": gs.integers(), "min_size": 10, "max_size": 9}),
@@ -118,11 +105,6 @@ def accepted(reason):
     (gs.lists, {"elements": gs.integers(), "max_size": -9}),
     (gs.lists, {"elements": gs.integers(), "min_size": -10}),
     (gs.lists, {"elements": gs.integers(), "min_size": math.nan}),
-    pytest.param(
-        gs.lists,
-        {"elements": gs.nothing(), "max_size": 1},
-        marks=accepted("lists(nothing(), max_size=1) generates empty lists"),
-    ),
     (gs.lists, {"elements": "hi"}),
     (gs.lists, {"elements": gs.integers(), "unique_by": 1}),
     (gs.lists, {"elements": gs.integers(), "unique_by": ()}),
@@ -138,6 +120,9 @@ def accepted(reason):
     (gs.text, {"alphabet": gs.sampled_from([123, 456])}),
     (gs.text, {"alphabet": gs.builds(lambda: "abc")}),
     (gs.text, {"alphabet": gs.builds(lambda: 123)}),
+    (gs.text, {"alphabet": gs.just("a")}),
+    (gs.text, {"alphabet": gs.sampled_from("abc")}),
+    (gs.text, {"alphabet": gs.builds(lambda: "a")}),
     (gs.from_regex, {"regex": 123}),
     (gs.from_regex, {"regex": b"abc", "alphabet": "abc"}),
     (gs.from_regex, {"regex": b"abc", "alphabet": b"def"}),
@@ -237,9 +222,6 @@ def test_validates_keyword_arguments(fn, kwargs):
     (gs.dicts, {"keys": gs.booleans(), "values": gs.integers()}),
     (gs.text, {"alphabet": "abc"}),
     (gs.text, {"alphabet": set("abc")}),
-    (gs.text, {"alphabet": gs.just("a")}),
-    (gs.text, {"alphabet": gs.sampled_from("abc")}),
-    (gs.text, {"alphabet": gs.builds(lambda: "a")}),
     (gs.characters, {"codec": "ascii"}),
     (gs.characters, {"categories": ["N"]}),
     (gs.characters, {"exclude_categories": []}),

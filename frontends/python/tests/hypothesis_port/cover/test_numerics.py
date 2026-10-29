@@ -50,7 +50,12 @@ def test_fuzz_floats_bounds(tc):
         if lo == hi == 0:
             tc.assume(not exmin and not exmax and copysign(1.0, lo) <= copysign(1.0, hi))
 
-    s = gs.floats(low, high, exclude_min=exmin, exclude_max=exmax, width=width)
+    kwargs = {"width": width}
+    if low is not None:
+        kwargs["min_value_exclusive" if exmin else "min_value"] = low
+    if high is not None:
+        kwargs["max_value_exclusive" if exmax else "max_value"] = high
+    s = gs.floats(**kwargs)
     val = tc.draw(s, name="value")
     tc.assume(val)  # positive/negative zero is an issue
 
@@ -68,9 +73,9 @@ def test_fuzz_floats_bounds(tc):
     "kwargs",
     [
         {"min_value": inf, "allow_infinity": False},
-        {"min_value": next_down(inf), "exclude_min": True, "allow_infinity": False},
+        {"min_value_exclusive": next_down(inf), "allow_infinity": False},
         {"max_value": -inf, "allow_infinity": False},
-        {"max_value": next_up(-inf), "exclude_max": True, "allow_infinity": False},
+        {"max_value_exclusive": next_up(-inf), "allow_infinity": False},
     ],
 )
 def test_floats_message(kwargs):

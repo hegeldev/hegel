@@ -1,4 +1,4 @@
-use crate::{SendPtr, check, hstr, hstrs, with_ctx};
+use crate::{SendPtr, check, hstr, hstrs, max_size_arg, with_ctx};
 use hegel_c as c;
 use pyo3::prelude::*;
 use std::ptr;
@@ -30,7 +30,7 @@ impl StringGenerator {
     #[pyo3(signature = (min_size, max_size, codec, min_codepoint, max_codepoint, categories, exclude_categories, include_characters, exclude_characters))]
     fn text(
         min_size: u64,
-        max_size: u64,
+        max_size: Option<u64>,
         codec: Option<&str>,
         min_codepoint: u32,
         max_codepoint: Option<u32>,
@@ -48,7 +48,7 @@ impl StringGenerator {
                 c::hegel_string_generator_text(
                     ctx,
                     min_size,
-                    max_size,
+                    max_size_arg(max_size),
                     codec.as_ref().map_or(ptr::null(), |s| s as *const _),
                     min_codepoint,
                     max_codepoint.unwrap_or(u32::MAX),

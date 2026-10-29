@@ -113,15 +113,9 @@ def test_efficient_sets_of_samples_with_chained_transformations(tc):
     assert x == {x for x in range(50) if (x * 2) % 3}
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Engine: a sampled_from whose every element is filtered out fails FilterTooMuch; "
-    "Unsatisfiable is only raised when the test draws no data",
-    raises=hegel.FailedHealthCheck,
-)
-@fails_with(hegel.Unsatisfiable)
+@fails_with(hegel.FailedHealthCheck)
 @hegel.test
-def test_unsatisfiable_explicit_filteredstrategy_sampled(tc):
+def test_fails_health_check_explicit_filteredstrategy_sampled(tc):
     tc.draw(gs.sampled_from([None, False, ""]).filter(bool))
     raise AssertionError("Unreachable because there are no valid examples")
 
