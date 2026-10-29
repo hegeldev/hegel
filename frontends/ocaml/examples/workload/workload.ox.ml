@@ -21,6 +21,19 @@ let rec push list value =
   if not (Atomic.compare_and_set list old (value :: old)) then push list value
 ;;
 
+module type Bank = sig
+  type t =
+    { next_id : int Atomic.t
+    ; accounts : (int * int Atomic.t) list Atomic.t
+    }
+
+  val create : unit -> t
+  val open_account : t -> deposit:int -> int
+  val balance : t -> int -> int
+  val deposit : t -> int -> amount:int -> unit
+  val transfer : t -> source:int -> dest:int -> amount:int -> unit
+end
+
 module Bank = struct
   type t =
     { next_id : int Atomic.t
@@ -58,28 +71,28 @@ module%hegel_concurrent_state_machine Bank_test = struct
   type t =
     { bank : Bank.t
     ; accounts : int Stateful.Concurrent_pool.t
-    ; all : int list Atomic.t
     ; total : int Atomic.t
     }
 
+  let ids state = Stateful.Concurrent_pool.to_list state.accounts
+
   let sexp_of_state state =
     Sexplib0.Sexp.List
-      (List.rev_map
+      (List.map
          (fun id ->
             Sexplib0.Sexp.Atom (Printf.sprintf "#%d=%d" id (Bank.balance state.bank id)))
-         (Atomic.get state.all))
+         (ids state))
   ;;
 
   let accounts_gen = Stateful.Concurrent_pool.values_reusable
   let max_accounts = 10
 
   let open_account tc (_ : ctx) (state : t) =
-    assume tc (List.length (Atomic.get state.all) < max_accounts);
+    assume tc (List.length (ids state) < max_accounts);
     let deposit = draw tc (integers ~min_value:0 ~max_value:1_000 ()) in
     let id = Bank.open_account state.bank ~deposit in
-    push state.all id;
-    ignore (Atomic.fetch_and_add state.total deposit : int);
     Stateful.Concurrent_pool.add state.accounts tc id;
+    ignore (Atomic.fetch_and_add state.total deposit : int);
     note tc (Printf.sprintf "opened #%d" id)
   [@@rule { group = "accounts" }]
   ;;
@@ -112,7 +125,7 @@ module%hegel_concurrent_state_machine Bank_test = struct
 
   let check_bal (state : t) =
     assert (
-      List.for_all (fun id -> Bank.balance state.bank id >= 0) (Atomic.get state.all))
+      List.for_all (fun id -> Bank.balance state.bank id >= 0) (ids state))
   ;;
 
   let no_negative_balance _tc (_ : ctx) state = check_bal state
@@ -124,7 +137,7 @@ module%hegel_concurrent_state_machine Bank_test = struct
       List.fold_left
         (fun sum id -> sum + Bank.balance state.bank id)
         0
-        (Atomic.get state.all)
+        (ids state)
     in
     assert (sum = Atomic.get state.total)
   [@@invariant { always_check = true }]
@@ -141,7 +154,6 @@ let%hegel_main workload tc =
   let state =
     { Bank_test.bank = Bank.create ()
     ; accounts = Stateful.Concurrent_pool.create tc
-    ; all = Atomic.make []
     ; total = Atomic.make 0
     }
   in
@@ -167,8 +179,7 @@ let%hegel_main workload tc =
      let state =
        { Bank_test.bank = Bank.create ()
        ; accounts = Stateful.Concurrent_pool.create tc
-       ; all = Atomic.make []
-       ; total = Atomic.make 0
+          ; total = Atomic.make 0
        }
      in
      Bank_test.open_account tc () state;
