@@ -80,27 +80,26 @@ type state =
 
 let pick l i = List.nth l (i mod List.length l)
 
-let apply state = function
+let apply ({ bank; accounts } as state) = function
   | Open_account { deposit } ->
-    if List.length state.accounts < 10
+    if List.length accounts < 10
     then (
-      let id = Bank.open_account state.bank ~deposit in
-      state.accounts <- id :: state.accounts)
+      let id = Bank.open_account bank ~deposit in
+      state.accounts <- id :: accounts)
   | Deposit { account; amount } ->
-    let id = pick state.accounts account in
-    Bank.deposit state.bank id ~amount
+    let id = pick accounts account in
+    Bank.deposit bank id ~amount
   | Transfer { source; dest; amount } ->
-    let source = pick funded source in
-    (match List.filter (fun id -> id <> source) state.accounts with
+    let source = pick accounts source in
+    (match List.filter (fun id -> id <> source) accounts with
     | [] -> ()
     | others ->
       let dest = pick others dest in
-      let amount = 1 + (amount mod Bank.balance state.bank source) in
-      Bank.transfer state.bank ~source ~dest ~amount)
+      Bank.transfer bank ~source ~dest ~amount)
 ;;
 
-let check state =
-  assert (List.for_all (fun id -> Bank.balance state.bank id >= 0) state.accounts)
+let check { bank; accounts } =
+  assert (List.for_all (fun id -> Bank.balance bank id >= 0) accounts)
 ;;
 
 let () =
