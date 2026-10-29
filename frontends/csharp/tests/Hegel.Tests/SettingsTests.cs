@@ -9,7 +9,14 @@ public class SettingsTests
     [Fact]
     public void DefaultsComeFromTheEngine()
     {
-        var s = new Settings();
+        var resolved = new Settings();
+        var active = Settings.FromProfile("default");
+        Assert.Equal(active.TestCases, resolved.TestCases);
+        Assert.Equal(active.Derandomize, resolved.Derandomize);
+        Assert.Equal(active.Database, resolved.Database);
+        Assert.Equal(active.SuppressHealthCheck, resolved.SuppressHealthCheck);
+
+        var s = Settings.FromProfile("development");
         Assert.Equal(100, s.TestCases);
         Assert.Null(s.Seed);
         Assert.False(s.Derandomize);
