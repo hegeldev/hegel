@@ -34,7 +34,7 @@
   </ItemGroup>
 
   <Target Name="HegelEngine" BeforeTargets="AssignTargetPaths;CoreCompile;_GetPackageFiles">
-    <Exec Command="&quot;$(HegelPython)&quot; &quot;$(HegelRoot)/scripts/engine.py&quot; build-info --out &quot;$(IntermediateOutputPath)&quot;" />
+    <Exec Command="&quot;$(HegelPython)&quot; &quot;$(HegelRoot)/scripts/engine.py&quot; build-info --out &quot;$(IntermediateOutputPath.TrimEnd('\').TrimEnd('/'))&quot;" />
     <Exec Condition="'$(HegelNativesSource)' != 'skip'" Command="&quot;$(HegelPython)&quot; &quot;$(HegelRoot)/scripts/engine.py&quot; stage --source $(HegelNativesSource) --out &quot;$(HegelNativeDir)&quot;" />
     <ItemGroup>
       <Compile Include="$(IntermediateOutputPath)BuildInfo.g.cs" />
