@@ -74,8 +74,20 @@ def test_sequential_machine_runs_and_shrinks():
 
 
 def test_passing_machine_and_final_invariants(output):
-    class Fine(Counter):
+    class Fine(hegel.StateMachine):
         steps = 5
+
+        def __init__(self):
+            self.calls = 0
+
+        @hegel.rule()
+        def after_first(self, tc):
+            self.calls += 1
+            tc.assume(self.calls > 1)
+
+        @hegel.invariant()
+        def counted(self, tc):
+            assert self.calls >= 0
 
     hegel.state_machine_test(Fine, test_cases=10, verbosity=hegel.Verbosity.verbose)()
     assert "Checking invariants on the final state." in output.lines
