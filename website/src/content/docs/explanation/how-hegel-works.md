@@ -7,7 +7,7 @@ At the highest level, Hegel splits a property-based testing library into two par
 - `libhegel` implements the core of property-based testing, including data generation, shrinking, the example database, and so on. It is written in Rust.
 - The library implements the user-facing syntax of properties and generators for a particular language. It asks `libhegel` for generated data as your test runs.
 
-As an example, suppose we have the following [hegel-rust](https://github.com/hegeldev/hegel-rust) test:
+As an example, suppose we have the following [hegel-rust](https://github.com/hegeldev/hegel/tree/main/frontends/rust) test:
 
 ```rust
 use hegel::TestCase;
@@ -30,4 +30,4 @@ When this test runs, `hegel-rust`:
 
 We have glossed over some subtlety here. For example, `tc.assume()` and `generator.filter()` can reject test cases during the test, which needs to be communicated back to `libhegel`. And `libhegel` needs the ability to communicate errors to `hegel-rust`, for example in the case of an invalid generator definition.
 
-For the full details, see the C header, [`hegel.h`](https://github.com/hegeldev/hegel-rust/blob/main/hegel-c/include/hegel.h).
+For the full details, see the C header, [`hegel.h`](https://github.com/hegeldev/hegel/blob/main/libhegel/include/hegel.h).

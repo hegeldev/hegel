@@ -2,7 +2,8 @@
 
 Run by the `release-ocaml-docs` job of ci.yml with the docs built
 (`just ocaml::check-docs` has filled frontends/ocaml/_build/default/_doc/_html/)
-and the hegeldev/website repository checked out at `website/`.
+and a shallow checkout of main at `publish/` that can push (the site lives in
+its `website/`).
 """
 
 import os
@@ -14,9 +15,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 FRONTEND = ROOT / "frontends" / "ocaml"
-WEBSITE = ROOT / "website"
+PUBLISH = ROOT / "publish"
 DOCS_SRC = FRONTEND / "_build" / "default" / "_doc" / "_html"
-DOCS_DEST = WEBSITE / "public" / "ocaml"
+DOCS_DEST = PUBLISH / "website" / "public" / "ocaml"
 # The docs are served at hegel.dev/ocaml. Vercel's `trailingSlash: false` +
 # `cleanUrls: true` serve `/ocaml/hegel/Hegel/index.html` at the URL
 # `/ocaml/hegel/Hegel` (no trailing slash), so the browser's base directory is
@@ -30,7 +31,7 @@ PUSH_ATTEMPTS = 5
 
 
 def git(*args: str) -> None:
-    subprocess.run(["git", *args], check=True, cwd=WEBSITE)
+    subprocess.run(["git", *args], check=True, cwd=PUBLISH)
 
 
 def frontend_version() -> str:
@@ -49,18 +50,18 @@ def inject_base_href(root: Path) -> None:
 
 
 def push_with_retry() -> None:
-    # Sibling hegel language releases can push to website main at the same
-    # time. Each touches a distinct path, so a rebase onto the winner is
+    # Other merges and sibling hegel language releases can push to main at
+    # the same time. Each touches a distinct path, so a rebase onto the winner is
     # always clean: on rejection, fetch + rebase + retry.
     for attempt in range(PUSH_ATTEMPTS):
-        result = subprocess.run(["git", "push", "origin", "HEAD:main"], cwd=WEBSITE)
+        result = subprocess.run(["git", "push", "origin", "HEAD:main"], cwd=PUBLISH)
         if result.returncode == 0:
             return
         if attempt < PUSH_ATTEMPTS - 1:
             time.sleep(3)
             git("fetch", "origin", "main")
-            git("rebase", "origin/main")
-    raise RuntimeError(f"Push to website main failed after {PUSH_ATTEMPTS} attempts.")
+            git("rebase", "--onto", "origin/main", "HEAD~1")
+    raise RuntimeError(f"Push to main failed after {PUSH_ATTEMPTS} attempts.")
 
 
 def main() -> None:
@@ -85,10 +86,10 @@ def main() -> None:
     git("config", "user.name", f"{app_slug}[bot]")
     git("config", "user.email", f"{app_id}+{app_slug}[bot]@users.noreply.github.com")
 
-    git("add", "public/ocaml")
+    git("add", "website/public/ocaml")
 
     status = subprocess.check_output(
-        ["git", "status", "--porcelain"], cwd=WEBSITE, text=True
+        ["git", "status", "--porcelain"], cwd=PUBLISH, text=True
     )
     if not status.strip():
         print("No doc changes to publish.")
