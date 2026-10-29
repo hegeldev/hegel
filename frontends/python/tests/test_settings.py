@@ -1,14 +1,19 @@
 from __future__ import annotations
 
-import dataclasses
+import copy
+import pickle
+import re
+from pathlib import Path
 
 import pytest
 
 import hegel
 from hegel import _native
 from hegel.settings import (
+    _FIELDS,
     Backend,
     HealthCheck,
+    NondeterminismStrictness,
     Phase,
     Settings,
     TestLocation,
@@ -35,7 +40,7 @@ def test_overrides_apply_and_validate():
 
 def test_coercions():
     settings = Settings(
-        seed=-1,
+        seed=(1 << 64) - 1,
         database=False,
         phases=[Phase.generate, Phase.shrink],
         suppress_health_check=HealthCheck.too_slow,
@@ -49,6 +54,7 @@ def test_coercions():
     assert settings.verbosity is Verbosity.verbose
     assert settings.backend is Backend.urandom
     assert Settings(database="/tmp/x").database == "/tmp/x"
+    assert Settings(database=None).database is None
 
 
 def test_replace_and_parent():
@@ -57,6 +63,25 @@ def test_replace_and_parent():
     assert child.test_cases == 3 and child.seed == 9
     assert Settings(base, seed=10).seed == 10
     assert base.seed is None
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        Settings(),
+        Settings(test_cases=3, phases=[Phase.generate], suppress_health_check=["too_slow"]),
+        Settings.from_profile("base", seed=4, verbosity=Verbosity.verbose),
+    ],
+)
+@pytest.mark.parametrize(
+    "duplicate", [copy.copy, copy.deepcopy, lambda s: pickle.loads(pickle.dumps(s))]
+)
+def test_settings_can_be_copied_and_pickled(settings, duplicate):
+    duplicated = duplicate(settings)
+    assert duplicated == settings
+    assert repr(duplicated) == repr(settings)
+    assert duplicated.test_cases == settings.test_cases
+    assert duplicated.replace(seed=1) == settings.replace(seed=1)
 
 
 def test_profiles():
@@ -97,6 +122,8 @@ def test_clearing_the_default_profile_restores_the_engine_choice():
         ({"test_cases": True}, "test_cases=True must be an integer"),
         ({"test_cases": -1}, "test_cases=-1 must be non-negative"),
         ({"seed": 1.5}, "seed=1.5 must be an integer"),
+        ({"seed": -1}, r"seed=-1 must be between 0 and 2\*\*64 - 1"),
+        ({"seed": 1 << 64}, r"seed=18446744073709551616 must be between 0 and 2\*\*64 - 1"),
         ({"derandomize": 1}, "derandomize=1 must be True or False"),
         ({"database": 3}, "database=3 must be a directory path"),
         ({"verbosity": "loud"}, "verbosity='loud' must be one of Verbosity.quiet"),
@@ -141,8 +168,10 @@ def test_build_round_trips_every_field():
         report_multiple_failures=True,
         stop_on_first_failure=False,
         show_statistics=True,
+        unbounded_choices=True,
         print_blob=True,
         backend=Backend.urandom,
+        nondeterminism_strictness=NondeterminismStrictness.error,
     )
     native = settings._build("key", TestLocation("f.py", 3, "Cls", "fn"))
     assert native.get_test_cases() == 5
@@ -155,14 +184,16 @@ def test_build_round_trips_every_field():
     assert native.get_report_multiple_failures()
     assert not native.get_stop_on_first_failure()
     assert native.get_show_statistics()
+    assert native.get_unbounded_choices()
     assert native.get_print_blob()
     assert native.get_backend() == _native.BACKEND_URANDOM
+    assert native.get_nondeterminism_strictness() == _native.NONDETERMINISM_ERROR
 
 
 def test_enum_helpers_and_fields():
     assert Phase.all() == frozenset(Phase)
     assert HealthCheck.all() == frozenset(HealthCheck)
-    assert {field.name for field in dataclasses.fields(Settings)} == {
+    assert set(_FIELDS) == {
         "test_cases",
         "verbosity",
         "seed",
@@ -173,6 +204,7 @@ def test_enum_helpers_and_fields():
         "report_multiple_failures",
         "stop_on_first_failure",
         "show_statistics",
+        "unbounded_choices",
         "print_blob",
         "backend",
         "nondeterminism_strictness",
@@ -205,3 +237,120 @@ def test_parent_and_profile_arguments_are_validated():
     ):
         Settings(test_cases=1 << 64)
     assert Settings(test_cases=(1 << 64) - 1)._build().get_test_cases() == (1 << 64) - 1
+
+
+HEGEL_H = Path(__file__).parents[3] / "libhegel" / "include" / "hegel.h"
+
+
+PER_TEST_SETTERS = {"database_key", "test_location", "from_string"}
+
+
+def test_every_engine_setting_is_a_settings_field():
+    header = HEGEL_H.read_text()
+    getters = set(re.findall(r"hegel_settings_get_(\w+)\(", header))
+    setters = set(re.findall(r"hegel_settings_set_(\w+)\(", header)) - PER_TEST_SETTERS
+    fields = set(_FIELDS)
+    assert fields
+    assert getters == fields
+    assert setters == fields
+
+
+def test_engine_profile_settings_reach_the_run():
+    native = _native.Settings.for_profile("base")
+    native.set_unbounded_choices(True)
+    native.set_show_statistics(True)
+    native.set_nondeterminism_strictness(_native.NONDETERMINISM_ERROR)
+    _native.register_profile("engine-made", native)
+    settings = Settings.from_profile("engine-made")
+    assert settings.unbounded_choices
+    built = settings._build()
+    assert built.get_unbounded_choices()
+    assert built.get_show_statistics()
+    assert built.get_nondeterminism_strictness() == _native.NONDETERMINISM_ERROR
+    assert not Settings(settings, unbounded_choices=False)._build().get_unbounded_choices()
+
+
+def test_unbounded_choices_is_validated():
+    with pytest.raises(hegel.InvalidArgument, match="unbounded_choices=1 must be True or False"):
+        Settings(unbounded_choices=1)
+
+
+def test_settings_keep_their_values_when_the_default_profile_changes_later():
+    settings = Settings(test_cases=3)
+    child = settings.replace(print_blob=True)
+    Settings.register_profile("later", seed=5, verbosity=Verbosity.verbose, test_cases=50)
+    try:
+        Settings.set_default_profile("later")
+        assert settings.seed is None
+        assert settings.verbosity is Verbosity.normal
+        assert settings.test_cases == 3
+        assert child.seed is None and child.print_blob
+        built = settings._build()
+        assert built.get_seed() is None and built.get_test_cases() == 3
+        assert built.get_verbosity() == _native.VERBOSITY_NORMAL
+        assert Settings().seed == 5
+    finally:
+        Settings.set_default_profile("hegel-tests")
+
+
+def test_registering_a_profile_is_not_retroactive():
+    Settings.register_profile("evolving", test_cases=3)
+    settings = Settings.from_profile("evolving")
+    Settings.register_profile("evolving", test_cases=4)
+    assert settings.test_cases == 3
+    assert Settings.from_profile("evolving").test_cases == 4
+
+
+def test_a_malformed_settings_variable_fails_at_construction(monkeypatch):
+    monkeypatch.setenv("HEGEL_TEST_CASES", "lots")
+    with pytest.raises(hegel.InvalidArgument, match="HEGEL_TEST_CASES must be a positive integer"):
+        Settings()
+    with pytest.raises(hegel.InvalidArgument, match="HEGEL_TEST_CASES must be a positive integer"):
+        Settings.from_profile("base")
+    monkeypatch.setenv("HEGEL_TEST_CASES", "7")
+    settings = Settings()
+    assert settings.test_cases == 7
+    monkeypatch.setenv("HEGEL_TEST_CASES", "lots")
+    assert settings.test_cases == 7
+
+
+def test_settings_from_a_profile_do_not_follow_the_default():
+    settings = Settings.from_profile("ci", test_cases=4)
+    Settings.register_profile("other", seed=5)
+    try:
+        Settings.set_default_profile("other")
+        assert settings.seed is None and settings.derandomize and settings.test_cases == 4
+    finally:
+        Settings.set_default_profile("hegel-tests")
+
+
+def test_settings_equality_hash_and_repr():
+    assert Settings(test_cases=3) == Settings(test_cases=3)
+    assert hash(Settings(test_cases=3)) == hash(Settings(test_cases=3))
+    assert Settings(test_cases=3) != Settings(test_cases=4)
+    assert Settings(test_cases=3) != Settings.from_profile("ci", test_cases=3)
+    assert Settings() != object()
+    assert Settings.from_profile("ci", test_cases=3) == Settings(
+        Settings.from_profile("ci"), test_cases=3
+    )
+    shown = repr(Settings(test_cases=3, seed=1))
+    assert shown.startswith("Settings(test_cases=3, verbosity=<Verbosity.normal")
+    assert "seed=1, derandomize=False, database=''" in shown
+    assert shown.endswith("nondeterminism_strictness=<NondeterminismStrictness.quiet: 0>)")
+    assert "derandomize=True" in repr(Settings.from_profile("ci"))
+
+
+def test_settings_cannot_be_changed_or_deleted():
+    settings = Settings(test_cases=3)
+    with pytest.raises(AttributeError, match="immutable"):
+        settings.test_cases = 4  # type: ignore[misc]
+    with pytest.raises(AttributeError, match="immutable"):
+        del settings.test_cases
+    with pytest.raises(AttributeError, match="no attribute 'kittens'"):
+        settings.kittens  # noqa: B018
+
+
+def test_repr_lists_set_members_in_a_fixed_order():
+    shown = repr(Settings(phases=[Phase.shrink, Phase.explicit, Phase.target]))
+    assert "phases=frozenset({<Phase.explicit: 1>, <Phase.target: 8>, <Phase.shrink: 16>})" in shown
+    assert "suppress_health_check=frozenset()" in repr(Settings(suppress_health_check=[]))

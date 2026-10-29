@@ -1,12 +1,11 @@
 # Hegel for Python compared with Hypothesis
 
-This page records what Hegel for Python has, what it does differently, and
-what it lacks, relative to Hypothesis 6.168. The engine bugs found along the
-way are [issues on the repository](https://github.com/hegeldev/hegel/issues),
-and [`tests/hypothesis_port`](https://github.com/hegeldev/hegel/tree/main/frontends/python/tests/hypothesis_port)
-is Hypothesis's own test suite ported to the Hegel API, with the tests of
-behaviour Hegel does differently marked `xfail` and a note per file of what
-was dropped.
+This page records how Hegel for Python differs from Hypothesis 6.168, as a
+reference for porting tests. Hegel's API is modelled on Hypothesis's, but
+matching Hypothesis is not a goal: the differences below are not a to-do list.
+[`tests/hypothesis_port`](https://github.com/hegeldev/hegel/tree/main/frontends/python/tests/hypothesis_port)
+is Hypothesis's own test suite ported to the Hegel API, asserting what Hegel
+does, with a note per file of what was dropped.
 
 ## Same job, different shape
 
@@ -24,6 +23,7 @@ was dropped.
 | `find(strategy, condition)` | none; write a test | A test whose failure is finding the value gets it shrunk. |
 | `dictionaries`, `fixed_dictionaries` | `dicts`, `fixed_dicts` | |
 | `from_regex(pattern)` matches anywhere | `gs.from_regex(pattern)` matches the whole string | Hegel defaults to `fullmatch=True`, as the Rust library does. |
+| `hypothesis.extra.lark.from_lark(Lark(grammar))` | `gs.from_lark(grammar)` | Takes the grammar's text, not a `lark.Lark` object, and does not need Lark installed. `explicit` and `alphabet` are as in Hypothesis; `max_size`, `max_depth` and `import_path` are Hegel's. |
 | `is_hypothesis_test(f)`, `f.hypothesis.inner_test` | `f.is_hegel_test`, `f.hegel_inner_test` | |
 | `InvalidArgument`, `Unsatisfiable`, `FailedHealthCheck`, `DidNotReproduce`, `StopTest` | the same names in `hegel` | `InvalidArgument` is not a `TypeError` subclass. |
 | `Flaky` and its subclasses | `hegel.Flaky` | Only under `nondeterminism_strictness="error"`; see below. |
@@ -36,6 +36,10 @@ was dropped.
 - Concurrent stateful testing: `max_concurrency > 1` runs rules from several
   threads in engine-scheduled rounds, with per-worker output attribution.
 - `tc.repeat(body)`: engine-sized repetition of a block of a test.
+- Drawing from several threads in one test case: `tc.clone()` gives each
+  thread a `TestCase` of its own, drawing from an independent choice stream
+  that still shrinks and replays, and `set_worker(i)` attributes its output
+  to a numbered worker. See {doc}`../how-to/threads`.
 - Nondeterministic-run handling: when a test's behaviour changes under
   replay (a concurrent machine, say), the engine confirms each failure by
   repeated replay and reports it with a caveat describing how reliably it
@@ -44,7 +48,7 @@ was dropped.
 - An engine shared with the Rust, Go, TypeScript and other bindings, so the
   example database and reproduce blobs behave the same everywhere.
 
-## Hypothesis has, Hegel for Python lacks
+## Hypothesis has, Hegel for Python does not
 
 - `deadline`: Hegel has no per-test-case time limit. `HealthCheck.too_slow`
   only fails a run whose first ten valid test cases take more than 30
@@ -70,7 +74,7 @@ was dropped.
   (`crosshair`, ...), `fuzz_one_input`, observability callbacks and the
   `HYPOTHESIS_EXPERIMENTAL_OBSERVABILITY` output.
 - The `hypothesis.extra` packages (numpy, pandas, django, pytz, dateutil,
-  lark, redis, ...), the ghostwriter, the CLI and `hypothesis.statistics`.
+  redis, ...) other than lark, which `gs.from_lark` covers, the ghostwriter, the CLI and `hypothesis.statistics`.
 - `from_type` of most of what Hypothesis's type lookup covers beyond value
   types, generics, enums, dataclasses, TypedDicts, protocols' registered
   implementations and annotated constructors: builtins without annotations
@@ -89,8 +93,9 @@ was dropped.
   giving `[]`, `lists(nothing(), min_size=1)` is not an error when built,
   and an empty registration for `from_type` is not detected.
 - The pytest plugin's `--hypothesis-*` options and statistics in the terminal
-  summary; Hegel's plugin has `--hegel-profile`, `--hegel-seed`,
-  `--hegel-verbosity`, `--hegel-derandomize` and `--hegel-database`.
+  summary; Hegel's plugin has `--hegel-profile`, `--hegel-setting`,
+  `--hegel-seed`, `--hegel-verbosity`, `--hegel-derandomize` and
+  `--hegel-database`.
 
 ## Different because the engine behaves differently
 
@@ -125,9 +130,10 @@ was dropped.
   `re`. A pattern
   that can match nothing over its alphabet is rejected when the generator is
   built, as in Hypothesis, but with Hegel's wording.
-- A `deferred` definition that only refers back to itself rejects the test
-  case once its draws nest 64 deep (so a test drawing nothing else is
-  `Unsatisfiable`), where Hypothesis detects the empty strategy up front.
+- A `deferred` definition that only refers back to itself abandons the test
+  case as too large once its draws nest close to Python's recursion limit (so
+  a test drawing nothing else fails a health check), where Hypothesis detects
+  the empty strategy up front.
 - A test whose every input is rejected fails the `filter_too_much` health
   check, where Hypothesis raises `Unsatisfiable` once it detects that a
   finite space is exhausted; with that check suppressed, Hegel raises
@@ -143,7 +149,6 @@ Hegel prints a failing input as the draws it made, one per line, and attaches
 the same text to the exception as a note:
 
 ```
-Falsifying example:
 xs = [0, 0]
 ```
 

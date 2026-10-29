@@ -8,9 +8,10 @@ use crate::test_case::invalid_argument;
 use std::borrow::Cow;
 use std::fmt::Debug;
 use std::marker::PhantomData;
+use std::sync::LazyLock;
 
-const ONE_OF_LABEL: u64 = label_from_name("hegel.one_of");
-const OPTIONAL_LABEL: u64 = label_from_name("hegel.optional");
+static ONE_OF_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.one_of"));
+static OPTIONAL_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.optional"));
 
 /// Generator that picks from a fixed list of values. Created by [`sampled_from()`].
 pub struct SampledFromGenerator<'a, T: Clone> {
@@ -229,7 +230,7 @@ pub fn one_of_from_alternatives<'a, T, A: Alternatives<T>>(
     alternatives: A,
 ) -> OneOfGenerator<'a, T, A> {
     OneOfGenerator {
-        label: combine_labels(&[ONE_OF_LABEL, alternatives.label()]),
+        label: combine_labels(&[*ONE_OF_LABEL, alternatives.label()]),
         alternatives,
         _phantom: PhantomData,
     }
@@ -332,7 +333,7 @@ where
 /// Generate `Option<T>` values: either `Some(value)` from the inner generator, or `None`.
 pub fn optional<T, G: Generator<T>>(inner: G) -> OptionalGenerator<G, T> {
     OptionalGenerator {
-        label: combine_labels(&[OPTIONAL_LABEL, inner.label()]),
+        label: combine_labels(&[*OPTIONAL_LABEL, inner.label()]),
         inner,
         _phantom: PhantomData,
     }

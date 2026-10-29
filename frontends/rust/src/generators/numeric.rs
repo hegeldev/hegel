@@ -187,6 +187,10 @@ impl<T: Integer + Debug> PrintableGenerator<T> for IntegerGenerator<T> {
 /// Bounds default to the full range of `T`. Use the builder methods `min_value`
 /// and `max_value` to constrain the range. See [`IntegerGenerator`] for more
 /// details.
+///
+/// `T` is any of Rust's primitive integer types, up to `i128` and `u128`.
+/// The engine can generate integers of any width, but the standard library
+/// has no wider integer type, so there is no generator for wider integers.
 pub fn integers<T: Integer>() -> IntegerGenerator<T> {
     IntegerGenerator {
         min: None,
@@ -243,24 +247,6 @@ impl<T> FloatGenerator<T> {
         self.exclude_max = true;
         self.params = OnceLock::new();
         self
-    }
-
-    /// Set whether to exclude the minimum value from the range.
-    #[deprecated(since = "0.42.0", note = "use `min_value_exclusive(bound)` instead")]
-    pub fn exclude_min(self, exclude_min: bool) -> Self {
-        unreachable!(
-            "`exclude_min({exclude_min})` has been removed from `gs::floats()`; \
-             pass the bound to `min_value_exclusive` instead"
-        );
-    }
-
-    /// Set whether to exclude the maximum value from the range.
-    #[deprecated(since = "0.42.0", note = "use `max_value_exclusive(bound)` instead")]
-    pub fn exclude_max(self, exclude_max: bool) -> Self {
-        unreachable!(
-            "`exclude_max({exclude_max})` has been removed from `gs::floats()`; \
-             pass the bound to `max_value_exclusive` instead"
-        );
     }
 
     /// Whether NaN values are allowed. Cannot be used with bounds.

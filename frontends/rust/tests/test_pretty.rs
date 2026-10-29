@@ -383,3 +383,45 @@ fn unbalanced_groups_in_a_child_region_panic_at_finish() {
     child.end_group(")");
     doc.finish();
 }
+
+fn print_with_trailing_comma(printer: &mut PrettyPrinter) {
+    printer.begin_group(1, "[");
+    printer.text("1000,");
+    printer.breakable(" ");
+    printer.text("2000");
+    printer.if_break(",");
+    printer.end_group("]");
+}
+
+#[test]
+fn if_break_text_is_omitted_from_a_flat_group() {
+    let mut doc = Document::new();
+    print_with_trailing_comma(doc.printer());
+    assert_eq!(doc.finish(), "[1000, 2000]");
+}
+
+#[test]
+fn if_break_text_appears_in_a_broken_group() {
+    let mut doc = Document::new().max_width(8);
+    print_with_trailing_comma(doc.printer());
+    assert_eq!(doc.finish(), "[1000,\n 2000,]");
+}
+
+#[test]
+fn if_break_text_does_not_count_toward_width() {
+    let mut doc = Document::new().max_width(12);
+    print_with_trailing_comma(doc.printer());
+    assert_eq!(doc.finish(), "[1000, 2000]");
+}
+
+#[test]
+fn if_break_on_a_noop_printer_does_nothing() {
+    PrettyPrinter::noop().if_break(",");
+}
+
+#[test]
+#[should_panic(expected = "newline")]
+fn if_break_with_newlines_panics() {
+    let mut doc = Document::new();
+    doc.printer().if_break("a\nb");
+}

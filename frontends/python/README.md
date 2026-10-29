@@ -11,7 +11,7 @@
 * [Documentation](https://hegel.readthedocs.io)
 * [Website](https://hegel.dev)
 
-`hegel-python` is a property-based testing library for Python. `hegel-python` is based on [Hypothesis](https://github.com/hypothesisworks/hypothesis), using the [Hegel](https://hegel.dev/) protocol. If you are coming from Hypothesis, [the documentation](https://hegel.readthedocs.io/en/latest/explanation/comparison-with-hypothesis.html) sets out how the two compare.
+`hegeltest` is a property-based testing library for Python. `hegeltest` is based on [Hypothesis](https://github.com/hypothesisworks/hypothesis), using the [Hegel](https://hegel.dev/) protocol. If you are coming from Hypothesis, [the documentation](https://hegel.readthedocs.io/en/latest/explanation/comparison-with-hypothesis.html) sets out how the two compare.
 
 ## Installation
 
@@ -43,7 +43,6 @@ _____________________________ test_matches_builtin _____________________________
 test_readme.py:12: in test_matches_builtin
     assert my_sort(ls) == sorted(ls)
 E   assert [0] == [0, 0]
-E   Falsifying example:
 E   ls = [0, 0]
 E   To reproduce this failure, add this decorator below @hegel.test:
 E       @hegel.reproduce_failure("AXicY2VgYGBkZOBiZEBhMAAAAd8AIQ==")

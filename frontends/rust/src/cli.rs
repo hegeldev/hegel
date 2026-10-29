@@ -8,9 +8,14 @@
 //! profile, so compiled-in settings that derive from [`Settings::new`]
 //! build on the profile the flag names, exactly as they would under
 //! `HEGEL_DEFAULT_PROFILE`.
+//!
+//! Every other flag is a setting: `--some-setting VALUE` (or
+//! `--some-setting=VALUE`) sets the `hegel.toml` key `some_setting`, with
+//! the engine parsing the value through `hegel_settings_set_from_string`,
+//! so the flags reach every setting the engine has, in the same vocabulary
+//! as `hegel.toml` and the `HEGEL_*` variables.
 
-use crate::runner::{Backend, Database, HealthCheck, Settings, Verbosity};
-
+use crate::runner::Settings;
 /// Result of applying CLI overrides. The macro wrapper in `#[hegel::main]`
 /// dispatches on this to print messages and exit the process; keeping the
 /// I/O and process-exit out of this function makes it directly testable.
@@ -65,90 +70,108 @@ where
     if let Some(name) = extract_profile(&mut args)? {
         set_default_profile(&name)?;
     }
-    let mut settings = default_settings();
+    let settings = default_settings();
 
+    let mut overrides = Vec::new();
     let mut i = 0;
     while i < args.len() {
         let arg = args[i].as_str();
-        match arg {
-            "--help" | "-h" => {
-                return Err(CliError::Help(usage()));
-            }
-            "--seed" => {
-                let value = next_value(&args, &mut i, "--seed")?;
-                if value == "none" {
-                    settings = settings.seed(None);
-                } else {
-                    let n: u64 = value.parse().map_err(|_| {
-                        CliError::Parse(format!(
-                            "--seed expects an integer or 'none', got {value:?}"
-                        ))
-                    })?;
-                    settings = settings.seed(Some(n));
-                }
-            }
-            "--verbosity" => {
-                let value = next_value(&args, &mut i, "--verbosity")?;
-                let v = parse_verbosity(&value)?;
-                settings = settings.verbosity(v);
-            }
-            "--derandomize" => {
-                let value = next_value(&args, &mut i, "--derandomize")?;
-                let b = parse_bool(&value, "--derandomize")?;
-                settings = settings.derandomize(b);
-            }
-            "--database" => {
-                let value = next_value(&args, &mut i, "--database")?;
-                match value.as_str() {
-                    "disabled" => settings = settings.database(None),
-                    "default" => settings.database = Database::Unset,
-                    _ => settings = settings.database(Some(value)),
-                }
-            }
-            "--suppress-health-check" => {
-                let value = next_value(&args, &mut i, "--suppress-health-check")?;
-                let checks = parse_health_check(&value)?;
-                settings = settings.suppress_health_check(checks);
-            }
-            "--backend" => {
-                let value = next_value(&args, &mut i, "--backend")?;
-                let backend = parse_backend(&value)?;
-                settings = settings.backend(backend);
-            }
-            _ => {
-                return Err(CliError::Parse(format!("Unknown argument: {arg}")));
-            }
+        if arg == "--help" || arg == "-h" {
+            return Err(CliError::Help(usage()));
         }
+        let Some(flag) = arg.strip_prefix("--").filter(|f| !f.is_empty()) else {
+            return Err(CliError::Parse(format!("Unknown argument: {arg}")));
+        };
+        let (name, value) = match flag.split_once('=') {
+            Some((name, value)) => (name, Some(value.to_string())),
+            None => {
+                i += 1;
+                let value = args.get(i).filter(|value| !value.starts_with("--"));
+                (flag, value.cloned())
+            }
+        };
+        if name.contains('_') {
+            return Err(CliError::Parse(format!("Unknown argument: --{name}")));
+        }
+        if name == "test-cases" {
+            return Err(CliError::Parse(
+                "--test-cases cannot be set: a #[hegel::main] binary runs exactly one test case"
+                    .to_string(),
+            ));
+        }
+        let key = name.replace('-', "_");
+        let Some(value) = value else {
+            let probe = [(key, String::new())];
+            return Err(match crate::ffi::settings_with_strings(&settings, &probe) {
+                Err((_, message)) if is_unknown_setting(&message) => {
+                    CliError::Parse(format!("Unknown argument: {arg}"))
+                }
+                _ => CliError::Parse(format!("{arg} requires a value")),
+            });
+        };
+        if key == "database_key" && value.is_empty() {
+            return Err(CliError::Parse(
+                "--database-key expects a non-empty key".to_string(),
+            ));
+        }
+        overrides.push((key, value));
         i += 1;
     }
-    Ok(settings)
+    crate::ffi::settings_with_strings(&settings, &overrides).map_err(|(index, message)| {
+        let key = &overrides[index].0;
+        let flag = format!("--{}", key.replace('_', "-"));
+        if is_unknown_setting(&message) {
+            CliError::Parse(format!("Unknown argument: {flag}"))
+        } else {
+            let message = without_function_name(&message);
+            let reason = message
+                .strip_prefix(&format!("`{key}` "))
+                .unwrap_or(message);
+            CliError::Parse(format!("{flag} {reason}"))
+        }
+    })
 }
 
-fn next_value(args: &[String], i: &mut usize, name: &str) -> Result<String, CliError> {
-    *i += 1;
-    args.get(*i)
-        .cloned()
-        .ok_or_else(|| CliError::Parse(format!("{name} requires a value")))
+/// The engine's diagnostic without the name of the ABI function it
+/// came from.
+fn without_function_name(message: &str) -> &str {
+    message
+        .strip_prefix("hegel_settings_set_from_string: ")
+        .unwrap_or(message)
 }
 
-/// Extract `--profile <NAME>` from `args` before the flag loop runs, so
-/// the flag takes effect before the compiled-in settings are constructed
-/// whatever its position.
+fn is_unknown_setting(message: &str) -> bool {
+    without_function_name(message).starts_with("unknown setting")
+}
+
+/// Extract `--profile <NAME>` (or `--profile=NAME`) from `args` before the
+/// flag loop runs, so the flag takes effect before the compiled-in settings
+/// are constructed whatever its position.
 fn extract_profile(args: &mut Vec<String>) -> Result<Option<String>, CliError> {
-    let Some(pos) = args.iter().position(|a| a == "--profile") else {
-        return Ok(None);
-    };
-    args.remove(pos);
-    if pos >= args.len() {
-        return Err(CliError::Parse("--profile requires a value".to_string()));
+    let mut name = None;
+    let mut i = 0;
+    while i < args.len() {
+        let value = if args[i] == "--profile" {
+            args.remove(i);
+            if args.get(i).is_none_or(|value| value.starts_with("--")) {
+                return Err(CliError::Parse("--profile requires a value".to_string()));
+            }
+            args.remove(i)
+        } else if let Some(value) = args[i].strip_prefix("--profile=") {
+            let value = value.to_string();
+            args.remove(i);
+            value
+        } else {
+            i += 1;
+            continue;
+        };
+        if name.replace(value).is_some() {
+            return Err(CliError::Parse(
+                "--profile may be given at most once".to_string(),
+            ));
+        }
     }
-    let name = args.remove(pos);
-    if args.iter().any(|a| a == "--profile") {
-        return Err(CliError::Parse(
-            "--profile may be given at most once".to_string(),
-        ));
-    }
-    Ok(Some(name))
+    Ok(name)
 }
 
 /// Set `name` as the process's default profile and check it resolves,
@@ -162,85 +185,40 @@ fn set_default_profile(name: &str) -> Result<(), CliError> {
     Ok(())
 }
 
-fn parse_verbosity(s: &str) -> Result<Verbosity, CliError> {
-    match s {
-        "quiet" => Ok(Verbosity::Quiet),
-        "normal" => Ok(Verbosity::Normal),
-        "verbose" => Ok(Verbosity::Verbose),
-        "debug" => Ok(Verbosity::Debug),
-        other => Err(CliError::Parse(format!(
-            "--verbosity expects one of quiet|normal|verbose|debug, got {other:?}"
-        ))),
-    }
-}
-
-fn parse_backend(s: &str) -> Result<Backend, CliError> {
-    match s {
-        "default" => Ok(Backend::Default),
-        "urandom" => Ok(Backend::Urandom),
-        other => Err(CliError::Parse(format!(
-            "--backend expects one of default|urandom, got {other:?}"
-        ))),
-    }
-}
-
-fn parse_bool(s: &str, name: &str) -> Result<bool, CliError> {
-    crate::runner::parse_bool(s)
-        .ok_or_else(|| CliError::Parse(format!("{name} expects true|false, got {s:?}")))
-}
-
-fn parse_health_check(s: &str) -> Result<Vec<HealthCheck>, CliError> {
-    if s == "all" {
-        return Ok(HealthCheck::all().to_vec());
-    }
-    let mut checks = Vec::new();
-    for part in s.split(',') {
-        let part = part.trim();
-        let hc = match part {
-            "filter_too_much" => HealthCheck::FilterTooMuch,
-            "too_slow" => HealthCheck::TooSlow,
-            "test_cases_too_large" => HealthCheck::TestCasesTooLarge,
-            "large_initial_test_case" => HealthCheck::LargeInitialTestCase,
-            other => {
-                return Err(CliError::Parse(format!(
-                    "--suppress-health-check does not recognise {other:?}. \
-                     Known names: all, filter_too_much, too_slow, test_cases_too_large, large_initial_test_case"
-                )));
-            }
-        };
-        checks.push(hc);
-    }
-    Ok(checks)
-}
-
 fn usage() -> String {
-    let mut s = String::new();
-    s.push_str("Usage: <program> [options]\n");
-    s.push('\n');
-    s.push_str("Hegel property-based testing binary. Runs exactly one test case.\n");
-    s.push('\n');
-    s.push_str("Options:\n");
-    s.push_str(
-        "  --profile <NAME>                     Set the default settings profile, like\n\
-         \x20                                      the HEGEL_DEFAULT_PROFILE environment\n\
-         \x20                                      variable; other flags apply on top\n",
-    );
-    s.push_str(
-        "  --seed <N|none>                      Seed for randomisation ('none' for unset)\n",
-    );
-    s.push_str("  --verbosity <LEVEL>                  quiet | normal | verbose | debug\n");
-    s.push_str("  --derandomize <true|false>           Use a deterministic derived seed\n");
-    s.push_str(
-        "  --database <PATH|disabled|default>   Database path for failing-example storage\n",
-    );
-    s.push_str(
-        "  --suppress-health-check <NAMES>      Comma-separated health check names, or 'all'\n",
-    );
-    s.push_str(
-        "  --backend <default|urandom>          Randomness source (urandom: the Antithesis fuzzer, else /dev/urandom)\n",
-    );
-    s.push_str("  -h, --help                           Show this help and exit\n");
-    s
+    "Usage: <program> [options]
+
+Hegel property-based testing binary. Runs exactly one test case.
+
+Options:
+  --profile <NAME>                       Set the default settings profile, like
+                                         the HEGEL_DEFAULT_PROFILE environment
+                                         variable; other flags apply on top
+  --seed <N|none>                        Seed for randomisation ('none' for unset)
+  --derandomize <BOOL>                   Use a deterministic derived seed
+  --database <PATH|disabled|default>     Database path for failing-example storage
+  --database-key <KEY>                   Key the failing examples are stored under
+  --verbosity <LEVEL>                    quiet | normal | verbose | debug
+  --phases <NAMES>                       Comma-separated phases to run: explicit,
+                                         reuse, generate, target, shrink
+  --suppress-health-check <NAMES>        Comma-separated health check names
+                                         (filter_too_much, too_slow,
+                                         test_cases_too_large,
+                                         large_initial_test_case), or 'all'
+  --report-multiple-failures <BOOL>      Report every distinct failure found
+  --stop-on-first-failure <BOOL>         End generation once a failure is found
+  --show-statistics <BOOL>               Print the run's statistics
+  --print-blob <BOOL>                    Print the failure's reproduce blob
+  --backend <default|urandom>            Randomness source (urandom: the Antithesis
+                                         fuzzer, else /dev/urandom)
+  --nondeterminism-strictness <LEVEL>    quiet | warn | error
+  --unbounded-choices <BOOL>             Remove the limit on choices per test case
+  -h, --help                             Show this help and exit
+
+Every flag also takes the form --flag=VALUE. A BOOL is true, false, 1, 0,
+yes or no. Values use the vocabulary of the matching hegel.toml key.
+"
+    .to_string()
 }
 
 #[cfg(test)]
