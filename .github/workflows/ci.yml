@@ -2,8 +2,8 @@
 # workspace-wide checks, calls each component's reusable workflow
 # (libhegel.yml, frontend-rust.yml, frontend-python.yml,
 # frontend-typescript.yml, frontend-cpp.yml, frontend-java.yml,
-# frontend-ocaml.yml) only when that component is affected, and — on a push to
-# main — releases whatever has a release file pending.
+# frontend-ocaml.yml, website.yml) only when that component is affected, and —
+# on a push to main — releases whatever has a release file pending.
 #
 # Adding a frontend: add a `frontends/<lang>/**` filter below, a
 # `.github/workflows/frontend-<lang>.yml` reusable workflow, a job here that
@@ -25,11 +25,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Which parts of the repo changed. On a push to main everything is treated
-  # as changed, so the release job always has a complete run behind it; on a
-  # pull request or a merge queue run only the affected components' workflows
-  # run. Branch protection requires `ci-ok` below rather than the component
-  # jobs, since a skipped reusable workflow reports no check runs at all.
+  # Which parts of the repo changed. On a push to main that touches anything
+  # outside website/ everything is treated as changed, so the release job
+  # always has a complete run behind it; on a pull request or a merge queue
+  # run only the affected components' workflows run. A change confined to
+  # website/ (including the docs the release jobs commit there) runs only the
+  # website job: `code` is false for it, which skips the lint and release
+  # jobs too. Branch protection requires `ci-ok` below rather than the
+  # component jobs, since a skipped reusable workflow reports no check runs
+  # at all.
   changes:
     name: changes
     runs-on: ubuntu-latest
@@ -37,20 +41,47 @@ jobs:
       contents: read
       pull-requests: read
     outputs:
-      libhegel: ${{ github.event_name == 'push' || steps.filter.outputs.libhegel == 'true' }}
-      rust: ${{ github.event_name == 'push' || steps.filter.outputs.rust == 'true' }}
-      python: ${{ github.event_name == 'push' || steps.filter.outputs.python == 'true' }}
-      typescript: ${{ github.event_name == 'push' || steps.filter.outputs.typescript == 'true' }}
-      cpp: ${{ github.event_name == 'push' || steps.filter.outputs.cpp == 'true' }}
-      java: ${{ github.event_name == 'push' || steps.filter.outputs.java == 'true' }}
-      ocaml: ${{ github.event_name == 'push' || steps.filter.outputs.ocaml == 'true' }}
+      libhegel: ${{ (github.event_name == 'push' && steps.code.outputs.code == 'true') || steps.filter.outputs.libhegel == 'true' }}
+      rust: ${{ (github.event_name == 'push' && steps.code.outputs.code == 'true') || steps.filter.outputs.rust == 'true' }}
+      python: ${{ (github.event_name == 'push' && steps.code.outputs.code == 'true') || steps.filter.outputs.python == 'true' }}
+      typescript: ${{ (github.event_name == 'push' && steps.code.outputs.code == 'true') || steps.filter.outputs.typescript == 'true' }}
+      cpp: ${{ (github.event_name == 'push' && steps.code.outputs.code == 'true') || steps.filter.outputs.cpp == 'true' }}
+      java: ${{ (github.event_name == 'push' && steps.code.outputs.code == 'true') || steps.filter.outputs.java == 'true' }}
+      ocaml: ${{ (github.event_name == 'push' && steps.code.outputs.code == 'true') || steps.filter.outputs.ocaml == 'true' }}
+      website: ${{ github.event_name == 'push' || steps.filter.outputs.website == 'true' }}
+      code: ${{ steps.code.outputs.code == 'true' }}
     steps:
       # Outside a pull request the filter diffs with git, so it needs a
       # repository to run in.
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        if: github.event_name == 'merge_group'
+        if: github.event_name != 'pull_request'
         with:
           persist-credentials: false
+          # A push diffs against the commit main was at before it.
+          fetch-depth: ${{ github.event_name == 'push' && '0' || '1' }}
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+        id: scope
+        with:
+          base: ${{ github.event.merge_group.base_sha || github.event.before }}
+          ref: ${{ github.event.merge_group.head_sha || github.sha }}
+          filters: |
+            all:
+              - '**'
+            site:
+              - 'website/**'
+      # Something outside website/ changed exactly when fewer files changed
+      # under website/ than in all.
+      - name: Check for changes outside website/
+        id: code
+        env:
+          ALL: ${{ steps.scope.outputs.all_count }}
+          SITE: ${{ steps.scope.outputs.site_count }}
+        run: |
+          if [ "$ALL" != "$SITE" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
         if: github.event_name != 'push'
         id: filter
@@ -96,12 +127,17 @@ jobs:
               - *shared
               - 'libhegel/**'
               - 'frontends/ocaml/**'
+            website:
+              - *shared
+              - 'website/**'
 
   # Workspace-wide lints: formatting, clippy, the scripts/check-*.py lints,
   # each component's own lints (via `just check-lint`), the workflow lint and
-  # a packaging dry run. Cheap enough to run on every change.
+  # a packaging dry run. Runs on every change outside website/.
   lint:
     name: lint
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -216,6 +252,14 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/frontend-ocaml.yml
+
+  website:
+    name: website
+    needs: changes
+    if: needs.changes.outputs.website == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/website.yml
 
   # Test with the minimal versions of every dependency in the workspace.
   test-minimal-versions:
@@ -340,7 +384,7 @@ jobs:
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [lint, libhegel, rust, python, typescript, cpp, java, ocaml, test-minimal-versions, coverage, nix]
+    needs: [changes, lint, libhegel, rust, python, typescript, cpp, java, ocaml, website, test-minimal-versions, coverage, nix]
     runs-on: ubuntu-latest
     permissions: {}
     steps:
@@ -357,9 +401,10 @@ jobs:
     name: release
     # On a push every component ran (see `changes`), so a plain success of
     # every dependency is required; the `!cancelled()` form is what lets this
-    # job evaluate its condition at all when a dependency was skipped.
-    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && github.event_name == 'push' && github.repository == 'hegeldev/hegel' }}
-    needs: [lint, libhegel, rust, python, typescript, cpp, java, ocaml, test-minimal-versions, coverage, nix]
+    # job evaluate its condition at all when a dependency was skipped. A push
+    # confined to website/ tested nothing it could release.
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.changes.outputs.code == 'true' }}
+    needs: [changes, lint, libhegel, rust, python, typescript, cpp, java, ocaml, website, test-minimal-versions, coverage, nix]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -911,14 +956,14 @@ jobs:
       - name: Publish to npm
         run: python3 .github/scripts/publish_typescript.py
 
-  # The TypeScript API reference, pushed to hegel.dev/typescript (the
-  # hegeldev/website repository) for every TypeScript release.
+  # The TypeScript API reference, committed to website/public/typescript on
+  # main (served at hegel.dev/typescript) for every TypeScript release.
   release-typescript-docs:
     name: release-typescript-docs
     if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.typescript_released == 'true' }}
     needs: release
     runs-on: ubuntu-latest
-    # The website push uses the app token below, not GITHUB_TOKEN.
+    # The push to main uses the app token below, not GITHUB_TOKEN.
     permissions:
       contents: read
     steps:
@@ -928,19 +973,13 @@ jobs:
         with:
           app-id: ${{ vars.HEGEL_RELEASE_APP_ID }}
           private-key: ${{ secrets.HEGEL_RELEASE_APP_PRIVATE_KEY }}
-          repositories: website
+          repositories: hegel
       - name: Checkout release commit
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
           fetch-depth: 0
           ref: refs/tags/${{ needs.release.outputs.typescript_tag }}
-      - name: Checkout website # zizmor: ignore[artipacked]
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: hegeldev/website
-          token: ${{ steps.app-token.outputs.token }}
-          path: website
       - uses: ./.github/actions/install-tools
         with:
           tools: just
@@ -951,7 +990,15 @@ jobs:
         run: just typescript::setup
       - name: Build the documentation
         run: just typescript::check-docs
-      - name: Push the documentation to the website repository
+      # Checked out only now so that no build above sees a second copy of
+      # the repository.
+      - name: Checkout main to publish into # zizmor: ignore[artipacked]
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: main
+          token: ${{ steps.app-token.outputs.token }}
+          path: publish
+      - name: Push the documentation to main
         env:
           HEGEL_RELEASE_APP_ID: ${{ vars.HEGEL_RELEASE_APP_ID }}
           HEGEL_RELEASE_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
@@ -959,14 +1006,15 @@ jobs:
 
   # The C++ frontend has no package index: a consumer fetches the
   # `frontends/cpp/<version>` tag with CMake's FetchContent, so the tag is
-  # the release. What remains is its API reference (Doxygen), pushed to
-  # hegel.dev/cpp (the hegeldev/website repository) for every C++ release.
+  # the release. What remains is its API reference (Doxygen), committed to
+  # website/public/cpp on main (served at hegel.dev/cpp) for every C++
+  # release.
   release-cpp-docs:
     name: release-cpp-docs
     if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.cpp_released == 'true' }}
     needs: release
     runs-on: ubuntu-latest
-    # The website push uses the app token below, not GITHUB_TOKEN.
+    # The push to main uses the app token below, not GITHUB_TOKEN.
     permissions:
       contents: read
     steps:
@@ -976,25 +1024,27 @@ jobs:
         with:
           app-id: ${{ vars.HEGEL_RELEASE_APP_ID }}
           private-key: ${{ secrets.HEGEL_RELEASE_APP_PRIVATE_KEY }}
-          repositories: website
+          repositories: hegel
       - name: Checkout release commit
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
           fetch-depth: 0
           ref: refs/tags/${{ needs.release.outputs.cpp_tag }}
-      - name: Checkout website # zizmor: ignore[artipacked]
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: hegeldev/website
-          token: ${{ steps.app-token.outputs.token }}
-          path: website
       - uses: ./.github/actions/setup-rust
         with:
           tools: just doxygen
       - name: Build the documentation
         run: just cpp::check-docs
-      - name: Push the documentation to the website repository
+      # Checked out only now so that no build above sees a second copy of
+      # the repository.
+      - name: Checkout main to publish into # zizmor: ignore[artipacked]
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: main
+          token: ${{ steps.app-token.outputs.token }}
+          path: publish
+      - name: Push the documentation to main
         env:
           HEGEL_RELEASE_APP_ID: ${{ vars.HEGEL_RELEASE_APP_ID }}
           HEGEL_RELEASE_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
@@ -1156,14 +1206,14 @@ jobs:
           gh release upload "$TAG" "$TARBALL" --clobber
           gh release edit "$TAG" --draft=false
 
-  # The OCaml API reference, pushed to hegel.dev/ocaml (the hegeldev/website
-  # repository) for every OCaml release.
+  # The OCaml API reference, committed to website/public/ocaml on main
+  # (served at hegel.dev/ocaml) for every OCaml release.
   release-ocaml-docs:
     name: release-ocaml-docs
     if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.ocaml_released == 'true' }}
     needs: release
     runs-on: ubuntu-latest
-    # The website push uses the app token below, not GITHUB_TOKEN.
+    # The push to main uses the app token below, not GITHUB_TOKEN.
     permissions:
       contents: read
     steps:
@@ -1173,19 +1223,13 @@ jobs:
         with:
           app-id: ${{ vars.HEGEL_RELEASE_APP_ID }}
           private-key: ${{ secrets.HEGEL_RELEASE_APP_PRIVATE_KEY }}
-          repositories: website
+          repositories: hegel
       - name: Checkout release commit
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
           fetch-depth: 0
           ref: refs/tags/${{ needs.release.outputs.ocaml_tag }}
-      - name: Checkout website # zizmor: ignore[artipacked]
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          repository: hegeldev/website
-          token: ${{ steps.app-token.outputs.token }}
-          path: website
       - uses: ./.github/actions/install-tools
         with:
           tools: just
@@ -1198,7 +1242,15 @@ jobs:
           packages: core async
       - name: Build the documentation
         run: just ocaml::check-docs
-      - name: Push the documentation to the website repository
+      # Checked out only now so that no build above sees a second copy of
+      # the repository.
+      - name: Checkout main to publish into # zizmor: ignore[artipacked]
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: main
+          token: ${{ steps.app-token.outputs.token }}
+          path: publish
+      - name: Push the documentation to main
         env:
           HEGEL_RELEASE_APP_ID: ${{ vars.HEGEL_RELEASE_APP_ID }}
           HEGEL_RELEASE_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
