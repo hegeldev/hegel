@@ -1,0 +1,18 @@
+# Recipes for hegel.dev (the Astro/Starlight site). Run as
+# `just website::<recipe>` from anywhere in the repo; recipes execute from
+# this directory.
+set ignore-comments := true
+
+# Install the site's dependencies.
+setup:
+    npm ci
+
+# Build the site into dist/.
+build:
+    npm run build
+
+alias dev := serve
+
+# Run the dev server.
+serve:
+    npm run dev
