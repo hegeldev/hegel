@@ -1,0 +1,5 @@
+error: #[rule] groups must name at least one group
+ --> tests/ui/concurrent_state_machine_empty_groups.rs:7:21
+  |
+7 |     #[rule(groups = [])]
+  |                     ^^

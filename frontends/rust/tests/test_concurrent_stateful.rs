@@ -111,19 +111,19 @@ struct Grouped {
 
 #[hegel::concurrent_state_machine]
 impl Grouped {
-    #[rule(group = "letters")]
+    #[rule(groups = ["letters"])]
     fn alpha(&self, _: TestCase) {
         self.log.lock().unwrap().push("alpha");
     }
 
-    #[rule(group = "letters")]
+    #[rule(groups = ["letters"])]
     fn beta(&self, tc: TestCase) {
         let n: i8 = tc.draw(gs::integers());
         tc.assume(n != 0);
         self.log.lock().unwrap().push("beta");
     }
 
-    #[rule(group = "numbers")]
+    #[rule(groups = ["numbers"])]
     fn one(&self, _: TestCase) {
         self.log.lock().unwrap().push("one");
     }
@@ -145,6 +145,149 @@ fn test_grouped_machine_passes(tc: TestCase) {
         log: Mutex::new(Vec::new()),
     };
     machine(m).max_concurrency(3).run_concurrent(tc);
+}
+
+struct Rounds {
+    log: Mutex<Vec<&'static str>>,
+}
+
+#[hegel::concurrent_state_machine]
+impl Rounds {
+    #[rule(groups = ["write"])]
+    fn write(&self, _: TestCase) {
+        self.log.lock().unwrap().push("write");
+    }
+
+    #[rule(groups = ["flush"])]
+    fn flush(&self, _: TestCase) {
+        self.log.lock().unwrap().push("flush");
+    }
+
+    #[rule(groups = ["write", "flush"])]
+    fn read(&self, _: TestCase) {
+        self.log.lock().unwrap().push("read");
+    }
+}
+
+#[test]
+fn a_rule_in_several_groups_is_declared_with_all_of_them() {
+    use hegel::stateful::ConcurrentStateMachine;
+    let m = Rounds {
+        log: Mutex::new(Vec::new()),
+    };
+    let rules = m.rules();
+    let groups: Vec<&[String]> = rules.iter().map(|r| r.groups.as_slice()).collect();
+    assert_eq!(
+        groups,
+        vec![&["write"][..], &["flush"][..], &["write", "flush"][..]]
+    );
+}
+
+#[test]
+fn a_rule_in_several_groups_runs_in_the_rounds_of_each() {
+    let (lines, result) = capture_hegel_output(|| {
+        Hegel::new(|tc| {
+            machine(Rounds {
+                log: Mutex::new(Vec::new()),
+            })
+            .steps(40)
+            .min_concurrency(2)
+            .max_concurrency(2)
+            .run_concurrent(tc)
+        })
+        .settings(
+            Settings::new()
+                .database(None)
+                .verbosity(Verbosity::Verbose)
+                .test_cases(20),
+        )
+        .run();
+    });
+    result.unwrap();
+    let mut current_group = None;
+    let mut read_under = HashSet::new();
+    for line in &lines {
+        if let Some(rest) = line.split("Round ").nth(1) {
+            let group = rest.split('"').nth(1).unwrap();
+            current_group = Some(group.to_string());
+        } else if line.contains("Rule: read {") {
+            read_under.insert(current_group.clone().unwrap());
+        } else if line.contains("Rule: write {") {
+            assert_eq!(current_group.as_deref(), Some("write"), "{line}");
+        } else if line.contains("Rule: flush {") {
+            assert_eq!(current_group.as_deref(), Some("flush"), "{line}");
+        }
+    }
+    assert_eq!(
+        read_under,
+        HashSet::from(["write".to_string(), "flush".to_string()]),
+        "the read rule must run under both of its groups:\n{}",
+        lines.join("\n")
+    );
+}
+
+struct NoGroups;
+
+impl hegel::stateful::ConcurrentStateMachine for NoGroups {
+    fn rules(&self) -> Vec<hegel::stateful::ConcurrentRule<Self>> {
+        vec![hegel::stateful::ConcurrentRule::new(
+            "homeless",
+            &[],
+            1.0,
+            |_m: &Self, _tc| {},
+        )]
+    }
+    fn invariants(&self) -> Vec<hegel::stateful::ConcurrentInvariant<Self>> {
+        vec![]
+    }
+}
+
+#[test]
+fn a_rule_without_groups_is_a_usage_error() {
+    let (_, result) = capture_hegel_output(|| {
+        Hegel::new(|tc| {
+            machine(NoGroups).run_concurrent(tc);
+        })
+        .settings(Settings::new().database(None).verbosity(Verbosity::Quiet))
+        .run();
+    });
+    let payload = result.expect_err("a rule without groups cannot run");
+    assert_matches_regex(
+        &panic_message(&payload),
+        "a rule must belong to at least one group, but rule 0 \\(homeless\\) has none",
+    );
+}
+
+struct RepeatedGroup;
+
+impl hegel::stateful::ConcurrentStateMachine for RepeatedGroup {
+    fn rules(&self) -> Vec<hegel::stateful::ConcurrentRule<Self>> {
+        vec![hegel::stateful::ConcurrentRule::new(
+            "twice",
+            &["g", "g"],
+            1.0,
+            |_m: &Self, _tc| {},
+        )]
+    }
+    fn invariants(&self) -> Vec<hegel::stateful::ConcurrentInvariant<Self>> {
+        vec![]
+    }
+}
+
+#[test]
+fn a_rule_repeating_a_group_is_a_usage_error() {
+    let (_, result) = capture_hegel_output(|| {
+        Hegel::new(|tc| {
+            machine(RepeatedGroup).run_concurrent(tc);
+        })
+        .settings(Settings::new().database(None).verbosity(Verbosity::Quiet))
+        .run();
+    });
+    let payload = result.expect_err("a rule repeating a group cannot run");
+    assert_matches_regex(
+        &panic_message(&payload),
+        "a rule's groups must be distinct, but rule 0 \\(twice\\) lists group 0 twice",
+    );
 }
 
 struct Boom;
@@ -1101,12 +1244,12 @@ struct WeightedGroups {
 
 #[hegel::concurrent_state_machine]
 impl WeightedGroups {
-    #[rule(group = "letters", weight = 2.5)]
+    #[rule(groups = ["letters"], weight = 2.5)]
     fn alpha(&self, _: TestCase) {
         self.log.lock().unwrap().push("alpha");
     }
 
-    #[rule(weight = 4, group = "letters")]
+    #[rule(weight = 4, groups = ["letters"])]
     fn beta(&self, _: TestCase) {
         self.log.lock().unwrap().push("beta");
     }
@@ -1116,7 +1259,7 @@ impl WeightedGroups {
         self.log.lock().unwrap().push("anonymous");
     }
 
-    #[rule(group = "numbers")]
+    #[rule(groups = ["numbers"])]
     fn one(&self, _: TestCase) {
         self.log.lock().unwrap().push("one");
     }
@@ -1129,17 +1272,20 @@ fn concurrent_rule_weight_argument_sets_the_rule_weight() {
         log: Mutex::new(Vec::new()),
     };
     let rules = m.rules();
-    let rules: Vec<(&str, &str, f64)> = rules
+    let rules: Vec<(&str, Vec<&str>, f64)> = rules
         .iter()
-        .map(|r| (r.name.as_str(), r.group.as_str(), r.weight))
+        .map(|r| {
+            let groups = r.groups.iter().map(String::as_str).collect();
+            (r.name.as_str(), groups, r.weight)
+        })
         .collect();
     assert_eq!(
         rules,
         vec![
-            ("alpha", "letters", 2.5),
-            ("beta", "letters", 4.0),
-            ("anonymous", ANONYMOUS_GROUP, 0.5),
-            ("one", "numbers", 1.0),
+            ("alpha", vec!["letters"], 2.5),
+            ("beta", vec!["letters"], 4.0),
+            ("anonymous", vec![ANONYMOUS_GROUP], 0.5),
+            ("one", vec!["numbers"], 1.0),
         ]
     );
 }
@@ -1155,9 +1301,18 @@ fn test_weighted_grouped_machine_passes(tc: TestCase) {
 #[test]
 fn concurrent_rule_new_takes_the_weight() {
     use hegel::stateful::ConcurrentRule;
-    let rule = ConcurrentRule::new("hit", "g", 3.0, |_m: &Counter, _tc| {});
+    let rule = ConcurrentRule::new("hit", &["g"], 3.0, |_m: &Counter, _tc| {});
     assert_eq!(rule.weight, 3.0);
-    assert_eq!(rule.group, "g");
+    assert_eq!(rule.groups, vec!["g"]);
+    assert_eq!(rule.name, "hit");
+}
+
+#[test]
+fn concurrent_rule_new_takes_every_group() {
+    use hegel::stateful::ConcurrentRule;
+    let rule = ConcurrentRule::new("hit", &["g", "h"], 3.0, |_m: &Counter, _tc| {});
+    assert_eq!(rule.weight, 3.0);
+    assert_eq!(rule.groups, vec!["g", "h"]);
     assert_eq!(rule.name, "hit");
 }
 
@@ -1167,7 +1322,7 @@ impl hegel::stateful::ConcurrentStateMachine for BadConcurrentWeight {
     fn rules(&self) -> Vec<hegel::stateful::ConcurrentRule<Self>> {
         vec![hegel::stateful::ConcurrentRule::new(
             "bad",
-            "g",
+            &["g"],
             0.0,
             |_m: &Self, _tc| {},
         )]

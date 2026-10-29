@@ -589,20 +589,23 @@ pub use hegel_macros::state_machine;
 /// implementation from an `impl` block, for concurrent stateful testing via
 /// [`stateful::Machine::run_concurrent`].
 ///
-/// Methods annotated `#[rule(group = "name")]` become rules assigned to the
-/// named concurrency group; methods annotated `#[invariant]` become
+/// Methods annotated `#[rule(groups = ["name"])]` become rules assigned to
+/// the named concurrency groups; methods annotated `#[invariant]` become
 /// invariants, checked in full on the machine's initial and final state and
 /// sampled at the join points between rounds (`#[invariant(always_run)]`
 /// runs at every join point instead). Rules in the same
 /// group may run concurrently with each other; rules in different groups
-/// never overlap.
+/// never overlap. A rule in several groups, `#[rule(groups = ["a", "b"])]`,
+/// runs whenever any of them is current, so it may overlap the rules of
+/// each group even though those groups never overlap each other.
 ///
-/// A bare `#[rule]` with no `group = "..."` argument is assigned to a
+/// A bare `#[rule]` with no `groups = [...]` argument is assigned to a
 /// single shared anonymous group, so a machine with no group annotations
-/// is maximally concurrent: any rule may overlap with any other, and naming
-/// groups is how overlap gets restricted. `#[rule(group = "name", weight =
-/// w)]` also hints how often a rule should be chosen compared to
-/// other rules in its group. This is not a distributional guarantee.
+/// is maximally concurrent: any rule may overlap with any other, and
+/// naming groups is how overlap gets restricted.
+/// `#[rule(groups = ["name"], weight = w)]` also hints how often a rule
+/// should be chosen compared to other rules in its group. This is not a
+/// distributional guarantee.
 ///
 /// The model is shared by reference across worker threads, so rules and
 /// invariants must take `&self` (mutable state needs interior mutability),
@@ -621,20 +624,20 @@ pub use hegel_macros::state_machine;
 ///
 /// #[hegel::concurrent_state_machine]
 /// impl KvTest {
-///     #[rule(group = "rw")]
+///     #[rule(groups = ["rw"])]
 ///     fn put(&self, tc: TestCase) {
 ///         let key: u8 = tc.draw(gs::integers());
 ///         let value: i64 = tc.draw(gs::integers());
 ///         self.store.lock().unwrap_or_else(|e| e.into_inner()).insert(key, value);
 ///     }
 ///
-///     #[rule(group = "rw")]
+///     #[rule(groups = ["rw"])]
 ///     fn get(&self, tc: TestCase) {
 ///         let key: u8 = tc.draw(gs::integers());
 ///         let _ = self.store.lock().unwrap_or_else(|e| e.into_inner()).get(&key).copied();
 ///     }
 ///
-///     #[rule(group = "dump")]
+///     #[rule(groups = ["dump"])]
 ///     fn dump(&self, _: TestCase) {
 ///         let _ = self.store.lock().unwrap_or_else(|e| e.into_inner()).clone();
 ///     }

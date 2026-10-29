@@ -199,7 +199,7 @@ impl ConcurrentStateMachine for HitCounter {
     fn rules(&self) -> Vec<ConcurrentRule<Self>> {
         vec![ConcurrentRule::new(
             "hit",
-            ANONYMOUS_GROUP,
+            &[ANONYMOUS_GROUP],
             1.0,
             |m, _tc| {
                 m.hits.fetch_add(1, Ordering::SeqCst);
@@ -217,7 +217,7 @@ impl ConcurrentStateMachine for AlwaysPanics {
     fn rules(&self) -> Vec<ConcurrentRule<Self>> {
         vec![ConcurrentRule::new(
             "boom",
-            ANONYMOUS_GROUP,
+            &[ANONYMOUS_GROUP],
             1.0,
             |_m, _tc| panic!("rule boom"),
         )]
