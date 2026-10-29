@@ -1,0 +1,3 @@
+using Hegel;
+
+[assembly: HegelInfrastructure]

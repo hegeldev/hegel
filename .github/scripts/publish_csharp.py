@@ -5,10 +5,10 @@ Run by the `release-csharp` job of ci.yml from a checkout of the
 `NUGET_API_KEY` (obtained by the NuGet/login action through trusted
 publishing). `dotnet pack` with `HegelNativesSource=release` builds the
 `Hegel` package, bundling every platform's libhegel from the GitHub release of
-the engine version in libhegel/Cargo.toml, and the `Hegel.FSharp` package that
-depends on it at the same version; `dotnet nuget push` uploads each together
-with its symbol package, `Hegel` first so that `Hegel.FSharp` never points at
-a version that is not there.
+the engine version in libhegel/Cargo.toml, and the `Hegel.FSharp` and
+`Hegel.Xunit` packages that depend on it at the same version; `dotnet nuget
+push` uploads each together with its symbol package, `Hegel` first so that the
+others never point at a version that is not there.
 
 A package whose version is already on nuget.org is skipped, so a re-run after
 a partial failure is safe; a push that races an earlier one is made idempotent
@@ -32,6 +32,7 @@ FRONTEND = ROOT / "frontends" / "csharp"
 PACKAGES = {
     "Hegel": FRONTEND / "src" / "Hegel" / "Hegel.csproj",
     "Hegel.FSharp": FRONTEND / "src" / "Hegel.FSharp" / "Hegel.FSharp.fsproj",
+    "Hegel.Xunit": FRONTEND / "src" / "Hegel.Xunit" / "Hegel.Xunit.csproj",
 }
 SOURCE = "https://api.nuget.org/v3/index.json"
 

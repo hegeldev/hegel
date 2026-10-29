@@ -1,14 +1,16 @@
 # .NET frontend
 
-Hegel for C# and F#: the `Hegel` and `Hegel.FSharp` NuGet packages. The
-bindings drive libhegel, the engine in `../../libhegel`, in-process through
+Hegel for C# and F#: the `Hegel`, `Hegel.FSharp` and `Hegel.Xunit` NuGet
+packages. The bindings drive libhegel, the engine in `../../libhegel`, in-process through
 its C ABI (`../../libhegel/include/hegel.h`) with source-generated P/Invoke
 (`LibraryImport`). Two library projects, both targeting .NET 8: `src/Hegel/`
 (C#, everything the engine offers) and `src/Hegel.FSharp/` (F#, a surface
 over `Hegel` that draws and prints F# values), each with an xunit test
 project (`tests/Hegel.Tests/`, `tests/Hegel.FSharp.Tests/`; .NET 10 by
-default, .NET 8 with `HEGEL_TEST_FRAMEWORK=net8.0`). The two packages share
-one version (`Directory.Build.props`) and release together. Repo-wide
+default, .NET 8 with `HEGEL_TEST_FRAMEWORK=net8.0`), plus `src/Hegel.Xunit/`
+(C#, the `[HegelTest]` attribute for xUnit.net v2, tested by the C# suite).
+The three packages share one version (`Directory.Build.props`) and release
+together. Repo-wide
 conventions are in the root `AGENTS.md`.
 
 ## Commands
@@ -129,6 +131,22 @@ There is no engine version pin to keep in step in this directory.
   over scalars, enums, nullables, collections, tuples and records,
   `RecordGenerator<T>`) and `Internal` (`ValueGenerator<T>`, handle caches,
   size validation) hold the implementations.
+- `src/Hegel.Xunit/` — the `Hegel.Xunit` package: `HegelTestAttribute`, a
+  `FactAttribute` whose constructor takes `[CallerFilePath]`/`[CallerLineNumber]`
+  (so the method's own file and line are the test location, with no help
+  from the runner) and whose `Profile`/`TestCases` are the settings surface;
+  `HegelTestDiscoverer` (named by the attribute's `[XunitTestCaseDiscoverer]`)
+  checks the method's shape (one `TestCase` parameter, `void`, non-generic)
+  and yields a `HegelTestCase`, or xunit's `ExecutionErrorTestCase` with the
+  problem; `HegelTestCase` → `HegelTestCaseRunner` → `HegelTestRunner` →
+  `HegelTestInvoker` is xunit's own chain with the invoker's `CallTestMethod`
+  replaced by `Property.Test` over the method as an `Action<TestCase>`
+  delegate (so the failure is the assertion's own exception and the class
+  name is the user's), the engine's report going into the test's xunit
+  output. The assembly is `[assembly: HegelInfrastructure]`, so its frames
+  never count as a failure's origin. The package depends on
+  `xunit.extensibility.execution` and on `Hegel`; the core package keeps no
+  test-framework dependency.
 - `Stateful`, `Pool` — `Stateful.Run` drives a machine's `[Rule]` and
   `[Invariant]` methods (each taking one `TestCase`) through the engine's
   state machine primitives, sequentially or with worker threads for
@@ -156,7 +174,7 @@ There is no engine version pin to keep in step in this directory.
 
 ## Rules
 
-- **Coverage is 100%** line coverage of `src/Hegel` and of
+- **Coverage is 100%** line coverage of `src/Hegel`, `src/Hegel.Xunit` and
   `src/Hegel.FSharp`, each enforced by coverlet in `just csharp::check-test`
   (generated `*.g.cs` files are excluded). Everything is covered by real-engine tests plus
   `DelegatingLibhegel`-driven error-path tests (`tests/Hegel.Tests/Support/`):
@@ -209,5 +227,10 @@ There is no engine version pin to keep in step in this directory.
 - The test suites are the `Hegel.Tests` and `Hegel.FSharp.Tests`
   assemblies, which `Runner.OriginOf` treats as user code, so origin
   assertions can name a test file.
+- `Hegel.Xunit` is tested in `XunitTests.cs` by driving `HegelTestDiscoverer`
+  and the test case's `RunAsync` by hand over a private nested sample class
+  (xunit discovers only public classes, so its failing and malformed samples
+  never run as tests) with a recording `IMessageBus`; the two `[HegelTest]`
+  methods on the public test class prove xunit's own discovery wiring.
 - Tests never write `Console.Error` noisily: pass `Reporter.Silent` or a
   `Reporter.Printing(new StringWriter())` to assert on output.

@@ -1,4 +1,4 @@
-# Recipes for the C# frontend (the `Hegel` and `Hegel.FSharp` NuGet packages).
+# Recipes for the C# frontend (the `Hegel`, `Hegel.FSharp` and `Hegel.Xunit` NuGet packages).
 # Run as `just csharp::<recipe>` from anywhere in the repo; recipes execute
 # from this directory. The engine is the in-tree libhegel: `build-libhegel`
 # compiles it into the workspace's `target/`, and the MSBuild `HegelEngine`
@@ -24,11 +24,11 @@ build: build-libhegel
     dotnet build Hegel.sln -c {{configuration}} -p:HegelTargetFramework={{test_framework}}
 
 # Both suites against the real engine, each with its 100% line coverage gate
-# (the C# suite over the Hegel assembly, the F# suite over Hegel.FSharp).
+# (the C# suite over the Hegel and Hegel.Xunit assemblies, the F# suite over Hegel.FSharp).
 check-test: build
     rm -rf coverage
     dotnet test {{csharp_tests}} -c {{configuration}} --no-build -p:HegelTargetFramework={{test_framework}} \
-        {{coverage_args}} -p:CoverletOutput=../../coverage/ -p:Include='[Hegel]*'
+        {{coverage_args}} -p:CoverletOutput=../../coverage/ -p:Include='[Hegel]*%2c[Hegel.Xunit]*'
     dotnet test {{fsharp_tests}} -c {{configuration}} --no-build -p:HegelTargetFramework={{test_framework}} \
         {{coverage_args}} -p:CoverletOutput=../../coverage/fsharp/ -p:Include='[Hegel.FSharp]*'
 
@@ -48,12 +48,14 @@ uncovered:
 # dotnet format for the C# projects, fantomas (from the tool manifest) for the F# ones.
 format:
     dotnet format src/Hegel/Hegel.csproj
+    dotnet format src/Hegel.Xunit/Hegel.Xunit.csproj
     dotnet format {{csharp_tests}}
     dotnet tool restore
     dotnet fantomas src/Hegel.FSharp tests/Hegel.FSharp.Tests
 
 check-format:
     dotnet format src/Hegel/Hegel.csproj --verify-no-changes
+    dotnet format src/Hegel.Xunit/Hegel.Xunit.csproj --verify-no-changes
     dotnet format {{csharp_tests}} --verify-no-changes
     dotnet tool restore
     dotnet fantomas --check src/Hegel.FSharp tests/Hegel.FSharp.Tests
@@ -62,14 +64,15 @@ check-format:
 check-lint: check-format build-libhegel
     dotnet build Hegel.sln -c {{configuration}} -p:HegelTargetFramework={{test_framework}} -warnaserror
 
-# Build both NuGet packages into dist/ with the local engine (the release job
+# Build the NuGet packages into dist/ with the local engine (the release job
 # packs with -p:HegelNativesSource=release instead, bundling every platform).
 pack: build-libhegel
     dotnet pack src/Hegel/Hegel.csproj -c {{configuration}} -o dist
     dotnet pack src/Hegel.FSharp/Hegel.FSharp.fsproj -c {{configuration}} -o dist
+    dotnet pack src/Hegel.Xunit/Hegel.Xunit.csproj -c {{configuration}} -o dist
 
 clean:
-    rm -rf src/Hegel/bin src/Hegel/obj src/Hegel.FSharp/bin src/Hegel.FSharp/obj tests/Hegel.Tests/bin tests/Hegel.Tests/obj tests/Hegel.FSharp.Tests/bin tests/Hegel.FSharp.Tests/obj coverage dist native
+    rm -rf src/Hegel/bin src/Hegel/obj src/Hegel.FSharp/bin src/Hegel.FSharp/obj src/Hegel.Xunit/bin src/Hegel.Xunit/obj tests/Hegel.Tests/bin tests/Hegel.Tests/obj tests/Hegel.FSharp.Tests/bin tests/Hegel.FSharp.Tests/obj coverage dist native
 
 check: check-lint check-test
 

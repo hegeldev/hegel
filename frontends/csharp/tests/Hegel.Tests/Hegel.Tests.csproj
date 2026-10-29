@@ -26,6 +26,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/Hegel/Hegel.csproj" />
+    <ProjectReference Include="../../src/Hegel.Xunit/Hegel.Xunit.csproj" />
   </ItemGroup>
 
 </Project>

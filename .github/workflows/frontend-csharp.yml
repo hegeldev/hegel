@@ -1,4 +1,4 @@
-# CI for the C# frontend (the `Hegel` and `Hegel.FSharp` NuGet packages in
+# CI for the C# frontend (the `Hegel`, `Hegel.FSharp` and `Hegel.Xunit` NuGet packages in
 # frontends/csharp/, driving libhegel through its C ABI). Called from ci.yml when the frontend,
 # libhegel (which it bundles) or the shared workspace changed. Every job
 # builds the in-tree engine first and the MSBuild build bundles that build:

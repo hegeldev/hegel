@@ -154,7 +154,7 @@ JAVA = Component(
 CSHARP = Component(
     path="frontends/csharp",
     manifests=("frontends/csharp/Directory.Build.props",),
-    crates=("Hegel", "Hegel.FSharp"),
+    crates=("Hegel", "Hegel.FSharp", "Hegel.Xunit"),
     source_dirs=(
         "frontends/csharp/src/",
         "frontends/csharp/Directory.Build.props",

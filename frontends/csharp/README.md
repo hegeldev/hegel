@@ -16,56 +16,78 @@ Instead of writing tests with hand-picked example inputs, you describe a *proper
 
 ## Installation
 
-Hegel ships as the `Hegel` package, for .NET 8 and later; F# projects add `Hegel.FSharp` on top of it (see [F#](#f) below):
+Hegel ships as the `Hegel` package, for .NET 8 and later; xUnit projects add `Hegel.Xunit` on top of it for the `[HegelTest]` attribute, and F# projects `Hegel.FSharp` (see [F#](#f) below):
 
 ```bash
 dotnet add package Hegel --version 0.1.4
+dotnet add package Hegel.Xunit --version 0.1.4
 ```
 
 or in your test project:
 
 ```xml
 <PackageReference Include="Hegel" Version="0.1.4" />
+<PackageReference Include="Hegel.Xunit" Version="0.1.4" />
 ```
 
-The engine is bundled in the package for Linux (x86-64 and arm64), macOS (Apple Silicon), and Windows (x86-64 and arm64); nothing is downloaded at runtime. Hegel works with any test framework: it runs inside your test method and throws the failing assertion, so xUnit, NUnit, MSTest and TUnit all report a property failure the way they report any other.
+The engine is bundled in the `Hegel` package for Linux (x86-64 and arm64), macOS (Apple Silicon), and Windows (x86-64 and arm64); nothing is downloaded at runtime. Hegel works with any test framework: `Property.Test` runs inside your test method and throws the failing assertion, so xUnit, NUnit, MSTest and TUnit all report a property failure the way they report any other. Under xUnit, `Hegel.Xunit` lets you write the property as the test method itself.
 
 ## Quickstart
 
-Here's a quick example of how to write a Hegel test, with xUnit:
+Here's a quick example of how to write a Hegel test, with xUnit and `Hegel.Xunit`:
 
 ```csharp
 using Hegel;
+using Hegel.Xunit;
 using Xunit;
 
 public class SortTests
 {
     static List<int> MySort(List<int> xs) => new SortedSet<int>(xs).ToList(); // oops: a set drops duplicates
 
-    [Fact]
-    public void SortPreservesLength() => Property.Test(tc =>
+    [HegelTest]
+    public void SortPreservesLength(TestCase tc)
     {
         var xs = tc.Draw(Generators.Lists(Generators.Integers()), "xs");
         Assert.Equal(xs.Count, MySort(xs).Count);
-    });
+    }
 }
 ```
 
-This test will fail when run with `dotnet test`! Hegel will produce a minimal failing test case for us, written as the C# you would type to reproduce it, followed by the assertion's own failure:
+This test will fail when run with `dotnet test`! Hegel will produce a minimal failing test case for us, written as the C# you would type to reproduce it, in the test's output, and fail the test with the assertion's own failure:
 
 ```
-var xs_1 = new List<int> {0, 0};
-
 Xunit.Sdk.EqualException: Assert.Equal() Failure: Values differ
 Expected: 2
 Actual:   1
+
+Standard Output Messages:
+ var xs_1 = new List<int> {0, 0};
 ```
 
 Hegel reports the minimal example showing that our sort is incorrectly dropping duplicates: `[0, 0]`, two equal elements, which `MySort` collapses into one. If we replace the `SortedSet`-based body of `MySort` with a sort that keeps duplicates, this test will then pass.
 
+A `[HegelTest]` method takes one `TestCase` and returns `void`, and is one test in xUnit's test tree; `Skip` and `DisplayName` work as on a `[Fact]`. The attribute takes a `Profile` name (a `hegel.toml` profile or one registered with `Settings.RegisterProfile`) and a `TestCases` count:
+
+```csharp
+[HegelTest(Profile = "ci", TestCases = 1000)]
+public void SortPreservesLength(TestCase tc) { ... }
+```
+
+With any other test framework, or for a setting only known at runtime, call `Property.Test` from an ordinary test method instead. It runs the property and throws the failing assertion, so the test fails the same way; the minimal test case is printed to standard error:
+
+```csharp
+[Fact]
+public void SortPreservesLength() => Property.Test(tc =>
+{
+    var xs = tc.Draw(Generators.Lists(Generators.Integers()), "xs");
+    Assert.Equal(xs.Count, MySort(xs).Count);
+});
+```
+
 ## Writing properties
 
-`Property.Test` takes an `Action<TestCase>`. The `TestCase` is where you ask for inputs:
+A `[HegelTest]` method, or the `Action<TestCase>` given to `Property.Test`, receives a `TestCase`, which is where you ask for inputs:
 
 - `tc.Draw(generator, "xs")` draws a value and prints it under the name you give, numbered per draw (`xs_1` above); a draw without a name prints as `draw_1`.
 - `tc.Assume(condition)` discards the current test case when the condition is false, so you can rule out inputs the property does not apply to. Prefer a generator that produces only valid inputs when you can; `tc.Reject()` discards unconditionally.
@@ -125,6 +147,8 @@ Values are printed in a failure as the C# that constructs them. Your own types p
 [Fact]
 public void ManyCases() => Property.Test(tc => { ... }, new Settings { TestCases = 1000 });
 ```
+
+(A `[HegelTest]` method takes its settings from the attribute's `Profile` and `TestCases` instead.)
 
 - `TestCases`, `Seed`, `Derandomize`, `Phases`, `Verbosity`, `Database`, `SuppressHealthCheck`, `ReportMultipleFailures`, `StopOnFirstFailure`, `ShowStatistics`, `PrintBlob`, `UnboundedChoices`, `NondeterminismStrictness` and `Backend` mirror the engine's settings.
 - `Examples` lists explicit test cases that run before the generated ones: `Example.Of(1, 2)` gives positional values to the draws in order, and `Example.With("xs", values)` names a draw.
