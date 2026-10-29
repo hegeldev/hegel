@@ -45,8 +45,9 @@ just ocaml::check            # lint + docs + test — what CI runs, less the com
 
 ## Releases
 
-- **Every PR that changes what ships needs a `RELEASE.md` here**: any change
-  to `lib/`, `ppx/`, `template/` or `dune-project`. See the root
+- **Every PR that changes what ships needs a release file here**, as
+  `RELEASE/<slug>.md` named after the change: any change to `lib/`, `ppx/`,
+  `template/` or `dune-project`. See the root
   `CONTRIBUTING.md` for the format and the semver rules (on 0.x, breaking
   changes are `minor`, everything else `patch`). CI checks this
   (`.github/scripts/release.py check`); on merge to main the release job
@@ -68,7 +69,7 @@ just ocaml::check            # lint + docs + test — what CI runs, less the com
   `.github/workflows/ocaml-opam-release.yml` (Actions -> "ocaml opam release"
   -> Run workflow with the tag) runs `opam publish` with that tarball.
 - A libhegel release re-releases this frontend too, with an auto-generated
-  engine-bump entry unless the PR writes a `RELEASE.md` here. There is no
+  engine-bump entry unless the PR writes a release file here. There is no
   engine version pin in this frontend: the engine it ships is whatever
   `libhegel/Cargo.toml` says at the tag.
 
@@ -1030,7 +1031,7 @@ guards the syntax upstream cannot parse (`@ m`, kind annotations).
 - Every lib module has a corresponding `test/test_<module>.ml`
 - All tests run against the real engine: the in-tree libhegel is dlopen'd
   in-process, so there are no fake engines. An engine divergence is fixed in
-  `../../libhegel` (with a `libhegel/RELEASE.md`) in the same PR, not worked
+  `../../libhegel` (with a `libhegel/RELEASE/<slug>.md`) in the same PR, not worked
   around in the bindings. Some test names carry a historical `_e2e` suffix;
   it no longer signals a different harness
 - `test/` must build under `-p hegel` (opam-repo-ci runs it): plain Alcotest

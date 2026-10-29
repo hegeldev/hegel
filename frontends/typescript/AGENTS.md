@@ -174,10 +174,11 @@ under the page's CORS/CSP.
   instantiated in Node (`tests/wasmFixture.ts`); `tests/wasm-*.test.ts` and
   `tests/browser-index.test.ts` cover the Wasm adapter and loader.
 - **Engine divergences are fixed in the engine.** When libhegel misbehaves,
-  fix it in `../../libhegel` (with a `libhegel/RELEASE.md`) in the same PR
-  rather than working around it in the bindings.
-- **Every PR that changes what ships needs a `RELEASE.md` here.** That means
-  any change to `src/` or `package.json`. See the root `CONTRIBUTING.md` for
+  fix it in `../../libhegel` (with a `libhegel/RELEASE/<slug>.md`) in the same
+  PR rather than working around it in the bindings.
+- **Every PR that changes what ships needs a release file here**, as
+  `RELEASE/<slug>.md` named after the change. That means any change to
+  `src/` or `package.json`. See the root `CONTRIBUTING.md` for
   the format and the semver rules (on 0.x, breaking changes are `minor`,
   everything else `patch`). CI checks this (`.github/scripts/release.py
 check`); on merge to main the release job bumps the version in
@@ -186,7 +187,7 @@ check`); on merge to main the release job bumps the version in
   publishes the five platform packages and then `@hegeldev/hegel` to npm and
   pushes the typedoc output to hegel.dev/typescript. A libhegel release
   re-releases this frontend too, with an auto-generated engine-bump entry
-  unless the PR writes a `RELEASE.md` here. Never edit `CHANGELOG.md` by hand.
+  unless the PR writes a release file here. Never edit `CHANGELOG.md` by hand.
 
 ## Conventions
 
