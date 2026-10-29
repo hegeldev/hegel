@@ -1,0 +1,13 @@
+<Project>
+  <PropertyGroup>
+    <Version>0.1.4</Version>
+    <LangVersion Condition="'$(MSBuildProjectExtension)' == '.csproj'">13</LangVersion>
+    <Nullable Condition="'$(MSBuildProjectExtension)' == '.csproj'">enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <Deterministic>true</Deterministic>
+    <HegelPython Condition="'$(HegelPython)' == '' And $([MSBuild]::IsOSPlatform('Windows'))">python</HegelPython>
+    <HegelPython Condition="'$(HegelPython)' == ''">python3</HegelPython>
+  </PropertyGroup>
+</Project>

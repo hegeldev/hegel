@@ -1,0 +1,85 @@
+# CI for the C# frontend (the `Hegel` and `Hegel.FSharp` NuGet packages in
+# frontends/csharp/, driving libhegel through its C ABI). Called from ci.yml when the frontend,
+# libhegel (which it bundles) or the shared workspace changed. Every job
+# builds the in-tree engine first and the MSBuild build bundles that build:
+# the tests never fetch a released binary.
+name: csharp
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  # Both suites on both frameworks the packages are tested against, each
+  # with its 100% line coverage gate.
+  test:
+    name: test (${{ matrix.framework }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: ["net8.0", "net10.0"]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - name: Test with 100% coverage enforcement
+        env:
+          HEGEL_TEST_FRAMEWORK: ${{ matrix.framework }}
+        run: just csharp::check-test
+      - name: Report uncovered lines
+        if: failure()
+        run: just csharp::uncovered
+
+  # Both suites on the other platforms the packages bundle an engine for.
+  test-os:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-2025]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: "10.0.x"
+      - name: Test
+        run: just csharp::test
+
+  # A packaging dry run with the in-tree engine, so a broken .nuspec or a
+  # missing package file fails the PR rather than the release.
+  pack:
+    name: pack
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: "10.0.x"
+      - name: Pack
+        run: just csharp::pack
+      - name: List the package contents
+        run: |
+          for package in frontends/csharp/dist/*.nupkg; do
+            unzip -l "$package"
+          done

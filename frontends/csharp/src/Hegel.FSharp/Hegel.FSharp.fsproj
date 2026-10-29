@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Hegel.FSharp</RootNamespace>
+    <AssemblyName>Hegel.FSharp</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <DisableImplicitFSharpCoreReference>true</DisableImplicitFSharpCoreReference>
+    <OtherFlags>--crossoptimize-</OtherFlags>
+    <PackageId>Hegel.FSharp</PackageId>
+    <Title>Hegel for F#</Title>
+    <Authors>David R. MacIver</Authors>
+    <Company>Antithesis</Company>
+    <Description>Property-based testing for F#, driven by the Hegel engine (libhegel): F# generators, derivation for records and unions, and failures printed as F#.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://hegel.dev</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/hegeldev/hegel</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>property-based-testing;testing;hegel;hypothesis;fuzzing;fsharp</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Repr.fs" />
+    <Compile Include="Generators.fs" />
+    <Compile Include="Auto.fs" />
+    <Compile Include="Gen.fs" />
+    <Compile Include="Hegel.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FSharp.Core" Version="8.0.403" />
+    <ProjectReference Include="../Hegel/Hegel.csproj" />
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+    <InternalsVisibleTo Include="Hegel.FSharp.Tests" />
+  </ItemGroup>
+
+</Project>

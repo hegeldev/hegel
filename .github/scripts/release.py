@@ -21,16 +21,17 @@ class Component:
     `manifests` are the manifests that carry the component's version (Cargo
     manifests, npm's `package.json` and `package-lock.json`, a
     `CMakeLists.txt` with a `project(... VERSION x.y.z ...)` line, Maven's
-    `pom.xml` files, or dune's `dune-project` and the `.opam` files it
-    generates; the first is the one its version is read from) and `crates` the
+    `pom.xml` files, MSBuild's `Directory.Build.props`, or dune's
+    `dune-project` and the `.opam` files it generates; the first is the one
+    its version is read from) and `crates` the
     packages those manifests declare, all at the component's version;
     `source_dirs` are the paths whose changes require a `<path>/RELEASE.md` on
     a PR.
 
     A frontend ships the engine (the Rust frontend pins the `hegeltest-c`
     crate exactly, the Python frontend compiles libhegel into its wheels, the
-    TypeScript, Java and OCaml frontends bundle the libhegel binaries, the C++
-    frontend builds the in-tree libhegel it is fetched with), so a libhegel release
+    TypeScript, Java, C# and OCaml frontends bundle the libhegel binaries, the
+    C++ frontend builds the in-tree libhegel it is fetched with), so a libhegel release
     also patch-bumps every frontend without a RELEASE.md of its own, giving it
     `engine_bump_entry` (with `{version}` filled in) as its changelog entry.
     libhegel itself has no such entry. A frontend that records the engine
@@ -147,6 +148,20 @@ JAVA = Component(
     engine_bump_entry="This release updates the bundled libhegel engine to {version}.",
     install_docs=("frontends/java/README.md",),
 )
+# The C# frontend's version is the <Version> of Directory.Build.props, which
+# every project in the solution inherits: the `Hegel` package and the
+# `Hegel.FSharp` package that depends on it at the same version.
+CSHARP = Component(
+    path="frontends/csharp",
+    manifests=("frontends/csharp/Directory.Build.props",),
+    crates=("Hegel", "Hegel.FSharp"),
+    source_dirs=(
+        "frontends/csharp/src/",
+        "frontends/csharp/Directory.Build.props",
+    ),
+    engine_bump_entry="This release updates the bundled libhegel engine to {version}.",
+    install_docs=("frontends/csharp/README.md",),
+)
 OCAML = Component(
     path="frontends/ocaml",
     manifests=(
@@ -165,7 +180,7 @@ OCAML = Component(
     ),
     engine_bump_entry="This release updates the bundled libhegel engine to {version}.",
 )
-FRONTENDS = [RUST, PYTHON, TYPESCRIPT, CPP, JAVA, OCAML]
+FRONTENDS = [RUST, PYTHON, TYPESCRIPT, CPP, JAVA, CSHARP, OCAML]
 COMPONENTS = [LIBHEGEL, *FRONTENDS]
 
 
@@ -244,8 +259,9 @@ def current_version(manifest: Path) -> str:
     of a Cargo manifest, the `"version"` of an npm one, the `project()`
     version of a CMakeLists.txt, the first `<version>` of a Maven pom (the
     project's own in a parent pom, the parent reference in a module pom;
-    `modelVersion` is a different tag), the `(version ...)` of a dune-project
-    or the `version: "..."` of an opam file."""
+    `modelVersion` is a different tag), the `<Version>` of an MSBuild
+    `.props` file, the `(version ...)` of a dune-project or the
+    `version: "..."` of an opam file."""
     if manifest.suffix == ".json":
         return json.loads(manifest.read_text())["version"]
     if manifest.name == "CMakeLists.txt":
@@ -255,6 +271,11 @@ def current_version(manifest: Path) -> str:
         return m.group(2)
     if manifest.suffix == ".xml":
         return re.search(r"<version>([^<]+)</version>", manifest.read_text()).group(1)
+    if manifest.suffix == ".props":
+        m = re.search(r"<Version>([^<]+)</Version>", manifest.read_text())
+        if m is None:
+            raise ValueError(f"no <Version> in {manifest}")
+        return m.group(1)
     pattern, _ = version_pattern(manifest)
     m = re.search(pattern, manifest.read_text(), re.MULTILINE)
     return re.search(r"\d+\.\d+\.\d+", m.group(0)).group(0)
@@ -288,6 +309,15 @@ def set_version(manifest: Path, new_version: str) -> None:
                 count=1,
             )
         )
+        return
+    if manifest.suffix == ".props":
+        text = manifest.read_text()
+        new_text, count = re.subn(
+            r"<Version>[^<]+</Version>", f"<Version>{new_version}</Version>", text, count=1
+        )
+        if count != 1:
+            raise ValueError(f"no <Version> in {manifest}")
+        manifest.write_text(new_text)
         return
     text = manifest.read_text()
     pattern, replacement = version_pattern(manifest)
