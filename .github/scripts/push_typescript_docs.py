@@ -1,8 +1,9 @@
 """Publish the TypeScript frontend's API reference to hegel.dev/typescript.
 
 Run by the `release-typescript-docs` job of ci.yml with the frontend built
-(`just typescript::check-docs` has filled frontends/typescript/docs/) and the
-hegeldev/website repository checked out at `website/`.
+(`just typescript::check-docs` has filled frontends/typescript/docs/) and a
+shallow checkout of main at `publish/` that can push (the site lives in its
+`website/`).
 """
 
 import json
@@ -14,9 +15,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 FRONTEND = ROOT / "frontends" / "typescript"
-WEBSITE = ROOT / "website"
+PUBLISH = ROOT / "publish"
 DOCS_SRC = FRONTEND / "docs"
-DOCS_DEST = WEBSITE / "public" / "typescript"
+DOCS_DEST = PUBLISH / "website" / "public" / "typescript"
 # The docs are served at hegel.dev/typescript. Vercel's `trailingSlash: false`
 # strips the trailing slash from the root page, so the browser resolves
 # relative hrefs on /typescript against / — which turns `assets/style.css`
@@ -29,7 +30,7 @@ PUSH_ATTEMPTS = 5
 
 
 def git(*args: str) -> None:
-    subprocess.run(["git", *args], check=True, cwd=WEBSITE)
+    subprocess.run(["git", *args], check=True, cwd=PUBLISH)
 
 
 def inject_base_href(root: Path, href: str) -> None:
@@ -53,10 +54,10 @@ def main() -> None:
     git("config", "user.name", f"{app_slug}[bot]")
     git("config", "user.email", f"{app_id}+{app_slug}[bot]@users.noreply.github.com")
 
-    git("add", "public/typescript")
+    git("add", "website/public/typescript")
 
     status = subprocess.check_output(
-        ["git", "status", "--porcelain"], cwd=WEBSITE, text=True
+        ["git", "status", "--porcelain"], cwd=PUBLISH, text=True
     )
     if not status.strip():
         print("No doc changes to publish.")
@@ -64,23 +65,23 @@ def main() -> None:
 
     git("commit", "-m", f"Update the TypeScript docs to v{version}")
 
-    # Sibling hegel language releases can push to website main at the same
-    # time. On a rejected push, rebase onto the new main and retry — each
+    # Other merges and sibling hegel language releases can push to main at
+    # the same time. On a rejected push, rebase onto the new main and retry — each
     # language's docs live at a distinct path, so the rebase is clean. (Two
     # overlapping releases of this frontend would conflict; the rebase then
     # fails the job loudly and rerunning the newer job recovers.)
     for attempt in range(PUSH_ATTEMPTS):
-        result = subprocess.run(["git", "push", "origin", "HEAD:main"], cwd=WEBSITE)
+        result = subprocess.run(["git", "push", "origin", "HEAD:main"], cwd=PUBLISH)
         if result.returncode == 0:
             return
         if attempt == PUSH_ATTEMPTS - 1:
             raise RuntimeError(
-                f"Push to website main failed after {PUSH_ATTEMPTS} attempts."
+                f"Push to main failed after {PUSH_ATTEMPTS} attempts."
             )
         print("Push rejected; rebasing onto origin/main and retrying.")
         time.sleep(2)
         git("fetch", "origin", "main")
-        git("rebase", "origin/main")
+        git("rebase", "--onto", "origin/main", "HEAD~1")
 
 
 if __name__ == "__main__":
