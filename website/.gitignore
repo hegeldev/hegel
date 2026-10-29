@@ -20,12 +20,3 @@ pnpm-debug.log*
 # macOS-specific files
 .DS_Store
 .vercel
-
-# claude local config
-CLAUDE.local.md
-
-# whitelist .claude files, rather than blacklist. Some local claude files
-# (skills, agents) have to live in .claude - as opposed to eg CLAUDE.local.md,
-# which we gitignore at the top level.
-.claude/*
-!.claude/CLAUDE.md

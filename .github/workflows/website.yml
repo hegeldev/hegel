@@ -1,0 +1,30 @@
+# CI for hegel.dev (the Astro/Starlight site in website/). Called from ci.yml
+# when the site or the shared workspace changed. Vercel deploys the site
+# itself; this only checks that it builds.
+name: website
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/install-tools
+        with:
+          tools: just
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "22"
+      - name: Install dependencies
+        run: just website::setup
+      - name: Build the site
+        run: just website::build

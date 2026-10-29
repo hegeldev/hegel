@@ -25,8 +25,8 @@ export default defineConfig({
     // and the libhegel reference duplicated the C header. Keep the old URLs
     // alive by pointing them at the header itself.
     redirects: {
-        '/reference/protocol': 'https://github.com/hegeldev/hegel-rust/blob/main/hegel-c/include/hegel.h',
-        '/reference/libhegel': 'https://github.com/hegeldev/hegel-rust/blob/main/hegel-c/include/hegel.h',
+        '/reference/protocol': 'https://github.com/hegeldev/hegel/blob/main/libhegel/include/hegel.h',
+        '/reference/libhegel': 'https://github.com/hegeldev/hegel/blob/main/libhegel/include/hegel.h',
     },
 	integrations: [
 		starlight({
@@ -58,12 +58,13 @@ export default defineConfig({
 				{
 					label: 'Libraries',
 					items: [
-						{ label: 'hegel-rust', link: 'https://github.com/hegeldev/hegel-rust', attrs: { target: '_blank', class: 'external-link' } },
+						{ label: 'hegel-rust', link: 'https://github.com/hegeldev/hegel/tree/main/frontends/rust', attrs: { target: '_blank', class: 'external-link' } },
+						{ label: 'hegel-python', link: 'https://github.com/hegeldev/hegel/tree/main/frontends/python', attrs: { target: '_blank', class: 'external-link' } },
 						{ label: 'hegel-go', link: 'https://github.com/hegeldev/hegel-go', attrs: { target: '_blank', class: 'external-link' } },
-						{ label: 'hegel-cpp', link: 'https://github.com/hegeldev/hegel-cpp', attrs: { target: '_blank', class: 'external-link' } },
-						{ label: 'hegel-typescript', link: 'https://github.com/hegeldev/hegel-typescript', attrs: { target: '_blank', class: 'external-link' } },
-						{ label: 'hegel-java', link: 'https://github.com/hegeldev/hegel-java', attrs: { target: '_blank', class: 'external-link' } },
-						{ label: 'hegel-ocaml', link: 'https://github.com/hegeldev/hegel-ocaml', attrs: { target: '_blank', class: 'external-link' } },
+						{ label: 'hegel-cpp', link: 'https://github.com/hegeldev/hegel/tree/main/frontends/cpp', attrs: { target: '_blank', class: 'external-link' } },
+						{ label: 'hegel-typescript', link: 'https://github.com/hegeldev/hegel/tree/main/frontends/typescript', attrs: { target: '_blank', class: 'external-link' } },
+						{ label: 'hegel-java', link: 'https://github.com/hegeldev/hegel/tree/main/frontends/java', attrs: { target: '_blank', class: 'external-link' } },
+						{ label: 'hegel-ocaml', link: 'https://github.com/hegeldev/hegel/tree/main/frontends/ocaml', attrs: { target: '_blank', class: 'external-link' } },
 					],
 				},
 				// re-enable once we actually have content here!
@@ -83,6 +84,7 @@ export default defineConfig({
 					label: 'API documentation',
 					items: [
 						{ label: 'hegel-rust', link: 'https://docs.rs/hegeltest', attrs: { target: '_blank', class: 'external-link' } },
+						{ label: 'hegel-python', link: 'https://hegel.readthedocs.io', attrs: { target: '_blank', class: 'external-link' } },
 						{ label: 'hegel-go', link: 'https://pkg.go.dev/hegel.dev/go/hegel', attrs: { target: '_blank', class: 'external-link' } },
 						{ label: 'hegel-cpp', link: '/cpp/', attrs: { target: '_blank', class: 'external-link' } },
 						{ label: 'hegel-typescript', link: '/typescript/', attrs: { target: '_blank', class: 'external-link' } },
