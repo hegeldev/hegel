@@ -16,12 +16,18 @@ use std::sync::LazyLock;
 
 static DATE_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.datetime.dates"));
 static TIME_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.datetime.times"));
-static DATETIME_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.datetime.datetimes"));
-static TIMESTAMP_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.datetime.timestamps"));
-static UTC_OFFSET_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.datetime.utc_offsets"));
-static TIME_ZONE_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.datetime.timezones"));
-static ZONED_DATETIME_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.datetime.zoned_datetimes"));
-static SIGNED_DURATION_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.datetime.signed_durations"));
+static DATETIME_LABEL: LazyLock<u64> =
+    LazyLock::new(|| label_from_name("hegel.datetime.datetimes"));
+static TIMESTAMP_LABEL: LazyLock<u64> =
+    LazyLock::new(|| label_from_name("hegel.datetime.timestamps"));
+static UTC_OFFSET_LABEL: LazyLock<u64> =
+    LazyLock::new(|| label_from_name("hegel.datetime.utc_offsets"));
+static TIME_ZONE_LABEL: LazyLock<u64> =
+    LazyLock::new(|| label_from_name("hegel.datetime.timezones"));
+static ZONED_DATETIME_LABEL: LazyLock<u64> =
+    LazyLock::new(|| label_from_name("hegel.datetime.zoned_datetimes"));
+static SIGNED_DURATION_LABEL: LazyLock<u64> =
+    LazyLock::new(|| label_from_name("hegel.datetime.signed_durations"));
 static SPAN_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.datetime.spans"));
 
 /// The first wall-clock time of the engine's civil range.

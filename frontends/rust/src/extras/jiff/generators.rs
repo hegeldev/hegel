@@ -22,7 +22,8 @@ static TIME_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.jiff.
 static DATETIME_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.jiff.datetimes"));
 static TIMESTAMP_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.jiff.timestamps"));
 static SPAN_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.jiff.spans"));
-static SIGNED_DURATION_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.jiff.signed_durations"));
+static SIGNED_DURATION_LABEL: LazyLock<u64> =
+    LazyLock::new(|| label_from_name("hegel.jiff.signed_durations"));
 static OFFSET_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.jiff.offsets"));
 static ZONED_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.jiff.zoneds"));
 static TIME_ZONE_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.jiff.timezones"));
