@@ -1,0 +1,82 @@
+# Recipes for the C# frontend (the `Hegel`, `Hegel.FSharp` and `Hegel.Xunit` NuGet packages).
+# Run as `just csharp::<recipe>` from anywhere in the repo; recipes execute
+# from this directory. The engine is the in-tree libhegel: `build-libhegel`
+# compiles it into the workspace's `target/`, and the MSBuild `HegelEngine`
+# target stages that build as the bundled native the tests load
+# (scripts/engine.py; `HEGEL_LIBHEGEL_PATH` overrides it).
+set ignore-comments := true
+# Recipes assume a POSIX shell; on Windows run them under Git Bash.
+set windows-shell := ["bash", "-uc"]
+
+configuration := "Release"
+# The framework the test projects target: net8.0 (the libraries' own target) or net10.0.
+test_framework := env("HEGEL_TEST_FRAMEWORK", "net10.0")
+coverage_args := "-p:CollectCoverage=true -p:CoverletOutputFormat=cobertura -p:ExcludeByFile='**/*.g.cs' -p:DoesNotReturnAttribute=DoesNotReturnAttribute -p:Threshold=100 -p:ThresholdType=line -p:ThresholdStat=total"
+csharp_tests := "tests/Hegel.Tests/Hegel.Tests.csproj"
+fsharp_tests := "tests/Hegel.FSharp.Tests/Hegel.FSharp.Tests.fsproj"
+
+# Build libhegel natively, the engine every recipe below bundles.
+build-libhegel:
+    cargo build --release -p hegeltest-c --manifest-path ../../Cargo.toml
+
+# Build the libraries and the tests against the locally built libhegel.
+build: build-libhegel
+    dotnet build Hegel.sln -c {{configuration}} -p:HegelTargetFramework={{test_framework}}
+
+# Both suites against the real engine, each with its 100% line coverage gate
+# (the C# suite over the Hegel and Hegel.Xunit assemblies, the F# suite over Hegel.FSharp).
+check-test: build
+    rm -rf coverage
+    dotnet test {{csharp_tests}} -c {{configuration}} --no-build -p:HegelTargetFramework={{test_framework}} \
+        {{coverage_args}} -p:CoverletOutput=../../coverage/ -p:Include='[Hegel]*%2c[Hegel.Xunit]*'
+    dotnet test {{fsharp_tests}} -c {{configuration}} --no-build -p:HegelTargetFramework={{test_framework}} \
+        {{coverage_args}} -p:CoverletOutput=../../coverage/fsharp/ -p:Include='[Hegel.FSharp]*'
+
+# Both suites without the coverage gates.
+test: build
+    dotnet test Hegel.sln -c {{configuration}} --no-build -p:HegelTargetFramework={{test_framework}}
+
+# One class, module or method: `just csharp::test-only RunnerTests`, `... RunnerTests.ReportsOrigin`, `... AutoTests`.
+test-only PATTERN: build
+    dotnet test Hegel.sln -c {{configuration}} --no-build -p:HegelTargetFramework={{test_framework}} --filter "FullyQualifiedName~{{PATTERN}}"
+
+# List the library lines the last `check-test` left uncovered.
+uncovered:
+    python3 scripts/uncovered.py coverage/coverage.cobertura.xml
+    python3 scripts/uncovered.py coverage/fsharp/coverage.cobertura.xml
+
+# dotnet format for the C# projects, fantomas (from the tool manifest) for the F# ones.
+format:
+    dotnet format src/Hegel/Hegel.csproj
+    dotnet format src/Hegel.Xunit/Hegel.Xunit.csproj
+    dotnet format {{csharp_tests}}
+    dotnet tool restore
+    dotnet fantomas src/Hegel.FSharp tests/Hegel.FSharp.Tests
+
+check-format:
+    dotnet format src/Hegel/Hegel.csproj --verify-no-changes
+    dotnet format src/Hegel.Xunit/Hegel.Xunit.csproj --verify-no-changes
+    dotnet format {{csharp_tests}} --verify-no-changes
+    dotnet tool restore
+    dotnet fantomas --check src/Hegel.FSharp tests/Hegel.FSharp.Tests
+
+# The compilers' analyzers and XML documentation checks, with warnings as errors.
+check-lint: check-format build-libhegel
+    dotnet build Hegel.sln -c {{configuration}} -p:HegelTargetFramework={{test_framework}} -warnaserror
+
+# Build the NuGet packages into dist/ with the local engine (the release job
+# packs with -p:HegelNativesSource=release instead, bundling every platform).
+pack: build-libhegel
+    dotnet pack src/Hegel/Hegel.csproj -c {{configuration}} -o dist
+    dotnet pack src/Hegel.FSharp/Hegel.FSharp.fsproj -c {{configuration}} -o dist
+    dotnet pack src/Hegel.Xunit/Hegel.Xunit.csproj -c {{configuration}} -o dist
+
+clean:
+    rm -rf src/Hegel/bin src/Hegel/obj src/Hegel.FSharp/bin src/Hegel.FSharp/obj src/Hegel.Xunit/bin src/Hegel.Xunit/obj tests/Hegel.Tests/bin tests/Hegel.Tests/obj tests/Hegel.FSharp.Tests/bin tests/Hegel.FSharp.Tests/obj coverage dist native
+
+check: check-lint check-test
+
+# These aliases are provided as ux improvements for local developers. CI
+# should use the longer forms.
+
+lint: check-lint
