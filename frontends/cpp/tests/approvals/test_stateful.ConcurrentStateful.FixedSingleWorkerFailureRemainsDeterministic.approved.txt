@@ -1,12 +1,10 @@
---- Failure: ConcurrentStateful.FixedSingleWorkerFailureRemainsDeterministic ([location]) ---
-Falsified after 1 test case (0 discarded):
+Concurrency level: 1
+---------------- Round 1: group "<anonymous>" ----------------
+[worker 0 +time] Rule: boom {
+[worker 0 +time]   auto draw_1 = 0;
+[worker 0 +time] }
+[worker 0 +time] Rule boom failed:
 
-  Concurrency level: 1
-  Initial invariant check.
-  ---------------- Round 1: group "<anonymous>" ----------------
-[worker 0 +time]   Rule: boom
-[worker 0 +time]     auto draw_1 = 0;
-
-Exception: std::runtime_error: concurrent boom 0
-rerun with: hegel::test(test_fn, settings, {"[blob]"})
+To reproduce this failure, pass its blob to hegel::test():
+    hegel::test(test_fn, settings, {"[blob]"})
 

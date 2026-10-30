@@ -23,7 +23,7 @@ using ApprovalTests::Approvals;
 using hegel::tests::common::assert_matches_regex;
 using hegel::tests::common::run_subject;
 using hegel::tests::common::scrub_blob;
-using hegel::tests::common::scrub_report;
+
 using hegel::tests::common::SubprocessResult;
 
 #ifndef HEGEL_SUBJECT_BIN
@@ -60,7 +60,7 @@ TEST(Output, ThrowSitesGroupTheSameWayInEveryProcess) {
     for (int run = 0; run < 3; run++) {
         SubprocessResult r = run_scenario("throw_sites");
         EXPECT_NE(r.exit_code, 0);
-        assert_matches_regex(r.stderr_data, R"(Failure 1 of 2)");
+        assert_matches_regex(r.stderr_data, R"(2 distinct failures)");
         assert_matches_regex(r.stderr_data, R"(even bug with x=10)");
         assert_matches_regex(r.stderr_data, R"(odd bug with x=11)");
     }
@@ -109,13 +109,22 @@ namespace {
     void throw_boom(hegel::TestCase&) { throw std::runtime_error("boom"); }
 } // namespace
 
+TEST(FailureReport, WideValueBreaksAcrossLines) {
+    std::string out = capture_failure_report([](hegel::TestCase& tc) {
+        (void)tc.draw(gs::vectors(gs::just(std::string("a wide value")),
+                                  {.min_size = 3, .max_size = 3}));
+        throw std::runtime_error("boom");
+    });
+    Approvals::verify(out, scrub_blob());
+}
+
 // Fails on every case; the minimal counterexample is 0.
 TEST(FailureReport, SingleFailure) {
     std::string out = capture_failure_report([](hegel::TestCase& tc) {
         int32_t x = tc.draw(gs::integers<int32_t>());
         throw std::runtime_error("intentional failure: " + std::to_string(x));
     });
-    Approvals::verify(out, scrub_report());
+    Approvals::verify(out, scrub_blob());
 }
 
 // Fails for x >= 10; the replayed counterexample shrinks to exactly 10.
@@ -126,7 +135,7 @@ TEST(FailureReport, OriginStableAcrossDrawnValues) {
             throw std::runtime_error("failure with x=" + std::to_string(x));
         }
     });
-    Approvals::verify(out, scrub_report());
+    Approvals::verify(out, scrub_blob());
 }
 
 // A non-std exception still produces the replay output before re-raising.
@@ -137,19 +146,15 @@ TEST(FailureReport, NonStdException) {
             throw 42;
         }
     });
-    Approvals::verify(out, scrub_report());
+    Approvals::verify(out, scrub_blob());
 }
 
-// A body that throws before it draws anything has nothing to show between the
-// count and the exception, so the report keeps no empty body block.
 TEST(FailureReport, NoDrawsPrintsBodylessReport) {
     std::string out = capture_failure_report(throw_boom);
-    Approvals::verify(out, scrub_report());
+    Approvals::verify(out, scrub_blob());
 }
 
-// A test location names the test and its source line in the header. The
-// location overload takes no blobs, so naming a test costs one argument.
-TEST(FailureReport, LocationNamesTheTest) {
+TEST(FailureReport, LocationOverloadGetsItsOwnRerunHint) {
     std::string out = capture_report(
         [] { hegel::test(throw_boom, kLocation, report_settings()); });
     Approvals::verify(out, scrub_blob());
@@ -162,31 +167,17 @@ TEST(FailureReport, LocationNamesTheTest) {
 TEST(FailureReport, MacroDefinedTestGetsAnnotationRerunHint) {
     std::string out = capture_report([] {
         hegel::internal::test_from_macro(throw_boom, kLocation,
-                                         report_settings(), {});
+                                         report_settings(), {}, {});
     });
     Approvals::verify(out, scrub_blob());
 }
 
-// The discards depend on the drawn data alone: a case the engine replays
-// with the same choices must reach the same verdict, or it reports the test
-// as flaky.
-TEST(FailureReport, DiscardedCasesAreCounted) {
-    std::string out = capture_failure_report([](hegel::TestCase& tc) {
-        int32_t x = tc.draw(gs::integers<int32_t>());
-        tc.assume(x % 2 != 0);
-        throw std::runtime_error("boom");
-    });
-    Approvals::verify(out, scrub_report());
-}
-
-// A note that spans several lines keeps every line inside the body's
-// indent.
-TEST(FailureReport, MultiLineNoteIsIndented) {
+TEST(FailureReport, MultiLineNotePrintsEachLine) {
     std::string out = capture_failure_report([](hegel::TestCase& tc) {
         tc.note("first line\nsecond line");
         throw std::runtime_error("boom");
     });
-    Approvals::verify(out, scrub_report());
+    Approvals::verify(out, scrub_blob());
 }
 
 namespace {
@@ -220,12 +211,12 @@ namespace {
 #ifdef HEGEL_TESTS_NO_THROW_SITE
 // Without throw-site capture, throws of one type collapse into one failure.
 TEST(FailureReport, ThrowSitesDisabled) {
-    Approvals::verify(capture_two_throw_sites_report(), scrub_report());
+    Approvals::verify(capture_two_throw_sites_report(), scrub_blob());
 }
 #else
 // With throw-site capture, the two sites are distinct origins
 TEST(FailureReport, ThrowSitesEnabled) {
-    Approvals::verify(capture_two_throw_sites_report(), scrub_report());
+    Approvals::verify(capture_two_throw_sites_report(), scrub_blob());
 }
 #endif
 
@@ -240,7 +231,7 @@ TEST(FailureReport, OneThrowSiteIsOneBug) {
             }
         },
         hegel::Settings{.report_multiple_failures = true});
-    EXPECT_TRUE(out.find("Failure 1 of") == std::string::npos) << out;
+    EXPECT_TRUE(out.find("distinct failures") == std::string::npos) << out;
 }
 
 // An exception that names its own origin splits one `throw` into two bugs,
@@ -255,7 +246,7 @@ TEST(FailureReport, FailureOriginSplitsOneThrowSite) {
             }
         },
         hegel::Settings{.report_multiple_failures = true});
-    EXPECT_TRUE(out.find("Failure 1 of 2") != std::string::npos) << out;
+    EXPECT_TRUE(out.find("2 distinct failures") != std::string::npos) << out;
     EXPECT_TRUE(out.find("bug with x=10") != std::string::npos) << out;
     EXPECT_TRUE(out.find("bug with x=11") != std::string::npos) << out;
 }
@@ -274,7 +265,7 @@ TEST(FailureReport, FailureOriginJoinsTwoThrowSites) {
             }
         },
         hegel::Settings{.report_multiple_failures = true});
-    EXPECT_TRUE(out.find("Failure 1 of") == std::string::npos) << out;
+    EXPECT_TRUE(out.find("distinct failures") == std::string::npos) << out;
 }
 
 namespace {
@@ -294,7 +285,7 @@ namespace {
 TEST(FailureReport, MultipleFailuresReported) {
     std::string out = capture_failure_report(
         two_bugs, hegel::Settings{.report_multiple_failures = true});
-    Approvals::verify(out, scrub_report());
+    Approvals::verify(out, scrub_blob());
 }
 
 // With report_multiple_failures off, the run stops at the first failing
@@ -302,7 +293,36 @@ TEST(FailureReport, MultipleFailuresReported) {
 TEST(FailureReport, MultipleFailuresOffReportsOne) {
     std::string out = capture_failure_report(
         two_bugs, hegel::Settings{.report_multiple_failures = false});
-    Approvals::verify(out, scrub_report());
+    Approvals::verify(out, scrub_blob());
+}
+
+TEST(FailureReport, QuietPrintsOnlyTheRerunHint) {
+    std::string out = capture_failure_report(
+        [](hegel::TestCase& tc) {
+            tc.note("hidden");
+            (void)tc.draw(gs::integers<int32_t>());
+            throw std::runtime_error("boom");
+        },
+        hegel::Settings{.verbosity = hegel::Verbosity::Quiet});
+    Approvals::verify(out, scrub_blob());
+}
+
+TEST(FailureReport, MultipleFailuresNameANonStdException) {
+    std::string out = capture_failure_report(
+        [](hegel::TestCase& tc) {
+            int32_t x = tc.draw(gs::integers<int32_t>());
+            if (x >= 10 && x % 2 == 0) {
+                throw std::runtime_error("even bug");
+            }
+            if (x >= 10) {
+                throw 7;
+            }
+        },
+        hegel::Settings{.verbosity = hegel::Verbosity::Quiet,
+                        .report_multiple_failures = true});
+    EXPECT_NE(out.find("(an exception that is not a std::exception)"),
+              std::string::npos)
+        << out;
 }
 
 // print_blob = false drops the rerun hint. The rest of the report stays.
@@ -310,7 +330,7 @@ TEST(FailureReport, PrintBlobOffDropsRerunHint) {
     std::string out = capture_failure_report(
         [](hegel::TestCase&) { throw std::runtime_error("silly error"); },
         hegel::Settings{.print_blob = false});
-    Approvals::verify(out, scrub_report());
+    Approvals::verify(out, scrub_blob());
 }
 
 // ---------------------------------------------------------------------------
@@ -372,6 +392,40 @@ TEST(Diagnostics, DebugPrintsNotesAndValues) {
     EXPECT_TRUE(contains(out, "auto draw_1 = "));
 }
 
+// Verbose says why a case stopped short: a failed assumption, or running
+// out of data (here, while shrinking the failing list).
+TEST(Diagnostics, VerbosePrintsWhyACaseStoppedShort) {
+    testing::internal::CaptureStderr();
+    hegel::test(
+        [](hegel::TestCase& tc) {
+            tc.assume(tc.draw(gs::integers<int>(
+                          {.min_value = 0, .max_value = 1})) == 0);
+        },
+        hegel::Settings{.test_cases = 20,
+                        .verbosity = hegel::Verbosity::Verbose,
+                        .database = hegel::Database::disabled()});
+    std::string out = testing::internal::GetCapturedStderr();
+    EXPECT_TRUE(contains(out, "Test case stopped: failed assumption\n")) << out;
+    EXPECT_FALSE(contains(out, "Test case stopped: out of data"));
+
+    testing::internal::CaptureStderr();
+    EXPECT_THROW(hegel::test(
+                     [](hegel::TestCase& tc) {
+                         std::vector<int64_t> xs = tc.draw(gs::vectors(
+                             gs::integers<int64_t>(), {.min_size = 10}));
+                         for (int64_t x : xs) {
+                             if (x >= 1000 || x <= -1000) {
+                                 throw std::runtime_error("large");
+                             }
+                         }
+                     },
+                     hegel::Settings{.verbosity = hegel::Verbosity::Verbose,
+                                     .database = hegel::Database::disabled()}),
+                 std::runtime_error);
+    EXPECT_TRUE(contains(testing::internal::GetCapturedStderr(),
+                         "Test case stopped: out of data\n"));
+}
+
 // A throw that isn't a std::exception exercises the catch(...) fallback,
 // which records the exception's type name as the failure origin; the
 // single-failure re-raise then surfaces the original exception, not a
@@ -386,18 +440,20 @@ TEST(Diagnostics, InternalExceptionMessages) {
     EXPECT_STREQ(hegel::internal::HegelReject().what(), "test case rejected");
     EXPECT_STREQ(hegel::internal::HegelStopTest().what(),
                  "test case stopped by backend");
+    EXPECT_STREQ(hegel::internal::HegelLoopDone().what(),
+                 "test case ended by repeat");
 }
 
 // ---------------------------------------------------------------------------
-// Draw naming: bare names, 1-based suffixes for repeatable draws, one line
-// per user-level draw. Deterministic outputs are snapshotted whole with
+// Draw naming: 1-based suffixes per name in draw order, one line per
+// user-level draw. Deterministic outputs are snapshotted whole with
 // ApprovalTests (tests/approvals/*.approved.txt).
 // ---------------------------------------------------------------------------
 
 namespace {
     // Runs one Verbose test case in-process and returns its stderr.
     std::string run_verbose(const std::function<void(hegel::TestCase&)>& body,
-                            int64_t test_cases = 1) {
+                            uint64_t test_cases = 1) {
         testing::internal::CaptureStderr();
         hegel::test(body,
                     hegel::Settings{.test_cases = test_cases,
@@ -407,8 +463,8 @@ namespace {
     }
 } // namespace
 
-// A user-supplied name drawn once prints bare, with no suffix.
-TEST(DrawNames, NamedDrawPrintsBareName) {
+// A user-supplied name is suffixed even for a single use.
+TEST(DrawNames, NamedDrawIsNumberedFromOne) {
     std::string out = run_verbose(
         [](hegel::TestCase& tc) { (void)tc.draw("count", gs::just(5)); });
     Approvals::verify(out);
@@ -424,45 +480,23 @@ TEST(DrawNames, UnnamedDrawsAreNumbered) {
     Approvals::verify(out);
 }
 
-// A repeatable name is suffixed even for a single use.
-TEST(DrawNames, RepeatableSingleUseIsSuffixed) {
-    std::string out = run_verbose([](hegel::TestCase& tc) {
-        (void)tc.draw("x", gs::just(3), /*repeatable=*/true);
-    });
-    Approvals::verify(out);
-}
-
-TEST(DrawNames, RepeatableDrawsNumberInOrder) {
+TEST(DrawNames, ReusedNamesNumberInOrder) {
     std::string out = run_verbose([](hegel::TestCase& tc) {
         for (int i = 1; i <= 3; ++i) {
-            (void)tc.draw("x", gs::just(i), /*repeatable=*/true);
+            (void)tc.draw("x", gs::just(i));
         }
     });
     Approvals::verify(out);
 }
 
-// Suffix allocation skips display names an earlier draw already took.
-TEST(DrawNames, SuffixAllocationSkipsTakenNames) {
-    std::string out = run_verbose([](hegel::TestCase& tc) {
-        (void)tc.draw("x_1", gs::just(0));
-        (void)tc.draw("x", gs::just(1), /*repeatable=*/true);
-        (void)tc.draw("x", gs::just(2), /*repeatable=*/true);
-    });
-    Approvals::verify(out);
-}
-
-TEST(DrawNames, BareNameReusePrintsBare) {
+// Each name numbers on its own, and the unnamed draws count as "draw".
+TEST(DrawNames, EachNameCountsSeparately) {
     std::string out = run_verbose([](hegel::TestCase& tc) {
         (void)tc.draw("x", gs::just(1));
-        (void)tc.draw("x", gs::just(2));
-    });
-    Approvals::verify(out);
-}
-
-TEST(DrawNames, MixedRepeatableAndBareUses) {
-    std::string out = run_verbose([](hegel::TestCase& tc) {
-        (void)tc.draw("x", gs::just(1), /*repeatable=*/true);
-        (void)tc.draw("x", gs::just(2));
+        (void)tc.draw(gs::just(2));
+        (void)tc.draw("y", gs::just(3));
+        (void)tc.draw("x", gs::just(4));
+        (void)tc.draw(gs::just(5));
     });
     Approvals::verify(out);
 }
@@ -491,8 +525,7 @@ TEST(DrawNames, ComposeInnerDrawsAreSilent) {
 TEST(DrawNames, CountersResetPerCase) {
     std::string out = run_verbose(
         [](hegel::TestCase& tc) {
-            (void)tc.draw("x", gs::integers<int>().map([](int) { return 3; }),
-                          /*repeatable=*/true);
+            (void)tc.draw("x", gs::integers<int>().map([](int) { return 3; }));
         },
         /*test_cases=*/3);
     Approvals::verify(out);

@@ -10,11 +10,11 @@
 * [Documentation](https://hegel.dev/cpp)
 * [Website](https://hegel.dev)
 
-Hegel is a property-based testing library for C++. Hegel is based on [Hypothesis](https://github.com/hypothesisworks/hypothesis), using the [Hegel protocol](https://hegel.dev/).
+Hegel is a property-based testing library for C++. Hegel is based on [Hypothesis](https://github.com/hypothesisworks/hypothesis), using [libhegel](https://github.com/hegeldev/hegel/tree/main/libhegel), Hegel's native engine.
 
 ## Installation
 
-Hegel requires C++20.
+Hegel builds with a C++20 compiler, and a project using it needs C++20 too, unless the library is configured with `-DHEGEL_REFLECTION=OFF`: that drops `hegel::generators::default_generator`, and a C++17 project can then use it.
 
 To install with CMake, add this to your `CMakeLists.txt` (CMake 3.14+ required):
 
@@ -80,21 +80,20 @@ failures found in one run are replayed first in the next. (You can also call
 This test will fail! Hegel will produce a minimal failing test case for us:
 
 ```
---- Failure: sort_agrees_with_std_sort (sort_test.cpp:9) ----------------
-Falsified after 8 test cases (0 discarded):
+auto vec1_1 = std::vector<int>{0, 0};
 
-  auto vec1 = std::vector<int>{0, 0};
-
-Exception: std::runtime_error: sort mismatch
-rerun with: HEGEL_REPRODUCE_FAILURE(sort_agrees_with_std_sort, "AXicY2VgYGBkZOBiZEBhMAAAAd8AIQ==")
+To reproduce this failure, add this line above HEGEL_TEST(sort_agrees_with_std_sort):
+    HEGEL_REPRODUCE_FAILURE(sort_agrees_with_std_sort, "AXicY2VgYGBkZOBiZEBhMAAAAd8AIQ==")
 ```
 
-The report names the test and its source line, says how many cases it took
-to find the failure, and shows the minimal example.
+The report shows the minimal example and how to replay it, and the test's own
+exception (`sort mismatch`) propagates out of the test.
 
 Each draw is replayed and printed as a C++ declaration. `tc.draw("vec1", gen)`
-names the draw with `vec1` as above. An unnamed `tc.draw(gen)` prints
-(`auto draw_1 = ...;`) instead.
+names the draw `vec1_1` as above; each use of a name is numbered in turn
+(`vec1_1`, `vec1_2`, ...). An unnamed `tc.draw(gen)` prints as
+`auto draw_1 = ...;` instead. A value too wide for one line is broken
+across lines, one element per line.
 
 The last line replays this exact failure. Put it above the test to rerun the
 counterexample instead of generating new cases:
@@ -105,3 +104,44 @@ HEGEL_TEST(sort_agrees_with_std_sort)(hegel::TestCase& tc) {
     // ...
 }
 ```
+
+### How values print
+
+The generator prints the value as it draws it. A container prints each
+element as the element's generator prints it, so printing that you choose for
+one generator shows inside every value built from it. `tc.draw` needs a
+printable generator, `hegel::generators::Generator<T>`. Every built-in
+generator of a type with a C++ representation is one. Arithmetic types, enums,
+`std::string` and `std::monostate` have one, and so do the standard pairs,
+tuples, variants, optionals, vectors, sets, arrays and maps of such types. A
+type of your own has one when it has a `void print_to(hegel::Printer&) const`
+member or an `operator<<`, or (C++20) is a reflectable aggregate.
+
+A generator that cannot print is an `AnyGenerator<T>`. For example, `map` to
+a type with no C++ representation gives one. Make it printable with one of
+these:
+
+```cpp
+namespace gs = hegel::generators;
+
+// Print each value with your own function.
+auto ids = gs::integers<int>({.min_value = 0})
+               .print_with([](int id, hegel::Printer& p) {
+                   p.text("UserId(" + std::to_string(id) + ")");
+               });
+
+// Print a mapped value as a call on the value it was made from:
+// `auto key_1 = KeyData::from_ffi(3);`
+auto keys = gs::integers<int>()
+                .map([](int raw) { return KeyData::from_ffi(raw); })
+                .print_as_call("KeyData::from_ffi");
+```
+
+`print_as_repr()` prints by the C++ representation, and `tc.draw_silent(gen)`
+draws from any generator and prints nothing. A generator of your own
+implements `hegel::generators::IPrintableGenerator<T>` and writes its value to
+a `hegel::Printer` in `do_draw_and_print`; see the API reference.
+
+A reflectable aggregate is representable even when one of its fields is not.
+That field prints as an `<unprintable ...>` placeholder. Give the field's type
+a representation, or draw the aggregate with `print_with`.

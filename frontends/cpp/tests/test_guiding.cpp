@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include <functional>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -122,8 +123,9 @@ TEST(Targeting, DuplicateLabelThrows) {
 // ---------------------------------------------------------------------------
 
 // repeat() runs its body in an engine-managed loop that can iterate more than
-// once, and control returns to the caller after the loop completes.
-TEST(Loop, RunsBodyAndReturns) {
+// once, and when the engine ends the loop the test case ends as passing: the
+// code after the call never runs.
+TEST(Loop, NeverReturns) {
     int max_iters = 0;
     bool returned = false;
     hegel::test(
@@ -131,19 +133,41 @@ TEST(Loop, RunsBodyAndReturns) {
             int iters = 0;
             tc.repeat([&] {
                 (void)tc.draw(gs::integers<int>());
-                ++iters;
+                if (++iters > max_iters) {
+                    max_iters = iters;
+                }
             });
-            // Reached only because repeat() returns after the loop.
             returned = true;
-            if (iters > max_iters) {
-                max_iters = iters;
-            }
         },
-        hegel::Settings{.test_cases = 100,
+        hegel::Settings{
+            .test_cases = 3,
+            .derandomize = true,
+            .database = hegel::Database::disabled(),
+            .suppress_health_check = {hegel::HealthCheck::TooSlow}});
+    EXPECT_FALSE(returned);
+    EXPECT_GT(max_iters, 1) << "repeat() never iterated more than once";
+}
+
+// A nested repeat() whose loop the engine ends ends the test case too, as
+// passing, without marking the outer repetition failed.
+TEST(Loop, NestedLoopEndingEndsTheCase) {
+    bool inner_ran = false;
+    bool returned = false;
+    hegel::test(
+        [&](hegel::TestCase& tc) {
+            tc.repeat([&] {
+                tc.repeat([&] {
+                    (void)tc.draw(gs::booleans());
+                    inner_ran = true;
+                });
+                returned = true;
+            });
+        },
+        hegel::Settings{.test_cases = 3,
                         .derandomize = true,
                         .database = hegel::Database::disabled()});
-    EXPECT_TRUE(returned);
-    EXPECT_GT(max_iters, 1) << "repeat() never iterated more than once";
+    EXPECT_TRUE(inner_ran);
+    EXPECT_FALSE(returned);
 }
 
 // A failure raised inside a repeat() iteration is reported like any other
@@ -166,24 +190,129 @@ TEST(Loop, FailureInsideIsReported) {
     }
 }
 
+// Each repetition's draws print indented under its `// Repetition #N` note,
+// and a rejected repetition still counts as one.
+TEST(Loop, RepetitionsPrintIndented) {
+    testing::internal::CaptureStderr();
+    EXPECT_THROW(hegel::test(
+                     [](hegel::TestCase& tc) {
+                         int total = 0;
+                         tc.repeat([&] {
+                             int n = tc.draw(
+                                 "n", gs::integers<int>(
+                                          {.min_value = 0, .max_value = 5}));
+                             tc.assume(n != 1);
+                             total += n;
+                             if (total > 5) {
+                                 throw std::runtime_error("boom");
+                             }
+                         });
+                     },
+                     hegel::Settings{.test_cases = 200,
+                                     .derandomize = true,
+                                     .database = hegel::Database::disabled()}),
+                 std::runtime_error);
+    std::string out = testing::internal::GetCapturedStderr();
+    EXPECT_NE(out.find("// Repetition #1\n  auto n_1 = "), std::string::npos)
+        << out;
+    EXPECT_NE(out.find("// Repetition #2\n  auto n_2 = "), std::string::npos)
+        << out;
+}
+
+// A usage error inside a repetition propagates untouched.
+TEST(Loop, UsageErrorInsideIsReraised) {
+    EXPECT_THROW(hegel::test(
+                     [](hegel::TestCase& tc) {
+                         tc.repeat([&] {
+                             (void)tc.draw(gs::integers<int>(
+                                 {.min_value = 1, .max_value = 0}));
+                         });
+                     },
+                     hegel::Settings{.test_cases = 5,
+                                     .derandomize = true,
+                                     .database = hegel::Database::disabled()}),
+                 std::invalid_argument);
+}
+
 // reject() inside an iteration discards that iteration and the loop continues;
 // the run completes without reporting a failure.
 TEST(Loop, RejectInsideContinues) {
     bool completed = false;
     hegel::test(
         [&](hegel::TestCase& tc) {
+            bool rejected = false;
             tc.repeat([&] {
-                int n = tc.draw(gs::integers<int>());
+                int n = tc.draw(
+                    gs::integers<int>({.min_value = 0, .max_value = 3}));
                 if (n % 2 != 0) {
+                    rejected = true;
                     tc.reject();
                 }
+                if (rejected) {
+                    completed = true;
+                }
             });
-            completed = true;
         },
         hegel::Settings{
-            .test_cases = 100,
+            .test_cases = 3,
             .derandomize = true,
             .database = hegel::Database::disabled(),
-            .suppress_health_check = {hegel::HealthCheck::FilterTooMuch}});
+            .suppress_health_check = {hegel::HealthCheck::FilterTooMuch,
+                                      hegel::HealthCheck::TooSlow}});
     EXPECT_TRUE(completed);
+}
+
+// ---------------------------------------------------------------------------
+// event() / event_value()
+// ---------------------------------------------------------------------------
+
+namespace {
+    std::string
+    run_capturing_stderr(const std::function<void(hegel::TestCase&)>& body,
+                         bool show_statistics) {
+        testing::internal::CaptureStderr();
+        hegel::test(body,
+                    hegel::Settings{.test_cases = 50,
+                                    .derandomize = true,
+                                    .show_statistics = show_statistics,
+                                    .database = hegel::Database::disabled()});
+        return testing::internal::GetCapturedStderr();
+    }
+} // namespace
+
+TEST(Events, StatisticsReportEventsAndValues) {
+    std::string output = run_capturing_stderr(
+        [](hegel::TestCase& tc) {
+            int n =
+                tc.draw(gs::integers<int>({.min_value = 0, .max_value = 9}));
+            if (n == 0) {
+                tc.event("zero");
+            }
+            tc.event_value("n", static_cast<double>(n));
+        },
+        true);
+    EXPECT_NE(output.find("Statistics (over "), std::string::npos) << output;
+    EXPECT_NE(output.find("* zero: "), std::string::npos) << output;
+    EXPECT_NE(output.find("* n: count "), std::string::npos) << output;
+}
+
+TEST(Events, NotReportedByDefault) {
+    std::string output = run_capturing_stderr(
+        [](hegel::TestCase& tc) {
+            (void)tc.draw(gs::booleans());
+            tc.event("always");
+        },
+        false);
+    EXPECT_EQ(output.find("Statistics"), std::string::npos) << output;
+}
+
+TEST(Events, NonFiniteValueThrows) {
+    EXPECT_THROW(hegel::test(
+                     [](hegel::TestCase& tc) {
+                         tc.event_value(
+                             "bad", std::numeric_limits<double>::quiet_NaN());
+                     },
+                     hegel::Settings{.test_cases = 1,
+                                     .database = hegel::Database::disabled()}),
+                 std::invalid_argument);
 }

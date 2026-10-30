@@ -18,7 +18,7 @@
 #include "common/approvals.h"
 
 using ApprovalTests::Approvals;
-using hegel::tests::common::scrub_report;
+using hegel::tests::common::scrub_blob;
 
 namespace gs = hegel::generators;
 
@@ -222,7 +222,7 @@ TEST(CloneOutput, FailureReplayIncludesCloneDraw) {
                                      std::to_string(x));
         }
     });
-    Approvals::verify(out, scrub_report());
+    Approvals::verify(out, scrub_blob());
 }
 
 // Verbose trace of a run that draws on the parent and then on a clone (both on
@@ -242,4 +242,59 @@ TEST(CloneOutput, VerboseTraceShowsParentAndCloneDraws) {
                         .derandomize = false,
                         .database = hegel::Database::disabled()});
     Approvals::verify(testing::internal::GetCapturedStderr());
+}
+
+// A clone's notes and draws appear where the clone was made, whatever order
+// the parent and the clone print in.
+TEST(CloneOutput, CloneOutputAppearsWhereTheCloneWasMade) {
+    std::string out = capture_failure_report([](hegel::TestCase& tc) {
+        tc.note("before the clone");
+        hegel::TestCase worker = tc.clone();
+        tc.note("after the clone");
+        worker.note("from the clone");
+        throw std::runtime_error("boom");
+    });
+    Approvals::verify(out, scrub_blob());
+}
+
+TEST(CloneOutput, CloneDrawsContinueTheParentsNames) {
+    std::string out = capture_failure_report([](hegel::TestCase& tc) {
+        (void)tc.draw(gs::just(1));
+        hegel::TestCase worker = tc.clone();
+        (void)worker.draw(gs::just(2));
+        (void)tc.draw(gs::just(3));
+        throw std::runtime_error("boom");
+    });
+    EXPECT_NE(
+        out.find("auto draw_1 = 1;\nauto draw_2 = 2;\nauto draw_3 = 3;\n"),
+        std::string::npos)
+        << out;
+}
+
+TEST(CloneOutput, SetWorkerPrefixesTheClonesLines) {
+    std::string out = capture_failure_report([](hegel::TestCase& tc) {
+        tc.note("from the parent");
+        hegel::TestCase worker = tc.clone();
+        worker.set_worker(3);
+        worker.note("from worker three");
+        throw std::runtime_error("boom");
+    });
+    EXPECT_NE(out.find("from the parent\n[worker 3 +"), std::string::npos)
+        << out;
+    EXPECT_NE(out.find("ms] from worker three\n"), std::string::npos) << out;
+}
+
+TEST(CloneOutput, SetWorkerDoesNothingInAnExplicitTestCase) {
+    testing::internal::CaptureStderr();
+    EXPECT_THROW(hegel::test(
+                     [](hegel::TestCase& tc) {
+                         hegel::TestCase worker = tc.clone();
+                         worker.set_worker(3);
+                         worker.note("from worker three");
+                         throw std::runtime_error("boom");
+                     },
+                     hegel::Settings{.database = hegel::Database::disabled()},
+                     {}, {hegel::ExplicitTestCase()}),
+                 std::runtime_error);
+    EXPECT_EQ(testing::internal::GetCapturedStderr(), "from worker three\n");
 }
