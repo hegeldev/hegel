@@ -1,13 +1,13 @@
 package dev.hegel.generators;
 
-import dev.hegel.Generator;
+import dev.hegel.Label;
 import dev.hegel.TestCase;
 
 /**
  * Generates syntactically valid domain names. The maximum length of the fully-qualified name
  * defaults to 255 and can be lowered with {@link #maxLength(int)}.
  */
-public final class DomainGenerator implements Generator<String> {
+public final class DomainGenerator extends ValueGenerator<String> {
     private final int maxLength;
     private final HandleCache cache = new HandleCache();
 
@@ -29,6 +29,12 @@ public final class DomainGenerator implements Generator<String> {
      */
     public DomainGenerator maxLength(int maxLength) {
         return new DomainGenerator(maxLength);
+    }
+
+    /** @hidden */
+    @Override
+    public long label() {
+        return Label.of("hegel.domains");
     }
 
     /** @hidden */

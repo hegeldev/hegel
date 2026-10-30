@@ -6,7 +6,9 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 
@@ -123,7 +125,7 @@ import java.util.concurrent.LinkedBlockingQueue;
  * reported, so a rule that blocks forever hangs the test case as it would sequentially. When
  * several workers fail in the same round the lowest-numbered worker's exception is reported and the
  * others are noted as dropped. The report groups each round's output by worker under the round's
- * header, each line stamped {@code [worker N +X.XXXms]} with the time since the machine started, so
+ * header, each line stamped {@code [worker N +X.XXXms]} with the time since the test case started, so
  * it can be read across workers. A concurrency bug that depends on thread scheduling may not
  * reproduce on replay; the engine then confirms it by repeated replay and reports it with a
  * caveat (see {@link Failure#caveat()}).
@@ -240,8 +242,9 @@ public final class Stateful {
      * #DEFAULT_STEP_COUNT} steps, sequentially.
      *
      * <p>The machine's {@code @Rule}/{@code @Invariant} methods are discovered reflectively from
-     * its class (superclass methods are not considered) and ordered by name, so rule numbering is
-     * stable across JVMs.
+     * its class and every superclass, and ordered by name, so rule numbering is stable across
+     * JVMs. A method taking a {@code TestCase} hides a method of the same name declared in a
+     * superclass, so an override keeps its superclass's annotation only if it repeats it.
      *
      * @param machine the state machine to drive
      * @param tc the current test case
@@ -338,9 +341,11 @@ public final class Stateful {
                 }
                 Method rule = rules.get(ruleIndex(index, rules));
                 step++;
-                tc.note("Step " + step + ": " + rule.getName());
+                tc.note("Step " + step + ": " + rule.getName() + " {");
+                TestCase ruleTc = tc.block(2);
+                Throwable failure = null;
                 try {
-                    invokeMachineMethod(machine, rule, tc);
+                    invokeMachineMethod(machine, rule, ruleTc);
                 } catch (AssumeRejected e) {
                     if (tc.isAborted()) {
                         // The engine itself concluded the case invalid (e.g. a draw inside the
@@ -352,14 +357,19 @@ public final class Stateful {
                     // the next rule.
                     tc.stateMachineRuleRejected(machineId, 0);
                     roundRejected = true;
-                    tc.note("Rule stopped early due to violated assumption.");
+                    ruleTc.note("Rule stopped early due to violated assumption.");
                 } catch (RuntimeException | Error e) {
                     // Everything else — including StopTest, so an out-of-data case is reported as
                     // an overrun instead of returning normally with a half-applied rule — unwinds
                     // through the caller. stopSpan is a no-op when the case is already being torn
                     // down.
                     tc.stopSpan(false);
+                    failure = e;
                     throw e;
+                } finally {
+                    ruleTc.endBlock();
+                    tc.note("}");
+                    noteFailure(tc, "Rule " + rule.getName() + " failed:", failure);
                 }
             }
             tc.stopSpan(roundRejected);
@@ -375,9 +385,9 @@ public final class Stateful {
     /**
      * The same protocol driven by worker threads, mirroring hegel-rust's concurrent runner. The
      * calling thread owns the root handle: it advances rounds, clones a fresh per-round handle for
-     * each worker right after the round's header (so the round's lines land under it), waits for
-     * every worker to report, absorbs their output, resolves the round's outcome and samples the
-     * invariants. Workers persist for the whole test case and only ever touch their own handle.
+     * each worker right after the round's header (so the engine anchors the round's lines under
+     * it, each stamped with its worker), waits for every worker to report, resolves the round's
+     * outcome and samples the invariants. Workers persist for the whole test case and only ever touch their own handle.
      * No spans are opened: the engine owns rule structure through {@code next_rule} / {@code
      * rule_rejected}, and a round's draws are spread over several streams.
      */
@@ -389,7 +399,6 @@ public final class Stateful {
             TestCase tc,
             long machineId,
             int concurrency) {
-        long startNanos = System.nanoTime();
         tc.note("Concurrency level: " + concurrency);
         if (!invariants.isEmpty()) {
             tc.note("Checking invariants on the initial state.");
@@ -398,7 +407,7 @@ public final class Stateful {
 
         Worker[] workers = new Worker[concurrency];
         for (int w = 0; w < concurrency; w++) {
-            workers[w] = new Worker(w, machine, rules, machineId);
+            workers[w] = new Worker(w, machine, rules, machineId, tc);
         }
         List<TestCase> handles = new ArrayList<>();
         try {
@@ -415,7 +424,7 @@ public final class Stateful {
                 tc.note("---------------- Round " + round + ": group \"" + groupNames.get((int) group)
                         + "\" ----------------");
                 for (Worker worker : workers) {
-                    handles.add(tc.forWorker(worker.index, startNanos));
+                    handles.add(tc.forWorker(worker.index));
                 }
                 for (int w = 0; w < concurrency; w++) {
                     workers[w].inbox.add(handles.get(w));
@@ -424,10 +433,7 @@ public final class Stateful {
                 for (int w = 0; w < concurrency; w++) {
                     events[w] = workers[w].await();
                 }
-                // Every worker has reported, so no handle is in use any more: fold the round's
-                // output into the report and release the clones before judging the round.
                 for (TestCase handle : handles) {
-                    tc.absorb(handle);
                     handle.release();
                 }
                 handles.clear();
@@ -551,12 +557,15 @@ public final class Stateful {
         private final Object machine;
         private final List<Method> rules;
         private final long machineId;
+        /** The root handle, through which the thread releases its engine context on exit. */
+        private final TestCase root;
 
-        Worker(int index, Object machine, List<Method> rules, long machineId) {
+        Worker(int index, Object machine, List<Method> rules, long machineId, TestCase root) {
             this.index = index;
             this.machine = machine;
             this.rules = rules;
             this.machineId = machineId;
+            this.root = root;
             this.thread = new Thread(this::loop, "hegel-worker-" + index);
             this.thread.setDaemon(true);
         }
@@ -577,6 +586,7 @@ public final class Stateful {
                 // Whatever ended the loop, leave an event behind so the driver never waits forever.
                 outbox.add(WorkerEvent.control(new HegelException(
                         "internal error: concurrent worker " + index + " exited without reporting its round")));
+                root.releaseThreadContext();
             }
         }
 
@@ -589,9 +599,11 @@ public final class Stateful {
                         return WorkerEvent.DONE;
                     }
                     Method rule = rules.get(ruleIndex(index, rules));
-                    wtc.note("Rule: " + rule.getName());
+                    wtc.note("Rule: " + rule.getName() + " {");
+                    TestCase ruleTc = wtc.block(2);
+                    Throwable failure = null;
                     try {
-                        invokeMachineMethod(machine, rule, wtc);
+                        invokeMachineMethod(machine, rule, ruleTc);
                     } catch (AssumeRejected e) {
                         if (wtc.isAborted()) {
                             // The engine concluded the case invalid inside the rule, not the
@@ -600,14 +612,21 @@ public final class Stateful {
                         }
                         // The engine does not count the slot; the next next_rule retries it.
                         wtc.stateMachineRuleRejected(machineId, this.index);
-                        wtc.note("Rule stopped early due to violated assumption.");
+                        ruleTc.note("Rule stopped early due to violated assumption.");
+                    } catch (RuntimeException | Error e) {
+                        failure = e;
+                        throw e;
+                    } finally {
+                        ruleTc.endBlock();
+                        wtc.note("}");
+                        noteFailure(wtc, "Rule " + rule.getName() + " failed:", failure);
                     }
                 }
             } catch (AssumeRejected e) {
                 return WorkerEvent.INVALID;
             } catch (StopTest e) {
                 return WorkerEvent.OVERRUN;
-            } catch (LibhegelException | IllegalArgumentException e) {
+            } catch (LibhegelException | InvalidArgument e) {
                 return WorkerEvent.control(e);
             } catch (Throwable e) {
                 return WorkerEvent.failed(e);
@@ -649,7 +668,28 @@ public final class Stateful {
             if (sampled && !tc.stateMachineShouldCheckInvariant(machineId, i)) {
                 continue;
             }
-            invokeMachineMethod(machine, invariants.get(i), tc);
+            Method invariant = invariants.get(i);
+            TestCase invariantTc = tc.block(2);
+            Throwable failure = null;
+            try {
+                invokeMachineMethod(machine, invariant, invariantTc);
+            } catch (RuntimeException | Error e) {
+                failure = e;
+                throw e;
+            } finally {
+                invariantTc.endBlock();
+                noteFailure(tc, "Invariant " + invariant.getName() + " failed:", failure);
+            }
+        }
+    }
+
+    /**
+     * Name the rule or invariant a failure escaped from, right before the failure's own report. A
+     * rejected assumption or exhausted data is not a failure of the method, so it gets no trailer.
+     */
+    private static void noteFailure(TestCase tc, String trailer, Throwable failure) {
+        if (failure != null && !(failure instanceof AssumeRejected) && !(failure instanceof StopTest)) {
+            tc.note(trailer);
         }
     }
 
@@ -689,18 +729,32 @@ public final class Stateful {
         }
     }
 
+    /**
+     * The {@code kind}-annotated methods of the machine's class and its superclasses, ordered by
+     * name. A method taking a {@code TestCase} hides any method of the same name declared further up
+     * the hierarchy, annotated or not, so an override without the annotation removes the rule.
+     */
     private static List<Method> annotated(Object machine, Class<? extends java.lang.annotation.Annotation> kind) {
         List<Method> methods = new ArrayList<>();
-        for (Method m : machine.getClass().getDeclaredMethods()) {
-            if (!m.isAnnotationPresent(kind)) {
-                continue;
+        Set<String> seen = new HashSet<>();
+        for (Class<?> c = machine.getClass(); c != Object.class; c = c.getSuperclass()) {
+            for (Method m : c.getDeclaredMethods()) {
+                boolean takesTestCase = m.getParameterCount() == 1 && m.getParameterTypes()[0] == TestCase.class;
+                if (!m.isAnnotationPresent(kind)) {
+                    if (takesTestCase) {
+                        seen.add(m.getName());
+                    }
+                    continue;
+                }
+                if (!takesTestCase) {
+                    throw new IllegalArgumentException(
+                            "@" + kind.getSimpleName() + " method " + m + " must take a single TestCase parameter");
+                }
+                if (seen.add(m.getName())) {
+                    m.setAccessible(true);
+                    methods.add(m);
+                }
             }
-            if (m.getParameterCount() != 1 || m.getParameterTypes()[0] != TestCase.class) {
-                throw new IllegalArgumentException(
-                        "@" + kind.getSimpleName() + " method " + m + " must take a single TestCase parameter");
-            }
-            m.setAccessible(true);
-            methods.add(m);
         }
         // getDeclaredMethods order is unspecified; sort so rule numbering is deterministic.
         methods.sort(Comparator.comparing(Method::getName));

@@ -15,6 +15,8 @@ import static dev.hegel.Generators.integers;
  *       resolved for settings that leave it unset;
  *   <li>{@code fail}: the printing reporter's output for a property that always fails, followed by
  *       {@code done};
+ *   <li>{@code no-engine}: {@code labels=<hex>} once {@link Label} and a generator are in use, then
+ *       {@code run=<exception>} for a run, which the caller arranges to have no engine to load;
  *   <li>{@code error=<message>} when constructing the settings failed on a malformed variable.
  * </ul>
  */
@@ -24,7 +26,8 @@ public final class EnvironmentFixture {
     /**
      * Entry point.
      *
-     * @param args the mode: {@code count}, {@code count-explicit}, {@code strictness} or {@code fail}
+     * @param args the mode: {@code count}, {@code count-explicit}, {@code strictness}, {@code no-engine} or
+     *     {@code fail}
      */
     public static void main(String[] args) {
         try {
@@ -44,6 +47,15 @@ public final class EnvironmentFixture {
                         }
                     });
                     System.out.println("strictness=" + effective[0].nondeterminismStrictness);
+                    break;
+                case "no-engine":
+                    Generator<?> generator = Generators.lists(integers()).unique();
+                    System.out.println("labels=" + Long.toHexString(Label.LIST) + " generator=" + (generator != null));
+                    try {
+                        Hegel.test(tc -> tc.draw(generator));
+                    } catch (RuntimeException e) {
+                        System.out.println("run=" + e.getClass().getName() + ": " + e.getMessage());
+                    }
                     break;
                 default:
                     Hegel.run(

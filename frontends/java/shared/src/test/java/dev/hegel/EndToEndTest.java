@@ -58,7 +58,7 @@ class EndToEndTest {
     @Test
     void reportMultipleFailuresProducesAggregateReport() {
         // Opt-in multi-failure mode keeps searching after the first failure; two distinct bugs
-        // (different origins) aggregate into one "Hegel found ..." report carrying the originals
+        // (different origins) aggregate into one "Property-based test failed with ..." report carrying the originals
         // as suppressed exceptions.
         AssertionError err = assertThrows(
                 AssertionError.class,
@@ -70,7 +70,8 @@ class EndToEndTest {
                             throw new IllegalStateException("bug two");
                         },
                         new Settings().reportMultipleFailures(true).seed(123).database(Database.disabled())));
-        assertTrue(err.getMessage().contains("2 distinct failing examples"), err.getMessage());
+        assertTrue(
+                err.getMessage().startsWith("Property-based test failed with 2 distinct failures."), err.getMessage());
         assertTrue(err.getMessage().contains("bug one"), err.getMessage());
         assertTrue(err.getMessage().contains("bug two"), err.getMessage());
         assertEquals(2, err.getSuppressed().length);

@@ -8,15 +8,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.hegel.lowlevel.Abi;
-import java.io.ByteArrayOutputStream;
-import java.io.PrintStream;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -24,8 +20,6 @@ import org.junit.jupiter.api.Test;
  * protocol, the join-point output layout and every outcome-resolution path deterministic.
  */
 class ConcurrentStatefulDriverTest {
-    private static final Pattern STAMP = Pattern.compile("^\\[worker (\\d+) \\+\\d+\\.\\d{3}ms\\] ");
-
     /** A fake reporting {@code concurrency} workers and playing the given rounds. */
     private static FakeLibhegel concurrentFake(int concurrency, long[][]... rounds) {
         FakeLibhegel fake = new FakeLibhegel();
@@ -35,21 +29,21 @@ class ConcurrentStatefulDriverTest {
     }
 
     private static TestCase exploringCase(FakeLibhegel fake) {
-        return new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), false, Reporter.silent());
+        return new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), false);
     }
 
     private static TestCase capturedCase(FakeLibhegel fake) {
-        return new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), true, Reporter.silent());
+        return new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), true);
     }
 
     private static Stateful.Options twoWorkers() {
         return Stateful.options().minConcurrency(2).maxConcurrency(2);
     }
 
-    /** Notes with the timing dropped from their worker stamps: {@code [worker N] ...}. */
-    private static List<String> unstamped(List<String> lines) {
-        return lines.stream()
-                .map(line -> STAMP.matcher(line).replaceFirst("[worker $1] "))
+    /** The case's output with the draw names numbered across racing workers ({@code x_2}) made plain. */
+    private static List<String> plainNames(TestCase tc) {
+        return tc.output().stream()
+                .map(line -> line.replaceAll("x_[0-9]+ =", "x ="))
                 .toList();
     }
 
@@ -63,7 +57,6 @@ class ConcurrentStatefulDriverTest {
     static final class Recording {
         final List<String> applied = Collections.synchronizedList(new ArrayList<>());
         final Set<String> threads = ConcurrentHashMap.newKeySet();
-        final Set<Integer> workers = ConcurrentHashMap.newKeySet();
         int sampledChecks;
         int alwaysChecks;
 
@@ -71,7 +64,6 @@ class ConcurrentStatefulDriverTest {
         void alpha(TestCase t) {
             applied.add("alpha");
             threads.add(Thread.currentThread().getName());
-            workers.add(t.worker());
         }
 
         @Rule(group = "ops")
@@ -113,8 +105,6 @@ class ConcurrentStatefulDriverTest {
         // Rules ran on worker threads, each worker pulling with its own index until its join point.
         assertEquals(List.of("alpha", "alpha", "gamma", "gamma"), sorted(machine.applied));
         assertTrue(machine.threads.stream().allMatch(n -> n.startsWith("hegel-worker-")), machine.threads.toString());
-        assertEquals(Set.of(0, 1), machine.workers);
-        assertEquals(-1, tc.worker());
         assertEquals(4, fake.nextRuleWorkers.stream().filter(w -> w == 0).count());
         assertEquals(4, fake.nextRuleWorkers.stream().filter(w -> w == 1).count());
         // One clone per worker per round, attributed to its worker, every one released; the machine too.
@@ -134,49 +124,46 @@ class ConcurrentStatefulDriverTest {
         assertEquals(4, machine.sampledChecks);
         assertEquals(4, machine.alwaysChecks);
         assertEquals(List.of(0L, 1L, 0L, 1L), fake.invariantChecksAsked);
-        // Output: each round's worker lines follow its header, grouped by worker index.
+        // Every rule and invariant body ran in a block, freed with its printer when it ended.
+        assertEquals(12, fake.blockParents.size());
+        assertEquals(12, fake.freedBlocks.size());
+        // Output: each round's worker lines follow its header, grouped by worker index, each rule's
+        // body indented under its heading.
         assertEquals(
                 List.of(
                         "Concurrency level: 2",
                         "Checking invariants on the initial state.",
                         "---------------- Round 1: group \"<anonymous>\" ----------------",
-                        "[worker 0] Rule: alpha",
-                        "[worker 0] Rule: gamma",
-                        "[worker 1] Rule: gamma",
+                        "[worker 0] Rule: alpha {",
+                        "[worker 0] }",
+                        "[worker 0] Rule: gamma {",
+                        "  [worker 0] var x = 0;",
+                        "[worker 0] }",
+                        "[worker 1] Rule: gamma {",
+                        "  [worker 1] var x = 0;",
+                        "[worker 1] }",
                         "---------------- Round 2: group \"<anonymous>\" ----------------",
-                        "[worker 1] Rule: alpha",
+                        "[worker 1] Rule: alpha {",
+                        "[worker 1] }",
                         "Checking invariants on the final state."),
-                unstamped(tc.notes()));
-        // Draw names are unique across workers and recorded plain; the replayed line carries the stamp.
-        assertEquals(Set.of("x", "x_2"), tc.draws().keySet());
-        ByteArrayOutputStream buf = new ByteArrayOutputStream();
-        tc.replayTo(Reporter.printing(new PrintStream(buf, true, StandardCharsets.UTF_8)));
-        List<String> printed =
-                unstamped(List.of(buf.toString(StandardCharsets.UTF_8).split("\\R")));
-        assertTrue(
-                printed.contains("[worker 0] x = 0;") || printed.contains("[worker 0] x_2 = 0;"), printed.toString());
-        assertTrue(
-                printed.indexOf("[worker 0] Rule: gamma") < printed.indexOf("[worker 1] Rule: gamma"),
-                printed.toString());
+                plainNames(tc));
+        // Draw names are unique across workers and recorded plain.
+        assertEquals(Set.of("x_1", "x_1_2"), tc.draws().keySet());
+        tc.releaseAll();
+        assertEquals(12, fake.freedBlocks.size());
+        assertEquals(fake.printerOwners.size(), fake.freedPrinters.size());
     }
 
     @Test
-    void verboseRunsHearWorkerLinesAtTheJoinPoint() {
+    void verboseCasesPrintWorkerLinesWithoutRecordingDraws() {
         FakeLibhegel fake = concurrentFake(2, new long[][] {{0}, {2}});
-        ByteArrayOutputStream buf = new ByteArrayOutputStream();
-        TestCase tc = new TestCase(
-                new LiveDataSource(fake, FakeLibhegel.TC),
-                false,
-                true,
-                Reporter.printing(new PrintStream(buf, true, StandardCharsets.UTF_8)));
+        TestCase tc = new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), false, true);
         Stateful.run(new Recording(), tc, twoWorkers());
-        List<String> printed =
-                unstamped(List.of(buf.toString(StandardCharsets.UTF_8).split("\\R")));
-        assertTrue(printed.contains("[worker 0] Rule: alpha"), printed.toString());
-        assertTrue(printed.contains("[worker 1] Rule: gamma"), printed.toString());
-        assertTrue(printed.contains("[worker 1] x = 0;"), printed.toString());
-        // Not captured: nothing is kept for a report.
-        assertTrue(tc.notes().isEmpty());
+        List<String> printed = tc.output();
+        assertTrue(printed.contains("[worker 0] Rule: alpha {"), printed.toString());
+        assertTrue(printed.contains("[worker 1] Rule: gamma {"), printed.toString());
+        assertTrue(printed.contains("  [worker 1] var x_1 = 0;"), printed.toString());
+        assertTrue(tc.draws().isEmpty());
     }
 
     @Test
@@ -185,11 +172,12 @@ class ConcurrentStatefulDriverTest {
         fake.stateMachineGroupId = 1; // the "ops" group
         TestCase tc = capturedCase(fake);
         Stateful.run(new Recording(), tc, twoWorkers());
-        List<String> notes = unstamped(tc.notes());
+        List<String> notes = tc.output();
         assertTrue(notes.contains("---------------- Round 1: group \"ops\" ----------------"), notes.toString());
-        int rule = notes.indexOf("[worker 0] Rule: beta");
+        int rule = notes.indexOf("[worker 0] Rule: beta {");
         assertTrue(rule >= 0, notes.toString());
-        assertEquals("[worker 0] Rule stopped early due to violated assumption.", notes.get(rule + 1));
+        assertEquals("  [worker 0] Rule stopped early due to violated assumption.", notes.get(rule + 1));
+        assertEquals("[worker 0] }", notes.get(rule + 2));
         assertEquals(List.of(0L), fake.rejectedWorkers);
     }
 
@@ -208,7 +196,7 @@ class ConcurrentStatefulDriverTest {
     static final class Outcomes {
         @Rule
         void bad(TestCase t) {
-            throw new IllegalArgumentException("usage");
+            throw new InvalidArgument("usage");
         }
 
         @Rule
@@ -234,8 +222,8 @@ class ConcurrentStatefulDriverTest {
         TestCase tc = capturedCase(fake);
         assertThrows(StopTest.class, () -> Stateful.run(new Outcomes(), tc, twoWorkers()));
         assertTrue(
-                tc.notes().contains("Dropped concurrent failure from worker 1: java.lang.AssertionError: boom"),
-                tc.notes().toString());
+                fake.notes.contains("Dropped concurrent failure from worker 1: java.lang.AssertionError: boom"),
+                fake.notes.toString());
     }
 
     @Test
@@ -245,8 +233,8 @@ class ConcurrentStatefulDriverTest {
         TestCase tc = capturedCase(fake);
         assertThrows(AssumeRejected.class, () -> Stateful.run(new Outcomes(), tc, twoWorkers()));
         assertTrue(
-                tc.notes().contains("Dropped concurrent failure from worker 0: java.lang.AssertionError: boom"),
-                tc.notes().toString());
+                fake.notes.contains("Dropped concurrent failure from worker 0: java.lang.AssertionError: boom"),
+                fake.notes.toString());
     }
 
     @Test
@@ -271,9 +259,9 @@ class ConcurrentStatefulDriverTest {
         AssertionError error = assertThrows(AssertionError.class, () -> Stateful.run(new Outcomes(), tc, twoWorkers()));
         assertEquals("boom", error.getMessage());
         assertTrue(
-                tc.notes()
-                        .contains("Dropped concurrent failure from worker 1: java.lang.IllegalStateException: crashed"),
-                tc.notes().toString());
+                errorFirst.notes.contains(
+                        "Dropped concurrent failure from worker 1: java.lang.IllegalStateException: crashed"),
+                errorFirst.notes.toString());
 
         FakeLibhegel exceptionFirst = concurrentFake(2, new long[][] {{1}, {3}});
         TestCase tc2 = capturedCase(exceptionFirst);
@@ -281,8 +269,9 @@ class ConcurrentStatefulDriverTest {
                 assertThrows(IllegalStateException.class, () -> Stateful.run(new Outcomes(), tc2, twoWorkers()));
         assertEquals("crashed", crashed.getMessage());
         assertTrue(
-                tc2.notes().contains("Dropped concurrent failure from worker 1: java.lang.AssertionError: boom"),
-                tc2.notes().toString());
+                exceptionFirst.notes.contains(
+                        "Dropped concurrent failure from worker 1: java.lang.AssertionError: boom"),
+                exceptionFirst.notes.toString());
     }
 
     @Test
@@ -416,10 +405,17 @@ class ConcurrentStatefulDriverTest {
         TestCase tc = capturedCase(fake);
         Stateful.run(machine, tc, Stateful.options().maxConcurrency(1).stepCount(9));
         assertEquals(Set.of(Thread.currentThread().getName()), machine.threads);
-        assertEquals(Set.of(-1), machine.workers);
         assertTrue(fake.clonesMade.isEmpty());
-        assertTrue(tc.notes().contains("Step 1: alpha"), tc.notes().toString());
-        assertFalse(tc.notes().contains("Concurrency level: 1"), tc.notes().toString());
+        assertEquals(
+                List.of(
+                        "Checking invariants on the initial state.",
+                        "Step 1: alpha {",
+                        "}",
+                        "Checking invariants on the final state."),
+                tc.output());
+        // One block for the rule and one per invariant check (two invariants at three join points).
+        assertEquals(7, fake.blockParents.size());
+        assertEquals(Set.of(FakeLibhegel.TC), Set.copyOf(fake.blockParents.values()));
         assertEquals(9, fake.stateMachineStepCount);
         // Groups are registered for sequential machines too; they have no effect at concurrency 1.
         assertArrayEquals(new long[] {0, 1, 1}, fake.stateMachineRuleGroups);

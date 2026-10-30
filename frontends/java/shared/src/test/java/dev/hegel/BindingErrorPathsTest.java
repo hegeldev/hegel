@@ -71,12 +71,31 @@ class BindingErrorPathsTest {
     }
 
     @Test
+    void aNoteToADeadRegionIsIgnoredAndOtherNoteErrorsAreRaised() {
+        FakeLibhegel fake = new FakeLibhegel();
+        LiveDataSource ds = source(fake);
+        fake.noteRc = Abi.E_INVALID_HANDLE;
+        ds.note("late");
+        fake.noteRc = Abi.E_INVALID_ARG;
+        fake.lastError = "hegel_note: bad text";
+        assertEquals(
+                "hegel_note: bad text",
+                assertThrows(IllegalArgumentException.class, () -> ds.note("x")).getMessage());
+        fake.noteRc = Abi.E_INTERNAL;
+        assertTrue(assertThrows(HegelException.class, () -> ds.note("x"))
+                .getMessage()
+                .startsWith("hegel_note failed (rc=-8)"));
+        assertTrue(fake.notes.isEmpty());
+    }
+
+    @Test
     void clonesDrawThroughTheirOwnHandleAndAreReleased() {
         FakeLibhegel fake = new FakeLibhegel();
         fake.integerValue = 4L;
         LiveDataSource ds = source(fake);
-        DataSource clone = ds.cloneForWorker(2);
+        DataSource clone = ds.clone();
         assertEquals(List.of(FakeLibhegel.TC), fake.clonesMade);
+        clone.setWorker(2);
         assertEquals(2L, fake.workersSet.get(FakeLibhegel.CLONE_BASE));
         assertEquals(4, clone.generateInteger(0, 10));
         clone.release();
@@ -89,19 +108,20 @@ class BindingErrorPathsTest {
     void cloneFailuresPropagateAndLeakNothing() {
         FakeLibhegel cloneFails = new FakeLibhegel();
         cloneFails.cloneRc = Abi.E_BACKEND;
-        assertThrows(HegelException.class, () -> source(cloneFails).cloneForWorker(0));
+        assertThrows(HegelException.class, () -> source(cloneFails).clone());
         assertTrue(cloneFails.freedClones.isEmpty());
 
         // A clone past the end of a replayed sequence is an overrun, like any other draw.
         FakeLibhegel exhausted = new FakeLibhegel();
         exhausted.cloneRc = Abi.E_STOP_TEST;
         LiveDataSource ds0 = source(exhausted);
-        assertThrows(StopTest.class, () -> ds0.cloneForWorker(0));
+        assertThrows(StopTest.class, () -> ds0.clone());
         assertTrue(ds0.isAborted());
 
         FakeLibhegel workerFails = new FakeLibhegel();
         workerFails.setWorkerFails = true;
-        assertThrows(HegelException.class, () -> source(workerFails).cloneForWorker(0));
+        TestCase root = new TestCase(source(workerFails), true);
+        assertThrows(HegelException.class, () -> root.forWorker(0));
         // The clone was made, so it is released before the failure surfaces.
         assertEquals(List.of(FakeLibhegel.CLONE_BASE), workerFails.freedClones);
 
@@ -110,7 +130,7 @@ class BindingErrorPathsTest {
         aborted.generateIntegerRc = Abi.E_STOP_TEST;
         LiveDataSource ds = source(aborted);
         assertThrows(StopTest.class, () -> ds.generateInteger(0, 1));
-        assertThrows(StopTest.class, () -> ds.cloneForWorker(0));
+        assertThrows(StopTest.class, () -> ds.clone());
         assertTrue(aborted.clonesMade.isEmpty());
     }
 
@@ -261,6 +281,28 @@ class BindingErrorPathsTest {
         FakeLibhegel target = new FakeLibhegel();
         target.targetRc = Abi.E_ASSUME;
         assertThrows(AssumeRejected.class, () -> source(target).target(1.0, "l"));
+    }
+
+    @Test
+    void repeatErrorsPropagate() {
+        FakeLibhegel newRepeat = new FakeLibhegel();
+        newRepeat.newRepeatRc = Abi.E_STOP_TEST;
+        assertThrows(StopTest.class, () -> source(newRepeat).newRepeat());
+
+        FakeLibhegel more = new FakeLibhegel();
+        more.moreSequence = new boolean[] {true, false};
+        LiveDataSource ds = source(more);
+        assertEquals(more.repeatId, ds.newRepeat());
+        assertTrue(ds.repeatMore(more.repeatId));
+        assertFalse(ds.repeatMore(more.repeatId));
+
+        FakeLibhegel moreError = new FakeLibhegel();
+        moreError.repeatMoreRc = Abi.E_BACKEND;
+        assertThrows(HegelException.class, () -> source(moreError).repeatMore(1));
+
+        FakeLibhegel failed = new FakeLibhegel();
+        failed.repeatFailedRc = Abi.E_STOP_TEST;
+        assertThrows(StopTest.class, () -> source(failed).repeatFailed(1));
     }
 
     @Test

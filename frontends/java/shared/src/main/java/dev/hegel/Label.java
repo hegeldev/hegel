@@ -1,7 +1,5 @@
 package dev.hegel;
 
-import java.nio.charset.StandardCharsets;
-
 /**
  * Span labels for {@link TestCase#span(long, java.util.function.Supplier)} and {@link
  * TestCase#startSpan(long)}.
@@ -13,108 +11,115 @@ import java.nio.charset.StandardCharsets;
  * same one. Derive a label from a name with {@link #of(String)}, and give a generator built from
  * other generators a label {@link #combine(long...) combined} from its own and its components', so
  * that a list of integers and a list of strings get different labels while every list of integers
- * gets the same one. Both match the engine's {@code hegel_label_from_name} and {@code
- * hegel_label_combine}, so labels minted here agree with those of every other Hegel frontend.
+ * gets the same one. Both are computed by the engine ({@code hegel_label_from_name} and {@code
+ * hegel_label_combine}), so labels minted here agree with those of every other Hegel frontend.
  *
- * <p>The constants below are the labels Hegel's own composite generators open their spans with,
- * derived from names of the form {@code dev.hegel.<kind>}. The engine labels the spans around its
- * own draws from {@code hegel.<kind>} names; prefix custom names with your library's to keep clear
- * of both.
+ * <p>The constants below are the kinds Hegel's own generators label themselves with. They share their
+ * {@code hegel.<kind>} names with the other Hegel frontends, and a composite generator's label
+ * combines its kind with its components' labels ({@link Generator#label}), as in every frontend.
+ * Each is the fixed value {@link #of(String)} gives for its name, so reading one needs no engine.
+ * Prefix custom names with your library's to keep clear of them.
+ *
+ * <p>{@link #of(String)} and {@link #combine(long...)} load the engine on first use, as a run does,
+ * and throw a {@link dev.hegel.lowlevel.LibhegelException} if it cannot be loaded.
  */
 public final class Label {
     private Label() {}
 
-    private static final long FNV_OFFSET_BASIS = 0xcbf29ce484222325L;
-    private static final long FNV_PRIME = 0x100000001b3L;
+    /** A variable-length list: {@code of("hegel.lists")}. */
+    public static final long LIST = 0x4ccf178a8c755675L;
 
-    /** A variable-length list. */
-    public static final long LIST = of("dev.hegel.list");
+    /** A set: {@code of("hegel.sets")}. */
+    public static final long SET = 0x8c7bf6e4c7f30665L;
 
-    /** One element of a list. */
-    public static final long LIST_ELEMENT = of("dev.hegel.list_element");
+    /** A map: {@code of("hegel.dicts")}. */
+    public static final long MAP = 0x68e71e450ea5be6dL;
 
-    /** A set. */
-    public static final long SET = of("dev.hegel.set");
+    /** A fixed-arity tuple: {@code of("hegel.tuples")}. */
+    public static final long TUPLE = 0xd8fa223d51dda37bL;
 
-    /** One element of a set. */
-    public static final long SET_ELEMENT = of("dev.hegel.set_element");
+    /** A choice between alternative generators: {@code of("hegel.one_of")}. */
+    public static final long ONE_OF = 0xf96229f21f87bc20L;
 
-    /** A map. */
-    public static final long MAP = of("dev.hegel.map");
+    /** An optional value: {@code of("hegel.optional")}. */
+    public static final long OPTIONAL = 0x46ac6fb1a1222720L;
 
-    /** One key/value entry of a map. */
-    public static final long MAP_ENTRY = of("dev.hegel.map_entry");
+    /** A record-like structure with a fixed set of named fields: {@code of("hegel.fixed_dicts")}. */
+    public static final long FIXED_DICT = 0x4588f998f6874808L;
 
-    /** A fixed-arity tuple. */
-    public static final long TUPLE = of("dev.hegel.tuple");
+    /** A draw whose generator depends on an earlier draw: {@code of("hegel.flat_map")}. */
+    public static final long FLAT_MAP = 0xe85be60d862e687aL;
 
-    /** A choice between alternative generators. */
-    public static final long ONE_OF = of("dev.hegel.one_of");
+    /** A draw filtered by a predicate, combined with the label of the generator it filters: {@code of("hegel.filter")}. */
+    public static final long FILTER = 0x954d8384f16a15feL;
 
-    /** An optional value. */
-    public static final long OPTIONAL = of("dev.hegel.optional");
+    /** One attempt of a filtered draw, discarded when the predicate rejects its value: {@code of("hegel.filter.attempt")}. */
+    public static final long FILTER_ATTEMPT = 0x8b6a04585682cd19L;
 
-    /** A record-like structure with a fixed set of named fields. */
-    public static final long FIXED_DICT = of("dev.hegel.fixed_dict");
+    /** A draw transformed by a function: {@code of("hegel.map")}. */
+    public static final long MAPPED = 0x46ef1386be65f262L;
 
-    /** A draw whose generator depends on an earlier draw. */
-    public static final long FLAT_MAP = of("dev.hegel.flat_map");
+    /** A value sampled from a fixed collection: {@code of("hegel.sampled_from")}. */
+    public static final long SAMPLED_FROM = 0xf9573be7fe320c77L;
 
-    /** A draw filtered by a predicate. */
-    public static final long FILTER = of("dev.hegel.filter");
+    /** One rule invocation of a stateful test: {@code of("hegel.stateful.rule")}. */
+    public static final long STATEFUL_RULE = 0xbd20e256d6f482f8L;
 
-    /** A draw transformed by a function. */
-    public static final long MAPPED = of("dev.hegel.mapped");
+    /** A recursive value or one of its subtrees ({@link Generators#recursive}): {@code of("hegel.recursive")}. */
+    public static final long RECURSIVE = 0xbbdcc6e73a04d5a8L;
 
-    /** A value sampled from a fixed collection. */
-    public static final long SAMPLED_FROM = of("dev.hegel.sampled_from");
+    /** A permutation of a fixed list ({@link Generators#permutations}): {@code of("hegel.permutation")}. */
+    public static final long PERMUTATION = 0xb027cceaf4155d40L;
 
-    /** One variant of an enum-like type. */
-    public static final long ENUM_VARIANT = of("dev.hegel.enum_variant");
+    /** A subsequence of a fixed list ({@link Generators#subsequences}): {@code of("hegel.subsequence")}. */
+    public static final long SUBSEQUENCE = 0xd25dd251af3d131fL;
 
-    /** One rule invocation of a stateful test. */
-    public static final long STATEFUL_RULE = of("dev.hegel.stateful_rule");
+    /** A sample of a fixed list ({@link Generators#samples}): {@code of("hegel.sample")}. */
+    public static final long SAMPLE = 0x7689a4323364eda6L;
 
-    /** A value built imperatively from several draws ({@link Generators#composite}). */
-    public static final long COMPOSITE = of("dev.hegel.composite");
+    /** A fixed-length array ({@link Generators#arrays}): {@code of("hegel.array")}. */
+    public static final long ARRAY = 0x5a6e9dc8e669fff1L;
+
+    /** A value built imperatively from several draws ({@link Generators#composite}): {@code of("hegel.composite")}. */
+    public static final long COMPOSITE = 0x28e766540c9ffb4fL;
+
+    /** A generator defined later, for forward references ({@link Generators#deferred}): {@code of("hegel.deferred")}. */
+    public static final long DEFERRED = 0xb96dc18ba2ffa9f7L;
+
+    /** A string matching a Lark grammar ({@link Generators#fromLark}): {@code of("hegel.from_lark")}. */
+    public static final long FROM_LARK = 0x8fc2df1e0331ed41L;
+
+    /** A non-consuming draw from a stateful test's {@link Pool} ({@link Pool#reusable}): {@code of("hegel.pool.values_reusable")}. */
+    public static final long POOL_VALUES_REUSABLE = 0x7f9558f7787b8b82L;
+
+    /** A consuming draw from a stateful test's {@link Pool} ({@link Pool#consuming}): {@code of("hegel.pool.values_consumed")}. */
+    public static final long POOL_VALUES_CONSUMED = 0x06d5135fb19072d1L;
+
+    /** A lambda generator, which has no class name to be labelled by ({@link Generator#label}): {@code of("hegel.generator")}. */
+    public static final long GENERATOR = 0xb86174e143a64e31L;
 
     /**
-     * Mint a stable label from a name: the 64-bit FNV-1a hash of its UTF-8 bytes. The same name
-     * always yields the same label, so a frontend can label its generators by fully-qualified name.
+     * Mint a stable label from a name: the engine's {@code hegel_label_from_name}, the 64-bit FNV-1a
+     * hash of its UTF-8 bytes. The same name always yields the same label, so a frontend can label
+     * its generators by fully-qualified name.
      *
      * @param name the label's name
      * @return the label
      */
     public static long of(String name) {
-        return fnv1a(FNV_OFFSET_BASIS, name.getBytes(StandardCharsets.UTF_8));
+        return Engine.real().labelFromName(name);
     }
 
     /**
-     * The label for a generator built from other generators: a hash of the given labels, in order.
-     * Pass the generator's own label (from {@link #of(String)}) first and its components' labels
-     * after it. Combining is order-sensitive, and combining a single label does not return it
-     * unchanged.
+     * The label for a generator built from other generators: the engine's {@code
+     * hegel_label_combine}, a hash of the given labels, in order. Pass the generator's own label
+     * (from {@link #of(String)}) first and its components' labels after it. Combining is
+     * order-sensitive, and combining a single label does not return it unchanged.
      *
      * @param labels the generator's own label followed by its components'
      * @return the combined label
      */
     public static long combine(long... labels) {
-        long hash = FNV_OFFSET_BASIS;
-        byte[] bytes = new byte[8];
-        for (long label : labels) {
-            for (int i = 0; i < 8; i++) {
-                bytes[i] = (byte) (label >>> (8 * i));
-            }
-            hash = fnv1a(hash, bytes);
-        }
-        return hash;
-    }
-
-    private static long fnv1a(long hash, byte[] bytes) {
-        for (byte b : bytes) {
-            hash ^= (b & 0xffL);
-            hash *= FNV_PRIME;
-        }
-        return hash;
+        return Engine.real().labelCombine(labels);
     }
 }

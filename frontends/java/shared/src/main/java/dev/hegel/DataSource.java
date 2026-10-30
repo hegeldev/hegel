@@ -1,11 +1,14 @@
 package dev.hegel;
 
 import dev.hegel.lowlevel.Libhegel;
+import java.math.BigInteger;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Function;
+import java.util.function.IntFunction;
 
 /**
  * The per-test-case primitive surface that generators draw against.
@@ -20,6 +23,9 @@ interface DataSource {
     boolean generateBoolean(double p);
 
     long generateInteger(long min, long max);
+
+    /** An integer in {@code [min, max]}, of any magnitude ({@code hegel_generate_integer_big} when outside {@code long}). */
+    BigInteger generateIntegerBig(BigInteger min, BigInteger max);
 
     double generateFloat(
             int width,
@@ -75,6 +81,31 @@ interface DataSource {
      */
     boolean ownsStringGenerator(StringGeneratorHandle generator);
 
+    /**
+     * Compile a grammar in Lark's syntax ({@code hegel_grammar_builder_*} then {@code
+     * hegel_grammar_new}). {@code files} maps the path of each file an {@code %import} needs to
+     * its text, or to {@code null} for a missing one. A rejected grammar throws {@link
+     * IllegalArgumentException} with the engine's diagnostic.
+     */
+    GrammarHandle grammar(
+            String text,
+            String start,
+            long maxSize,
+            int maxDepth,
+            StringGeneratorHandle alphabet,
+            List<String> explicitNames,
+            Function<String, String> files);
+
+    /**
+     * Draw a string of {@code grammar} ({@code hegel_grammar_draw_t}), asking {@code terminal} for
+     * the value of each occurrence of an explicit terminal, by its index among the grammar's
+     * explicit names. The engine splices the values in and keeps the string under its size cap.
+     */
+    String generateGrammar(GrammarHandle grammar, IntFunction<String> terminal);
+
+    /** Whether {@code grammar} was built by the binding behind this source; see {@link #ownsStringGenerator}. */
+    boolean ownsGrammar(GrammarHandle grammar);
+
     void startSpan(long label);
 
     void stopSpan(boolean discard);
@@ -85,11 +116,57 @@ interface DataSource {
 
     void collectionReject(long id, String why);
 
+    /** Release a collection handle from {@link #newCollection}. Safe once the case is aborted. */
+    void collectionFree(long id);
+
+    /** Start the engine-driven loop behind {@link TestCase#repeat} ({@code hegel_new_repeat}). */
+    long newRepeat();
+
+    /** Whether the engine wants another repetition of the loop. */
+    boolean repeatMore(long id);
+
+    /** Report that the repetition just run failed, before the failure propagates. */
+    void repeatFailed(long id);
+
+    /** Release a repeat handle from {@link #newRepeat}. Safe once the case is aborted. */
+    void repeatFree(long id);
+
+    /**
+     * Create a pool. The pool is family-wide: it is released by {@link #releasePools()} on the
+     * root source once the test case is over, wherever in the family it was created.
+     */
     long newPool();
 
     long poolAdd(long poolId);
 
     long poolGenerate(long poolId, boolean consume);
+
+    /**
+     * Put back a variable a consuming {@link #poolGenerate} removed ({@code hegel_pool_restore}). A
+     * no-op once the case is aborted: nothing will draw from the pool again.
+     */
+    void poolRestore(long poolId, long variableId);
+
+    long newRecursion(long maxDepth, long maxLeaves);
+
+    /** Whether the sub-value at {@code depth} is a branch (else a leaf). */
+    boolean recursionBranch(long recursion, long depth);
+
+    /**
+     * Count a leaf against the attempt's budget: {@code false} when the attempt has outgrown it and
+     * must unwind to {@link #recursionRetry}. Until then, spans are left open for the engine to
+     * close.
+     */
+    boolean recursionLeaf(long recursion);
+
+    /** Discard an attempt that outgrew its budget; rejects the case when the attempts are exhausted. */
+    void recursionRetry(long recursion);
+
+    /** Report the value complete: {@code false} when the engine discarded the attempt as mispriced. */
+    boolean recursionFinish(long recursion);
+
+    /** Release the recursion handle. Safe once the case is aborted. */
+    void recursionFree(long recursion);
 
     // Stateful testing. The root source registers the machine, advances rounds and samples
     // invariants; at concurrency > 1 each worker pulls its rules through its own clone.
@@ -126,13 +203,40 @@ interface DataSource {
 
     /**
      * A source over an independent choice stream of the same test case ({@code
-     * hegel_test_case_clone}), attributed to concurrent worker {@code workerIndex}, for a worker
-     * thread to draw through. Release it with {@link #release()} once the worker is done with it.
+     * hegel_test_case_clone}), for another thread to draw through. Release it with {@link
+     * #release()} once that thread is done with it.
      */
-    DataSource cloneForWorker(long workerIndex);
+    DataSource clone();
 
-    /** Free the handle behind a source from {@link #cloneForWorker}. Safe once the case is aborted. */
+    /**
+     * Attribute this source's output from now on to concurrent worker {@code workerIndex} ({@code
+     * hegel_test_case_set_worker}).
+     */
+    void setWorker(long workerIndex);
+
+    /**
+     * A source over a block handle ({@code hegel_test_case_block}): the <em>same</em> choice stream
+     * as this one, whose output lands in a block nested in this source's print region, every line
+     * {@code indent} columns further in. It shares this source's abort state. Release it with
+     * {@link #release()}.
+     */
+    DataSource block(long indent);
+
+    /** Free the handle behind a source from {@link #clone} or {@link #block}. Safe once the case is aborted. */
     void release();
+
+    /**
+     * Append {@code message} to this source's print region ({@code hegel_note}). A note to a region
+     * that is already dead (the document was read while a straggling thread was still printing) is
+     * a harmless no-op; any other error the engine reports is raised.
+     */
+    void note(String message);
+
+    /**
+     * A caller-owned printer onto this source's print region ({@code hegel_test_case_printer}),
+     * whose deferred regions are registered in {@code regions}.
+     */
+    Printer printer(Printer.Regions regions);
 
     /** The engine's sampling decision for invariant {@code invariantIndex} at this join point. */
     boolean stateMachineShouldCheckInvariant(long stateMachineId, long invariantIndex);
@@ -140,8 +244,26 @@ interface DataSource {
     /** Release the machine handle. Safe once the case is aborted. */
     void stateMachineFree(long stateMachineId);
 
+    /**
+     * Release every pool created through this source's test-case family. Called once, on the root
+     * source, when the test case is over. Safe once the case is aborted.
+     */
+    void releasePools();
+
+    /**
+     * Release the calling thread's engine error context. Called by a worker thread that is about
+     * to exit, so its context does not outlive it.
+     */
+    void releaseThreadContext();
+
     /** Whether the case has been concluded (overrun or invalid) and its primitives now short-circuit. */
     boolean isAborted();
 
     void target(double value, String label);
+
+    /** Record an event for the statistics report ({@code hegel_event}). */
+    void event(String label);
+
+    /** Record a numeric observation for the statistics report ({@code hegel_event_value}). */
+    void eventValue(String label, double value);
 }

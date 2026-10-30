@@ -38,22 +38,57 @@ class ReproduceFailureTest {
     void printedBlobReplaysTheExactFailure() {
         String output = runCapturing(
                 new Settings().database(Database.disabled()).printBlob(true), FAILING, AssertionError.class);
-        assertTrue(output.contains("reproduceFailure = \""), output);
-        String tail = output.substring(output.indexOf("reproduceFailure = \"") + "reproduceFailure = \"".length());
-        String blob = tail.substring(0, tail.indexOf('"'));
+        String blob = printedBlob(output);
 
         // Replaying the blob reproduces the shrunk counterexample (x = 11) and the same failure.
         String replayOutput = runCapturing(
                 new Settings().database(Database.disabled()).reproduceFailure(blob), FAILING, AssertionError.class);
-        assertTrue(replayOutput.contains("x = 11;"), replayOutput);
+        assertTrue(replayOutput.contains("var x_1 = 11;"), replayOutput);
 
         // A body that no longer fails makes the blob stale.
-        HegelException stale = assertThrows(
-                HegelException.class,
+        DidNotReproduceException stale = assertThrows(
+                DidNotReproduceException.class,
                 () -> Hegel.test(
                         tc -> tc.draw(integers().min(0).max(1000), "x"),
                         new Settings().database(Database.disabled()).reproduceFailure(blob)));
-        assertTrue(stale.getMessage().contains("did not reproduce"), stale.getMessage());
+        assertEquals(Runner.STALE_BLOB, stale.getMessage());
+    }
+
+    private static String printedBlob(String output) {
+        String marker = ".reproduceFailure(\"";
+        assertTrue(output.contains(marker), output);
+        String tail = output.substring(output.indexOf(marker) + marker.length());
+        return tail.substring(0, tail.indexOf('"'));
+    }
+
+    @Test
+    void everyBlobIsReplayedAndEveryFailureReported() {
+        Consumer<TestCase> twoBugs = tc -> {
+            int x = tc.draw(integers().min(0).max(1000), "x");
+            if (x > 500) {
+                throw new IllegalStateException("x was huge: " + x);
+            }
+            assertTrue(x <= 10, "x was too big: " + x);
+        };
+        Settings settings = new Settings().database(Database.disabled()).reportMultipleFailures(true);
+        RunReport found = Hegel.run(twoBugs, settings, Reporter.silent());
+        assertEquals(2, found.failures().size());
+        String[] blobs = found.failures().stream()
+                .map(f -> f.reproduceBlob().orElseThrow())
+                .toArray(String[]::new);
+
+        RunReport replayed = Hegel.run(twoBugs, settings.reproduceFailure(blobs), Reporter.silent());
+        assertEquals(RunStatus.FAILED, replayed.status());
+        assertEquals(2, replayed.failures().size());
+        AssertionError thrown = assertThrows(AssertionError.class, replayed::throwIfFailed);
+        assertEquals(2, thrown.getSuppressed().length);
+
+        RunReport oneFixed = Hegel.run(
+                tc -> assertTrue(tc.draw(integers().min(0).max(1000), "x") <= 10),
+                settings.reproduceFailure(blobs),
+                Reporter.silent());
+        assertEquals(RunStatus.FAILED, oneFixed.status());
+        assertEquals(1, oneFixed.failures().size());
     }
 
     @Test
@@ -111,14 +146,14 @@ class ReproduceFailureTest {
         calls.set(0);
         String output = runCapturing(settings, onceOnly, AssertionError.class);
         assertTrue(output.contains("note: unconfirmed failure"), output);
-        assertTrue(!output.contains("reproduceFailure = \""), output);
+        assertTrue(!output.contains(".reproduceFailure(\""), output);
     }
 
     @Test
     void errorStrictnessAbortsOnANondeterministicTest() {
         AtomicInteger calls = new AtomicInteger();
-        HegelException e = assertThrows(
-                HegelException.class,
+        FlakyTestException e = assertThrows(
+                FlakyTestException.class,
                 () -> Hegel.test(
                         tc -> {
                             tc.draw(integers());
@@ -147,9 +182,7 @@ class ReproduceFailureTest {
         Settings settings = new Settings().database(Database.disabled()).seed(7).printBlob(true);
         String output = runCapturing(settings, intermittent, AssertionError.class);
         assertTrue(output.contains("note: nondeterministic failure, confirmed"), output);
-        assertTrue(output.contains("reproduceFailure = \""), output);
-        String tail = output.substring(output.indexOf("reproduceFailure = \"") + "reproduceFailure = \"".length());
-        String blob = tail.substring(0, tail.indexOf('"'));
+        String blob = printedBlob(output);
 
         // The engine replays a nondeterministic blob until one of its recorded runs fails again.
         RunReport replay = Hegel.run(

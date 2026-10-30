@@ -1,143 +1,102 @@
 package dev.hegel;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.hegel.lowlevel.Abi;
-import java.io.ByteArrayOutputStream;
-import java.io.PrintStream;
-import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class TestCaseTest {
-    /** The captured output with platform line endings normalised, so exact comparisons hold on Windows. */
-    private static String text(ByteArrayOutputStream buf) {
-        return buf.toString(StandardCharsets.UTF_8).replace("\r\n", "\n");
-    }
-
-    /**
-     * A TestCase over a fake binding, both stamped for capture and reporting live (verbose) when
-     * {@code reporting}; only the reporting/target plumbing is under test here.
-     */
-    private TestCase newCase(FakeLibhegel fake, boolean reporting, ByteArrayOutputStream buf) {
-        return new TestCase(
-                new LiveDataSource(fake, FakeLibhegel.TC),
-                reporting,
-                reporting,
-                Reporter.printing(new PrintStream(buf, true, StandardCharsets.UTF_8)));
+    /** A TestCase over a fake binding, stamped for capture as {@code captured} and not verbose. */
+    private static TestCase newCase(FakeLibhegel fake, boolean captured) {
+        return new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), captured);
     }
 
     @Test
-    void drawReportsTopLevelWithLabelAndDefaultName() {
-        ByteArrayOutputStream buf = new ByteArrayOutputStream();
-        TestCase tc = newCase(new FakeLibhegel(), true, buf);
+    void drawPrintsTopLevelWithLabelAndDefaultName() {
+        FakeLibhegel fake = new FakeLibhegel();
+        TestCase tc = newCase(fake, true);
         tc.draw(constant(1), "x");
         tc.draw(constant(2));
-        String out = buf.toString(StandardCharsets.UTF_8);
-        assertTrue(out.contains("x = 1;"), out);
-        assertTrue(out.contains("draw_1 = 2;"), out);
+        assertEquals(List.of("var x_1 = 1;", "var draw_1 = 2;"), tc.output());
+        // The case fetched one printer for its draws and freed it; output() read the document
+        // through a second root printer, also freed.
+        assertEquals(List.copyOf(fake.printerOwners.keySet()), fake.freedPrinters);
+        assertEquals(2, fake.freedPrinters.size());
     }
 
     @Test
-    void drawDoesNotReportWhenNotReporting() {
-        ByteArrayOutputStream buf = new ByteArrayOutputStream();
-        TestCase tc = newCase(new FakeLibhegel(), false, buf);
-        assertEquals(5, tc.draw(constant(5)));
-        assertEquals("", buf.toString(StandardCharsets.UTF_8));
+    void nothingIsPrintedWhenTheCaseIsNeitherCapturedNorVerbose() {
+        FakeLibhegel fake = new FakeLibhegel();
+        TestCase tc = newCase(fake, false);
+        assertFalse(tc.isFinal());
+        assertEquals(5, tc.draw(constant(5), "x"));
+        tc.note("nope");
+        assertEquals(List.of(), tc.output());
+        assertTrue(tc.draws().isEmpty());
+        assertTrue(fake.notes.isEmpty());
+        assertTrue(fake.printerOwners.isEmpty());
     }
 
     @Test
-    void nestedDrawsAreNotReported() {
-        ByteArrayOutputStream buf = new ByteArrayOutputStream();
-        TestCase tc = newCase(new FakeLibhegel(), true, buf);
+    void nestedDrawsAreNotPrinted() {
+        TestCase tc = newCase(new FakeLibhegel(), true);
         Generator<Integer> nested = new Generator<>() {
             @Override
             public Integer doDraw(TestCase inner) {
-                int a = inner.draw(constant(10)); // nested: should not be printed
+                int a = inner.draw(constant(10), "inner");
                 return a + 1;
             }
         };
-        tc.draw(nested, "top");
-        String out = buf.toString(StandardCharsets.UTF_8);
-        assertTrue(out.contains("top = 11;"), out);
-        assertEquals(1, out.lines().count());
+        tc.draw(nested.printAsRepr(), "top");
+        assertEquals(List.of("var top_1 = 11;"), tc.output());
+        assertEquals(Map.of("top_1", 11), tc.draws());
     }
 
     @Test
-    void noteRespectsReporting() {
-        ByteArrayOutputStream buf = new ByteArrayOutputStream();
-        TestCase reporting = newCase(new FakeLibhegel(), true, buf);
-        reporting.note("hello");
-        assertTrue(buf.toString(StandardCharsets.UTF_8).contains("hello"));
-
-        ByteArrayOutputStream quiet = new ByteArrayOutputStream();
-        newCase(new FakeLibhegel(), false, quiet).note("nope");
-        assertEquals("", quiet.toString(StandardCharsets.UTF_8));
+    void notesGoToTheEngine() {
+        FakeLibhegel fake = new FakeLibhegel();
+        TestCase tc = newCase(fake, true);
+        tc.note("hello\nworld");
+        assertEquals(List.of("hello\nworld"), fake.notes);
+        assertEquals(List.of("hello", "world"), tc.output());
     }
 
     @Test
-    void capturedCaseRecordsDrawsAndNotesAndReplaysThem() {
-        TestCase tc = newCase(new FakeLibhegel(), true, new ByteArrayOutputStream());
+    void capturedCaseRecordsDrawsInOrder() {
+        TestCase tc = newCase(new FakeLibhegel(), true);
         assertTrue(tc.isFinal());
         tc.draw(constant(1), "x");
         tc.note("first");
         tc.draw(constant(2));
-        java.util.LinkedHashMap<String, Object> want = new java.util.LinkedHashMap<>();
-        want.put("x", 1);
-        want.put("draw_1", 2);
-        assertEquals(want, tc.draws());
-        assertEquals(List.of("x", "draw_1"), List.copyOf(tc.draws().keySet()));
-        assertEquals(List.of("first"), tc.notes());
-        // The recording replays in report order, flagged as a replay.
-        ByteArrayOutputStream replay = new ByteArrayOutputStream();
-        Reporter reporter = Reporter.printing(new PrintStream(replay, true, StandardCharsets.UTF_8));
-        reporter.runStarted(new Settings());
-        tc.replayTo(reporter);
-        assertEquals("x = 1;\nfirst\ndraw_1 = 2;\n", text(replay));
-
-        // A case stamped for capture but not verbose records without reporting live.
-        ByteArrayOutputStream silent = new ByteArrayOutputStream();
-        TestCase captured = new TestCase(
-                new LiveDataSource(new FakeLibhegel(), FakeLibhegel.TC),
-                true,
-                Reporter.printing(new PrintStream(silent, true, StandardCharsets.UTF_8)));
-        captured.draw(constant(3), "y");
-        captured.note("kept");
-        assertEquals("", text(silent));
-        assertEquals(Map.of("y", 3), captured.draws());
-        assertEquals(List.of("kept"), captured.notes());
-
-        TestCase exploring = newCase(new FakeLibhegel(), false, new ByteArrayOutputStream());
-        assertTrue(!exploring.isFinal());
-        exploring.draw(constant(1), "x");
-        exploring.note("ignored");
-        assertTrue(exploring.draws().isEmpty());
-        assertTrue(exploring.notes().isEmpty());
+        assertEquals(List.of("x_1", "draw_1"), List.copyOf(tc.draws().keySet()));
+        assertEquals(Map.of("x_1", 1, "draw_1", 2), tc.draws());
+        assertEquals(List.of("var x_1 = 1;", "first", "var draw_1 = 2;"), tc.output());
     }
 
     @Test
-    void repeatedNamesAreNumberedFromTheirSecondUse() {
-        ByteArrayOutputStream buf = new ByteArrayOutputStream();
-        TestCase tc = newCase(new FakeLibhegel(), true, buf);
+    void everyUseOfANameIsNumberedInTurn() {
+        TestCase tc = newCase(new FakeLibhegel(), true);
         for (int i = 1; i <= 3; i++) {
             tc.draw(constant(i), "x");
         }
         tc.draw(constant(8));
         tc.draw(constant(9));
         assertEquals(
-                List.of("x", "x_2", "x_3", "draw_1", "draw_2"),
+                List.of("x_1", "x_2", "x_3", "draw_1", "draw_2"),
                 List.copyOf(tc.draws().keySet()));
-        assertEquals(3, tc.draws().get("x_3"));
-        assertEquals("x = 1;\nx_2 = 2;\nx_3 = 3;\ndraw_1 = 8;\ndraw_2 = 9;\n", text(buf));
+        assertEquals(
+                List.of("var x_1 = 1;", "var x_2 = 2;", "var x_3 = 3;", "var draw_1 = 8;", "var draw_2 = 9;"),
+                tc.output());
     }
 
     @Test
     void notesMadeMidDrawFollowTheDrawLine() {
-        ByteArrayOutputStream buf = new ByteArrayOutputStream();
-        TestCase tc = newCase(new FakeLibhegel(), true, buf);
+        TestCase tc = newCase(new FakeLibhegel(), true);
         Generator<Integer> noisy = new Generator<>() {
             @Override
             public Integer doDraw(TestCase inner) {
@@ -146,16 +105,14 @@ class TestCaseTest {
             }
         };
         tc.note("before");
-        tc.draw(noisy, "v");
+        tc.draw(noisy.printAsRepr(), "v");
         tc.note("after");
-        assertEquals("before\nv = 7;\ninside\nafter\n", text(buf));
-        assertEquals(List.of("before", "inside", "after"), tc.notes());
+        assertEquals(List.of("before", "var v_1 = 7;", "inside", "after"), tc.output());
     }
 
     @Test
-    void notesMadeBeforeAFailingDrawAreNotLost() {
-        ByteArrayOutputStream buf = new ByteArrayOutputStream();
-        TestCase tc = newCase(new FakeLibhegel(), true, buf);
+    void aFailingDrawPrintsNothingButKeepsItsNotes() {
+        TestCase tc = newCase(new FakeLibhegel(), true);
         Generator<Integer> failing = new Generator<>() {
             @Override
             public Integer doDraw(TestCase inner) {
@@ -163,46 +120,131 @@ class TestCaseTest {
                 throw new IllegalStateException("inside");
             }
         };
-        assertThrows(IllegalStateException.class, () -> tc.draw(failing, "v"));
-        assertEquals("about to fail\n", text(buf));
+        assertThrows(IllegalStateException.class, () -> tc.draw(failing.printAsRepr(), "v"));
+        assertEquals(List.of("about to fail"), tc.output());
+        assertTrue(tc.draws().isEmpty());
     }
 
     @Test
-    void verboseCasesReportWithoutRecording() {
-        ByteArrayOutputStream buf = new ByteArrayOutputStream();
-        TestCase tc = new TestCase(
-                new LiveDataSource(new FakeLibhegel(), FakeLibhegel.TC),
-                false,
-                true,
-                Reporter.printing(new PrintStream(buf, true, StandardCharsets.UTF_8)));
-        assertTrue(!tc.isFinal());
+    void verboseCasesPrintWithoutRecording() {
+        TestCase tc = new TestCase(new LiveDataSource(new FakeLibhegel(), FakeLibhegel.TC), false, true);
+        assertFalse(tc.isFinal());
         tc.draw(constant(1), "x");
         tc.note("n");
-        assertEquals("x = 1;\nn\n", text(buf));
+        assertEquals(List.of("var x_1 = 1;", "n"), tc.output());
         assertTrue(tc.draws().isEmpty());
-        assertTrue(tc.notes().isEmpty());
+    }
+
+    @Test
+    void anEmptyDocumentHasNoLines() {
+        assertEquals(List.of(), newCase(new FakeLibhegel(), true).output());
+    }
+
+    @Test
+    void anUnreadableDocumentIsABindingError() {
+        FakeLibhegel fake = new FakeLibhegel();
+        fake.printerValueRc = Abi.E_INVALID_ARG;
+        TestCase tc = newCase(fake, true);
+        HegelException e = assertThrows(HegelException.class, tc::output);
+        assertTrue(e.getMessage().contains("hegel_printer_value failed"), e.getMessage());
+    }
+
+    @Test
+    void blocksIndentTheirOutputAndNameTheirDrawsInAFreshScope() {
+        FakeLibhegel fake = new FakeLibhegel();
+        TestCase tc = newCase(fake, true);
+        tc.draw(constant(1), "x");
+        tc.note("Step 1: rule {");
+        TestCase block = tc.block(2);
+        block.draw(constant(2), "x");
+        block.draw(constant(3), "x");
+        block.note("inner");
+        block.endBlock();
+        tc.note("}");
+        tc.draw(constant(4), "x");
+        assertEquals(
+                List.of(
+                        "var x_1 = 1;",
+                        "Step 1: rule {",
+                        "  var x_1 = 2;",
+                        "  var x_2 = 3;",
+                        "  inner",
+                        "}",
+                        "var x_2 = 4;"),
+                tc.output());
+        assertEquals(Map.of("x_1", 1, "x_1_2", 2, "x_2", 3, "x_2_2", 4), tc.draws());
+        assertEquals(List.of(FakeLibhegel.BLOCK_BASE), fake.freedBlocks);
+        tc.releaseAll();
+        assertEquals(List.of(FakeLibhegel.BLOCK_BASE), fake.freedBlocks);
+        assertEquals(fake.printerOwners.size(), fake.freedPrinters.size());
+    }
+
+    @Test
+    void aPinnedBlockLivesUntilTheCaseIsOver() {
+        FakeLibhegel fake = new FakeLibhegel();
+        TestCase tc = newCase(fake, true);
+        TestCase block = tc.block(2);
+        block.pin();
+        block.pin();
+        block.endBlock();
+        assertTrue(fake.freedBlocks.isEmpty());
+        tc.pin();
+        tc.releaseAll();
+        assertEquals(List.of(FakeLibhegel.BLOCK_BASE), fake.freedBlocks);
+    }
+
+    @Test
+    void anEndedBlockCannotBeUsed() {
+        FakeLibhegel fake = new FakeLibhegel();
+        TestCase tc = newCase(fake, true);
+        TestCase block = tc.block(2);
+        block.endBlock();
+        assertThrows(InvalidArgument.class, () -> block.draw(constant(1)));
+        assertThrows(InvalidArgument.class, () -> block.draw(Generators.integers()));
+        assertThrows(InvalidArgument.class, () -> block.note("late"));
+    }
+
+    @Test
+    void blocksShareTheStreamsAbortState() {
+        FakeLibhegel fake = new FakeLibhegel();
+        TestCase tc = newCase(fake, false);
+        TestCase block = tc.block(2);
+        fake.generateIntegerRc = Abi.E_STOP_TEST;
+        assertThrows(StopTest.class, () -> block.draw(Generators.integers()));
+        assertTrue(tc.isAborted());
+        block.endBlock();
+    }
+
+    @Test
+    void aFailedBlockOrPrinterIsABindingError() {
+        FakeLibhegel fake = new FakeLibhegel();
+        TestCase tc = newCase(fake, true);
+        fake.testCaseBlockRc = Abi.E_INVALID_HANDLE;
+        assertThrows(HegelException.class, () -> tc.block(2));
+        fake.testCasePrinterRc = Abi.E_INVALID_HANDLE;
+        assertThrows(HegelException.class, () -> tc.draw(constant(1)));
     }
 
     @Test
     void spanOpensAndClosesAroundTheBody() {
         FakeLibhegel fake = new FakeLibhegel();
-        TestCase tc = newCase(fake, false, new ByteArrayOutputStream());
+        TestCase tc = newCase(fake, false);
         assertEquals(7, tc.span(Label.of("test.pair"), () -> 7));
         assertEquals(List.of(Label.of("test.pair")), fake.startedSpans);
-        assertEquals(1, fake.stoppedSpans);
+        assertEquals(1, fake.stoppedSpans.get());
         // The span is closed on the exceptional path too.
         assertThrows(
                 IllegalStateException.class,
                 () -> tc.span(Label.TUPLE, () -> {
                     throw new IllegalStateException("inside");
                 }));
-        assertEquals(2, fake.stoppedSpans);
+        assertEquals(2, fake.stoppedSpans.get());
     }
 
     @Test
     void assumeAndTarget() {
         FakeLibhegel fake = new FakeLibhegel();
-        TestCase tc = newCase(fake, false, new ByteArrayOutputStream());
+        TestCase tc = newCase(fake, false);
         tc.assume(true);
         assertThrows(AssumeRejected.class, () -> tc.assume(false));
         tc.target(3.5);
@@ -211,27 +253,7 @@ class TestCaseTest {
         assertThrows(StopTest.class, () -> tc.target(1.0));
     }
 
-    @Test
-    void reprCoversAllShapes() {
-        assertEquals("null", TestCase.repr(null));
-        assertEquals("\"a\\\\b\\\"c\"", TestCase.repr("a\\b\"c"));
-        assertEquals("[1, 2]", TestCase.repr(new byte[] {1, 2}));
-        assertEquals("[1, \"x\"]", TestCase.repr(List.of(1, "x")));
-        assertEquals("[]", TestCase.repr(List.of()));
-        assertEquals("{1: 2}", TestCase.repr(Map.of(1, 2)));
-        java.util.LinkedHashMap<String, Integer> m = new java.util.LinkedHashMap<>();
-        m.put("a", 1);
-        m.put("b", 2);
-        assertEquals("{\"a\": 1, \"b\": 2}", TestCase.repr(m));
-        assertEquals("42", TestCase.repr(42));
-    }
-
     private static Generator<Integer> constant(int v) {
-        return new Generator<>() {
-            @Override
-            public Integer doDraw(TestCase tc) {
-                return v;
-            }
-        };
+        return Generators.just(v);
     }
 }

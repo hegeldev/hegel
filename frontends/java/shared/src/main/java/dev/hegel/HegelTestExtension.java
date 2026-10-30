@@ -1,6 +1,7 @@
 package dev.hegel;
 
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.List;
@@ -74,33 +75,58 @@ public final class HegelTestExtension implements TestTemplateInvocationContextPr
             invocation.skip();
             Method method = invocationContext.getExecutable();
             HegelTest ann = method.getAnnotation(HegelTest.class);
-            Settings settings = settingsFrom(ann, method.getName());
             Object target = invocationContext.getTarget().orElse(null);
+            Class<?> testClass = extensionContext.getRequiredTestClass();
+            Settings settings = settingsFrom(ann, method, testClass).examples(examplesFrom(ann, testClass, target));
             Hegel.test(tc -> ReflectionSupport.invokeMethod(method, target, tc), settings);
         }
     }
 
-    static Settings settingsFrom(HegelTest ann, String methodName) {
-        String name = ann.name().isEmpty() ? methodName : ann.name();
-        Settings s = new Settings()
-                .verbosity(ann.verbosity())
-                .backend(ann.backend())
-                .nondeterminismStrictness(ann.nondeterminismStrictness())
-                .reportMultipleFailures(ann.reportMultipleFailures())
-                .suppressHealthCheck(ann.suppressHealthCheck())
-                .name(name);
-        // The annotation cannot express "unset" for a primitive: 0 test cases (its default) leaves
-        // the engine's profile / HEGEL_TEST_CASES value in place.
+    /**
+     * The settings {@code ann} gives {@code method} run as a test of {@code testClass}, the class
+     * whose instance runs it, which for an inherited test is a subclass of the method's own. Each
+     * class running an inherited test keys its database entry by its own name.
+     */
+    static Settings settingsFrom(HegelTest ann, Method method, Class<?> testClass) {
+        String className = testClass.getName();
+        String name = ann.name().isEmpty() ? className + "." + method.getName() : ann.name();
+        Settings s = ann.profile().isEmpty() ? new Settings() : Settings.fromProfile(ann.profile());
+        s = s.name(name).testLocation(MethodLocation.of(method, testClass)).annotated();
+        // Each attribute's default leaves the value the settings resolved in place.
+        if (ann.verbosity() != Verbosity.DEFAULT) {
+            s = s.verbosity(ann.verbosity());
+        }
+        if (ann.backend() != Backend.AUTO) {
+            s = s.backend(ann.backend());
+        }
+        if (ann.nondeterminismStrictness() != NondeterminismStrictness.DEFAULT) {
+            s = s.nondeterminismStrictness(ann.nondeterminismStrictness());
+        }
         if (ann.testCases() != 0) {
             s = s.testCases(ann.testCases());
         }
         if (ann.printBlob() != OptBoolean.DEFAULT) {
             s = s.printBlob(ann.printBlob() == OptBoolean.TRUE);
         }
+        if (ann.reportMultipleFailures() != OptBoolean.DEFAULT) {
+            s = s.reportMultipleFailures(ann.reportMultipleFailures() == OptBoolean.TRUE);
+        }
+        if (ann.stopOnFirstFailure() != OptBoolean.DEFAULT) {
+            s = s.stopOnFirstFailure(ann.stopOnFirstFailure() == OptBoolean.TRUE);
+        }
+        if (ann.showStatistics() != OptBoolean.DEFAULT) {
+            s = s.showStatistics(ann.showStatistics() == OptBoolean.TRUE);
+        }
+        if (ann.unboundedChoices() != OptBoolean.DEFAULT) {
+            s = s.unboundedChoices(ann.unboundedChoices() == OptBoolean.TRUE);
+        }
+        if (ann.suppressHealthCheck().length > 0) {
+            s = s.suppressHealthCheck(ann.suppressHealthCheck());
+        }
         if (ann.seed() != HegelTest.NO_SEED) {
             s = s.seed(ann.seed());
         }
-        if (!ann.reproduceFailure().isEmpty()) {
+        if (ann.reproduceFailure().length > 0) {
             s = s.reproduceFailure(ann.reproduceFailure());
         }
         if (ann.derandomize() != OptBoolean.DEFAULT) {
@@ -109,14 +135,39 @@ public final class HegelTestExtension implements TestTemplateInvocationContextPr
         if (!isDefaultPhases(ann.phases())) {
             s = s.phases(ann.phases());
         }
-        // database() is a single tri-state String (members can't be value objects): "" leaves the
-        // engine default, DISABLED turns it off, anything else is a directory path.
-        if (ann.database().equals(Database.DISABLED)) {
+        if (ann.database().equals(Database.DEFAULT_LOCATION)) {
+            s = s.database(Database.defaultLocation());
+        } else if (ann.database().equals(Database.DISABLED)) {
             s = s.database(Database.disabled());
         } else if (!ann.database().isEmpty()) {
             s = s.database(Database.path(ann.database()));
         }
         return s;
+    }
+
+    /**
+     * The examples the methods {@code ann} names supply, invoked on {@code target} (ignored by a
+     * static method).
+     */
+    static Example[] examplesFrom(HegelTest ann, Class<?> testClass, Object target) {
+        List<Example> examples = new ArrayList<>();
+        for (String name : ann.examples()) {
+            Method source = ReflectionSupport.findMethod(testClass, name)
+                    .orElseThrow(() -> new IllegalArgumentException(
+                            "@HegelTest(examples): " + testClass.getName() + " has no method " + name + "()"));
+            Object supplied = ReflectionSupport.invokeMethod(source, target);
+            if (supplied instanceof Example example) {
+                examples.add(example);
+            } else if (supplied instanceof Iterable<?> iterable) {
+                for (Object item : iterable) {
+                    examples.add((Example) item);
+                }
+            } else {
+                throw new IllegalArgumentException("@HegelTest(examples): " + testClass.getName() + "." + name
+                        + "() must return an Example or an Iterable of them");
+            }
+        }
+        return examples.toArray(new Example[0]);
     }
 
     /**

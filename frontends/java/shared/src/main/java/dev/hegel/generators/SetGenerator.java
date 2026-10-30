@@ -2,6 +2,8 @@ package dev.hegel.generators;
 
 import dev.hegel.Generator;
 import dev.hegel.Label;
+import dev.hegel.PrintableGenerator;
+import dev.hegel.Printer;
 import dev.hegel.TestCase;
 import java.util.LinkedHashSet;
 import java.util.Set;
@@ -12,11 +14,15 @@ import java.util.Set;
  *
  * <p>The size range defaults to any size; narrow it with the fluent {@link #minSize(int)} / {@link
  * #maxSize(int)} methods.
+ *
+ * <p>It prints as {@code Set.of(a, b)}, each element printed by the element generator as it is drawn;
+ * a rejected duplicate prints nothing.
  */
-public final class SetGenerator<T> implements Generator<Set<T>> {
+public final class SetGenerator<T> implements PrintableGenerator<Set<T>> {
     private final Generator<T> element;
     private final long minSize;
     private final long maxSize;
+    private final CachedLabel label = new CachedLabel();
 
     public SetGenerator(Generator<T> element, long minSize, long maxSize) {
         Sizes.validate(minSize, maxSize, "sets");
@@ -43,20 +49,46 @@ public final class SetGenerator<T> implements Generator<Set<T>> {
 
     /** @hidden */
     @Override
+    public long label() {
+        return label.get(() -> Label.combine(Label.SET, element.label()));
+    }
+
+    /** @hidden */
+    @Override
     public Set<T> doDraw(TestCase tc) {
-        tc.startSpan(Label.SET);
+        return draw(tc, null);
+    }
+
+    /** @hidden */
+    @Override
+    public Set<T> doDrawAndPrint(TestCase tc, Printer printer) {
+        return draw(tc, printer);
+    }
+
+    private Set<T> draw(TestCase tc, Printer printer) {
+        Printer p = Components.out(printer);
+        long id = tc.newCollection(minSize, maxSize);
         try {
-            long id = tc.newCollection(minSize, maxSize);
             Set<T> out = new LinkedHashSet<>();
+            p.beginGroup("Set.of(");
             while (tc.collectionMore(id)) {
-                T value = element.doDraw(tc);
-                if (!out.add(value)) {
-                    tc.collectionReject(id, "duplicate element");
+                try (Printer.Speculation speculation = p.speculate()) {
+                    if (!out.isEmpty()) {
+                        p.separator();
+                    }
+                    T value = Components.draw(tc, element, printer);
+                    if (out.add(value)) {
+                        speculation.commit();
+                    } else {
+                        speculation.abort();
+                        tc.collectionReject(id, "duplicate element");
+                    }
                 }
             }
+            p.endGroup(")");
             return out;
         } finally {
-            tc.stopSpan(false);
+            tc.collectionFree(id);
         }
     }
 }

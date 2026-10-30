@@ -2,6 +2,7 @@ package dev.hegel;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.function.Predicate;
 
 /**
  * A {@link Pool} for concurrent state machines: previously generated values that rules running on
@@ -64,34 +65,66 @@ public final class ConcurrentPool<T> {
      *
      * @return the reusing generator
      */
-    public Generator<T> reusable() {
-        return new PoolGenerator(false);
+    public PrintableGenerator<T> reusable() {
+        return new ReusableGenerator();
     }
 
     /**
      * A generator that consumes values from the pool: it removes the value it yields, so once
      * consumed a value is never drawn again.
      *
+     * <p>A {@link Generator#filter filter} on this generator consumes only the value it yields, as
+     * for {@link Pool#consuming()}. The pool's lock is held for the whole filtered draw, so no
+     * other worker sees a value an attempt rejected before it is put back.
+     *
      * @return the consuming generator
      */
-    public Generator<T> consuming() {
-        return new PoolGenerator(true);
+    public PrintableGenerator<T> consuming() {
+        return new ConsumingGenerator();
     }
 
-    private final class PoolGenerator implements Generator<T> {
-        private final boolean consume;
-
-        PoolGenerator(boolean consume) {
-            this.consume = consume;
+    private final class ReusableGenerator extends PoolGenerator<T> {
+        @Override
+        public long label() {
+            return Label.POOL_VALUES_REUSABLE;
         }
 
         @Override
         public T doDraw(TestCase tc) {
             synchronized (ConcurrentPool.this) {
-                tc.assume(!values.isEmpty());
-                long variableId = tc.poolGenerate(poolId, consume);
-                return consume ? values.remove(variableId) : values.get(variableId);
+                return PoolDraws.draw(tc, poolId, values, false);
             }
+        }
+    }
+
+    private final class ConsumingGenerator extends PoolGenerator<T> {
+        @Override
+        public long label() {
+            return Label.POOL_VALUES_CONSUMED;
+        }
+
+        @Override
+        public T doDraw(TestCase tc) {
+            synchronized (ConcurrentPool.this) {
+                return PoolDraws.draw(tc, poolId, values, true);
+            }
+        }
+
+        @Override
+        public PrintableGenerator<T> filter(Predicate<? super T> predicate) {
+            return new PoolGenerator<T>() {
+                @Override
+                public long label() {
+                    return Label.combine(Label.FILTER, Label.POOL_VALUES_CONSUMED);
+                }
+
+                @Override
+                public T doDraw(TestCase tc) {
+                    synchronized (ConcurrentPool.this) {
+                        return PoolDraws.drawFiltered(tc, poolId, values, predicate);
+                    }
+                }
+            };
         }
     }
 }
