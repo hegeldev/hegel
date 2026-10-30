@@ -28,6 +28,12 @@ check-tests-all-features:
 compile-examples:
     cargo build -p hegeltest --examples --all-features
 
+check-sqlite:
+    cargo fmt --manifest-path examples/sqlite/Cargo.toml --check
+    cargo clippy --manifest-path examples/sqlite/Cargo.toml --all-targets --all-features -- -D warnings
+    RUST_BACKTRACE=1 cargo test --manifest-path examples/sqlite/Cargo.toml
+    RUST_BACKTRACE=1 cargo run --manifest-path examples/sqlite/Cargo.toml
+
 check-docs:
     cargo +nightly docs-rs
 

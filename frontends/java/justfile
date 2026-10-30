@@ -1,0 +1,59 @@
+# Recipes for the Java frontend (the `dev.hegel:hegel`, `dev.hegel:hegel-jna` and
+# `dev.hegel:hegel-lowlevel` Maven artifacts). Run as `just java::<recipe>` from
+# anywhere in the repo; recipes execute from this directory. The engine is the
+# in-tree libhegel: `build-libhegel` compiles it into the workspace's `target/`,
+# and the Maven build stages that build as the bundled native the tests load
+# (scripts/engine.py; `HEGEL_LIBHEGEL_PATH` overrides it).
+set ignore-comments := true
+# Recipes assume a POSIX shell; on Windows run them under Git Bash.
+set windows-shell := ["bash", "-uc"]
+
+# Build libhegel natively, the engine every Maven recipe below bundles.
+build-libhegel:
+    cargo build --release -p hegeltest-c --manifest-path ../../Cargo.toml
+
+# Compile every module and its tests.
+build: build-libhegel
+    mvn -B -q compile test-compile
+
+# The full suite against the real engine, with the 100% coverage gate (needs JDK 22+).
+check-test: build-libhegel
+    mvn -B verify
+
+# Only parent + hegel-jna, which build and test on JDK 17+.
+check-test-jna: build-libhegel
+    mvn -B -pl hegel-jna -am verify
+
+# The full suite without the coverage gate.
+test: build-libhegel
+    mvn -B test
+
+# One class or method: `just java::test-only RunnerTest`, `... RunnerTest#happyPath`.
+test-only PATTERN: build-libhegel
+    mvn -B test -Dtest='{{PATTERN}}' -Dsurefire.failIfNoSpecifiedTests=false
+
+format:
+    mvn -B spotless:apply
+
+check-format:
+    mvn -B spotless:check
+
+check-lint: check-format
+
+# `compile` first: hegel and hegel-jna depend on hegel-lowlevel, and a bare `javadoc:javadoc`
+# would try to resolve it from Maven Central instead of the reactor. Javadoc needs no engine.
+check-docs:
+    mvn -B -q -Dhegel.natives.skip=true compile javadoc:javadoc
+
+docs: check-docs
+    open hegel/target/reports/apidocs/index.html
+
+clean:
+    mvn -B -q clean
+
+check: check-lint check-docs check-test
+
+# These aliases are provided as ux improvements for local developers. CI
+# should use the longer forms.
+
+lint: check-lint

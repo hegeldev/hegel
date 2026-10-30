@@ -87,7 +87,7 @@ def test_regression_issue_1230():
         ),
     )
 
-    @hegel.test(database="", seed=81581571036124932593143257836081491416)
+    @hegel.test(database="", seed=11226829199800118744)
     def test_false_is_false(tc):
         params = tc.draw(generator)
         tc.assume(params.get("0") not in ("", "\x00"))
@@ -129,6 +129,7 @@ exc_instances = [
     errors.InvalidArgument("invalid"),
     errors.MultipleFailures("check with Exception", [Exception()]),
     errors.MultipleFailures("check with BaseException", [KeyboardInterrupt()]),
+    errors.NotPrintable("not printable"),
     errors.ResolutionFailed("resolution"),
     errors.RunError("run"),
     errors.StopTest("stop"),

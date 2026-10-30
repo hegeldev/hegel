@@ -10,9 +10,9 @@ from typing import TYPE_CHECKING, TypeVar
 from hegel._labels import combine_labels, label_from_name
 from hegel._native import RetrySignal
 from hegel.errors import InvalidArgument
-from hegel.generators.base import NOOP_PRINTER, Generator
+from hegel.generators.base import Generator
 from hegel.generators.combinators import as_generator
-from hegel.pretty import PrettyPrinter
+from hegel.pretty import _SILENT_PRINTER, PrettyPrinter
 
 if TYPE_CHECKING:
     from hegel import _native
@@ -26,9 +26,6 @@ DEFAULT_MAX_DEPTH = 32
 DEFAULT_MAX_LEAVES = 100
 RECURSIVE_LABEL = label_from_name("hegel.recursive")
 DEFERRED_LABEL = label_from_name("hegel.deferred")
-# Below the test case's own span-depth limit, so a definition that only
-# refers back to itself is rejected as an assumption rather than overrunning.
-MAX_DEFERRED_DEPTH = 64
 
 
 class _Subtree(Generator[T]):
@@ -57,7 +54,7 @@ class _Subtree(Generator[T]):
         return result
 
     def do_draw(self, tc: TestCase) -> T:
-        return self._draw(tc, NOOP_PRINTER)
+        return self._draw(tc, _SILENT_PRINTER)
 
     def do_draw_and_print(self, tc: TestCase, printer: PrettyPrinter) -> T:
         return self._draw(tc, printer)
@@ -102,7 +99,7 @@ class Recursive(Generator[T]):
             return value
 
     def do_draw(self, tc: TestCase) -> T:
-        return self._draw(tc, NOOP_PRINTER)
+        return self._draw(tc, _SILENT_PRINTER)
 
     def do_draw_and_print(self, tc: TestCase, printer: PrettyPrinter) -> T:
         return self._draw(tc, printer)
@@ -203,16 +200,10 @@ class Deferred(Generator[T]):
     def label(self, value: int) -> None:  # nocov
         self._label = value
 
-    def _check_depth(self, tc: TestCase) -> None:
-        if tc._open_span_depth > MAX_DEFERRED_DEPTH:
-            tc.reject()
-
     def do_draw(self, tc: TestCase) -> T:
-        self._check_depth(tc)
         return self._get().do_draw(tc)
 
     def do_draw_and_print(self, tc: TestCase, printer: PrettyPrinter) -> T:
-        self._check_depth(tc)
         return self._get().do_draw_and_print(tc, printer)
 
     @reprlib.recursive_repr(fillvalue="...")
@@ -233,10 +224,11 @@ def deferred(definition: Callable[[], Generator[T]]) -> Generator[T]:
 
         tree = gs.deferred(lambda: gs.none() | gs.tuples(tree, tree))
 
-    A draw from a deferred generator nested more than 64 levels deep
-    rejects the test case, so a definition that always refers back to
-    itself cannot recurse forever. A definition that resolves only to
-    itself is an :class:`~hegel.InvalidArgument`.
+    Draws nested so deeply that Python's recursion limit is in sight
+    abandon the test case as too large, so a definition that always
+    refers back to itself cannot recurse forever: a test drawing from one
+    fails with :class:`~hegel.FailedHealthCheck`. A definition that
+    resolves only to itself is an :class:`~hegel.InvalidArgument`.
     """
     if not callable(definition):
         raise InvalidArgument("deferred() takes a zero-argument function returning a generator")

@@ -1,0 +1,109 @@
+# CI for the Java frontend (the `dev.hegel:hegel`, `dev.hegel:hegel-jna` and
+# `dev.hegel:hegel-lowlevel` Maven artifacts in frontends/java/, driving
+# libhegel through the FFM API and through JNA). Called from ci.yml when the
+# frontend, libhegel (which it bundles) or the shared workspace changed. Every
+# job builds the in-tree engine first and the Maven build bundles that build:
+# the tests never fetch a released binary.
+name: java
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  # The whole reactor (FFM needs JDK 22+) with the 100% coverage gate.
+  test:
+    name: test (java ${{ matrix.java-version }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        java-version: ["22", "25"]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java-version }}
+          cache: maven
+      - name: Test with 100% coverage enforcement
+        run: just java::check-test
+      - name: Report uncovered lines
+        if: failure()
+        run: python3 frontends/java/scripts/uncovered.py
+
+  # hegel-lowlevel and hegel-jna on the JDKs the JNA artifact supports.
+  test-jna:
+    name: test hegel-jna (java ${{ matrix.java-version }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        java-version: ["17", "21"]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java-version }}
+          cache: maven
+      - name: Test hegel-jna with 100% coverage enforcement
+        run: just java::check-test-jna
+      - name: Report uncovered lines
+        if: failure()
+        run: python3 frontends/java/scripts/uncovered.py
+
+  # The suite on the other platforms the jars bundle an engine for.
+  test-os:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-2025]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+      - name: Test
+        run: just java::test
+
+  # The API reference (javadoc), with doclint on.
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/install-tools
+        with:
+          tools: just
+      - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+      - name: Build Javadoc
+        run: just java::check-docs

@@ -82,7 +82,8 @@ macro_rules! compose {
         $crate::compose!(|$tc| { $($body)* })
     };
     (|$tc:ident| { $($body:tt)* }) => {{
-        const LABEL: u64 = $crate::generators::label_from_name(stringify!($($body)*));
-        $crate::generators::ComposedGenerator::new(LABEL, move |$tc: &$crate::TestCase| { $($body)* })
+        static LABEL: ::std::sync::LazyLock<u64> =
+            ::std::sync::LazyLock::new(|| $crate::generators::label_from_name(stringify!($($body)*)));
+        $crate::generators::ComposedGenerator::new(*LABEL, move |$tc: &$crate::TestCase| { $($body)* })
     }};
 }

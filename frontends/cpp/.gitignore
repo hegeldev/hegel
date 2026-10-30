@@ -1,0 +1,12 @@
+build/
+.hypothesis
+.hegel
+__pycache__
+.cache
+.vscode/
+
+.devcontainer/
+devcontainer
+external/
+result
+

@@ -8,6 +8,7 @@ use crate::native::core::{ManyState, NativeStateMachine, NativeVariables, Recurs
 use crate::native::draws::special::{Date, DateTime, Time};
 use crate::native::draws::{FloatSpec, StringSpec};
 use crate::native::lark::generate::GrammarSpec;
+use crate::native::lark::grammar_draw::GrammarDraw;
 use crate::settings::HealthCheck;
 
 /// Error returned by [`DataSource`] methods when an operation cannot complete.
@@ -96,6 +97,12 @@ pub trait DataSource: Send + Sync {
         spec: &GrammarSpec,
         max_size: Option<u64>,
     ) -> Result<String, DataSourceError>;
+
+    /// Advance a draw of a grammar string with caller-supplied explicit
+    /// terminals (see [`GrammarDraw::next`]), drawing from this stream:
+    /// `Some(i)` when a value is due for explicit terminal `i`, `None` when
+    /// the string is complete.
+    fn grammar_draw_next(&self, draw: &mut GrammarDraw) -> Result<Option<usize>, DataSourceError>;
 
     /// Draw a Gregorian calendar [`Date`] in `[min, max]`, shrinking toward
     /// 2000-01-01 (clamped into range). Errors with `InvalidArgument` for

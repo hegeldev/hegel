@@ -1,0 +1,7 @@
+native/
+platform-packages/
+node_modules/
+dist/
+coverage/
+docs/
+tests/smoke/package-lock.json

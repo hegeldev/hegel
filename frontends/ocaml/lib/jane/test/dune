@@ -1,0 +1,5 @@
+(executable
+ (name test_hegel_jane)
+ (modules test_hegel_jane)
+ (optional)
+ (libraries hegel hegel_jane alcotest core))

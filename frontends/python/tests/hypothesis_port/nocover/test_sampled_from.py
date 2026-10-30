@@ -97,14 +97,16 @@ def test_flag_enum_repr_names_the_class():
 
 def test_exhaustive_flags():
     # Generate powerset of flag combinations. There are only 2^3 of them, so
-    # we can reasonably expect that they are all are found.
+    # we can reasonably expect that they are all are found. Each multi-bit
+    # combination is drawn about one case in twenty, so 100 cases miss one
+    # about once in 500 runs; 1000 cases never do.
     unseen_flags = {
         functools.reduce(operator.or_, flaglist, AFlag(0))
         for r in range(len(AFlag) + 1)
         for flaglist in itertools.combinations(AFlag, r)
     }
 
-    @hegel.test
+    @hegel.test(test_cases=1000)
     def accept(tc):
         flag = tc.draw(gs.sampled_from(AFlag))
         unseen_flags.discard(flag)

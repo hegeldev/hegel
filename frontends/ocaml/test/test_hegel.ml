@@ -1,0 +1,34 @@
+(* [Test_client.test_hegel_toml_config] re-executes this binary with a
+   [hegel.toml] named by [HEGEL_CONFIG]; the child checks the settings it
+   resolves and exits. *)
+let () =
+  match Stdlib.Sys.getenv_opt "HEGEL_TEST_CONFIG_CHILD" with
+  | Some _ ->
+    Test_client.config_child ();
+    Stdlib.exit 0
+  | None -> ()
+;;
+
+(* [Test_cli] runs [Hegel.main] in a child the same way. *)
+let () =
+  match Stdlib.Sys.getenv_opt "HEGEL_TEST_MAIN_CHILD" with
+  | Some mode -> Test_cli.main_child mode
+  | None -> ()
+;;
+
+let () =
+  Alcotest.run
+    "hegel"
+    [ "loader", Test_loader.tests
+    ; "client", Test_client.tests
+    ; "cli", Test_cli.tests
+    ; "clone", Test_clone.tests
+    ; "concurrency", Test_concurrency.tests
+    ; "generators_core", Test_generators_core.tests
+    ; "generators_primitives", Test_generators_primitives.tests
+    ; "generators_collections", Test_generators_collections.tests
+    ; "generators_combinators", Test_generators_combinators.tests
+    ; "generators_functions", Test_generators_functions.tests
+    ; "stateful", Test_stateful.tests
+    ]
+;;

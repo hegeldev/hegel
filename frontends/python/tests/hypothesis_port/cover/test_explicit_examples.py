@@ -159,7 +159,7 @@ def test_prints_output_for_explicit_examples():
         x = tc.draw(gs.integers())
         assert x > 0
 
-    assert_failing_output(test_positive, "Falsifying example", x=-1)
+    assert_failing_output(test_positive, x=-1)
 
 
 def test_captures_original_repr_of_example():
@@ -170,7 +170,7 @@ def test_captures_original_repr_of_example():
         x.append(1)
         assert not x
 
-    assert_failing_output(test_mutation, "Falsifying example", x=[])
+    assert_failing_output(test_mutation, x=[])
 
 
 def test_examples_are_tried_in_order():
@@ -217,7 +217,7 @@ def test_unsatisfied_assumption_during_explicit_example(threshold):
     if threshold > 0.56789:
         test()
     else:
-        with pytest.raises(hegel.InvalidArgument, match="assumption violated"):
+        with pytest.raises(hegel.InvalidArgument, match="Explicit test cases must not be rejected"):
             test()
 
 
