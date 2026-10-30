@@ -637,21 +637,27 @@ class TestCase:
             draw.provide(value(terminal))
         return draw.result()
 
-    def _generate_date(self, min_value: _dt.date, max_value: _dt.date) -> _dt.date:
+    def _generate_date(
+        self, min_value: _dt.date, max_value: _dt.date, options: _native.DateOptions | None
+    ) -> _dt.date:
         year, month, day = self._handle.generate_date(
             (min_value.year, min_value.month, min_value.day),
             (max_value.year, max_value.month, max_value.day),
+            options,
         )
         return _dt.date(year, month, day)
 
-    def _generate_time(self, min_value: _dt.time, max_value: _dt.time) -> _dt.time:
+    def _generate_time(self, min_value: _dt.time, max_value: _dt.time, precision: int) -> _dt.time:
         hour, minute, second, nanosecond = self._handle.generate_time(
             (min_value.hour, min_value.minute, min_value.second, min_value.microsecond * 1000),
             (max_value.hour, max_value.minute, max_value.second, max_value.microsecond * 1000),
+            precision,
         )
         return _dt.time(hour, minute, second, nanosecond // 1000)
 
-    def _generate_datetime(self, min_value: _dt.datetime, max_value: _dt.datetime) -> _dt.datetime:
+    def _generate_datetime(
+        self, min_value: _dt.datetime, max_value: _dt.datetime, precision: int
+    ) -> _dt.datetime:
         result = self._handle.generate_datetime(
             (
                 min_value.year,
@@ -671,9 +677,38 @@ class TestCase:
                 max_value.second,
                 max_value.microsecond * 1000,
             ),
+            precision,
         )
         year, month, day, hour, minute, second, nanosecond = result
         return _dt.datetime(year, month, day, hour, minute, second, nanosecond // 1000)
+
+    def _generate_timedelta(
+        self, min_value: _dt.timedelta, max_value: _dt.timedelta, precision: int
+    ) -> _dt.timedelta:
+        seconds, nanoseconds = self._handle.generate_duration(
+            _duration_of(min_value), _duration_of(max_value), precision
+        )
+        return _dt.timedelta(seconds=seconds, microseconds=nanoseconds // 1000)
+
+    def _generate_offset(self, min_seconds: int, max_seconds: int, granularity: int) -> int:
+        return self._handle.generate_offset(min_seconds, max_seconds, granularity)
+
+    def _generate_timezone(self, spec: _native.TimeZoneSpec) -> str:
+        return self._handle.generate_timezone(spec)
+
+    def _generate_zoned_datetime(
+        self, tz_spec: _native.TimeZoneSpec, zoned_spec: _native.ZonedSpec
+    ) -> tuple[str, _dt.datetime]:
+        """Draw a zone and a wall-clock time in it, as the zone's name and a
+        naive datetime carrying the fold. A wall time outside the years
+        :mod:`datetime` represents, which instant bounds near its limits can
+        reach in a zone with a large offset, rejects the test case."""
+        key, civil, fold, _, _, _, _ = self._handle.generate_zoned_datetime(tz_spec, zoned_spec)
+        year, month, day, hour, minute, second, nanosecond = civil
+        if not _dt.MINYEAR <= year <= _dt.MAXYEAR:
+            self.reject()
+        value = _dt.datetime(year, month, day, hour, minute, second, nanosecond // 1000)
+        return key, value.replace(fold=int(fold))
 
     def _generate_uuid(self, version: int | None = None) -> bytes:
         return self._handle.generate_uuid(version)
@@ -737,3 +772,11 @@ class Collection:
         if self._finished:
             return
         self._ensure().reject(self._tc._handle, why)
+
+
+def _duration_of(delta: _dt.timedelta) -> tuple[int, int]:
+    """A timedelta as the engine's ``(seconds, nanoseconds)`` of one sign."""
+    microseconds = delta // _dt.timedelta(microseconds=1)
+    seconds, remainder = divmod(abs(microseconds), 1_000_000)
+    sign = -1 if microseconds < 0 else 1
+    return sign * seconds, sign * remainder * 1000

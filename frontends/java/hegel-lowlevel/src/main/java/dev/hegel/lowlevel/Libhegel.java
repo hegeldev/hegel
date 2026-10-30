@@ -1,6 +1,8 @@
 package dev.hegel.lowlevel;
 
 import java.nio.file.Path;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -20,7 +22,9 @@ import java.util.function.Consumer;
  * whichever is on the classpath. Frontends may also substitute a fake for tests.
  *
  * <p>Opaque handles ({@code hegel_settings_t*}, {@code hegel_run_t*}, {@code hegel_test_case_t*},
- * {@code hegel_run_result_t*}, {@code hegel_string_generator_t*}) are passed as raw addresses
+ * {@code hegel_run_result_t*}, {@code hegel_string_generator_t*}, {@code hegel_date_options_t*},
+ * {@code hegel_timezone_spec_t*}, {@code hegel_zoned_spec_t*}, {@code hegel_span_spec_t*}) are
+ * passed as raw addresses
  * ({@code long}; {@code 0} is NULL); callers treat them as opaque and never dereference them.
  * Handles are caller-owned: every handle a method returns must be released with its matching
  * {@code *Free} method. A binding keeps one {@code hegel_context_t} per thread internally, so the
@@ -245,12 +249,133 @@ public interface Libhegel {
 
     int generateString(long tc, long generator, String[] out);
 
-    int generateDate(long tc, LocalDate min, LocalDate max, LocalDate[] out);
+    /**
+     * {@code hegel_generate_date}: {@code options} is a handle from {@link #dateOptionsNew}, or
+     * {@code 0} for every weekday and month.
+     */
+    int generateDate(long tc, LocalDate min, LocalDate max, long options, LocalDate[] out);
 
-    /** Time bounds and results are at microsecond resolution (the engine's granularity). */
-    int generateTime(long tc, LocalTime min, LocalTime max, LocalTime[] out);
+    /** {@code precision} is one of the {@code Abi.PRECISION_*} constants. */
+    int generateTime(long tc, LocalTime min, LocalTime max, int precision, LocalTime[] out);
 
-    int generateDatetime(long tc, LocalDateTime min, LocalDateTime max, LocalDateTime[] out);
+    /** {@code precision} is one of the {@code Abi.PRECISION_*} constants. */
+    int generateDatetime(long tc, LocalDateTime min, LocalDateTime max, int precision, LocalDateTime[] out);
+
+    /**
+     * {@code hegel_generate_timestamp}: an instant of whole {@code precision} units, as seconds since
+     * the epoch and a nanosecond adjustment, which is {@link Instant}'s own model.
+     */
+    int generateTimestamp(long tc, Instant min, Instant max, int precision, Instant[] out);
+
+    /**
+     * {@code hegel_generate_offset}: {@code granularity} is one of the {@code
+     * Abi.OFFSET_GRANULARITY_*} constants. On OK the offset in seconds east of UTC is written to
+     * {@code outSeconds[0]} and whether it is known to {@code outKnown[0]}; the unknown offset (RFC
+     * 3339's {@code -00:00}) is drawn only with {@code allowUnknown} and reads as 0 seconds.
+     */
+    int generateOffset(
+            long tc,
+            int minSeconds,
+            int maxSeconds,
+            int granularity,
+            boolean allowUnknown,
+            int[] outSeconds,
+            boolean[] outKnown);
+
+    /**
+     * {@code hegel_generate_duration}: the engine's seconds and nanoseconds share a sign, and a
+     * {@link Duration} is normalised on the way in and out, so {@code -1.5s} crosses as {@code {-1,
+     * -500000000}}.
+     */
+    int generateDuration(long tc, Duration min, Duration max, int precision, Duration[] out);
+
+    /**
+     * {@code hegel_generate_timezone}: on OK the drawn IANA name, copied out of the engine's owned
+     * string, is written to {@code out[0]}.
+     */
+    int generateTimezone(long tc, long spec, String[] out);
+
+    /** A drawn zoned datetime: {@code hegel_zoned_datetime_t} plus the zone name the draw reports. */
+    record ZonedDatetime(
+            String zone,
+            LocalDateTime civil,
+            int offsetSeconds,
+            boolean offsetKnown,
+            boolean fold,
+            int kind,
+            int offsetBefore,
+            int offsetAfter,
+            Instant timestamp) {}
+
+    /** {@code hegel_generate_zoned_datetime}: on OK the value is written to {@code out[0]}. */
+    int generateZonedDatetime(long tc, long tzSpec, long zonedSpec, ZonedDatetime[] out);
+
+    /**
+     * {@code hegel_generate_span}: on OK the ten unit values of the {@code hegel_span_t}, years
+     * first and nanoseconds last ({@code Abi.SPAN_UNIT_*} order), are written to {@code out10}.
+     */
+    int generateSpan(long tc, long spec, long[] out10);
+
+    // Date options, time zone specs, zoned specs and span specs. Constructors write the new handle
+    // (0 on failure) and return the raw rc; a setter that can reject its argument returns the raw rc
+    // (INVALID_ARG leaves the spec as it was); the frees and the setters that cannot fail follow the
+    // infrastructure convention.
+    int dateOptionsNew(long[] out);
+
+    void dateOptionsFree(long options);
+
+    /** {@code mask} has bit 0 for Monday through bit 6 for Sunday. */
+    int dateOptionsSetWeekdays(long options, int mask);
+
+    /** {@code mask} has bit 0 for January through bit 11 for December. */
+    int dateOptionsSetMonths(long options, int mask);
+
+    int timezoneSpecNew(long[] out);
+
+    void timezoneSpecFree(long spec);
+
+    /** {@code hegel_timezone_spec_set_names}: each name exactly as the IANA database spells it. */
+    int timezoneSpecSetNames(long spec, List<String> names);
+
+    void timezoneSpecSetLinks(long spec, boolean links);
+
+    void timezoneSpecSetLegacy(long spec, boolean legacy);
+
+    int zonedSpecNew(long[] out);
+
+    void zonedSpecFree(long spec);
+
+    int zonedSpecSetCivilBounds(long spec, LocalDateTime min, LocalDateTime max);
+
+    int zonedSpecSetInstantBounds(long spec, Instant min, Instant max);
+
+    int zonedSpecSetPrecision(long spec, int precision);
+
+    /** {@code imaginary} is {@code Abi.IMAGINARY_ALLOW} or {@code Abi.IMAGINARY_AVOID}. */
+    int zonedSpecSetImaginary(long spec, int imaginary);
+
+    /** {@code ambiguous} is one of the {@code Abi.AMBIGUOUS_*} constants. */
+    int zonedSpecSetAmbiguous(long spec, int ambiguous);
+
+    int spanSpecNew(long[] out);
+
+    void spanSpecFree(long spec);
+
+    /** {@code unit} is one of the {@code Abi.SPAN_UNIT_*} constants. */
+    int spanSpecSetUnitBounds(long spec, int unit, long min, long max);
+
+    /** {@code sign} is one of the {@code Abi.SPAN_SIGN_*} constants. */
+    int spanSpecSetSign(long spec, int sign);
+
+    /**
+     * What {@code hegel_timezone_info} knows about a name: whether it is in the bundled database,
+     * the primary zone it resolves to ({@code ""} when not known), whether it is a link, its shrink
+     * rank and its {@code Abi.TIMEZONE_TAG_*} bits.
+     */
+    record TimezoneInfo(boolean known, String primaryName, boolean link, int rank, int tags) {}
+
+    /** {@code hegel_timezone_info}: a query, never a draw; an unknown name reports {@code known} false. */
+    TimezoneInfo timezoneInfo(String name);
 
     /** On OK writes the UUID's 16 big-endian bytes into {@code out16}. */
     int generateUuid(long tc, int version, boolean hasVersion, byte[] out16);
@@ -375,4 +500,7 @@ public interface Libhegel {
     String lastErrorMessage();
 
     String version();
+
+    /** {@code hegel_tzdb_version}: the IANA release of the time zone database bundled in the engine. */
+    String tzdbVersion();
 }
