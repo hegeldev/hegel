@@ -20,14 +20,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest]
         python: ["3.11", "3.12", "3.13", "3.14"]
         # The plan caps macOS at five concurrent jobs across the org, so
-        # macOS runs only the oldest and newest Python; Linux and Windows
-        # cover every version.
-        exclude:
-          - { os: macos-latest, python: "3.12" }
-          - { os: macos-latest, python: "3.13" }
+        # macOS runs one Python, and only in the merge queue and on main.
+        include: ${{ fromJSON(github.event_name == 'pull_request' && '[]' || '[{"os":"macos-latest","python":"3.11"}]') }}
     env:
       UV_PYTHON: ${{ matrix.python }}
     steps:
@@ -72,7 +69,7 @@ jobs:
   # is not writable afterwards.
   package:
     name: package (${{ matrix.platform }})
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ fromJSON('{"linux-amd64":"ubuntu-latest","linux-arm64":"ubuntu-24.04-arm","darwin-arm64":"macos-14","windows-amd64":"windows-latest"}')[matrix.platform] }}
     permissions:
       contents: read
     defaults:
@@ -81,11 +78,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { platform: linux-amd64,   runner: ubuntu-latest }
-          - { platform: linux-arm64,   runner: ubuntu-24.04-arm }
-          - { platform: darwin-arm64,  runner: macos-14 }
-          - { platform: windows-amd64, runner: windows-latest }
+        # darwin-arm64 only in the merge queue and on main: macOS runners
+        # are scarce.
+        platform: ${{ fromJSON(github.event_name == 'pull_request' && '["linux-amd64", "linux-arm64", "windows-amd64"]' || '["linux-amd64", "linux-arm64", "darwin-arm64", "windows-amd64"]') }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
