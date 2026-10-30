@@ -1,6 +1,15 @@
 import { describe, it, expect, vi } from "vitest";
 import { wasmFixture } from "./wasmFixture.js";
-import { createRunner, Database, HealthCheck } from "../src/runnerCore.js";
+import {
+  createRunner,
+  Database,
+  HealthCheck,
+  Verbosity,
+  Phase,
+  Backend,
+  NondeterminismStrictness,
+} from "../src/runnerCore.js";
+import { FailedHealthCheckError } from "../src/errors.js";
 import { browserRuntime } from "../src/browser/runtime.js";
 import { WasmArena } from "../src/browser/arena.js";
 import {
@@ -16,6 +25,8 @@ import * as gs from "../src/generators/index.js";
 import * as stateful from "../src/stateful.js";
 import { Libhegel } from "../src/libhegel.js";
 import { testLibPath } from "./libPath.js";
+import { fakeRuntime } from "./fakeEngine.js";
+import { prettyPrint, type PrettyPrinter } from "../src/pretty.js";
 
 function active<T>(
   engine: Engine,
@@ -93,8 +104,8 @@ describe("WasmEngine pinned raw ABI", () => {
   it("copies empty buffers, NUL, WTF-8 surrogates and astral text, preserving null vs empty lists", () => {
     const { engine } = wasmFixture();
     active(engine, (ctx, tc) => {
-      expect(engine.generateBytes(ctx, tc, 0, 0)).toEqual(new Uint8Array());
-      expect(engine.generateBytes(ctx, tc, 7, 7)).toHaveLength(7);
+      expect(engine.generateBytes(ctx, tc, 0, 0n)).toEqual(new Uint8Array());
+      expect(engine.generateBytes(ctx, tc, 7, 7n)).toHaveLength(7);
       for (const codepoint of [0, 0x1f642]) {
         const generator = engine.stringGeneratorText(ctx, {
           ...text,
@@ -155,7 +166,7 @@ describe("WasmEngine pinned raw ABI", () => {
       } finally {
         engine.freeStringGenerator(generator);
       }
-      const bytes = engine.generateBytes(ctx, tc, 20, 20);
+      const bytes = engine.generateBytes(ctx, tc, 20, 20n);
       const copy = bytes.slice();
       abi.memory.grow(2);
       expect(bytes).toEqual(copy);
@@ -171,6 +182,7 @@ describe("WasmEngine pinned raw ABI", () => {
     const options = {
       ruleNames: ["push", "pop"],
       ruleGroups: [0, 0],
+      ruleWeights: [1, 3],
       invariantNames: ["sorted", "small"],
       invariantAlwaysCheck: [true, false],
       minConcurrency: 1,
@@ -212,6 +224,88 @@ describe("WasmEngine pinned raw ABI", () => {
         }
       });
     expect(drive(wasm)).toEqual(drive(native));
+  });
+
+  it("drives recursions, pool restores and the Unicode version like the native adapter", () => {
+    const wasm = wasmFixture().engine;
+    const native = Libhegel.load(testLibPath());
+    const drive = (engine: Engine) =>
+      active(engine, (ctx, tc) => {
+        const trace: unknown[] = [];
+        engine.setUnicodeVersion(ctx, "16.0");
+        expect(() => engine.setUnicodeVersion(ctx, "not a version")).toThrow(/version/);
+        engine.setUnicodeVersion(ctx, process.versions["unicode"] ?? "");
+        const recursion = engine.newRecursion(ctx, tc, 5, 3);
+        const pool = engine.newPool(ctx, tc);
+        try {
+          const subtree = (depth: number): boolean => {
+            const branch = engine.recursionBranch(ctx, tc, recursion, depth);
+            trace.push(branch);
+            if (!branch) return engine.recursionLeaf(ctx, tc, recursion);
+            for (let i = 0; i < 3; i++) if (!subtree(depth + 1)) return false;
+            return true;
+          };
+          for (let attempt = 0; attempt < 3; attempt++) {
+            if (!subtree(0)) {
+              trace.push("retry");
+              engine.recursionRetry(ctx, tc, recursion);
+              continue;
+            }
+            const finished = engine.recursionFinish(ctx, tc, recursion);
+            trace.push(finished);
+            if (finished) break;
+          }
+          engine.poolAdd(ctx, tc, pool);
+          const id = engine.poolGenerate(ctx, tc, pool, true);
+          expect(() => engine.poolGenerate(ctx, tc, pool, true)).toThrow(AssumeError);
+          engine.poolRestore(ctx, tc, pool, id);
+          expect(engine.poolGenerate(ctx, tc, pool, true)).toBe(id);
+          expect(() => engine.poolRestore(ctx, tc, pool, id + 1n)).toThrow(EngineError);
+          return trace;
+        } finally {
+          engine.freePool(pool);
+          engine.freeRecursion(recursion);
+        }
+      });
+    expect(drive(wasm)).toEqual(drive(native));
+  });
+
+  it("maps RETRY from the Wasm recursion protocol to false and checks other codes", () => {
+    const { engine, abi } = wasmFixture();
+    active(engine, (ctx, tc) => {
+      const recursion = engine.newRecursion(ctx, tc, 5, 3);
+      const call = abi.call.bind(abi);
+      const spy = vi.spyOn(abi, "call").mockImplementation((op, ...args) => {
+        if (op === "recursion_leaf") return -10;
+        if (op === "recursion_finish") return -1;
+        return call(op, ...args);
+      });
+      try {
+        expect(engine.recursionLeaf(ctx, tc, recursion)).toBe(false);
+        expect(() => engine.recursionFinish(ctx, tc, recursion)).toThrow(StopTestError);
+      } finally {
+        spy.mockRestore();
+        engine.freeRecursion(recursion);
+      }
+    });
+  });
+
+  it("draws recursive values and filtered pool values in the browser runner", () => {
+    const runner = createRunner(browserRuntime(wasmFixture().engine));
+    type Tree = number | Tree[];
+    const trees = gs.recursive<Tree>(gs.integers({ minValue: 0, maxValue: 3 }), (children) =>
+      gs.arrays(children, { minSize: 1, maxSize: 3 }),
+    );
+    runner.test(
+      (tc) => {
+        tc.draw(trees);
+        const pool = new stateful.Pool<number>(tc);
+        for (let i = 0; i < 4; i++) pool.add(i);
+        expect(tc.draw(pool.valuesConsumed().filter((x) => x > 0))).toBeGreaterThan(0);
+        expect(pool.size).toBe(3);
+      },
+      { testCases: 50, database: Database.disabled },
+    );
   });
 
   it("runs a stateful test with a pool in the browser runner", () => {
@@ -281,6 +375,7 @@ describe("WasmEngine pinned raw ABI", () => {
         tc.draw(gs.binary({ minSize: 1, maxSize: 10 }));
         tc.draw(gs.text({ maxSize: 10 }));
         tc.draw(gs.fromRegex("a[bc]+", { fullmatch: true }));
+        expect(tc.draw(gs.fromRegex("a[bc]+", { alphabet: "ab" }))).toMatch(/^ab+$/);
         tc.draw(gs.emails());
         tc.draw(gs.urls());
         tc.draw(gs.domains());
@@ -299,7 +394,7 @@ describe("WasmEngine pinned raw ABI", () => {
       {
         testCases: 15,
         seed: 42,
-        database: Database.unset,
+        database: Database.default,
         suppressHealthCheck: [HealthCheck.TooSlow],
       },
     );
@@ -325,7 +420,7 @@ describe("WasmEngine real run lifecycle", () => {
     const { engine } = wasmFixture();
     const runtime = browserRuntime(engine),
       runner = createRunner(runtime);
-    const note = vi.spyOn(runtime, "note");
+    const output = vi.spyOn(runtime, "output");
     runner.test(
       (tc) => {
         tc.assume(tc.draw(gs.integers({ minValue: 0, maxValue: 10 })) > 0);
@@ -340,75 +435,171 @@ describe("WasmEngine real run lifecycle", () => {
       },
       { testCases: 5, seed: 42 },
     );
-    expect(note).not.toHaveBeenCalled();
+    expect(output).not.toHaveBeenCalled();
   });
 
-  it("shrinks and reports a replayed failure with notes in both drivers", async () => {
+  it("shrinks and reports a failure with notes and a blob native replays, in both drivers", async () => {
     for (const async of [false, true]) {
       const { engine } = wasmFixture();
       const runtime = browserRuntime(engine);
-      const values: unknown[] = [];
-      runtime.reportFinalValue = (value) => values.push(value);
-      runtime.reportFinalError = vi.fn();
-      runtime.note = vi.fn();
+      const lines: string[] = [];
+      runtime.output = (line) => lines.push(line);
       const runner = createRunner(runtime);
-      const replay = vi.spyOn(engine, "testCaseFromBlob");
       const body = (tc: import("../src/testCase.js").TestCase) => {
         const n = tc.draw(gs.integers({ minValue: 0, maxValue: 1000 }));
         tc.note("replay note");
         if (n >= 50) throw new Error(`bad ${n}`);
       };
-      if (async) await expect(runner.testAsync(body, { seed: 42 })).rejects.toThrow("bad 50");
-      else expect(() => runner.test(body, { seed: 42 })).toThrow("bad 50");
-      expect(values).toEqual([50]);
-      expect(replay).toHaveBeenCalledTimes(1);
-      expect(runtime.note).toHaveBeenCalledWith("replay note");
-      const native = Libhegel.load(testLibPath());
-      const ctx = native.newContext(),
-        settings = native.newSettings(ctx);
-      try {
-        const tc = native.testCaseFromBlob(ctx, settings, replay.mock.calls[0][2]);
-        try {
-          expect(native.generateInteger(ctx, tc, 0n, 1000n)).toBe(50n);
-        } finally {
-          native.freeTestCase(tc);
-        }
-      } finally {
-        native.freeSettings(settings);
-        native.freeContext(ctx);
-      }
+      const settings = { seed: 42, printBlob: true };
+      if (async) await expect(runner.testAsync(body, settings)).rejects.toThrow("bad 50");
+      else expect(() => runner.test(body, settings)).toThrow("bad 50");
+      expect(lines.slice(0, 4)).toEqual([
+        "const draw_1 = 50;",
+        "replay note",
+        "",
+        "To reproduce this failure, replay it with the Hegel builder:",
+      ]);
+      const blob = JSON.parse(lines[4].trim().replace(/^\.reproduceFailure\((.*)\)$/, "$1"));
+      const native = createRunner(fakeRuntime(Libhegel.load(testLibPath())));
+      expect(() => new native.Hegel(body).reproduceFailure(blob).runSync()).toThrow("bad 50");
     }
   });
 
+  it("prints the same report as the native engine for every kind of output", () => {
+    const body = (tc: import("../src/testCase.js").TestCase) => {
+      const worker = tc.clone();
+      worker.setWorker(2);
+      tc.note("first line\nsecond line");
+      tc.target(1, "t");
+      tc.event("e");
+      tc.eventValue("v", 1);
+      const values = tc.draw(gs.arrays(gs.text({ maxSize: 3 }), { minSize: 1 }), "values");
+      worker.draw(gs.booleans());
+      tc.repeat(() => {
+        if (tc.draw(gs.integers({ minValue: 0, maxValue: 10 })) > 2 && values.length > 0) {
+          throw new Error("failed");
+        }
+      });
+    };
+    const reports: string[][] = [];
+    for (const runtime of [
+      browserRuntime(wasmFixture().engine),
+      fakeRuntime(Libhegel.load(testLibPath())),
+    ]) {
+      const lines: string[] = [];
+      runtime.output = (line) => lines.push(line);
+      expect(() =>
+        createRunner(runtime).test(body, {
+          database: Database.disabled,
+          derandomize: true,
+          showStatistics: true,
+        }),
+      ).toThrow("failed");
+      reports.push(lines.map((line) => line.replace(/\+\d+\.\d+ms/, "+TIME")));
+    }
+    expect(reports[0]).toEqual(reports[1]);
+    expect(reports[0].slice(0, 6)).toEqual([
+      "[worker 2 +TIME] const draw_1 = false;",
+      "first line",
+      "second line",
+      'const values_1 = [""];',
+      "// Repetition #1",
+      "  const draw_2 = 3;",
+    ]);
+  });
+
+  it("lays out structured values the same as the native engine", () => {
+    class Interval {
+      constructor(
+        readonly lo: number,
+        readonly hi: number,
+      ) {}
+      [prettyPrint](p: PrettyPrinter): void {
+        p.group(9, "Interval(", ")", () => {
+          p.value(this.lo);
+          p.text(",");
+          p.breakable();
+          p.value(this.hi);
+          p.ifBreak(",");
+          p.shiftIndent(-9);
+          p.breakable("");
+          p.shiftIndent(9);
+        });
+        p.comment("half-open");
+      }
+    }
+    const body = (tc: import("../src/testCase.js").TestCase) => {
+      tc.draw(gs.just(new RangeError("bad")), "error");
+      tc.draw(gs.just(new Interval(1, 2)), "interval");
+      tc.draw(gs.just(new Interval(10 ** 20, -(10 ** 20)).hi), "plain");
+      tc.draw(gs.just(Array.from({ length: 20 }, (_, i) => i * 1000)), "long");
+      tc.draw(
+        gs.just({ name: "x".repeat(60), tags: new Set(["a"]), at: new Map([[1, [2]]]) }),
+        "record",
+      );
+      throw new Error("failed");
+    };
+    const reports: string[][] = [];
+    for (const runtime of [
+      browserRuntime(wasmFixture().engine),
+      fakeRuntime(Libhegel.load(testLibPath())),
+    ]) {
+      const lines: string[] = [];
+      runtime.output = (line) => lines.push(line);
+      expect(() =>
+        createRunner(runtime).test(body, { database: Database.disabled, printBlob: false }),
+      ).toThrow("failed");
+      reports.push(lines);
+    }
+    expect(reports[0]).toEqual(reports[1]);
+    expect(reports[0]).toEqual([
+      'const error_1 = new RangeError("bad");',
+      "const interval_1 = Interval(1, 2);  // half-open",
+      "const plain_1 = -100000000000000000000;",
+      "const long_1 = [",
+      ...Array.from({ length: 20 }, (_, i) => `    ${i * 1000},`),
+      "];",
+      "const record_1 = {",
+      `    name: "${"x".repeat(60)}",`,
+      '    tags: new Set(["a"]),',
+      "    at: new Map([[1, [2]]]),",
+      "};",
+    ]);
+  });
+
   it.each([false, true])(
-    "reports a real flaky run as a blobless failure without frontend replay, async=%s",
+    "reports a real flaky run's own error and caveat without frontend replay, async=%s",
     async (async) => {
       const { engine } = wasmFixture();
       const status = vi.spyOn(engine, "runStatus");
       const failureCount = vi.spyOn(engine, "failureCount");
       const failure = vi.spyOn(engine, "failure");
-      const replay = vi.spyOn(engine, "testCaseFromBlob");
       const free = vi.spyOn(engine, "freeContext");
-      const runner = createRunner(browserRuntime(engine));
+      const runtime = browserRuntime(engine);
+      runtime.output = vi.fn();
+      const runner = createRunner(runtime);
+      const flaky = new Error("flaky failure");
       let seen = false;
       const body = (tc: import("../src/testCase.js").TestCase) => {
         const n = tc.draw(gs.integers({ minValue: 0, maxValue: 100 }));
         if (n > 0 && !seen) {
           seen = true;
-          throw new Error("flaky failure");
+          throw flaky;
         }
       };
-      // A flaky run is now reported as a plain FAILED whose nondeterministic
-      // handling could not confirm it: the failure carries no reproduction blob,
-      // so there is no frontend replay and the runner reports the missing blob.
-      const message = /no reproduction blob/;
-      if (async) await expect(runner.testAsync(body, { seed: 42 })).rejects.toThrow(message);
-      else expect(() => runner.test(body, { seed: 42 })).toThrow(message);
+      let thrown: unknown;
+      try {
+        if (async) await runner.testAsync(body, { seed: 42 });
+        else runner.test(body, { seed: 42 });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBe(flaky);
+      expect(runtime.output).toHaveBeenCalledTimes(1);
       expect(seen).toBe(true);
       expect(status).toHaveReturnedWith(RunStatus.FAILED);
       expect(failureCount).toHaveBeenCalledTimes(1);
       expect(failure).toHaveBeenCalledTimes(1);
-      expect(replay).not.toHaveBeenCalled();
       expect(free).toHaveBeenCalledTimes(1);
     },
   );
@@ -416,10 +607,10 @@ describe("WasmEngine real run lifecycle", () => {
   it("reports multiple independent origins", () => {
     const { engine } = wasmFixture();
     const runtime = browserRuntime(engine);
-    runtime.reportFinalError = vi.fn();
-    runtime.reportFinalValue = vi.fn();
-    const replay = vi.spyOn(engine, "testCaseFromBlob");
-    expect(() =>
+    const lines: string[] = [];
+    runtime.output = (line) => lines.push(line);
+    let thrown: unknown;
+    try {
       createRunner(runtime).test(
         (tc) => {
           const n = tc.draw(gs.integers({ minValue: 0, maxValue: 10 }));
@@ -427,17 +618,26 @@ describe("WasmEngine real run lifecycle", () => {
           if (n > 7) throw new Error("high");
         },
         { seed: 42, reportMultipleFailures: true },
-      ),
-    ).toThrow(/low|high/);
-    expect(replay).toHaveBeenCalledTimes(2);
+      );
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(AggregateError);
+    expect((thrown as AggregateError).message).toBe(
+      "Property-based test failed with 2 distinct failures.",
+    );
+    expect((thrown as AggregateError).errors.map((e: Error) => e.message).sort()).toEqual([
+      "high",
+      "low",
+    ]);
+    expect(lines[0]).toBe("Property-based test failed with 2 distinct failures.");
+    expect(lines.filter((line) => line.startsWith("const draw_1 = ")).length).toBe(2);
   });
 
   it("reports real health errors without replay and rejects filesystem settings", () => {
     const { engine } = wasmFixture();
     const runner = createRunner(browserRuntime(engine));
-    const replay = vi.spyOn(engine, "testCaseFromBlob");
     expect(() => runner.test((tc) => tc.assume(false), { seed: 42 })).toThrow(/Unsatisfiable/i);
-    expect(replay).not.toHaveBeenCalled();
     expect(() => runner.test(() => {}, { database: Database.fromPath("") })).toThrow(/Filesystem/);
   });
 
@@ -483,12 +683,21 @@ describe("WasmEngine real run lifecycle", () => {
     const blob = engine.reproductionBlob(failure)!;
     expect(engine.failureOrigin(failure)).toBe("origin");
     engine.freeFailure(failure);
-    const replay = engine.testCaseFromBlob(ctx, settings, blob);
-    expect(engine.generateInteger(ctx, replay, 42n, 42n)).toBe(42n);
-    engine.markComplete(ctx, replay, Status.INTERESTING, "origin");
-    engine.freeTestCase(replay);
     engine.freeRunResult(result);
     engine.freeRun(run);
+    const replay = engine.runStartBlob(ctx, settings, blob);
+    let replayed = 0;
+    while ((tc = engine.nextTestCase(ctx, replay)) !== null) {
+      expect(engine.generateInteger(ctx, tc, 42n, 42n)).toBe(42n);
+      engine.markComplete(ctx, tc, Status.INTERESTING, "origin");
+      engine.freeTestCase(tc);
+      replayed++;
+    }
+    expect(replayed).toBeGreaterThan(0);
+    const replayResult = engine.runResult(ctx, replay);
+    expect(engine.runStatus(replayResult)).toBe(RunStatus.FAILED);
+    engine.freeRunResult(replayResult);
+    engine.freeRun(replay);
     engine.freeSettings(settings);
     engine.freeContext(ctx);
   });
@@ -502,7 +711,7 @@ describe("WasmEngine error and ownership boundaries", () => {
     expect(engine.lastError(ctx)).toBe("");
     engine.setDatabaseKey(ctx, s, "key\0with NUL");
     expect(() => engine.setDatabase(ctx, s, "path")).toThrow(/Filesystem/);
-    expect(() => engine.testCaseFromBlob(ctx, s, "bad blob")).toThrow(/failed/);
+    expect(() => engine.runStartBlob(ctx, s, "bad blob")).toThrow(/failed/);
     expect(() => engine.setVerbosity(s, 99)).toThrow(/failed/);
     expect(() => wasmFixture().engine.freeSettings(s)).toThrow(/Foreign/);
     engine.freeSettings(s);
@@ -552,7 +761,7 @@ describe("WasmEngine error and ownership boundaries", () => {
           new DataView(abi.memory.buffer).setUint32(result, data, true);
         return call(op, ...args);
       });
-      expect(() => engine.generateBytes(ctx, tc, 2, 2)).toThrow(/range/);
+      expect(() => engine.generateBytes(ctx, tc, 2, 2n)).toThrow(/range/);
       expect(spy).toHaveBeenCalledWith("generate_bytes_result_free", 0, result);
       expect(frees).toHaveBeenCalledWith(result, 8, 4);
     });
@@ -596,5 +805,102 @@ describe("WasmEngine error and ownership boundaries", () => {
       }),
     ).toThrow("body");
     expect(free).toHaveBeenCalledExactlyOnceWith(pointer, 16, 8);
+  });
+});
+
+describe("WasmEngine settings, profiles and run errors", () => {
+  it("applies every setting, resolves profiles and classifies run errors like Node", () => {
+    const { engine } = wasmFixture();
+    const runner = createRunner(browserRuntime(engine));
+    let count = 0;
+    const body = (tc: import("../src/testCase.js").TestCase) => {
+      tc.draw(gs.integers());
+      count++;
+    };
+    runner.test(body, {
+      testCases: 3,
+      seed: 2n ** 64n - 1n,
+      derandomize: true,
+      verbosity: Verbosity.Quiet,
+      suppressHealthCheck: [],
+      reportMultipleFailures: true,
+      stopOnFirstFailure: false,
+      phases: [Phase.Generate, Phase.Shrink],
+      printBlob: false,
+      showStatistics: false,
+      unboundedChoices: true,
+      nondeterminismStrictness: NondeterminismStrictness.Warn,
+      backend: Backend.Default,
+    });
+    expect(count).toBe(3);
+    runner.registerProfile("wasm-tiny", { testCases: 2, seed: null });
+    count = 0;
+    runner.test(body, { profile: "wasm-tiny" });
+    expect(count).toBe(2);
+    runner.setDefaultProfile("wasm-tiny");
+    count = 0;
+    try {
+      runner.test(body);
+    } finally {
+      runner.setDefaultProfile(null);
+    }
+    expect(count).toBe(2);
+    expect(() => runner.test(body, { profile: "no-such-wasm-profile" })).toThrow(
+      /no-such-wasm-profile/,
+    );
+    expect(() => runner.registerProfile("base")).toThrow(/base/);
+    expect(() => runner.setDefaultProfile("default")).toThrow(/default/);
+    let error: unknown;
+    try {
+      runner.test((tc) => tc.assume(tc.draw(gs.integers({ minValue: 0, maxValue: 1000 })) === 5));
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(FailedHealthCheckError);
+    expect((error as FailedHealthCheckError).healthCheck).toBe(HealthCheck.FilterTooMuch);
+  });
+
+  it("passes the test location and reads failure caveats", () => {
+    const { engine } = wasmFixture();
+    const setTestLocation = vi.spyOn(engine, "setTestLocation");
+    const caveat = vi.spyOn(engine, "failureCaveat");
+    const runtime = browserRuntime(engine);
+    runtime.output = vi.fn();
+    expect(() =>
+      createRunner(runtime).test(function located(tc) {
+        if (tc.draw(gs.integers({ minValue: 0, maxValue: 10 })) > 3) throw new Error("big");
+      }),
+    ).toThrow("big");
+    expect(setTestLocation.mock.calls[0][2].function).toBe("located");
+    expect(caveat).toHaveReturnedWith(null);
+  });
+});
+
+describe.each([
+  ["Wasm", () => wasmFixture().engine],
+  ["native", () => Libhegel.load(testLibPath())],
+])("deferred printer regions on the %s engine", (_name, load) => {
+  it("splice in where they were opened, and die when the document is resolved", () => {
+    const engine = load();
+    const ctx = engine.newContext();
+    const printer = engine.newPrinter(ctx, null);
+    try {
+      engine.printerText(ctx, printer, "f(");
+      const slot = engine.printerDeferred(ctx, printer);
+      engine.printerText(ctx, printer, ")");
+      expect(engine.printerIsLive(ctx, printer)).toBe(true);
+      expect(engine.printerIsLive(ctx, slot)).toBe(true);
+      const inner = engine.printerDeferred(ctx, slot);
+      engine.printerText(ctx, inner, "1");
+      engine.printerResolve(ctx, printer);
+      expect(engine.printerIsLive(ctx, slot)).toBe(false);
+      expect(engine.printerValue(ctx, printer)).toBe("f(1)");
+      expect(() => engine.printerDeferred(ctx, slot)).toThrow(/hegel_printer_deferred/);
+      engine.freePrinter(inner);
+      engine.freePrinter(slot);
+    } finally {
+      engine.freePrinter(printer);
+      engine.freeContext(ctx);
+    }
   });
 });

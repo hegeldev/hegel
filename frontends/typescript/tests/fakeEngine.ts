@@ -11,9 +11,15 @@ import {
   type CollectionHandle,
   type StringGeneratorHandle,
   type PoolHandle,
+  type RecursionHandle,
+  type RepeatHandle,
   type StateMachineHandle,
+  type PrinterHandle,
+  type PrinterOptionsHandle,
+  type GrammarBuilderHandle,
+  type GrammarHandle,
+  type GrammarDrawHandle,
 } from "../src/engine.js";
-import { Database, Verbosity } from "../src/runnerCore.js";
 import type { RuntimeServices } from "../src/runtime.js";
 
 export const context = {} as ContextHandle;
@@ -21,20 +27,42 @@ export const settings = {} as SettingsHandle;
 export const run = {} as RunHandle;
 export const result = {} as RunResultHandle;
 export const testCase = {} as TestCaseHandle;
-export const replayCase = {} as TestCaseHandle;
 export const failure = {} as FailureHandle;
 export const collection = {} as CollectionHandle;
 export const stringGenerator = {} as StringGeneratorHandle;
 export const pool = {} as PoolHandle;
+export const recursion = {} as RecursionHandle;
+export const repeat = {} as RepeatHandle;
 export const stateMachine = {} as StateMachineHandle;
+export const derivedCase = {} as TestCaseHandle;
+export const grammarBuilder = {} as GrammarBuilderHandle;
+export const grammar = {} as GrammarHandle;
+export const grammarDraw = {} as GrammarDrawHandle;
+export const printerOptions = {} as PrinterOptionsHandle;
+
+export class FakePrinter {
+  regions: string[] = [""];
+  get handle(): PrinterHandle {
+    return this as unknown as PrinterHandle;
+  }
+  push(text: string): void {
+    this.regions[this.regions.length - 1] += text;
+  }
+}
+
+function printerOf(p: PrinterHandle): FakePrinter {
+  return p as unknown as FakePrinter;
+}
 
 /** Deterministic Engine double; no ABI pointers or generated engine logic. */
 export function fakeEngine() {
+  const printers = new WeakMap<TestCaseHandle, FakePrinter>();
   return {
     version: vi.fn<Engine["version"]>(() => "0.42.4"),
     newContext: vi.fn<Engine["newContext"]>(() => context),
     freeContext: vi.fn<Engine["freeContext"]>(),
     lastError: vi.fn<Engine["lastError"]>(() => "diagnostic"),
+    setUnicodeVersion: vi.fn<Engine["setUnicodeVersion"]>(),
     newSettings: vi.fn<Engine["newSettings"]>(() => settings),
     freeSettings: vi.fn<Engine["freeSettings"]>(),
     setTestCases: vi.fn<Engine["setTestCases"]>(),
@@ -45,6 +73,17 @@ export function fakeEngine() {
     setDatabaseKey: vi.fn<Engine["setDatabaseKey"]>(),
     setSuppressHealthCheck: vi.fn<Engine["setSuppressHealthCheck"]>(),
     setReportMultipleFailures: vi.fn<Engine["setReportMultipleFailures"]>(),
+    newSettingsForProfile: vi.fn<Engine["newSettingsForProfile"]>(() => settings),
+    setStopOnFirstFailure: vi.fn<Engine["setStopOnFirstFailure"]>(),
+    setShowStatistics: vi.fn<Engine["setShowStatistics"]>(),
+    setUnboundedChoices: vi.fn<Engine["setUnboundedChoices"]>(),
+    setPrintBlob: vi.fn<Engine["setPrintBlob"]>(),
+    setPhases: vi.fn<Engine["setPhases"]>(),
+    setBackend: vi.fn<Engine["setBackend"]>(),
+    setNondeterminismStrictness: vi.fn<Engine["setNondeterminismStrictness"]>(),
+    setTestLocation: vi.fn<Engine["setTestLocation"]>(),
+    registerProfile: vi.fn<Engine["registerProfile"]>(),
+    setDefaultProfile: vi.fn<Engine["setDefaultProfile"]>(),
     runStart: vi.fn<Engine["runStart"]>(() => run),
     nextTestCase: vi
       .fn<Engine["nextTestCase"]>()
@@ -53,7 +92,66 @@ export function fakeEngine() {
     runResult: vi.fn<Engine["runResult"]>(() => result),
     freeRunResult: vi.fn<Engine["freeRunResult"]>(),
     freeRun: vi.fn<Engine["freeRun"]>(),
-    testCaseFromBlob: vi.fn<Engine["testCaseFromBlob"]>(() => replayCase),
+    runStartBlob: vi.fn<Engine["runStartBlob"]>(() => run),
+    getVerbosity: vi.fn<Engine["getVerbosity"]>(() => 0),
+    getPhases: vi.fn<Engine["getPhases"]>(() => 0b11111),
+    getPrintBlob: vi.fn<Engine["getPrintBlob"]>(() => false),
+    getReportMultipleFailures: vi.fn<Engine["getReportMultipleFailures"]>(() => true),
+    getTestCases: vi.fn<Engine["getTestCases"]>(() => 100),
+    getSeed: vi.fn<Engine["getSeed"]>(() => null),
+    getDerandomize: vi.fn<Engine["getDerandomize"]>(() => false),
+    getDatabase: vi.fn<Engine["getDatabase"]>(() => null),
+    getSuppressHealthCheck: vi.fn<Engine["getSuppressHealthCheck"]>(() => 0),
+    getStopOnFirstFailure: vi.fn<Engine["getStopOnFirstFailure"]>(() => true),
+    getShowStatistics: vi.fn<Engine["getShowStatistics"]>(() => false),
+    getUnboundedChoices: vi.fn<Engine["getUnboundedChoices"]>(() => false),
+    getBackend: vi.fn<Engine["getBackend"]>(() => 0),
+    getNondeterminismStrictness: vi.fn<Engine["getNondeterminismStrictness"]>(() => 0),
+    shouldCapture: vi.fn<Engine["shouldCapture"]>(() => false),
+    cloneTestCase: vi.fn<Engine["cloneTestCase"]>(() => derivedCase),
+    blockTestCase: vi.fn<Engine["blockTestCase"]>(() => derivedCase),
+    setWorker: vi.fn<Engine["setWorker"]>(),
+    note: vi.fn<Engine["note"]>(),
+    target: vi.fn<Engine["target"]>(),
+    event: vi.fn<Engine["event"]>(),
+    eventValue: vi.fn<Engine["eventValue"]>(),
+    labelFromName: vi.fn<Engine["labelFromName"]>((_ctx, name) => BigInt(name.length)),
+    labelCombine: vi.fn<Engine["labelCombine"]>((_ctx, labels) =>
+      labels.reduce((a, b) => a * 31n + b, 0n),
+    ),
+    testCasePrinter: vi.fn<Engine["testCasePrinter"]>((_ctx, tc) => {
+      if (!printers.has(tc)) printers.set(tc, new FakePrinter());
+      return printers.get(tc)!.handle;
+    }),
+    newPrinterOptions: vi.fn<Engine["newPrinterOptions"]>(() => printerOptions),
+    setPrinterMaxWidth: vi.fn<Engine["setPrinterMaxWidth"]>(),
+    freePrinterOptions: vi.fn<Engine["freePrinterOptions"]>(),
+    newPrinter: vi.fn<Engine["newPrinter"]>(() => new FakePrinter().handle),
+    freePrinter: vi.fn<Engine["freePrinter"]>(),
+    printerText: vi.fn<Engine["printerText"]>((_ctx, p, text) => printerOf(p).push(text)),
+    printerHardBreak: vi.fn<Engine["printerHardBreak"]>((_ctx, p) => printerOf(p).push("\n")),
+    printerReflow: vi.fn<Engine["printerReflow"]>((_ctx, p, text) => printerOf(p).push(text)),
+    printerBeginGroup: vi.fn<Engine["printerBeginGroup"]>((_ctx, p, _indent, open) =>
+      printerOf(p).push(open),
+    ),
+    printerEndGroup: vi.fn<Engine["printerEndGroup"]>((_ctx, p, close) => printerOf(p).push(close)),
+    printerBreakable: vi.fn<Engine["printerBreakable"]>((_ctx, p, sep) => printerOf(p).push(sep)),
+    printerIfBreak: vi.fn<Engine["printerIfBreak"]>(),
+    printerComment: vi.fn<Engine["printerComment"]>((_ctx, p, text) => printerOf(p).push(text)),
+    printerShiftIndent: vi.fn<Engine["printerShiftIndent"]>(),
+    printerBeginSpeculative: vi.fn<Engine["printerBeginSpeculative"]>((_ctx, p) => {
+      printerOf(p).regions.push("");
+    }),
+    printerCommitSpeculative: vi.fn<Engine["printerCommitSpeculative"]>((_ctx, p) => {
+      printerOf(p).push(printerOf(p).regions.pop()!);
+    }),
+    printerAbortSpeculative: vi.fn<Engine["printerAbortSpeculative"]>((_ctx, p) => {
+      printerOf(p).regions.pop();
+    }),
+    printerDeferred: vi.fn<Engine["printerDeferred"]>(() => new FakePrinter().handle),
+    printerIsLive: vi.fn<Engine["printerIsLive"]>(() => true),
+    printerResolve: vi.fn<Engine["printerResolve"]>(),
+    printerValue: vi.fn<Engine["printerValue"]>((_ctx, p) => printerOf(p).regions[0]),
     freeTestCase: vi.fn<Engine["freeTestCase"]>(),
     generateBoolean: vi.fn<Engine["generateBoolean"]>(() => true),
     generateInteger: vi.fn<Engine["generateInteger"]>(() => 0n),
@@ -94,11 +192,22 @@ export function fakeEngine() {
       .mockReturnValue(false),
     collectionReject: vi.fn<Engine["collectionReject"]>(),
     freeCollection: vi.fn<Engine["freeCollection"]>(),
+    newRepeat: vi.fn<Engine["newRepeat"]>(() => repeat),
+    repeatMore: vi.fn<Engine["repeatMore"]>().mockReturnValueOnce(true).mockReturnValue(false),
+    repeatFailed: vi.fn<Engine["repeatFailed"]>(),
+    freeRepeat: vi.fn<Engine["freeRepeat"]>(),
     markComplete: vi.fn<Engine["markComplete"]>(),
     newPool: vi.fn<Engine["newPool"]>(() => pool),
     poolAdd: vi.fn<Engine["poolAdd"]>(() => 0n),
     poolGenerate: vi.fn<Engine["poolGenerate"]>(() => 0n),
+    poolRestore: vi.fn<Engine["poolRestore"]>(),
     freePool: vi.fn<Engine["freePool"]>(),
+    newRecursion: vi.fn<Engine["newRecursion"]>(() => recursion),
+    recursionBranch: vi.fn<Engine["recursionBranch"]>(() => false),
+    recursionLeaf: vi.fn<Engine["recursionLeaf"]>(() => true),
+    recursionRetry: vi.fn<Engine["recursionRetry"]>(),
+    recursionFinish: vi.fn<Engine["recursionFinish"]>(() => true),
+    freeRecursion: vi.fn<Engine["freeRecursion"]>(),
     newStateMachine: vi.fn<Engine["newStateMachine"]>(() => stateMachine),
     stateMachineNextGroup: vi
       .fn<Engine["stateMachineNextGroup"]>()
@@ -113,31 +222,34 @@ export function fakeEngine() {
     freeStateMachine: vi.fn<Engine["freeStateMachine"]>(),
     runStatus: vi.fn<Engine["runStatus"]>(() => RunStatus.PASSED),
     runError: vi.fn<Engine["runError"]>(() => "backend error"),
+    runErrorKind: vi.fn<Engine["runErrorKind"]>(() => ({ kind: 6, healthCheck: 0 })),
     failureCount: vi.fn<Engine["failureCount"]>(() => 1),
     failure: vi.fn<Engine["failure"]>(() => failure),
     freeFailure: vi.fn<Engine["freeFailure"]>(),
     failureOrigin: vi.fn<Engine["failureOrigin"]>(() => "property.ts:1"),
     reproductionBlob: vi.fn<Engine["reproductionBlob"]>(() => "blob"),
+    failureCaveat: vi.fn<Engine["failureCaveat"]>(() => null),
     freeStringGenerator: vi.fn<Engine["freeStringGenerator"]>(),
+    grammarBuilderNew: vi.fn<Engine["grammarBuilderNew"]>(() => grammarBuilder),
+    grammarBuilderFile: vi.fn<Engine["grammarBuilderFile"]>(() => null),
+    grammarBuilderProvide: vi.fn<Engine["grammarBuilderProvide"]>(),
+    freeGrammarBuilder: vi.fn<Engine["freeGrammarBuilder"]>(),
+    newGrammar: vi.fn<Engine["newGrammar"]>(() => grammar),
+    freeGrammar: vi.fn<Engine["freeGrammar"]>(),
+    grammarDrawNew: vi.fn<Engine["grammarDrawNew"]>(() => grammarDraw),
+    grammarDrawNext: vi.fn<Engine["grammarDrawNext"]>(() => null),
+    grammarDrawProvide: vi.fn<Engine["grammarDrawProvide"]>(),
+    grammarDrawResult: vi.fn<Engine["grammarDrawResult"]>(() => ""),
+    freeGrammarDraw: vi.fn<Engine["freeGrammarDraw"]>(),
   } satisfies Engine;
 }
 
 export function fakeRuntime(engine: Engine): RuntimeServices {
   return {
     getEngine: () => engine,
-    defaultSettings: () => ({
-      testCases: 100,
-      seed: null,
-      verbosity: Verbosity.Normal,
-      derandomize: true,
-      database: Database.disabled,
-      suppressHealthCheck: [],
-      reportMultipleFailures: false,
-    }),
     validateSettings: vi.fn(),
-    reportFinalValue: vi.fn(),
-    reportFinalError: vi.fn(),
-    note: vi.fn(),
-    emitAntithesisAssertion: vi.fn(),
+    persistence: true,
+    projectRoot: "",
+    output: vi.fn(),
   };
 }

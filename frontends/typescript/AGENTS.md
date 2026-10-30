@@ -16,7 +16,7 @@ in the root `AGENTS.md`.
 just typescript::setup            # npm ci
 just typescript::build-libhegel   # cargo-build the engine natively and for wasm32-unknown-unknown
 just typescript::check-test       # vitest with coverage against both builds (fails if < 100%)
-just typescript::check-lint       # prettier --check + libhegel-version check + eslint + tsc + typecheck:portable
+just typescript::check-lint       # prettier --check + libhegel-version check + eslint + tsc + typecheck:portable + typecheck:tests
 just typescript::format           # prettier --write
 just typescript::check-docs       # typedoc (treatWarningsAsErrors)
 just typescript::check-packaging  # node --test scripts/packaging.test.mjs
@@ -116,20 +116,78 @@ so a Node import creeping into a shared module fails `check-lint`.
    (`one_of`, `tuple`, `list`, `dict`, `constant`) client-side with the
    matching shrinker spans and the collection protocol. String-shaped draws go
    through a per-engine `StringGeneratorCache` of `hegel_string_generator_t`
-   handles, bounded and freed with the runner.
+   handles, bounded and freed with the runner. The same run-owned cache
+   compiles each `fromLark` generator's grammar once (the builder loop, with
+   imported files read through `RuntimeServices.readGrammarFile`) and frees
+   the `hegel_grammar_t` handles when the run ends. Each kind is capped at 256
+   live handles, evicting (and freeing) the oldest first; a grammar a draw in
+   progress borrows is never evicted. A grammar draw
+   (`EngineDataSource.drawGrammar`) is one `hegel_grammar_draw_t` loop per
+   value, the frontend drawing each explicit terminal's value between
+   `hegel_grammar_draw_next` and `hegel_grammar_draw_provide`. Text and binary
+   draws without a `maxSize` pass `HEGEL_MAX_SIZE_DEFAULT`, and `filter` tries
+   `HEGEL_FILTER_ATTEMPTS` values: both constants live in `src/engine.ts`.
 5. **Runtime services** (`src/runtime.ts`, `src/nodeRuntime.ts`,
    `src/browser/runtime.ts`) — `RuntimeServices` is the small set of
    host-specific things the shared loop needs: how to get the `Engine`,
-   default settings (CI detection is Node-only), settings validation (the
-   browser rejects `Database.fromPath`), diagnostics output, and Antithesis
-   assertion emission (Node-only).
+   settings validation (the browser rejects `Database.fromPath`), whether the
+   host can keep a database (the browser cannot, so its runs disable it), how
+   to read a grammar file a `fromLark` grammar imports (Node only), and
+   where report lines go (`output`: `console.error` on every host, so Node and
+   browsers print the same report). Settings defaults, CI detection and Antithesis
+   reporting all belong to the engine: a run starts from
+   `hegel_settings_new` (or `_for_profile`) and `src/settings.ts` sets only
+   the fields the user gave; the test's location and database key come from
+   its call site (`src/callSite.ts`) through `hegel_settings_set_test_location`
+   and `hegel_settings_set_database_key`. The key is the file relative to the
+   runtime's `projectRoot` (Node's working directory; a browser keys on the
+   URL's path) plus the test's name, which for an anonymous test function is
+   Vitest's or Jest's name for the running test, so it does not depend on
+   where the project is checked out. Several anonymous test functions in one
+   runner test or enclosing function can borrow one name: they are numbered
+   in the order their call lines first run in the process (a module-level
+   map in `callSite.ts`), the first keeping the plain key and each later one
+   carrying its number (`tests/a.test.ts::suite > case (2)`). A key never
+   depends on other runner tests, but within one it does depend on order:
+   skipping or adding an earlier call, or moving a call's line in a process
+   that keeps the module loaded, renumbers it. A runtime without
+   `Error.captureStackTrace` (Firefox) has no call site: no location, and
+   the key falls back to the function's name (none for an anonymous one).
 6. **Shared runner** (`src/runnerCore.ts`) — the sync and async run loops:
-   `run_start` → `next_test_case` → `mark_complete` → `run_result`. The engine
-   only explores (generate/shrink); the client owns the final replay: on
-   `FAILED`, the runner replays each failure's `hegel_failure_reproduction_blob`
-   via `hegel_test_case_from_blob` to surface the test's own error as the
-   thrown message. `EngineDataSource` implements `DataSource` against an
-   engine test case. `createRunner(runtime)` produces `test`/`testAsync`.
+   explicit examples (`src/explicit.ts`: each runs once, with no engine test
+   case, its draws and notes laid out by a standalone engine printer from
+   `hegel_printer_new`, and its description printed on one line with an
+   unbounded `hegel_printer_options_t` width; a usage error in one, an
+   `ExplicitExampleError`, fails the run as itself), then `run_start` (or
+   `run_start_blob` for each `reproduceFailure` blob) → `next_test_case` →
+   `mark_complete` → `run_result`. The engine owns the whole run, the final
+   replay of each failure included; the runner never replays. A test case
+   the engine stamps (`hegel_test_case_should_capture`), or every one in a
+   verbose run, prints its draws and notes into the engine's printer
+   document. Printing is the generator's job: `TestCase.draw` hands the
+   document's `PrettyPrinter` to the generator's `doDrawAndPrint`, which
+   prints as it draws (containers element by element, through
+   `TestCase.drawAndPrint`), so only a `PrintableGenerator` can be drawn
+   with `draw`; nothing renders the drawn value afterwards. `src/pretty.ts`
+   holds the printer (structure through `hegel_printer_begin_group` /
+   `breakable` / `if_break`, speculation, deferred regions from
+   `hegel_printer_deferred`, which die at resolve and are probed with
+   `hegel_printer_is_live`) and `PrettyPrinter.value`, the JavaScript
+   representation value-producing generators (`map`, `just`, leaves,
+   `printAsValue`) print with, which calls a class's `[prettyPrint]` method
+   where it has one; the runner keeps each failure origin's
+   best capture and, on `FAILED`, prints it with the caveat and the
+   `.reproduceFailure(...)` line, then rethrows the test's own error (an
+   `AggregateError` of them for several distinct failures). An errored run
+   throws a `RunError` subclass chosen by `hegel_run_result_error_kind`
+   (`src/errors.ts`). `EngineDataSource` implements `DataSource` against an
+   engine test case, owning the clones, blocks, printers and deferred
+   printer regions derived from it. Once the document is read or released,
+   writes to any of its printers do nothing, so a value holding a deferred
+   region may outlive its test case.
+   Span labels come from the engine (`hegel_label_from_name` /
+   `hegel_label_combine`, `src/labels.ts`), never hard-coded numbers.
+   `createRunner(runtime)` produces `test`/`testAsync`.
 7. **Composition roots** (`src/runner.ts` + `src/index.ts` for Node,
    `src/browser/index.ts` for browsers) — each builds one runner from its
    `RuntimeServices` and re-exports the same public surface. The browser entry
@@ -140,10 +198,18 @@ so a Node import creeping into a shared module fails `check-lint`.
    (imperative) and `record` (declarative) in `compose.ts` are the composition
    entry points.
 
-Neither adapter frees anything implicitly — every handle the ABI writes back
-is caller-owned: the runner frees `Context`/`Settings`/`Run` handles, each test
-case from `next_test_case`, the run result, each failure, and each collection
-explicitly in `finally` blocks, in ownership order. Generated strings decode
+Both adapters hand out handles as fresh opaque objects mapped to the engine's
+pointers, never the pointers themselves, and forget the mapping when the
+handle is freed: a freed or foreign handle (a clone kept past its test case,
+say) throws `EngineError("Foreign, freed or invalid engine handle")` instead of
+reaching the engine as a dangling pointer. Neither adapter frees anything
+implicitly — every handle the ABI writes back is caller-owned: the runner frees `Context`/`Settings`/`Run` handles, each test
+case from `next_test_case`, the run result and each failure explicitly in
+`finally` blocks, in ownership order, and `EngineDataSource.dispose` frees
+each test case's collections, pools, recursions, state machines, printers and
+derived test cases; each grammar draw frees its `hegel_grammar_draw_t` when it ends. `src/session.ts` passes `process.versions.unicode` to
+`hegel_set_unicode_version` when the native library loads; the browser reports
+no Unicode version, so the Wasm engine keeps its own tables. Generated strings decode
 through `wtf8.ts` (UTF-8 exactly; safe if the engine ever hands back a lone
 surrogate again). The `typescript-ffi` skill (`.claude/skills/typescript-ffi/`)
 is the guide to changing the binding layers when `hegel.h` changes.
@@ -157,8 +223,9 @@ thread (the main thread unless the user runs tests in a worker themselves).
 
 ### Browser non-goals (for now)
 
-No persistence (`Database.fromPath` throws; `unset` becomes `disabled`), no
-worker offloading, no Antithesis output, no raw engine-output callbacks. Web
+No persistence (`Database.fromPath` throws; every run's database is
+disabled), no grammar files (`fromLark`'s `importPath` fails the test), no worker offloading, no Antithesis output (the location is passed,
+but the Wasm engine has no output directory), no raw engine-output callbacks. Web
 Crypto in a secure context is required, and the Wasm asset must be servable
 under the page's CORS/CSP.
 

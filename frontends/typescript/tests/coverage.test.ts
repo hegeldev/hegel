@@ -17,7 +17,7 @@ import * as gs from "@hegeldev/hegel/generators";
 describe("collection protocol", () => {
   // A composite generator has no schema, so gs.arrays() must use the
   // Collection protocol (new_collection / collection_more) instead of
-  // sending a list schema to the server.
+  // drawing from a list schema.
   const compositeInt = gs.composite((tc) => tc.draw(gs.integers({ minValue: 0, maxValue: 100 })));
 
   test("arrays with composite elements uses collection protocol", () =>
