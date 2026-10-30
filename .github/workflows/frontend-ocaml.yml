@@ -130,9 +130,11 @@ jobs:
       - name: Build the documentation
         run: just ocaml::check-docs
 
-  # Cross-platform check: build the engine and run the suite on macOS.
+  # Cross-platform check: build the engine and run the suite on macOS. Runs
+  # only in the merge queue and on main, since macOS runners are scarce.
   smoke:
     name: smoke (macos)
+    if: github.event_name != 'pull_request'
     runs-on: macos-latest
     permissions:
       contents: read

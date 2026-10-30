@@ -262,11 +262,14 @@ jobs:
     uses: ./.github/workflows/website.yml
 
   # Test with the minimal versions of every dependency in the workspace.
+  # `ubuntu-8-core` is an org larger runner (Settings → Actions → Runners):
+  # this and `coverage` are the longest jobs in a run, and larger runners
+  # don't count against the plan's cap on concurrent standard-runner jobs.
   test-minimal-versions:
     name: test-minimal-versions
     needs: changes
     if: needs.changes.outputs.rust == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-8-core
     permissions:
       contents: read
     steps:
@@ -286,7 +289,7 @@ jobs:
     name: coverage
     needs: changes
     if: needs.changes.outputs.rust == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-8-core
     permissions:
       contents: write  # needed for ratchet auto-update
       pull-requests: write  # needed for creating PRs on main
