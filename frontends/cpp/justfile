@@ -97,6 +97,9 @@ check-consumer MODE="subdirectory":
             --prefix "$ROOT/build/consumer-hegel-prefix"
         EXTRA_ARGS+=(-DCMAKE_PREFIX_PATH="$ROOT/build/consumer-hegel-prefix")
     elif [ "{{ MODE }}" = "fetchcontent" ]; then
+        # The clone's LFS files (website/ only) are not needed, and CI's
+        # checkout has no LFS objects for the clone to smudge from.
+        export GIT_LFS_SKIP_SMUDGE=1
         just build-libhegel
         target_dir="${CARGO_TARGET_DIR:-$ROOT/../../target}"
         case "$(uname -s)" in
