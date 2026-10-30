@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.13.4 - 2026-10-30
+
+This patch adds `GIT_CONFIG lfs.fetchexclude=website` to the recommended `FetchContent_Declare` in the README and the API reference. The hegeldev/hegel repository also holds the hegel.dev website, whose images and generated API references are stored in Git LFS, and with this line a machine that has git-lfs installed no longer downloads them when fetching Hegel.
+
 ## 0.13.3 - 2026-10-28
 
 This release updates the bundled libhegel engine to 0.49.0.

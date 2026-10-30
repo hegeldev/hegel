@@ -17,6 +17,7 @@ FetchContent_Declare(
     GIT_REPOSITORY file://${HEGEL_MONOREPO_ROOT}
     GIT_TAG ${HEGEL_REF}
     SOURCE_SUBDIR frontends/cpp
+    GIT_CONFIG lfs.fetchexclude=website
 )
 FetchContent_MakeAvailable(hegel)
 
