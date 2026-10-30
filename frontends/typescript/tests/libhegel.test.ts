@@ -131,10 +131,13 @@ function fakeBindings(overrides: Partial<Bindings>): Bindings {
     poolAdd: () => 0,
     poolGenerate: () => 0,
     poolFree: noop,
-    newStateMachine: (_ctx, _tc, _opts, out) => {
+    newStateMachine: (_ctx, _tc, _min, _max, _steps, out) => {
       out[0] = {} as Ptr;
       return 0;
     },
+    stateMachineAddRule: () => 0,
+    stateMachineAddInvariant: () => 0,
+    stateMachineStart: () => 0,
     stateMachineNextGroup: () => 0,
     stateMachineNextRule: () => 0,
     stateMachineRuleRejected: () => 0,
@@ -386,17 +389,10 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
     lib.freePool(lib.newPool(null, null));
     expect(lib.poolAdd(null, null, null)).toBe(0n);
     expect(lib.poolGenerate(null, null, null, true)).toBe(0n);
-    lib.freeStateMachine(
-      lib.newStateMachine(null, null, {
-        ruleNames: ["a"],
-        ruleGroups: [0],
-        invariantNames: [],
-        invariantAlwaysCheck: [],
-        minConcurrency: 1,
-        maxConcurrency: 1,
-        stepCount: 50,
-      }),
-    );
+    lib.freeStateMachine(lib.newStateMachine(null, null, 1, 1, 50));
+    lib.stateMachineAddRule(null, null, null, "a", 1, [0]);
+    lib.stateMachineAddInvariant(null, null, null, "i", false);
+    expect(lib.stateMachineStart(null, null, null)).toBe(0);
     lib.stateMachineRuleRejected(null, null, null, 0);
     expect(lib.stateMachineShouldCheckInvariant(null, null, null, 0)).toBe(false);
     lib.freeRunResult(lib.runResult(null, null));

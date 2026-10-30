@@ -20,7 +20,6 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.util.List;
 import org.junit.jupiter.api.Test;
 
 /** Covers {@link RealLibhegel} edge branches that the normal engine path does not reach. */
@@ -161,38 +160,12 @@ class RealLibhegelTest {
         long[] out = {7};
         long[] concurrency = {9};
         boolean[] check = {true};
-        assertEquals(
-                Abi.E_INVALID_HANDLE,
-                lib.newStateMachine(
-                        0,
-                        List.of("r"),
-                        new long[] {0},
-                        null,
-                        List.of("i"),
-                        new boolean[] {true},
-                        1,
-                        1,
-                        50,
-                        out,
-                        concurrency));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.newStateMachine(0, 1, 1, 50, out));
         assertEquals(7, out[0]);
+        assertEquals(Abi.E_INVALID_HANDLE, lib.stateMachineAddRule(0, 0, "r", 2.5, new long[] {0}));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.stateMachineAddInvariant(0, 0, "i", true));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.stateMachineStart(0, 0, concurrency));
         assertEquals(9, concurrency[0]);
-        // Explicit weights are marshalled too (NULL above keeps the engine's all-equal default).
-        assertEquals(
-                Abi.E_INVALID_HANDLE,
-                lib.newStateMachine(
-                        0,
-                        List.of("r"),
-                        new long[] {0},
-                        new double[] {2.5},
-                        List.of("i"),
-                        new boolean[] {true},
-                        1,
-                        1,
-                        50,
-                        out,
-                        concurrency));
-        assertEquals(7, out[0]);
         assertEquals(Abi.E_INVALID_HANDLE, lib.stateMachineNextGroup(0, 0, out));
         assertEquals(7, out[0]);
         assertEquals(Abi.E_INVALID_HANDLE, lib.stateMachineNextRule(0, 0, 0, out));

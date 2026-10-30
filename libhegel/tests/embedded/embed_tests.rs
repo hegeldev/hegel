@@ -347,18 +347,10 @@ const REPLAY_STEP_THRESHOLD: i64 = 60;
 
 fn drive_counter_machine(ds: &(dyn crate::backend::DataSource + Send + Sync)) -> i64 {
     use crate::backend::Failure;
-    let mut machine = ds
-        .new_state_machine(
-            alloc::vec!["increment".to_string()],
-            alloc::vec![0],
-            alloc::vec![1.0],
-            Vec::new(),
-            Vec::new(),
-            1,
-            1,
-            REPLAY_STEP_COUNT,
-        )
+    let mut machine = ds.new_state_machine(1, 1, REPLAY_STEP_COUNT).unwrap();
+    ds.state_machine_add_rule(&mut machine, "increment", 1.0, alloc::vec![0])
         .unwrap();
+    ds.state_machine_start(&mut machine).unwrap();
     let mut steps = 0;
     'rounds: while let Ok(Some(_)) = ds.state_machine_next_group(&mut machine) {
         while let Ok(Some(_)) = ds.state_machine_next_rule(&mut machine, 0) {

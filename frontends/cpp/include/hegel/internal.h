@@ -104,6 +104,9 @@ namespace hegel::internal {
     };
 
     inline constexpr int64_t state_machine_done = INT64_MIN;
+    // Owns a started engine state machine: the constructor creates it with
+    // the concurrency bounds, declares rule_names[i] in group rule_groups[i]
+    // and each invariant, then starts it, which draws the concurrency level.
     class StateMachineHandle {
       public:
         StateMachineHandle(const TestCase& tc,

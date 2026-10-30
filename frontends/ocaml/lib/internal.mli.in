@@ -312,11 +312,14 @@ val pool_restore : test_case -> pool:pool -> variable_id:int -> unit
     {!state_machine_free}. *)
 type state_machine = Hegel_ffi.Ffi.state_machine
 
-(** Registers a sequential or concurrent engine-owned state machine and
-    returns its handle with the concurrency level selected by libhegel. Raises
-    {!Usage_error} if there are no rules, a weight is not finite and positive,
-    [step_count < 1], or the bounds do not satisfy
-    [1 <= min_concurrency <= max_concurrency]. *)
+(** Builds and starts a sequential or concurrent engine-owned state machine
+    (one engine call per rule and invariant, in list order, then the start
+    call) and returns its handle with the concurrency level selected by
+    libhegel. [rule_groups] and [rule_weights] are parallel to [rule_names],
+    [invariants_always_check] to [invariant_names]. Raises {!Usage_error} if
+    there are no rules, a weight is not finite and positive, [step_count < 1],
+    or the bounds do not satisfy [1 <= min_concurrency <= max_concurrency];
+    the half-built machine is released before the exception propagates. *)
 val new_state_machine_with_concurrency
   :  test_case
   -> rule_names:string list

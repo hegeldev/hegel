@@ -237,7 +237,7 @@ fn open(path: &Path) -> rusqlite::Result<Connection> {
 
 #[hegel::concurrent_state_machine]
 impl Bank {
-    #[rule(group = "bank", weight = 6)]
+    #[rule(groups = ["bank"], weight = 6)]
     fn transfer_rule(&self, tc: TestCase) {
         let n = self.config.accounts;
         let source = tc.draw(gs::integers::<i64>().min_value(0).max_value(n - 1));
@@ -254,17 +254,17 @@ impl Bank {
         ));
     }
 
-    #[rule(group = "bank")]
+    #[rule(groups = ["bank"])]
     fn verify_total_balance_rule(&self, _: TestCase) {
         self.verify_total_balance();
     }
 
-    #[rule(group = "bank")]
+    #[rule(groups = ["bank"])]
     fn verify_ops_not_lost_rule(&self, _: TestCase) {
         self.verify_ops_not_lost();
     }
 
-    #[rule(group = "bank")]
+    #[rule(groups = ["bank"])]
     fn verify_no_negative_rule(&self, _: TestCase) {
         self.verify_no_negative();
     }

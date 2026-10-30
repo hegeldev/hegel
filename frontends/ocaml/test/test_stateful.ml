@@ -209,7 +209,7 @@ let stateful_no_rules_test () =
   | exception Hegel.Usage_error msg ->
     Alcotest.(check string)
       "engine diagnostic"
-      "cannot run a state machine with no rules"
+      "cannot start a state machine with no rules"
       msg
 ;;
 
@@ -1260,7 +1260,7 @@ let concurrent_no_rules_test () =
   | exception Hegel.Usage_error msg ->
     Alcotest.(check string)
       "engine diagnostic"
-      "cannot run a state machine with no rules"
+      "cannot start a state machine with no rules"
       msg
 ;;
 

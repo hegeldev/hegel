@@ -168,21 +168,21 @@ describe("WasmEngine pinned raw ABI", () => {
   it("drives pools and state machines like the native adapter", () => {
     const wasm = wasmFixture().engine;
     const native = Libhegel.load(testLibPath());
-    const options = {
-      ruleNames: ["push", "pop"],
-      ruleGroups: [0, 0],
-      invariantNames: ["sorted", "small"],
-      invariantAlwaysCheck: [true, false],
-      minConcurrency: 1,
-      maxConcurrency: 1,
-      stepCount: 5,
-    };
     const drive = (engine: Engine) =>
       active(engine, (ctx, tc) => {
         const trace: unknown[] = [];
         const pool = engine.newPool(ctx, tc);
-        const machine = engine.newStateMachine(ctx, tc, options);
+        const machine = engine.newStateMachine(ctx, tc, 1, 1, 5);
         try {
+          expect(() => engine.stateMachineStart(ctx, tc, machine)).toThrow(/no rules/);
+          engine.stateMachineAddRule(ctx, tc, machine, "push", 1, [0]);
+          engine.stateMachineAddRule(ctx, tc, machine, "pop", 2, [0, 1]);
+          engine.stateMachineAddInvariant(ctx, tc, machine, "sorted", true);
+          engine.stateMachineAddInvariant(ctx, tc, machine, "small", false);
+          expect(engine.stateMachineStart(ctx, tc, machine)).toBe(1);
+          expect(() => engine.stateMachineAddRule(ctx, tc, machine, "late", 1, [0])).toThrow(
+            /after the machine was started/,
+          );
           expect(() => engine.poolGenerate(ctx, tc, pool, false)).toThrow(AssumeError);
           const first = engine.poolAdd(ctx, tc, pool);
           const second = engine.poolAdd(ctx, tc, pool);

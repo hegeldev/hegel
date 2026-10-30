@@ -318,54 +318,10 @@ impl DataSource for NativeDataSource {
 
     fn new_state_machine(
         &self,
-        rule_names: Vec<String>,
-        rule_groups: Vec<i64>,
-        rule_weights: Vec<f64>,
-        invariant_names: Vec<String>,
-        invariant_always_check: Vec<bool>,
         min_concurrency: i64,
         max_concurrency: i64,
         step_count: i64,
     ) -> Result<NativeStateMachine, DataSourceError> {
-        if rule_names.is_empty() {
-            return Err(DataSourceError::InvalidArgument(
-                "cannot run a state machine with no rules".to_string(),
-            ));
-        }
-        if rule_groups.len() != rule_names.len() {
-            return Err(DataSourceError::InvalidArgument(format!(
-                "rule_groups must be parallel to rule_names: got {} group assignments \
-                 for {} rules",
-                rule_groups.len(),
-                rule_names.len()
-            )));
-        }
-        if rule_weights.len() != rule_names.len() {
-            return Err(DataSourceError::InvalidArgument(format!(
-                "rule_weights must be parallel to rule_names: got {} weights for {} rules",
-                rule_weights.len(),
-                rule_names.len()
-            )));
-        }
-        if let Some((rule, weight)) = rule_weights
-            .iter()
-            .enumerate()
-            .find(|(_, w)| !(w.is_finite() && **w > 0.0))
-        {
-            return Err(DataSourceError::InvalidArgument(format!(
-                "rule weights must be finite and positive, but rule {rule} ({}) has weight \
-                 {weight}",
-                rule_names[rule]
-            )));
-        }
-        if invariant_always_check.len() != invariant_names.len() {
-            return Err(DataSourceError::InvalidArgument(format!(
-                "invariant_always_check must be parallel to invariant_names: got {} flags \
-                 for {} invariants",
-                invariant_always_check.len(),
-                invariant_names.len()
-            )));
-        }
         if min_concurrency < 1 || max_concurrency < min_concurrency {
             return Err(DataSourceError::InvalidArgument(format!(
                 "state machine concurrency bounds must satisfy 1 <= min <= max, \
@@ -383,17 +339,59 @@ impl DataSource for NativeDataSource {
                 "state machine step count must be at least 1, got {step_count}"
             )));
         }
-        self.with_ntc(|ntc| {
-            NativeStateMachine::new(
-                ntc,
-                rule_groups,
-                rule_weights,
-                invariant_always_check,
-                min_concurrency,
-                max_concurrency,
-                step_count,
-            )
-        })
+        self.with_ntc(|_| NativeStateMachine::new(min_concurrency, max_concurrency, step_count))
+    }
+
+    fn state_machine_add_rule(
+        &self,
+        machine: &mut NativeStateMachine,
+        name: &str,
+        weight: f64,
+        groups: Vec<i64>,
+    ) -> Result<(), DataSourceError> {
+        let rule = machine.rule_count();
+        if !(weight.is_finite() && weight > 0.0) {
+            return Err(DataSourceError::InvalidArgument(format!(
+                "rule weights must be finite and positive, but rule {rule} ({name}) has weight \
+                 {weight}"
+            )));
+        }
+        if groups.is_empty() {
+            return Err(DataSourceError::InvalidArgument(format!(
+                "a rule must belong to at least one group, but rule {rule} ({name}) has none"
+            )));
+        }
+        if let Some((_, id)) = groups
+            .iter()
+            .enumerate()
+            .find(|(i, id)| groups[..*i].contains(id))
+        {
+            return Err(DataSourceError::InvalidArgument(format!(
+                "a rule's groups must be distinct, but rule {rule} ({name}) lists group {id} twice"
+            )));
+        }
+        self.with_ntc(|_| machine.add_rule(weight, &groups))
+    }
+
+    fn state_machine_add_invariant(
+        &self,
+        machine: &mut NativeStateMachine,
+        _name: &str,
+        always_check: bool,
+    ) -> Result<(), DataSourceError> {
+        self.with_ntc(|_| machine.add_invariant(always_check))
+    }
+
+    fn state_machine_start(
+        &self,
+        machine: &mut NativeStateMachine,
+    ) -> Result<i64, DataSourceError> {
+        if machine.rule_count() == 0 {
+            return Err(DataSourceError::InvalidArgument(
+                "cannot start a state machine with no rules".to_string(),
+            ));
+        }
+        self.with_ntc(|ntc| machine.start(ntc))
     }
 
     fn state_machine_next_group(

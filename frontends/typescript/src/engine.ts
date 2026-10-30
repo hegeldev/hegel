@@ -108,20 +108,6 @@ export interface NativeFloatOptions {
 }
 
 /**
- * Options for `hegel_new_state_machine`. `ruleGroups` and
- * `invariantAlwaysCheck` are parallel to `ruleNames` / `invariantNames`.
- */
-export interface StateMachineOptions {
-  ruleNames: readonly string[];
-  ruleGroups: readonly number[];
-  invariantNames: readonly string[];
-  invariantAlwaysCheck: readonly boolean[];
-  minConcurrency: number;
-  maxConcurrency: number;
-  stepCount: number;
-}
-
-/**
  * `HEGEL_STATE_MACHINE_DONE` (`INT64_MIN`): the sentinel
  * `hegel_state_machine_next_group` / `hegel_state_machine_next_rule` write
  * instead of a group / rule index once the machine (or the worker's round) is
@@ -242,15 +228,47 @@ export interface Engine {
   poolGenerate(ctx: ContextHandle, tc: TestCaseHandle, pool: PoolHandle, consume: boolean): bigint;
   freePool(pool: PoolHandle): void;
   /**
-   * Register a state machine on `tc`; released with {@link freeStateMachine}.
-   * The engine's drawn concurrency level is discarded: this client fixes the
-   * bounds at 1.
+   * Create an empty state machine on `tc` with its concurrency bounds and
+   * step count; released with {@link freeStateMachine}. Declare its rules and
+   * invariants with {@link stateMachineAddRule} / {@link stateMachineAddInvariant},
+   * then seal them with {@link stateMachineStart}.
    */
   newStateMachine(
     ctx: ContextHandle,
     tc: TestCaseHandle,
-    opts: StateMachineOptions,
+    minConcurrency: number,
+    maxConcurrency: number,
+    stepCount: number,
   ): StateMachineHandle;
+  /**
+   * Declare the machine's next rule (its index is the number of rules declared
+   * before it): a selection weight and the ids of the concurrency groups it
+   * belongs to (at least one, distinct).
+   */
+  stateMachineAddRule(
+    ctx: ContextHandle,
+    tc: TestCaseHandle,
+    machine: StateMachineHandle,
+    name: string,
+    weight: number,
+    groups: readonly number[],
+  ): void;
+  /**
+   * Declare the machine's next invariant (its index is the number of
+   * invariants declared before it); `alwaysCheck` exempts it from sampling.
+   */
+  stateMachineAddInvariant(
+    ctx: ContextHandle,
+    tc: TestCaseHandle,
+    machine: StateMachineHandle,
+    name: string,
+    alwaysCheck: boolean,
+  ): void;
+  /**
+   * Seal the declared rules and invariants and draw the concurrency level,
+   * returning it. No rule may be added, and no round driven, across this call.
+   */
+  stateMachineStart(ctx: ContextHandle, tc: TestCaseHandle, machine: StateMachineHandle): number;
   /**
    * Start the machine's next round, returning the round's group id, or `null`
    * once the machine is finished.

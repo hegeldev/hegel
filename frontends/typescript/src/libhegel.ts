@@ -39,7 +39,6 @@ import {
   type StringGeneratorHandle,
   type PoolHandle,
   type StateMachineHandle,
-  type StateMachineOptions,
   type NativeDate,
   type NativeTime,
   type NativeDatetime,
@@ -56,7 +55,6 @@ export {
   type NativeDatetime,
   type TextGeneratorOptions,
   type NativeFloatOptions,
-  type StateMachineOptions,
   type UuidVersion,
 } from "./engine.js";
 import { bigIntToTwosComplementLE, twosComplementLEToBigInt } from "./bytes.js";
@@ -237,15 +235,33 @@ export interface Bindings {
   ) => number;
   poolFree: (pool: Ptr) => void;
 
-  /**
-   * The `rule_weights` array of `hegel_new_state_machine` is absorbed as NULL
-   * (all rules equally likely): this client does not expose rule weights.
-   */
   newStateMachine: (
     ctx: Ptr,
     tc: Ptr,
-    opts: StateMachineOptions,
+    minConcurrency: number,
+    maxConcurrency: number,
+    stepCount: number,
     outMachine: Ptr[],
+  ) => number;
+  stateMachineAddRule: (
+    ctx: Ptr,
+    tc: Ptr,
+    machine: Ptr,
+    name: string,
+    weight: number,
+    groups: readonly number[],
+  ) => number;
+  stateMachineAddInvariant: (
+    ctx: Ptr,
+    tc: Ptr,
+    machine: Ptr,
+    name: string,
+    alwaysCheck: boolean,
+  ) => number;
+  stateMachineStart: (
+    ctx: Ptr,
+    tc: Ptr,
+    machine: Ptr,
     outConcurrency: (number | bigint)[],
   ) => number;
   stateMachineNextGroup: (ctx: Ptr, tc: Ptr, machine: Ptr, out: (number | bigint)[]) => number;
@@ -464,22 +480,28 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
   );
   const poolFree = f("int hegel_pool_free(void* ctx, void* pool)");
 
-  const newStateMachine = fs("hegel_new_state_machine", [
+  const newStateMachine = f(
+    "int hegel_new_state_machine(void* ctx, void* tc, int64_t min_concurrency, int64_t max_concurrency, int64_t step_count, _Out_ void** out_state_machine)",
+  );
+  const stateMachineAddRule = fs("hegel_state_machine_add_rule", [
     "void*",
     "void*",
-    koffi.pointer(stringType),
+    "void*",
+    stringType,
+    "double",
     koffi.pointer("int64_t"),
-    koffi.pointer("double"),
     "size_t",
-    koffi.pointer(stringType),
-    koffi.pointer("bool"),
-    "size_t",
-    "int64_t",
-    "int64_t",
-    "int64_t",
-    koffi.out(koffi.pointer("void*")),
-    koffi.out(koffi.pointer("int64_t")),
   ]);
+  const stateMachineAddInvariant = fs("hegel_state_machine_add_invariant", [
+    "void*",
+    "void*",
+    "void*",
+    stringType,
+    "bool",
+  ]);
+  const stateMachineStart = f(
+    "int hegel_state_machine_start(void* ctx, void* tc, void* state_machine, _Out_ int64_t* out_concurrency)",
+  );
   const stateMachineNextGroup = f(
     "int hegel_state_machine_next_group(void* ctx, void* tc, void* state_machine, _Out_ int64_t* out_group_id)",
   );
@@ -636,23 +658,14 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     poolAdd: (ctx, tc, pool, out) => poolAdd(ctx, tc, pool, out),
     poolGenerate: (ctx, tc, pool, consume, out) => poolGenerate(ctx, tc, pool, consume, out),
     poolFree: (pool) => checked(poolFree(null, pool), "poolFree"),
-    newStateMachine: (ctx, tc, opts, outMachine, outConcurrency) =>
-      newStateMachine(
-        ctx,
-        tc,
-        opts.ruleNames.map(nativeString),
-        opts.ruleGroups,
-        null,
-        opts.ruleNames.length,
-        opts.invariantNames.map(nativeString),
-        opts.invariantAlwaysCheck,
-        opts.invariantNames.length,
-        opts.minConcurrency,
-        opts.maxConcurrency,
-        opts.stepCount,
-        outMachine,
-        outConcurrency,
-      ),
+    newStateMachine: (ctx, tc, minConcurrency, maxConcurrency, stepCount, outMachine) =>
+      newStateMachine(ctx, tc, minConcurrency, maxConcurrency, stepCount, outMachine),
+    stateMachineAddRule: (ctx, tc, machine, name, weight, groups) =>
+      stateMachineAddRule(ctx, tc, machine, nativeString(name), weight, groups, groups.length),
+    stateMachineAddInvariant: (ctx, tc, machine, name, alwaysCheck) =>
+      stateMachineAddInvariant(ctx, tc, machine, nativeString(name), alwaysCheck),
+    stateMachineStart: (ctx, tc, machine, outConcurrency) =>
+      stateMachineStart(ctx, tc, machine, outConcurrency),
     stateMachineNextGroup: (ctx, tc, machine, out) => stateMachineNextGroup(ctx, tc, machine, out),
     stateMachineNextRule: (ctx, tc, machine, workerIndex, out) =>
       stateMachineNextRule(ctx, tc, machine, workerIndex, out),
@@ -1109,19 +1122,67 @@ export class Libhegel implements Engine {
   }
 
   /**
-   * Register a state machine on `tc`. The returned handle is owned by the
-   * caller — release it with {@link freeStateMachine}. The engine's drawn
-   * concurrency level is discarded: this client fixes the bounds at 1.
+   * Create an empty state machine on `tc` with its concurrency bounds and
+   * step count. The returned handle is owned by the caller — release it with
+   * {@link freeStateMachine}. Declare rules and invariants with
+   * {@link stateMachineAddRule} / {@link stateMachineAddInvariant}, then
+   * {@link stateMachineStart} it.
    */
-  newStateMachine(ctx: Ptr, tc: Ptr, opts: StateMachineOptions): StateMachineHandle {
+  newStateMachine(
+    ctx: Ptr,
+    tc: Ptr,
+    minConcurrency: number,
+    maxConcurrency: number,
+    stepCount: number,
+  ): StateMachineHandle {
     const outMachine: Ptr[] = [null];
-    const outConcurrency: (number | bigint)[] = [0];
     this.check(
       ctx,
-      this.fns.newStateMachine(ctx, tc, opts, outMachine, outConcurrency),
+      this.fns.newStateMachine(ctx, tc, minConcurrency, maxConcurrency, stepCount, outMachine),
       "hegel_new_state_machine",
     );
     return this.requireHandle<StateMachineHandle>(outMachine[0], "newStateMachine");
+  }
+
+  /** Declare the machine's next rule: its weight and concurrency-group ids. */
+  stateMachineAddRule(
+    ctx: Ptr,
+    tc: Ptr,
+    machine: Ptr,
+    name: string,
+    weight: number,
+    groups: readonly number[],
+  ): void {
+    this.check(
+      ctx,
+      this.fns.stateMachineAddRule(ctx, tc, machine, name, weight, groups),
+      "hegel_state_machine_add_rule",
+    );
+  }
+
+  /** Declare the machine's next invariant; `alwaysCheck` exempts it from sampling. */
+  stateMachineAddInvariant(
+    ctx: Ptr,
+    tc: Ptr,
+    machine: Ptr,
+    name: string,
+    alwaysCheck: boolean,
+  ): void {
+    this.check(
+      ctx,
+      this.fns.stateMachineAddInvariant(ctx, tc, machine, name, alwaysCheck),
+      "hegel_state_machine_add_invariant",
+    );
+  }
+
+  /**
+   * Seal the machine's rules and invariants and draw its concurrency level,
+   * returning it (a small integer, whichever shape koffi hands it back in).
+   */
+  stateMachineStart(ctx: Ptr, tc: Ptr, machine: Ptr): number {
+    const out: (number | bigint)[] = [0];
+    this.check(ctx, this.fns.stateMachineStart(ctx, tc, machine, out), "hegel_state_machine_start");
+    return Number(out[0]);
   }
 
   /**

@@ -1,6 +1,7 @@
 /*
  * state_machine.c — demo: engine-owned rule selection for stateful testing.
- * Verifies that hegel_new_state_machine / hegel_state_machine_next_group /
+ * Verifies that hegel_new_state_machine / hegel_state_machine_add_rule /
+ * hegel_state_machine_start / hegel_state_machine_next_group /
  * hegel_state_machine_next_rule compose into the building block behind
  * hegel-rust's `hegel::stateful::run` — the engine decides which rule runs
  * at each step (applying swarm testing: each test case enables a random
@@ -33,7 +34,7 @@
 
 static const hegel_string_t RULES[] = { {"increment", sizeof("increment") - 1}, {"decrement", sizeof("decrement") - 1}, {"reset", sizeof("reset") - 1} };
 #define NUM_RULES (int64_t) (sizeof(RULES) / sizeof(RULES[0]))
-static const int64_t RULE_GROUPS[] = { 0, 0, 0 };
+static const int64_t RULE_GROUPS[] = { 0 };
 static const hegel_string_t INVARIANTS[] = { {"non_negative", sizeof("non_negative") - 1} };
 #define NUM_INVARIANTS (sizeof(INVARIANTS) / sizeof(INVARIANTS[0]))
 
@@ -61,7 +62,15 @@ int main(void) {
 
         hegel_state_machine_t *machine;
         int64_t concurrency;
-        if (hegel_new_state_machine(ctx, tc, RULES, RULE_GROUPS, NULL, NUM_RULES, INVARIANTS, NULL, NUM_INVARIANTS, 1, 1, 50, &machine, &concurrency) != HEGEL_OK) {
+        HEGEL_CHECK(hegel_new_state_machine, ctx, tc, 1, 1, 50, &machine);
+        for (int64_t i = 0; i < NUM_RULES; i++) {
+            HEGEL_CHECK(hegel_state_machine_add_rule, ctx, tc, machine, RULES[i], 1.0, RULE_GROUPS, 1);
+        }
+        for (size_t i = 0; i < NUM_INVARIANTS; i++) {
+            HEGEL_CHECK(hegel_state_machine_add_invariant, ctx, tc, machine, INVARIANTS[i], false);
+        }
+        if (hegel_state_machine_start(ctx, tc, machine, &concurrency) != HEGEL_OK) {
+            HEGEL_CHECK(hegel_state_machine_free, ctx, machine);
             HEGEL_CHECK(hegel_mark_complete, ctx, tc, HEGEL_STATUS_OVERRUN, NULL);
             HEGEL_CHECK(hegel_test_case_free, ctx, tc);
             continue;

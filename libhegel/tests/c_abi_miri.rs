@@ -30,8 +30,9 @@ use hegel_c::{
     hegel_run_result_failure_count, hegel_run_result_free, hegel_run_result_status,
     hegel_run_start, hegel_run_status_t, hegel_settings_free, hegel_settings_new,
     hegel_settings_set_database, hegel_settings_set_seed, hegel_settings_set_test_cases,
-    hegel_settings_set_verbosity, hegel_start_span, hegel_state_machine_free, hegel_status_t,
-    hegel_stop_span, hegel_test_case_clone, hegel_test_case_free, hegel_verbosity_t,
+    hegel_settings_set_verbosity, hegel_start_span, hegel_state_machine_add_rule,
+    hegel_state_machine_free, hegel_state_machine_start, hegel_status_t, hegel_stop_span,
+    hegel_test_case_clone, hegel_test_case_free, hegel_verbosity_t,
 };
 use std::ffi::{CString, c_void};
 use std::ptr;
@@ -248,24 +249,23 @@ fn object_handles_outlive_the_run_and_free_in_any_order() {
         let mut pool: *mut HegelPool = ptr::null_mut();
         ok(hegel_new_pool(ctx, tc, &mut pool));
         let rule = CString::new("only").unwrap();
-        let rules = [test_string(&rule)];
         let rule_groups: [i64; 1] = [0];
         let mut machine: *mut HegelStateMachine = ptr::null_mut();
         let mut out_concurrency = 0i64;
-        ok(hegel_new_state_machine(
+        ok(hegel_new_state_machine(ctx, tc, 1, 1, 50, &mut machine));
+        ok(hegel_state_machine_add_rule(
             ctx,
             tc,
-            rules.as_ptr(),
+            machine,
+            test_string(&rule),
+            1.0,
             rule_groups.as_ptr(),
-            ptr::null(),
             1,
-            ptr::null(),
-            ptr::null(),
-            0,
-            1,
-            1,
-            50,
-            &mut machine,
+        ));
+        ok(hegel_state_machine_start(
+            ctx,
+            tc,
+            machine,
             &mut out_concurrency,
         ));
 

@@ -267,7 +267,10 @@ typed draws (`generate_integer`, `generate_boolean`, `generate_float`,
 `generate_bytes`, `generate_string` + the `string_generator_*` handle
 constructors, `generate_date`/`time`/`datetime`, `generate_ipv4`/`ipv6`), spans,
 collections, pools, state machines (`new_state_machine` takes the per-machine
-`~step_count` since libhegel 0.38.0; there is no settings-level step count),
+`~step_count` since libhegel 0.38.0; there is no settings-level step count;
+rules and invariants are declared one call at a time with
+`state_machine_add_rule` / `state_machine_add_invariant` and sealed with
+`state_machine_start`, which returns the drawn concurrency),
 `target`, `event`/`event_value`, derived handles (`test_case_clone`,
 `test_case_block`), the pretty-printer document (`printer_*`,
 `test_case_printer`, `note` — see Pretty printing below), `mark_complete`. Strings cross the ABI as `hegel_string_t`

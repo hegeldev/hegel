@@ -288,23 +288,26 @@ public final class Stateful {
         }
         List<String> groupNames = new ArrayList<>();
         long[] groups = groups(rules, groupNames);
-        DataSource.StateMachine sm = tc.newStateMachine(
-                names(rules),
-                groups,
-                weights(rules),
-                names(invariants),
-                alwaysRun(invariants),
-                options.minConcurrency,
-                options.maxConcurrency,
-                options.stepCount);
+        double[] weights = weights(rules);
+        long machineId = tc.newStateMachine(options.minConcurrency, options.maxConcurrency, options.stepCount);
         try {
+            for (int i = 0; i < rules.size(); i++) {
+                tc.stateMachineAddRule(machineId, rules.get(i).getName(), weights[i], new long[] {groups[i]});
+            }
+            for (Method invariant : invariants) {
+                tc.stateMachineAddInvariant(
+                        machineId,
+                        invariant.getName(),
+                        invariant.getAnnotation(Invariant.class).alwaysRun());
+            }
+            int concurrency = tc.stateMachineStart(machineId);
             if (options.maxConcurrency == 1) {
-                driveSequential(machine, rules, invariants, tc, sm.id());
+                driveSequential(machine, rules, invariants, tc, machineId);
             } else {
-                driveConcurrent(machine, rules, invariants, groupNames, tc, sm.id(), sm.concurrency());
+                driveConcurrent(machine, rules, invariants, groupNames, tc, machineId, concurrency);
             }
         } finally {
-            tc.stateMachineFree(sm.id());
+            tc.stateMachineFree(machineId);
         }
     }
 
@@ -707,10 +710,6 @@ public final class Stateful {
         return methods;
     }
 
-    private static List<String> names(List<Method> methods) {
-        return methods.stream().map(Method::getName).toList();
-    }
-
     /**
      * The rules' concurrency-group ids, parallel to {@code rules}: distinct group names numbered
      * from 0 in first-appearance order, appended to {@code groupNames} so the id indexes it. A
@@ -733,13 +732,9 @@ public final class Stateful {
         return ids;
     }
 
-    /**
-     * The rules' selection weights, parallel to {@code rules}, or {@code null} — the engine's
-     * all-equal default — when no rule asks for anything but weight 1.
-     */
+    /** The rules' selection weights, parallel to {@code rules}, validated before anything reaches the engine. */
     private static double[] weights(List<Method> rules) {
         double[] weights = new double[rules.size()];
-        boolean weighted = false;
         for (int i = 0; i < weights.length; i++) {
             Method rule = rules.get(i);
             double w = rule.getAnnotation(Rule.class).weight();
@@ -748,16 +743,7 @@ public final class Stateful {
                         "@Rule weight of " + rule.getName() + " must be finite and positive, got " + w);
             }
             weights[i] = w;
-            weighted |= w != 1.0;
         }
-        return weighted ? weights : null;
-    }
-
-    private static boolean[] alwaysRun(List<Method> invariants) {
-        boolean[] flags = new boolean[invariants.size()];
-        for (int i = 0; i < flags.length; i++) {
-            flags[i] = invariants.get(i).getAnnotation(Invariant.class).alwaysRun();
-        }
-        return flags;
+        return weights;
     }
 }

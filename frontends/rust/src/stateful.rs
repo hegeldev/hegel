@@ -105,19 +105,19 @@
 //!
 //! #[hegel::concurrent_state_machine]
 //! impl SharedStack {
-//!     #[rule(group = "ops")]
+//!     #[rule(groups = ["ops"])]
 //!     fn push(&self, tc: TestCase) {
 //!         let element = tc.draw(gs::integers::<i32>());
 //!         self.stack.lock().unwrap_or_else(|e| e.into_inner()).push(element);
 //!         self.pushes.fetch_add(1, Ordering::SeqCst);
 //!     }
 //!
-//!     #[rule(group = "ops")]
+//!     #[rule(groups = ["ops"])]
 //!     fn pop(&self, _: TestCase) {
 //!         self.stack.lock().unwrap_or_else(|e| e.into_inner()).pop();
 //!     }
 //!
-//!     #[rule(group = "audit")]
+//!     #[rule(groups = ["audit"])]
 //!     fn audit(&self, tc: TestCase) {
 //!         let stack = self.stack.lock().unwrap_or_else(|e| e.into_inner());
 //!         tc.note(&format!("stack holds {} elements", stack.len()));
@@ -164,11 +164,11 @@ use std::sync::{LazyLock, Mutex, mpsc};
 /// once.
 static RULE_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.stateful.rule"));
 
-/// The concurrency group a `#[rule]` without a `group = "..."` argument is
-/// assigned to. All unannotated rules share this one group, so a machine
-/// with no group annotations is maximally concurrent — and in a machine
-/// that mixes annotated and unannotated rules, the unannotated rules never
-/// overlap with any named group's rules (see
+/// The concurrency group a `#[rule]` without a `groups = [...]` argument
+/// is assigned to. All unannotated rules share this one group, so a
+/// machine with no group annotations is maximally concurrent — and in a
+/// machine that mixes annotated and unannotated rules, the unannotated
+/// rules never overlap with any named group's rules (see
 /// [`ConcurrentStateMachine`]).
 pub const ANONYMOUS_GROUP: &str = "<anonymous>";
 
@@ -920,8 +920,9 @@ impl<M: ConcurrentStateMachine + Sync> Machine<M> {
     /// each round, the engine picks a random concurrency group; every worker
     /// thread then runs a short (possibly empty) random sequence of rules from
     /// that group — and only that group — concurrently with the other workers. Rules in the same
-    /// group may overlap each other, and rules in different groups never
-    /// overlap. Once every worker has finished its rules for the round, the
+    /// group may overlap each other, rules in different groups never
+    /// overlap, and a rule in several groups takes part in the rounds of
+    /// each. Once every worker has finished its rules for the round, the
     /// main thread runs the invariants the engine's sampling draws select
     /// (probability `1 / step_count` each, and always-run invariants
     /// unconditionally); every invariant runs in full on the machine's initial
@@ -966,12 +967,12 @@ impl<M: ConcurrentStateMachine + Sync> Machine<M> {
     ///
     /// #[hegel::concurrent_state_machine]
     /// impl CounterTest {
-    ///     #[rule(group = "write")]
+    ///     #[rule(groups = ["write"])]
     ///     fn increment(&self, _: TestCase) {
     ///         *self.counter.lock().unwrap_or_else(|e| e.into_inner()) += 1;
     ///     }
     ///
-    ///     #[rule(group = "read")]
+    ///     #[rule(groups = ["read"])]
     ///     fn read(&self, _: TestCase) {
     ///         let _ = *self.counter.lock().unwrap_or_else(|e| e.into_inner());
     ///     }
@@ -999,29 +1000,68 @@ impl<M: ConcurrentStateMachine + Sync> Machine<M> {
     }
 }
 
-fn run_sequential<M: StateMachine>(mut m: M, tc: TestCase, step_count: i64) {
-    let rules = m.rules();
-    let rule_names: Vec<&str> = rules.iter().map(|r| r.name.as_str()).collect();
-    let rule_groups = vec![0i64; rules.len()];
-    let rule_weights: Vec<f64> = rules.iter().map(|r| r.weight).collect();
-    let invariants = m.invariants();
-    let invariant_names: Vec<&str> = invariants.iter().map(|r| r.name.as_str()).collect();
-    let invariant_always_check: Vec<bool> = invariants.iter().map(|r| r.always_run).collect();
-    let machine = match tc.with_ctc(|ctc| {
-        ctc.new_state_machine(
-            &rule_names,
-            &rule_groups,
-            &rule_weights,
-            &invariant_names,
-            &invariant_always_check,
-            1,
-            1,
-            step_count,
-        )
-    }) {
-        Ok((handle, _)) => handle,
+/// One rule as declared to the engine: its name, selection weight, and the
+/// ids of the concurrency groups it belongs to.
+struct RuleSpec<'a> {
+    name: &'a str,
+    weight: f64,
+    groups: Vec<i64>,
+}
+
+/// Build and start an engine state machine: create it with the bounds and
+/// step count, declare every rule and invariant in order (so the engine's
+/// rule and invariant indices are positions in `rules` and `invariants`),
+/// and start it. Returns the machine and the concurrency level the engine
+/// drew.
+fn register_machine(
+    tc: &TestCase,
+    rules: &[RuleSpec<'_>],
+    invariants: &[(&str, bool)],
+    min_concurrency: i64,
+    max_concurrency: i64,
+    step_count: i64,
+) -> (StateMachineHandle, i64) {
+    let machine = match tc
+        .with_ctc(|ctc| ctc.new_state_machine(min_concurrency, max_concurrency, step_count))
+    {
+        Ok(handle) => handle,
         Err(rc) => raise_for_rc(rc),
     };
+    let declare = |declared: Result<(), crate::ffi::sys::hegel_result_t>| {
+        if let Err(rc) = declared {
+            raise_for_rc(rc);
+        }
+    };
+    for rule in rules {
+        declare(tc.with_ctc(|ctc| {
+            ctc.state_machine_add_rule(&machine, rule.name, rule.weight, &rule.groups)
+        }));
+    }
+    for &(name, always_check) in invariants {
+        declare(tc.with_ctc(|ctc| ctc.state_machine_add_invariant(&machine, name, always_check)));
+    }
+    match tc.with_ctc(|ctc| ctc.state_machine_start(&machine)) {
+        Ok(concurrency) => (machine, concurrency),
+        Err(rc) => raise_for_rc(rc),
+    }
+}
+
+fn run_sequential<M: StateMachine>(mut m: M, tc: TestCase, step_count: i64) {
+    let rules = m.rules();
+    let rule_specs: Vec<RuleSpec<'_>> = rules
+        .iter()
+        .map(|r| RuleSpec {
+            name: r.name.as_str(),
+            weight: r.weight,
+            groups: vec![0],
+        })
+        .collect();
+    let invariants = m.invariants();
+    let invariant_specs: Vec<(&str, bool)> = invariants
+        .iter()
+        .map(|r| (r.name.as_str(), r.always_run))
+        .collect();
+    let (machine, _) = register_machine(&tc, &rule_specs, &invariant_specs, 1, 1, step_count);
 
     if !invariants.is_empty() {
         tc.note("Checking invariants on the initial state.");
@@ -1090,27 +1130,32 @@ fn run_sequential<M: StateMachine>(mut m: M, tc: TestCase, step_count: i64) {
 ///
 /// Unlike a sequential [`Rule`], the apply function takes `&M`: the model is
 /// shared by reference across the worker threads, so any mutable model
-/// state needs interior mutability. `group` names the concurrency group the
-/// rule belongs to; rules in the same group may run concurrently with each
-/// other, rules in different groups never overlap. `weight` is a hint about how
+/// state needs interior mutability. `groups` names the concurrency groups
+/// the rule belongs to — at least one, with no repeats; rules in the same
+/// group may run concurrently with each other, rules in different groups
+/// never overlap, and a rule in several groups runs whenever any of them is
+/// current (see [`ConcurrentStateMachine`]). `weight` is a hint about how
 /// often to choose the rule relative to the machine's other rules. It is not a
 /// distributional guarantee. This feature is intended for advanced users. We
 /// otherwise discourage using it. Every weight must be finite and positive.
 pub struct ConcurrentRule<M: ?Sized> {
     pub name: String,
-    pub group: String,
+    pub groups: Vec<String>,
     pub weight: f64,
     pub apply: fn(&M, TestCase),
 }
 
 impl<M> ConcurrentRule<M> {
-    /// Create a new rule with a name, a concurrency group, a selection
-    /// weight, and an apply function. Pass [`ANONYMOUS_GROUP`] as the
-    /// group for a rule without a group annotation.
-    pub fn new(name: &str, group: &str, weight: f64, apply: fn(&M, TestCase)) -> Self {
+    /// Create a new rule with a name, its concurrency groups, a selection
+    /// weight, and an apply function. The rule is handed out whenever any
+    /// of `groups` is the current group, so it may overlap the rules of
+    /// each; `groups` must name at least one group and must not repeat
+    /// one. Pass `&[ANONYMOUS_GROUP]` for a rule without a group
+    /// annotation (see [`ANONYMOUS_GROUP`]).
+    pub fn new(name: &str, groups: &[&str], weight: f64, apply: fn(&M, TestCase)) -> Self {
         ConcurrentRule {
             name: name.to_string(),
-            group: group.to_string(),
+            groups: groups.iter().map(|group| group.to_string()).collect(),
             weight,
             apply,
         }
@@ -1160,8 +1205,14 @@ impl<M> ConcurrentInvariant<M> {
 /// to the current group are handed out — so rules in the same group may run
 /// concurrently with each other, rules in different groups never overlap,
 /// and the current group changes only at the join points between rounds.
-/// Groups cannot express asymmetric overlap ("put may overlap get but not
-/// delete"); that expressiveness limit is deliberate.
+///
+/// A rule may belong to several groups, and then runs whenever any of them
+/// is current. That is how to say that a rule may overlap two sets of rules
+/// which must not overlap each other: a `read` in both a `"write"` group
+/// and a `"flush"` group runs alongside writes and alongside flushes, while
+/// writes and flushes never run together. Groups still cannot express
+/// asymmetric overlap ("put may overlap get but not delete"); that
+/// expressiveness limit is deliberate.
 ///
 /// A rule without a group annotation is assigned to a single shared
 /// anonymous group ([`ANONYMOUS_GROUP`]), so an unannotated machine is
@@ -1369,38 +1420,42 @@ fn run_concurrent_machine<M: ConcurrentStateMachine + Sync>(
 ) {
     let rules = m.rules();
     let invariants = m.invariants();
-    let rule_names: Vec<&str> = rules.iter().map(|r| r.name.as_str()).collect();
-    let invariant_names: Vec<&str> = invariants.iter().map(|r| r.name.as_str()).collect();
-    let invariant_always_check: Vec<bool> = invariants.iter().map(|r| r.always_run).collect();
     let mut group_names: Vec<&str> = Vec::new();
-    let mut rule_groups: Vec<i64> = Vec::with_capacity(rules.len());
+    let mut rule_specs: Vec<RuleSpec<'_>> = Vec::with_capacity(rules.len());
     for rule in &rules {
-        let index = group_names
+        let groups = rule
+            .groups
             .iter()
-            .position(|name| *name == rule.group)
-            .unwrap_or_else(|| {
-                group_names.push(rule.group.as_str());
-                group_names.len() - 1
-            });
-        rule_groups.push(index as i64);
+            .map(|group| {
+                let index = group_names
+                    .iter()
+                    .position(|name| name == group)
+                    .unwrap_or_else(|| {
+                        group_names.push(group.as_str());
+                        group_names.len() - 1
+                    });
+                index as i64
+            })
+            .collect();
+        rule_specs.push(RuleSpec {
+            name: rule.name.as_str(),
+            weight: rule.weight,
+            groups,
+        });
     }
-    let rule_weights: Vec<f64> = rules.iter().map(|r| r.weight).collect();
+    let invariant_specs: Vec<(&str, bool)> = invariants
+        .iter()
+        .map(|r| (r.name.as_str(), r.always_run))
+        .collect();
 
-    let (machine, concurrency) = match tc.with_ctc(|ctc| {
-        ctc.new_state_machine(
-            &rule_names,
-            &rule_groups,
-            &rule_weights,
-            &invariant_names,
-            &invariant_always_check,
-            min_concurrency,
-            max_concurrency,
-            step_count,
-        )
-    }) {
-        Ok(created) => created,
-        Err(rc) => raise_for_rc(rc),
-    };
+    let (machine, concurrency) = register_machine(
+        &tc,
+        &rule_specs,
+        &invariant_specs,
+        min_concurrency,
+        max_concurrency,
+        step_count,
+    );
     tc.note(&format!("Concurrency level: {concurrency}"));
 
     if !invariants.is_empty() {

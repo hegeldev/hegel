@@ -307,33 +307,31 @@ final class LiveDataSource implements DataSource {
     }
 
     @Override
-    public StateMachine newStateMachine(
-            List<String> ruleNames,
-            long[] ruleGroups,
-            double[] ruleWeights,
-            List<String> invariantNames,
-            boolean[] invariantAlwaysCheck,
-            long minConcurrency,
-            long maxConcurrency,
-            int stepCount) {
+    public long newStateMachine(long minConcurrency, long maxConcurrency, int stepCount) {
         checkLive();
         long[] id = new long[1];
+        translate(lib.newStateMachine(tc, minConcurrency, maxConcurrency, stepCount, id), "new_state_machine");
+        return id[0];
+    }
+
+    @Override
+    public void stateMachineAddRule(long stateMachineId, String name, double weight, long[] groups) {
+        checkLive();
+        translate(lib.stateMachineAddRule(tc, stateMachineId, name, weight, groups), "state_machine_add_rule");
+    }
+
+    @Override
+    public void stateMachineAddInvariant(long stateMachineId, String name, boolean alwaysCheck) {
+        checkLive();
+        translate(lib.stateMachineAddInvariant(tc, stateMachineId, name, alwaysCheck), "state_machine_add_invariant");
+    }
+
+    @Override
+    public int stateMachineStart(long stateMachineId) {
+        checkLive();
         long[] concurrency = new long[1];
-        translate(
-                lib.newStateMachine(
-                        tc,
-                        ruleNames,
-                        ruleGroups,
-                        ruleWeights,
-                        invariantNames,
-                        invariantAlwaysCheck,
-                        minConcurrency,
-                        maxConcurrency,
-                        stepCount,
-                        id,
-                        concurrency),
-                "new_state_machine");
-        return new StateMachine(id[0], (int) concurrency[0]);
+        translate(lib.stateMachineStart(tc, stateMachineId, concurrency), "state_machine_start");
+        return (int) concurrency[0];
     }
 
     @Override

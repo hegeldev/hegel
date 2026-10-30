@@ -12,6 +12,7 @@ use alloc::ffi::CString;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
+#[cfg(test)]
 use alloc::vec;
 use alloc::vec::Vec;
 #[cfg(target_family = "wasm")]
@@ -4284,7 +4285,9 @@ unsafe fn names_from_c_array(
 /// Opaque handle to an engine-owned *state machine* for stateful
 /// (rule-based) testing, sequential or concurrent.
 ///
-/// Created by `hegel_new_state_machine` on a test case; driven by
+/// Created by `hegel_new_state_machine` on a test case, declared with
+/// `hegel_state_machine_add_rule` / `hegel_state_machine_add_invariant`,
+/// sealed by `hegel_state_machine_start`, and driven by
 /// `hegel_state_machine_next_group` / `hegel_state_machine_next_rule` /
 /// `hegel_state_machine_rule_rejected` through any handle of the *same*
 /// test-case family (the root or any clone) — each choice is drawn from
@@ -4315,53 +4318,40 @@ unsafe fn state_machine_ref<'a>(
     }
 }
 
-/// Register a *state machine* for engine-owned stateful (rule-based)
-/// testing, sequential or concurrent: `num_rules` rules — each assigned to
-/// a concurrency group by `rule_groups`, an array of group ids parallel to
-/// `rule_names`, and given a selection weight by `rule_weights`, an array
-/// of `num_rules` finite, strictly positive doubles parallel to
-/// `rule_names` (NULL for all-equal weights) — and `num_invariants`
-/// invariants, with names as UTF-8 strings, plus concurrency bounds. `invariant_always_check`
-/// is an array of `num_invariants` flags parallel to `invariant_names`
-/// (NULL for all-false): `hegel_state_machine_should_check_invariant`
-/// answers true unconditionally for a flagged invariant and samples the
-/// rest. Group ids are arbitrary
-/// (any value except `HEGEL_STATE_MACHINE_DONE`, which
-/// `hegel_state_machine_next_group` reserves as its termination sentinel):
-/// the machine has one concurrency group per distinct value of
-/// `rule_groups`. The engine draws the machine's concurrency
-/// level — the number of workers (typically worker threads) that will pull
-/// rules — in `[min_concurrency, max_concurrency]` and writes it into
-/// `*out_concurrency`; the caller must run exactly that many workers. The
-/// engine owns the distribution, which is weighted toward
-/// `max_concurrency` (concurrency bugs need concurrency) rather than
-/// shrink-biased toward the minimum. Pass `min_concurrency ==
-/// max_concurrency` to fix the level without consuming entropy — `1, 1`
-/// for a sequential machine. `step_count` is the target number of counted
-/// rounds the machine runs per test case: every case runs at least one
-/// round and at most `step_count` (at concurrency 1, where a round is one
-/// rule, that is at most `step_count` completed rules), and each sampled
-/// invariant is checked with probability `1 / step_count` per join point.
-/// The engine has no default; frontends typically use 50.
+/// Create an empty *state machine* for engine-owned stateful (rule-based)
+/// testing, sequential or concurrent, with its concurrency bounds and step
+/// count. The machine is built in three steps: this call, then one
+/// `hegel_state_machine_add_rule` per rule and one
+/// `hegel_state_machine_add_invariant` per invariant, then
+/// `hegel_state_machine_start`, which seals the declaration and draws the
+/// concurrency level. Only then may rounds be driven.
+///
+/// The engine draws the machine's concurrency level — the number of workers
+/// (typically worker threads) that will pull rules — in `[min_concurrency,
+/// max_concurrency]` when the machine starts, and `hegel_state_machine_start`
+/// reports it; the caller must run exactly that many workers. The engine
+/// owns the distribution, which is weighted toward `max_concurrency`
+/// (concurrency bugs need concurrency) rather than shrink-biased toward the
+/// minimum. Pass `min_concurrency == max_concurrency` to fix the level
+/// without consuming entropy — `1, 1` for a sequential machine.
+/// `step_count` is the target number of counted rounds the machine runs per
+/// test case: every case runs at least one round and at most `step_count`
+/// (at concurrency 1, where a round is one rule, that is at most
+/// `step_count` completed rules), and each sampled invariant is checked with
+/// probability `1 / step_count` per join point. The engine has no default;
+/// frontends typically use 50.
 ///
 /// The engine owns rule selection — including swarm testing, where each
 /// worker enables a random subset of rules (at least one per group) and
 /// selection draws only from that subset, with probability proportional
-/// to `rule_weights` among the enabled rules of the current group. A
+/// to the rules' weights among the enabled rules of the current group. A
 /// rule's realized frequency therefore depends on which other rules its
 /// worker has enabled: the weights are a guide, not a guarantee. The
-/// caller drives execution in
-/// rounds: on the root test-case handle it asks
+/// caller drives execution in rounds: on the root test-case handle it asks
 /// `hegel_state_machine_next_group` whether another round should run, then
 /// each worker asks `hegel_state_machine_next_rule` which rule to run and
-/// applies it, until that call signals the join point. Rules in
-/// the same group may run concurrently; rules in different groups never
-/// overlap.
-///
-/// Creating the machine draws from the calling handle's stream: the
-/// concurrency level and each worker's swarm parameters are decided here,
-/// up front, so the machine is fully constructed before any rule is
-/// requested.
+/// applies it, until that call signals the join point. Rules in the same
+/// group may run concurrently; rules that share no group never overlap.
 ///
 /// Concurrency alone does not mark the run nondeterministic: a properly
 /// serialized concurrent machine can fail deterministically, so the engine
@@ -4371,121 +4361,203 @@ unsafe fn state_machine_ref<'a>(
 /// when those observations fire.
 ///
 /// On success writes a caller-owned handle into `*out_state_machine` —
-/// pass it to subsequent `hegel_state_machine_next_group` /
-/// `hegel_state_machine_next_rule` / `hegel_state_machine_rule_rejected`
-/// calls (through any handle of the same test-case family) and release it
-/// with `hegel_state_machine_free` exactly once — writes the drawn
-/// concurrency level into `*out_concurrency`, and returns `HEGEL_OK`.
-/// Returns `HEGEL_E_STOP_TEST` when the engine's choice budget is
-/// exhausted (the caller should abort the body and call
-/// `hegel_mark_complete` with `HEGEL_STATUS_OVERRUN`). Returns
-/// `HEGEL_E_INVALID_ARG` if `num_rules` is zero, an entry of `rule_groups`
-/// is `HEGEL_STATE_MACHINE_DONE`, an entry of `rule_weights` is not finite
-/// and positive, `min_concurrency < 1`, `max_concurrency < min_concurrency`,
-/// `step_count < 1`, or on null / non-UTF-8 names.
+/// pass it to the `hegel_state_machine_*` calls (through any handle of the
+/// same test-case family) and release it with `hegel_state_machine_free`
+/// exactly once — and returns `HEGEL_OK`. Returns `HEGEL_E_STOP_TEST` when
+/// the engine's choice budget is exhausted (the caller should abort the
+/// body and call `hegel_mark_complete` with `HEGEL_STATUS_OVERRUN`).
+/// Returns `HEGEL_E_INVALID_ARG` if `min_concurrency < 1`,
+/// `max_concurrency < min_concurrency`, or `step_count < 1`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_new_state_machine(
     ctx: *mut HegelContext,
     tc: *mut HegelTestCase,
-    rule_names: *const hegel_string_t,
-    rule_groups: *const i64,
-    rule_weights: *const f64,
-    num_rules: usize,
-    invariant_names: *const hegel_string_t,
-    invariant_always_check: *const bool,
-    num_invariants: usize,
     min_concurrency: i64,
     max_concurrency: i64,
     step_count: i64,
     out_state_machine: *mut *mut HegelStateMachine,
-    out_concurrency: *mut i64,
 ) -> hegel_result_t {
     clear_last_error(ctx);
     let (tc, _guard) = match unsafe { tc_guard(ctx, "hegel_new_state_machine", tc) } {
         Ok(t) => t,
         Err(rc) => return rc,
     };
-    if out_state_machine.is_null() || out_concurrency.is_null() {
+    if out_state_machine.is_null() {
         set_last_error(ctx, "hegel_new_state_machine: out parameter is null");
         return HEGEL_E_INVALID_ARG;
     }
     unsafe { *out_state_machine = ptr::null_mut() };
-    let rules = match unsafe {
-        names_from_c_array(
-            ctx,
-            "hegel_new_state_machine",
-            "rule_names",
-            rule_names,
-            num_rules,
-        )
-    } {
-        Ok(v) => v,
+    match tc
+        .stream
+        .new_state_machine(min_concurrency, max_concurrency, step_count)
+    {
+        Ok(machine) => {
+            unsafe {
+                *out_state_machine = Box::into_raw(Box::new(HegelStateMachine {
+                    machine: Mutex::new(machine),
+                }));
+            }
+            HEGEL_OK
+        }
+        Err(e) => translate_ds_error(ctx, e),
+    }
+}
+
+/// Declare the next rule of a state machine that has not started: the
+/// rule's index — the value `hegel_state_machine_next_rule` later hands
+/// out for it — is the number of rules declared before it, so rules are
+/// numbered in declaration order from 0. `name` is a UTF-8 name used in
+/// diagnostics. `weight` is the rule's selection weight relative to the
+/// other rules of whichever group is current, a finite, strictly positive
+/// double (1.0 for an unweighted rule). `groups` is an array of
+/// `num_groups` concurrency-group ids the rule belongs to: at least one,
+/// with no duplicates. Group ids are arbitrary (any value except
+/// `HEGEL_STATE_MACHINE_DONE`, which `hegel_state_machine_next_group`
+/// reserves as its termination sentinel): the machine has one concurrency
+/// group per distinct id across every declared rule, and a rule listed in
+/// several groups is handed out in each of their rounds.
+///
+/// Returns `HEGEL_OK`; `HEGEL_E_INVALID_ARG` if the machine has already
+/// started, `name` is null or not UTF-8, `weight` is not finite and
+/// positive, `num_groups` is zero, `groups` is null, or an entry of
+/// `groups` is `HEGEL_STATE_MACHINE_DONE` or repeated; or
+/// `HEGEL_E_STOP_TEST` once the engine's choice budget is exhausted.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_state_machine_add_rule(
+    ctx: *mut HegelContext,
+    tc: *mut HegelTestCase,
+    state_machine: *mut HegelStateMachine,
+    name: hegel_string_t,
+    weight: f64,
+    groups: *const i64,
+    num_groups: usize,
+) -> hegel_result_t {
+    const FN: &str = "hegel_state_machine_add_rule";
+    clear_last_error(ctx);
+    let (tc, _guard) = match unsafe { tc_guard(ctx, FN, tc) } {
+        Ok(t) => t,
         Err(rc) => return rc,
     };
-    if rule_groups.is_null() && num_rules > 0 {
-        set_last_error(ctx, "hegel_new_state_machine: rule_groups is null");
+    let state_machine = match unsafe { state_machine_ref(ctx, FN, state_machine) } {
+        Ok(m) => m,
+        Err(rc) => return rc,
+    };
+    let name = match unsafe { required_utf8_arg(ctx, FN, "name", name) } {
+        Ok(name) => name,
+        Err(rc) => return rc,
+    };
+    if groups.is_null() && num_groups > 0 {
+        set_last_error(ctx, &format!("{FN}: groups is null"));
         return HEGEL_E_INVALID_ARG;
     }
-    let rule_groups: Vec<i64> = if num_rules == 0 {
+    let groups: Vec<i64> = if num_groups == 0 {
         Vec::new()
     } else {
-        unsafe { core::slice::from_raw_parts(rule_groups, num_rules) }.to_vec()
+        unsafe { core::slice::from_raw_parts(groups, num_groups) }.to_vec()
     };
-    if let Some(rule) = rule_groups
-        .iter()
-        .position(|&id| id == HEGEL_STATE_MACHINE_DONE)
-    {
+    if let Some(i) = groups.iter().position(|&id| id == HEGEL_STATE_MACHINE_DONE) {
         set_last_error(
             ctx,
             &format!(
-                "hegel_new_state_machine: rule_groups[{rule}] is {HEGEL_STATE_MACHINE_DONE} \
-                 (HEGEL_STATE_MACHINE_DONE), which is reserved as the termination sentinel \
-                 of hegel_state_machine_next_group"
+                "{FN}: groups[{i}] is {HEGEL_STATE_MACHINE_DONE} (HEGEL_STATE_MACHINE_DONE), \
+                 which is reserved as the termination sentinel of \
+                 hegel_state_machine_next_group"
             ),
         );
         return HEGEL_E_INVALID_ARG;
     }
-    let rule_weights: Vec<f64> = if num_rules == 0 || rule_weights.is_null() {
-        vec![1.0; num_rules]
-    } else {
-        unsafe { core::slice::from_raw_parts(rule_weights, num_rules) }.to_vec()
-    };
-    let invariants = match unsafe {
-        names_from_c_array(
-            ctx,
-            "hegel_new_state_machine",
-            "invariant_names",
-            invariant_names,
-            num_invariants,
-        )
-    } {
-        Ok(v) => v,
+    let mut machine = state_machine.machine.lock();
+    match tc
+        .stream
+        .state_machine_add_rule(&mut machine, &name, weight, groups)
+    {
+        Ok(()) => HEGEL_OK,
+        Err(e) => translate_ds_error(ctx, e),
+    }
+}
+
+/// Declare the next invariant of a state machine that has not started: the
+/// invariant's index — the value `hegel_state_machine_should_check_invariant`
+/// takes for it — is the number of invariants declared before it, so
+/// invariants are numbered in declaration order from 0. `name` is a UTF-8
+/// name used in diagnostics. With `always_check`,
+/// `hegel_state_machine_should_check_invariant` answers true for the
+/// invariant unconditionally; otherwise it samples.
+///
+/// Returns `HEGEL_OK`; `HEGEL_E_INVALID_ARG` if the machine has already
+/// started or `name` is null or not UTF-8; or `HEGEL_E_STOP_TEST` once the
+/// engine's choice budget is exhausted.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_state_machine_add_invariant(
+    ctx: *mut HegelContext,
+    tc: *mut HegelTestCase,
+    state_machine: *mut HegelStateMachine,
+    name: hegel_string_t,
+    always_check: bool,
+) -> hegel_result_t {
+    const FN: &str = "hegel_state_machine_add_invariant";
+    clear_last_error(ctx);
+    let (tc, _guard) = match unsafe { tc_guard(ctx, FN, tc) } {
+        Ok(t) => t,
         Err(rc) => return rc,
     };
-    let invariant_always_check: Vec<bool> =
-        if num_invariants == 0 || invariant_always_check.is_null() {
-            vec![false; num_invariants]
-        } else {
-            unsafe { core::slice::from_raw_parts(invariant_always_check, num_invariants) }.to_vec()
-        };
-    match tc.stream.new_state_machine(
-        rules,
-        rule_groups,
-        rule_weights,
-        invariants,
-        invariant_always_check,
-        min_concurrency,
-        max_concurrency,
-        step_count,
-    ) {
-        Ok(machine) => {
-            let concurrency = machine.concurrency();
-            unsafe {
-                *out_state_machine = into_raw_send_sync(HegelStateMachine {
-                    machine: Mutex::new(machine),
-                });
-                *out_concurrency = concurrency;
-            }
+    let state_machine = match unsafe { state_machine_ref(ctx, FN, state_machine) } {
+        Ok(m) => m,
+        Err(rc) => return rc,
+    };
+    let name = match unsafe { required_utf8_arg(ctx, FN, "name", name) } {
+        Ok(name) => name,
+        Err(rc) => return rc,
+    };
+    let mut machine = state_machine.machine.lock();
+    match tc
+        .stream
+        .state_machine_add_invariant(&mut machine, &name, always_check)
+    {
+        Ok(()) => HEGEL_OK,
+        Err(e) => translate_ds_error(ctx, e),
+    }
+}
+
+/// Seal a state machine's declared rules and invariants and draw its
+/// concurrency level, writing the level into `*out_concurrency`: the caller
+/// must run exactly that many workers, indexed `0 .. concurrency`. No rule
+/// or invariant may be added afterwards, and no round may be driven
+/// before. Starting draws from the calling handle's stream: the
+/// concurrency level and each worker's swarm parameters are decided here,
+/// up front, so the machine is fully constructed before any rule is
+/// requested.
+///
+/// Returns `HEGEL_OK`; `HEGEL_E_INVALID_ARG` if no rule was declared,
+/// the machine was already started, or `out_concurrency` is null; or
+/// `HEGEL_E_STOP_TEST` when the engine's choice budget is exhausted (the
+/// caller should abort the body and call `hegel_mark_complete` with
+/// `HEGEL_STATUS_OVERRUN`).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_state_machine_start(
+    ctx: *mut HegelContext,
+    tc: *mut HegelTestCase,
+    state_machine: *mut HegelStateMachine,
+    out_concurrency: *mut i64,
+) -> hegel_result_t {
+    const FN: &str = "hegel_state_machine_start";
+    clear_last_error(ctx);
+    let (tc, _guard) = match unsafe { tc_guard(ctx, FN, tc) } {
+        Ok(t) => t,
+        Err(rc) => return rc,
+    };
+    let state_machine = match unsafe { state_machine_ref(ctx, FN, state_machine) } {
+        Ok(m) => m,
+        Err(rc) => return rc,
+    };
+    if out_concurrency.is_null() {
+        set_last_error(ctx, &format!("{FN}: out parameter is null"));
+        return HEGEL_E_INVALID_ARG;
+    }
+    let mut machine = state_machine.machine.lock();
+    match tc.stream.state_machine_start(&mut machine) {
+        Ok(concurrency) => {
+            unsafe { *out_concurrency = concurrency };
             HEGEL_OK
         }
         Err(e) => translate_ds_error(ctx, e),
@@ -4503,11 +4575,11 @@ pub const HEGEL_STATE_MACHINE_DONE: i64 = i64::MIN;
 /// recorded boolean draw with a small stop probability, bounded by the
 /// machine's `step_count`) and, if the test case continues, draw
 /// which concurrency group is current for the round. Writes the current
-/// group's id (its value in the creating `rule_groups`) into
+/// group's id (as passed to `hegel_state_machine_add_rule`) into
 /// `*out_group_id` when a new round has begun and the workers should pull
 /// rules again — the id identifies the round's group, e.g. for trace
 /// output — or `HEGEL_STATE_MACHINE_DONE` (`INT64_MIN`) to indicate
-/// termination of the whole state machine. (`hegel_new_state_machine`
+/// termination of the whole state machine. (`hegel_state_machine_add_rule`
 /// rejects `HEGEL_STATE_MACHINE_DONE` as a group id so it stays
 /// unambiguous here.)
 ///
@@ -4519,7 +4591,8 @@ pub const HEGEL_STATE_MACHINE_DONE: i64 = i64::MIN;
 /// though there is only a single group.
 ///
 /// `state_machine` must be a handle returned by `hegel_new_state_machine`
-/// on this test-case family. Returns `HEGEL_E_STOP_TEST` when the
+/// on this test-case family, started with `hegel_state_machine_start`
+/// (`HEGEL_E_INVALID_ARG` otherwise). Returns `HEGEL_E_STOP_TEST` when the
 /// engine's choice budget is exhausted (the caller should abort the body
 /// and call `hegel_mark_complete` with `HEGEL_STATUS_OVERRUN`).
 #[unsafe(no_mangle)]
@@ -4575,8 +4648,8 @@ pub unsafe extern "C" fn hegel_state_machine_next_group(
 /// stays with whoever drives `hegel_state_machine_next_group`.
 ///
 /// `worker_index` identifies the calling worker and must satisfy
-/// `0 <= worker_index < concurrency` (the level drawn at state-machine
-/// creation and written to `*out_concurrency`);
+/// `0 <= worker_index < concurrency` (the level `hegel_state_machine_start`
+/// drew and wrote to `*out_concurrency`);
 /// an index rather than the handle identifies the worker because a single
 /// OS thread could hold multiple test-case clones. Draws consult only
 /// per-worker and per-clone state, so draws on one worker don't affect
@@ -4587,9 +4660,10 @@ pub unsafe extern "C" fn hegel_state_machine_next_group(
 /// for the next group / join point.
 ///
 /// `state_machine` must be a handle returned by `hegel_new_state_machine`
-/// on this test-case family. Returns `HEGEL_E_STOP_TEST` when the engine's
-/// choice budget is exhausted (the caller should abort the body and call
-/// `hegel_mark_complete` with `HEGEL_STATUS_OVERRUN`).
+/// on this test-case family, started with `hegel_state_machine_start`
+/// (`HEGEL_E_INVALID_ARG` otherwise). Returns `HEGEL_E_STOP_TEST` when the
+/// engine's choice budget is exhausted (the caller should abort the body
+/// and call `hegel_mark_complete` with `HEGEL_STATUS_OVERRUN`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_state_machine_next_rule(
     ctx: *mut HegelContext,
@@ -4675,8 +4749,8 @@ pub unsafe extern "C" fn hegel_state_machine_rule_rejected(
 
 /// Decide whether the caller should run invariant `invariant_index` at the
 /// current join point, writing the decision into `*out_should_check`: true
-/// unconditionally (consuming no entropy) for an invariant whose
-/// `invariant_always_check` flag was set at creation, otherwise a
+/// unconditionally (consuming no entropy) for an invariant declared with
+/// `always_check` set, otherwise a
 /// recorded boolean draw that is true with probability `1 / step_count`
 /// (the machine's creation-time step count), so each sampled invariant's
 /// expected number of sampled runs over a full-length test case is one,
@@ -4685,13 +4759,14 @@ pub unsafe extern "C" fn hegel_state_machine_rule_rejected(
 /// `hegel_state_machine_next_group` signals termination — and should run
 /// those unconditionally, without calling this.
 ///
-/// `invariant_index` identifies the invariant by its position in the
-/// creating `invariant_names`. Call once per invariant per join point,
-/// from the same handle that makes the `hegel_state_machine_next_group`
-/// calls.
+/// `invariant_index` identifies the invariant by its declaration order
+/// (`hegel_state_machine_add_invariant`). Call once per invariant per join
+/// point, from the same handle that makes the
+/// `hegel_state_machine_next_group` calls.
 ///
 /// Returns `HEGEL_OK`, `HEGEL_E_INVALID_ARG` when `invariant_index` is
-/// outside the machine's registered invariants or `out_should_check` is
+/// outside the machine's declared invariants, the machine has not
+/// started, or `out_should_check` is
 /// null, or `HEGEL_E_STOP_TEST` when the engine's choice budget is
 /// exhausted (the caller should abort the body and call
 /// `hegel_mark_complete` with `HEGEL_STATUS_OVERRUN`).

@@ -1,0 +1,5 @@
+error: #[rule] groups lists group "rw" twice
+ --> tests/ui/concurrent_state_machine_repeated_group.rs:7:37
+  |
+7 |     #[rule(groups = ["rw", "audit", "rw"])]
+  |                                     ^^^^

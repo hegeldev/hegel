@@ -1194,66 +1194,98 @@ impl CTestCase {
         rc_to_unit(rc)
     }
 
-    /// Register a state machine. Each rule is assigned to a concurrency
-    /// group by `rule_groups` (parallel to `rule_names`); group ids are
-    /// arbitrary and the machine has one group per distinct value. Each
-    /// rule is given a selection weight by `rule_weights` (parallel to
-    /// `rule_names`; finite and strictly positive). Each
-    /// invariant is flagged always-check or sampled by
-    /// `invariant_always_check` (parallel to `invariant_names`). The
-    /// engine draws the concurrency level in
-    /// `[min_concurrency, max_concurrency]` at creation — weighted toward
-    /// the maximum (the engine owns the distribution) — and returns it
-    /// alongside the new machine's id. `step_count` is the target number
-    /// of counted rounds the machine runs per test case.
+    /// Create an empty state machine with its concurrency bounds and step
+    /// count (the target number of counted rounds per test case). Declare
+    /// its rules and invariants with [`Self::state_machine_add_rule`] and
+    /// [`Self::state_machine_add_invariant`], then seal them with
+    /// [`Self::state_machine_start`].
     pub(crate) fn new_state_machine(
         &self,
-        rule_names: &[&str],
-        rule_groups: &[i64],
-        rule_weights: &[f64],
-        invariant_names: &[&str],
-        invariant_always_check: &[bool],
         min_concurrency: i64,
         max_concurrency: i64,
         step_count: i64,
-    ) -> Result<(StateMachineHandle, i64), hegel_result_t> {
-        let rule_ptrs: Vec<hegel_c::hegel_string_t> = rule_names
-            .iter()
-            .map(|name| view(name.as_bytes()))
-            .collect();
-        let invariant_ptrs: Vec<hegel_c::hegel_string_t> = invariant_names
-            .iter()
-            .map(|name| view(name.as_bytes()))
-            .collect();
+    ) -> Result<StateMachineHandle, hegel_result_t> {
         let mut raw: *mut hegel_c::HegelStateMachine = ptr::null_mut();
-        let mut concurrency: i64 = 0;
         let rc = with_context(|ctx| unsafe {
             hegel_c::hegel_new_state_machine(
                 ctx,
                 self.raw,
-                rule_ptrs.as_ptr(),
-                rule_groups.as_ptr(),
-                rule_weights.as_ptr(),
-                rule_ptrs.len(),
-                invariant_ptrs.as_ptr(),
-                invariant_always_check.as_ptr(),
-                invariant_ptrs.len(),
                 min_concurrency,
                 max_concurrency,
                 step_count,
                 &mut raw,
-                &mut concurrency,
             )
         });
         if rc != hegel_result_t::HEGEL_OK {
             return Err(rc);
         }
-        Ok((StateMachineHandle { raw }, concurrency))
+        Ok(StateMachineHandle { raw })
+    }
+
+    /// Declare the machine's next rule: its index is the number of rules
+    /// declared before it. `weight` is its selection weight (finite and
+    /// strictly positive); `groups` the ids of the concurrency groups it
+    /// belongs to (at least one, distinct). Group ids are arbitrary and
+    /// the machine has one group per distinct id.
+    pub(crate) fn state_machine_add_rule(
+        &self,
+        state_machine: &StateMachineHandle,
+        name: &str,
+        weight: f64,
+        groups: &[i64],
+    ) -> Result<(), hegel_result_t> {
+        let rc = with_context(|ctx| unsafe {
+            hegel_c::hegel_state_machine_add_rule(
+                ctx,
+                self.raw,
+                state_machine.raw,
+                view(name.as_bytes()),
+                weight,
+                groups.as_ptr(),
+                groups.len(),
+            )
+        });
+        rc_to_unit(rc)
+    }
+
+    /// Declare the machine's next invariant: its index is the number of
+    /// invariants declared before it. With `always_check`, the engine's
+    /// sampling decision for it is always `true`.
+    pub(crate) fn state_machine_add_invariant(
+        &self,
+        state_machine: &StateMachineHandle,
+        name: &str,
+        always_check: bool,
+    ) -> Result<(), hegel_result_t> {
+        let rc = with_context(|ctx| unsafe {
+            hegel_c::hegel_state_machine_add_invariant(
+                ctx,
+                self.raw,
+                state_machine.raw,
+                view(name.as_bytes()),
+                always_check,
+            )
+        });
+        rc_to_unit(rc)
+    }
+
+    /// Seal the machine's rules and invariants and draw its concurrency
+    /// level in `[min_concurrency, max_concurrency]` — weighted toward the
+    /// maximum (the engine owns the distribution) — returning it.
+    pub(crate) fn state_machine_start(
+        &self,
+        state_machine: &StateMachineHandle,
+    ) -> Result<i64, hegel_result_t> {
+        let mut concurrency: i64 = 0;
+        let rc = with_context(|ctx| unsafe {
+            hegel_c::hegel_state_machine_start(ctx, self.raw, state_machine.raw, &mut concurrency)
+        });
+        rc_to_value(rc, concurrency)
     }
 
     /// Start the machine's next round, yielding the id of the round's
-    /// current concurrency group (its value in the registering
-    /// `rule_groups`); `None` once the engine has run enough rounds
+    /// current concurrency group (as passed to
+    /// [`Self::state_machine_add_rule`]); `None` once the engine has run enough rounds
     /// (`HEGEL_STATE_MACHINE_DONE`). Call on the root test-case handle at
     /// every join point, including before the first rule is requested.
     pub(crate) fn state_machine_next_group(

@@ -12,7 +12,6 @@ import {
   type StringGeneratorHandle,
   type PoolHandle,
   type StateMachineHandle,
-  type StateMachineOptions,
   type NativeDate,
   type NativeTime,
   type NativeDatetime,
@@ -543,45 +542,70 @@ export class WasmEngine implements Engine {
   newStateMachine(
     ctx: ContextHandle,
     tc: TestCaseHandle,
-    opts: StateMachineOptions,
+    minConcurrency: number,
+    maxConcurrency: number,
+    stepCount: number,
   ): StateMachineHandle {
-    return WasmArena.scoped(this.abi, (a) => {
+    const c = this.ptr(ctx);
+    return this.handle(
+      c,
+      "new_state_machine",
+      [c, this.ptr(tc), BigInt(minConcurrency), BigInt(maxConcurrency), BigInt(stepCount)],
+      true,
+    );
+  }
+  stateMachineAddRule(
+    ctx: ContextHandle,
+    tc: TestCaseHandle,
+    machine: StateMachineHandle,
+    name: string,
+    weight: number,
+    groups: readonly number[],
+  ): void {
+    WasmArena.scoped(this.abi, (a) => {
       // `int64_t` group ids, written little-endian; a present empty array is
       // still a valid (never dereferenced) pointer, like `stringList`.
-      const groups = a.alloc(Math.max(8, opts.ruleGroups.length * 8), 8);
-      opts.ruleGroups.forEach((group, index) => {
-        a.view(groups + index * 8, 8).setBigInt64(0, BigInt(group), true);
+      const ids = a.alloc(Math.max(8, groups.length * 8), 8);
+      groups.forEach((group, index) => {
+        a.view(ids + index * 8, 8).setBigInt64(0, BigInt(group), true);
       });
       const c = this.ptr(ctx);
-      // The machine handle is not the trailing out-parameter here: the drawn
-      // concurrency level follows it (and is discarded, the bounds being 1).
-      const machine = a.alloc(4, 4);
-      const concurrency = a.alloc(8, 8);
       this.check(
         c,
-        "new_state_machine",
-        [
-          c,
-          this.ptr(tc),
-          a.stringList(opts.ruleNames),
-          groups,
-          // `rule_weights`: NULL for all-equal weights, which this client
-          // does not expose.
-          0,
-          u32(opts.ruleNames.length),
-          a.stringList(opts.invariantNames),
-          a.input(Uint8Array.from(opts.invariantAlwaysCheck, Number)),
-          u32(opts.invariantNames.length),
-          BigInt(opts.minConcurrency),
-          BigInt(opts.maxConcurrency),
-          BigInt(opts.stepCount),
-          machine,
-          concurrency,
-        ],
+        "state_machine_add_rule",
+        [c, this.ptr(tc), this.ptr(machine), a.text(name), weight, ids, u32(groups.length)],
         true,
       );
-      return this.owned<StateMachineHandle>(a.pointer(machine));
     });
+  }
+  stateMachineAddInvariant(
+    ctx: ContextHandle,
+    tc: TestCaseHandle,
+    machine: StateMachineHandle,
+    name: string,
+    alwaysCheck: boolean,
+  ): void {
+    WasmArena.scoped(this.abi, (a) => {
+      const c = this.ptr(ctx);
+      this.check(
+        c,
+        "state_machine_add_invariant",
+        [c, this.ptr(tc), this.ptr(machine), a.text(name), +alwaysCheck],
+        true,
+      );
+    });
+  }
+  stateMachineStart(ctx: ContextHandle, tc: TestCaseHandle, machine: StateMachineHandle): number {
+    const c = this.ptr(ctx);
+    return this.output(
+      c,
+      "state_machine_start",
+      [c, this.ptr(tc), this.ptr(machine)],
+      8,
+      8,
+      (a, p) => Number(a.view(p, 8).getBigInt64(0, true)),
+      true,
+    );
   }
   private stateMachineIndex(
     ctx: ContextHandle,

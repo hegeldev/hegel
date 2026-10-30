@@ -100,6 +100,9 @@ export function fakeEngine() {
     poolGenerate: vi.fn<Engine["poolGenerate"]>(() => 0n),
     freePool: vi.fn<Engine["freePool"]>(),
     newStateMachine: vi.fn<Engine["newStateMachine"]>(() => stateMachine),
+    stateMachineAddRule: vi.fn<Engine["stateMachineAddRule"]>(),
+    stateMachineAddInvariant: vi.fn<Engine["stateMachineAddInvariant"]>(),
+    stateMachineStart: vi.fn<Engine["stateMachineStart"]>(() => 1),
     stateMachineNextGroup: vi
       .fn<Engine["stateMachineNextGroup"]>()
       .mockReturnValueOnce(0)
