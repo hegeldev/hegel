@@ -95,8 +95,25 @@ let test_functions3_e2e () =
   Alcotest.(check bool) "different third arg can differ" true !saw_differ
 ;;
 
+let test_draw_silent_named_with_printer () =
+  run_hegel_test ~settings:(Settings.create ~test_cases:10 ()) (fun tc ->
+    let f =
+      draw_silent_named
+        ~name:"f"
+        tc
+        (with_printer
+           (fun _ -> Core.Sexp.Atom "<custom>")
+           (functions ~returns:(integers ~min_value:0 ~max_value:5 ()) ()))
+    in
+    assert (f 0 = f 0))
+;;
+
 let tests =
   [ Alcotest.test_case
+      "draw_silent_named threads the name through a printed function"
+      `Quick
+      test_draw_silent_named_with_printer
+  ; Alcotest.test_case
       "functions memoize per argument and draw independent results"
       `Quick
       test_functions_independent_e2e

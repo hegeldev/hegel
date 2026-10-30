@@ -182,12 +182,18 @@
       | [CI], [GITHUB_ACTIONS], ...       | environment detection | The [ci] profile.                                                              |
       | [HEGEL_TEST_CASES]                | settings              | [test_cases]: a positive integer.                                              |
       | [HEGEL_DATABASE]                  | settings              | [database]: [disabled], or a path.                                             |
+      | [HEGEL_UNBOUNDED_CHOICES]         | settings              | [unbounded_choices]: the same values as [HEGEL_DERANDOMIZE].                   |
       | [HEGEL_STATISTICS]                | settings              | [show_statistics]: any value except [0] enables it.                            |
-      | [HEGEL_SEED]                      | settings              | [seed]: an integer, or [none].                                                 |
+      | [HEGEL_SEED]                      | settings              | [seed]: an integer from 0 to 2{^64}-1, or [none].                              |
       | [HEGEL_DERANDOMIZE]               | settings              | [derandomize]: [true], [1], [yes], [false], [0], or [no].                      |
       | [HEGEL_PRINT_BLOB]                | settings              | [print_blob]: the same values as [HEGEL_DERANDOMIZE].                          |
       | [HEGEL_NONDETERMINISM_STRICTNESS] | settings              | [nondeterminism_strictness]: [quiet], [warn], or [error].                      |
       | [HEGEL_STOP_ON_FIRST_FAILURE]     | settings              | [stop_on_first_failure]: the same values as [HEGEL_DERANDOMIZE].               |
+      | [HEGEL_VERBOSITY]                 | settings              | [verbosity]: [quiet], [normal], [verbose], or [debug].                         |
+      | [HEGEL_PHASES]                    | settings              | [phases]: comma-separated phase names, such as [generate,shrink].              |
+      | [HEGEL_SUPPRESS_HEALTH_CHECK]     | settings              | [suppress_health_check]: comma-separated health check names, or [all].         |
+      | [HEGEL_REPORT_MULTIPLE_FAILURES]  | settings              | [report_multiple_failures]: the same values as [HEGEL_DERANDOMIZE].            |
+      | [HEGEL_BACKEND]                   | settings              | [backend]: [default] or [urandom].                                             |
     }
 
     An empty variable is ignored. A malformed variable makes {!default} and {!from_profile}
@@ -209,6 +215,10 @@ type health_check =
 (** [health_check_to_string hc] returns the canonical name for [hc]. *)
 val health_check_to_string : health_check -> string
 
+(** [health_check_of_bit bit] is the health check whose [HEGEL_HC_*] bit is
+    [bit], if any. *)
+val health_check_of_bit : int -> health_check option
+
 (**/**)
 
 (** How much output Hegel produces during a run. In [hegel.toml]: [quiet],
@@ -222,7 +232,14 @@ type verbosity =
 (** Where Hegel stores and replays failing examples. In [hegel.toml]:
     [default], [disabled], or a path. *)
 type database =
-  | Unset (** Defaults to [.hegel/examples] under the working directory *)
+  | Unset
+  (** Keep the database of the default settings profile, as {!default}
+      resolves it when the test runs: the directory [.hegel] by default,
+      none under the [ci] and [workload] profiles. *)
+  | Default_location
+  (** The database at [.hegel], whatever the profile says. In
+      [hegel.toml]: [default]. Settings read from libhegel ({!default},
+      {!from_profile}) report the default database this way. *)
   | Disabled (** No database. *)
   | Path of string (** A string representing the database path. *)
 
@@ -248,8 +265,7 @@ end
     field. In [hegel.toml]: [explicit], [reuse], [generate], [target], or [shrink]. *)
 type phase =
   | Explicit
-  (** Reserved for future use: hegel-ocaml has no explicit-examples facility
-      yet, so selecting this phase currently has no effect. *)
+  (** run the explicit examples given with [\[@@example ...\]] *)
   | Reuse (** replay previously failing examples from the {!type:database} *)
   | Generate (** generate new test cases *)
   | Target (** targeted search guided by [target] observations *)
@@ -279,9 +295,10 @@ type t =
     (** Maximum number of valid test cases to generate. Cases rejected by
         [assume] or a filter do not count. 100 in the [base] profile. *)
   ; verbosity : verbosity (** How much Hegel prints. [Normal] in the [base] profile. *)
-  ; seed : int option
-    (** A fixed seed for reproducibility; [None]/[seed = "none"] in [hegel.toml]
-        draws a new random seed per run. *)
+  ; seed : Unsigned.UInt64.t option
+    (** A fixed seed for reproducibility, any unsigned 64-bit integer;
+        [None]/[seed = "none"] in [hegel.toml] draws a new random seed per
+        run. *)
   ; derandomize : bool
     (** Make the run reproducible by deriving its seed from the test's identity
         instead of fresh randomness. [true] in the [ci] profile. *)
@@ -295,7 +312,7 @@ type t =
   ; phases : phase list
     (** The phases to run. All phases are run with the [base] profile. *)
   ; print_blob : bool
-    (** Print a [rerun with:] line whose base64 blob encodes the choices that
+    (** Print a reproduce line whose base64 blob encodes the choices that
         led to a failure. [true] in the [base] settings. *)
   ; report_multiple_failures : bool
     (** Report every distinct failure the run found. When [false] (the default),
@@ -314,6 +331,13 @@ type t =
   ; nondeterminism_strictness : Nondeterminism_strictness.t
     (** How a run handles nondeterministic test behavior. [Quiet] in the
         [base] profile. *)
+  ; unbounded_choices : bool
+    (** Let a test case make any number of choices (draws, spans, collection
+        and clone steps). When [false] (the base setting), a test case that
+        makes more than 2{^20} choices is stopped as an overrun. A long-running
+        test case, such as a concurrent state machine driven for hours, needs
+        it; the cost is the memory to record every choice. Suppressing
+        [Test_cases_too_large] also lifts the limit. *)
   }
 
 (** {2:functions Functions} *)
@@ -340,12 +364,14 @@ val default : unit -> t
 val from_profile : string -> t
 
 (** [create ?test_cases ?seed ()] is {!default} with the two most commonly
-    overridden fields applied. [seed] is an [int] here (the field is an
-    [int option]). Use record update syntax for any other field:
+    overridden fields applied. [seed] is a non-negative [int] here, and
+    [create] raises [Usage_error] for a negative one. Use record update
+    syntax for a seed above [max_int], and for any other field:
 
     {[
       let s = Settings.create ~test_cases:500 ~seed:42 () in
-      let s = { s with verbosity = Settings.Verbose }
+      let s = { s with verbosity = Settings.Verbose } in
+      { s with seed = Some (Unsigned.UInt64.of_string "18446744073709551615") }
     ]} *)
 val create : ?test_cases:int -> ?seed:int -> unit -> t
 
@@ -375,5 +401,11 @@ val to_ffi
 
 (** [of_ffi ctx s] reads an libhegel settings handle into a record. *)
 val of_ffi : Hegel_ffi.Ffi.context -> Hegel_ffi.Ffi.settings -> t
+
+(** [set_from_strings t pairs] is [t] with each [(key, value)] of [pairs]
+    applied in order by the engine, which parses [value] as [hegel.toml] does
+    for the setting [key] ([hegel_settings_set_from_string]). Raises
+    [Usage_error] for an unknown key or a value outside its vocabulary. *)
+val set_from_strings : t -> (string * string) list -> t
 
 (**/**)

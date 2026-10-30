@@ -26,7 +26,7 @@ let scrub_numeric_after ~marker ~placeholder s =
 ;;
 
 let scrub_blobs s =
-  let marker = "rerun with:" in
+  let marker = "To reproduce this failure" in
   let ml = String.length marker in
   let sl = String.length s in
   let buf = Buffer.create sl in
@@ -66,16 +66,8 @@ let scrub_blobs s =
 (* OxCaml automatically adds draw positions. Keep general value-printing
    snapshots shared across compilers; position tests inspect the raw output. *)
 let scrub_draw_positions s =
-  let open Core in
-  String.split s ~on:'\n'
-  |> List.map ~f:(fun line ->
-    match
-      String.substr_index line ~pattern:" @ ", String.substr_index line ~pattern:" = "
-    with
-    | Some start, Some stop when start < stop ->
-      String.prefix line start ^ String.drop_prefix line stop
-    | _ -> line)
-  |> String.concat ~sep:"\n"
+  let position = Re.Perl.compile_pat {|  \(\* [^ ]+:[0-9]+ \*\)|} in
+  Re.replace_string position ~by:"" s
 ;;
 
 let scrub_report ?(hide_draw_positions = true) s =

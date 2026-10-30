@@ -68,9 +68,7 @@ let ofdays ?(min_ofday = first_ofday) ?(max_ofday = last_ofday) () =
              (ofdays_gen ~max_ofday:Time_ns.Ofday.approximate_end_of_day)))
 ;;
 
-let chars () =
-  (G.make_characters [@mode portable]) ~of_char:Fun.id ~sexp_of:Char.sexp_of_t ()
-;;
+let chars () = G.chars ()
 
 let time_spans
       ?(min_span = Time_ns.Span.min_value_representable)
@@ -109,9 +107,10 @@ let times
 ;;
 
 let%template hash_tables keys values ?min_size ?max_size () =
-  (G.make_hash_tables [@mode m])
+  (G.make_hash_tables_printed [@mode m])
     ~of_pairs:Hashtbl.Poly.of_alist_exn
     ~sexp_of_t:Hashtbl.Poly.sexp_of_t
+    ~wrap:[ "Hashtbl.Poly.of_alist_exn" ]
     keys
     values
     ?min_size

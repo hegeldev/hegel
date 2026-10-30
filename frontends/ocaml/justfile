@@ -14,9 +14,9 @@ setup:
     # --confirm-level=unsafe-yes lets opam run the system package manager
     # (e.g. brew, for ctypes' libffi) non-interactively; plain --yes refuses.
     opam install . --deps-only --with-test --with-doc --with-dev-setup --confirm-level=unsafe-yes
-    # The hegel.jane and hegel.jane.async sublibraries' depopts, which the
-    # coverage-enforcing suite needs.
-    opam install core async --confirm-level=unsafe-yes
+    # The hegel.jane, hegel.jane.async and hegel.zarith sublibraries'
+    # depopts, which the coverage-enforcing suite needs.
+    opam install core async zarith --confirm-level=unsafe-yes
 
 # Build libhegel (release) into the workspace's target/.
 build-libhegel:
@@ -26,7 +26,7 @@ build-libhegel:
 libhegel-path:
     @scripts/libhegel-path.sh
 
-# The full suite with bisect_ppx, enforcing 100% coverage of lib/ and lib/jane/.
+# The full suite with bisect_ppx, enforcing 100% coverage of lib/, lib/jane/ and lib/zarith/.
 check-test: build-libhegel
     #!/usr/bin/env bash
     set -euo pipefail
@@ -58,6 +58,8 @@ check-test: build-libhegel
       ppx/test/test_ppx_hegel_test_async.exe
     ./_build/default/lib/jane/async/test/test_hegel_jane_async.exe
     ./_build/default/ppx/test/test_ppx_hegel_test_async.exe
+    dune build --instrument-with bisect_ppx lib/zarith/test/test_hegel_zarith.exe
+    ./_build/default/lib/zarith/test/test_hegel_zarith.exe
     python3 scripts/check-coverage.py
 
 # The suite without coverage, for switches missing the dev-setup deps (CI's compat/oxcaml jobs).
@@ -95,6 +97,13 @@ check-test-no-coverage: build-libhegel
       ./_build/default/lib/jane/async/test/test_hegel_jane_async.exe
       ./_build/default/ppx/test/test_ppx_hegel_test_async.exe
     fi
+    # The hegel.zarith suite needs the zarith opam depopt.
+    if [ "${HEGEL_SKIP_ZARITH_TESTS:-}" = "1" ]; then
+      echo "Skipping hegel.zarith suite (HEGEL_SKIP_ZARITH_TESTS=1)"
+    else
+      dune build lib/zarith/test/test_hegel_zarith.exe
+      ./_build/default/lib/zarith/test/test_hegel_zarith.exe
+    fi
     dune runtest lib/jane/concurrent/test --force
     # Concurrent Async machines (OxCaml only), opt-in with
     # HEGEL_CONCURRENT_TESTS=1 like lib/jane/concurrent/test.
@@ -125,7 +134,11 @@ check-opam:
     git diff --exit-code -- '*.opam'
     opam lint ./*.opam
 
-check-lint: check-format check-opam
+# The #define constants lib/ffi/ffi.ml.in copies must match libhegel/include/hegel.h.
+check-ffi-constants:
+    python3 scripts/check-ffi-constants.py
+
+check-lint: check-format check-opam check-ffi-constants
 
 check-docs:
     #!/usr/bin/env bash

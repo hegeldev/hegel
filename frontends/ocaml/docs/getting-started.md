@@ -66,7 +66,7 @@ let%hegel_test integer_under_fifty tc =
 
 This test asserts that any integer is less than 50, which is obviously incorrect.
 Hegel will find a test case that makes this assertion fail, and then shrink it
-to find the smallest counterexample (`n = 50`). Add it to the Alcotest list
+to find the smallest counterexample (`let n = 50 in`). Add it to the Alcotest list
 alongside the first test:
 
 ```ocaml
@@ -82,7 +82,7 @@ let () =
 ```
 
 `dune runtest` will now report `integer under fifty` as failed, print the
-drawn value as `n = 50` (named after the `let` binding), and exit non-zero.
+drawn value as `let n = 50 in` (named after the `let` binding), and exit non-zero.
 
 To fix this test, you can constrain the integers you generate with `min_value`
 and `max_value`:
@@ -156,14 +156,15 @@ let%hegel_test people_are_generatable tc =
 
 `composite` carries no printer (the value type is yours), so draw it with
 `draw_silent`. To print it on a failing replay or to feed it into combinators
-like `lists` that expect a *printable* element generator, attach a printer with
-`with_printer` (see [Debugging failures](#debug-your-failing-test-cases)).
+like `lists` that expect a *printable* element generator, write it with
+`printable_composite` instead, which prints the value as it draws it (see
+[Debugging failures](#debug-your-failing-test-cases)).
 
 ## Debug your failing test cases
 
 When a test fails, Hegel replays the minimal failing example and prints a
-report: the test's name and source location, the values you
-drew (as s-expressions, named after their `let` binding), the exception, and a
+report: the values you
+drew (as OCaml syntax, named after their `let` binding), the exception, and a
 copy-pasteable line that replays the exact case.
 
 ```ocaml
@@ -176,20 +177,21 @@ let%hegel_test reverse_is_identity tc =
 On failure this prints:
 
 ```
---- Failure: reverse_is_identity (test/my_tests.ml:1) ------------------
-
-xs = (0 1)
-
+let xs = [0; 1] in
 Exception: File "test/my_tests.ml", line 3, characters 2-8: Assertion failed
-rerun with: [@@failure_blobs [ "AXic..." ]]
+
+To reproduce this failure, add this attribute to the let%hegel_test:
+    [@@failure_blobs [ "AXic..." ]]
 ```
 
-The final line shows how to replay the exact case. Under `let%hegel_test` it is
+The final lines show how to replay the exact case. Under `let%hegel_test` it is
 a `[@@failure_blobs [ "..." ]]`
-attribute you paste onto the test, while a plain `run_hegel_test` caller gets a
-`~failure_blobs:[ "..." ]` argument to pass. On a terminal the header prints in 
-red. Set `HEGEL_COLOR=0` to disable color (or `1` to force it on). Set 
-`print_blob = false` in your `[@@settings ...]` to omit the line.
+attribute you paste onto the test (one per failure; stacked attributes replay
+every blob), while a plain `run_hegel_test` caller gets a
+`~failure_blobs:[ "..." ]` argument to pass and a `Hegel.main` binary a
+`--failure-blob` flag. Set `print_blob = false` in your `[@@settings ...]` to
+omit them. A run that finds several distinct failures starts its report with
+`Property-based test failed with N distinct failures.` and reports each one.
 
 A value that is shadowed or drawn inside a loop is numbered (`x_1`, `x_2`, …):
 
@@ -202,34 +204,65 @@ let%hegel_test all_draws_below_ten tc =
 ;;
 
 (* On failure, prints:
-     x_1 = …
-     x_2 = …
-     x_3 = 10  *)
+     let x_1 = … in
+     let x_2 = … in
+     let x_3 = 10 in  *)
 ```
 
 The same `let x` runs on each iteration, so Hegel disambiguates the draws as
 `x_1`, `x_2`, `x_3` in draw order. You can override the name with `~label`:
-`draw ~label:"y" tc (integers ())`.
+`draw ~label:"y" tc (integers ())`, which prints `let y_1 = … in`, numbering
+each use of the label in turn.
+
+Values print as OCaml syntax: lists as `[1; 2; 3]`, tuples as `(1, "a")`,
+options as `Some 3`, records and variants of derived types as
+`{ x = 1; y = 2 }` and `Circle 1.5`, and strings always quoted.
+
+Printing is the generator's job: a generator prints each value as it draws
+it, so a list prints element by element, each element as its own generator
+prints it, and a value a `filter` rejects is never printed.
 
 Some combinators hand the result type to your own code and so carry no printer:
-`map`, `flat_map`, `sampled_from`, and `just`. Either draw it with `draw_silent` (which prints nothing):
+`map`, `sampled_from`, `just` and `composite`. (`flat_map` prints whenever the
+generators its function returns do.) Either draw it with
+`draw_silent` (which prints nothing):
 
 ```ocaml
 let parity = draw_silent tc (map (fun n -> n mod 2) (integers ()))
 ```
-or attach a printer with `with_printer`. A printer is a function of type
-`'a -> Sexplib0.Sexp.t`.
+
+or make it printable. `map_as_call` prints a mapped value as a call on its
+printed input, and `printable_composite` writes a generator that prints its
+value as it draws its parts, through `Printer.Out`:
+
 ```ocaml
-let parity =
+let key = draw tc (map_as_call "Key.of_int" Key.of_int (integers ()))
+(* prints: let key = Key.of_int 3 in *)
+
+let bags =
+  printable_composite (fun tc printer ->
+    Printer.Out.parens_if_argument printer (fun printer ->
+      Printer.Out.group printer ~indent:2 "" "" (fun printer ->
+        Printer.Out.text printer "Bag.of_list";
+        Printer.Out.breakable printer " ";
+        let items = draw_and_print tc printer (lists (integers ()) ()) in
+        Bag.of_list items)))
+(* a list of bags prints as: [Bag.of_list [1; 2]; Bag.of_list []] *)
+```
+
+When the value is easier to describe once it is built, attach a printer for
+the finished value: `with_ocaml_printer` takes a `Printer` (OCaml syntax), and
+`with_printer` takes an `'a -> Sexplib0.Sexp.t` and prints the s-expressions it
+returns.
+
+```ocaml
+let pair =
   draw
     tc
-    (with_printer
-       (fun n -> Sexplib0.Sexp.Atom (string_of_int n))
-       (map (fun n -> n mod 2) (integers ())))
-```
-If you have [`ppx_sexp_conv`](https://github.com/janestreet/ppx_sexp_conv) in your
-`(preprocess (pps ...))`, `[%sexp_of: int]` is a shorthand for that printer:
-```ocaml
+    (with_ocaml_printer
+       Printer.(pair int string)
+       (map (fun n -> n, string_of_int n) (integers ())))
+
 let parity =
   draw tc (with_printer [%sexp_of: int] (map (fun n -> n mod 2) (integers ())))
 ```
@@ -262,15 +295,12 @@ rules with `[@@rule]` and invariants with `[@@invariant]`. A rule takes the
 test case and the state and updates the state in place. Rules may be weighted
 with `[@@rule { weight = <weight> }]`. Every invariant is checked on the initial
 and final states and sampled after intermediate steps, or after every step when
-marked `[@@invariant { always_check = true }]`. Pass `?sexp_of_state` to 
-`Stateful.run` to trace the model state. Draws are also printed with their 
+marked `[@@invariant { always_check = true }]`. Draws are printed with their
 `let`-bound name.
 
 ```ocaml
 module%hegel_state_machine Stack = struct
   type state = int list ref
-
-  let sexp_of_state (stack : state) = sexp_of_list sexp_of_int !stack
 
   let push tc stack =
     let n = draw tc (integers ~min_value:0 ~max_value:9 ()) in
@@ -284,21 +314,21 @@ end
 let%hegel_test stack_model tc = Stack.run tc ~init:(ref [])
 ```
 
-When a sequence fails, the report shows each step, the draws it made, the state
-after it, and which step broke the invariant:
+When a sequence fails, the report shows each step with the draws it made, and
+names the invariant that broke:
 
 ```
-state = ()
-Step 1: push
-  n = 0
-state = (0)
-Step 2: push
-  n = 0
-state = (0 0)
-Step 3: push
-  n = 0
-state = (0 0 0)
-Invariant stack_stays_small violated after step 3.
+Checking invariants on the initial state.
+Step 1: push {
+  let n = 0 in
+}
+Step 2: push {
+  let n = 0 in
+}
+Step 3: push {
+  let n = 0 in
+}
+Invariant stack_stays_small failed:
 ```
 
 State machines can also be created without the PPX. Create the rules and
@@ -326,12 +356,7 @@ module Stack = struct
     ]
 end
 
-let%hegel_test stack_model tc =
-  Stateful.run
-    tc
-    (module Stack)
-    ~init:(ref [])
-    ~sexp_of_state:(fun stack -> [%sexp_of: int list] !stack)
+let%hegel_test stack_model tc = Stateful.run tc (module Stack) ~init:(ref [])
 ```
 
 In state machines not written with the PPX, draws print as `draw_1`, `draw_2`, ... unless given a `~label`.

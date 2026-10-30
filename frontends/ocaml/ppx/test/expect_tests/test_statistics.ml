@@ -61,8 +61,9 @@ let%expect_test "shrink replays are excluded from the statistics" =
     Statistics (over 2 test cases):
       * v: count 2, min 0, median 39.5, mean 39.50, p90 79, max 79
       * nondeterministic handling: measurement replays 4, failing 4
-    --- Failure --------------------------------------------------------------------
     Exception: File "ppx/test/expect_tests/test_statistics.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;

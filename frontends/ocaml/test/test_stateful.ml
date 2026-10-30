@@ -247,6 +247,32 @@ let stateful_step_count_forwarded_test () =
   Alcotest.(check bool) "no case exceeded the configured cap" true (!max_steps <= 5)
 ;;
 
+(* An invariant that rejects the test case does not fail the property: the
+   case is invalid, as when a rule's own draw is rejected. *)
+let invariant_rejection_is_not_a_failure_test () =
+  let module S = Hegel.Stateful in
+  let module M = struct
+    type state = unit
+
+    let rules = [ S.Rule.create ~name:"noop" ~step:(fun _tc () -> ()) () ]
+
+    let invariants =
+      [ S.Invariant.create ~name:"picky" ~inv:(fun tc () -> Hegel.assume tc false) () ]
+    ;;
+  end
+  in
+  match
+    Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:1 ()) (fun tc ->
+      S.run tc (module M) ~init:())
+  with
+  | () -> Alcotest.fail "expected every case to be rejected"
+  | exception Hegel.Failed_health_check { message; _ } ->
+    Alcotest.(check bool)
+      "rejected cases are filtered, not failed"
+      true
+      (String.is_substring message ~substring:"FilterTooMuch")
+;;
+
 (* A step count below one is a usage error: the engine rejects it
    ([HEGEL_E_INVALID_ARG]) when the state machine is created, and the runner
    propagates it unshrunk, matching hegel-rust. *)
@@ -1067,7 +1093,9 @@ let concurrent_worker_control_exceptions_test () =
             | Hegel.Internal.Assume_rejected ->
               (* exceeding the libhegel nesting limit invalidates the tc *)
               for _ = 1 to 1001 do
-                Hegel.Internal.start_span tc
+                Hegel.Internal.start_span
+                  ~label:(Hegel.Internal.Label.of_name "test.span")
+                  tc
               done;
               ignore (Hegel.draw tc (Hegel.booleans ()) : bool)
             | _ -> raise error)
@@ -1101,7 +1129,7 @@ let concurrent_worker_control_exceptions_test () =
          | Hegel.Internal.Internal_error expected ->
            Alcotest.(check string) "internal error propagated" expected message
          | _ -> Alcotest.fail "unexpected internal error")
-      | exception Failure message ->
+      | exception Hegel.Failed_health_check { message; _ } ->
         (match error with
          | Hegel.Internal.Flaky_strategy | Hegel.Internal.Assume_rejected ->
            Alcotest.(check bool)
@@ -1345,6 +1373,10 @@ let tests =
       stateful_usage_error_test
   ; Alcotest.test_case "stateful: rule name accessor" `Quick stateful_rule_accessors_test
   ; Alcotest.test_case "stateful: empty rules raises" `Quick stateful_no_rules_test
+  ; Alcotest.test_case
+      "stateful: a rejecting invariant invalidates the case"
+      `Quick
+      invariant_rejection_is_not_a_failure_test
   ; Alcotest.test_case
       "stateful: empty pool draw rejects"
       `Quick

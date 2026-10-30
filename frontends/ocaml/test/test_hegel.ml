@@ -23,12 +23,17 @@ let () =
     ; "client", Test_client.tests
     ; "cli", Test_cli.tests
     ; "clone", Test_clone.tests
+    ; "repeat", Test_repeat.tests
+    ; "recursive", Test_recursive.tests
+    ; "generators extra", Test_generators_extra.tests
+    ; "lark", Test_lark.tests
     ; "concurrency", Test_concurrency.tests
     ; "generators_core", Test_generators_core.tests
     ; "generators_primitives", Test_generators_primitives.tests
     ; "generators_collections", Test_generators_collections.tests
     ; "generators_combinators", Test_generators_combinators.tests
     ; "generators_functions", Test_generators_functions.tests
+    ; "printer", Test_printer.tests
     ; "stateful", Test_stateful.tests
     ]
 ;;
