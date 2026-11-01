@@ -124,6 +124,15 @@ var nonEmpty = Generators.Text().Filter(s => s.Length > 0);
 var pairs = Generators.Integers().FlatMap(n => Generators.Tuples(Generators.Just(n), Generators.Integers().Min(n)));
 ```
 
+They also support C# query expressions, where a later `from` can use any earlier value (`select` is `Map`, `where` is `Filter`):
+
+```csharp
+var withIndex =
+    from xs in Generators.Lists(Generators.Integers()).MinSize(1)
+    from i in Generators.Integers().Min(0).Max(xs.Count - 1)
+    select (xs, i);
+```
+
 `Generators.Composite` builds a generator out of draws, for a value that several generators contribute to:
 
 ```csharp

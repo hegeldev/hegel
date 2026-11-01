@@ -100,6 +100,24 @@ public class PoolTests
     }
 
     [Fact]
+    public void QueryWhereOnAConsumingPoolTakesOnlyMatchingValues()
+    {
+        var report = Property.Test(tc =>
+        {
+            var pool = new Pool<int>(tc);
+            foreach (var i in Enumerable.Range(1, 4))
+            {
+                pool.Add(i);
+            }
+            var even = from x in pool.Consuming() where x % 2 == 0 select x;
+            Assert.Equal([2, 4], new[] { tc.Draw(even), tc.Draw(even) }.Order());
+            Assert.Equal(2, pool.Count);
+            Assert.Throws<AssumeRejected>(() => tc.Draw(even));
+        }, Quick);
+        Assert.True(report.Passed);
+    }
+
+    [Fact]
     public void FilteredConsumingDrawsGiveUpAfterAFewAttempts()
     {
         var report = Property.Test(tc =>
