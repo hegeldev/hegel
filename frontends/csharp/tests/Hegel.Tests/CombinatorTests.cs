@@ -64,6 +64,50 @@ public class CombinatorTests
     }
 
     [Fact]
+    public void QuerySelectAndWhereMapAndFilter()
+    {
+        var g = from x in Generators.Integers().Min(0).Max(10)
+                where x % 2 == 1
+                select x * 2;
+        Gen.All(g, v => v % 4 == 2 && v <= 18, 50);
+        Assert.Equal(Label.Combine(Label.Mapped, Label.Combine(Label.Filter, Label.Of("hegel.integers"))), g.Label);
+        Assert.Equal("var x_1 = 2;", Gen.MinimalOutput(g));
+    }
+
+    [Fact]
+    public void QueryFromClausesDrawDependentValues()
+    {
+        var g = from n in Generators.Integers().Min(1).Max(3)
+                from xs in Generators.Lists(Generators.Just(n)).MinSize(n).MaxSize(n)
+                select (n, xs);
+        Gen.All(g, v => v.xs.Count == v.n && v.xs.All(x => x == v.n), 50);
+        Assert.Equal(Label.Combine(Label.FlatMap, Label.Of("hegel.integers")), g.Label);
+        Assert.Equal("var x_1 = (1, new List<int> {1});", Gen.MinimalOutput(g));
+    }
+
+    [Fact]
+    public void QueryKeepsEveryEarlierValueInScope()
+    {
+        var g = from lo in Generators.Integers().Min(0).Max(5)
+                from hi in Generators.Integers().Min(lo).Max(10)
+                from x in Generators.Integers().Min(lo).Max(hi)
+                where x != hi
+                let width = hi - lo
+                select (lo, hi, x, width);
+        Gen.All(g, v => v.lo <= v.x && v.x < v.hi && v.width == v.hi - v.lo, 100);
+        Assert.Equal("var x_1 = (0, 1, 0, 1);", Gen.MinimalOutput(g));
+    }
+
+    [Fact]
+    public void SelectManyWithOneSelectorIsFlatMap()
+    {
+        var g = Generators.Integers().Min(1).Max(3).SelectMany(n => Generators.Lists(Generators.Just(n)).MinSize(n).MaxSize(n));
+        Gen.All(g, xs => xs.Count >= 1 && xs.All(x => x == xs.Count), 50);
+        Assert.Equal(Label.Combine(Label.FlatMap, Label.Of("hegel.integers")), g.Label);
+        Assert.Equal("var x_1 = new List<int> {1};", Gen.MinimalOutput(g));
+    }
+
+    [Fact]
     public void PrintWithUsesTheGivenPrinter()
     {
         var g = Generators.Integers().Min(1).Max(1).PrintWith((v, p) => p.Text($"one({v})"));
