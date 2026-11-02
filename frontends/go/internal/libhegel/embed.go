@@ -1,6 +1,8 @@
 package libhegel
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,12 +26,13 @@ func writeDynamicLibrary(lib []byte) (string, error) {
 			runtime.GOOS, runtime.GOARCH, LibraryPathEnv)
 	}
 
-	path, cacheErr := cachedLibrary(lib)
+	key := libraryKey(lib)
+	path, cacheErr := cachedLibrary(lib, key)
 	if cacheErr == nil {
 		return path, nil
 	}
 
-	dir, err := resolveTempCacheDir(hegelVersion)
+	dir, err := resolveTempCacheDir(key)
 	if err != nil {
 		return "", fmt.Errorf("prepare temporary libhegel cache: %w (user cache unavailable: %v)", err, cacheErr)
 	}
@@ -40,10 +43,17 @@ func writeDynamicLibrary(lib []byte) (string, error) {
 	return path, nil
 }
 
-// cachedLibrary returns the per-version copy in the user cache, installing it
-// on first use.
-func cachedLibrary(lib []byte) (path string, err error) {
-	dir, err := libhegelCacheDir(hegelVersion)
+// libraryKey names the cache directory lib is materialized in: the hex SHA-256
+// of its bytes, so different binaries never share a cached copy.
+func libraryKey(lib []byte) string {
+	sum := sha256.Sum256(lib)
+	return hex.EncodeToString(sum[:])
+}
+
+// cachedLibrary returns the copy of lib in the user cache directory for key,
+// installing it on first use.
+func cachedLibrary(lib []byte, key string) (path string, err error) {
+	dir, err := libhegelCacheDir(key)
 	if err != nil {
 		return "", err
 	}

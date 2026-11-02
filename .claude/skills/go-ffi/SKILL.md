@@ -1,21 +1,23 @@
 ---
-name: align-libhegel
-description: "How to align the Go FFI wrapper to a new libhegel (hegel-c) release. Use when updating to the latest libhegel release or aligning an explicitly requested version, when `just check` fails with a symbol-resolution or version-mismatch error against libhegel, or whenever the hegel-c C API in hegel.h has changed and the Go bindings need to catch up."
+name: go-ffi
+description: "How the Go frontend (frontends/go) binds libhegel's C ABI through purego in internal/libhegel. Use when changing libhegel's C ABI (hegel.h), when the Go tests fail at library load with a symbol-resolution or version-mismatch error, or when adding, removing or reshaping an ABI function in the Go frontend."
 ---
 
-# Aligning the Go wrapper to a new libhegel release
+# The Go frontend's bindings to libhegel
 
-`libhegel` is a Rust cdylib built from the `hegeltest-c` crate in the
-`libhegel/` directory of the [hegeldev/hegel](https://github.com/hegeldev/hegel)
-monorepo. hegel-go
-calls it via purego FFI. When the pinned version changes, the C API in
-`libhegel/include/hegel.h` may have added, removed, renamed, or re-typed symbols,
-and the low-level wrapper in `internal/libhegel/` must be re-aligned. The main
-`hegel` package's exported API must **not** change as a result — only the
-internal binding layer — **except when libhegel removes an API**. In that case,
-remove the corresponding API from the public Go package too. Do not preserve it
-with a compatibility shim, emulation, or another workaround after its upstream
-libhegel support is gone.
+`frontends/go` calls libhegel, the engine in `libhegel/` of this repository,
+through its C ABI (`libhegel/include/hegel.h`) via purego FFI, in
+`frontends/go/internal/libhegel/`. There is no pinned release to align to: the
+frontend is tested against the in-tree engine (`just go::build-libhegel`), so a
+C ABI change and the binding change that follows it land in the same PR. Only
+a release commit embeds libhegel binaries (the release automation commits
+them); on main `internal/libhegel/libs/` holds empty placeholders.
+
+The main `hegel` package's exported API must **not** change as a result of an
+ABI change — only the internal binding layer — **except when libhegel removes
+an API**. In that case, remove the corresponding API from the public Go
+package too. Do not preserve it with a compatibility shim, emulation, or
+another workaround after its upstream libhegel support is gone.
 
 **Within that binding layer, the wrapper API *should* track the C API.** When a
 C function gains a parameter, plumb it through the `internal/libhegel` wrapper
@@ -52,76 +54,28 @@ while the per-call error state lives on a `*Context`. The wrapper threads a
   zero out-handle to a `nil` result (the engine's "no object" sentinel, e.g. a
   finished run) and registers a GC cleanup that calls `free`.
 
-## 1. Vendor the target release first and fetch its actual header
+## 1. Build the in-tree engine and read its header
 
-**Start by running `just vendor-libhegel` to vendor the latest stable libhegel
-release unless the user explicitly specifies a version.** The existing pin in
-`internal/libhegel/version.go` is the starting state, not the requested target.
-For an explicit version, run `just vendor-libhegel <version-or-tag>` instead.
-The command accepts bare versions and `libhegel/<version>` tags such as
-`libhegel/0.47.2`. It downloads and checksum-verifies the binaries
-and updates `hegelVersion`. It uses public GitHub HTTP endpoints; `gh` login is
-not required (an optional `GH_TOKEN` or `GITHUB_TOKEN` supports CI rate limits).
-
-Record the **actual tag printed by the vendoring command**. The monorepo's
-components (libhegel, the Rust frontend, ...) version independently and are
-tagged `<path>/<version>`, so the repository's overall latest release is not
-necessarily the latest libhegel. Do not derive the target from another
-component's tag.
-
-Fetch the header from that exact release, and confirm it exists before editing
-(every libhegel release ships its `hegel.h` as an asset):
+The header to bind is `libhegel/include/hegel.h` in the same checkout, and the
+library to test against is the in-tree build:
 
 ```bash
-curl -fsSL https://github.com/hegeldev/hegel/releases/download/<ACTUAL_TAG>/hegel.h
+just go::build-libhegel        # cargo build --release -p hegeltest-c
+just go::libhegel-path         # where the build landed
 ```
 
-If resuming with only a pinned version, query the GitHub release API at
-`repos/hegeldev/hegel/releases/tags/libhegel/<VERSION>`; use the returned
-`tag_name` and verify its assets include libhegel binaries. Keep that resolved
-tag with the header for the independent audit in §8.
-
-## 2. Get the matching library — always `just check vendored`
-
-`just check` runs integration tests (`TestLoadLibVersion`, `TestLibhegelEndToEnd`)
-against the **real** library, and `TestLoadLibVersion` asserts the loaded lib
-reports exactly `hegelVersion`. You need a libhegel at that exact version, and
-the simplest way to get it is to let the loader use the vendored binary:
+**When you need the symbol table**, run `nm -D` against the in-tree build — it
+is ground truth for which `hegel_*` symbols exist:
 
 ```bash
-just check vendored
+nm -D "$(just go::libhegel-path)" | grep '^.* T hegel_' | sort
 ```
 
-**Always use `vendored` mode for this work — never a local build.** The
-`vendored` mode leaves `HEGEL_LIBHEGEL_PATH` unset, so the loader materializes
-the `go:embed`'d vendored binary for `hegelVersion` (under
-`internal/libhegel/libs/`, refreshed by `just vendor-libhegel`) into the cache.
-A plain `just check` would instead build whatever the sibling checkout
-checkout happens to be on (likely an *older* tag, since you've just bumped the
-version), point `HEGEL_LIBHEGEL_PATH` at that stale `.so`, and fail the version
-test. Don't touch the checkout; the vendored binary is always the right version.
+Diff it against the registration table in `tryOpen` (`libhegel.go`). A symbol
+the wrapper registers but the lib no longer exports makes `registerSymbols`
+fail and **every** integration test dies at load.
 
-The cached library lands at:
-
-```bash
-${XDG_CACHE_HOME:-$HOME/.cache}/hegel-go/libhegel/<VERSION>/libhegel-linux-amd64.so
-```
-
-**When you need the symbol table**, run `nm -D` against that cached `.so` — no
-build required. Use the exact pinned version so an older or newer cached release cannot
-be selected:
-
-```bash
-LIB="${XDG_CACHE_HOME:-$HOME/.cache}/hegel-go/libhegel/<VERSION>/libhegel-linux-amd64.so"
-nm -D "$LIB" | grep '^.* T hegel_' | sort
-```
-
-The `nm` output is ground truth for which `hegel_*` symbols exist — diff it
-against the registration table in `tryOpen` (`libhegel.go`). A symbol the wrapper
-registers but the lib no longer exports makes `registerSymbols` fail and
-**every** integration test dies at load.
-
-## 3. Compare hegel.h against `internal/libhegel/libhegel.go`
+## 2. Compare hegel.h against `internal/libhegel/libhegel.go`
 
 Walk every C declaration and check it against the wrapper. Categorize each:
 
@@ -135,17 +89,17 @@ Walk every C declaration and check it against the wrapper. Categorize each:
   → update the field signature, the registration name, the wrapper method, and
   the `stub.go` closure's signature/out-param handling.
 - **New symbol** → add a `symbols` field, a registration entry, a wrapper method,
-  a `stub.go` closure, and a test (see §5).
+  a `stub.go` closure, and a test (see §4).
 - **Changed signature** (a new arg, or a value that moved from return to
   out-param) → remember the ABI convention: ctx first, `Error` return,
   produced value through a trailing out-pointer. The `symbols` field type and the
-  wrapper method change together (`stub.go` adapts on its own — see §4.3). A new
+  wrapper method change together (`stub.go` adapts on its own — see §3.3). A new
   arg must be **plumbed through the wrapper method's signature**, not hardcoded
   inside the wrapper. If it is an *optional* arg with a behavior-preserving
   default (a NULL callback, a nullable pointer, a `0`-means-default flag), leave
   the wrapper faithful and pass the default from the **package-`hegel` callers**
-  (see the charter note in §intro). Do not silently bury a default in the
-  wrapper — that hides the new capability and the §8 audit cannot tell a
+  (see the charter note at the top). Do not silently bury a default in the
+  wrapper — that hides the new capability and the §7 audit cannot tell a
   deliberate default from an oversight.
 - **Changed enum/constant values** (e.g. a new `HEGEL_LABEL_*`, or a reordered
   `hegel_status_t`) → update the Go `const` block. Binding-invented labels that
@@ -162,13 +116,13 @@ Walk every C declaration and check it against the wrapper. Categorize each:
   register identically for the small non-negative values these enums hold — so
   the integration tests pass either way and a mismatch will **not** be caught by
   the test suite; only a literal read of the header catches it. A base-type
-  change needs a `go generate ./internal/libhegel` (§4), but the generated
+  change needs a `go generate ./internal/libhegel` (§3), but the generated
   `_string.go` is usually byte-identical (the index assertions and string tables
   don't depend on signedness). Note the asymmetry: a value written through an
   out-param typed as the enum pointer (`hegel_run_status_t *`, i.e. `RunStatus`)
   is *not* widened and keeps mirroring the enum (`int32`).
 
-## 4. Editing the binding — the things that move together
+## 3. Editing the binding — the things that move together
 
 These must stay consistent or the build/coverage breaks. In practice only the
 first two are hand-edited for a signature change; `stub.go` is reflection-driven
@@ -196,7 +150,7 @@ the call shape does:
    are supplied by the caller via `returns ...any` and popped in strict call
    order by a single `retval()` helper. So the thing that moves in lockstep with a
    signature change is not `stub.go` but each test's `returns ...any` list when a
-   symbol's **output** type or call order changes (see §5) — a new *input* arg
+   symbol's **output** type or call order changes (see §4) — a new *input* arg
    that consumes no return value (like the NULL callback) needs no `returns`
    change either.
 4. **`libhegel.go` — wrapper method**: a thin, typed Go method that threads a
@@ -225,9 +179,7 @@ the call shape does:
 ### Regenerate the stringer output
 
 Enum types are listed in the `//go:generate` directive at the top of
-`libhegel.go` (currently
-`-type=Error,Status,Mode,Backend,Verbosity,RunStatus,HealthCheck,Phase,Label`).
-After adding an enum type or changing any enum constant value:
+`libhegel.go`. After adding an enum type or changing any enum constant value:
 
 ```bash
 go generate ./internal/libhegel        # uses `go tool stringer`
@@ -237,9 +189,9 @@ Changed constant values break the compile-time `_ = x[CONST-N]` assertions in
 `libhegel_string.go` until you regenerate, so this is not optional. Add new enum
 types to the `-type=` list. The generated `_string.go` is coverage-excluded.
 
-## 5. Coverage and tests
+## 4. Coverage and tests
 
-100% per-file coverage is enforced (see the `coverage` skill). New or changed
+100% per-file coverage is enforced (see the `go-coverage` skill). New or changed
 wrapper methods need coverage:
 
 - Methods the runner exercises (result/status handling, generate, spans,
@@ -257,10 +209,10 @@ wrapper methods need coverage:
   that rejects bad input, like `cStringArray`'s interior-NUL check, needs a test
   that trips it).
 - Prefer covering a method to annotating it `// coverage-ignore`. The ratchet in
-  `.github/coverage-ratchet.json` auto-tightens when the annotation count drops,
-  so removing now-covered ignores is free and good.
+  `frontends/go/coverage-ratchet.json` auto-tightens when the annotation count
+  drops, so removing now-covered ignores is free and good.
 
-## 6. purego pitfalls
+## 5. purego pitfalls
 
 - A symbol that **returns** `const char *` directly → type the field
   `func(ctxT) string` (not `*byte`/`uintptr`). Only `hegel_context_last_error`
@@ -321,53 +273,46 @@ wrapper methods need coverage:
   (`*Date`) uses the natural in-memory layout and needs no special handling
   beyond the shared padded definition.
 
-## 7. Verify
+## 6. Verify
 
 ```bash
-just check vendored    # lint + check-docs + test against the vendored binary
+just go::check    # lint + check-docs + the coverage suite against the in-tree build
 ```
 
-Use `vendored` mode here too (see §2) — it guarantees the tests run against the
-vendored binary, not a stale local build.
-
-Confirm the version smoke test actually ran against the real lib (not skipped):
+Confirm the end-to-end smoke test actually ran against the real lib (not skipped):
 
 ```bash
-go test -run 'TestLoadLibVersion|TestLibhegelEndToEnd' -v ./internal/libhegel/
+just go::check-test-no-coverage -run TestLibhegelEndToEnd -v ./internal/libhegel/
 ```
 
-## 8. Validation gate — independent completeness audit
+## 7. Validation gate — independent completeness audit
 
 The steps above are done by the same context that made the edits, so they share
 its blind spots: a symbol you never noticed in the header is a symbol you also
 won't notice is unbound. Close that gap with a **fresh-context audit** as the
-final gate. Launch a separate agent (Task tool, `subagent_type:
-"general-purpose"`) that has *not* seen your edits and whose only job is to diff
-the header against the binding and report anything missing.
+final gate. Launch a separate agent (`subagent_type: "general-purpose"`) that
+has *not* seen your edits and whose only job is to diff the header against the
+binding and report anything missing.
 
 Give the agent a self-contained prompt — it starts with no context, so spell
-out the version and actual release tag, the two files to compare, and the exact output you want:
+out the two files to compare and the exact output you want:
 
 ```
-Audit the libhegel FFI binding for completeness against the C header. Do NOT
-edit anything — this is a read-only verification.
+Audit the Go frontend's libhegel FFI binding for completeness against the C
+header. Do NOT edit anything — this is a read-only verification.
 
-1. Read the pinned version from internal/libhegel/version.go (hegelVersion).
-2. Independently verify that release tag <ACTUAL_TAG> corresponds to the pin
-   using the GitHub release API and its libhegel assets. Fetch its header:
-   curl -fsSL https://github.com/hegeldev/hegel/releases/download/<ACTUAL_TAG>/hegel.h
-   libhegel tags are libhegel/<VERSION>; do not assume another prefix or
-   substitute another monorepo component's release.
-3. Extract every `hegel_*` function declared in the header.
-4. Cross-check each against internal/libhegel/libhegel.go: it must have (a) a
-   field in the `symbols` struct, (b) an entry in the `registerSymbols` table
-   in `tryOpen`, and (c) a wrapper method (or a documented reason it has none).
-   Also flag any registered symbol that is NOT in the header (a stale binding
-   that would break `registerSymbols` at load).
-5. For every symbol, confirm the Go field signature matches the C prototype
+1. The header is libhegel/include/hegel.h; the binding is
+   frontends/go/internal/libhegel/libhegel.go (both in this checkout).
+2. Extract every `hegel_*` function declared in the header.
+3. Cross-check each against the binding: it must have (a) a field in the
+   `symbols` struct, (b) an entry in the `registerSymbols` table in `tryOpen`,
+   and (c) a wrapper method (or a documented reason it has none). Also flag any
+   registered symbol that is NOT in the header (a stale binding that would break
+   `registerSymbols` at load).
+4. For every symbol, confirm the Go field signature matches the C prototype
    under the context-based ABI (ctx first, Error return, produced values via
    trailing out-params).
-6. Check every integer parameter's width AND signedness against the C type,
+5. Check every integer parameter's width AND signedness against the C type,
    including enum-typed params. A C param typed `uint32_t` (even one that
    carries a semantically-enum value, e.g. `hegel_mode_t`/`hegel_status_t`
    values passed through a widened `uint32_t` slot) must be bound by a
@@ -375,21 +320,21 @@ edit anything — this is a read-only verification.
    bound to an unsigned C param as SIGNATURE-MISMATCH. This mismatch is
    invisible to the runtime tests (purego marshals both identically for small
    values), so this literal-read check is the only thing that catches it.
-7. For every parameter that is NEW in this version (present in the header
-   prototype but absent from the prior binding), check the corresponding
-   `internal/libhegel` wrapper method: is the new arg forwarded through the
-   wrapper's own signature, or hardcoded to a constant inside the wrapper? A new
-   arg hardcoded inside the wrapper (rather than plumbed to the wrapper signature
-   and defaulted at the package-`hegel` caller) is a BURIED-DEFAULT — flag it.
-   This is a design-policy check, not an ABI failure.
+6. For every parameter the change under review adds to the header (compare
+   against `git diff origin/main -- libhegel/include/hegel.h`), check the
+   corresponding `internal/libhegel` wrapper method: is the new arg forwarded
+   through the wrapper's own signature, or hardcoded to a constant inside the
+   wrapper? A new arg hardcoded inside the wrapper (rather than plumbed to the
+   wrapper signature and defaulted at the package-`hegel` caller) is a
+   BURIED-DEFAULT — flag it. This is a design-policy check, not an ABI failure.
 
 Report a table of every header function with OK / MISSING / SIGNATURE-MISMATCH /
 BURIED-DEFAULT, and a final verdict line. List discrepancies explicitly; do not
 fix them.
 ```
 
-The agent's report is the gate: if it comes back clean, the alignment is
-complete. If it flags a `MISSING` or `SIGNATURE-MISMATCH`, return to §3–§5,
+The agent's report is the gate: if it comes back clean, the binding is
+complete. If it flags a `MISSING` or `SIGNATURE-MISMATCH`, return to §2–§4,
 fix it, and re-run this gate. This is a genuine independent check only because
 the agent rederives the header→binding mapping from scratch — do not paste your
 own diff or conclusions into its prompt.

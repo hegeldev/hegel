@@ -7,20 +7,6 @@ import (
 	"testing"
 )
 
-// TestLoadLibVersion checks the real library against the pinned version.
-func TestLoadLibVersion(t *testing.T) {
-	lib, err := load()
-	if err != nil {
-		t.Fatalf("loadLib: %v", err)
-	}
-	defer lib.Close()
-
-	got := lib.versionString()
-	if got != hegelVersion {
-		t.Fatalf("hegel_version: got %q, want %q (rebuild libhegel.so if it's stale)", got, hegelVersion)
-	}
-}
-
 // TestRegisterSymbolsMissing covers the dlsym / registerSymbols error path: a
 // symbol that the library does not export must surface a wrapped error.
 func TestRegisterSymbolsMissing(t *testing.T) {
@@ -60,6 +46,7 @@ func TestLoadLibMissing(t *testing.T) {
 // locations are unavailable.
 func TestLoadEmbeddedWriteFails(t *testing.T) {
 	t.Setenv(LibraryPathEnv, "")
+	stubVar(t, &embeddedLib, []byte("embedded libhegel"))
 	testHomeOverride(t)
 	stubVar(t, &chmodCacheDir, func(string, os.FileMode) error { return errors.New("cache denied") })
 	stubVar(t, &resolveTempCacheDir, func(string) (string, error) { return "", errors.New("temp denied") })

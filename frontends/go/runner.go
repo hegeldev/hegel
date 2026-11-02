@@ -190,8 +190,26 @@ func (s *testCase) free() {
 }
 
 func (s *testCase) stateMachineNew(ruleNames []string, ruleGroups []int64, invariantNames []string, invariantAlwaysCheck []bool, maxConcurrency, stepCount int) (*libhegel.StateMachine, int64, error) {
-	machine, concurrency, err := s.tc.NewStateMachine(s.ctx, ruleNames, ruleGroups, nil, invariantNames, invariantAlwaysCheck, 1, int64(maxConcurrency), int64(stepCount))
-	return machine, concurrency, err
+	machine, err := s.tc.NewStateMachine(s.ctx, 1, int64(maxConcurrency), int64(stepCount))
+	if err != nil {
+		return nil, 0, err
+	}
+	for i, name := range ruleNames {
+		if err := s.tc.StateMachineAddRule(s.ctx, machine, name, 1.0, []int64{ruleGroups[i]}); err != nil {
+			return nil, 0, err
+		}
+	}
+	for i, name := range invariantNames {
+		alwaysCheck := i < len(invariantAlwaysCheck) && invariantAlwaysCheck[i]
+		if err := s.tc.StateMachineAddInvariant(s.ctx, machine, name, alwaysCheck); err != nil {
+			return nil, 0, err
+		}
+	}
+	concurrency, err := s.tc.StateMachineStart(s.ctx, machine)
+	if err != nil {
+		return nil, 0, err
+	}
+	return machine, concurrency, nil
 }
 
 func (s *testCase) stateMachineNextGroup(machine *libhegel.StateMachine) (libhegel.StateMachineGroup, error) {

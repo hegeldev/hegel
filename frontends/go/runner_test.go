@@ -1576,9 +1576,9 @@ func TestStubCollectionReject(t *testing.T) {
 // engine rejects new_state_machine registration.
 func TestStatefulNewStateMachineError(t *testing.T) {
 	t.Parallel()
-	// new_state_machine writes its *StateMachine and concurrency out-params
-	// (placeholders) before returning the failing Error.
-	tc := newStubTestCase(t, uintptr(0), int64(0), libhegel.E_BACKEND, "boom")
+	// new_state_machine writes its *StateMachine out-param (a placeholder)
+	// before returning the failing Error.
+	tc := newStubTestCase(t, uintptr(0), libhegel.E_BACKEND, "boom")
 	sm := &stateMachine{rules: []stateMachineRule{{name: "Rule", fn: func(TestCase) {}}}, ruleGroups: []int64{0}}
 	defer func() {
 		err, ok := recover().(error)
@@ -1589,12 +1589,59 @@ func TestStatefulNewStateMachineError(t *testing.T) {
 	sm.Run(tc)
 }
 
+// TestStatefulStateMachineDeclarationErrors covers stateMachine.Run's panic
+// when the engine rejects a declaration step after creating the machine:
+// adding a rule, adding an invariant, or starting it.
+func TestStatefulStateMachineDeclarationErrors(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name    string
+		returns []any
+	}{
+		{"add rule", []any{
+			uintptr(1), libhegel.OK, // new_state_machine
+			libhegel.E_INVALID_ARG, "bad rule", // state_machine_add_rule
+		}},
+		{"add invariant", []any{
+			uintptr(1), libhegel.OK, // new_state_machine
+			libhegel.OK,                             // state_machine_add_rule
+			libhegel.E_INVALID_ARG, "bad invariant", // state_machine_add_invariant
+		}},
+		{"start", []any{
+			uintptr(1), libhegel.OK, // new_state_machine
+			libhegel.OK,                               // state_machine_add_rule
+			libhegel.OK,                               // state_machine_add_invariant
+			int64(0), libhegel.E_STOP_TEST, "overrun", // state_machine_start
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			tc := newStubTestCase(t, tt.returns...)
+			sm := &stateMachine{
+				rules:                []stateMachineRule{{name: "Rule", fn: func(TestCase) {}}},
+				ruleGroups:           []int64{0},
+				invariants:           []stateMachineRule{{name: "Inv", fn: func(TestCase) {}}},
+				invariantAlwaysCheck: []bool{false},
+			}
+			defer func() {
+				err, ok := recover().(error)
+				if !ok || !(errors.Is(err, libhegel.E_INVALID_ARG) || errors.Is(err, libhegel.E_STOP_TEST)) {
+					t.Fatalf("expected the declaration error to panic, got %v", err)
+				}
+			}()
+			sm.Run(tc)
+		})
+	}
+}
+
 // TestStatefulNextGroupError covers stateMachine.Run's panic when the engine
 // rejects the round draw (state_machine_next_group).
 func TestStatefulNextGroupError(t *testing.T) {
 	t.Parallel()
 	tc := newStubTestCase(t,
-		uintptr(1), int64(1), libhegel.OK, // new_state_machine
+		uintptr(1), libhegel.OK, // new_state_machine
+		libhegel.OK,           // state_machine_add_rule
+		int64(1), libhegel.OK, // state_machine_start
 		int64(0), libhegel.E_BACKEND, "boom", // next_group fails
 	)
 	sm := &stateMachine{rules: []stateMachineRule{{name: "Rule", fn: func(TestCase) {}}}, ruleGroups: []int64{0}}
@@ -1611,7 +1658,9 @@ func TestStatefulNextGroupError(t *testing.T) {
 func TestStatefulInitialInvariantError(t *testing.T) {
 	t.Parallel()
 	tc := newStubTestCase(t,
-		uintptr(1), int64(1), libhegel.OK, // new_state_machine
+		uintptr(1), libhegel.OK, // new_state_machine
+		libhegel.OK,           // state_machine_add_invariant
+		int64(1), libhegel.OK, // state_machine_start
 	)
 	sm := &stateMachine{invariants: []stateMachineRule{{name: "Inv", fn: func(TestCase) {
 		panic(libhegel.E_BACKEND)
@@ -1628,7 +1677,9 @@ func TestStatefulInitialInvariantError(t *testing.T) {
 func TestStatefulFinalInvariantError(t *testing.T) {
 	t.Parallel()
 	tc := newStubTestCase(t,
-		uintptr(1), int64(1), libhegel.OK, // new_state_machine
+		uintptr(1), libhegel.OK, // new_state_machine
+		libhegel.OK,           // state_machine_add_invariant
+		int64(1), libhegel.OK, // state_machine_start
 		libhegel.StateMachineDone, libhegel.OK, // state_machine_next_group
 	)
 	calls := 0

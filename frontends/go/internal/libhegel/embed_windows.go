@@ -61,7 +61,7 @@ func lockLibraryCache(dir string) (func() error, error) {
 
 // Assume the temp directory's ACL prevents other users from writing to it.
 // The encoded username keeps cache paths separate across accounts.
-func tempLibhegelCacheDir(version string) (string, error) {
+func tempLibhegelCacheDir(key string) (string, error) {
 	username, err := currentWindowsUsername()
 	if err != nil {
 		return "", fmt.Errorf("resolve current username: %w", err)
@@ -72,7 +72,7 @@ func tempLibhegelCacheDir(version string) (string, error) {
 	// QueryEscape is injective and escapes Windows path separators and reserved
 	// filename characters while keeping ordinary usernames readable.
 	userDir := "hegel-go-" + url.QueryEscape(username)
-	dir := filepath.Join(windowsTempDir(), userDir, "libhegel", version)
+	dir := filepath.Join(windowsTempDir(), userDir, "libhegel", key)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("create temporary cache dir %s: %w", dir, err)
 	}

@@ -1,17 +1,17 @@
 ---
-name: coverage
-description: "How to approach code coverage in this project. Use when coverage CI fails, when writing tests for new code, when deciding whether to add // coverage-ignore, or when you need to make untestable code testable. Also use proactively when writing new code to ensure it will be coverable."
+name: go-coverage
+description: "How to approach code coverage in the Go frontend (frontends/go). Use when its coverage check fails, when writing tests for new Go code, when deciding whether to add // coverage-ignore, or when you need to make untestable Go code testable. Also use proactively when writing new Go code to ensure it will be coverable."
 ---
 
-# Code Coverage
+# Code Coverage in the Go frontend
 
-This project requires 100% line coverage for new code, with explicit coverage-ignore annotations only allowed under rare circumstances and with human permission.
+The Go frontend requires 100% line coverage for new code, with explicit coverage-ignore annotations only allowed under rare circumstances and with human permission.
 
 This is implemented as a ratchet which counts the number of lines annotated as not requiring coverage. If the number of excluded lines exceeds the ratchet value, or if there are any uncovered lines without a `// coverage-ignore` annotation, the coverage check fails.
 
 ## The ratchet is not a budget
 
-The coverage-ignore count in `.github/coverage-ratchet.json` tracks excluded lines and can only decrease. Just because previous work reduced the count does not mean you have implicit permission to add new uncovered lines. Think of the ratchet as immediately ratcheting down after any reduction — the slack is gone.
+The coverage-ignore count in `frontends/go/coverage-ratchet.json` tracks excluded lines and can only decrease. Just because previous work reduced the count does not mean you have implicit permission to add new uncovered lines. Think of the ratchet as immediately ratcheting down after any reduction — the slack is gone.
 
 You may not add `// coverage-ignore` annotations without explicit human permission. If you think code is genuinely untestable, your first move should be to refactor it for testability, not to annotate it. See `references/patterns.md` for testability refactoring examples.
 
@@ -31,6 +31,6 @@ When CI coverage fails:
    - **Just needs testing**: most code that has not been covered just needs a test written for it. Your default assumption should be that it is straightforwardly testable and you just need to write a normal test.
    - **Needs refactoring**: some code cannot easily be tested in its current form and needs refactoring to make it testable. See `references/patterns.md` for information on how to do that.
    - **Dead code**: if it's truly unreachable, delete it, or replace it with a `panic("hegel: unreachable: ...")`.
-3. Run `just test` locally to iterate faster than CI.
+3. Run `just go::check-test` locally to iterate faster than CI.
 
 For details on how the coverage script works and what it auto-excludes, see `references/internals.md`.

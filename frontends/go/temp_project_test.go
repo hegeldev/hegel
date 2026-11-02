@@ -12,6 +12,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"hegel.dev/go/hegel/internal/libhegel"
 )
 
 // tempGoProject runs tests in a separate Go process to inspect output, exit
@@ -19,6 +21,7 @@ import (
 type tempGoProject struct {
 	t      *testing.T
 	dir    string
+	env    []string
 	expect string // regex; non-empty => expect non-zero exit and match
 }
 
@@ -40,9 +43,14 @@ func newTempGoProject(t *testing.T) *tempGoProject {
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
 	}
+	lib, err := libhegel.LibraryPath()
+	if err != nil {
+		t.Fatalf("resolve libhegel: %v", err)
+	}
 	p := &tempGoProject{
 		t:   t,
 		dir: t.TempDir(),
+		env: append(os.Environ(), libhegel.LibraryPathEnv+"="+lib),
 	}
 	// Build the temp go.mod by reusing the parent's transitive require lines.
 	// This avoids a `go mod tidy` round-trip per project (which would also
@@ -113,6 +121,7 @@ func (p *tempGoProject) run(args []string) runOutput {
 	p.t.Helper()
 	cmd := exec.Command("go", args...)
 	cmd.Dir = p.dir
+	cmd.Env = p.env
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr

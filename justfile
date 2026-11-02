@@ -4,7 +4,7 @@ set ignore-comments := true
 # Per-component recipes live next to the code they drive and run from that
 # directory: `just libhegel::test`, `just rust::test`, `just python::test`,
 # `just typescript::test`, `just cpp::test`, `just java::test`,
-# `just ocaml::test`.
+# `just ocaml::test`, `just go::test`.
 # Recipes here are the ones that span the whole Cargo workspace (libhegel,
 # the Rust frontend and the Python extension share one workspace and
 # lockfile; the coverage report covers the first two).
@@ -27,14 +27,17 @@ mod java 'frontends/java'
 # The OCaml frontend (needs opam; `just ocaml::setup` first)
 mod ocaml 'frontends/ocaml'
 
+# The Go frontend (needs Go)
+mod go 'frontends/go'
+
 # hegel.dev (needs Node; `just website::setup` first)
 mod website
 
 # Definition of done for the whole repo: lint + every component's tests.
-check: check-lint libhegel::check rust::check python::check typescript::check cpp::check java::check ocaml::check
+check: check-lint libhegel::check rust::check python::check typescript::check cpp::check java::check ocaml::check go::check
 
 # Lints spanning the Cargo workspace, plus each component's own.
-check-lint: check-format check-clippy check-nocov-style check-test-modules check-internal-asserts check-settings-env check-release-script libhegel::check-lint rust::check-lint python::check-lint typescript::check-lint cpp::check-lint java::check-lint ocaml::check-lint
+check-lint: check-format check-clippy check-nocov-style check-test-modules check-internal-asserts check-settings-env check-release-script libhegel::check-lint rust::check-lint python::check-lint typescript::check-lint cpp::check-lint java::check-lint ocaml::check-lint go::check-lint
 
 format:
     cargo fmt --all

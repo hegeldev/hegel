@@ -33,7 +33,7 @@ func lockLibraryCache(string) (func() error, error) {
 // directory. The UID is not itself a security boundary: an existing base must
 // also be a real directory owned by that UID before its permissions are
 // changed or a library is loaded from it.
-func tempLibhegelCacheDir(version string) (string, error) {
+func tempLibhegelCacheDir(key string) (string, error) {
 	uid := os.Getuid()
 	root, err := filepath.EvalSymlinks(os.TempDir())
 	if err != nil {
@@ -51,7 +51,7 @@ func tempLibhegelCacheDir(version string) (string, error) {
 	if err := ensurePrivateTempDir(libhegelDir, uid); err != nil {
 		return "", err
 	}
-	dir := filepath.Join(libhegelDir, version)
+	dir := filepath.Join(libhegelDir, key)
 	if err := ensurePrivateTempDir(dir, uid); err != nil {
 		return "", err
 	}

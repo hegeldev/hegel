@@ -27,12 +27,13 @@ func libhegelExt() string {
 	}
 }
 
-// libhegelCacheDir returns the per-version cache directory under the user's
-// cache root. The caller creates it when needed.
-func libhegelCacheDir(version string) (string, error) {
+// libhegelCacheDir returns the cache directory for the library whose
+// libraryKey is key, under the user's cache root. The caller creates it when
+// needed.
+func libhegelCacheDir(key string) (string, error) {
 	root, err := os.UserCacheDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve user cache dir: %w", err)
 	}
-	return filepath.Join(root, "hegel-go", "libhegel", version), nil
+	return filepath.Join(root, "hegel-go", "libhegel", key), nil
 }

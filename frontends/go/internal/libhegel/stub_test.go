@@ -74,8 +74,8 @@ func TestStubSettingsSetters(t *testing.T) {
 
 // TestStubUnwiredPrimitives exercises the per-test-case primitives that the
 // runner does not drive against a Stub so their plumbing is covered: the
-// variable pool, the engine-owned state machine (including the C-string-array
-// marshalling in NewStateMachine), and the forced-boolean primitive. Each is a
+// variable pool, the engine-owned state machine (created, declared and
+// started step by step), and the forced-boolean primitive. Each is a
 // fallible call that writes one scripted output value (an id, index, or bool)
 // through a trailing out-parameter before its Error return.
 func TestStubUnwiredPrimitives(t *testing.T) {
@@ -83,7 +83,10 @@ func TestStubUnwiredPrimitives(t *testing.T) {
 		uintptr(7), OK, // new_pool: pool handle
 		int64(1), OK, // pool_add: variable id
 		int64(1), OK, // pool_generate: variable id
-		uintptr(3), int64(1), OK, // new_state_machine: machine handle + drawn concurrency
+		uintptr(3), OK, // new_state_machine: machine handle
+		OK,           // state_machine_add_rule
+		OK,           // state_machine_add_invariant
+		int64(1), OK, // state_machine_start: drawn concurrency
 		int64(0), OK, // state_machine_next_group: group index
 		int64(0), OK, // state_machine_next_rule: rule index
 		OK,       // state_machine_rule_rejected
@@ -101,13 +104,22 @@ func TestStubUnwiredPrimitives(t *testing.T) {
 	if _, err := pool.Generate(lib, tc, true); err != nil {
 		t.Fatalf("Pool.Generate: %v", err)
 	}
-	// Non-empty rules + nil invariants exercises both cStringArray branches.
-	machine, concurrency, err := tc.NewStateMachine(lib, []string{"insert", "remove"}, []int64{0, 0}, nil, nil, nil, 1, 1, 50)
+	machine, err := tc.NewStateMachine(lib, 1, 1, 50)
 	if err != nil {
 		t.Fatalf("NewStateMachine: %v", err)
 	}
+	if err := tc.StateMachineAddRule(lib, machine, "insert", 1.0, []int64{0, 1}); err != nil {
+		t.Fatalf("StateMachineAddRule: %v", err)
+	}
+	if err := tc.StateMachineAddInvariant(lib, machine, "sorted", true); err != nil {
+		t.Fatalf("StateMachineAddInvariant: %v", err)
+	}
+	concurrency, err := tc.StateMachineStart(lib, machine)
+	if err != nil {
+		t.Fatalf("StateMachineStart: %v", err)
+	}
 	if concurrency != 1 {
-		t.Fatalf("NewStateMachine: concurrency = %d, want 1", concurrency)
+		t.Fatalf("StateMachineStart: concurrency = %d, want 1", concurrency)
 	}
 	if _, err := tc.StateMachineNextGroup(lib, machine); err != nil {
 		t.Fatalf("StateMachineNextGroup: %v", err)
@@ -325,40 +337,6 @@ func TestStubIntegerBig(t *testing.T) {
 	}
 	if len(got) != 1 || got[0] != 0x2a {
 		t.Errorf("GenerateIntegerBig: got %v", got)
-	}
-}
-
-// TestStubStateMachineRejectsGroupMismatch covers NewStateMachine's guard
-// against a ruleGroups slice whose length differs from ruleNames.
-func TestStubStateMachineRejectsGroupMismatch(t *testing.T) {
-	lib := Stub(t) // no returns: must error before the C call
-	tc := &TestCase{pointer: &pointer[testCaseT]{syms: lib.syms, raw: 1}}
-
-	if _, _, err := tc.NewStateMachine(lib, []string{"a", "b"}, []int64{0}, nil, nil, nil, 1, 1, 50); err == nil {
-		t.Error("expected error for mismatched rule-group length")
-	}
-}
-
-// TestStubStateMachineRejectsWeightMismatch covers NewStateMachine's guard
-// against a non-nil ruleWeights slice whose length differs from ruleNames.
-func TestStubStateMachineRejectsWeightMismatch(t *testing.T) {
-	lib := Stub(t) // no returns: must error before the C call
-	tc := &TestCase{pointer: &pointer[testCaseT]{syms: lib.syms, raw: 1}}
-
-	if _, _, err := tc.NewStateMachine(lib, []string{"a", "b"}, []int64{0, 0}, []float64{1.0}, nil, nil, 1, 1, 50); err == nil {
-		t.Error("expected error for mismatched rule-weight length")
-	}
-}
-
-// TestStubStateMachineRejectsInvariantFlagMismatch covers NewStateMachine's
-// guard against a non-nil invariantAlwaysCheck slice whose length differs from
-// invariantNames.
-func TestStubStateMachineRejectsInvariantFlagMismatch(t *testing.T) {
-	lib := Stub(t) // no returns: must error before the C call
-	tc := &TestCase{pointer: &pointer[testCaseT]{syms: lib.syms, raw: 1}}
-
-	if _, _, err := tc.NewStateMachine(lib, []string{"a"}, []int64{0}, nil, []string{"inv"}, []bool{true, false}, 1, 1, 50); err == nil {
-		t.Error("expected error for mismatched always-check-flag length")
 	}
 }
 

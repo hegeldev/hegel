@@ -10,17 +10,21 @@
 // The following locations are searched for the dynamic library, first hit wins:
 //
 //  1. $HEGEL_LIBHEGEL_PATH if set (no fallback if it fails to open)
-//  2. the libhegel binary go:embed'd from internal/libhegel/libs (vendored via
-//     git-lfs), materialized to
-//     ~/.cache/hegel-go/libhegel/<version>/libhegel-<goos>-<goarch>.<ext> and
-//     dlopen'd from there. If a sandbox makes the user cache unusable, a
+//  2. the libhegel binary go:embed'd from internal/libhegel/libs, materialized
+//     to ~/.cache/hegel-go/libhegel/<sha256>/libhegel-<goos>-<goarch>.<ext>
+//     (keyed by the SHA-256 of its bytes) and dlopen'd from there. If a sandbox makes the user cache unusable, a
 //     private per-user location under the system temp directory is used
-//     instead. Skipped when HEGEL_LIBHEGEL_PATH is set (an explicit override
-//     means the user wants that exact file) or on platforms with no vendored
-//     artifact.
-//
-// The library does not search for a sibling hegel-rust checkout; local
-// development against a fresh build goes through HEGEL_LIBHEGEL_PATH.
+//     instead. Only tagged releases embed a binary: on the monorepo's main
+//     branch the files under libs/ are empty, and the release automation
+//     commits the libhegel release binaries in the commit it tags.
+//  3. when nothing is embedded, a local build of the nearest hegel checkout:
+//     the first hegel/target directory in the working directory or its
+//     parents, and in it release/<lib>, else debug/<lib>, where <lib> is the
+//     name cargo gives the hegeltest-c library (libhegel_c.so,
+//     libhegel_c.dylib or hegel_c.dll). The search stops at that checkout, so
+//     an unbuilt one is an error rather than a fall through to a stale build
+//     further up. This is what makes a replace directive pointing at a local
+//     checkout work after `cargo build --release -p hegeltest-c`.
 //
 // where <ext> is "so" on Linux, "dylib" on macOS, and "dll" on Windows.
 
@@ -41,9 +45,9 @@ import (
 //go:generate go tool stringer -type=Error,Status,Backend,Verbosity,RunStatus,RunErrorKind,HealthCheck,Phase,NondeterminismStrictness -linecomment -output=libhegel_string.go
 
 // LibraryPathEnv names the env var that pins libhegel to an explicit path.
-// When set, that path is loaded directly with no embedded fallback; when unset,
-// the go:embed'd vendored binary is used. It is the only way to use a local
-// build — the library does not search for a sibling hegel-rust checkout.
+// When set, that path is loaded directly with no fallback; when unset, the
+// binary a tagged release embeds is used, or else a local build found from the
+// working directory (see the package documentation).
 const LibraryPathEnv = "HEGEL_LIBHEGEL_PATH"
 
 type Error int32
@@ -360,7 +364,10 @@ type symbols struct {
 	PoolGenerate             func(ctxT, testCaseT, poolT, bool, out[int64]) Error
 	PoolRestore              func(ctxT, testCaseT, poolT, int64) Error
 	PoolFree                 func(ctxT, poolT) Error
-	NewStateMachine          func(ctxT, testCaseT, *stringT, *int64, *float64, uint64, *stringT, *bool, uint64, int64, int64, int64, out[stateMachineT], out[int64]) Error
+	NewStateMachine          func(ctxT, testCaseT, int64, int64, int64, out[stateMachineT]) Error
+	StateMachineAddRule      func(ctxT, testCaseT, stateMachineT, stringT, float64, *int64, uint64) Error
+	StateMachineAddInvariant func(ctxT, testCaseT, stateMachineT, stringT, bool) Error
+	StateMachineStart        func(ctxT, testCaseT, stateMachineT, out[int64]) Error
 	StateMachineNextGroup    func(ctxT, testCaseT, stateMachineT, out[StateMachineGroup]) Error
 	StateMachineNextRule     func(ctxT, testCaseT, stateMachineT, int64, out[int64]) Error
 	StateMachineRuleRejected func(ctxT, testCaseT, stateMachineT, int64) Error
@@ -648,13 +655,9 @@ func (s *symbols) versionString() string {
 }
 
 func load() (*symbols, error) {
-	path := os.Getenv(LibraryPathEnv)
-	if path == "" {
-		var err error
-		path, err = writeDynamicLibrary(embeddedLib)
-		if err != nil {
-			return nil, fmt.Errorf("write libhegel: %w", err)
-		}
+	path, err := libraryPath()
+	if err != nil {
+		return nil, err
 	}
 
 	syms, err := tryOpen(path)
@@ -663,6 +666,32 @@ func load() (*symbols, error) {
 	}
 
 	return syms, nil
+}
+
+// LibraryPath returns the path of the libhegel the loader would load.
+//
+// It resolves the library in the order the package documentation lists,
+// materializing the embedded binary when that is the one chosen.
+//
+// It returns an error when no library can be found.
+func LibraryPath() (string, error) {
+	return libraryPath()
+}
+
+// libraryPath resolves which libhegel to load, in the order the package
+// documentation lists.
+func libraryPath() (string, error) {
+	if path := os.Getenv(LibraryPathEnv); path != "" {
+		return path, nil
+	}
+	if len(embeddedLib) == 0 {
+		return findLocalLibrary()
+	}
+	path, err := writeDynamicLibrary(embeddedLib)
+	if err != nil {
+		return "", fmt.Errorf("write libhegel: %w", err)
+	}
+	return path, nil
 }
 
 // tryOpen dlopens a single path and resolves every symbol against the
@@ -792,6 +821,9 @@ func tryOpen(path string) (syms *symbols, err error) {
 		{"hegel_pool_free", &syms.PoolFree},
 		{"hegel_pool_restore", &syms.PoolRestore},
 		{"hegel_new_state_machine", &syms.NewStateMachine},
+		{"hegel_state_machine_add_rule", &syms.StateMachineAddRule},
+		{"hegel_state_machine_add_invariant", &syms.StateMachineAddInvariant},
+		{"hegel_state_machine_start", &syms.StateMachineStart},
 		{"hegel_state_machine_next_group", &syms.StateMachineNextGroup},
 		{"hegel_state_machine_next_rule", &syms.StateMachineNextRule},
 		{"hegel_state_machine_rule_rejected", &syms.StateMachineRuleRejected},
@@ -1794,52 +1826,90 @@ func (r *Repeat) Failed(ctx *Context, tc *TestCase) error {
 // (hegel_state_machine_free).
 type StateMachine pointer[stateMachineT]
 
-// NewStateMachine registers a state machine for engine-owned stateful testing,
-// sequential or concurrent: numGroups concurrency groups and the named rules,
-// each assigned to a group by ruleGroups (parallel to ruleNames). The engine
-// draws the concurrency level — the number of workers that will pull rules —
-// in [minConcurrency, maxConcurrency] and returns it alongside the machine;
-// the caller must run exactly that many workers. minConcurrency ==
-// maxConcurrency fixes the level without consuming entropy (1, 1 for a
-// sequential machine). stepCount bounds the number of completed rounds and
-// must be positive; the frontend supplies its default.
+// NewStateMachine creates an empty state machine for engine-owned stateful
+// testing, sequential or concurrent.
 //
-// ruleWeights is a slice of selection weights parallel to ruleNames: each entry
-// must be finite and strictly positive, and gives its rule a selection weight
-// among the enabled rules of the current group. A nil slice (the C NULL default)
-// weights every rule equally.
+// The machine is built in three steps: this call, then one
+// [TestCase.StateMachineAddRule] per rule and one
+// [TestCase.StateMachineAddInvariant] per invariant, then
+// [TestCase.StateMachineStart], which draws the concurrency level in
+// [minConcurrency, maxConcurrency]. minConcurrency == maxConcurrency fixes the
+// level without consuming entropy (1, 1 for a sequential machine). stepCount
+// bounds the number of completed rounds and must be positive; the frontend
+// supplies its default.
 //
-// invariantAlwaysCheck is a slice of flags parallel to invariantNames: a
-// flagged invariant is checked after every rule, the rest are sampled. A nil
-// slice (the C NULL default) leaves every invariant sampled. The returned
-// handle is owned by the caller and freed automatically via the GC.
-func (tc *TestCase) NewStateMachine(ctx *Context, ruleNames []string, ruleGroups []int64, ruleWeights []float64, invariantNames []string, invariantAlwaysCheck []bool, minConcurrency, maxConcurrency, stepCount int64) (*StateMachine, int64, error) {
-	if len(ruleGroups) != len(ruleNames) {
-		return nil, 0, fmt.Errorf("hegel_new_state_machine: %d rule groups for %d rule names", len(ruleGroups), len(ruleNames))
-	}
-	if ruleWeights != nil && len(ruleWeights) != len(ruleNames) {
-		return nil, 0, fmt.Errorf("hegel_new_state_machine: %d rule weights for %d rule names", len(ruleWeights), len(ruleNames))
-	}
-	if invariantAlwaysCheck != nil && len(invariantAlwaysCheck) != len(invariantNames) {
-		return nil, 0, fmt.Errorf("hegel_new_state_machine: %d always-check flags for %d invariant names", len(invariantAlwaysCheck), len(invariantNames))
-	}
-	rules := cStringArray(ruleNames)
-	invariants := cStringArray(invariantNames)
+// The returned handle is owned by the caller and freed automatically via the
+// GC.
+func (tc *TestCase) NewStateMachine(ctx *Context, minConcurrency, maxConcurrency, stepCount int64) (*StateMachine, error) {
 	ptr, err := allocate(ctx, "hegel_new_state_machine", func(ctx ctxT, raw *stateMachineT) Error {
-		e := tc.syms.NewStateMachine(
-			ctx, tc.raw,
-			slicePtr(rules), slicePtr(ruleGroups), slicePtr(ruleWeights), uint64(len(ruleNames)),
-			slicePtr(invariants), slicePtr(invariantAlwaysCheck), uint64(len(invariantNames)),
-			minConcurrency, maxConcurrency, stepCount,
-			raw, &tc.outInt,
-		)
+		e := tc.syms.NewStateMachine(ctx, tc.raw, minConcurrency, maxConcurrency, stepCount, raw)
 		runtime.KeepAlive(tc)
 		return e
 	}, tc.syms.StateMachineFree)
 	if ptr == nil {
-		return nil, tc.outInt, err
+		return nil, err
 	}
-	return (*StateMachine)(ptr), tc.outInt, err
+	return (*StateMachine)(ptr), err
+}
+
+// StateMachineAddRule declares the next rule of a machine that has not
+// started; rules are numbered in declaration order from 0, the index
+// [TestCase.StateMachineNextRule] hands out.
+//
+// weight is the rule's finite, strictly positive selection weight among the
+// enabled rules of the current group (1.0 for an unweighted rule). groups are
+// the concurrency groups the rule belongs to: at least one, with no duplicates
+// and no [StateMachineDone]. A rule in several groups is handed out in each of
+// their rounds.
+//
+// It returns an error wrapping [E_INVALID_ARG] for a started machine or an
+// invalid argument, and one wrapping [E_STOP_TEST] once the choice budget is
+// exhausted.
+func (tc *TestCase) StateMachineAddRule(ctx *Context, machine *StateMachine, name string, weight float64, groups []int64) error {
+	return ctx.invoke("hegel_state_machine_add_rule", func(ctx ctxT) Error {
+		e := tc.syms.StateMachineAddRule(ctx, tc.raw, machine.raw, cString(name), weight, slicePtr(groups), uint64(len(groups)))
+		runtime.KeepAlive(tc)
+		runtime.KeepAlive(machine)
+		return e
+	})
+}
+
+// StateMachineAddInvariant declares the next invariant of a machine that has
+// not started; invariants are numbered in declaration order from 0, the index
+// [TestCase.StateMachineShouldCheckInvariant] takes.
+//
+// With alwaysCheck, the invariant is checked at every join point; otherwise
+// the engine samples it.
+//
+// It returns an error wrapping [E_INVALID_ARG] for a started machine, and one
+// wrapping [E_STOP_TEST] once the choice budget is exhausted.
+func (tc *TestCase) StateMachineAddInvariant(ctx *Context, machine *StateMachine, name string, alwaysCheck bool) error {
+	return ctx.invoke("hegel_state_machine_add_invariant", func(ctx ctxT) Error {
+		e := tc.syms.StateMachineAddInvariant(ctx, tc.raw, machine.raw, cString(name), alwaysCheck)
+		runtime.KeepAlive(tc)
+		runtime.KeepAlive(machine)
+		return e
+	})
+}
+
+// StateMachineStart seals a machine's declared rules and invariants and draws
+// its concurrency level.
+//
+// No rule or invariant may be added afterwards, and no round may be driven
+// before.
+//
+// It returns the concurrency level: the caller must run exactly that many
+// workers, indexed from 0. It returns an error wrapping [E_INVALID_ARG] when
+// no rule was declared or the machine has already started, and one wrapping
+// [E_STOP_TEST] once the choice budget is exhausted.
+func (tc *TestCase) StateMachineStart(ctx *Context, machine *StateMachine) (int64, error) {
+	err := ctx.invoke("hegel_state_machine_start", func(ctx ctxT) Error {
+		e := tc.syms.StateMachineStart(ctx, tc.raw, machine.raw, &tc.outInt)
+		runtime.KeepAlive(tc)
+		runtime.KeepAlive(machine)
+		return e
+	})
+	return tc.outInt, err
 }
 
 // StateMachineNextGroup starts the machine's next round: it returns the round's

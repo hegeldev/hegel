@@ -55,7 +55,17 @@ func TestStringArraysAndOwnedResults(t *testing.T) {
 	if err != nil || tc == nil {
 		t.Fatalf("test case = %v, %v", tc, err)
 	}
-	if _, _, err := tc.NewStateMachine(ctx, []string{"rule\x00suffix"}, []int64{0}, nil, []string{"invariant\x00suffix"}, nil, 1, 1, 1); err != nil {
+	machine, err := tc.NewStateMachine(ctx, 1, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tc.StateMachineAddRule(ctx, machine, "rule\x00suffix", 1.0, []int64{0}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tc.StateMachineAddInvariant(ctx, machine, "invariant\x00suffix", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tc.StateMachineStart(ctx, machine); err != nil {
 		t.Fatal(err)
 	}
 	for _, categories := range [][]string{nil, {"Lu"}} {

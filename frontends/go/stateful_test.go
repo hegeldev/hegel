@@ -929,7 +929,9 @@ func TestRunStatefulNextRuleErrorAborts(t *testing.T) {
 		t.Fatalf("newStateMachine: %v", err)
 	}
 	tc := newStubTestCase(t,
-		uintptr(2), int64(1), libhegel.OK, // new_state_machine
+		uintptr(2), libhegel.OK, // new_state_machine
+		libhegel.OK,           // state_machine_add_rule
+		int64(1), libhegel.OK, // state_machine_start
 		libhegel.StateMachineGroup(0), libhegel.OK, // state_machine_next_group
 		uintptr(3), libhegel.OK, // test_case_clone
 		uintptr(4),                                // context_new for the cloned test case

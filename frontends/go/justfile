@@ -1,91 +1,97 @@
-# Path to the libhegel-rust checkout (override with HEGEL_RUST_DIR=...).
-hegel_rust_dir := env("HEGEL_RUST_DIR", justfile_directory() + "/../hegel-rust")
+# Recipes for the Go frontend (the hegel.dev/go/hegel module). Run as
+# `just go::<recipe>` from anywhere in the repo; recipes execute from this
+# directory. The engine is the in-tree libhegel: `build-libhegel` compiles it
+# into the workspace's `target/`, and the test recipes point the loader at
+# that build through `HEGEL_LIBHEGEL_PATH` (an already-set value wins;
+# scripts/libhegel-path.sh is the one place that knows where the build is).
+# The binaries under internal/libhegel/libs/ are empty on main: only the
+# commit a release tags embeds the libhegel release binaries.
+set ignore-comments := true
 
-# Build libhegel.{so,dylib} in the sibling hegel-rust checkout. No-op when
-# the checkout isn't present — tests then fall back to the libhegel binary
-# vendored under internal/libhegel/libs and go:embed'd into the test binary.
+set windows-shell := ["bash", "-uc"]
+
+# Build libhegel (release) into the workspace's target/.
 build-libhegel:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    if [ -d "{{hegel_rust_dir}}/hegel-c" ]; then
-        cd "{{hegel_rust_dir}}" && cargo build -p hegeltest-c --release
-    else
-        echo "No hegel-rust checkout at {{hegel_rust_dir}}; tests will use the vendored libhegel under internal/libhegel/libs."
-    fi
+    cargo build --release -p hegeltest-c --manifest-path ../../Cargo.toml
 
-# Run tests with coverage.
-# We measure coverage across all packages; exclusions are in .testcoverage.yml.
+# Print the path of the in-tree libhegel build the tests load.
+libhegel-path:
+    @scripts/libhegel-path.sh
+
+# The coverage-ignore count is ratcheted in coverage-ratchet.json.
 #
-# The library only uses a local libhegel when HEGEL_LIBHEGEL_PATH points at one;
-# otherwise it falls back to the vendored binary go:embed'd under
-# internal/libhegel/libs. With a sibling hegel-rust checkout present, this
-# recipe builds it and exports that path. Pass `vendored` as the mode to skip
-# the local build and test against the embedded binary instead — handy after a
-# version bump, when the checkout may lag hegelVersion. An externally set
-# HEGEL_LIBHEGEL_PATH (e.g. in CI) always wins.
-test mode="" *args="":
+# The full suite with the race detector, enforcing 100% coverage per file.
+check-test: build-libhegel
     #!/usr/bin/env bash
     set -euo pipefail
-    case "{{mode}}" in
-        vendored)
-            unset HEGEL_LIBHEGEL_PATH ;;
-        "")
-            just build-libhegel
-            if [ -z "${HEGEL_LIBHEGEL_PATH:-}" ]; then
-                ext=so; [ "$(uname)" = Darwin ] && ext=dylib
-                # hegel-rust ≥0.30.3 names the build output libhegel_c.<ext>
-                # (the crate lib was renamed to hegel_c); older checkouts
-                # produce libhegel.<ext>. Prefer the new name.
-                for stem in libhegel_c libhegel; do
-                    libpath="{{hegel_rust_dir}}/target/release/$stem.$ext"
-                    if [ -f "$libpath" ]; then
-                        export HEGEL_LIBHEGEL_PATH="$libpath"
-                        break
-                    fi
-                done
-            fi ;;
-        *)
-            echo "unknown test mode '{{mode}}' (expected '' or 'vendored')" >&2
-            exit 1 ;;
-    esac
-    go test -race {{args}} -coverprofile=coverage.out -covermode=atomic \
+    HEGEL_LIBHEGEL_PATH="${HEGEL_LIBHEGEL_PATH:-$(scripts/libhegel-path.sh)}"
+    export HEGEL_LIBHEGEL_PATH
+    go test -race -coverprofile=coverage.out -covermode=atomic \
         -coverpkg=hegel.dev/go/hegel/... \
         ./...
     python3 scripts/check-coverage.py
 
+# Arguments replace the default `./...`, e.g. `-race ./...` or
+# `-run TestLibhegelEndToEnd ./internal/libhegel`.
+#
+# The suite without coverage, passing its arguments to `go test`.
+check-test-no-coverage *args: build-libhegel
+    #!/usr/bin/env bash
+    set -euo pipefail
+    HEGEL_LIBHEGEL_PATH="${HEGEL_LIBHEGEL_PATH:-$(scripts/libhegel-path.sh)}"
+    export HEGEL_LIBHEGEL_PATH
+    go test {{ if args == "" { "./..." } else { args } }}
+
 format:
     gofmt -w .
 
-# Vendor a libhegel release (hegeldev/hegel's `libhegel/<version>` tags): download
-# the pre-compiled libhegel artifacts into internal/libhegel/libs (git-lfs) and
-# pin hegelVersion in version.go, then commit the result. With no argument this
-# targets the latest release; pass a version (e.g. `just vendor-libhegel 0.47.2`)
-# or a tag (`libhegel/0.47.2`) to vendor that exact release. Requires
-# `git lfs`; GitHub authentication is optional.
-vendor-libhegel version="":
-    go run scripts/vendor-libhegel.go -version={{version}}
-    gofmt -w internal/libhegel/version.go
-
-lint:
+check-format:
     #!/usr/bin/env bash
     set -euo pipefail
     unformatted=$(gofmt -l .)
     if [ -n "$unformatted" ]; then
-        echo "The following files need formatting (run 'just format'):"
+        echo "The following files need formatting (run 'just go::format'):"
         echo "$unformatted"
         exit 1
     fi
+
+# Only a release commit, which is never on main, embeds the binaries.
+#
+# The libhegel binaries under internal/libhegel/libs/ must be empty.
+check-libs-empty:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    nonempty=$(find internal/libhegel/libs -type f -size +0c)
+    if [ -n "$nonempty" ]; then
+        echo "These files must be empty outside a release commit:" >&2
+        echo "$nonempty" >&2
+        exit 1
+    fi
+
+check-lint: check-format check-libs-empty
     go fix -diff ./...
     go vet ./...
     go tool staticcheck ./...
+    go build ./examples/...
 
+# Verify all exported symbols have doc comments.
 check-docs:
-    # verify all exported symbols have doc comments
     go doc -all . > /dev/null 2>&1
 
+# Serve the API docs locally; open the printed URL.
 docs:
     go doc -http .
 
-# Run lint + docs + test (the full CI check). Pass `vendored` to test against
-# the pinned libhegel release instead of a local hegel-rust checkout.
-check mode="": lint check-docs (test mode)
+# The binaries come from hegeldev/hegel's `libhegel/<version>` GitHub release,
+# checksum-verified. The release automation runs this for the commit it tags;
+# on main the binaries stay empty. With no argument it takes the latest libhegel release; pass a
+# version (`0.49.0`) or a tag (`libhegel/0.49.0`) for an exact one.
+#
+# Download a libhegel release's binaries into internal/libhegel/libs.
+vendor-libhegel version="":
+    go run scripts/vendor-libhegel.go -version={{version}}
+
+check: check-lint check-docs check-test
+
+test: check-test
+lint: check-lint

@@ -11,7 +11,7 @@ import re
 import subprocess
 import sys
 from glob import glob
-RATCHET_FILE = ".github/coverage-ratchet.json"
+RATCHET_FILE = "coverage-ratchet.json"
 
 
 def main() -> int:

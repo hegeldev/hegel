@@ -29,17 +29,21 @@ func stubVar[T any](t *testing.T, target *T, replacement T) {
 	t.Cleanup(func() { *target = original })
 }
 
-// TestEmbeddedLibPresent asserts that a vendored libhegel binary is embedded
-// for the platform the test suite runs on. CI runs this on linux/amd64,
-// darwin/arm64, and windows/amd64 — the published, vendored assets.
+// TestEmbeddedLibPresent asserts that a libhegel binary is embedded for the
+// platform the test suite runs on. Only a release commit embeds one, so it
+// runs when HEGEL_EXPECT_EMBEDDED_LIBHEGEL is set, as the release verification
+// does on linux/amd64, darwin/arm64 and windows/amd64.
 func TestEmbeddedLibPresent(t *testing.T) {
+	if os.Getenv("HEGEL_EXPECT_EMBEDDED_LIBHEGEL") == "" {
+		t.Skip("HEGEL_EXPECT_EMBEDDED_LIBHEGEL is not set")
+	}
 	if len(embeddedLib) == 0 {
 		t.Fatalf("no embedded libhegel for this platform; libs/%s missing or not git-lfs-pulled", libhegelAssetName())
 	}
 }
 
 // TestMaterializeEmbeddedSuccess covers the happy path: the bytes are written
-// to the per-version cache dir, marked executable, and returned by path.
+// to the content-keyed cache dir, marked executable, and returned by path.
 func TestMaterializeEmbeddedSuccess(t *testing.T) {
 	testHomeOverride(t)
 	payload := []byte("fake libhegel binary")
@@ -70,7 +74,7 @@ func TestMaterializeEmbeddedSuccess(t *testing.T) {
 }
 
 // TestMaterializeEmbeddedCacheHit verifies an existing destination is
-// authoritative even when the supplied bytes differ.
+// reused rather than rewritten when the same bytes are materialized again.
 func TestMaterializeEmbeddedCacheHit(t *testing.T) {
 	testHomeOverride(t)
 	payload := []byte("cached payload")
@@ -79,8 +83,12 @@ func TestMaterializeEmbeddedCacheHit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first call: %v", err)
 	}
+	marker := []byte("marker payload")
+	if err := os.WriteFile(path1, marker, 0o755); err != nil {
+		t.Fatal(err)
+	}
 
-	path2, err := writeDynamicLibrary([]byte("bogus! payload"))
+	path2, err := writeDynamicLibrary(payload)
 	if err != nil {
 		t.Fatalf("second (cached) call: %v", err)
 	}
@@ -91,8 +99,8 @@ func TestMaterializeEmbeddedCacheHit(t *testing.T) {
 	if err != nil { // coverage-ignore
 		t.Fatalf("read cached file: %v", err)
 	}
-	if string(got) != string(payload) {
-		t.Errorf("cache hit rewrote destination: got %q, want %q", got, payload)
+	if string(got) != string(marker) {
+		t.Errorf("cache hit rewrote destination: got %q, want %q", got, marker)
 	}
 }
 
@@ -132,7 +140,7 @@ func TestCachedLibraryCacheDirChmodError(t *testing.T) {
 	want := errors.New("chmod failed")
 	stubVar(t, &chmodCacheDir, func(string, os.FileMode) error { return want })
 
-	_, err := cachedLibrary([]byte("libhegel"))
+	_, err := cachedLibrary([]byte("libhegel"), libraryKey([]byte("libhegel")))
 	if !errors.Is(err, want) {
 		t.Fatalf("cachedLibrary: got %v, want chmod error", err)
 	}
@@ -218,7 +226,7 @@ func TestCachedLibraryCacheLockError(t *testing.T) {
 	want := errors.New("lock failed")
 	stubVar(t, &lockCacheDir, func(string) (func() error, error) { return nil, want })
 
-	_, err := cachedLibrary([]byte("libhegel"))
+	_, err := cachedLibrary([]byte("libhegel"), libraryKey([]byte("libhegel")))
 	if !errors.Is(err, want) {
 		t.Fatalf("cachedLibrary: got %v, want lock error", err)
 	}
@@ -236,7 +244,7 @@ func TestCachedLibraryCacheUnlockError(t *testing.T) {
 		return func() error { return want }, nil
 	})
 
-	_, err := cachedLibrary([]byte("libhegel"))
+	_, err := cachedLibrary([]byte("libhegel"), libraryKey([]byte("libhegel")))
 	if !errors.Is(err, want) {
 		t.Fatalf("cachedLibrary: got %v, want unlock error", err)
 	}
@@ -271,11 +279,44 @@ func TestCachedLibraryUserCacheDirError(t *testing.T) {
 		t.Setenv("XDG_CACHE_HOME", "relative")
 	}
 
-	_, err := cachedLibrary([]byte("libhegel"))
+	_, err := cachedLibrary([]byte("libhegel"), libraryKey([]byte("libhegel")))
 	if err == nil {
 		t.Fatal("expected user cache directory resolution to fail")
 	}
 	if !strings.Contains(err.Error(), "user cache dir") {
 		t.Errorf("expected user cache directory error; got %q", err)
+	}
+}
+
+// TestMaterializedLibrariesAreKeyedByContent checks that the cache never hands
+// out one binary's copy for another: equal bytes share a path, different bytes
+// (even of the same length) do not.
+func TestMaterializedLibrariesAreKeyedByContent(t *testing.T) {
+	testHomeOverride(t)
+
+	first, err := writeDynamicLibrary([]byte("libhegel build A"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := writeDynamicLibrary([]byte("libhegel build A"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := writeDynamicLibrary([]byte("libhegel build B"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again != first {
+		t.Errorf("same bytes materialized at %q and %q", first, again)
+	}
+	if other == first {
+		t.Fatalf("different bytes share the cached copy %q", first)
+	}
+	got, err := os.ReadFile(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "libhegel build B" {
+		t.Errorf("second build's copy holds %q", got)
 	}
 }
