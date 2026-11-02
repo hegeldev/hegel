@@ -81,13 +81,13 @@ public static class Stateful
         ArgumentNullException.ThrowIfNull(options);
         if (options.MinConcurrency > options.MaxConcurrency)
         {
-            throw new ArgumentException($"MinConcurrency ({options.MinConcurrency}) must not exceed MaxConcurrency ({options.MaxConcurrency})", nameof(options));
+            throw new HegelUsageException($"MinConcurrency ({options.MinConcurrency}) must not exceed MaxConcurrency ({options.MaxConcurrency})");
         }
         var rules = Annotated<RuleAttribute>(machine);
         var invariants = Annotated<InvariantAttribute>(machine);
         if (rules.Count == 0)
         {
-            throw new ArgumentException($"{machine.GetType().FullName} has no [Rule] methods; a state machine needs at least one", nameof(machine));
+            throw new HegelUsageException($"{machine.GetType().FullName} has no [Rule] methods; a state machine needs at least one");
         }
         var groupNames = new List<string>();
         var groups = Groups(rules, groupNames);
@@ -498,7 +498,7 @@ public static class Stateful
                 }
                 if (!takesTestCase)
                 {
-                    throw new ArgumentException($"[{typeof(TAttribute).Name.Replace("Attribute", "")}] method {type.FullName}.{m.Name} must take a single TestCase parameter", nameof(machine));
+                    throw new HegelUsageException($"[{typeof(TAttribute).Name.Replace("Attribute", "")}] method {type.FullName}.{m.Name} must take a single TestCase parameter");
                 }
                 if (seen.Add(m.Name))
                 {
@@ -542,7 +542,7 @@ public static class Stateful
             var w = rules[i].GetCustomAttribute<RuleAttribute>()!.Weight;
             if (!(double.IsFinite(w) && w > 0))
             {
-                throw new ArgumentException($"[Rule] Weight of {rules[i].Name} must be finite and positive, got {Printer.Double(w)}", "machine");
+                throw new HegelUsageException($"[Rule] Weight of {rules[i].Name} must be finite and positive, got {Printer.Double(w)}");
             }
             weights[i] = w;
             weighted |= w != 1.0;

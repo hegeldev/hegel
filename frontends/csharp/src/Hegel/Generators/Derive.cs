@@ -284,9 +284,11 @@ public sealed class RecordGenerator<T> : PrintableGenerator<T>
     {
         ArgumentNullException.ThrowIfNull(component);
         ArgumentNullException.ThrowIfNull(generator);
-        if (!_constructor.GetParameters().Any(p => p.Name == component))
+        var parameter = _constructor.GetParameters().FirstOrDefault(p => p.Name == component)
+            ?? throw new ArgumentException($"{typeof(T).FullName} has no record component named '{component}'", nameof(component));
+        if (!parameter.ParameterType.IsAssignableFrom(typeof(TComponent)))
         {
-            throw new ArgumentException($"{typeof(T).FullName} has no record component named '{component}'", nameof(component));
+            throw new ArgumentException($"{typeof(T).FullName}.{component} is of type {Printer.TypeName(parameter.ParameterType)}, not {Printer.TypeName(typeof(TComponent))}", nameof(generator));
         }
         var next = new Dictionary<string, IGenerator>(_overrides) { [component] = generator };
         return new RecordGenerator<T>(next);

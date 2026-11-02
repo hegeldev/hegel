@@ -93,7 +93,7 @@ public class StatefulTests
     public void MinConcurrencyMustNotExceedMax()
     {
         var options = new StatefulOptions { MinConcurrency = 3, MaxConcurrency = 2 };
-        var e = Assert.Throws<ArgumentException>(() => Property.Test(tc => Stateful.Run(new Counter(), tc, options), Quick));
+        var e = Assert.Throws<HegelUsageException>(() => Property.Test(tc => Stateful.Run(new Counter(), tc, options), Quick));
         Assert.StartsWith("MinConcurrency (3) must not exceed MaxConcurrency (2)", e.Message);
     }
 
@@ -106,7 +106,7 @@ public class StatefulTests
     [Fact]
     public void AMachineWithoutRulesIsRejected()
     {
-        var e = Assert.Throws<ArgumentException>(() => Property.Test(tc => Stateful.Run(new NoRules(), tc), Quick));
+        var e = Assert.Throws<HegelUsageException>(() => Property.Test(tc => Stateful.Run(new NoRules(), tc), Quick));
         Assert.Contains("NoRules has no [Rule] methods; a state machine needs at least one", e.Message);
     }
 
@@ -128,9 +128,9 @@ public class StatefulTests
     [Fact]
     public void AnnotatedMethodsMustTakeOneTestCase()
     {
-        var rule = Assert.Throws<ArgumentException>(() => Property.Test(tc => Stateful.Run(new BadRule(), tc), Quick));
+        var rule = Assert.Throws<HegelUsageException>(() => Property.Test(tc => Stateful.Run(new BadRule(), tc), Quick));
         Assert.Contains("[Rule] method Hegel.Tests.StatefulTests+BadRule.Wrong must take a single TestCase parameter", rule.Message);
-        var invariant = Assert.Throws<ArgumentException>(() => Property.Test(tc => Stateful.Run(new BadInvariant(), tc), Quick));
+        var invariant = Assert.Throws<HegelUsageException>(() => Property.Test(tc => Stateful.Run(new BadInvariant(), tc), Quick));
         Assert.Contains("[Invariant] method Hegel.Tests.StatefulTests+BadInvariant.Wrong must take a single TestCase parameter", invariant.Message);
     }
 
@@ -341,11 +341,11 @@ public class StatefulTests
     [Fact]
     public void NonPositiveOrNonFiniteWeightsAreRejected()
     {
-        var zero = Assert.Throws<ArgumentException>(() => Property.Test(tc => Stateful.Run(new ZeroWeight(), tc), Quick));
+        var zero = Assert.Throws<HegelUsageException>(() => Property.Test(tc => Stateful.Run(new ZeroWeight(), tc), Quick));
         Assert.StartsWith("[Rule] Weight of Never must be finite and positive, got 0.0", zero.Message);
-        var nan = Assert.Throws<ArgumentException>(() => Property.Test(tc => Stateful.Run(new NanWeight(), tc), Quick));
+        var nan = Assert.Throws<HegelUsageException>(() => Property.Test(tc => Stateful.Run(new NanWeight(), tc), Quick));
         Assert.StartsWith("[Rule] Weight of Undefined must be finite and positive, got double.NaN", nan.Message);
-        var inf = Assert.Throws<ArgumentException>(() => Property.Test(tc => Stateful.Run(new InfiniteWeight(), tc), Quick));
+        var inf = Assert.Throws<HegelUsageException>(() => Property.Test(tc => Stateful.Run(new InfiniteWeight(), tc), Quick));
         Assert.StartsWith("[Rule] Weight of Endless must be finite and positive, got double.PositiveInfinity", inf.Message);
     }
 

@@ -146,6 +146,14 @@ public class DeriveTests
     }
 
     [Fact]
+    public void RecordComponentOverridesMustDrawTheComponentType()
+    {
+        var e = Assert.Throws<ArgumentException>(() => Generators.Records<Point>().With("X", Generators.Longs()));
+        Assert.Contains("Hegel.Tests.Point.X is of type int, not long", e.Message);
+        Gen.All(Generators.Records<Shape>().With("Weight", Generators.Integers().Min(1).Max(1)), s => s.Weight == 1, 5);
+    }
+
+    [Fact]
     public void NonRecordsAreRejected()
     {
         var e = Assert.Throws<ArgumentException>(() => Generators.Records<NotARecord>());

@@ -407,13 +407,16 @@ internal sealed unsafe class Libhegel : ILibhegel
 
     public void RunFree(nint run)
     {
-        NativeMethods.hegel_run_free(Ctx, run);
+        GCHandle sink;
+        bool registered;
         lock (_outputs)
         {
-            if (_outputs.Remove(run, out var sink))
-            {
-                sink.Free();
-            }
+            registered = _outputs.Remove(run, out sink);
+        }
+        NativeMethods.hegel_run_free(Ctx, run);
+        if (registered)
+        {
+            sink.Free();
         }
     }
 
