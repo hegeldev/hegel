@@ -228,18 +228,10 @@ fn a_rule_in_several_groups_runs_in_the_rounds_of_each() {
 
 struct NoGroups;
 
-impl hegel::stateful::ConcurrentStateMachine for NoGroups {
-    fn rules(&self) -> Vec<hegel::stateful::ConcurrentRule<Self>> {
-        vec![hegel::stateful::ConcurrentRule::new(
-            "homeless",
-            &[],
-            1.0,
-            |_m: &Self, _tc| {},
-        )]
-    }
-    fn invariants(&self) -> Vec<hegel::stateful::ConcurrentInvariant<Self>> {
-        vec![]
-    }
+#[hegel::concurrent_state_machine]
+impl NoGroups {
+    #[rule(groups = [])]
+    fn homeless(&self, _: TestCase) {}
 }
 
 #[test]
@@ -260,18 +252,10 @@ fn a_rule_without_groups_is_a_usage_error() {
 
 struct RepeatedGroup;
 
-impl hegel::stateful::ConcurrentStateMachine for RepeatedGroup {
-    fn rules(&self) -> Vec<hegel::stateful::ConcurrentRule<Self>> {
-        vec![hegel::stateful::ConcurrentRule::new(
-            "twice",
-            &["g", "g"],
-            1.0,
-            |_m: &Self, _tc| {},
-        )]
-    }
-    fn invariants(&self) -> Vec<hegel::stateful::ConcurrentInvariant<Self>> {
-        vec![]
-    }
+#[hegel::concurrent_state_machine]
+impl RepeatedGroup {
+    #[rule(groups = ["g", "g"])]
+    fn twice(&self, _: TestCase) {}
 }
 
 #[test]

@@ -250,9 +250,10 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   per rule in name order (so the engine's rule indices are positions in the
   sorted list) and one `hegel_state_machine_add_invariant` per invariant, and
   `hegel_state_machine_start` seals the declaration and draws the concurrency
-  level. `@Rule(group = "g")` names become group ids (0.. in first-appearance
-  order, one id per rule; rules that name none share `Stateful.ANONYMOUS_GROUP`,
-  so a plain machine is all-zeros), `@Rule(weight = w)` becomes the rule's
+  level. `@Rule(groups = {"g", "h"})` names become group ids (0.. in
+  first-appearance order, one array per rule; a rule with an empty list gets
+  `Stateful.ANONYMOUS_GROUP`, so a plain machine is all-zeros; a repeated
+  group is left for the engine to reject), `@Rule(weight = w)` becomes the rule's
   weight (validated finite and positive in Java before the machine is created;
   the engine samples proportionally among the *enabled* rules, so weights are
   hints, and tests check them per case, not in aggregate), and

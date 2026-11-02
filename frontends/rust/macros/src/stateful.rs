@@ -94,33 +94,16 @@ struct RuleArgs {
 }
 
 /// Parse the `groups = ["...", ...]` value of a `#[rule]` attribute: a
-/// non-empty bracketed list of distinct string literals.
+/// bracketed list of string literals. The engine rejects an empty list and
+/// a repeated group when the machine runs.
 fn rule_groups(meta: &syn::meta::ParseNestedMeta) -> syn::Result<Vec<syn::LitStr>> {
     let input = meta.value()?;
     let content;
-    let bracket = syn::bracketed!(content in input);
-    let groups: Vec<syn::LitStr> = content
+    syn::bracketed!(content in input);
+    Ok(content
         .parse_terminated(|input| input.parse::<syn::LitStr>(), syn::Token![,])?
         .into_iter()
-        .collect();
-    if groups.is_empty() {
-        return Err(syn::Error::new(
-            bracket.span.join(),
-            "#[rule] groups must name at least one group",
-        ));
-    }
-    for (index, group) in groups.iter().enumerate() {
-        if groups[..index]
-            .iter()
-            .any(|seen| seen.value() == group.value())
-        {
-            return Err(syn::Error::new_spanned(
-                group,
-                format!("#[rule] groups lists group {:?} twice", group.value()),
-            ));
-        }
-    }
-    Ok(groups)
+        .collect())
 }
 
 /// Parse the `weight = <number>` value of a `#[rule]` attribute: an integer

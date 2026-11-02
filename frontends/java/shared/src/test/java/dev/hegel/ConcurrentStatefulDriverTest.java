@@ -74,13 +74,13 @@ class ConcurrentStatefulDriverTest {
             workers.add(t.worker());
         }
 
-        @Rule(group = "ops")
+        @Rule(groups = "ops")
         void beta(TestCase t) {
             applied.add("beta");
             t.assume(false);
         }
 
-        @Rule(group = "ops")
+        @Rule(groups = "ops")
         void gamma(TestCase t) {
             applied.add("gamma");
             t.draw(integers().min(0).max(9), "x");
@@ -107,7 +107,7 @@ class ConcurrentStatefulDriverTest {
 
         // Registration: groups numbered in first-appearance order over the name-sorted rules.
         assertEquals(List.of("alpha", "beta", "gamma"), fake.stateMachineRules);
-        assertArrayEquals(new long[] {0, 1, 1}, fake.stateMachineRuleGroups);
+        assertArrayEquals(new long[][] {{0}, {1}, {1}}, fake.stateMachineRuleGroups);
         assertEquals(2, fake.stateMachineMinConcurrency);
         assertEquals(2, fake.stateMachineMaxConcurrency);
         // Rules ran on worker threads, each worker pulling with its own index until its join point.
@@ -422,7 +422,28 @@ class ConcurrentStatefulDriverTest {
         assertFalse(tc.notes().contains("Concurrency level: 1"), tc.notes().toString());
         assertEquals(9, fake.stateMachineStepCount);
         // Groups are registered for sequential machines too; they have no effect at concurrency 1.
-        assertArrayEquals(new long[] {0, 1, 1}, fake.stateMachineRuleGroups);
+        assertArrayEquals(new long[][] {{0}, {1}, {1}}, fake.stateMachineRuleGroups);
+    }
+
+    /** Rules write and flush in a group each, and read in both of them. */
+    static final class Tiered {
+        @Rule(groups = "flush")
+        void flush(TestCase t) {}
+
+        @Rule(groups = {"write", "flush"})
+        void read(TestCase t) {}
+
+        @Rule(groups = "write")
+        void write(TestCase t) {}
+    }
+
+    @Test
+    void aRuleInSeveralGroupsIsRegisteredWithEveryGroupId() {
+        FakeLibhegel fake = new FakeLibhegel();
+        fake.ruleSequence = new long[] {0};
+        Stateful.run(new Tiered(), capturedCase(fake), Stateful.options().maxConcurrency(1));
+        assertEquals(List.of("flush", "read", "write"), fake.stateMachineRules);
+        assertArrayEquals(new long[][] {{0}, {1, 0}, {1}}, fake.stateMachineRuleGroups);
     }
 
     @Test

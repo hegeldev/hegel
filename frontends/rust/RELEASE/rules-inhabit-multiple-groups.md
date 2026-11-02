@@ -1,6 +1,6 @@
 RELEASE_TYPE: minor
 
-This release lets a rule of a concurrent state machine belong to several concurrency groups. The list must name at least one group and must not repeat one; both are compile errors. A bare `#[rule]` still indicates the anonymous group.
+This release lets a rule of a concurrent state machine belong to several concurrency groups: the rule runs in the rounds of each of them. The list must name at least one group and must not repeat one; the engine reports either as an invalid argument when the machine runs. A bare `#[rule]` still indicates the anonymous group.
 
 Before:
 

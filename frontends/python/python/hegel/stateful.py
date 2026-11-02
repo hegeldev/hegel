@@ -7,7 +7,7 @@ import inspect
 import math
 import queue
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -50,11 +50,13 @@ ANONYMOUS_GROUP = "<anonymous>"
 
 @dataclass(frozen=True)
 class Rule:
-    """A rule of a state machine: ``apply(tc)`` performs one step."""
+    """A rule of a state machine: ``apply(tc)`` performs one step.
+    ``groups`` names the concurrency groups it belongs to; it runs in the
+    rounds of each of them."""
 
     name: str
     apply: Callable[[TestCase], Any]
-    group: str = ANONYMOUS_GROUP
+    groups: tuple[str, ...] = (ANONYMOUS_GROUP,)
     weight: float = 1.0
 
 
@@ -115,7 +117,9 @@ class Machine:
     Each round, it picks one group of rules, every worker runs a short
     sequence of that group's rules against the shared model, and the
     invariants then run on the main thread. Rules in the same group may
-    overlap; rules in different groups never do. A concurrent run's
+    overlap; rules in different groups never do; a rule in several groups
+    runs in the rounds of each of them, so a ``read`` rule in both a
+    ``write`` and a ``flush`` group can overlap either. A concurrent run's
     failures may not reproduce exactly, so they are confirmed by replay
     and reported with a caveat; see
     :class:`~hegel.NondeterminismStrictness`.
@@ -134,7 +138,7 @@ class Machine:
         name: str,
         apply: Callable[[TestCase], Any] | None = None,
         *,
-        group: str | None = None,
+        groups: Iterable[str] | None = None,
         weight: float = 1.0,
     ) -> Any:
         """Add a rule called ``name`` that runs ``apply(tc)`` as one step;
@@ -142,11 +146,16 @@ class Machine:
 
         A rule that rejects (with :meth:`TestCase.assume
         <hegel.TestCase.assume>`) stops early without failing; rules
-        should reject before they change the model. ``group`` is the
-        concurrency group (rules without one share a group) and
-        ``weight`` a positive hint of how often to choose the rule
-        relative to the others. A duplicate name or a weight that is not
-        finite and positive is an :class:`~hegel.InvalidArgument`.
+        should reject before they change the model. ``groups`` names the
+        rule's concurrency groups: rules in the same group may overlap,
+        rules in different groups never do, and a rule in several groups
+        runs in the rounds of each of them (rules without one share the
+        anonymous group). ``weight`` is a positive hint of how often to
+        choose the rule relative to the others. A duplicate name or a
+        weight that is not finite and positive is an
+        :class:`~hegel.InvalidArgument`; so are an empty ``groups`` and
+        one that repeats a group, which the engine reports when the
+        machine runs.
         """
 
         def add(fn: Callable[[TestCase], Any]) -> Callable[[TestCase], Any]:
@@ -156,7 +165,7 @@ class Machine:
                 Rule(
                     name,
                     fn,
-                    ANONYMOUS_GROUP if group is None else str(group),
+                    (ANONYMOUS_GROUP,) if groups is None else tuple(str(g) for g in groups),
                     _check_weight(name, weight),
                 )
             )
@@ -460,9 +469,10 @@ def _run_concurrent(
     group_names: list[str] = []
     rule_specs: list[tuple[Rule, list[int]]] = []
     for r in rules:
-        if r.group not in group_names:
-            group_names.append(r.group)
-        rule_specs.append((r, [group_names.index(r.group)]))
+        for g in r.groups:
+            if g not in group_names:
+                group_names.append(g)
+        rule_specs.append((r, [group_names.index(g) for g in r.groups]))
     machine = _register_machine(
         tc, rule_specs, invariants, min_concurrency, max_concurrency, step_count
     )
@@ -542,7 +552,7 @@ def _check_step_method(kind: str, method: Callable[..., Any]) -> None:
 def rule(
     fn: Callable[..., Any] | None = None,
     *,
-    group: str | None = None,
+    groups: Iterable[str] | None = None,
     weight: float = 1.0,
     name: str | None = None,
 ) -> Any:
@@ -555,15 +565,15 @@ def rule(
             self.stack.append(tc.draw(gs.integers()))
 
     Usable as ``@hegel.rule`` or ``@hegel.rule(...)``. ``name`` replaces
-    the method name in the failure report; ``group`` and ``weight`` are as
-    for :meth:`Machine.rule`. A rule's precondition is a
+    the method name in the failure report; ``groups`` and ``weight`` are
+    as for :meth:`Machine.rule`. A rule's precondition is a
     :meth:`TestCase.assume <hegel.TestCase.assume>` at its top.
     """
 
     def decorate(method: Callable[..., Any]) -> Callable[..., Any]:
         _check_step_method("rule", method)
         method._hegel_rule = {  # type: ignore[attr-defined]
-            "group": group,
+            "groups": None if groups is None else tuple(str(g) for g in groups),
             "weight": _check_weight(name or method.__name__, weight),
             "name": name or method.__name__,
         }
@@ -660,7 +670,7 @@ class StateMachine:
         machine = Machine(tc)
         for attr, spec in self._rules():
             machine.rule(
-                spec["name"], getattr(self, attr), group=spec["group"], weight=spec["weight"]
+                spec["name"], getattr(self, attr), groups=spec["groups"], weight=spec["weight"]
             )
         for attr, spec in self._invariants():
             machine.invariant(spec["name"], getattr(self, attr), always_run=spec["always_run"])

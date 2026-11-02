@@ -266,7 +266,7 @@ class CoverageTest {
         assertEquals(List.of("alpha", "beta", "alpha"), machine.applied);
         // Registered sequentially: every rule in group 0, exactly one worker.
         assertEquals(List.of("alpha", "beta"), fake.stateMachineRules);
-        assertArrayEquals(new long[] {0, 0}, fake.stateMachineRuleGroups);
+        assertArrayEquals(new long[][] {{0}, {0}}, fake.stateMachineRuleGroups);
         // Every rule declared at the default weight.
         assertArrayEquals(new double[] {1.0, 1.0}, fake.stateMachineRuleWeights);
         assertEquals(1, fake.stateMachineMinConcurrency);

@@ -107,8 +107,9 @@ Stateful.run(new IntegerStack(), tc);
 ```
 
 Run the same machine with a concurrency bound to look for races: the engine draws how many worker
-threads apply the rules at once, `@Rule(group = "...")` says which rules may overlap, and a
-`ConcurrentPool` passes generated values between concurrent rules.
+threads apply the rules at once, `@Rule(groups = "...")` says which rules may overlap (a rule may
+list several groups and then runs in the rounds of each), and a `ConcurrentPool` passes generated
+values between concurrent rules.
 
 ```java
 Stateful.run(new Counter(tc), tc, Stateful.options().maxConcurrency(4));

@@ -1149,9 +1149,9 @@ impl<M> ConcurrentRule<M> {
     /// Create a new rule with a name, its concurrency groups, a selection
     /// weight, and an apply function. The rule is handed out whenever any
     /// of `groups` is the current group, so it may overlap the rules of
-    /// each; `groups` must name at least one group and must not repeat
-    /// one. Pass `&[ANONYMOUS_GROUP]` for a rule without a group
-    /// annotation (see [`ANONYMOUS_GROUP`]).
+    /// each. The engine rejects an empty `groups` and a repeated group
+    /// when the machine runs. Pass `&[ANONYMOUS_GROUP]` for a rule without
+    /// a group annotation (see [`ANONYMOUS_GROUP`]).
     pub fn new(name: &str, groups: &[&str], weight: f64, apply: fn(&M, TestCase)) -> Self {
         ConcurrentRule {
             name: name.to_string(),

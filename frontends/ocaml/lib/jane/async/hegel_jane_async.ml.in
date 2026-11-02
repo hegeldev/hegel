@@ -37,17 +37,17 @@ module Stateful = struct
   module Concurrent_rule = struct
     type 'state t =
       { name : string
-      ; group : string
+      ; groups : string list
       ; weight : float
       ; step : Hegel.test_case -> 'state -> unit Deferred.t
       }
 
-    let create ?(group = "<anonymous>") ?(weight = 1.0) ~name ~step () =
-      { name; group; weight; step }
+    let create ?(groups = [ "<anonymous>" ]) ?(weight = 1.0) ~name ~step () =
+      { name; groups; weight; step }
     ;;
 
     let name t = t.name
-    let group t = t.group
+    let groups t = t.groups
     let weight t = t.weight
   end
 
@@ -94,7 +94,7 @@ module Stateful = struct
       Hegel.Stateful.run_concurrent_core
         ~init
         ~rule_names:(List.map Concurrent_rule.name rules)
-        ~rule_groups:(List.map Concurrent_rule.group rules)
+        ~rule_groups:(List.map Concurrent_rule.groups rules)
         ~rule_weights:(List.map Concurrent_rule.weight rules)
         ~invariant_names:(List.map (fun (inv : _ Invariant.t) -> inv.name) invariants)
         ~invariants_always_check:

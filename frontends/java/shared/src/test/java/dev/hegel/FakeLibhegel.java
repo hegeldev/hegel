@@ -154,10 +154,10 @@ final class FakeLibhegel implements Libhegel {
     int stateMachineAddRuleRc = Abi.OK;
     int stateMachineAddInvariantRc = Abi.OK;
     int stateMachineStartRc = Abi.OK;
-    // What the declarations received, in declaration order: names, each rule's first group id
-    // (the drivers declare one group per rule) and weight, each invariant's always-check flag.
+    // What the declarations received, in declaration order: names, each rule's group ids and
+    // weight, each invariant's always-check flag.
     final List<String> stateMachineRules = new ArrayList<>();
-    long[] stateMachineRuleGroups = {};
+    long[][] stateMachineRuleGroups = {};
     double[] stateMachineRuleWeights = {};
     final List<String> stateMachineInvariants = new ArrayList<>();
     boolean[] stateMachineAlwaysCheck = {};
@@ -607,7 +607,7 @@ final class FakeLibhegel implements Libhegel {
         if (stateMachineAddRuleRc == Abi.OK) {
             stateMachineRules.add(name);
             stateMachineRuleGroups = Arrays.copyOf(stateMachineRuleGroups, stateMachineRuleGroups.length + 1);
-            stateMachineRuleGroups[stateMachineRuleGroups.length - 1] = groups[0];
+            stateMachineRuleGroups[stateMachineRuleGroups.length - 1] = groups.clone();
             stateMachineRuleWeights = Arrays.copyOf(stateMachineRuleWeights, stateMachineRuleWeights.length + 1);
             stateMachineRuleWeights[stateMachineRuleWeights.length - 1] = weight;
         }

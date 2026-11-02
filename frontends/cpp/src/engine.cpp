@@ -745,7 +745,7 @@ namespace hegel::internal {
 
     StateMachineHandle::StateMachineHandle(
         const TestCase& tc, const std::vector<std::string>& rule_names,
-        const std::vector<int64_t>& rule_groups,
+        const std::vector<std::vector<int64_t>>& rule_groups,
         const std::vector<std::string>& invariant_names,
         int64_t min_concurrency, int64_t max_concurrency) {
         impl::DrawScope scope(tc);
@@ -758,15 +758,17 @@ namespace hegel::internal {
                                     tc.data()->stateful_step_count, &handle_),
             "hegel_new_state_machine");
         try {
-            // Every rule has the same weight and belongs to one group, and
-            // every invariant is sampled at the engine's default
-            // probability; the public API exposes neither knob.
+            // Every rule has the same weight, and every invariant is
+            // sampled at the engine's default probability; the public API
+            // exposes neither knob. The engine validates each rule's group
+            // list.
             for (std::size_t i = 0; i < rule_names.size(); ++i) {
                 const std::string& name = rule_names[i];
+                const std::vector<int64_t>& groups = rule_groups[i];
                 scope.raise_for_rc(hegel_state_machine_add_rule(
                                        scope.ctx, scope.tc, handle_,
                                        hegel_string_t{name.data(), name.size()},
-                                       1.0, &rule_groups[i], 1),
+                                       1.0, groups.data(), groups.size()),
                                    "hegel_state_machine_add_rule");
             }
             for (const std::string& name : invariant_names) {

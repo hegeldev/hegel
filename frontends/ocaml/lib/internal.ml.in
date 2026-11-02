@@ -554,14 +554,14 @@ let new_state_machine_with_concurrency
     in
     match
       List.iter2
-        (fun name (group, weight) ->
+        (fun name (groups, weight) ->
            Ffi.state_machine_add_rule
              tc.context
              tc.handle
              ~state_machine
              ~name
              ~weight
-             ~groups:[ group ])
+             ~groups)
         rule_names
         (List.combine rule_groups rule_weights);
       List.iter2

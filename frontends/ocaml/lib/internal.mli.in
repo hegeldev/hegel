@@ -316,14 +316,17 @@ type state_machine = Hegel_ffi.Ffi.state_machine
     (one engine call per rule and invariant, in list order, then the start
     call) and returns its handle with the concurrency level selected by
     libhegel. [rule_groups] and [rule_weights] are parallel to [rule_names],
-    [invariants_always_check] to [invariant_names]. Raises {!Usage_error} if
-    there are no rules, a weight is not finite and positive, [step_count < 1],
-    or the bounds do not satisfy [1 <= min_concurrency <= max_concurrency];
-    the half-built machine is released before the exception propagates. *)
+    [invariants_always_check] to [invariant_names]; each rule's entry in
+    [rule_groups] lists the ids of the concurrency groups it belongs to, and
+    the rule is handed out in the rounds of every one of them. Raises
+    {!Usage_error} if there are no rules, a weight is not finite and positive,
+    a rule's group list is empty or repeats an id, [step_count < 1], or the
+    bounds do not satisfy [1 <= min_concurrency <= max_concurrency]; the
+    half-built machine is released before the exception propagates. *)
 val new_state_machine_with_concurrency
   :  test_case
   -> rule_names:string list
-  -> rule_groups:int list
+  -> rule_groups:int list list
   -> rule_weights:float list
   -> invariant_names:string list
   -> invariants_always_check:bool list

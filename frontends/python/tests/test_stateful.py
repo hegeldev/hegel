@@ -30,7 +30,7 @@ class Counter(hegel.StateMachine):
         step = tc.draw(gs.integers(1, 10))
         self.count += step
 
-    @hegel.rule(weight=0.5, group="decr")
+    @hegel.rule(weight=0.5, groups=["decr"])
     def decr(self, tc):
         n = tc.draw(gs.integers(1, 10))
         tc.assume(n <= self.count)
@@ -113,7 +113,7 @@ def test_rule_failure_is_reported():
 
 def test_class_based_machine_discovery_and_overrides():
     assert [name for name, _ in Counter._rules()] == ["incr", "decr"]
-    assert [spec["group"] for _, spec in Counter._rules()] == [None, "decr"]
+    assert [spec["groups"] for _, spec in Counter._rules()] == [None, ("decr",)]
     assert [name for name, _ in Counter._invariants()] == ["non_negative", "is_int"]
     assert Counter._invariants()[1][1]["always_run"] is True
 
@@ -170,7 +170,7 @@ def test_machine_builder_api():
         machine = Machine(tc)
         assert machine.rule("push", lambda tc: log.append("push")) is machine
 
-        @machine.rule("pop", group="g", weight=2)
+        @machine.rule("pop", groups=["g"], weight=2)
         def pop(tc):
             log.append("pop")
 
@@ -191,8 +191,8 @@ def test_machine_builder_api():
         with pytest.raises(InvalidArgument, match="weight"):
             machine.rule("w", lambda tc: None, weight=float("inf"))
         machine.run()
-        assert machine._rules[1].group == "g"
-        assert machine._rules[0].group == ANONYMOUS_GROUP
+        assert machine._rules[1].groups == ("g",)
+        assert machine._rules[0].groups == (ANONYMOUS_GROUP,)
 
     run_test(body, test_cases=3)
     assert "inv" in log and ("push" in log or "pop" in log)
@@ -447,13 +447,13 @@ class Bank(hegel.StateMachine):
         self.balance = 0
         self.lock = threading.Lock()
 
-    @hegel.rule(group="deposit")
+    @hegel.rule(groups=["deposit"])
     def deposit(self, tc):
         amount = tc.draw(gs.integers(1, 100))
         with self.lock:
             self.balance += amount
 
-    @hegel.rule(group="withdraw")
+    @hegel.rule(groups=["withdraw"])
     def withdraw(self, tc):
         amount = tc.draw(gs.integers(1, 100))
         if self.balance >= amount:  # racy check-then-act
@@ -483,7 +483,7 @@ def test_concurrent_machine_passes_when_safe():
         min_concurrency = 2
         max_concurrency = 3
 
-        @hegel.rule(group="withdraw")
+        @hegel.rule(groups=["withdraw"])
         def withdraw(self, tc):
             amount = tc.draw(gs.integers(1, 100))
             with self.lock:
@@ -491,6 +491,89 @@ def test_concurrent_machine_passes_when_safe():
                     self.balance -= amount
 
     hegel.state_machine_test(Safe, test_cases=20)()
+
+
+class TieredStore(hegel.StateMachine):
+    steps = 40
+    min_concurrency = 2
+    max_concurrency = 2
+
+    def __init__(self):
+        self.log = []
+
+    @hegel.rule(groups=["write"])
+    def write(self, tc):
+        self.log.append("write")
+
+    @hegel.rule(groups=["flush"])
+    def flush(self, tc):
+        self.log.append("flush")
+
+    @hegel.rule(groups=["write", "flush"])
+    def read(self, tc):
+        self.log.append("read")
+
+
+def test_a_rule_in_several_groups_is_declared_with_all_of_them():
+    assert [spec["groups"] for _, spec in TieredStore._rules()] == [
+        ("write",),
+        ("flush",),
+        ("write", "flush"),
+    ]
+
+    def body(tc):
+        machine = TieredStore().build_machine(tc)
+        assert [r.groups for r in machine._rules] == [("write",), ("flush",), ("write", "flush")]
+        machine.rule("audit", lambda tc: None, groups=iter(["flush", "audit", "write"]))
+        assert machine._rules[3].groups == ("flush", "audit", "write")
+
+    run_test(body, test_cases=1)
+
+
+def test_a_rule_in_several_groups_runs_in_the_rounds_of_each(output):
+    hegel.state_machine_test(TieredStore, test_cases=20, verbosity=hegel.Verbosity.verbose)()
+    current_group = None
+    read_under = set()
+    for line in output.lines:
+        match = re.search(r'^---------------- Round \d+: group "([^"]*)" ----------------$', line)
+        if match:
+            current_group = match.group(1)
+        elif "Rule: read {" in line:
+            read_under.add(current_group)
+        elif "Rule: write {" in line:
+            assert current_group == "write", line
+        elif "Rule: flush {" in line:
+            assert current_group == "flush", line
+    assert read_under == {"write", "flush"}, output.text
+
+
+def test_a_rule_without_groups_is_an_engine_error():
+    class Homeless(hegel.StateMachine):
+        max_concurrency = 2
+
+        @hegel.rule(groups=[])
+        def homeless(self, tc):
+            pass
+
+    with pytest.raises(
+        InvalidArgument,
+        match=r"a rule must belong to at least one group, but rule 0 \(homeless\) has none",
+    ):
+        hegel.state_machine_test(Homeless, test_cases=1)()
+
+
+def test_a_rule_repeating_a_group_is_an_engine_error():
+    def body(tc):
+        machine = Machine(tc).max_concurrency(2)
+        machine.rule("once", lambda tc: None, groups=["g"])
+        machine.rule("twice", lambda tc: None, groups=["h", "g", "g"])
+        machine.run()
+
+    with pytest.raises(
+        InvalidArgument,
+        match=r"a rule's groups must be distinct, but rule 1 \(twice\) lists group 0 twice",
+    ):
+        run_test(body, test_cases=1)
 
 
 def test_concurrent_rules_may_reject_and_use_pools():
