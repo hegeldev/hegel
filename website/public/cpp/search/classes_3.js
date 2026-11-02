@@ -1,6 +1,3 @@
-var searchData=
-[
-  ['failureorigin_0',['FailureOrigin',['../classhegel_1_1FailureOrigin.html',1,'hegel']]],
-  ['field_1',['Field',['../structhegel_1_1generators_1_1Field.html',1,'hegel::generators']]],
-  ['floatsparams_2',['FloatsParams',['../structhegel_1_1generators_1_1FloatsParams.html',1,'hegel::generators']]]
-];
+version https://git-lfs.github.com/spec/v1
+oid sha256:4f2f94eb73cce85a78eebc7b1c0da2fb8e8662282f83cd8e9452ffe7dfb1b74c
+size 320

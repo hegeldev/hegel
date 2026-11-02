@@ -1,6 +1,3 @@
-var searchData=
-[
-  ['hegel_0',['hegel',['../namespacehegel.html',1,'']]],
-  ['hegel_3a_3agenerators_1',['generators',['../namespacehegel_1_1generators.html',1,'hegel']]],
-  ['hegel_3a_3astateful_2',['stateful',['../namespacehegel_1_1stateful.html',1,'hegel']]]
-];
+version https://git-lfs.github.com/spec/v1
+oid sha256:c0e05e6274601dddc5319a2f6cc5d5015e6f2378da29b146ac865bdbb670daba
+size 265

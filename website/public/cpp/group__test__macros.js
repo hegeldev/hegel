@@ -1,5 +1,3 @@
-var group__test__macros =
-[
-    [ "HEGEL_REPRODUCE_FAILURE", "group__test__macros.html#ga999f42b20aca6caffe4f89a6767ec847", null ],
-    [ "HEGEL_TEST", "group__test__macros.html#ga169f32a3b09c62f6b25e6c9217c46ca0", null ]
-];
+version https://git-lfs.github.com/spec/v1
+oid sha256:606eae91b65c7a152c83fa1df3764a88aa26917793411f0b9337e9184752b0e5
+size 224

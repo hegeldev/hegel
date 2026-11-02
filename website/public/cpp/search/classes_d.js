@@ -1,5 +1,3 @@
-var searchData=
-[
-  ['variablesgenerator_0',['VariablesGenerator',['../classhegel_1_1stateful_1_1VariablesGenerator.html',1,'hegel::stateful']]],
-  ['vectorsparams_1',['VectorsParams',['../structhegel_1_1generators_1_1VectorsParams.html',1,'hegel::generators']]]
-];
+version https://git-lfs.github.com/spec/v1
+oid sha256:dee5b8c196007dee588d190d9677c626df1d41a6656de39353055bbb6e7206ad
+size 266

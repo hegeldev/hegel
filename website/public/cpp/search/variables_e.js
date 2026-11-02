@@ -1,4 +1,3 @@
-var searchData=
-[
-  ['test_5fcases_0',['test_cases',['../structhegel_1_1Settings.html#a73a0b3f269878772d6f8ce346e51191e',1,'hegel::Settings']]]
-];
+version https://git-lfs.github.com/spec/v1
+oid sha256:5aa05760a2667fb378b23bccee0636ba907171de50e4c8590c6e1326d08df01e
+size 147

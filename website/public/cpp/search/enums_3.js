@@ -1,4 +1,3 @@
-var searchData=
-[
-  ['nondeterminismstrictness_0',['NondeterminismStrictness',['../namespacehegel.html#acf2c3692138ebc619357b95b916322a9',1,'hegel']]]
-];
+version https://git-lfs.github.com/spec/v1
+oid sha256:f4c0f52c5e094edbe725e690a6e0fc4dbf60eaeceabefec56872b68ad1b83ff0
+size 154

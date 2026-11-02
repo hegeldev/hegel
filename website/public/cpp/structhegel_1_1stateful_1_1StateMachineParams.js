@@ -1,4 +1,3 @@
-var structhegel_1_1stateful_1_1StateMachineParams =
-[
-    [ "initial_state", "structhegel_1_1stateful_1_1StateMachineParams.html#ae0dd133b9305abb1f819325de6490bfe", null ]
-];
+version https://git-lfs.github.com/spec/v1
+oid sha256:49514379f9b68fbd42c5c69568d766d475e62297cd0bf6fd0b118f2048990b21
+size 174

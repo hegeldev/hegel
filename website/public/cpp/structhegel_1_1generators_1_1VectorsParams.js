@@ -1,6 +1,3 @@
-var structhegel_1_1generators_1_1VectorsParams =
-[
-    [ "max_size", "structhegel_1_1generators_1_1VectorsParams.html#a4feea36d997b16ab4e2698444e17126d", null ],
-    [ "min_size", "structhegel_1_1generators_1_1VectorsParams.html#a1d7df3909591824c1f20c0f16c70008e", null ],
-    [ "unique", "structhegel_1_1generators_1_1VectorsParams.html#a3265bc3851847621b7134ee4ffb27e02", null ]
-];
+version https://git-lfs.github.com/spec/v1
+oid sha256:7110d06ffafa7f85d8849fdd75f3acc8c217781a7022eb93b982d828b67e6c3b
+size 383

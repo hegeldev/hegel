@@ -1,4 +1,3 @@
-var searchData=
-[
-  ['path_0',['Path',['../classhegel_1_1Database.html#ace5961c34d3d89ef5ef59f60f1363b70aac70412e939d72a9234cdebb1af5867b',1,'hegel::Database']]]
-];
+version https://git-lfs.github.com/spec/v1
+oid sha256:e3ab0b7e789f8f3ed366ff50d8d316051ba359662ac9ae833601c30bbd9436ae
+size 165

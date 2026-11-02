@@ -1,7 +1,3 @@
-var classhegel_1_1stateful_1_1StateMachine =
-[
-    [ "state_type", "classhegel_1_1stateful_1_1StateMachine.html#a8dad964767a501c24e79e2b227b96ddc", null ],
-    [ "StateMachine", "classhegel_1_1stateful_1_1StateMachine.html#aa523c97a9af27366374ad2ca7b56affb", null ],
-    [ "invariants", "classhegel_1_1stateful_1_1StateMachine.html#a343cc01c3f9618bafcfe6b82c9b4e3cc", null ],
-    [ "state", "classhegel_1_1stateful_1_1StateMachine.html#a772e643626d6d0b86b0525af47762491", null ]
-];
+version https://git-lfs.github.com/spec/v1
+oid sha256:1a75800dfaee30196a8f1a7114f00a9e6bcc2838921beaf14cc3d4d9e29f18ae
+size 481

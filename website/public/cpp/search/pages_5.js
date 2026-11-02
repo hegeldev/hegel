@@ -1,5 +1,3 @@
-var searchData=
-[
-  ['hegel_0',['Hegel',['../index.html',1,'Hegel'],['../index.html#install',1,'Install Hegel']]],
-  ['hegel_20and_20test_20frameworks_1',['Hegel and test frameworks',['../index.html#use_gtest',1,'']]]
-];
+version https://git-lfs.github.com/spec/v1
+oid sha256:7fda6320c821aa8c36137ddef1eef2e61ac346f0ae15e2aaaf328bab991909e2
+size 221

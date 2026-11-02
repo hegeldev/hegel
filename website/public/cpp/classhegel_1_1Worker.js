@@ -1,5 +1,3 @@
-var classhegel_1_1Worker =
-[
-    [ "Worker", "classhegel_1_1Worker.html#addc62f6cc1ccaab7eeab5f4fa28ca1aa", null ],
-    [ "join", "classhegel_1_1Worker.html#a8c3d55b49642d140d8f60473841fda47", null ]
-];
+version https://git-lfs.github.com/spec/v1
+oid sha256:0fbdb613eb6e470076f3331b2a426c25147e7c4f9b2d0422dbe7f07b642c3811
+size 202

@@ -1,6 +1,3 @@
-var searchData=
-[
-  ['failing_20test_20cases_0',['Debug your failing test cases',['../index.html#debug_failing',1,'']]],
-  ['first_20test_1',['Write your first test',['../index.html#first_test',1,'']]],
-  ['frameworks_2',['Hegel and test frameworks',['../index.html#use_gtest',1,'']]]
-];
+version https://git-lfs.github.com/spec/v1
+oid sha256:472259b7ad4fdc5d7f3b00cd6a0c0e4617619305709588adc038cadd0044a5bb
+size 288

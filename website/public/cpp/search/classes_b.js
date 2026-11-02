@@ -1,6 +1,3 @@
-var searchData=
-[
-  ['testcase_0',['TestCase',['../classhegel_1_1TestCase.html',1,'hegel']]],
-  ['testlocation_1',['TestLocation',['../structhegel_1_1TestLocation.html',1,'hegel']]],
-  ['textparams_2',['TextParams',['../structhegel_1_1generators_1_1TextParams.html',1,'hegel::generators']]]
-];
+version https://git-lfs.github.com/spec/v1
+oid sha256:cc3ba51d39da6380f177e2534ceaf6a001cbc8ed500943780719918a50a06a03
+size 294

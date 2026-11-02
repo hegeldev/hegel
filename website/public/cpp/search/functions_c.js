@@ -1,4 +1,3 @@
-var searchData=
-[
-  ['pool_0',['Pool',['../classhegel_1_1stateful_1_1Pool.html#a2bbd93251f370358f82d31604add19fa',1,'hegel::stateful::Pool']]]
-];
+version https://git-lfs.github.com/spec/v1
+oid sha256:363a07af1d47c42526e1596edb07967e6de98db1eeb0f08c26fa579612adb347
+size 146

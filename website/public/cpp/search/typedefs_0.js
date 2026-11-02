@@ -1,4 +1,3 @@
-var searchData=
-[
-  ['function_0',['Function',['../classhegel_1_1stateful_1_1ConcurrentRule.html#a1a6313a1281ca96041c621b6fafae444',1,'hegel::stateful::ConcurrentRule']]]
-];
+version https://git-lfs.github.com/spec/v1
+oid sha256:5ad586180279a7439067199675f4b10593227c92517872da52f550df2f9727f4
+size 174

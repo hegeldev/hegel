@@ -1,5 +1,3 @@
-var searchData=
-[
-  ['your_20failing_20test_20cases_0',['Debug your failing test cases',['../index.html#debug_failing',1,'']]],
-  ['your_20first_20test_1',['Write your first test',['../index.html#first_test',1,'']]]
-];
+version https://git-lfs.github.com/spec/v1
+oid sha256:df298b10b9a7ed060cc05455df1aba6e815f7e5a6ad0222f7642e80547b3dde5
+size 219

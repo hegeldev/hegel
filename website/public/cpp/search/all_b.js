@@ -1,6 +1,3 @@
-var searchData=
-[
-  ['largeinitialtestcase_0',['LargeInitialTestCase',['../namespacehegel.html#a98e2c0a6bc324370d8fb109cd3a2c71daa057e626223174c2433962916cbfaca0',1,'hegel']]],
-  ['learning_20more_1',['Learning more',['../index.html#learning_more',1,'']]],
-  ['line_2',['line',['../structhegel_1_1TestLocation.html#a047c34610ce7b2cdfca8f92ea458ab10',1,'hegel::TestLocation']]]
-];
+version https://git-lfs.github.com/spec/v1
+oid sha256:b7fc281414f18914f542639622ebed4704393e303e8593ad42dfb765ed0d8019
+size 380

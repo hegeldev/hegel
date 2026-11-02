@@ -1,4 +1,3 @@
-var searchData=
-[
-  ['verbose_0',['Verbose',['../namespacehegel.html#aa5d3c97b2de55ed337e5bf3a9bc92eb8ad4a9fa383ab700c5bdd6f31cf7df0faf',1,'hegel']]]
-];
+version https://git-lfs.github.com/spec/v1
+oid sha256:40b06c8903ef8416823d22e00484442207e49887a21136b475043ee9253d4f84
+size 153

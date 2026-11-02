@@ -1,4 +1,3 @@
-var searchData=
-[
-  ['auto_0',['Auto',['../namespacehegel.html#a887e0714b99c358aa474848809bca688a06b9281e396db002010bde1de57262eb',1,'hegel']]]
-];
+version https://git-lfs.github.com/spec/v1
+oid sha256:eb8824eae608c44b73314dfc99de4b66acba9225a3a5f63f8e5df0bb5f7c57e2
+size 147

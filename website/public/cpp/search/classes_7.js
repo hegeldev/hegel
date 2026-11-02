@@ -1,5 +1,3 @@
-var searchData=
-[
-  ['mappedgenerator_0',['MappedGenerator',['../classhegel_1_1generators_1_1MappedGenerator.html',1,'hegel::generators']]],
-  ['mapsparams_1',['MapsParams',['../structhegel_1_1generators_1_1MapsParams.html',1,'hegel::generators']]]
-];
+version https://git-lfs.github.com/spec/v1
+oid sha256:d921608c9f9579fb404fb199f6ee04895f6f684c46ed5bccb3dfb6a62eb880d3
+size 252

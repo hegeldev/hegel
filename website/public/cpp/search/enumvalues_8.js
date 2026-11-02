@@ -1,4 +1,3 @@
-var searchData=
-[
-  ['quiet_0',['Quiet',['../namespacehegel.html#aa5d3c97b2de55ed337e5bf3a9bc92eb8a098753f8980036f4b936e3d4b6997111',1,'hegel::Quiet'],['../namespacehegel.html#acf2c3692138ebc619357b95b916322a9a098753f8980036f4b936e3d4b6997111',1,'hegel::Quiet']]]
-];
+version https://git-lfs.github.com/spec/v1
+oid sha256:f77c548e04dd6f89f4b15bb076d3c856911d4cd702147a723095585cd0d5f0d5
+size 267
