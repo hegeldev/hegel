@@ -21,6 +21,7 @@ just website::build   # production build into dist/
 - **Go module redirect**: `public/go/hegel.html` serves the `go-import` meta tag so `go get hegel.dev/go/hegel` resolves via [hegel-go-modproxy](https://github.com/hegeldev/hegel-go-modproxy), a GOPROXY that serves the module with its git-lfs files. `cleanUrls` in `vercel.json` serves it at `/go/hegel`.
 - **Custom CSS**: `src/styles/style.css` overrides Starlight defaults (text color, line height, admonition styling). External sidebar links use the `.external-link` class, which appends the icon in `src/assets/external-link.svg`.
 - **Images**: the Hedgel mascot images live in `src/assets/` and `public/`.
+- **Git LFS**: `.gitattributes` stores every image and everything under `public/cpp/` and `public/typescript/` in Git LFS, so a checkout without `git lfs` has pointer files there and the build fails. CI checks the site out with `lfs: true`, and the Vercel project has Git LFS enabled.
 
 ## CI
 
