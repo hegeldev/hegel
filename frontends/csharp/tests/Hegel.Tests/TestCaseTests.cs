@@ -9,7 +9,7 @@ public class TestCaseTests
 {
     private sealed class Unprintable : Generator<int>
     {
-        public override int DoDraw(TestCase tc) => (int)tc.GenerateInteger(5, 5);
+        protected internal override int DoDraw(TestCase tc) => (int)tc.GenerateInteger(5, 5);
     }
 
     private static Settings Explicit(params Example[] examples) => Engines.Quiet with { Examples = examples, Verbosity = Verbosity.Normal };

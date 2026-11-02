@@ -84,7 +84,7 @@ internal static class Derive
     {
         public override ulong Label => source.Label;
 
-        public override TTarget DoDrawAndPrint(TestCase tc, Printer printer) => (TTarget)(object)source.DoDrawAndPrint(tc, printer)!;
+        protected internal override TTarget DoDrawAndPrint(TestCase tc, Printer printer) => (TTarget)(object)source.DoDrawAndPrint(tc, printer)!;
     }
 
     private static class NullableOf<T> where T : struct
@@ -298,10 +298,10 @@ public sealed class RecordGenerator<T> : PrintableGenerator<T>
     public override ulong Label => _label.Get(() => Hegel.Label.Combine(Hegel.Label.FixedDict, Hegel.Label.Of(typeof(T).FullName!)));
 
     /// <inheritdoc />
-    public override T DoDraw(TestCase tc) => Draw(tc, null);
+    protected internal override T DoDraw(TestCase tc) => Draw(tc, null);
 
     /// <inheritdoc />
-    public override T DoDrawAndPrint(TestCase tc, Printer printer) => Draw(tc, printer);
+    protected internal override T DoDrawAndPrint(TestCase tc, Printer printer) => Draw(tc, printer);
 
     private T Draw(TestCase tc, Printer? printer)
     {

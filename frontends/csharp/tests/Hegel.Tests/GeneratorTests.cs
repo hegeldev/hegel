@@ -7,14 +7,14 @@ public class GeneratorTests
 {
     private sealed class Silent : Generator<int>
     {
-        public override int DoDraw(TestCase tc) => (int)tc.GenerateInteger(3, 3);
+        protected internal override int DoDraw(TestCase tc) => (int)tc.GenerateInteger(3, 3);
     }
 
     private sealed class Recording : PrintableGenerator<int>
     {
         internal Printer? Printer { get; private set; }
 
-        public override int DoDrawAndPrint(TestCase tc, Printer printer)
+        protected internal override int DoDrawAndPrint(TestCase tc, Printer printer)
         {
             Printer = printer;
             printer.Text("recorded");
@@ -26,7 +26,7 @@ public class GeneratorTests
     {
         public override ulong Label => 12345;
 
-        public override int DoDraw(TestCase tc) => 1;
+        protected internal override int DoDraw(TestCase tc) => 1;
     }
 
     [Fact]

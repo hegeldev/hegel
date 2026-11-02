@@ -23,7 +23,7 @@ public sealed class DateGenerator : ValueGenerator<DateOnly>
     public DateGenerator Max(DateOnly max) => new(_min, max);
 
     /// <inheritdoc />
-    public override DateOnly DoDraw(TestCase tc) => tc.GenerateDate(_min, _max);
+    protected internal override DateOnly DoDraw(TestCase tc) => tc.GenerateDate(_min, _max);
 }
 
 /// <summary>Draws times of day.</summary>
@@ -49,7 +49,7 @@ public sealed class TimeGenerator : ValueGenerator<TimeOnly>
     public TimeGenerator Max(TimeOnly max) => new(_min, max);
 
     /// <inheritdoc />
-    public override TimeOnly DoDraw(TestCase tc) => tc.GenerateTime(_min, _max);
+    protected internal override TimeOnly DoDraw(TestCase tc) => tc.GenerateTime(_min, _max);
 }
 
 /// <summary>Draws date-times without a time zone (<see cref="DateTimeKind.Unspecified"/>).</summary>
@@ -75,7 +75,7 @@ public sealed class DateTimeGenerator : ValueGenerator<DateTime>
     public DateTimeGenerator Max(DateTime max) => new(_min, max);
 
     /// <inheritdoc />
-    public override DateTime DoDraw(TestCase tc) => tc.GenerateDatetime(_min, _max);
+    protected internal override DateTime DoDraw(TestCase tc) => tc.GenerateDatetime(_min, _max);
 
     /// <summary>These date-times paired with offsets from <paramref name="offsets"/>, as <see cref="DateTimeOffset"/>s.</summary>
     public PrintableGenerator<DateTimeOffset> WithOffsets(Generator<TimeSpan> offsets) =>
@@ -122,7 +122,7 @@ public sealed class TimeSpanGenerator : ValueGenerator<TimeSpan>
     public TimeSpanGenerator Max(TimeSpan max) => new(_min, max);
 
     /// <inheritdoc />
-    public override TimeSpan DoDraw(TestCase tc) => TimeSpan.FromTicks(tc.GenerateInteger(_min.Ticks, _max.Ticks));
+    protected internal override TimeSpan DoDraw(TestCase tc) => TimeSpan.FromTicks(tc.GenerateInteger(_min.Ticks, _max.Ticks));
 }
 
 /// <summary>Draws UTC offsets: whole minutes between -14:00 and +14:00.</summary>
@@ -163,5 +163,5 @@ public sealed class UtcOffsetGenerator : ValueGenerator<TimeSpan>
     public UtcOffsetGenerator Max(TimeSpan max) => new(TimeSpan.FromMinutes(_minMinutes), max);
 
     /// <inheritdoc />
-    public override TimeSpan DoDraw(TestCase tc) => TimeSpan.FromMinutes(tc.GenerateInteger(_minMinutes, _maxMinutes));
+    protected internal override TimeSpan DoDraw(TestCase tc) => TimeSpan.FromMinutes(tc.GenerateInteger(_minMinutes, _maxMinutes));
 }

@@ -647,7 +647,7 @@ public class RunnerTests
 
     private sealed class Unprintable : Generator<int>
     {
-        public override int DoDraw(TestCase tc) => 1;
+        protected internal override int DoDraw(TestCase tc) => 1;
     }
 
     private sealed class ErroringResults(ILibhegel inner, int failFrom, int kind = Abi.RunErrorInternal) : DelegatingLibhegel(inner)

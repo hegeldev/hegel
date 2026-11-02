@@ -19,7 +19,7 @@ public sealed class MappedGenerator<TSource, TResult> : ValueGenerator<TResult>
     public override ulong Label => _label.Get(() => Hegel.Label.Combine(Hegel.Label.Mapped, _source.Label));
 
     /// <inheritdoc />
-    public override TResult DoDraw(TestCase tc) => _f(tc.DrawSilent(_source));
+    protected internal override TResult DoDraw(TestCase tc) => _f(tc.DrawSilent(_source));
 
     /// <summary>
     /// This generator, printing each value as a call of <paramref name="function"/> on the source's
@@ -51,9 +51,9 @@ public sealed class MappedGenerator<TSource, TResult> : ValueGenerator<TResult>
 
         public override ulong Label => _outer.Label;
 
-        public override TResult DoDraw(TestCase tc) => _outer.DoDraw(tc);
+        protected internal override TResult DoDraw(TestCase tc) => _outer.DoDraw(tc);
 
-        public override TResult DoDrawAndPrint(TestCase tc, Printer printer)
+        protected internal override TResult DoDrawAndPrint(TestCase tc, Printer printer)
         {
             printer.BeginGroup(_open);
             var input = tc.DrawAndPrint(_outer._source, printer);
@@ -83,10 +83,10 @@ public sealed class FilteredGenerator<T> : PrintableGenerator<T>
     public override ulong Label => _label.Get(() => Hegel.Label.Combine(Hegel.Label.Filter, _source.Label));
 
     /// <inheritdoc />
-    public override T DoDraw(TestCase tc) => Draw(tc, null);
+    protected internal override T DoDraw(TestCase tc) => Draw(tc, null);
 
     /// <inheritdoc />
-    public override T DoDrawAndPrint(TestCase tc, Printer printer) => Draw(tc, printer);
+    protected internal override T DoDrawAndPrint(TestCase tc, Printer printer) => Draw(tc, printer);
 
     private T Draw(TestCase tc, Printer? printer)
     {
@@ -139,10 +139,10 @@ public sealed class FlatMappedGenerator<TSource, TResult> : PrintableGenerator<T
     public override ulong Label => _label.Get(() => Hegel.Label.Combine(Hegel.Label.FlatMap, _source.Label));
 
     /// <inheritdoc />
-    public override TResult DoDraw(TestCase tc) => Draw(tc, null);
+    protected internal override TResult DoDraw(TestCase tc) => Draw(tc, null);
 
     /// <inheritdoc />
-    public override TResult DoDrawAndPrint(TestCase tc, Printer printer) => Draw(tc, printer);
+    protected internal override TResult DoDrawAndPrint(TestCase tc, Printer printer) => Draw(tc, printer);
 
     private TResult Draw(TestCase tc, Printer? printer) => Components.Draw(tc, _f(tc.DrawSilent(_source)), printer);
 }
@@ -163,10 +163,10 @@ public sealed class PrintedGenerator<T> : PrintableGenerator<T>
     public override ulong Label => _source.Label;
 
     /// <inheritdoc />
-    public override T DoDraw(TestCase tc) => _source.DoDraw(tc);
+    protected internal override T DoDraw(TestCase tc) => _source.DoDraw(tc);
 
     /// <inheritdoc />
-    public override T DoDrawAndPrint(TestCase tc, Printer printer)
+    protected internal override T DoDrawAndPrint(TestCase tc, Printer printer)
     {
         var value = _source.DoDraw(tc);
         if (printer.ShouldPrint)
@@ -200,10 +200,10 @@ public sealed class Deferred<T> : PrintableGenerator<T>
     public override ulong Label => Hegel.Label.Deferred;
 
     /// <inheritdoc />
-    public override T DoDraw(TestCase tc) => Components.Draw(tc, Delegate(), null);
+    protected internal override T DoDraw(TestCase tc) => Components.Draw(tc, Delegate(), null);
 
     /// <inheritdoc />
-    public override T DoDrawAndPrint(TestCase tc, Printer printer) => Components.Draw(tc, Delegate(), printer);
+    protected internal override T DoDrawAndPrint(TestCase tc, Printer printer) => Components.Draw(tc, Delegate(), printer);
 
     private Generator<T> Delegate() => _delegate ?? throw new InvalidOperationException("deferred generator has not been set");
 }
@@ -219,7 +219,7 @@ internal sealed class CompositeGenerator<T> : ValueGenerator<T>
 
     public override ulong Label => Hegel.Label.Composite;
 
-    public override T DoDraw(TestCase tc) => _body(tc);
+    protected internal override T DoDraw(TestCase tc) => _body(tc);
 }
 
 internal sealed class PrintingCompositeGenerator<T> : PrintableGenerator<T>
@@ -233,7 +233,7 @@ internal sealed class PrintingCompositeGenerator<T> : PrintableGenerator<T>
 
     public override ulong Label => Hegel.Label.Composite;
 
-    public override T DoDrawAndPrint(TestCase tc, Printer printer) => _body(tc, printer);
+    protected internal override T DoDrawAndPrint(TestCase tc, Printer printer) => _body(tc, printer);
 }
 
 internal sealed class ConstantGenerator<T> : ValueGenerator<T>
@@ -247,7 +247,7 @@ internal sealed class ConstantGenerator<T> : ValueGenerator<T>
 
     public override ulong Label => Hegel.Label.Of("hegel.just");
 
-    public override T DoDraw(TestCase tc) => _value;
+    protected internal override T DoDraw(TestCase tc) => _value;
 }
 
 internal sealed class SampledFromGenerator<T> : ValueGenerator<T>
@@ -261,7 +261,7 @@ internal sealed class SampledFromGenerator<T> : ValueGenerator<T>
 
     public override ulong Label => Hegel.Label.SampledFrom;
 
-    public override T DoDraw(TestCase tc) => _values[tc.GenerateInteger(0, _values.Length - 1)];
+    protected internal override T DoDraw(TestCase tc) => _values[tc.GenerateInteger(0, _values.Length - 1)];
 }
 
 internal sealed class OneOfGenerator<T> : PrintableGenerator<T>
@@ -280,9 +280,9 @@ internal sealed class OneOfGenerator<T> : PrintableGenerator<T>
 
     public override ulong Label => _label.Get(() => CachedLabel.Combine(Hegel.Label.OneOf, _options));
 
-    public override T DoDraw(TestCase tc) => Draw(tc, null);
+    protected internal override T DoDraw(TestCase tc) => Draw(tc, null);
 
-    public override T DoDrawAndPrint(TestCase tc, Printer printer) => Draw(tc, printer);
+    protected internal override T DoDrawAndPrint(TestCase tc, Printer printer) => Draw(tc, printer);
 
     private T Draw(TestCase tc, Printer? printer) =>
         Components.Draw(tc, _options[tc.GenerateInteger(0, _options.Length - 1)], printer);
@@ -304,9 +304,9 @@ internal sealed class OptionalGenerator<T, TResult> : PrintableGenerator<TResult
 
     public override ulong Label => _label.Get(() => Hegel.Label.Combine(Hegel.Label.Optional, _inner.Label));
 
-    public override TResult DoDraw(TestCase tc) => Draw(tc, null);
+    protected internal override TResult DoDraw(TestCase tc) => Draw(tc, null);
 
-    public override TResult DoDrawAndPrint(TestCase tc, Printer printer) => Draw(tc, printer);
+    protected internal override TResult DoDrawAndPrint(TestCase tc, Printer printer) => Draw(tc, printer);
 
     private TResult Draw(TestCase tc, Printer? printer)
     {
@@ -337,9 +337,9 @@ internal sealed class TupleGenerator<T> : PrintableGenerator<T>
 
     public override ulong Label => _label.Get(() => CachedLabel.Combine(Hegel.Label.Tuple, _elements));
 
-    public override T DoDraw(TestCase tc) => Draw(tc, null);
+    protected internal override T DoDraw(TestCase tc) => Draw(tc, null);
 
-    public override T DoDrawAndPrint(TestCase tc, Printer printer) => Draw(tc, printer);
+    protected internal override T DoDrawAndPrint(TestCase tc, Printer printer) => Draw(tc, printer);
 
     private T Draw(TestCase tc, Printer? printer)
     {
@@ -394,7 +394,7 @@ internal sealed class PermutationGenerator<T> : ValueGenerator<List<T>>
 
     public override ulong Label => Hegel.Label.Permutation;
 
-    public override List<T> DoDraw(TestCase tc)
+    protected internal override List<T> DoDraw(TestCase tc)
     {
         var n = (ulong)_elements.Length;
         return IndexSamples.Draw(tc, _elements.Length, n, n).Select(i => _elements[i]).ToList();
@@ -429,7 +429,7 @@ public sealed class SubsequenceGenerator<T> : ValueGenerator<List<T>>
     public override ulong Label => Hegel.Label.Subsequence;
 
     /// <inheritdoc />
-    public override List<T> DoDraw(TestCase tc)
+    protected internal override List<T> DoDraw(TestCase tc)
     {
         var n = (ulong)_elements.Length;
         var max = _maxSize == Abi.Unbounded ? n : Math.Min(_maxSize, n);
@@ -483,7 +483,7 @@ public sealed class SampleGenerator<T> : ValueGenerator<List<T>>
     public override ulong Label => Hegel.Label.Sample;
 
     /// <inheritdoc />
-    public override List<T> DoDraw(TestCase tc)
+    protected internal override List<T> DoDraw(TestCase tc)
     {
         var n = _elements.Length;
         var output = new List<T>();
@@ -576,10 +576,10 @@ public sealed class ListGenerator<T> : PrintableGenerator<List<T>>
     public override ulong Label => _label.Get(() => Hegel.Label.Combine(Hegel.Label.List, _element.Label));
 
     /// <inheritdoc />
-    public override List<T> DoDraw(TestCase tc) => Draw(tc, null, $"new {Printer.TypeName(typeof(List<T>))} {{", "}");
+    protected internal override List<T> DoDraw(TestCase tc) => Draw(tc, null, $"new {Printer.TypeName(typeof(List<T>))} {{", "}");
 
     /// <inheritdoc />
-    public override List<T> DoDrawAndPrint(TestCase tc, Printer printer) => Draw(tc, printer, $"new {Printer.TypeName(typeof(List<T>))} {{", "}");
+    protected internal override List<T> DoDrawAndPrint(TestCase tc, Printer printer) => Draw(tc, printer, $"new {Printer.TypeName(typeof(List<T>))} {{", "}");
 
     internal List<T> Draw(TestCase tc, Printer? printer, string open, string close)
     {
@@ -646,10 +646,10 @@ public sealed class ArrayGenerator<T> : PrintableGenerator<T[]>
     public override ulong Label => _label.Get(() => Hegel.Label.Combine(Hegel.Label.Array, _lists.Label));
 
     /// <inheritdoc />
-    public override T[] DoDraw(TestCase tc) => Draw(tc, null);
+    protected internal override T[] DoDraw(TestCase tc) => Draw(tc, null);
 
     /// <inheritdoc />
-    public override T[] DoDrawAndPrint(TestCase tc, Printer printer) => Draw(tc, printer);
+    protected internal override T[] DoDrawAndPrint(TestCase tc, Printer printer) => Draw(tc, printer);
 
     private T[] Draw(TestCase tc, Printer? printer) =>
         _lists.Draw(tc, printer, $"new {Printer.TypeName(typeof(T))}[] {{", "}").ToArray();
@@ -680,10 +680,10 @@ public sealed class SetGenerator<T> : PrintableGenerator<HashSet<T>>
     public override ulong Label => _label.Get(() => Hegel.Label.Combine(Hegel.Label.Set, _element.Label));
 
     /// <inheritdoc />
-    public override HashSet<T> DoDraw(TestCase tc) => Draw(tc, null);
+    protected internal override HashSet<T> DoDraw(TestCase tc) => Draw(tc, null);
 
     /// <inheritdoc />
-    public override HashSet<T> DoDrawAndPrint(TestCase tc, Printer printer) => Draw(tc, printer);
+    protected internal override HashSet<T> DoDrawAndPrint(TestCase tc, Printer printer) => Draw(tc, printer);
 
     private HashSet<T> Draw(TestCase tc, Printer? printer)
     {
@@ -749,10 +749,10 @@ public sealed class MapGenerator<TKey, TValue> : PrintableGenerator<Dictionary<T
     public override ulong Label => _label.Get(() => Hegel.Label.Combine(Hegel.Label.Map, _keys.Label, _values.Label));
 
     /// <inheritdoc />
-    public override Dictionary<TKey, TValue> DoDraw(TestCase tc) => Draw(tc, null);
+    protected internal override Dictionary<TKey, TValue> DoDraw(TestCase tc) => Draw(tc, null);
 
     /// <inheritdoc />
-    public override Dictionary<TKey, TValue> DoDrawAndPrint(TestCase tc, Printer printer) => Draw(tc, printer);
+    protected internal override Dictionary<TKey, TValue> DoDrawAndPrint(TestCase tc, Printer printer) => Draw(tc, printer);
 
     private Dictionary<TKey, TValue> Draw(TestCase tc, Printer? printer)
     {
@@ -838,10 +838,10 @@ public sealed class RecursiveGenerator<T> : PrintableGenerator<T>
     public override ulong Label => _label.Get(() => Hegel.Label.Combine(Hegel.Label.Recursive, _base.Label));
 
     /// <inheritdoc />
-    public override T DoDraw(TestCase tc) => Draw(tc, null);
+    protected internal override T DoDraw(TestCase tc) => Draw(tc, null);
 
     /// <inheritdoc />
-    public override T DoDrawAndPrint(TestCase tc, Printer printer) => Draw(tc, printer);
+    protected internal override T DoDrawAndPrint(TestCase tc, Printer printer) => Draw(tc, printer);
 
     private T Draw(TestCase tc, Printer? printer)
     {
@@ -903,8 +903,8 @@ public sealed class RecursiveGenerator<T> : PrintableGenerator<T>
 
         public override ulong Label => _outer.Label;
 
-        public override T DoDraw(TestCase inner) => _outer.DrawSubtree(inner, _recursion, _depth, null);
+        protected internal override T DoDraw(TestCase inner) => _outer.DrawSubtree(inner, _recursion, _depth, null);
 
-        public override T DoDrawAndPrint(TestCase inner, Printer innerPrinter) => _outer.DrawSubtree(inner, _recursion, _depth, innerPrinter);
+        protected internal override T DoDrawAndPrint(TestCase inner, Printer innerPrinter) => _outer.DrawSubtree(inner, _recursion, _depth, innerPrinter);
     }
 }

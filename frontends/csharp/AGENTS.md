@@ -126,7 +126,10 @@ There is no engine version pin to keep in step in this directory.
   on this package (`Hegel.FSharp` applies it) reports the user's frame.
 - `Generator`, `Generators`, `Generators/` — `Generator<T>` (`DoDraw`,
   `Label`, `Map`/`Filter`/`FlatMap`/`PrintWith`) and `PrintableGenerator<T>`
-  (`DoDrawAndPrint`, which prints as it draws); `Generators` is the facade;
+  (`DoDrawAndPrint`, which prints as it draws). The two hooks are
+  `protected internal`: only `TestCase.DrawSilent`/`DrawAndPrint` call them,
+  inside the generator's span, so a generator draws its parts through the
+  `TestCase`, never by calling another generator's hook. `Generators` is the facade;
   `Primitives`, `Strings`, `Temporal`, `Combinators`, `Derive` (reflection
   over scalars, enums, nullables, collections, tuples and records,
   `RecordGenerator<T>`) and `Internal` (`ValueGenerator<T>`, handle caches,

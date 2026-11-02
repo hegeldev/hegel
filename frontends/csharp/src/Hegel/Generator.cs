@@ -13,8 +13,12 @@ public abstract class Generator<T> : IGenerator
 
     ulong IGenerator.Label => Label;
 
-    /// <summary>Draw one value. Called inside a span labelled <see cref="Label"/>.</summary>
-    public abstract T DoDraw(TestCase tc);
+    /// <summary>
+    /// Draw one value. Called inside a span labelled <see cref="Label"/>: draw from another
+    /// generator through <see cref="TestCase.DrawSilent{T}"/>, which opens its span, rather than
+    /// by calling its hook.
+    /// </summary>
+    protected internal abstract T DoDraw(TestCase tc);
 
     private ulong? _label;
 
@@ -64,11 +68,14 @@ public abstract class Generator<T> : IGenerator
 /// <typeparam name="T">The type of value drawn.</typeparam>
 public abstract class PrintableGenerator<T> : Generator<T>
 {
-    /// <summary>Draw one value, printing it to <paramref name="printer"/> (which may be <see cref="Printer.Noop"/>).</summary>
-    public abstract T DoDrawAndPrint(TestCase tc, Printer printer);
+    /// <summary>
+    /// Draw one value, printing it to <paramref name="printer"/> (which may be <see cref="Printer.Noop"/>).
+    /// Draw its parts through <see cref="TestCase.DrawAndPrint{T}"/>.
+    /// </summary>
+    protected internal abstract T DoDrawAndPrint(TestCase tc, Printer printer);
 
     /// <inheritdoc />
-    public override T DoDraw(TestCase tc) => DoDrawAndPrint(tc, Printer.Noop);
+    protected internal override T DoDraw(TestCase tc) => DoDrawAndPrint(tc, Printer.Noop);
 }
 
 internal interface IGenerator

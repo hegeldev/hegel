@@ -83,7 +83,7 @@ public sealed class TextGenerator : ValueGenerator<string>
     public override ulong Label => Hegel.Label.Of("hegel.text");
 
     /// <inheritdoc />
-    public override string DoDraw(TestCase tc) =>
+    protected internal override string DoDraw(TestCase tc) =>
         tc.GenerateString(_cache.Get(tc, t => BuildHandle(t, _minSize, Sizes.EngineMax(_maxSize))));
 
     internal StringGeneratorHandle AlphabetHandle(TestCase tc) => BuildHandle(tc, 0, 0);
@@ -123,7 +123,7 @@ public sealed class RegexGenerator : ValueGenerator<string>
     public override ulong Label => Hegel.Label.Of("hegel.from_regex");
 
     /// <inheritdoc />
-    public override string DoDraw(TestCase tc) =>
+    protected internal override string DoDraw(TestCase tc) =>
         tc.GenerateString(_cache.Get(tc, t => t.RegexGenerator(_pattern, _fullmatch, _alphabet?.AlphabetHandle(t))));
 }
 
@@ -133,7 +133,7 @@ internal sealed class EmailGenerator : ValueGenerator<string>
 
     public override ulong Label => Hegel.Label.Of("hegel.emails");
 
-    public override string DoDraw(TestCase tc) => tc.GenerateString(_cache.Get(tc, t => t.EmailGenerator()));
+    protected internal override string DoDraw(TestCase tc) => tc.GenerateString(_cache.Get(tc, t => t.EmailGenerator()));
 }
 
 internal sealed class UrlGenerator : ValueGenerator<string>
@@ -142,7 +142,7 @@ internal sealed class UrlGenerator : ValueGenerator<string>
 
     public override ulong Label => Hegel.Label.Of("hegel.urls");
 
-    public override string DoDraw(TestCase tc) => tc.GenerateString(_cache.Get(tc, t => t.UrlGenerator()));
+    protected internal override string DoDraw(TestCase tc) => tc.GenerateString(_cache.Get(tc, t => t.UrlGenerator()));
 }
 
 /// <summary>Draws domain names.</summary>
@@ -167,7 +167,7 @@ public sealed class DomainGenerator : ValueGenerator<string>
     public override ulong Label => Hegel.Label.Of("hegel.domains");
 
     /// <inheritdoc />
-    public override string DoDraw(TestCase tc) => tc.GenerateString(_cache.Get(tc, t => t.DomainGenerator((ulong)_maxLength)));
+    protected internal override string DoDraw(TestCase tc) => tc.GenerateString(_cache.Get(tc, t => t.DomainGenerator((ulong)_maxLength)));
 }
 
 /// <summary>Draws UUIDs, of any version or one in particular.</summary>
@@ -191,7 +191,7 @@ public sealed class UuidGenerator : ValueGenerator<Guid>
     public override ulong Label => Hegel.Label.Of("hegel.uuids");
 
     /// <inheritdoc />
-    public override Guid DoDraw(TestCase tc) => tc.GenerateUuid(_version);
+    protected internal override Guid DoDraw(TestCase tc) => tc.GenerateUuid(_version);
 }
 
 /// <summary>Draws IP addresses as text: a mix of IPv4 and IPv6 unless narrowed.</summary>
@@ -214,7 +214,7 @@ public sealed class IpAddressGenerator : ValueGenerator<string>
     public override ulong Label => Hegel.Label.Of("hegel.ip_addresses");
 
     /// <inheritdoc />
-    public override string DoDraw(TestCase tc)
+    protected internal override string DoDraw(TestCase tc)
     {
         if (_version != null)
         {
@@ -343,7 +343,7 @@ public sealed class LarkGenerator : ValueGenerator<string>
     public override ulong Label => Hegel.Label.FromLark;
 
     /// <inheritdoc />
-    public override string DoDraw(TestCase tc) => tc.GenerateGrammar(Compiled(tc), i => tc.DrawSilent(_explicit[i].Generator));
+    protected internal override string DoDraw(TestCase tc) => tc.GenerateGrammar(Compiled(tc), i => tc.DrawSilent(_explicit[i].Generator));
 
     private GrammarHandle Compiled(TestCase tc)
     {

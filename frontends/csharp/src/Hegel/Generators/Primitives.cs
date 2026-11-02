@@ -28,7 +28,7 @@ public sealed class IntegerGenerator : ValueGenerator<int>
     public override ulong Label => Hegel.Label.Of("hegel.integers");
 
     /// <inheritdoc />
-    public override int DoDraw(TestCase tc) => (int)tc.GenerateInteger(_min, _max);
+    protected internal override int DoDraw(TestCase tc) => (int)tc.GenerateInteger(_min, _max);
 }
 
 /// <summary>Draws 64-bit integers in a range.</summary>
@@ -57,7 +57,7 @@ public sealed class LongGenerator : ValueGenerator<long>
     public override ulong Label => Hegel.Label.Of("hegel.integers");
 
     /// <inheritdoc />
-    public override long DoDraw(TestCase tc) => tc.GenerateInteger(_min, _max);
+    protected internal override long DoDraw(TestCase tc) => tc.GenerateInteger(_min, _max);
 }
 
 /// <summary>Draws integers of any size, in a range or around ±2^127 when unbounded.</summary>
@@ -102,7 +102,7 @@ public sealed class BigIntegerGenerator : ValueGenerator<BigInteger>
     public override ulong Label => Hegel.Label.Of("hegel.integers");
 
     /// <inheritdoc />
-    public override BigInteger DoDraw(TestCase tc) => tc.GenerateIntegerBig(_lo, _hi);
+    protected internal override BigInteger DoDraw(TestCase tc) => tc.GenerateIntegerBig(_lo, _hi);
 }
 
 internal static class Floats
@@ -257,7 +257,7 @@ public sealed class DoubleGenerator : ValueGenerator<double>
     public override ulong Label => Hegel.Label.Of("hegel.floats");
 
     /// <inheritdoc />
-    public override double DoDraw(TestCase tc) =>
+    protected internal override double DoDraw(TestCase tc) =>
         tc.GenerateFloat(64, _params.Min, _params.Max, _params.AllowNan, _params.AllowInfinity, _excludeMin, _excludeMax, _params.SmallestNonzeroMagnitude);
 }
 
@@ -310,7 +310,7 @@ public sealed class FloatGenerator : ValueGenerator<float>
     public override ulong Label => Hegel.Label.Of("hegel.floats");
 
     /// <inheritdoc />
-    public override float DoDraw(TestCase tc) =>
+    protected internal override float DoDraw(TestCase tc) =>
         (float)tc.GenerateFloat(32, _params.Min, _params.Max, _params.AllowNan, _params.AllowInfinity, _excludeMin, _excludeMax, _params.SmallestNonzeroMagnitude);
 }
 
@@ -329,7 +329,7 @@ internal sealed class BooleanGenerator : ValueGenerator<bool>
 
     public override ulong Label => Hegel.Label.Of("hegel.booleans");
 
-    public override bool DoDraw(TestCase tc) => tc.GenerateBoolean(_p);
+    protected internal override bool DoDraw(TestCase tc) => tc.GenerateBoolean(_p);
 }
 
 /// <summary>Draws byte arrays.</summary>
@@ -354,5 +354,5 @@ public sealed class BinaryGenerator : ValueGenerator<byte[]>
     public override ulong Label => Hegel.Label.Of("hegel.binary");
 
     /// <inheritdoc />
-    public override byte[] DoDraw(TestCase tc) => tc.GenerateBytes(_minSize, Sizes.EngineMax(_maxSize));
+    protected internal override byte[] DoDraw(TestCase tc) => tc.GenerateBytes(_minSize, Sizes.EngineMax(_maxSize));
 }

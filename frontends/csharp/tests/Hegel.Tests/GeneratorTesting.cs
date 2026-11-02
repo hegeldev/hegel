@@ -13,7 +13,7 @@ internal sealed class Boom : Exception
 
 internal sealed class RawIntegers : Generator<int>
 {
-    public override int DoDraw(TestCase tc) => (int)tc.GenerateInteger(0, 3);
+    protected internal override int DoDraw(TestCase tc) => (int)tc.GenerateInteger(0, 3);
 }
 
 internal static class Gen

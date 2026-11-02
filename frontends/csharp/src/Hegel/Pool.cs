@@ -2,9 +2,9 @@ namespace Hegel;
 
 internal abstract class PoolGenerator<T> : PrintableGenerator<T>
 {
-    public abstract override T DoDraw(TestCase tc);
+    protected internal abstract override T DoDraw(TestCase tc);
 
-    public sealed override T DoDrawAndPrint(TestCase tc, Printer printer)
+    protected internal sealed override T DoDrawAndPrint(TestCase tc, Printer printer)
     {
         var value = DoDraw(tc);
         printer.Repr(value, typeof(T));
@@ -115,14 +115,14 @@ public sealed class Pool<T>
     {
         public override ulong Label => Hegel.Label.PoolValuesReusable;
 
-        public override T DoDraw(TestCase tc) => PoolDraws.Draw(tc, pool._poolId, pool._values, false);
+        protected internal override T DoDraw(TestCase tc) => PoolDraws.Draw(tc, pool._poolId, pool._values, false);
     }
 
     private sealed class ConsumingGenerator(Pool<T> pool) : PoolGenerator<T>
     {
         public override ulong Label => Hegel.Label.PoolValuesConsumed;
 
-        public override T DoDraw(TestCase tc) => PoolDraws.Draw(tc, pool._poolId, pool._values, true);
+        protected internal override T DoDraw(TestCase tc) => PoolDraws.Draw(tc, pool._poolId, pool._values, true);
 
         public override PrintableGenerator<T> Filter(Func<T, bool> predicate) => new FilteredConsuming(pool, predicate);
     }
@@ -131,7 +131,7 @@ public sealed class Pool<T>
     {
         public override ulong Label => Hegel.Label.Combine(Hegel.Label.Filter, Hegel.Label.PoolValuesConsumed);
 
-        public override T DoDraw(TestCase tc) => PoolDraws.DrawFiltered(tc, pool._poolId, pool._values, predicate);
+        protected internal override T DoDraw(TestCase tc) => PoolDraws.DrawFiltered(tc, pool._poolId, pool._values, predicate);
     }
 }
 
@@ -194,7 +194,7 @@ public sealed class ConcurrentPool<T>
     {
         public override ulong Label => Hegel.Label.PoolValuesReusable;
 
-        public override T DoDraw(TestCase tc)
+        protected internal override T DoDraw(TestCase tc)
         {
             lock (pool._gate)
             {
@@ -207,7 +207,7 @@ public sealed class ConcurrentPool<T>
     {
         public override ulong Label => Hegel.Label.PoolValuesConsumed;
 
-        public override T DoDraw(TestCase tc)
+        protected internal override T DoDraw(TestCase tc)
         {
             lock (pool._gate)
             {
@@ -222,7 +222,7 @@ public sealed class ConcurrentPool<T>
     {
         public override ulong Label => Hegel.Label.Combine(Hegel.Label.Filter, Hegel.Label.PoolValuesConsumed);
 
-        public override T DoDraw(TestCase tc)
+        protected internal override T DoDraw(TestCase tc)
         {
             lock (pool._gate)
             {

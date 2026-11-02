@@ -15,10 +15,10 @@ internal static class Components
 public abstract class ValueGenerator<T> : PrintableGenerator<T>
 {
     /// <inheritdoc />
-    public abstract override T DoDraw(TestCase tc);
+    protected internal abstract override T DoDraw(TestCase tc);
 
     /// <inheritdoc />
-    public sealed override T DoDrawAndPrint(TestCase tc, Printer printer)
+    protected internal sealed override T DoDrawAndPrint(TestCase tc, Printer printer)
     {
         var value = DoDraw(tc);
         printer.Repr(value, typeof(T));
