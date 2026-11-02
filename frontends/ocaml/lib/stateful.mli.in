@@ -479,8 +479,9 @@ module Concurrent_rule : sig PORTABLE
         are valid only for that step.
 
       With the PPX, a concurrent rule takes the following options:
-      [[@@rule { groups = [ "a"; "b" ]; weight = <weight> }]]. The order of the
-      fields does not matter and neither are required. *)
+      [[@@rule { groups = [ "a"; "b" ]; weight = <weight> }]]. A single group
+      may be written without the list: [[@@rule { groups = "a" }]]. The
+      order of the fields does not matter and neither are required. *)
   val create
     :  ?groups:string list
     -> ?weight:float
@@ -640,18 +641,21 @@ val run_concurrent_internal
   -> Internal.test_case
   -> unit
 
-(** [run_concurrent_core] is the concurrent runner with the rules passed as
-    their fields and the round supplied by the caller. [rule_groups] holds one
-    list of group names per rule. [run_round] runs one round on [num_workers]
-    workers and returns their outcomes. [check_invariant i tc] checks
-    invariant [i]. *)
+type rule_info =
+  { name : string
+  ; groups : string list
+  ; weight : float
+  }
+
+type invariant_info = Internal.invariant_info =
+  { name : string
+  ; always_check : bool
+  }
+
 val run_concurrent_core
   :  init:'state
-  -> rule_names:string list
-  -> rule_groups:string list list
-  -> rule_weights:float list
-  -> invariant_names:string list
-  -> invariants_always_check:bool list
+  -> rules:rule_info list
+  -> invariants:invariant_info list
   -> check_invariant:(int -> Internal.test_case -> unit) MODE(local)
   -> run_round:
        (state_machine:Internal.state_machine -> num_workers:int -> Concurrency.outcome list)

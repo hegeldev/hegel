@@ -532,13 +532,21 @@ type collection = Ffi.collection
 type pool = Ffi.pool
 type state_machine = Ffi.state_machine
 
+type rule_info =
+  { name : string
+  ; groups : int list
+  ; weight : float
+  }
+
+type invariant_info =
+  { name : string
+  ; always_check : bool
+  }
+
 let new_state_machine_with_concurrency
       tc
-      ~rule_names
-      ~rule_groups
-      ~rule_weights
-      ~invariant_names
-      ~invariants_always_check
+      ~rules
+      ~invariants
       ~step_count
       ~min_concurrency
       ~max_concurrency
@@ -553,27 +561,25 @@ let new_state_machine_with_concurrency
         ~step_count
     in
     match
-      List.iter2
-        (fun name (groups, weight) ->
+      List.iter
+        (fun (rule : rule_info) ->
            Ffi.state_machine_add_rule
              tc.context
              tc.handle
              ~state_machine
-             ~name
-             ~weight
-             ~groups)
-        rule_names
-        (List.combine rule_groups rule_weights);
-      List.iter2
-        (fun name always_check ->
+             ~name:rule.name
+             ~weight:rule.weight
+             ~groups:rule.groups)
+        rules;
+      List.iter
+        (fun (invariant : invariant_info) ->
            Ffi.state_machine_add_invariant
              tc.context
              tc.handle
              ~state_machine
-             ~name
-             ~always_check)
-        invariant_names
-        invariants_always_check;
+             ~name:invariant.name
+             ~always_check:invariant.always_check)
+        invariants;
       Ffi.state_machine_start tc.context tc.handle ~state_machine
     with
     | concurrency -> state_machine, concurrency

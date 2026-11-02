@@ -114,18 +114,44 @@ let run_rules tc ~state_machine ~worker_index LOCAL_CTX ~heading ~rule =
   loop ctx false
 ;;
 
-let unique_groups rule_groups =
+type rule_info =
+  { name : string
+  ; groups : string list
+  ; weight : float
+  }
+
+type invariant_info = Internal.invariant_info =
+  { name : string
+  ; always_check : bool
+  }
+
+let unique_groups rules =
   List.fold_left
     (fun names group -> if List.mem group names then names else group :: names)
     []
-    (List.concat rule_groups)
+    (List.concat_map (fun (rule : rule_info) -> rule.groups) rules)
   |> List.rev
 ;;
 
-let group_indices rule_groups names =
+(* converts group names to indices *)
+let to_engine_rules rules names =
   List.map
-    (List.map (fun group -> List.find_index (String.equal group) names |> Option.get))
-    rule_groups
+    (fun (rule : rule_info) : Internal.rule_info ->
+       { name = rule.name
+       ; groups =
+           List.map
+             (fun group -> List.find_index (String.equal group) names |> Option.get)
+             rule.groups
+       ; weight = rule.weight
+       })
+    rules
+;;
+
+let to_inv_record invariants =
+  List.map
+    (fun (inv : _ Invariant.t) : invariant_info ->
+       { name = inv.name; always_check = inv.always_check })
+    invariants
 ;;
 
 (* like List.iteri but takes a local closure *)
@@ -210,11 +236,8 @@ let reraise_worker_failure (outcomes : Concurrency.outcome list) =
 
 let run_machine
       tc
-      ~rule_names
-      ~rule_groups
-      ~rule_weights
-      ~invariant_names
-      ~invariants_always_check
+      ~rules
+      ~invariants
       ~check_invariant:LOCAL(check_invariant)
       ~step_count
       ~min_concurrency
@@ -226,11 +249,8 @@ let run_machine
   let state_machine, num_workers =
     Internal.new_state_machine_with_concurrency
       tc
-      ~rule_names
-      ~rule_groups
-      ~rule_weights
-      ~invariant_names
-      ~invariants_always_check
+      ~rules
+      ~invariants
       ~step_count
       ~min_concurrency
       ~max_concurrency
@@ -242,7 +262,7 @@ let run_machine
   in
   let check_invariants ~where ~sample =
     iteri_local
-      (fun i name ->
+      (fun i (invariant : invariant_info) ->
          if
            (not sample)
            || Internal.state_machine_should_check_invariant
@@ -257,10 +277,10 @@ let run_machine
            with
            | () -> ()
            | exception e ->
-             Internal.note tc (Printf.sprintf "Invariant %s violated %s." name where);
+             Internal.note tc (Printf.sprintf "Invariant %s violated %s." invariant.name where);
              raise e))
       0
-      invariant_names NONTAIL
+      invariants NONTAIL
   in
   (* Can't use Fun.protect because its body must be a global closure *)
   let free () = Internal.state_machine_free tc ~state_machine in
@@ -313,11 +333,12 @@ let run_internal ~init ~rules ~invariants ?sexp_of_state ?(step_count = 50) tc =
   in
   run_machine
     tc
-    ~rule_names:(List.map Rule.name rules)
-    ~rule_groups:(List.map (fun _ -> [ 0 ]) rules)
-    ~rule_weights:(List.map Rule.weight rules)
-    ~invariant_names:(List.map Invariant.name invariants)
-    ~invariants_always_check:(List.map (fun inv -> inv.Invariant.always_check) invariants)
+    ~rules:
+      (List.map
+         (fun (rule : _ Rule.t) : Internal.rule_info ->
+            { name = rule.name; groups = [ 0 ]; weight = rule.weight })
+         rules)
+    ~invariants:(to_inv_record invariants)
     ~check_invariant:(fun i tc -> (List.nth invariants i).Invariant.inv tc init)
     ~step_count
     ~min_concurrency:1
@@ -355,11 +376,8 @@ end
 
 let run_concurrent_core
       ~init
-      ~rule_names
-      ~rule_groups
-      ~rule_weights
-      ~invariant_names
-      ~invariants_always_check
+      ~rules
+      ~invariants
       ~check_invariant:LOCAL(check_invariant)
       ~run_round:LOCAL(run_round)
       ?(min_concurrency = 1)
@@ -368,7 +386,7 @@ let run_concurrent_core
       ?(step_count = 50)
       tc
   =
-  let group_names = unique_groups rule_groups in
+  let group_names = unique_groups rules in
   let run_steps ~state_machine ~num_workers ~print_state ~check_invariants:LOCAL(check_invariants) =
     (* Local closures are passed down rather than captured. *)
     let rec loop LOCAL(run_round) LOCAL(check_invariants) round =
@@ -390,11 +408,8 @@ let run_concurrent_core
   in
   run_machine
     tc
-    ~rule_names
-    ~rule_groups:(group_indices rule_groups group_names)
-    ~rule_weights
-    ~invariant_names
-    ~invariants_always_check
+    ~rules:(to_engine_rules rules group_names)
+    ~invariants
     ~check_invariant
     ~step_count
     ~min_concurrency
@@ -418,11 +433,12 @@ let run_concurrent_internal
   =
   run_concurrent_core
     ~init
-    ~rule_names:(List.map Concurrent_rule.name rules)
-    ~rule_groups:(List.map Concurrent_rule.groups rules)
-    ~rule_weights:(List.map Concurrent_rule.weight rules)
-    ~invariant_names:(List.map Invariant.name invariants)
-    ~invariants_always_check:(List.map (fun inv -> inv.Invariant.always_check) invariants)
+    ~rules:
+      (List.map
+         (fun (rule : _ Concurrent_rule.t) : rule_info ->
+            { name = rule.name; groups = rule.groups; weight = rule.weight })
+         rules)
+    ~invariants:(to_inv_record invariants)
     ~check_invariant:(fun i tc -> (List.nth invariants i).Invariant.inv tc init)
     ~run_round:(fun ~state_machine ~num_workers ->
       let work LOCAL(ctx) ~worker_index tc =

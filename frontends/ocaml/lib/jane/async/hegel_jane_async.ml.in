@@ -93,12 +93,16 @@ module Stateful = struct
     Concurrent_in_async.schedule_with_concurrent Await.Terminator.unkillable ~f:(fun conc ->
       Hegel.Stateful.run_concurrent_core
         ~init
-        ~rule_names:(List.map Concurrent_rule.name rules)
-        ~rule_groups:(List.map Concurrent_rule.groups rules)
-        ~rule_weights:(List.map Concurrent_rule.weight rules)
-        ~invariant_names:(List.map (fun (inv : _ Invariant.t) -> inv.name) invariants)
-        ~invariants_always_check:
-          (List.map (fun (inv : _ Invariant.t) -> inv.always_check) invariants)
+        ~rules:
+          (List.map
+             (fun (rule : _ Concurrent_rule.t) : Hegel.Stateful.rule_info ->
+                { name = rule.name; groups = rule.groups; weight = rule.weight })
+             rules)
+        ~invariants:
+          (List.map
+             (fun (inv : _ Invariant.t) : Hegel.Stateful.invariant_info ->
+                { name = inv.name; always_check = inv.always_check })
+             invariants)
         ~check_invariant:(fun i tc ->
           let inv = List.nth invariants i in
           wait (Concurrent.await conc) (fun () -> inv.Invariant.inv tc init) [@nontail])

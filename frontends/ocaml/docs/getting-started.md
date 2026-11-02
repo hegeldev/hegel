@@ -338,9 +338,9 @@ In state machines not written with the PPX, draws print as `draw_1`, `draw_2`, .
 
 One rule runs at a time. To run rules on several workers at once, write a
 `module%hegel_concurrent_state_machine` and pass `~max_concurrency:n` to its
-`run`. Rules marked `[@@rule { groups = [ "group" ] }]` run concurrently only
-with rules in the same group (a rule listing several groups runs in the rounds
-of each of them), and `[@@rule { weight = <weight> }]` hints at the proportion
+`run`. Rules marked `[@@rule { groups = [ "group1"; ... ] }]` (or
+`[@@rule { groups = "group1" }]` for a single group) run concurrently only
+with rules in the same group. `[@@rule { weight = <weight> }]` hints at the proportion
 of times a rule should be executed.
 
 See the `Hegel.Stateful` API docs for concurrent testing, for invariants across

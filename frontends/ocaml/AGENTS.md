@@ -968,10 +968,11 @@ guards the syntax upstream cannot parse (`@ m`, kind annotations).
   portable code. The only other launder is three `ipaddr` functions in
   `generators_combinators.ml.in`.
 - **Concurrent core.** `run_concurrent_core` is the concurrent runner with the
-  rules as plain data (names, groups, weights) and two local callbacks from
-  the caller: `run_round` (run one round, return one outcome per worker) and
-  `check_invariant i tc`. `run_machine` takes invariant names, always-check
-  flags, and that `check_invariant`, not invariant closures, because the
+  rules and invariants as lists of plain-data records (`Stateful.rule_info`,
+  `Stateful.invariant_info`) and two local callbacks from the caller:
+  `run_round` (run one round, return one outcome per worker) and
+  `check_invariant i tc`. `run_machine` takes those invariant records and
+  that `check_invariant`, not invariant closures, because the
   Async runner's invariants wait through the scheduler scope's local
   `Concurrent.t`. Local closures are passed down the step loops, not
   captured, and iteration uses `iteri_local` (`Stdlib.List.iteri` takes a
