@@ -28,15 +28,20 @@ int main() {
                             .map([](int x) { return x * x; }));
             auto named = tc.draw("named", gs::integers<int>());
             auto flag = tc.draw("flag", gs::booleans());
-            auto date = tc.draw(gs::dates());
-            auto zoned = tc.draw(gs::zoned_datetimes(
-                {.timezones = {
-                     .names = std::vector<std::string>{"Europe/London"}}}));
-            auto duration = tc.draw(gs::durations<std::chrono::milliseconds>());
-            auto back = hegel::datetime::SignedDuration::from_chrono(duration);
+            auto date = tc.draw(gs::temporal::dates());
+            auto zoned = tc.draw(gs::temporal::zoned_datetimes(
+                {.zones = gs::temporal::zones(
+                     {.names = std::vector<std::string>{"Europe/London"}})}));
+            auto duration =
+                tc.draw(gs::temporal::durations<std::chrono::milliseconds>());
+            auto back =
+                hegel::generators::temporal::SignedDuration::from_chrono(
+                    duration);
+            auto exact = tc.draw(gs::temporal::durations());
             (void)date;
             (void)zoned;
             (void)back;
+            (void)exact;
             (void)named;
             (void)flag;
             (void)f;

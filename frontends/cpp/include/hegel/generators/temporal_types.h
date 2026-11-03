@@ -27,23 +27,23 @@
 /// @endcond
 
 /**
- * @brief Plain date and time values, as the engine draws them.
+ * @brief Date and time generators, and the plain values they draw.
  *
- * Every type here is an aggregate of public fields mirroring the engine's
+ * Every value type here is an aggregate of public fields mirroring the engine's
  * value model one to one, with no arithmetic and no parsing: a test that
  * uses a date library wraps the value it draws with
  * @ref hegel::generators::Generator::map "map", and nothing here competes
  * with that library. The generators over these types are
- * @ref hegel::generators::dates "dates()",
- * @ref hegel::generators::times "times()",
- * @ref hegel::generators::datetimes "datetimes()",
- * @ref hegel::generators::timestamps "timestamps()",
- * @ref hegel::generators::utc_offsets "utc_offsets()",
- * @ref hegel::generators::timezones "timezones()",
- * @ref hegel::generators::zoned_datetimes "zoned_datetimes()",
- * @ref hegel::generators::signed_durations "signed_durations()" and
- * @ref hegel::generators::spans "spans()"; the option enums of their
- * parameters live here too.
+ * @ref hegel::generators::temporal::dates "dates()",
+ * @ref hegel::generators::temporal::times "times()",
+ * @ref hegel::generators::temporal::datetimes "datetimes()",
+ * @ref hegel::generators::temporal::instants "instants()",
+ * @ref hegel::generators::temporal::offsets "offsets()",
+ * @ref hegel::generators::temporal::zones "zones()",
+ * @ref hegel::generators::temporal::zoned_datetimes "zoned_datetimes()",
+ * @ref hegel::generators::temporal::durations "durations()" and
+ * @ref hegel::generators::temporal::spans "spans()", and the parameter structs
+ * and option enums they take.
  *
  * Each `operator<<` prints the RFC 9557 form the engine prints a
  * counterexample in, so a failing value reads the same from every language
@@ -52,18 +52,29 @@
  * (`2024-03-10T02:30:00-04:00[America/New_York][gap]`), `-00:00` for an
  * unknown offset and `Z[Etc/Unknown]` for the unknown zone.
  *
- * The functions tzdb_version(), resolve(), offset_at() and info() query the
- * engine's bundled time zone database directly, outside any test.
+ * The functions resolve(), offset_at() and info() query the default zone
+ * source directly, outside any test: the engine's bundled IANA database
+ * unless set_default_zone_source() set another. A ZoneSource answers the
+ * same queries for its own data, and tzdb_version() names the bundled
+ * release.
+ *
+ * Every zone draw resolves wall times against a zone source. C++ has no
+ * time zone database that every toolchain ships, so the default is the
+ * engine's bundled one. To draw against the database the code under test
+ * uses, build a ZoneSource from it (`hegel/extras/boost_date_time.h` does
+ * this for Boost.DateTime, and `hegel/extras/chrono_tzdb.h` for a standard
+ * library with `std::chrono::tzdb`) and pass it to zones(), or make it the
+ * default with set_default_zone_source().
  */
-namespace hegel::datetime {
+namespace hegel::generators::temporal {
 
     /// The lowest year of a Date.
     inline constexpr int32_t MIN_YEAR = -999'999;
     /// The highest year of a Date.
     inline constexpr int32_t MAX_YEAR = 999'999;
-    /// The first second of MIN_YEAR, the lowest `second` of a Timestamp.
+    /// The first second of MIN_YEAR, the lowest `second` of an Instant.
     inline constexpr int64_t MIN_INSTANT = -31'619'087'596'800;
-    /// The last second of MAX_YEAR, the highest `second` of a Timestamp.
+    /// The last second of MAX_YEAR, the highest `second` of an Instant.
     inline constexpr int64_t MAX_INSTANT = 31'494'784'780'799;
     /// The largest magnitude of a known UtcOffset in seconds, 25:59:59.
     inline constexpr int32_t MAX_OFFSET = 93'599;
@@ -389,7 +400,7 @@ namespace hegel::datetime {
      * `{-2, 500000000}`. Prints as the UTC wall time with a `Z` suffix:
      * `2000-01-01T00:00:00Z`.
      */
-    struct Timestamp {
+    struct Instant {
         int64_t second;      ///< Seconds since 1970-01-01T00:00:00Z.
         uint32_t nanosecond; ///< Nanoseconds after `second`.
 
@@ -416,15 +427,15 @@ namespace hegel::datetime {
         }
 
         /**
-         * @brief The Timestamp of a `std::chrono::system_clock` time point,
+         * @brief The Instant of a `std::chrono::system_clock` time point,
          * or `std::nullopt` when it lies outside `[MIN_INSTANT,
          * MAX_INSTANT]`.
          *
          * @param time_point The time point to convert.
-         * @return The timestamp, or `std::nullopt`.
+         * @return The instant, or `std::nullopt`.
          */
         template <typename Rep, typename Period>
-        static std::optional<Timestamp>
+        static std::optional<Instant>
         from_chrono(std::chrono::time_point<std::chrono::system_clock,
                                             std::chrono::duration<Rep, Period>>
                         time_point) {
@@ -435,66 +446,63 @@ namespace hegel::datetime {
                 parts->first > MAX_INSTANT) {
                 return std::nullopt;
             }
-            return Timestamp{parts->first,
-                             static_cast<uint32_t>(parts->second)};
+            return Instant{parts->first, static_cast<uint32_t>(parts->second)};
         }
     };
 
-    /// @name Timestamp comparison
+    /// @name Instant comparison
     /// @{
 
-    /// Compares two timestamps for equality.
+    /// Compares two instants for equality.
     /// @param a The left operand.
     /// @param b The right operand.
     /// @return `true` when `a` and `b` are equal.
-    inline bool operator==(const Timestamp& a, const Timestamp& b) {
+    inline bool operator==(const Instant& a, const Instant& b) {
         return a.second == b.second && a.nanosecond == b.nanosecond;
     }
-    /// Compares two timestamps for inequality.
+    /// Compares two instants for inequality.
     /// @param a The left operand.
     /// @param b The right operand.
     /// @return `true` when `a` and `b` differ.
-    inline bool operator!=(const Timestamp& a, const Timestamp& b) {
+    inline bool operator!=(const Instant& a, const Instant& b) {
         return !(a == b);
     }
-    /// Compares two timestamps for ordering.
+    /// Compares two instants for ordering.
     /// @param a The left operand.
     /// @param b The right operand.
     /// @return `true` when `a` is before `b`.
-    inline bool operator<(const Timestamp& a, const Timestamp& b) {
+    inline bool operator<(const Instant& a, const Instant& b) {
         if (a.second != b.second) {
             return a.second < b.second;
         }
         return a.nanosecond < b.nanosecond;
     }
-    /// Compares two timestamps for ordering.
+    /// Compares two instants for ordering.
     /// @param a The left operand.
     /// @param b The right operand.
     /// @return `true` when `a` is after `b`.
-    inline bool operator>(const Timestamp& a, const Timestamp& b) {
-        return b < a;
-    }
-    /// Compares two timestamps for ordering.
+    inline bool operator>(const Instant& a, const Instant& b) { return b < a; }
+    /// Compares two instants for ordering.
     /// @param a The left operand.
     /// @param b The right operand.
     /// @return `true` when `a` is not after `b`.
-    inline bool operator<=(const Timestamp& a, const Timestamp& b) {
+    inline bool operator<=(const Instant& a, const Instant& b) {
         return !(b < a);
     }
-    /// Compares two timestamps for ordering.
+    /// Compares two instants for ordering.
     /// @param a The left operand.
     /// @param b The right operand.
     /// @return `true` when `a` is not before `b`.
-    inline bool operator>=(const Timestamp& a, const Timestamp& b) {
+    inline bool operator>=(const Instant& a, const Instant& b) {
         return !(a < b);
     }
     /// @}
 
     /// Prints as `2000-01-01T00:00:00Z`.
     /// @param os The stream to print to.
-    /// @param timestamp The value to print.
+    /// @param instant The value to print.
     /// @return `os`.
-    std::ostream& operator<<(std::ostream& os, const Timestamp& timestamp);
+    std::ostream& operator<<(std::ostream& os, const Instant& instant);
 
     /**
      * @brief A UTC offset: a known number of seconds east of UTC within
@@ -538,12 +546,12 @@ namespace hegel::datetime {
     std::ostream& operator<<(std::ostream& os, const UtcOffset& offset);
 
     /**
-     * @brief A time zone of the bundled IANA database, or UNKNOWN_ZONE.
+     * @brief A time zone of a zone source, or UNKNOWN_ZONE.
      *
      * `name` is the name as it was drawn or written, link names such as
      * `Asia/Calcutta` included, and `primary_name` the zone it resolves to
-     * (`Asia/Kolkata`), or the name itself for a zone the engine's database
-     * lacks and only the caller's knows. Prints as the name.
+     * (`Asia/Kolkata`), or the name itself for a zone the source lacks and
+     * only the caller's database knows. Prints as the name.
      */
     struct TimeZone {
         std::string name;         ///< The name as written.
@@ -576,7 +584,7 @@ namespace hegel::datetime {
     std::ostream& operator<<(std::ostream& os, const TimeZone& zone);
 
     /// How a wall-clock time maps to instants in its zone.
-    enum class Kind {
+    enum class TransitionKind {
         Unique, ///< Exactly one instant.
         Gap,    ///< None: the clocks skipped it.
         Fold,   ///< Two: the clocks repeated it.
@@ -585,11 +593,11 @@ namespace hegel::datetime {
     /**
      * @brief A wall-clock time in a time zone, resolved to an instant.
      *
-     * Carries the Kind of the wall time, the offsets in force before and
-     * after the transition it falls on (both the resolved offset for a
+     * Carries the TransitionKind of the wall time, the offsets in force before
+     * and after the transition it falls on (both the resolved offset for a
      * unique time), which repeat of a fold it means (`fold`, the later when
      * set), the resolved `offset` (unknown in UNKNOWN_ZONE and in a zone
-     * only the caller's database knows) and the `timestamp`: the unique
+     * only the caller's database knows) and the `instant`: the unique
      * instant, the one `fold` picks, or for a gap the wall time read with
      * `offset_before`. Prints as
      * `2024-03-10T01:30:00-05:00[America/New_York]`, with `[gap]`
@@ -597,14 +605,14 @@ namespace hegel::datetime {
      * `[fold=1]` appended when relevant.
      */
     struct ZonedDateTime {
-        TimeZone zone;         ///< The zone the wall time is read in.
-        DateTime civil;        ///< The wall-clock time.
-        Kind kind;             ///< How the wall time maps to instants.
-        int32_t offset_before; ///< The offset before the transition.
-        int32_t offset_after;  ///< The offset after the transition.
-        bool fold;             ///< Which repeat of a fold is meant.
-        UtcOffset offset;      ///< The offset in force at `timestamp`.
-        Timestamp timestamp;   ///< The resolved instant.
+        TimeZone zone;           ///< The zone the wall time is read in.
+        DateTime civil;          ///< The wall-clock time.
+        TransitionKind kind;     ///< How the wall time maps to instants.
+        UtcOffset offset_before; ///< The offset before the transition.
+        UtcOffset offset_after;  ///< The offset after the transition.
+        bool fold;               ///< Which repeat of a fold is meant.
+        UtcOffset offset;        ///< The offset in force at `instant`.
+        Instant instant;         ///< The resolved instant.
     };
 
     /// @name ZonedDateTime comparison
@@ -618,7 +626,7 @@ namespace hegel::datetime {
         return a.zone == b.zone && a.civil == b.civil && a.kind == b.kind &&
                a.offset_before == b.offset_before &&
                a.offset_after == b.offset_after && a.fold == b.fold &&
-               a.offset == b.offset && a.timestamp == b.timestamp;
+               a.offset == b.offset && a.instant == b.instant;
     }
     /// Compares two zoned datetimes for inequality.
     /// @param a The left operand.
@@ -925,7 +933,7 @@ namespace hegel::datetime {
         Tag::Undefined, Tag::Link,          Tag::Legacy,     Tag::InvertedSign,
     };
 
-    /// What the bundled database knows about a time zone name; see info().
+    /// What a zone source knows about a time zone name; see info().
     struct ZoneInfo {
         /// The zone the name resolves to: the name itself unless it is a
         /// link.
@@ -1002,8 +1010,9 @@ namespace hegel::datetime {
     std::string tzdb_version();
 
     /**
-     * @brief What the bundled database knows about `name`, matched exactly
-     * as the database spells it, or `std::nullopt` for a name it lacks.
+     * @brief What the default zone source knows about `name`, matched
+     * exactly as the source spells it, or `std::nullopt` for a name it
+     * lacks.
      *
      * UNKNOWN_ZONE is known, with itself as primary name, Tag::Undefined and
      * the highest rank.
@@ -1022,22 +1031,22 @@ namespace hegel::datetime {
      * @param name The zone name.
      * @param civil The wall-clock time to resolve.
      * @return The resolved zoned datetime.
-     * @throws std::invalid_argument for a zone the bundled database lacks, a
+     * @throws std::invalid_argument for a zone the default source lacks, a
      *   `civil` out of range, or one whose instant in the zone lies outside
-     *   the range of Timestamp, which a wall time within an offset's width
+     *   the range of Instant, which a wall time within an offset's width
      *   of the civil range's ends can do.
      */
     ZonedDateTime resolve(std::string_view name, const DateTime& civil);
 
     /**
-     * @brief The offset the zone `name` has in force at `timestamp`.
+     * @brief The offset the zone `name` has in force at `instant`.
      *
      * @param name The zone name.
-     * @param timestamp The instant to look up.
+     * @param instant The instant to look up.
      * @return The offset in force.
-     * @throws std::invalid_argument for a zone the bundled database lacks or
-     *   a `timestamp` out of range.
+     * @throws std::invalid_argument for a zone the default source lacks or
+     *   an `instant` out of range.
      */
-    ZoneOffset offset_at(std::string_view name, const Timestamp& timestamp);
+    ZoneOffset offset_at(std::string_view name, const Instant& instant);
 
-} // namespace hegel::datetime
+} // namespace hegel::generators::temporal

@@ -328,19 +328,19 @@
  *
  * - Browse the hegel::generators namespace for the full list of available
  *   generators.
+ * - Date and time generators, and the values they draw, are in
+ *   hegel::generators::temporal.
  * - See @Settings for more configuration settings to customise how your
  *   test runs.
  */
 
 #include "core.h"
-#include "datetime.h"
 #include "settings.h"
 #include "test_case.h"
 
 #include "generators/builds.h"
 #include "generators/collections.h"
 #include "generators/combinators.h"
-#include "generators/datetime.h"
 #include "generators/default.h"
 #include "generators/formats.h"
 #include "generators/numeric.h"
@@ -348,6 +348,7 @@
 #include "generators/random.h"
 #include "generators/stateful.h"
 #include "generators/strings.h"
+#include "generators/temporal.h"
 
 #include <functional>
 

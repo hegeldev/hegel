@@ -91,13 +91,13 @@ function(hegel_add_test)
 endfunction()
 
 foreach(name IN ITEMS integers floats strings collections flatmap
-        mixed_types datetime)
+        mixed_types temporal)
     hegel_add_test(NAME test_shrink_quality_${name}
         SOURCE shrink_quality/test_${name}.cpp
         USE_UTILS)
 endforeach()
 
-foreach(name IN ITEMS integers floats strings collections one_of datetime)
+foreach(name IN ITEMS integers floats strings collections one_of temporal)
     hegel_add_test(NAME test_find_quality_${name}
         SOURCE find_quality/test_${name}.cpp
         USE_UTILS)
@@ -121,9 +121,34 @@ hegel_add_test(NAME test_generators_combinators
     SOURCE test_generators_combinators.cpp)
 hegel_add_test(NAME test_generators_random
     SOURCE test_generators_random.cpp)
-hegel_add_test(NAME test_generators_datetime
-    SOURCE test_generators_datetime.cpp
+hegel_add_test(NAME test_generators_temporal
+    SOURCE test_generators_temporal.cpp
     USE_UTILS)
+hegel_add_test(NAME test_zone_source
+    SOURCE test_zone_source.cpp
+    USE_UTILS)
+include(CheckCXXSourceRuns)
+set(CMAKE_REQUIRED_FLAGS "-std=c++20")
+check_cxx_source_runs([=[
+    #include <chrono>
+    int main() {
+        auto* zone = std::chrono::get_tzdb().locate_zone("America/New_York");
+        auto info = zone->get_info(std::chrono::sys_seconds{});
+        return info.offset == std::chrono::hours(-5) ? 0 : 1;
+    }
+]=] HEGEL_HAS_CHRONO_TZDB)
+unset(CMAKE_REQUIRED_FLAGS)
+if(HEGEL_HAS_CHRONO_TZDB)
+    hegel_add_test(NAME test_chrono_tzdb
+        SOURCE test_chrono_tzdb.cpp
+        USE_UTILS)
+endif()
+if(TARGET hegel_boost_date_time)
+    hegel_add_test(NAME test_boost_date_time
+        SOURCE test_boost_date_time.cpp
+        USE_UTILS)
+    target_link_libraries(test_boost_date_time PRIVATE hegel::boost_date_time)
+endif()
 hegel_add_test(NAME test_stateful
     SOURCE test_stateful.cpp
     USE_UTILS

@@ -74,6 +74,8 @@ namespace hegel::generators {
         Generator(std::shared_ptr<IGenerator<T>> p) : inner_(std::move(p)) {}
 
         T do_draw(const TestCase& tc) const { return inner_->do_draw(tc); }
+
+        const std::shared_ptr<IGenerator<T>>& inner() const { return inner_; }
         /// @endcond
 
         /**

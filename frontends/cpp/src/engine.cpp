@@ -23,7 +23,16 @@
 
 namespace hegel::impl {
 
+    namespace {
+
+        thread_local hegel_context_t* callback_context = nullptr;
+
+    } // namespace
+
     hegel_context_t* thread_context() {
+        if (callback_context != nullptr) {
+            return callback_context;
+        }
         struct ThreadContext {
             hegel_context_t* ctx = hegel_context_new();
             ~ThreadContext() { hegel_context_free(ctx); }
@@ -32,12 +41,20 @@ namespace hegel::impl {
         return context.ctx;
     }
 
-    namespace {
+    CallbackContextScope::CallbackContextScope(hegel_context_t* ctx)
+        : previous_(callback_context) {
+        callback_context = ctx;
+    }
 
-        // A borrowed hegel_string_t over `text`, valid while `text` lives.
-        hegel_string_t borrow(std::string_view text) {
-            return hegel_string_t{text.data(), text.size()};
-        }
+    CallbackContextScope::~CallbackContextScope() {
+        callback_context = previous_;
+    }
+
+    hegel_string_t borrow(std::string_view text) {
+        return hegel_string_t{text.data(), text.size()};
+    }
+
+    namespace {
 
         // The C++ copy of an engine-owned string, or nullopt for NULL.
         std::optional<std::string> copy_optional(const hegel_string_t* text) {
@@ -344,18 +361,20 @@ namespace hegel::impl {
             ~StringResultGuard() { hegel_owned_string_free(ctx, &result); }
         };
 
-        // Convert an engine rejection of a configuration call into
-        // std::invalid_argument at generator-construction or query time.
-        void require_configured(hegel_context_t* ctx, const char* what,
-                                hegel_result_t rc) {
-            if (rc == HEGEL_OK) {
-                return;
-            }
-            std::string msg = last_error(ctx);
-            throw std::invalid_argument(
-                std::string(what) +
-                (msg.empty() ? ": invalid arguments" : ": " + msg));
+    } // namespace
+
+    void require_configured(hegel_context_t* ctx, const char* what,
+                            hegel_result_t rc) {
+        if (rc == HEGEL_OK) {
+            return;
         }
+        std::string msg = last_error(ctx);
+        throw std::invalid_argument(
+            std::string(what) +
+            (msg.empty() ? ": invalid arguments" : ": " + msg));
+    }
+
+    namespace {
 
         template <typename F>
         hegel_string_generator_t* make_string_generator(const char* what,
@@ -514,13 +533,17 @@ namespace hegel::impl {
 
     hegel_timezone_spec_t*
     timezone_spec_new(const std::optional<std::vector<std::string>>& names,
-                      bool links, bool legacy, bool unknown, bool opaque) {
+                      bool links, bool legacy, bool unknown, bool opaque,
+                      const hegel_zone_source_t* source) {
         Building<hegel_timezone_spec_t> building{thread_context(),
                                                  hegel_timezone_spec_free};
         require_configured(
-            building.ctx, "timezones",
+            building.ctx, "zones",
             hegel_timezone_spec_new(building.ctx, &building.handle));
-        require_configured(building.ctx, "timezones",
+        require_configured(building.ctx, "zones",
+                           hegel_timezone_spec_set_source(
+                               building.ctx, building.handle, source));
+        require_configured(building.ctx, "zones",
                            hegel_timezone_spec_set_opaque(
                                building.ctx, building.handle, opaque));
         if (names.has_value()) {
@@ -530,17 +553,17 @@ namespace hegel::impl {
                 strings.push_back(borrow(name));
             }
             require_configured(
-                building.ctx, "timezones",
+                building.ctx, "zones",
                 hegel_timezone_spec_set_names(building.ctx, building.handle,
                                               strings.data(), strings.size()));
         }
-        require_configured(building.ctx, "timezones",
+        require_configured(building.ctx, "zones",
                            hegel_timezone_spec_set_links(
                                building.ctx, building.handle, links));
-        require_configured(building.ctx, "timezones",
+        require_configured(building.ctx, "zones",
                            hegel_timezone_spec_set_legacy(
                                building.ctx, building.handle, legacy));
-        require_configured(building.ctx, "timezones",
+        require_configured(building.ctx, "zones",
                            hegel_timezone_spec_set_unknown(
                                building.ctx, building.handle, unknown));
         return building.release();
@@ -625,31 +648,35 @@ namespace hegel::impl {
         return std::string(version.data, version.len);
     }
 
-    hegel_timezone_info_t timezone_info(std::string_view name) {
+    hegel_timezone_info_t timezone_info(const hegel_zone_source_t* source,
+                                        std::string_view name) {
         hegel_context_t* ctx = thread_context();
         hegel_timezone_info_t info{};
-        require_configured(ctx, "info",
-                           hegel_timezone_info(ctx, borrow(name), &info));
+        require_configured(
+            ctx, "info",
+            hegel_timezone_info_in(ctx, source, borrow(name), &info));
         return info;
     }
 
-    hegel_timezone_resolution_t timezone_resolve(std::string_view name,
-                                                 hegel_datetime_t civil) {
+    hegel_timezone_resolution_t
+    timezone_resolve(const hegel_zone_source_t* source, std::string_view name,
+                     hegel_datetime_t civil) {
         hegel_context_t* ctx = thread_context();
         hegel_timezone_resolution_t resolution{};
-        require_configured(
-            ctx, "resolve",
-            hegel_timezone_resolve(ctx, borrow(name), civil, &resolution));
+        require_configured(ctx, "resolve",
+                           hegel_timezone_resolve_in(ctx, source, borrow(name),
+                                                     civil, &resolution));
         return resolution;
     }
 
-    hegel_timezone_offset_t timezone_offset_at(std::string_view name,
-                                               hegel_timestamp_t timestamp) {
+    hegel_timezone_offset_t
+    timezone_offset_at(const hegel_zone_source_t* source, std::string_view name,
+                       hegel_timestamp_t timestamp) {
         hegel_context_t* ctx = thread_context();
         hegel_timezone_offset_t offset{};
-        require_configured(
-            ctx, "offset_at",
-            hegel_timezone_offset_at(ctx, borrow(name), timestamp, &offset));
+        require_configured(ctx, "offset_at",
+                           hegel_timezone_offset_at_in(
+                               ctx, source, borrow(name), timestamp, &offset));
         return offset;
     }
 
@@ -831,16 +858,26 @@ namespace hegel::internal {
         // enumerator order. The `hegel-cpp.` prefix keeps the names clear
         // of the engine's own `hegel.<kind>` labels.
         constexpr std::array<const char*, span_label_count> span_label_names = {
-            "hegel-cpp.list",          "hegel-cpp.set",    "hegel-cpp.map",
-            "hegel-cpp.tuple",         "hegel-cpp.one_of", "hegel-cpp.optional",
-            "hegel-cpp.flat_map",      "hegel-cpp.filter", "hegel-cpp.mapped",
+            "hegel-cpp.list",
+            "hegel-cpp.set",
+            "hegel-cpp.map",
+            "hegel-cpp.tuple",
+            "hegel-cpp.one_of",
+            "hegel-cpp.optional",
+            "hegel-cpp.flat_map",
+            "hegel-cpp.filter",
+            "hegel-cpp.mapped",
             "hegel-cpp.stateful.rule",
+            "hegel-cpp.zoned_datetime",
         };
         static_assert(span_label_names[static_cast<size_t>(SpanLabel::List)] ==
                       std::string_view("hegel-cpp.list"));
         static_assert(
             span_label_names[static_cast<size_t>(SpanLabel::StatefulRule)] ==
             std::string_view("hegel-cpp.stateful.rule"));
+        static_assert(
+            span_label_names[static_cast<size_t>(SpanLabel::ZonedDatetime)] ==
+            std::string_view("hegel-cpp.zoned_datetime"));
 
         // The engine label of `label`, derived once per process.
         uint64_t span_label_value(SpanLabel label) {

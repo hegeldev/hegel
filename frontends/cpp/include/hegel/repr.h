@@ -9,7 +9,7 @@
 // their stream operator, then to an "<unprintable Type>" placeholder.
 
 #include "config.h"
-#include "datetime.h"
+#include "generators/temporal_types.h"
 
 #include <array>
 #include <chrono>
@@ -125,16 +125,17 @@ namespace hegel::internal {
         // rather than as a C++ expression, so a counterexample reads the
         // same from every frontend.
         template <typename T>
-        struct is_datetime_value
-            : std::disjunction<std::is_same<T, hegel::datetime::Date>,
-                               std::is_same<T, hegel::datetime::Time>,
-                               std::is_same<T, hegel::datetime::DateTime>,
-                               std::is_same<T, hegel::datetime::Timestamp>,
-                               std::is_same<T, hegel::datetime::UtcOffset>,
-                               std::is_same<T, hegel::datetime::TimeZone>,
-                               std::is_same<T, hegel::datetime::ZonedDateTime>,
-                               std::is_same<T, hegel::datetime::SignedDuration>,
-                               std::is_same<T, hegel::datetime::Span>> {};
+        struct is_temporal_value
+            : std::disjunction<
+                  std::is_same<T, hegel::generators::temporal::Date>,
+                  std::is_same<T, hegel::generators::temporal::Time>,
+                  std::is_same<T, hegel::generators::temporal::DateTime>,
+                  std::is_same<T, hegel::generators::temporal::Instant>,
+                  std::is_same<T, hegel::generators::temporal::UtcOffset>,
+                  std::is_same<T, hegel::generators::temporal::TimeZone>,
+                  std::is_same<T, hegel::generators::temporal::ZonedDateTime>,
+                  std::is_same<T, hegel::generators::temporal::SignedDuration>,
+                  std::is_same<T, hegel::generators::temporal::Span>> {};
 
         template <typename T> struct is_chrono_duration : std::false_type {};
         template <typename Rep, typename Period>
@@ -452,7 +453,7 @@ namespace hegel::internal {
             }
             out += "}";
             return out;
-        } else if constexpr (repr_detail::is_datetime_value<T>::value) {
+        } else if constexpr (repr_detail::is_temporal_value<T>::value) {
             std::ostringstream os;
             os << value;
             return os.str();

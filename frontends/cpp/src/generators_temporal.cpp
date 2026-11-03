@@ -1,38 +1,37 @@
 #include <hegel/core.h>
-#include <hegel/datetime.h>
-#include <hegel/generators/datetime.h>
+#include <hegel/generators/formats.h>
+#include <hegel/generators/temporal.h>
+#include <hegel/generators/temporal_types.h>
+#include <hegel/generators/zone_source.h>
+#include <hegel/internal.h>
 
-#include <datetime_ffi.h>
 #include <engine.h>
 #include <hegel.h>
+#include <temporal_ffi.h>
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <limits>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
-namespace hegel::generators {
+namespace hegel::generators::temporal {
 
     namespace {
 
-        using datetime::Date;
-        using datetime::DateTime;
-        using datetime::SignedDuration;
-        using datetime::Time;
-        using datetime::Timestamp;
-        using datetime::UtcOffset;
-
-        constexpr DateTime min_datetime{{datetime::MIN_YEAR, 1, 1},
-                                        {0, 0, 0, 0}};
-        constexpr DateTime max_datetime{{datetime::MAX_YEAR, 12, 31},
+        constexpr DateTime min_datetime{{MIN_YEAR, 1, 1}, {0, 0, 0, 0}};
+        constexpr DateTime max_datetime{{MAX_YEAR, 12, 31},
                                         {23, 59, 59, 999'999'999}};
-        constexpr Timestamp min_timestamp{datetime::MIN_INSTANT, 0};
-        constexpr Timestamp max_timestamp{datetime::MAX_INSTANT, 999'999'999};
+        constexpr Instant lowest_instant{MIN_INSTANT, 0};
+        constexpr Instant highest_instant{MAX_INSTANT, 999'999'999};
         constexpr SignedDuration min_duration{
             std::numeric_limits<int64_t>::min(), -999'999'999};
         constexpr SignedDuration max_duration{
@@ -59,8 +58,7 @@ namespace hegel::generators {
         }
 
         bool valid(const Date& d) {
-            return d.year >= datetime::MIN_YEAR &&
-                   d.year <= datetime::MAX_YEAR && d.month >= 1 &&
+            return d.year >= MIN_YEAR && d.year <= MAX_YEAR && d.month >= 1 &&
                    d.month <= 12 && d.day >= 1 &&
                    d.day <= days_in_month(d.year, d.month);
         }
@@ -74,9 +72,8 @@ namespace hegel::generators {
             return valid(dt.date) && valid(dt.time);
         }
 
-        bool valid(const Timestamp& t) {
-            return t.second >= datetime::MIN_INSTANT &&
-                   t.second <= datetime::MAX_INSTANT &&
+        bool valid(const Instant& t) {
+            return t.second >= MIN_INSTANT && t.second <= MAX_INSTANT &&
                    t.nanosecond <= 999'999'999;
         }
 
@@ -109,52 +106,52 @@ namespace hegel::generators {
             return {min, max};
         }
 
-        uint32_t precision_to_c(datetime::Precision precision) {
+        uint32_t precision_to_c(Precision precision) {
             switch (precision) {
-            case datetime::Precision::Microseconds:
+            case Precision::Microseconds:
                 return HEGEL_PRECISION_MICROSECONDS;
-            case datetime::Precision::Milliseconds:
+            case Precision::Milliseconds:
                 return HEGEL_PRECISION_MILLISECONDS;
-            case datetime::Precision::Seconds:
+            case Precision::Seconds:
                 return HEGEL_PRECISION_SECONDS;
-            case datetime::Precision::Minutes:
+            case Precision::Minutes:
                 return HEGEL_PRECISION_MINUTES;
-            case datetime::Precision::Hours:
+            case Precision::Hours:
                 return HEGEL_PRECISION_HOURS;
             default:
                 return HEGEL_PRECISION_NANOSECONDS;
             }
         }
 
-        uint32_t granularity_to_c(datetime::Granularity granularity) {
+        uint32_t granularity_to_c(Granularity granularity) {
             switch (granularity) {
-            case datetime::Granularity::Hours:
+            case Granularity::Hours:
                 return HEGEL_OFFSET_GRANULARITY_HOURS;
-            case datetime::Granularity::QuarterHours:
+            case Granularity::QuarterHours:
                 return HEGEL_OFFSET_GRANULARITY_QUARTER_HOURS;
-            case datetime::Granularity::Minutes:
+            case Granularity::Minutes:
                 return HEGEL_OFFSET_GRANULARITY_MINUTES;
             default:
                 return HEGEL_OFFSET_GRANULARITY_SECONDS;
             }
         }
 
-        uint32_t ambiguous_to_c(datetime::Ambiguous ambiguous) {
+        uint32_t ambiguous_to_c(Ambiguous ambiguous) {
             switch (ambiguous) {
-            case datetime::Ambiguous::Earlier:
+            case Ambiguous::Earlier:
                 return HEGEL_AMBIGUOUS_EARLIER;
-            case datetime::Ambiguous::Later:
+            case Ambiguous::Later:
                 return HEGEL_AMBIGUOUS_LATER;
             default:
                 return HEGEL_AMBIGUOUS_BOTH;
             }
         }
 
-        uint32_t sign_to_c(datetime::SpanSign sign) {
+        uint32_t sign_to_c(SpanSign sign) {
             switch (sign) {
-            case datetime::SpanSign::Mixed:
+            case SpanSign::Mixed:
                 return HEGEL_SPAN_SIGN_MIXED;
-            case datetime::SpanSign::NonNegative:
+            case SpanSign::NonNegative:
                 return HEGEL_SPAN_SIGN_NONNEGATIVE;
             default:
                 return HEGEL_SPAN_SIGN_UNIFORM;
@@ -263,21 +260,21 @@ namespace hegel::generators {
             uint32_t precision_;
         };
 
-        class TimestampsGenerator : public IGenerator<Timestamp> {
+        class InstantsGenerator : public IGenerator<Instant> {
           public:
-            explicit TimestampsGenerator(const TimestampsParams& params)
+            explicit InstantsGenerator(const InstantsParams& params)
                 : bounds_(bounds(params.min_value, params.max_value,
-                                 min_timestamp, max_timestamp, "timestamp")),
+                                 lowest_instant, highest_instant, "instant")),
                   precision_(precision_to_c(params.precision)) {}
 
-            Timestamp do_draw(const TestCase& tc) const override {
+            Instant do_draw(const TestCase& tc) const override {
                 return impl::timestamp_from_c(impl::draw_timestamp(
                     tc, impl::timestamp_to_c(bounds_.first),
                     impl::timestamp_to_c(bounds_.second), precision_));
             }
 
           private:
-            std::pair<Timestamp, Timestamp> bounds_;
+            std::pair<Instant, Instant> bounds_;
             uint32_t precision_;
         };
 
@@ -291,21 +288,18 @@ namespace hegel::generators {
                 throw std::invalid_argument(std::string(what) +
                                             " must be a known offset");
             }
-            if (bound->seconds < -datetime::MAX_OFFSET ||
-                bound->seconds > datetime::MAX_OFFSET) {
+            if (bound->seconds < -MAX_OFFSET || bound->seconds > MAX_OFFSET) {
                 throw std::invalid_argument(std::string(what) +
                                             " must be within 25:59:59 of UTC");
             }
             return bound->seconds;
         }
 
-        class UtcOffsetsGenerator : public IGenerator<UtcOffset> {
+        class OffsetsGenerator : public IGenerator<UtcOffset> {
           public:
-            explicit UtcOffsetsGenerator(const UtcOffsetsParams& params)
-                : min_(known_bound("min_value", params.min_value,
-                                   -datetime::MAX_OFFSET)),
-                  max_(known_bound("max_value", params.max_value,
-                                   datetime::MAX_OFFSET)),
+            explicit OffsetsGenerator(const OffsetsParams& params)
+                : min_(known_bound("min_value", params.min_value, -MAX_OFFSET)),
+                  max_(known_bound("max_value", params.max_value, MAX_OFFSET)),
                   granularity_(granularity_to_c(params.granularity)),
                   unknown_(params.unknown) {
                 if (max_ < min_) {
@@ -327,22 +321,25 @@ namespace hegel::generators {
             bool unknown_;
         };
 
-        hegel_timezone_spec_t* timezone_spec_of(const TimezonesParams& params) {
-            return impl::timezone_spec_new(params.names, params.links,
-                                           params.legacy, params.unknown,
-                                           params.opaque);
-        }
-
-        class TimezonesGenerator : public IGenerator<datetime::TimeZone> {
+        class ZonesGenerator : public IGenerator<TimeZone> {
           public:
-            explicit TimezonesGenerator(const TimezonesParams& params)
-                : spec_(timezone_spec_of(params)) {}
+            explicit ZonesGenerator(const ZonesParams& params)
+                : source_(params.source.has_value() ? *params.source
+                                                    : default_zone_source()),
+                  spec_(impl::timezone_spec_new(
+                      params.names, params.links, params.legacy, params.unknown,
+                      params.opaque, impl::source_handle(source_))) {}
 
-            datetime::TimeZone do_draw(const TestCase& tc) const override {
-                return impl::zone_named(impl::draw_timezone(tc, spec_.get()));
+            TimeZone do_draw(const TestCase& tc) const override {
+                return impl::zone_named(impl::draw_timezone(tc, spec_.get()),
+                                        source_);
             }
 
+            const hegel_timezone_spec_t* spec() const { return spec_.get(); }
+            const ZoneSource& source() const { return source_; }
+
           private:
+            ZoneSource source_;
             TimezoneSpecHandle spec_;
         };
 
@@ -360,8 +357,8 @@ namespace hegel::generators {
             impl::ZonedSpecParams spec;
             spec.precision = precision_to_c(params.precision);
             if (instant) {
-                Timestamp min = params.min_instant.value_or(min_timestamp);
-                Timestamp max = params.max_instant.value_or(max_timestamp);
+                Instant min = params.min_instant.value_or(lowest_instant);
+                Instant max = params.max_instant.value_or(highest_instant);
                 if (valid(min) && valid(max) && max < min) {
                     throw std::invalid_argument(
                         "Cannot have max_instant < min_instant");
@@ -384,37 +381,70 @@ namespace hegel::generators {
             return impl::zoned_spec_new(spec);
         }
 
-        class ZonedDatetimesGenerator
-            : public IGenerator<datetime::ZonedDateTime> {
+        class ZonedDatetimesGenerator : public IGenerator<ZonedDateTime> {
           public:
             explicit ZonedDatetimesGenerator(const ZonedDatetimesParams& params)
-                : zones_(timezone_spec_of(params.timezones)),
+                : zones_(params.zones.has_value() ? params.zones->inner()
+                                                  : zones().inner()),
+                  builtin_(dynamic_cast<const ZonesGenerator*>(zones_.get())),
+                  source_(builtin_ != nullptr ? builtin_->source()
+                                              : default_zone_source()),
                   spec_(zoned_spec_of(params)) {}
 
-            datetime::ZonedDateTime do_draw(const TestCase& tc) const override {
-                impl::ZonedDraw drawn =
-                    impl::draw_zoned_datetime(tc, zones_.get(), spec_.get());
+            ZonedDateTime do_draw(const TestCase& tc) const override {
+                if (builtin_ != nullptr) {
+                    return from_draw(impl::draw_zoned_datetime(
+                        tc, builtin_->spec(), spec_.get()));
+                }
+                internal::start_span(tc, internal::SpanLabel::ZonedDatetime);
+                TimeZone zone = zones_->do_draw(tc);
+                ZonedDateTime value = from_draw(impl::draw_zoned_datetime(
+                    tc, spec_for(zone.name), spec_.get()));
+                internal::stop_span(tc);
+                return value;
+            }
+
+          private:
+            ZonedDateTime from_draw(impl::ZonedDraw drawn) const {
                 const hegel_zoned_datetime_t& z = drawn.value;
-                return datetime::ZonedDateTime{
-                    impl::zone_named(std::move(drawn.zone)),
+                return ZonedDateTime{
+                    impl::zone_named(std::move(drawn.zone), source_),
                     impl::datetime_from_c(z.civil),
                     impl::kind_from_c(z.kind),
-                    z.offset_before,
-                    z.offset_after,
+                    impl::offset_from_c(z.offset_before, z.offset_known),
+                    impl::offset_from_c(z.offset_after, z.offset_known),
                     z.fold,
                     impl::offset_from_c(z.offset_seconds, z.offset_known),
                     impl::timestamp_from_c(z.timestamp)};
             }
 
-          private:
-            TimezoneSpecHandle zones_;
+            const hegel_timezone_spec_t*
+            spec_for(const std::string& name) const {
+                std::lock_guard<std::mutex> lock(single_specs_mutex_);
+                auto found = single_specs_.find(name);
+                if (found == single_specs_.end()) {
+                    auto spec = std::make_unique<TimezoneSpecHandle>(
+                        impl::timezone_spec_new(std::vector<std::string>{name},
+                                                true, true, false, true,
+                                                impl::source_handle(source_)));
+                    found = single_specs_.emplace(name, std::move(spec)).first;
+                }
+                return found->second->get();
+            }
+
+            std::shared_ptr<IGenerator<TimeZone>> zones_;
+            const ZonesGenerator* builtin_;
+            ZoneSource source_;
             ZonedSpecHandle spec_;
+            mutable std::mutex single_specs_mutex_;
+            mutable std::map<std::string, std::unique_ptr<TimezoneSpecHandle>>
+                single_specs_;
         };
 
         class SignedDurationsGenerator : public IGenerator<SignedDuration> {
           public:
             explicit SignedDurationsGenerator(
-                const SignedDurationsParams& params)
+                const DurationsParams<SignedDuration>& params)
                 : bounds_(bounds(params.min_value, params.max_value,
                                  min_duration, max_duration, "duration")),
                   precision_(precision_to_c(params.precision)) {}
@@ -448,7 +478,7 @@ namespace hegel::generators {
                 }
             }
             if (!any) {
-                int64_t min = params.sign == datetime::SpanSign::NonNegative
+                int64_t min = params.sign == SpanSign::NonNegative
                                   ? 0
                                   : -std::numeric_limits<int64_t>::max();
                 for (std::optional<impl::SpanUnitBounds>& unit : bounds) {
@@ -459,17 +489,17 @@ namespace hegel::generators {
             return impl::span_spec_new(bounds, sign_to_c(params.sign));
         }
 
-        class SpansGenerator : public IGenerator<datetime::Span> {
+        class SpansGenerator : public IGenerator<Span> {
           public:
             explicit SpansGenerator(const SpansParams& params)
                 : spec_(span_spec_of(params)) {}
 
-            datetime::Span do_draw(const TestCase& tc) const override {
+            Span do_draw(const TestCase& tc) const override {
                 hegel_span_t s = impl::draw_span(tc, spec_.get());
-                return datetime::Span{
-                    s.years,        s.months,     s.weeks,   s.days,
-                    s.hours,        s.minutes,    s.seconds, s.milliseconds,
-                    s.microseconds, s.nanoseconds};
+                return Span{s.years,      s.months,       s.weeks,
+                            s.days,       s.hours,        s.minutes,
+                            s.seconds,    s.milliseconds, s.microseconds,
+                            s.nanoseconds};
             }
 
           private:
@@ -490,30 +520,89 @@ namespace hegel::generators {
         return Generator<DateTime>(new DatetimesGenerator(params));
     }
 
-    Generator<Timestamp> timestamps(TimestampsParams params) {
-        return Generator<Timestamp>(new TimestampsGenerator(params));
+    Generator<Instant> instants(InstantsParams params) {
+        return Generator<Instant>(new InstantsGenerator(params));
     }
 
-    Generator<UtcOffset> utc_offsets(UtcOffsetsParams params) {
-        return Generator<UtcOffset>(new UtcOffsetsGenerator(params));
+    Generator<UtcOffset> offsets(OffsetsParams params) {
+        return Generator<UtcOffset>(new OffsetsGenerator(params));
     }
 
-    Generator<datetime::TimeZone> timezones(const TimezonesParams& params) {
-        return Generator<datetime::TimeZone>(new TimezonesGenerator(params));
+    Generator<TimeZone> zones(const ZonesParams& params) {
+        return Generator<TimeZone>(new ZonesGenerator(params));
     }
 
-    Generator<datetime::ZonedDateTime>
+    Generator<ZonedDateTime>
     zoned_datetimes(const ZonedDatetimesParams& params) {
-        return Generator<datetime::ZonedDateTime>(
-            new ZonedDatetimesGenerator(params));
+        return Generator<ZonedDateTime>(new ZonedDatetimesGenerator(params));
     }
 
-    Generator<SignedDuration> signed_durations(SignedDurationsParams params) {
+    Generator<SignedDuration>
+    detail::signed_durations(const DurationsParams<SignedDuration>& params) {
         return Generator<SignedDuration>(new SignedDurationsGenerator(params));
     }
 
-    Generator<datetime::Span> spans(SpansParams params) {
-        return Generator<datetime::Span>(new SpansGenerator(params));
+    Generator<Span> spans(SpansParams params) {
+        return Generator<Span>(new SpansGenerator(params));
+    }
+
+} // namespace hegel::generators::temporal
+
+namespace hegel::generators {
+
+    namespace {
+
+        const temporal::Date first_date{1, 1, 1};
+        const temporal::Date last_date{9999, 12, 31};
+
+        std::string iso_date(const temporal::Date& date) {
+            std::array<char, 16> buf{};
+            std::snprintf(buf.data(), buf.size(), "%04d-%02u-%02u",
+                          static_cast<int>(date.year),
+                          static_cast<unsigned>(date.month),
+                          static_cast<unsigned>(date.day));
+            return buf.data();
+        }
+
+        std::string iso_time(const temporal::Time& time) {
+            std::array<char, 24> buf{};
+            unsigned microsecond = time.nanosecond / 1000;
+            if (microsecond != 0) {
+                std::snprintf(buf.data(), buf.size(), "%02u:%02u:%02u.%06u",
+                              static_cast<unsigned>(time.hour),
+                              static_cast<unsigned>(time.minute),
+                              static_cast<unsigned>(time.second), microsecond);
+            } else {
+                std::snprintf(buf.data(), buf.size(), "%02u:%02u:%02u",
+                              static_cast<unsigned>(time.hour),
+                              static_cast<unsigned>(time.minute),
+                              static_cast<unsigned>(time.second));
+            }
+            return buf.data();
+        }
+
+    } // namespace
+
+    Generator<std::string> dates() {
+        return temporal::dates(
+                   {.min_value = first_date, .max_value = last_date})
+            .map(iso_date);
+    }
+
+    Generator<std::string> times() {
+        return temporal::times({.precision = temporal::Precision::Microseconds})
+            .map(iso_time);
+    }
+
+    Generator<std::string> datetimes() {
+        return temporal::datetimes(
+                   {.min_value = temporal::DateTime{first_date, {0, 0, 0, 0}},
+                    .max_value =
+                        temporal::DateTime{last_date, {23, 59, 59, 999999999}},
+                    .precision = temporal::Precision::Microseconds})
+            .map([](const temporal::DateTime& value) {
+                return iso_date(value.date) + "T" + iso_time(value.time);
+            });
     }
 
 } // namespace hegel::generators

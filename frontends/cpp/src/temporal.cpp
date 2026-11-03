@@ -1,8 +1,8 @@
-#include <hegel/datetime.h>
+#include <hegel/generators/temporal_types.h>
 
-#include <datetime_ffi.h>
 #include <engine.h>
 #include <hegel.h>
+#include <temporal_ffi.h>
 
 #include <cstdint>
 #include <cstdio>
@@ -12,9 +12,8 @@
 #include <string>
 #include <string_view>
 #include <utility>
-#include <vector>
 
-namespace hegel::datetime {
+namespace hegel::generators::temporal {
 
     namespace detail {
 
@@ -154,9 +153,9 @@ namespace hegel::datetime {
         return os << datetime.date << 'T' << datetime.time;
     }
 
-    std::ostream& operator<<(std::ostream& os, const Timestamp& timestamp) {
-        int64_t days = timestamp.second / seconds_per_day;
-        int64_t second_of_day = timestamp.second % seconds_per_day;
+    std::ostream& operator<<(std::ostream& os, const Instant& instant) {
+        int64_t days = instant.second / seconds_per_day;
+        int64_t second_of_day = instant.second % seconds_per_day;
         if (second_of_day < 0) {
             days -= 1;
             second_of_day += seconds_per_day;
@@ -170,7 +169,7 @@ namespace hegel::datetime {
         write_time(os, Time{static_cast<uint8_t>(second_of_day / 3600),
                             static_cast<uint8_t>(second_of_day / 60 % 60),
                             static_cast<uint8_t>(second_of_day % 60),
-                            timestamp.nanosecond});
+                            instant.nanosecond});
         return os << 'Z';
     }
 
@@ -205,10 +204,10 @@ namespace hegel::datetime {
         }
         os << '[' << zoned.zone << ']';
         switch (zoned.kind) {
-        case Kind::Gap:
+        case TransitionKind::Gap:
             os << "[gap]";
             break;
-        case Kind::Fold:
+        case TransitionKind::Fold:
             os << "[fold=" << (zoned.fold ? 1 : 0) << ']';
             break;
         default:
@@ -310,114 +309,77 @@ namespace hegel::datetime {
 
     std::string tzdb_version() { return impl::tzdb_version(); }
 
-    std::optional<ZoneInfo> info(std::string_view name) {
-        hegel_timezone_info_t c = impl::timezone_info(name);
-        if (!c.known) {
-            return std::nullopt;
-        }
-        std::vector<Tag> tags;
-        for (size_t bit = 0; bit < ALL_TAGS.size(); ++bit) {
-            if ((c.tags & (1u << bit)) != 0) {
-                tags.push_back(ALL_TAGS[bit]);
-            }
-        }
-        return ZoneInfo{std::string(c.primary_name.data, c.primary_name.len),
-                        c.is_link, c.rank, std::move(tags)};
-    }
-
-    ZonedDateTime resolve(std::string_view name, const DateTime& civil) {
-        hegel_timezone_resolution_t r =
-            impl::timezone_resolve(name, impl::datetime_to_c(civil));
-        return ZonedDateTime{
-            impl::zone_named(std::string(name)),
-            civil,
-            impl::kind_from_c(r.kind),
-            r.offset_before,
-            r.offset_after,
-            false,
-            impl::offset_from_c(r.offset_seconds, r.offset_known),
-            impl::timestamp_from_c(r.timestamp)};
-    }
-
-    ZoneOffset offset_at(std::string_view name, const Timestamp& timestamp) {
-        hegel_timezone_offset_t o =
-            impl::timezone_offset_at(name, impl::timestamp_to_c(timestamp));
-        return ZoneOffset{impl::offset_from_c(o.offset_seconds, o.offset_known),
-                          o.is_dst,
-                          std::string(o.abbreviation.data, o.abbreviation.len)};
-    }
-
-} // namespace hegel::datetime
+} // namespace hegel::generators::temporal
 
 namespace hegel::impl {
 
-    hegel_date_t date_to_c(const datetime::Date& date) {
+    hegel_date_t date_to_c(const generators::temporal::Date& date) {
         return hegel_date_t{date.year, date.month, date.day};
     }
 
-    datetime::Date date_from_c(const hegel_date_t& date) {
-        return datetime::Date{date.year, date.month, date.day};
+    generators::temporal::Date date_from_c(const hegel_date_t& date) {
+        return generators::temporal::Date{date.year, date.month, date.day};
     }
 
-    hegel_time_t time_to_c(const datetime::Time& time) {
+    hegel_time_t time_to_c(const generators::temporal::Time& time) {
         return hegel_time_t{time.hour, time.minute, time.second,
                             time.nanosecond};
     }
 
-    datetime::Time time_from_c(const hegel_time_t& time) {
-        return datetime::Time{time.hour, time.minute, time.second,
-                              time.nanosecond};
+    generators::temporal::Time time_from_c(const hegel_time_t& time) {
+        return generators::temporal::Time{time.hour, time.minute, time.second,
+                                          time.nanosecond};
     }
 
-    hegel_datetime_t datetime_to_c(const datetime::DateTime& datetime) {
+    hegel_datetime_t
+    datetime_to_c(const generators::temporal::DateTime& datetime) {
         return hegel_datetime_t{date_to_c(datetime.date),
                                 time_to_c(datetime.time)};
     }
 
-    datetime::DateTime datetime_from_c(const hegel_datetime_t& datetime) {
-        return datetime::DateTime{date_from_c(datetime.date),
-                                  time_from_c(datetime.time)};
+    generators::temporal::DateTime
+    datetime_from_c(const hegel_datetime_t& datetime) {
+        return generators::temporal::DateTime{date_from_c(datetime.date),
+                                              time_from_c(datetime.time)};
     }
 
-    hegel_timestamp_t timestamp_to_c(const datetime::Timestamp& timestamp) {
+    hegel_timestamp_t
+    timestamp_to_c(const generators::temporal::Instant& timestamp) {
         return hegel_timestamp_t{timestamp.second, timestamp.nanosecond};
     }
 
-    datetime::Timestamp timestamp_from_c(const hegel_timestamp_t& timestamp) {
-        return datetime::Timestamp{timestamp.second, timestamp.nanosecond};
+    generators::temporal::Instant
+    timestamp_from_c(const hegel_timestamp_t& timestamp) {
+        return generators::temporal::Instant{timestamp.second,
+                                             timestamp.nanosecond};
     }
 
-    hegel_duration_t duration_to_c(const datetime::SignedDuration& duration) {
+    hegel_duration_t
+    duration_to_c(const generators::temporal::SignedDuration& duration) {
         return hegel_duration_t{duration.seconds, duration.nanoseconds};
     }
 
-    datetime::SignedDuration duration_from_c(const hegel_duration_t& duration) {
-        return datetime::SignedDuration{duration.seconds, duration.nanoseconds};
+    generators::temporal::SignedDuration
+    duration_from_c(const hegel_duration_t& duration) {
+        return generators::temporal::SignedDuration{duration.seconds,
+                                                    duration.nanoseconds};
     }
 
-    datetime::UtcOffset offset_from_c(int32_t seconds, bool known) {
-        return known ? datetime::UtcOffset{seconds, true}
-                     : datetime::UNKNOWN_OFFSET;
+    generators::temporal::UtcOffset offset_from_c(int32_t seconds, bool known) {
+        return known ? generators::temporal::UtcOffset{seconds, true}
+                     : generators::temporal::UNKNOWN_OFFSET;
     }
 
-    datetime::Kind kind_from_c(hegel_timezone_kind_t kind) {
+    generators::temporal::TransitionKind
+    kind_from_c(hegel_timezone_kind_t kind) {
         switch (kind) {
         case HEGEL_TIMEZONE_KIND_GAP:
-            return datetime::Kind::Gap;
+            return generators::temporal::TransitionKind::Gap;
         case HEGEL_TIMEZONE_KIND_FOLD:
-            return datetime::Kind::Fold;
+            return generators::temporal::TransitionKind::Fold;
         default:
-            return datetime::Kind::Unique;
+            return generators::temporal::TransitionKind::Unique;
         }
-    }
-
-    datetime::TimeZone zone_named(std::string name) {
-        std::string primary_name = name;
-        if (std::optional<datetime::ZoneInfo> zone_info =
-                datetime::info(name)) {
-            primary_name = std::move(zone_info->primary_name);
-        }
-        return datetime::TimeZone{std::move(name), std::move(primary_name)};
     }
 
 } // namespace hegel::impl

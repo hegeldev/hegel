@@ -47,9 +47,10 @@ namespace hegel::internal {
         Filter,
         Mapped,
         StatefulRule,
+        ZonedDatetime,
     };
     inline constexpr std::size_t span_label_count =
-        static_cast<std::size_t>(SpanLabel::StatefulRule) + 1;
+        static_cast<std::size_t>(SpanLabel::ZonedDatetime) + 1;
 
     // Open / close a labeled span around a group of draws so the shrinker
     // can treat them as a unit. stop_span(tc, true) marks the span rejected

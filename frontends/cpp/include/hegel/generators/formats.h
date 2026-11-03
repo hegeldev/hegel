@@ -103,4 +103,40 @@ namespace hegel::generators {
 
     /// @}
 
+    /// @name Datetime (deprecated)
+    /// @{
+
+    /**
+     * @brief Generate ISO 8601 date strings (`YYYY-MM-DD`) from 0001-01-01
+     * to 9999-12-31.
+     *
+     * @deprecated Use temporal::dates(), which draws a temporal::Date.
+     * @return Generator producing ISO 8601 date strings.
+     */
+    [[deprecated("use hegel::generators::temporal::dates()")]]
+    Generator<std::string> dates();
+
+    /**
+     * @brief Generate ISO 8601 time strings (`HH:MM:SS[.ffffff]`, the
+     * fraction present iff the microsecond is nonzero).
+     *
+     * @deprecated Use temporal::times(), which draws a temporal::Time.
+     * @return Generator producing ISO 8601 time strings.
+     */
+    [[deprecated("use hegel::generators::temporal::times()")]]
+    Generator<std::string> times();
+
+    /**
+     * @brief Generate naive ISO 8601 datetime strings
+     * (`YYYY-MM-DDTHH:MM:SS[.ffffff]`) from 0001-01-01 to 9999-12-31.
+     *
+     * @deprecated Use temporal::datetimes(), which draws a
+     * temporal::DateTime.
+     * @return Generator producing ISO 8601 datetime strings.
+     */
+    [[deprecated("use hegel::generators::temporal::datetimes()")]]
+    Generator<std::string> datetimes();
+
+    /// @}
+
 } // namespace hegel::generators

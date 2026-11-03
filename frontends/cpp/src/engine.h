@@ -24,11 +24,36 @@ namespace hegel {
 namespace hegel::impl {
 
     /// This thread's libhegel error-reporting context, created on first use
-    /// and freed when the thread exits.
+    /// and freed when the thread exits; inside a CallbackContextScope, the
+    /// context of that scope.
     hegel_context_t* thread_context();
+
+    /// While it lives, thread_context() on this thread is `ctx`: the
+    /// context libhegel gave a callback it is running, which the libhegel
+    /// calls the callback makes must use.
+    class CallbackContextScope {
+      public:
+        explicit CallbackContextScope(hegel_context_t* ctx);
+        ~CallbackContextScope();
+        CallbackContextScope(const CallbackContextScope&) = delete;
+        CallbackContextScope& operator=(const CallbackContextScope&) = delete;
+        CallbackContextScope(CallbackContextScope&&) = delete;
+        CallbackContextScope& operator=(CallbackContextScope&&) = delete;
+
+      private:
+        hegel_context_t* previous_;
+    };
 
     /// Most recent error message recorded on `ctx` (empty string if none).
     std::string last_error(hegel_context_t* ctx);
+
+    /// A borrowed hegel_string_t over `text`, valid while `text` lives.
+    hegel_string_t borrow(std::string_view text);
+
+    /// Turn an engine rejection of a configuration call or a query into
+    /// std::invalid_argument, prefixed with `what`.
+    void require_configured(hegel_context_t* ctx, const char* what,
+                            hegel_result_t rc);
 
     // Safe wrappers over the libhegel C ABI: each forwards to its `hegel_*`
     // entry point and routes the return code through an internal check that
@@ -155,7 +180,8 @@ namespace hegel::impl {
 
     hegel_timezone_spec_t*
     timezone_spec_new(const std::optional<std::vector<std::string>>& names,
-                      bool links, bool legacy, bool unknown, bool opaque);
+                      bool links, bool legacy, bool unknown, bool opaque,
+                      const hegel_zone_source_t* source);
     void timezone_spec_free(hegel_timezone_spec_t* spec);
 
     struct ZonedSpecParams {
@@ -181,18 +207,21 @@ namespace hegel::impl {
                   uint32_t sign);
     void span_spec_free(hegel_span_spec_t* spec);
 
-    // Queries of the bundled time zone database. A rejected argument
-    // throws std::invalid_argument with the engine's diagnostic.
+    // Queries of a zone source's data. A rejected argument throws
+    // std::invalid_argument with the engine's diagnostic.
 
     std::string tzdb_version();
-    hegel_timezone_info_t timezone_info(std::string_view name);
-    hegel_timezone_resolution_t timezone_resolve(std::string_view name,
-                                                 hegel_datetime_t civil);
-    hegel_timezone_offset_t timezone_offset_at(std::string_view name,
-                                               hegel_timestamp_t timestamp);
+    hegel_timezone_info_t timezone_info(const hegel_zone_source_t* source,
+                                        std::string_view name);
+    hegel_timezone_resolution_t
+    timezone_resolve(const hegel_zone_source_t* source, std::string_view name,
+                     hegel_datetime_t civil);
+    hegel_timezone_offset_t
+    timezone_offset_at(const hegel_zone_source_t* source, std::string_view name,
+                       hegel_timestamp_t timestamp);
 
     // Draw primitives used by the non-template generators in
-    // generators.cpp and generators_datetime.cpp. (The template-visible
+    // generators.cpp and generators_temporal.cpp. (The template-visible
     // ones live in hegel::internal — see include/hegel/internal.h.)
 
     void target(const TestCase& tc, double score, std::string_view label);
