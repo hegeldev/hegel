@@ -221,6 +221,8 @@ mod drift {
 
     const _: () = {
         assert!(mirror::HEGEL_STATE_MACHINE_DONE == HEGEL_STATE_MACHINE_DONE);
+        assert!(mirror::HEGEL_FILTER_ATTEMPTS == HEGEL_FILTER_ATTEMPTS);
+        assert!(mirror::HEGEL_MAX_SIZE_DEFAULT == HEGEL_MAX_SIZE_DEFAULT);
         assert!(
             size_of::<mirror::hegel_output_callback_t>() == size_of::<hegel_output_callback_t>()
         );

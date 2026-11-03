@@ -22,3 +22,14 @@ describe("gs.just()", () => {
       { testCases: 5 },
     ));
 });
+
+describe("gs.none()", () => {
+  test("always generates null", () =>
+    hegel.test(
+      (tc) => {
+        expect(tc.draw(gs.none())).toBeNull();
+        expect(tc.draw(gs.arrays(gs.none(), { maxSize: 3 })).every((v) => v === null)).toBe(true);
+      },
+      { testCases: 10 },
+    ));
+});

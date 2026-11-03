@@ -214,35 +214,41 @@ def test_finite_max_bound_does_not_overflow(tc):
 
 @hegel.test
 def test_can_exclude_endpoints(tc):
-    x = tc.draw(gs.floats(0, 1, exclude_min=True, exclude_max=True))
+    x = tc.draw(gs.floats(min_value_exclusive=0, max_value_exclusive=1))
     assert 0 < x < 1
 
 
 @hegel.test
 def test_can_exclude_neg_infinite_endpoint(tc):
-    x = tc.draw(gs.floats(-math.inf, -1e307, exclude_min=True))
+    x = tc.draw(gs.floats(min_value_exclusive=-math.inf, max_value=-1e307))
     assert not math.isinf(x)
 
 
 @hegel.test
 def test_can_exclude_pos_infinite_endpoint(tc):
-    x = tc.draw(gs.floats(1e307, math.inf, exclude_max=True))
+    x = tc.draw(gs.floats(min_value=1e307, max_value_exclusive=math.inf))
     assert not math.isinf(x)
 
 
 def test_exclude_infinite_endpoint_is_invalid():
     with pytest.raises(hegel.InvalidArgument):
-        gs.floats(min_value=math.inf, exclude_min=True)
+        gs.floats(min_value_exclusive=math.inf)
     with pytest.raises(hegel.InvalidArgument):
-        gs.floats(max_value=-math.inf, exclude_max=True)
+        gs.floats(max_value_exclusive=-math.inf)
 
 
 @pytest.mark.parametrize("lo,hi", [(True, False), (False, True), (True, True)])
 @hegel.test
 def test_exclude_entire_interval(tc, lo, hi):
     bound = tc.draw(gs.floats(allow_nan=False, allow_infinity=False).filter(bool))
-    with pytest.raises(hegel.InvalidArgument, match=r"exclude_min/exclude_max leave no"):
-        gs.floats(bound, bound, exclude_min=lo, exclude_max=hi)
+    kwargs = {
+        "min_value_exclusive" if lo else "min_value": bound,
+        "max_value_exclusive" if hi else "max_value": bound,
+    }
+    with pytest.raises(
+        hegel.InvalidArgument, match=r"min_value_exclusive/max_value_exclusive leave no"
+    ):
+        gs.floats(**kwargs)
 
 
 def test_zero_intervals_are_OK():
@@ -255,8 +261,12 @@ def test_zero_intervals_are_OK():
 @pytest.mark.parametrize("hi", [0.0, -0.0])
 @pytest.mark.parametrize("exmin,exmax", [(True, False), (False, True), (True, True)])
 def test_cannot_exclude_endpoint_with_zero_interval(lo, hi, exmin, exmax):
+    kwargs = {
+        "min_value_exclusive" if exmin else "min_value": lo,
+        "max_value_exclusive" if exmax else "max_value": hi,
+    }
     with pytest.raises(hegel.InvalidArgument):
-        gs.floats(lo, hi, exclude_min=exmin, exclude_max=exmax)
+        gs.floats(**kwargs)
 
 
 WIDTHS = (64, 32)

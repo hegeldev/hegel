@@ -20,6 +20,12 @@ describe("global handle", () => {
     expect(lib.version()).toMatch(/^\d+\.\d+\.\d+$/);
   });
 
+  it("passes the host's Unicode version to the engine, when it has one", () => {
+    expect(loadLibhegel().version()).toBe(loadLibhegel("15.1").version());
+    expect(() => loadLibhegel("1.0")).toThrow(/no tables for Unicode 1.0/);
+    loadLibhegel(process.versions["unicode"] ?? "");
+  });
+
   it("getLibhegel memoizes the handle", () => {
     const a = getLibhegel();
     const b = getLibhegel();

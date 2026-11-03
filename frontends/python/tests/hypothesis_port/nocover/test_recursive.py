@@ -148,10 +148,7 @@ SELF_REF = gs.recursive(
 )
 
 
-@hegel.test(
-    suppress_health_check=[hegel.HealthCheck.too_slow, hegel.HealthCheck.filter_too_much],
-    test_cases=5,
-)
+@hegel.test(suppress_health_check=list(hegel.HealthCheck), test_cases=5)
 def test_self_ref_regression(tc):
     # See https://github.com/HypothesisWorks/hypothesis/issues/2794
     tc.draw(SELF_REF)

@@ -4,10 +4,11 @@ use crate::pretty::PrettyPrinter;
 use crate::test_case::invalid_argument;
 use std::borrow::Cow;
 use std::fmt::Debug;
+use std::sync::LazyLock;
 
-const SUBSEQUENCE_LABEL: u64 = label_from_name("hegel.subsequence");
-const PERMUTATION_LABEL: u64 = label_from_name("hegel.permutation");
-const SAMPLE_LABEL: u64 = label_from_name("hegel.sample");
+static SUBSEQUENCE_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.subsequence"));
+static PERMUTATION_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.permutation"));
+static SAMPLE_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.sample"));
 
 /// Draw between `min_size` and `max_size` distinct indices in `0..n`, without
 /// replacement, in draw order. Shrinks towards fewer indices and towards the
@@ -49,7 +50,7 @@ impl<'a, T: Clone> SubsequenceGenerator<'a, T> {
 
 impl<'a, T: Clone + Send + Sync + 'a> Generator<Vec<T>> for SubsequenceGenerator<'a, T> {
     fn label(&self) -> u64 {
-        SUBSEQUENCE_LABEL
+        *SUBSEQUENCE_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> Vec<T> {
@@ -130,7 +131,7 @@ pub struct PermutationGenerator<'a, T: Clone> {
 
 impl<'a, T: Clone + Send + Sync + 'a> Generator<Vec<T>> for PermutationGenerator<'a, T> {
     fn label(&self) -> u64 {
-        PERMUTATION_LABEL
+        *PERMUTATION_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> Vec<T> {
@@ -228,7 +229,7 @@ impl<'a, T: Clone> SampleGenerator<'a, T> {
 
 impl<'a, T: Clone + Send + Sync + 'a> Generator<Vec<T>> for SampleGenerator<'a, T> {
     fn label(&self) -> u64 {
-        SAMPLE_LABEL
+        *SAMPLE_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> Vec<T> {

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import datetime as dt
+import sys
+import threading
 import uuid
 
 import pytest
@@ -11,7 +13,7 @@ from hegel import generators as gs
 from hegel._draw_names import DrawName
 from hegel.errors import AssumeFailed, InternalError, LoopDone
 from hegel.pretty import PrettyPrinter
-from hegel.test_case import Collection, TestCase
+from hegel.test_case import SHALLOW_SPANS, Collection, TestCase
 from tests.helpers import failing, notes, run_test
 
 
@@ -24,7 +26,7 @@ def test_draw_reports_values_with_inferred_names():
 
     error = failing(body)
     falsifying = notes(error)[0]
-    assert falsifying.startswith("Falsifying example:\nxs = [0, 0]\n")
+    assert falsifying.startswith("xs = [0, 0]\n")
     assert "\nnamed_1 = " in falsifying
     assert "\ndraw_1 = 5" in falsifying
 
@@ -37,7 +39,7 @@ def test_repeated_names_get_suffixes():
         assert x is None or x_2 is None
 
     lines = notes(failing(body))[0].splitlines()
-    assert lines[1:] == ["x_1 = 1", "x_2 = 1", "x_3 = 1", "x_2_1 = 2"]
+    assert lines == ["x_1 = 1", "x_2 = 1", "x_3 = 1", "x_2_1 = 2"]
 
 
 def test_a_name_drawn_more_often_than_inferred_is_numbered():
@@ -52,7 +54,7 @@ def test_a_name_drawn_more_often_than_inferred_is_numbered():
         raise AssertionError(x_2)
 
     lines = notes(failing(body))[0].splitlines()
-    assert lines[1:] == ["x = 1", "x_2 = 1", "x_2_1 = 2"]
+    assert lines == ["x = 1", "x_2 = 1", "x_2_1 = 2"]
 
 
 def test_nested_draws_are_silent():
@@ -63,11 +65,11 @@ def test_nested_draws_are_silent():
             return (a, b)
 
     def body(tc):
-        pair = tc.draw(Pair())
+        pair = tc.draw(Pair().print_as_repr())
         raise ValueError(pair)
 
     lines = notes(failing(body, ValueError))[0].splitlines()
-    assert lines == ["Falsifying example:", "pair = (1, 2)"]
+    assert lines == ["pair = (1, 2)"]
 
 
 def test_draw_silent_and_generate_alias():
@@ -93,9 +95,9 @@ def test_note_assume_reject(output):
             tc.reject()
         assert x < 2
 
-    error = failing(body)
+    error = failing(body, suppress_health_check=[hegel.HealthCheck.filter_too_much])
     assert all(x % 2 == 0 for x in seen)
-    assert notes(error)[0] == "Falsifying example:\nx = 2\nx is 2"
+    assert notes(error)[0] == "x = 2\nx is 2"
 
 
 def test_target_event_and_event_value(output):
@@ -112,6 +114,7 @@ def test_target_event_and_event_value(output):
 def test_repeat_runs_body_and_reports_repetitions():
     counts = []
 
+    @hegel.test
     def body(tc):
         n = 0
 
@@ -124,12 +127,13 @@ def test_repeat_runs_body_and_reports_repetitions():
         tc.repeat(step)
         counts.append(n)  # unreachable: repeat raises LoopDone
 
-    error = failing(body)
+    with pytest.raises(AssertionError) as info:
+        body()
+    error = info.value
     assert counts == []
     text = notes(error)[0]
-    assert "// Repetition #1" in text
-    assert "// Repetition #2" in text
-    assert "  x = " in text
+    assert "# Repetition #1\n  x_1 = " in text
+    assert "# Repetition #2\n  x_2 = " in text
 
 
 def test_repeat_with_assumption_and_control_signals():
@@ -157,16 +161,23 @@ def test_repeat_with_assumption_and_control_signals():
     failing(invalid, hegel.InvalidArgument, test_cases=20)
 
 
-def test_repeat_can_run_zero_times(monkeypatch):
-    # A body that draws nothing is stopped only by the test case's choice
-    # limit, about a million forced repetitions, which is far too slow under
-    # coverage on CI; have the collection stop at once instead.
-    monkeypatch.setattr(Collection, "more", lambda self: False)
+def test_repeat_runs_until_the_engine_stops_it():
+    repetitions = 0
+    after = 0
 
     def body(tc):
-        tc.repeat(lambda: None)
+        nonlocal after
+
+        def step():
+            nonlocal repetitions
+            repetitions += 1
+
+        tc.repeat(step)
+        after += 1
 
     run_test(body, test_cases=3)
+    assert repetitions > 0
+    assert after == 0
 
 
 def test_child_and_clone_handles():
@@ -174,8 +185,8 @@ def test_child_and_clone_handles():
         child = tc._child(4)
         a = child.draw(gs.just("a"))
         child.note("inside")
-        clone = tc._clone()
-        clone._set_worker(0)
+        clone = tc.clone()
+        clone.set_worker(0)
         b = clone.draw(gs.just("b"))
         assert repr(tc) == "TestCase()"
         raise ValueError(a + b)
@@ -308,15 +319,76 @@ def test_assume_failed_is_base_exception():
     assert isinstance(TestCase.__test__, bool)
 
 
-def test_draws_nested_too_deep_abandon_the_case():
-    from hegel.test_case import MAX_DRAW_DEPTH
+def test_draws_nested_near_the_recursion_limit_abandon_the_case():
+    def nest(tc):
+        tc.start_span(1)
+        nest(tc)
+
+    with pytest.raises(hegel.errors.FailedHealthCheck):
+        run_test(nest, test_cases=10)
+
+
+def test_spans_opened_from_returned_frames_still_measure_the_stack():
+    def open_span(tc):
+        tc.start_span(1)
+
+    def nest(tc):
+        open_span(tc)
+        nest(tc)
+
+    with pytest.raises(hegel.errors.FailedHealthCheck):
+        run_test(nest, test_cases=10)
+
+
+def test_spans_left_open_by_a_resumed_generator_still_measure_the_stack():
+    def nest(tc):
+        tc.start_span(1)
+        nest(tc)
+
+    def spans(tc):
+        for _ in range(SHALLOW_SPANS + 8):
+            tc.start_span(1)
+        yield
+        nest(tc)
+
+    def resume_deep(n, resumable):
+        if n == 0:
+            next(resumable)
+        else:
+            resume_deep(n - 1, resumable)
 
     def body(tc):
-        for _ in range(MAX_DRAW_DEPTH + 1):
-            tc.start_span(1)
+        resumable = spans(tc)
+        next(resumable)
+        resume_deep(sys.getrecursionlimit() - 400, resumable)
 
     with pytest.raises(hegel.errors.FailedHealthCheck):
         run_test(body, test_cases=10)
+
+
+def test_closing_deep_spans_then_nesting_still_measures_the_stack():
+    def nest(tc):
+        tc.start_span(1)
+        nest(tc)
+
+    def body(tc):
+        for _ in range(100):
+            tc.start_span(1)
+        for _ in range(100):
+            tc.stop_span()
+        nest(tc)
+
+    with pytest.raises(hegel.errors.FailedHealthCheck):
+        run_test(body, test_cases=10)
+
+
+def test_deep_spans_without_deep_recursion_are_allowed():
+    def body(tc):
+        for _ in range(1000):
+            tc.start_span(1)
+        tc._reset_open_spans_to(0)
+
+    run_test(body, test_cases=3)
 
 
 def test_numbered_names_skip_names_already_taken():
@@ -327,10 +399,10 @@ def test_numbered_names_skip_names_already_taken():
         raise AssertionError((x_1, x))
 
     lines = notes(failing(body))[0].splitlines()
-    assert lines[1:] == ["x_1 = 0", "x_2 = 1", "x_3 = 1"]
+    assert lines == ["x_1 = 0", "x_2 = 1", "x_3 = 1"]
 
 
-def test_a_draw_that_raises_reports_what_was_drawn_inside_it():
+def test_a_draw_that_raises_reports_neither_itself_nor_its_nested_draws():
     @gs.composite
     def failing_composite(tc):
         inner = tc.draw(gs.integers(0, 10))
@@ -345,14 +417,7 @@ def test_a_draw_that_raises_reports_what_was_drawn_inside_it():
         tc.draw(failing_composite())
 
     lines = notes(failing(body, KeyError))[0].splitlines()
-    assert lines == [
-        "Falsifying example:",
-        "first_1 = 0",
-        "draw_1 = <KeyError raised while drawing from failing_composite()>",
-        "  inner = 6",
-        "  draw = False",
-        "  named = 1",
-    ]
+    assert lines == ["first_1 = 0"]
 
 
 def test_a_rejected_draw_reports_nothing():
@@ -381,5 +446,56 @@ def test_target_rejects_a_non_string_label(label):
         tc.draw(gs.none())
         with pytest.raises(hegel.InvalidArgument, match="must be a string"):
             tc.target(0.0, label=label)
+
+    run_test(body, test_cases=1)
+
+
+def test_clones_draw_from_threads():
+    def body(tc):
+        clones = [tc.clone() for _ in range(3)]
+        for i, clone in enumerate(clones):
+            clone.set_worker(i)
+        results = [0] * len(clones)
+        errors = []
+
+        def work(i):
+            try:
+                results[i] = clones[i].draw(gs.integers(0, 10), name="n")
+            except BaseException as error:
+                errors.append(error)
+
+        threads = [threading.Thread(target=work, args=(i,)) for i in range(len(clones))]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        if errors:
+            raise errors[0]
+        assert sum(results) < 5
+
+    lines = notes(failing(body))[0].splitlines()
+    worker_lines = [line for line in lines if line.startswith("[worker ")]
+    assert len(worker_lines) == 3
+    assert sum(int(line.rsplit(" = ", 1)[1]) for line in worker_lines) == 5
+    names = sorted(line.split("] ", 1)[1].split(" = ")[0] for line in worker_lines)
+    assert names == ["n_1", "n_2", "n_3"]
+
+
+def test_clone_shares_draw_names():
+    def body(tc):
+        tc.draw(gs.just(1), name="x")
+        tc.clone().draw(gs.just(2), name="x")
+        raise ValueError
+
+    text = notes(failing(body, ValueError))[0]
+    assert "x_1 = 1" in text
+    assert "x_2 = 2" in text
+
+
+@pytest.mark.parametrize("index", [-1, 1 << 63, True, 1.0])
+def test_set_worker_validates_its_index(index):
+    def body(tc):
+        with pytest.raises(hegel.InvalidArgument, match="must be a non-negative integer"):
+            tc.set_worker(index)
 
     run_test(body, test_cases=1)

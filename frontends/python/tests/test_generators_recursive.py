@@ -78,7 +78,7 @@ def test_recursive_shrinks_and_prints():
         v = tc.draw(gs.recursive(gs.just(1), lambda c: gs.lists(c, min_size=2, max_size=2)))
         assert depth(v) < 1
 
-    assert notes(failing(body))[0] == "Falsifying example:\nv = [1, 1]"
+    assert notes(failing(body))[0] == "v = [1, 1]"
 
 
 def test_recursive_branch_must_return_generator():
@@ -123,7 +123,7 @@ def test_deferred_self_reference():
         v = tc.draw(tree)
         assert not isinstance(v, tuple)
 
-    assert notes(failing(body))[0] == "Falsifying example:\nv = (0, 0)"
+    assert notes(failing(body))[0] == "v = (0, 0)"
 
 
 def test_deferred_label_of_direct_cycle_and_errors():
@@ -169,13 +169,13 @@ def test_recursive_branches_can_draw_subtrees_silently():
     check_all(wrapped, lambda v: isinstance(v, (int, list)), test_cases=100)
 
 
-def test_deferred_self_reference_without_a_way_out_is_rejected():
+def test_deferred_self_reference_without_a_way_out_is_too_large():
     hidden = Deferred(lambda: gs.none().flat_map(lambda _: hidden))
 
     def body(tc):
         tc.draw(hidden)
 
-    with pytest.raises(hegel.errors.Unsatisfiable):
+    with pytest.raises(hegel.errors.FailedHealthCheck):
         run_test(body, test_cases=20)
 
 

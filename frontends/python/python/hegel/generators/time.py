@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from hegel._labels import combine_labels, label_from_name
 from hegel.errors import InvalidArgument
-from hegel.generators.base import Generator
+from hegel.generators.base import Generator, _PrintsValue
 from hegel.generators.combinators import as_generator, just
 
 if TYPE_CHECKING:
@@ -27,7 +27,7 @@ def _check_type(name: str, value: Any, cls: type) -> None:
         raise InvalidArgument(f"{name}={value!r} must be a {cls.__name__}")
 
 
-class Dates(Generator[dt.date]):
+class Dates(_PrintsValue[dt.date]):
     def __init__(self, min_value: dt.date, max_value: dt.date) -> None:
         self.min_value = min_value
         self.max_value = max_value
@@ -57,7 +57,7 @@ def dates(min_value: dt.date = dt.date.min, max_value: dt.date = dt.date.max) ->
     return Dates(min_value, max_value)
 
 
-class Times(Generator[dt.time]):
+class Times(_PrintsValue[dt.time]):
     def __init__(
         self, min_value: dt.time, max_value: dt.time, timezones: Generator[Any] | None
     ) -> None:
@@ -100,7 +100,7 @@ def times(
     return Times(min_value, max_value, None if timezones is None else as_generator(timezones))
 
 
-class Datetimes(Generator[dt.datetime]):
+class Datetimes(_PrintsValue[dt.datetime]):
     def __init__(
         self,
         min_value: dt.datetime,
@@ -185,7 +185,7 @@ def datetimes(
     )
 
 
-class Timedeltas(Generator[dt.timedelta]):
+class Timedeltas(_PrintsValue[dt.timedelta]):
     def __init__(self, min_value: dt.timedelta, max_value: dt.timedelta) -> None:
         self.min_value = min_value
         self.max_value = max_value

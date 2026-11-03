@@ -256,6 +256,16 @@ fn profile_flag_position_does_not_matter() {
 }
 
 #[test]
+fn profile_flag_takes_the_equals_form() {
+    let out = failing()
+        .with_file("hegel.toml", NOBLOB_TOML)
+        .args(&["--profile=noblob"])
+        .expect_failure("got nonneg")
+        .run();
+    assert_no_marker(out);
+}
+
+#[test]
 fn bogus_profile_flag_is_a_usage_error() {
     failing()
         .args(&["--profile", "nope"])

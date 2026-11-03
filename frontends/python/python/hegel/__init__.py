@@ -26,6 +26,7 @@ from hegel.errors import (
     InternalError,
     InvalidArgument,
     MultipleFailures,
+    NotPrintable,
     ResolutionFailed,
     RunError,
     StopTest,
@@ -33,7 +34,7 @@ from hegel.errors import (
 )
 from hegel.explicit import ExplicitCase
 from hegel.generators import Generator, composite
-from hegel.pretty import PrettyPrinter, pretty_print, pretty_repr
+from hegel.pretty import Document, PrettyPrinter, Speculation, pretty_print, pretty_repr
 from hegel.runner import (
     explicit_test_case,
     reproduce_failure,
@@ -74,6 +75,7 @@ __all__ = [
     "Collection",
     "ConcurrentPool",
     "DidNotReproduce",
+    "Document",
     "ExplicitCase",
     "FailedHealthCheck",
     "Flaky",
@@ -85,12 +87,14 @@ __all__ = [
     "Machine",
     "MultipleFailures",
     "NondeterminismStrictness",
+    "NotPrintable",
     "Phase",
     "Pool",
     "PrettyPrinter",
     "ResolutionFailed",
     "RunError",
     "Settings",
+    "Speculation",
     "StateMachine",
     "StopTest",
     "TestCase",

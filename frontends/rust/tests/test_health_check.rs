@@ -152,7 +152,7 @@ mod health_checks {
             .cloned()
             .unwrap_or_default();
         assert!(
-            msg.contains("FilterTooMuch"),
+            msg.starts_with("FailedHealthCheck: FilterTooMuch"),
             "expected FilterTooMuch panic, got {msg:?}"
         );
         let n = count.load(Ordering::SeqCst);

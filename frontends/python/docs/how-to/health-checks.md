@@ -20,7 +20,12 @@ FailedHealthCheck: FilterTooMuch — it looks like this test is filtering out to
 many inputs. 50 inputs were rejected by assume() or a filter while only 1 valid
 inputs were generated. If this is expected, suppress the FilterTooMuch health
 check with the suppress_health_check setting.
+The failed health check is HealthCheck.filter_too_much; suppress it with
+suppress_health_check=[HealthCheck.filter_too_much].
 ```
+
+The exception's `health_check` attribute is the {class}`~hegel.HealthCheck`
+that failed, here `HealthCheck.filter_too_much`.
 
 The best fix is usually to change the test, so that it generates the inputs it
 wants directly. Here, `gs.integers().map(lambda n: n * 1000)` generates only

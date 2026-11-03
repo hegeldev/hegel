@@ -12,10 +12,11 @@ Conventions:
   features Hegel does not have (`deadline`, `find`, `.example()`, `@seed`,
   `shared`, `randoms`, `Bundle`-specific stateful features, ...) are not
   ported; each file notes what was dropped from the original and why.
-- Tests of behaviour Hegel has but does differently are kept and marked
-  `pytest.mark.xfail(reason=...)` (strict, so they flag when the engine or the
-  generators change). Engine bugs found this way are opened as issues
-  against the repository.
+- Matching Hypothesis is not a goal. A test of behaviour Hegel has but does
+  differently is rewritten to assert what Hegel does, or dropped (with a note)
+  when the behaviour is Hypothesis-specific, such as its message wording. Only
+  genuine engine bugs found this way are opened as issues against the
+  repository.
 - `common/` holds the helpers the tests share: `debug.minimal` and friends
   search a generator by running a Hegel test, and `utils.capture_out` collects
   Hegel's output.

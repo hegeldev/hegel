@@ -3,14 +3,16 @@ from hegel import _native
 from hegel._labels import combine_labels, label_from_name
 
 
-def test_label_from_name_matches_engine():
+def test_label_from_name_is_the_engines():
     for name in ["", "hegel.integers", "ünïcode", "a" * 100]:
         assert label_from_name(name) == _native.label_from_name(name)
+        assert label_from_name(name) == label_from_name(name)
 
 
-def test_combine_labels_matches_engine():
+def test_combine_labels_is_the_engines():
     labels = [label_from_name(n) for n in ["a", "b", "c"]]
     assert combine_labels(labels) == _native.label_combine(labels)
+    assert combine_labels(iter(labels)) == combine_labels(labels)
     assert combine_labels([]) == _native.label_combine([])
     assert combine_labels(labels[:1]) != combine_labels(labels[:2])
 

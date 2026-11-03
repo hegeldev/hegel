@@ -2,8 +2,9 @@ use super::generators::draw_and_print_value;
 use super::{Generator, PrintableGenerator, TestCase, label_from_name};
 use crate::pretty::PrettyPrinter;
 use std::fmt::Debug;
+use std::sync::LazyLock;
 
-const BOOLEAN_LABEL: u64 = label_from_name("hegel.booleans");
+static BOOLEAN_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.booleans"));
 
 /// Generate the unit value `()`.
 // nocov start
@@ -49,7 +50,7 @@ pub struct BoolGenerator {
 
 impl Generator<bool> for BoolGenerator {
     fn label(&self) -> u64 {
-        BOOLEAN_LABEL
+        *BOOLEAN_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> bool {

@@ -23,13 +23,19 @@ include(FetchContent)
 FetchContent_Declare(
     hegel
     GIT_REPOSITORY https://github.com/hegeldev/hegel.git
-    GIT_TAG frontends/cpp/0.13.3
+    GIT_TAG frontends/cpp/0.13.4
     SOURCE_SUBDIR frontends/cpp
+    GIT_CONFIG lfs.fetchexclude=website
 )
 FetchContent_MakeAvailable(hegel)
 
 target_link_libraries(your_target PRIVATE hegel)
 ```
+
+The repository also holds the hegel.dev website, whose images and generated
+API references are stored in Git LFS. `GIT_CONFIG lfs.fetchexclude=website`
+stops a machine with git-lfs installed from downloading them; the build never
+needs them.
 
 The library lives in the [hegeldev/hegel](https://github.com/hegeldev/hegel)
 repository next to [libhegel](https://github.com/hegeldev/hegel/tree/main/libhegel),

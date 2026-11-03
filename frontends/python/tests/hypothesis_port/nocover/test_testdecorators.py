@@ -1,5 +1,7 @@
 # Dropped from the Hypothesis original: test_signature_mismatch_error_message
-# (@given's argument binding).
+# (@given's argument binding) and
+# test_contains_the_test_function_name_in_the_exception_string (Hypothesis's
+# message wording).
 # This file is part of Hypothesis, which may be found at
 # https://github.com/HypothesisWorks/hypothesis/
 #
@@ -10,42 +12,9 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
-import re
-
-import pytest
 
 import hegel
 from hegel import generators as gs
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="engine: the Unsatisfiable message does not name the test function",
-)
-def test_contains_the_test_function_name_in_the_exception_string():
-    look_for_one = hegel.Settings(test_cases=1, suppress_health_check=hegel.HealthCheck.all())
-
-    @hegel.test(settings=look_for_one)
-    def this_has_a_totally_unique_name(tc):
-        tc.draw(gs.integers())
-        tc.reject()
-
-    with pytest.raises(
-        hegel.Unsatisfiable, match=re.escape(this_has_a_totally_unique_name.__name__)
-    ):
-        this_has_a_totally_unique_name()
-
-    class Foo:
-        @hegel.test(settings=look_for_one)
-        def this_has_a_unique_name_and_lives_on_a_class(self, tc):
-            tc.draw(gs.integers())
-            tc.reject()
-
-    with pytest.raises(
-        hegel.Unsatisfiable,
-        match=re.escape(Foo.this_has_a_unique_name_and_lives_on_a_class.__name__),
-    ):
-        Foo().this_has_a_unique_name_and_lives_on_a_class()
 
 
 @hegel.test

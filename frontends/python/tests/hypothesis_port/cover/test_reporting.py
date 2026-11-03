@@ -29,7 +29,7 @@ def test_prints_output_by_default():
 
     with pytest.raises(AssertionError) as err:
         test_int()
-    assert "Falsifying example" in "\n".join(notes(err.value))
+    assert "draw_1 = " in "\n".join(notes(err.value))
 
 
 def test_can_report_when_system_locale_is_ascii(monkeypatch):

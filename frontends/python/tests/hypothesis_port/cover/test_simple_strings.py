@@ -81,13 +81,14 @@ def test_respects_alphabet_if_string(tc):
 
 @hegel.test
 def test_respects_alphabet_if_union(tc):
-    xs = tc.draw(gs.text(alphabet=gs.characters(max_codepoint=ord("b")) | gs.just("d")))
+    xs = tc.draw(gs.lists(gs.characters(max_codepoint=ord("b")) | gs.just("d")).map("".join))
     assert all(c <= "b" or c == "d" for c in xs)
 
 
 @hegel.test
 def test_respects_transformed_alphabet_in_union(tc):
-    xs = tc.draw(gs.text(alphabet=gs.sampled_from("abc").filter(lambda c: c != "a") | gs.just("d")))
+    alphabet = gs.sampled_from("abc").filter(lambda c: c != "a") | gs.just("d")
+    xs = tc.draw(gs.lists(alphabet).map("".join))
     assert "a" not in xs
 
 

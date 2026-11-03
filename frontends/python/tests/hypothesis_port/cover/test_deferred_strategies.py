@@ -26,6 +26,13 @@ from tests.hypothesis_port.common.debug import (
 )
 
 
+def assert_too_large(generator):
+    # Hegel abandons draws nested close to Python's recursion limit as too
+    # large, so a generator with no finite values fails a health check.
+    with pytest.raises(hegel.FailedHealthCheck):
+        assert_no_examples(generator)
+
+
 def test_binary_tree():
     tree = gs.deferred(lambda: gs.integers() | gs.tuples(tree, tree))
 
@@ -66,25 +73,25 @@ def test_can_draw_one_of_self():
 
 def test_hidden_self_references_just_result_in_no_example():
     bad = gs.deferred(lambda: gs.none().flat_map(lambda _: bad))
-    assert_no_examples(bad)
+    assert_too_large(bad)
 
 
 def test_self_recursive_flatmap():
     bad = gs.deferred(lambda: bad.flat_map(lambda x: gs.none()))
-    assert_no_examples(bad)
+    assert_too_large(bad)
 
 
 def test_self_tuple_draws_nothing():
     x = gs.deferred(lambda: gs.tuples(x))
-    assert_no_examples(x)
+    assert_too_large(x)
 
 
 def test_mutually_recursive_tuples_draw_nothing():
     x = gs.deferred(lambda: gs.tuples(y))
     y = gs.tuples(x)
 
-    assert_no_examples(x)
-    assert_no_examples(y)
+    assert_too_large(x)
+    assert_too_large(y)
 
 
 def test_literals_strategy_is_valid():

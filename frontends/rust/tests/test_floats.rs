@@ -765,28 +765,6 @@ mod float_nastiness {
     }
 
     #[test]
-    #[allow(deprecated)]
-    fn test_exclude_min_is_removed() {
-        expect_panic(
-            || {
-                gs::floats::<f64>().min_value(0.0).exclude_min(true);
-            },
-            "min_value_exclusive",
-        );
-    }
-
-    #[test]
-    #[allow(deprecated)]
-    fn test_exclude_max_is_removed() {
-        expect_panic(
-            || {
-                gs::floats::<f64>().max_value(1.0).exclude_max(true);
-            },
-            "max_value_exclusive",
-        );
-    }
-
-    #[test]
     fn test_exclude_entire_interval() {
         for bound in [1.0_f64, -1.0_f64, 1e10_f64, -1e-10_f64] {
             for (lo, hi) in [(true, false), (false, true), (true, true)] {

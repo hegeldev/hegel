@@ -9,7 +9,7 @@
 
 mod common;
 
-use common::exec::self_test;
+use common::exec::{fixture, self_test};
 use hegel::TestCase;
 use hegel::generators as gs;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -38,6 +38,52 @@ fn test_reproduce_failure_accepts_a_const_blob(tc: TestCase) {
     let _ = x;
 }
 
+/// `#[hegel::standalone_function]` takes the attribute too.
+#[test]
+#[should_panic(expected = "could not be decoded")]
+fn test_reproduce_failure_below_standalone_function() {
+    #[hegel::standalone_function]
+    #[hegel::reproduce_failure(BLOB)]
+    fn replayed(tc: TestCase) {
+        let x: i32 = tc.draw(gs::integers());
+        let _ = x;
+    }
+    replayed();
+}
+
+/// So does `#[hegel::main]`: a `#[hegel::main]` failure prints the blob
+/// under that attribute's name, and the attribute below `#[hegel::main]`
+/// replays it.
+#[test]
+fn test_reproduce_failure_below_hegel_main_replays_its_failure() {
+    let out = fixture(env!("CARGO_BIN_EXE_fixture_main_failing"))
+        .env("HEGEL_DEFAULT_PROFILE", "base")
+        .args(&["--database", "disabled"])
+        .expect_failure("got nonneg")
+        .run();
+    assert!(
+        out.stderr
+            .contains("To reproduce this failure, add the attribute below #[hegel::main]:"),
+        "stderr:\n{}",
+        out.stderr
+    );
+    let re = regex::Regex::new(r#"reproduce_failure\("([^"]+)"\)"#).unwrap();
+    let blob = re
+        .captures(&out.stderr)
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str().to_string())
+        .unwrap_or_else(|| panic!("no reproduce_failure line in output:\n{}", out.stderr));
+
+    fixture(env!("CARGO_BIN_EXE_fixture_main_reproduce"))
+        .env("HEGEL_TEST_REPRO_BLOB", &blob)
+        .expect_failure("got nonneg")
+        .run();
+    fixture(env!("CARGO_BIN_EXE_fixture_main_reproduce"))
+        .env("HEGEL_TEST_REPRO_BLOB", "!!! not a blob !!!")
+        .expect_failure("could not be decoded")
+        .run();
+}
+
 /// Stage 1 fixture: a failing test with `print_blob = true`, whose output the
 /// driver scrapes for the `reproduce_failure("…")` blob.
 #[hegel::test(print_blob = true)]
@@ -56,11 +102,11 @@ fn repro_replay_fixture(tc: TestCase) {
     assert!(x < 5, "x was {x}");
 }
 
-/// Stage 3 fixture: a stacked stale blob below the good one must not break
-/// the replay.
+/// Stage 3 fixture: every stacked attribute replays, so the same blob
+/// stacked twice reproduces two failures.
 #[hegel::test]
 #[hegel::reproduce_failure(std::env::var("HEGEL_TEST_REPRO_BLOB").unwrap())]
-#[hegel::reproduce_failure("!!! stale bookkeeping blob !!!")]
+#[hegel::reproduce_failure(std::env::var("HEGEL_TEST_REPRO_BLOB").unwrap())]
 #[ignore = "fixture: run via exec::self_test"]
 fn repro_replay_stacked_fixture(tc: TestCase) {
     let x: i32 = tc.draw(gs::integers());
@@ -154,10 +200,16 @@ fn test_reproduce_failure_replays_real_counterexample() {
         .expect_failure("x was")
         .run();
 
-    self_test("repro_replay_stacked_fixture")
+    let out = self_test("repro_replay_stacked_fixture")
         .env("HEGEL_TEST_REPRO_BLOB", &blob)
-        .expect_failure("x was")
+        .expect_failure("Property-based test failed with 2 distinct failures.")
         .run();
+    let combined = format!("{}\n{}", out.stdout, out.stderr);
+    assert_eq!(
+        combined.matches("x was").count(),
+        2,
+        "expected both replayed failures in the report:\n{combined}"
+    );
 
     let out = self_test("repro_replay_changed_shape_fixture")
         .env("HEGEL_TEST_REPRO_BLOB", &blob)

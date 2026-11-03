@@ -77,7 +77,7 @@ def test_failure_is_shrunk_and_annotated(output):
 
     with pytest.raises(AssertionError) as info:
         test_it()
-    assert notes(info.value)[0] == "Falsifying example:\nxs = [3]"
+    assert notes(info.value)[0] == "xs = [3]"
     assert notes(info.value)[1].startswith(
         "To reproduce this failure, add this decorator below @hegel.test:\n"
         '    @hegel.reproduce_failure("'
@@ -117,11 +117,11 @@ def test_reproduce_failure_replays_blob(output):
         seen.append(xs)
         assert len(xs) < 2
 
-    assert replay.hegel_reproduce_blob == blob
+    assert replay.hegel_reproduce_blobs == [blob]
     with pytest.raises(AssertionError) as info:
         replay()
     assert seen == [[0, 0]]
-    assert notes(info.value) == ["Falsifying example:\nxs = [0, 0]"]
+    assert notes(info.value) == ["xs = [0, 0]"]
 
     @hegel.reproduce_failure(blob)
     @hegel.test
@@ -132,6 +132,68 @@ def test_reproduce_failure_replays_blob(output):
         fixed()
     with pytest.raises(hegel.InvalidArgument):
         hegel.reproduce_failure("")
+
+
+def _two_failure_blobs() -> tuple[str, str]:
+    @hegel.test(print_blob=True, report_multiple_failures=True, test_cases=200)
+    def test_it(tc):
+        n = tc.draw(gs.integers(0, 100))
+        if n > 10:
+            raise ValueError(n)
+        if n == 3:
+            raise KeyError(n)
+
+    with pytest.raises(hegel.MultipleFailures) as info:
+        test_it()
+    errors = sorted(info.value.exceptions, key=lambda e: type(e).__name__)
+    assert [type(e) for e in errors] == [KeyError, ValueError]
+    key_blob, value_blob = (notes(e)[1].split('"')[1] for e in errors)
+    return key_blob, value_blob
+
+
+def test_stacked_reproduce_failures_replay_every_blob(output):
+    key_blob, value_blob = _two_failure_blobs()
+    seen = []
+
+    @hegel.reproduce_failure(key_blob)
+    @hegel.test
+    @hegel.reproduce_failure(value_blob)
+    def replay(tc):
+        n = tc.draw(gs.integers(0, 100))
+        seen.append(n)
+        if n > 10:
+            raise ValueError(n)
+        if n == 3:
+            raise KeyError(n)
+
+    assert replay.hegel_reproduce_blobs == [key_blob, value_blob]
+    with pytest.raises(hegel.MultipleFailures) as info:
+        replay()
+    assert seen == [3, 11]
+    assert [type(e) for e in info.value.exceptions] == [KeyError, ValueError]
+    assert notes(info.value.exceptions[0]) == ["n = 3"]
+    assert notes(info.value.exceptions[1]) == ["n = 11"]
+
+
+def test_stacked_reproduce_failures_raise_what_still_fails(output):
+    key_blob, value_blob = _two_failure_blobs()
+
+    def only_value_error(tc):
+        if tc.draw(gs.integers(0, 100)) > 10:
+            raise ValueError
+
+    with pytest.raises(ValueError):
+        hegel.run(only_value_error, reproduce_blob=[key_blob, value_blob])
+
+    def fixed(tc):
+        tc.draw(gs.integers(0, 100))
+
+    with pytest.raises(hegel.DidNotReproduce, match="none of the 2 supplied failure blobs"):
+        hegel.run(fixed, reproduce_blob=(key_blob, value_blob))
+    with pytest.raises(hegel.DidNotReproduce, match="the supplied failure blob did not"):
+        hegel.run(fixed, reproduce_blob=value_blob)
+    with pytest.raises(hegel.InvalidArgument, match="reproduce_failure takes the blob"):
+        hegel.run(fixed, reproduce_blob=[value_blob, ""])
 
 
 def test_reproduce_failure_with_invalid_blob():
@@ -178,7 +240,7 @@ def test_explicit_test_case_failure_reports_values(output):
 
     with pytest.raises(AssertionError) as info:
         test_it()
-    assert notes(info.value) == ["Falsifying example:\nx = 7\nline"]
+    assert notes(info.value) == ["x = 7\nline"]
     assert output.lines == []
 
 
@@ -221,8 +283,25 @@ def test_explicit_test_case_errors():
         x = tc.draw(gs.integers())
         tc.assume(x > 5)
 
-    with pytest.raises(hegel.InvalidArgument, match="assumption violated"):
+    with pytest.raises(hegel.InvalidArgument, match="Explicit test cases must not be rejected"):
         rejects()
+
+    @hegel.explicit_test_case(1)
+    @hegel.test
+    def rejects_before_drawing(tc):
+        tc.reject()
+        tc.draw(gs.integers())
+
+    with pytest.raises(hegel.InvalidArgument, match="Explicit test cases must not be rejected"):
+        rejects_before_drawing()
+
+    @hegel.explicit_test_case(1)
+    @hegel.test
+    def rejects_in_repeat(tc):
+        tc.repeat(lambda: tc.assume(tc.draw(gs.integers(), name="x") > 5))
+
+    with pytest.raises(hegel.InvalidArgument, match="Explicit test cases must not be rejected"):
+        rejects_in_repeat()
 
     @hegel.explicit_test_case(1)
     @hegel.test
@@ -239,6 +318,27 @@ def test_explicit_test_case_errors():
         raise hegel.errors.LoopDone()
 
     done()
+
+
+def test_explicit_case_runs_repeat_body_once():
+    runs = []
+
+    @hegel.explicit_test_case(3)
+    @hegel.test(phases=[Phase.explicit])
+    def passes(tc):
+        tc.repeat(lambda: runs.append(tc.draw(gs.integers(), name="x")))
+
+    passes()
+    assert runs == [3]
+
+    @hegel.explicit_test_case(3)
+    @hegel.test(phases=[Phase.explicit])
+    def fails(tc):
+        tc.repeat(lambda: tc.draw(gs.integers(), name="x") < 0 or pytest.fail("boom"))
+
+    with pytest.raises(pytest.fail.Exception) as info:
+        fails()
+    assert info.value.__notes__[0] == "# Repetition #1\nx_1 = 3"
 
 
 def test_explicit_cases_skipped_without_explicit_phase():
@@ -272,7 +372,7 @@ def test_unconfirmed_failure_is_reported_with_a_caveat(output):
         assert calls[0] != 1
 
     error = failing(body)
-    assert any(note.startswith("unconfirmed failure") for note in notes(error))
+    assert any(note.startswith("note: unconfirmed failure") for note in notes(error))
     assert not any("reproduce_failure" in note for note in notes(error))
 
 
@@ -305,7 +405,23 @@ def test_health_check_failure():
 
     error = failing(body, hegel.FailedHealthCheck, test_cases=100)
     assert "FilterTooMuch" in str(error)
+    assert error.health_check is hegel.HealthCheck.filter_too_much
+    assert str(error).endswith(
+        "The failed health check is HealthCheck.filter_too_much; suppress it with "
+        "suppress_health_check=[HealthCheck.filter_too_much]."
+    )
     assert isinstance(error, hegel.RunError)
+
+
+def test_failed_health_check_names_each_check():
+    def nest(tc):
+        tc.start_span(1)
+        nest(tc)
+
+    error = failing(nest, hegel.FailedHealthCheck, test_cases=10)
+    assert error.health_check is hegel.HealthCheck.large_initial_test_case
+    assert "HealthCheck.large_initial_test_case" in str(error)
+    assert hegel.FailedHealthCheck("message").health_check is None
 
 
 def test_health_check_can_be_suppressed():
@@ -334,7 +450,7 @@ def test_multiple_failures(output):
 
     error = failing(body, hegel.MultipleFailures, report_multiple_failures=True, test_cases=300)
     assert {type(e) for e in error.exceptions} == {ValueError, AssertionError}
-    assert all(notes(e)[0].startswith("Falsifying example:") for e in error.exceptions)
+    assert all(notes(e)[0].startswith("x = ") for e in error.exceptions)
     assert str(error).startswith("Property-based test failed with 2 distinct failures.")
     assert output.lines == []
 
@@ -346,7 +462,7 @@ def test_verbosity_verbose_prints_every_case(output):
 
     run_test(body, verbosity=Verbosity.verbose, test_cases=3)
     assert output.lines.count("hello") == 3
-    assert "Test case passed" in output.lines
+    assert not any(line.startswith("Test case ") for line in output.lines)
 
 
 def test_verbose_output_for_failures_and_rejections(output):
@@ -356,8 +472,8 @@ def test_verbose_output_for_failures_and_rejections(output):
         assert x < 5
 
     failing(body, verbosity=Verbosity.debug)
-    assert "Test case rejected: assumption failed" in output.lines
-    assert any(line.startswith("Test case failed: AssertionError at") for line in output.lines)
+    assert "Test case stopped: failed assumption" in output.lines
+    assert not any(line.startswith("Test case failed") for line in output.lines)
     assert output.text.count("Traceback") >= 2
 
 
@@ -368,6 +484,7 @@ def test_verbose_overrun_message(output):
             tc.draw_silent(gs.lists(gs.integers(), min_size=100))
 
     failing(body, hegel.RunError, verbosity=Verbosity.verbose, test_cases=3)
+    assert "Test case stopped: out of data" in output.lines
 
 
 def test_quiet_verbosity_prints_nothing(output):
@@ -556,15 +673,15 @@ def test_a_group_of_control_exceptions_is_handled_as_one(output):
         raise BaseExceptionGroup("tasks", [BaseExceptionGroup("inner", [hegel.AssumeFailed()])])
 
     failing(rejecting, hegel.FailedHealthCheck, verbosity=Verbosity.verbose, test_cases=10)
-    assert "Test case stopped: the engine abandoned it" not in output.lines
-    assert "Test case rejected: assumption failed" in output.lines
+    assert "Test case stopped: out of data" not in output.lines
+    assert "Test case stopped: failed assumption" in output.lines
 
     def stopping(tc):
         tc.draw(gs.integers())
         raise BaseExceptionGroup("tasks", [hegel.StopTest()])
 
     failing(stopping, hegel.RunError, verbosity=Verbosity.verbose, test_cases=10)
-    assert "Test case stopped: the engine abandoned it" in output.lines
+    assert "Test case stopped: out of data" in output.lines
 
     def done(tc):
         tc.draw(gs.integers())
@@ -587,10 +704,7 @@ def test_a_group_with_a_user_error_in_it_is_a_failure(output):
 
     error = failing(body, BaseExceptionGroup, verbosity=Verbosity.verbose)
     assert [type(e) for e in error.exceptions] == [hegel.AssumeFailed, ValueError]
-    assert any(
-        line.startswith("Test case failed: BaseExceptionGroup at") and "ValueError at" in line
-        for line in output.lines
-    )
+    assert "ValueError: boom" in output.text
 
 
 def test_location_of():
@@ -920,17 +1034,12 @@ def test_explicit_cases_are_reported_in_verbose_mode(output):
 
     with pytest.raises(AssertionError):
         test_it()
-    first = output.lines.index("Running explicit test case: explicit_test_case(x=1)")
-    assert output.lines[first : first + 4] == [
-        "Running explicit test case: explicit_test_case(x=1)",
-        "x = 1",
-        "noted 1",
-        "Test case passed",
-    ]
-    second = output.lines.index("Running explicit test case: explicit_test_case(x=2)")
-    assert output.lines[second + 1 : second + 3] == ["x = 2", "noted 2"]
+    first = output.lines.index("x = 1")
+    assert output.lines[first : first + 3] == ["x = 1", "noted 1", "x = 2"]
+    second = output.lines.index("x = 2")
+    assert output.lines[second : second + 2] == ["x = 2", "noted 2"]
     assert "Traceback (most recent call last):" in output.lines[second:]
-    assert any(line.startswith("Test case failed: AssertionError at") for line in output.lines)
+    assert not any(line.startswith("Test case ") for line in output.lines)
 
 
 def test_explicit_case_misuse_is_reported_in_verbose_mode(output):
@@ -952,6 +1061,20 @@ def test_explicit_cases_print_nothing_unless_verbose(output):
         x = tc.draw(gs.integers())  # noqa: F841
 
     test_it()
+    assert output.lines == []
+
+
+def test_quiet_explicit_failure_carries_no_lines(output):
+    @hegel.explicit_test_case(x=1)
+    @hegel.test(test_cases=1, verbosity=Verbosity.quiet)
+    def test_it(tc):
+        tc.note("noted")
+        x = tc.draw(gs.integers())
+        assert x != 1
+
+    with pytest.raises(AssertionError) as info:
+        test_it()
+    assert notes(info.value) == []
     assert output.lines == []
 
 
@@ -992,8 +1115,8 @@ def test_explicit_failures_are_collected_with_generated_ones(output):
         test_it()
     assert seen[:3] == [1, 2, 3] and len(seen) > 3
     assert [type(e) for e in info.value.exceptions] == [ValueError, KeyError, TypeError]
-    assert notes(info.value.exceptions[0]) == ["Falsifying example:\nx = 1"]
-    assert notes(info.value.exceptions[2]) == ["Falsifying example:\nx = -1"]
+    assert notes(info.value.exceptions[0]) == ["x = 1"]
+    assert notes(info.value.exceptions[2]) == ["x = -1"]
     assert str(info.value).startswith("Property-based test failed with 3 distinct failures.")
     assert output.lines == []
 
@@ -1010,7 +1133,7 @@ def test_a_generated_failure_with_an_explicit_failures_origin_is_the_same_bug():
     # assertion: one bug, reported from the first explicit case.
     with pytest.raises(AssertionError) as info:
         test_it()
-    assert notes(info.value) == ["Falsifying example:\nx = 7"]
+    assert notes(info.value) == ["x = 7"]
 
 
 def test_a_single_explicit_failure_is_raised_after_a_passing_generate_phase():
@@ -1023,7 +1146,7 @@ def test_a_single_explicit_failure_is_raised_after_a_passing_generate_phase():
     with pytest.raises(AssertionError) as info:
         test_it()
     assert info.value.__cause__ is None
-    assert notes(info.value) == ["Falsifying example:\nx = 7"]
+    assert notes(info.value) == ["x = 7"]
 
 
 def test_a_run_error_after_explicit_failures_is_chained_onto_them():

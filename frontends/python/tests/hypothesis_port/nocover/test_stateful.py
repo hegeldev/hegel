@@ -35,8 +35,7 @@ def run_to_notes(machine):
 
 
 def assert_runs_to_output(machine, output):
-    # remove the first line, which is always "Falsfying example:"
-    actual = "\n".join(run_to_notes(machine)[1:])
+    actual = "\n".join(run_to_notes(machine))
     assert actual == inspect.cleandoc(output.strip())
 
 

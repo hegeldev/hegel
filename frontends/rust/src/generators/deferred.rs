@@ -4,7 +4,7 @@ use super::{
 use crate::pretty::PrettyPrinter;
 use crate::test_case::TestCase;
 use std::cell::RefCell;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, LazyLock, OnceLock};
 
 /// The label a deferred handle reports before its definition can answer:
 /// while the definition is unset, and from inside the definition's own label
@@ -12,7 +12,7 @@ use std::sync::{Arc, OnceLock};
 /// is for), and generators compute their labels when they are built, so a
 /// generator built around a handle whose definition is still being written
 /// folds in this constant, as Hypothesis's `calculating` sentinel does.
-const DEFERRED_LABEL: u64 = label_from_name("hegel.deferred");
+static DEFERRED_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.deferred"));
 
 /// What every handle from one [`deferred()`] definition shares: the
 /// generator, once set, and its label, once computed.
@@ -69,7 +69,7 @@ impl<T, B: Generator<T> + Send + Sync> Generator<T> for DeferredGenerator<B> {
             return label;
         }
         let Some(generator) = self.inner.generator.get() else {
-            return DEFERRED_LABEL;
+            return *DEFERRED_LABEL;
         };
         let key = Arc::as_ptr(&self.inner) as usize;
         let in_progress = CALCULATING_LABELS.with(|calculating| {
@@ -81,7 +81,7 @@ impl<T, B: Generator<T> + Send + Sync> Generator<T> for DeferredGenerator<B> {
             in_progress
         });
         if in_progress {
-            return DEFERRED_LABEL;
+            return *DEFERRED_LABEL;
         }
         let _guard = CalculatingLabel(key);
         let label = generator.label();

@@ -19,7 +19,6 @@ from tests.helpers import notes
 # Hegel reports a failing example as one "name = value" line per draw,
 # whatever the length, rather than Hypothesis's call-style rendering.
 OUTPUT_WITH_BREAK = """
-Falsifying example:
 x = {0!r}
 y = {0!r}
 """

@@ -61,7 +61,7 @@ def test_fails_only_once_is_reported_as_unconfirmed_by_default():
 
     with pytest.raises(Nope) as e:
         rude()
-    assert any(note.startswith("unconfirmed failure") for note in notes(e.value))
+    assert any(note.startswith("note: unconfirmed failure") for note in notes(e.value))
 
 
 def test_fails_differently_is_flaky():
@@ -132,7 +132,7 @@ def test_does_not_attempt_to_shrink_flaky_errors():
 
     with pytest.raises(AssertionError) as e:
         test()
-    assert any(note.startswith("unconfirmed failure") for note in notes(e.value))
+    assert any(note.startswith("note: unconfirmed failure") for note in notes(e.value))
     # The flaky example is replayed to confirm it, and nothing else is tried:
     # no shrinking, and no further generation.
     assert 1 < len(values) <= REPLAYS + 1

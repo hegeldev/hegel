@@ -637,8 +637,8 @@ mod override_captures_run_output {
             "expected the reproducer line in the sink, got {lines:?}"
         );
         assert!(
-            lines.iter().any(|l| l.contains("hegel::reproduce_failure")),
-            "expected the reproduce_failure attribute in the sink, got {lines:?}"
+            lines.iter().any(|l| l.contains(".reproduce_failure(\"")),
+            "expected the reproduce_failure call in the sink, got {lines:?}"
         );
     }
 

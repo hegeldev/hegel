@@ -1,6 +1,7 @@
 use jiff::civil::{Date, DateTime, Time};
 use jiff::tz::{Offset, TimeZone};
 use jiff::{SignedDuration, Span, Timestamp, Zoned};
+use std::sync::LazyLock;
 
 use crate::ffi::sys as hegel_c;
 use crate::generators::{
@@ -9,14 +10,15 @@ use crate::generators::{
 };
 use crate::pretty::PrettyPrinter;
 
-const DATE_LABEL: u64 = label_from_name("hegel.jiff.dates");
-const TIME_LABEL: u64 = label_from_name("hegel.jiff.times");
-const DATETIME_LABEL: u64 = label_from_name("hegel.jiff.datetimes");
-const TIMESTAMP_LABEL: u64 = label_from_name("hegel.jiff.timestamps");
-const SPAN_LABEL: u64 = label_from_name("hegel.jiff.spans");
-const SIGNED_DURATION_LABEL: u64 = label_from_name("hegel.jiff.signed_durations");
-const OFFSET_LABEL: u64 = label_from_name("hegel.jiff.offsets");
-const ZONED_LABEL: u64 = label_from_name("hegel.jiff.zoneds");
+static DATE_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.jiff.dates"));
+static TIME_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.jiff.times"));
+static DATETIME_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.jiff.datetimes"));
+static TIMESTAMP_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.jiff.timestamps"));
+static SPAN_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.jiff.spans"));
+static SIGNED_DURATION_LABEL: LazyLock<u64> =
+    LazyLock::new(|| label_from_name("hegel.jiff.signed_durations"));
+static OFFSET_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.jiff.offsets"));
+static ZONED_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.jiff.zoneds"));
 
 use crate::test_case::invalid_argument;
 
@@ -52,7 +54,7 @@ impl DateGenerator {
 
 impl Generator<Date> for DateGenerator {
     fn label(&self) -> u64 {
-        DATE_LABEL
+        *DATE_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> Date {
@@ -129,7 +131,7 @@ impl TimeGenerator {
 
 impl Generator<Time> for TimeGenerator {
     fn label(&self) -> u64 {
-        TIME_LABEL
+        *TIME_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> Time {
@@ -221,7 +223,7 @@ impl DateTimeGenerator {
 
 impl Generator<DateTime> for DateTimeGenerator {
     fn label(&self) -> u64 {
-        DATETIME_LABEL
+        *DATETIME_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> DateTime {
@@ -288,7 +290,7 @@ impl TimestampGenerator {
 
 impl Generator<Timestamp> for TimestampGenerator {
     fn label(&self) -> u64 {
-        TIMESTAMP_LABEL
+        *TIMESTAMP_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> Timestamp {
@@ -358,7 +360,7 @@ impl SpanGenerator {
 
 impl Generator<Span> for SpanGenerator {
     fn label(&self) -> u64 {
-        SPAN_LABEL
+        *SPAN_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> Span {
@@ -433,7 +435,7 @@ impl SignedDurationGenerator {
 
 impl Generator<SignedDuration> for SignedDurationGenerator {
     fn label(&self) -> u64 {
-        SIGNED_DURATION_LABEL
+        *SIGNED_DURATION_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> SignedDuration {
@@ -502,7 +504,7 @@ impl OffsetGenerator {
 
 impl Generator<Offset> for OffsetGenerator {
     fn label(&self) -> u64 {
-        OFFSET_LABEL
+        *OFFSET_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> Offset {
@@ -561,7 +563,7 @@ impl<TS, TZ> ZonedGenerator<TS, TZ> {
         TZ: Generator<TimeZone>,
     {
         ZonedGenerator {
-            label: combine_labels(&[ZONED_LABEL, timestamp_gen.label(), timezone_gen.label()]),
+            label: combine_labels(&[*ZONED_LABEL, timestamp_gen.label(), timezone_gen.label()]),
             timestamp_gen,
             timezone_gen,
         }
