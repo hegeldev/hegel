@@ -6,7 +6,9 @@
 # `HEGEL_WASM_PATH` override them).
 set ignore-comments := true
 
-# Install the package's dependencies (needs Node >= 20.11).
+# Install the package's dependencies (needs Node >= 20.11). Every recipe that
+# runs a dev dependency depends on this, so none runs a stale or missing
+# install, or a tool `npx` fetched at whatever version is newest.
 setup:
     npm ci
 
@@ -20,20 +22,20 @@ build-libhegel:
     cargo build --release -p hegeltest-c --manifest-path ../../Cargo.toml --target wasm32-unknown-unknown
 
 # Compile to dist/ and bundle the Wasm module next to the browser entry.
-build: build-libhegel
+build: setup build-libhegel
     npm run build
 
 # vitest against the real engine, native and Wasm, requiring 100% coverage.
-check-test: build-libhegel
+check-test: setup build-libhegel
     npx vitest run --coverage
     python3 scripts/check-coverage.py
 
 # The packaging scripts and the export map (node --test).
-check-packaging: build-libhegel
+check-packaging: setup build-libhegel
     node --test scripts/packaging.test.mjs
 
 # Pack the package, bundle it four ways and run it in Chromium (`setup-browser` first).
-check-browser: build-libhegel
+check-browser: setup build-libhegel
     node tests/browser/run.mjs
 
 # src/libhegel-version.ts must mirror libhegel/Cargo.toml.
@@ -52,20 +54,20 @@ check-timezone-names:
 update-timezone-names:
     node scripts/engine.mjs write-timezone-names
 
-format:
+format: setup
     npx prettier --write .
 
-check-format:
+check-format: setup
     npx prettier --check .
 
-check-lint: check-format check-libhegel-version check-timezone-names
+check-lint: setup check-format check-libhegel-version check-timezone-names
     npx eslint .
     npx tsc --noEmit
     npm run typecheck:portable
     npm run typecheck:tests
 
 # typedoc, with warnings as errors.
-check-docs:
+check-docs: setup
     npx typedoc
 
 docs: check-docs
