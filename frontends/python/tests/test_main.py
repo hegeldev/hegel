@@ -111,7 +111,7 @@ def test_explicit_cases_and_reproduce_blobs_apply(captured):
     main(["--failure-blob", "BLOB2"])
     assert [case.kwargs for case in captured["explicit_cases"]] == [{"n": 1}, {"n": 2}]
     assert captured["blobs"] == ["BLOB1", "BLOB2"]
-    assert captured["remedy"] == "remove the decorator and do not pass --failure-blob"
+    assert captured["suggestion"] == "remove the decorator and do not pass --failure-blob"
 
     @hegel.main
     @hegel.reproduce_failure("BLOB1")
@@ -120,7 +120,7 @@ def test_explicit_cases_and_reproduce_blobs_apply(captured):
         tc.draw(gs.integers())
 
     two([])
-    assert captured["remedy"] == "remove the decorators"
+    assert captured["suggestion"] == "remove the decorators"
 
 
 def test_reports_its_own_signature():
