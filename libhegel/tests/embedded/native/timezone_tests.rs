@@ -20,17 +20,13 @@ fn named(name: &str) -> TimeZone {
 }
 
 fn primary_name(zone: TimeZone) -> &'static str {
-    match zone {
-        TimeZone::Unknown => UNKNOWN_NAME,
-        TimeZone::Named(name) => &name.zone.name,
-    }
+    zone.data().map_or(UNKNOWN_NAME, |data| &data.name)
 }
 
 fn zone_of(name: &str) -> &'static Zone {
-    match named(name) {
-        TimeZone::Named(name) => name.zone,
-        TimeZone::Unknown => panic!("{name} is the unknown zone"),
-    }
+    named(name)
+        .data()
+        .unwrap_or_else(|| panic!("{name} is the unknown zone"))
 }
 
 fn jiff_zone(name: &str) -> JiffZone {
@@ -569,13 +565,13 @@ fn the_etc_gmt_family_inverts_the_sign() {
             0,
             "{name}"
         );
-        match zone {
-            TimeZone::Named(entry) => assert!(
-                entry.tags.contains(Tag::InvertedSign) || name == "Etc/GMT-0",
-                "{name}"
-            ),
-            TimeZone::Unknown => panic!("{name}"),
-        }
+        let TimeZone::Named(entry) = zone else {
+            panic!("{name}")
+        };
+        assert!(
+            entry.tags.contains(Tag::InvertedSign) || name == "Etc/GMT-0",
+            "{name}"
+        );
     }
 }
 
@@ -625,13 +621,11 @@ fn lookup_is_exact_and_links_keep_their_name() {
     assert!(TimeZone::lookup("Etc/unknown").unwrap().is_none());
     let calcutta = named("Asia/Calcutta");
     assert_eq!(primary_name(calcutta), "Asia/Kolkata");
-    match calcutta {
-        TimeZone::Named(entry) => {
-            assert_eq!(entry.name, "Asia/Calcutta");
-            assert!(entry.is_link());
-        }
-        TimeZone::Unknown => panic!(),
-    }
+    let TimeZone::Named(entry) = calcutta else {
+        panic!()
+    };
+    assert_eq!(entry.name, "Asia/Calcutta");
+    assert!(entry.is_link());
     assert_eq!(primary_name(named("UTC")), "UTC");
 }
 

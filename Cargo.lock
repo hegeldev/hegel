@@ -424,6 +424,7 @@ dependencies = [
  "hegeltest-macros",
  "insta",
  "jiff",
+ "jiff-tzdb",
  "parking_lot",
  "rand",
  "regex",

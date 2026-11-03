@@ -1,4 +1,4 @@
-//! The time zone evaluator over the bundled database
+//! The time zone evaluator over the bundled database and zone sources' data
 //! (`libhegel/docs/datetime.md` §5 and §7).
 //!
 //! A zone's history is its explicit transitions followed, from the last
@@ -32,6 +32,7 @@ use crate::native::core::EngineError;
 use crate::native::draws::special::{
     Date, DateTime, civil_from_days, days_from_civil, days_in_month, validate_date, validate_time,
 };
+use crate::native::zone_source::SourcedZone;
 use crate::sys::sync::Lazy;
 use crate::tzdata::{self, DstRule, Footer, LocalTimeType, Name, RuleDate, RuleDay, Zone};
 
@@ -116,15 +117,34 @@ pub struct ZoneTransition {
     pub after: LocalTimeType,
 }
 
-/// A zone the evaluator can answer for: a name in the database, or the
-/// unknown zone.
+/// A zone the evaluator can answer for: a name in the bundled database,
+/// zone data from a zone source, or the unknown zone.
 #[derive(Clone, Copy, Debug)]
 pub enum TimeZone {
     Unknown,
     Named(&'static Name),
+    Sourced(&'static SourcedZone),
 }
 
 impl TimeZone {
+    /// The zone's data, `None` for the unknown zone.
+    pub fn data(&self) -> Option<&'static Zone> {
+        match self {
+            TimeZone::Unknown => None,
+            TimeZone::Named(name) => Some(name.zone),
+            TimeZone::Sourced(zone) => Some(&zone.zone),
+        }
+    }
+
+    /// The zone's C strings, `None` for the unknown zone.
+    pub fn c_strings(&self) -> Result<Option<&'static CStrings>, InternalError> {
+        match self {
+            TimeZone::Unknown => Ok(None),
+            TimeZone::Named(name) => c_strings_of(name).map(Some),
+            TimeZone::Sourced(zone) => Ok(Some(&zone.strings)),
+        }
+    }
+
     /// The zone for `name`, exactly as the database spells it or
     /// [`UNKNOWN_NAME`], or `None` for a name the database lacks.
     pub fn lookup(name: &str) -> Result<Option<TimeZone>, InternalError> {
@@ -137,20 +157,20 @@ impl TimeZone {
     /// The offset in force at `timestamp`.
     pub fn offset_at(&self, timestamp: Timestamp) -> Result<Offset, EngineError> {
         validate_timestamp(&timestamp)?;
-        match self {
-            TimeZone::Unknown => Ok(Offset {
+        match self.data() {
+            None => Ok(Offset {
                 seconds: 0,
                 known: false,
                 is_dst: false,
                 abbreviation: UNKNOWN_ABBREVIATION,
             }),
-            TimeZone::Named(name) => {
-                let kind = type_at(name.zone, timestamp.second)?;
+            Some(zone) => {
+                let kind = type_at(zone, timestamp.second)?;
                 Ok(Offset {
                     seconds: kind.utoff,
                     known: true,
                     is_dst: kind.is_dst,
-                    abbreviation: abbreviation(name.zone, kind)?,
+                    abbreviation: abbreviation(zone, kind)?,
                 })
             }
         }
@@ -182,8 +202,8 @@ impl TimeZone {
     ) -> Result<Resolution, EngineError> {
         validate_date("civil.date", &civil.date)?;
         validate_time("civil.time", &civil.time)?;
-        match self {
-            TimeZone::Unknown => Ok(Resolution {
+        match self.data() {
+            None => Ok(Resolution {
                 kind: Kind::Unique,
                 offset_before: 0,
                 offset_after: 0,
@@ -194,7 +214,7 @@ impl TimeZone {
                     nanosecond: civil.time.nanosecond,
                 },
             }),
-            TimeZone::Named(name) => Ok(resolve(name.zone, civil, fold)?),
+            Some(zone) => Ok(resolve(zone, civil, fold)?),
         }
     }
 }
@@ -297,7 +317,7 @@ fn rule_day(day: RuleDay, year: i64) -> i64 {
 }
 
 /// The instant of `rule` in `year`, whose time is read with `utoff`.
-fn rule_instant(rule: RuleDate, year: i64, utoff: i32) -> i64 {
+pub(crate) fn rule_instant(rule: RuleDate, year: i64, utoff: i32) -> i64 {
     rule_day(rule.day, year) * DAY + i64::from(rule.time) - i64::from(utoff)
 }
 

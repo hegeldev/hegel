@@ -21,6 +21,9 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::ffi::CStr;
 
+pub mod classify;
+pub mod tzif;
+
 /// The deflated table; see the module docs.
 const COMPRESSED_TABLE: &[u8] = include_bytes!("tzdata.txt.z");
 
@@ -156,7 +159,7 @@ impl Tags {
 
 /// A local time type: the offset and designation in force over some span
 /// of a zone's history.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct LocalTimeType {
     /// Seconds east of UT.
     pub utoff: i32,
@@ -168,7 +171,7 @@ pub struct LocalTimeType {
 }
 
 /// An explicit transition: from `instant` on, `kind` applies.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Transition {
     /// Unix seconds.
     pub instant: i64,
@@ -176,7 +179,7 @@ pub struct Transition {
 }
 
 /// The day a footer rule names within a year (RFC 9636 §3.3.1).
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum RuleDay {
     /// `Jn`: day `n` in `1..=365`, never counting February 29.
     Julian(u16),
@@ -191,16 +194,18 @@ pub enum RuleDay {
 /// midnight of `day`, in the offset in force before the transition. The
 /// time may be negative or exceed a day (RFC 9636 allows -167 to 167
 /// hours).
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct RuleDate {
     pub day: RuleDay,
     pub time: i32,
 }
 
 /// The DST half of a footer rule.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct DstRule {
-    /// Always has `is_dst` set, as the standard half never does.
+    /// The type in force between `start` and `end`. A parsed POSIX footer
+    /// always sets its `is_dst`, and never the standard half's; a footer a
+    /// zone source inferred keeps the flags it observed.
     pub kind: LocalTimeType,
     /// When DST starts each year.
     pub start: RuleDate,
@@ -210,14 +215,14 @@ pub struct DstRule {
 
 /// The POSIX TZ footer, pre-parsed: the rule in force after the last
 /// explicit transition, for every later year.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Footer {
     pub standard: LocalTimeType,
     pub dst: Option<DstRule>,
 }
 
 /// A primary zone's data.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Zone {
     pub name: String,
     pub abbreviations: Vec<String>,

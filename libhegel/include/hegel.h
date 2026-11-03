@@ -96,6 +96,8 @@
  *     hegel_reflow_options_new   ->  hegel_reflow_options_free
  *     hegel_timezone_spec_new    ->  hegel_timezone_spec_free
  *     hegel_zoned_spec_new       ->  hegel_zoned_spec_free
+ *     hegel_zone_source_new      ->  hegel_zone_source_free
+ *     hegel_zone_source_bundled  ->  hegel_zone_source_free
  *     hegel_date_options_new     ->  hegel_date_options_free
  *     hegel_span_spec_new        ->  hegel_span_spec_free
  *     hegel_printer_new          ->  hegel_printer_free
@@ -688,6 +690,53 @@ typedef enum {
 } hegel_span_sign_t;
 
 /*
+ What a zone has in force after its explicit transitions; see
+ `hegel_zone_data_t` and `hegel_zone_oracle_t`.
+ */
+typedef enum {
+    /*
+     The last transition's type, or the initial type, for ever.
+     */
+    HEGEL_ZONE_AFTER_HOLD = 0,
+    /*
+     The yearly rule in the data's `standard`, `dst`, `dst_start` and
+     `dst_end` fields.
+     */
+    HEGEL_ZONE_AFTER_RULE = 1,
+    /*
+     A yearly rule inferred from the transitions of the last year the
+     data covers and the year before it: none when neither year has a
+     transition, daylight saving between the same two types on dates one
+     rule names in both years, or else the last type held. Of the rules
+     that name both years' dates, the one that also names the dates of
+     the most consecutive earlier years (up to 28) is taken, so that a
+     rule such as "the last Sunday of March at 01:00" wins over one that
+     fits two years by coincidence.
+     */
+    HEGEL_ZONE_AFTER_INFER = 2,
+} hegel_zone_after_t;
+
+/*
+ How a `hegel_zone_rule_date_t` names its day (RFC 9636 §3.3.1).
+ */
+typedef enum {
+    /*
+     `Jn`: day `day` of the year in `[1, 365]`, never counting February
+     29.
+     */
+    HEGEL_ZONE_RULE_DAY_JULIAN = 0,
+    /*
+     `n`: day `day` of the year in `[0, 365]`, counting February 29.
+     */
+    HEGEL_ZONE_RULE_DAY_ZERO_BASED = 1,
+    /*
+     `Mm.w.d`: weekday `weekday` (0 is Sunday) of week `week` (1 to 5, 5
+     meaning the last) of month `month`.
+     */
+    HEGEL_ZONE_RULE_DAY_MONTH_WEEK_DAY = 2,
+} hegel_zone_rule_day_t;
+
+/*
  Opaque handle to an engine-managed variable-length collection.
 
  Created by `hegel_new_collection` on a test case; driven by
@@ -1077,14 +1126,39 @@ typedef struct hegel_test_case_t hegel_test_case_t;
 /*
  The allowed names of a time zone draw
 
- Build one with `hegel_timezone_spec_new`, which allows every name in
- the bundled database with link names in and legacy names out, change
+ Build one with `hegel_timezone_spec_new`, which allows every name of
+ the process's default zone source (the bundled database unless
+ `hegel_set_default_zone_source` set another) with link names in and
+ legacy names out, change
  it with the `hegel_timezone_spec_set_*` setters, and free it with
  `hegel_timezone_spec_free` once no draws will use it again. A spec may
  be drawn from by any number of test cases and threads once configured;
  each setter call requires exclusive access.
  */
 typedef struct hegel_timezone_spec_t hegel_timezone_spec_t;
+
+/*
+ A source of time zone data
+
+ The zone data the time zone and zoned datetime draws and the
+ `hegel_timezone_*` queries classify, target and resolve against: the
+ database the code under test uses, rather than the one bundled in
+ libhegel. Build an empty source with `hegel_zone_source_new`, fill it
+ with `hegel_zone_source_add_*`, `hegel_zone_source_declare` and
+ `hegel_zone_source_set_loader`, and free it with
+ `hegel_zone_source_free`; `hegel_zone_source_bundled` gives a handle to
+ the bundled database. Make it the process's default with
+ `hegel_set_default_zone_source`, or attach it to one time zone spec with
+ `hegel_timezone_spec_set_source`. Freeing a handle does not invalidate
+ the default or a spec using the source, which keep it alive.
+
+ A source may be used by any number of threads, including while it is
+ being filled; a spec reads the names a source knows when the spec is
+ built or reconfigured, so add or declare names before building specs
+ that draw from them. Data added for a name replaces what the source had
+ for it.
+ */
+typedef struct hegel_zone_source_t hegel_zone_source_t;
 
 /*
  The bounds and policies of a zoned datetime draw
@@ -1301,6 +1375,177 @@ typedef struct {
      */
     uint32_t tags;
 } hegel_timezone_info_t;
+
+/*
+ A local time type: an offset, its DST flag and its abbreviation.
+ */
+typedef struct {
+    /*
+     Seconds east of UT, less than two days in magnitude.
+     */
+    int32_t utoff;
+    /*
+     Informational: reported by `hegel_timezone_offset_at`, never used
+     to classify.
+     */
+    bool is_dst;
+    /*
+     Such as `"EST"`; no NUL bytes.
+     */
+    hegel_string_t abbreviation;
+} hegel_zone_type_t;
+
+/*
+ An explicit transition: from `instant` (Unix seconds) on, `local_type`
+ is in force.
+ */
+typedef struct {
+    int64_t instant;
+    hegel_zone_type_t local_type;
+} hegel_zone_transition_t;
+
+/*
+ When a yearly rule's transition happens: `time` seconds (within ±167
+ hours) after local midnight of the day `kind` and its fields name, in
+ the offset in force before the transition.
+ */
+typedef struct {
+    /*
+     A `hegel_zone_rule_day_t`, 32 bits wide.
+     */
+    uint32_t kind;
+    /*
+     The day of the year, for the Julian and zero-based forms.
+     */
+    uint16_t day;
+    /*
+     For the month form: the month in `[1, 12]`.
+     */
+    uint8_t month;
+    /*
+     For the month form: the week in `[1, 5]`, 5 meaning the last.
+     */
+    uint8_t week;
+    /*
+     For the month form: the weekday in `[0, 6]`, 0 being Sunday.
+     */
+    uint8_t weekday;
+    int32_t time;
+} hegel_zone_rule_date_t;
+
+/*
+ A zone's data, given as fields: the TZif model of RFC 9636.
+ */
+typedef struct {
+    /*
+     The type in force before the first transition.
+     */
+    hegel_zone_type_t initial;
+    /*
+     `transition_count` transitions, strictly ascending by instant; may
+     be NULL when the count is 0.
+     */
+    const hegel_zone_transition_t *transitions;
+    size_t transition_count;
+    /*
+     A `hegel_zone_after_t`, 32 bits wide.
+     */
+    uint32_t after;
+    /*
+     For `HEGEL_ZONE_AFTER_RULE`: the standard type, and when `has_dst`
+     the daylight type in force from `dst_start` to `dst_end` each year.
+     */
+    hegel_zone_type_t standard;
+    bool has_dst;
+    hegel_zone_type_t dst;
+    hegel_zone_rule_date_t dst_start;
+    hegel_zone_rule_date_t dst_end;
+    /*
+     For `HEGEL_ZONE_AFTER_INFER`: the last year the transitions cover,
+     in `[-999999, 999999]`.
+     */
+    int32_t last_year;
+} hegel_zone_data_t;
+
+/*
+ The local time type in force at `instant` (Unix seconds), written to
+ `*out_type`; see `hegel_zone_oracle_t`. The abbreviation's bytes must
+ stay valid until the oracle is next called or
+ `hegel_zone_source_add_oracle` returns. Returns `HEGEL_OK`, or any
+ other code to fail the probe, with a message set on `ctx` by
+ `hegel_context_set_error` or by a failed libhegel call.
+ */
+typedef hegel_result_t (*hegel_zone_offset_fn_t)(void *user_data,
+                                                 hegel_context_t *ctx,
+                                                 int64_t instant,
+                                                 hegel_zone_type_t *out_type);
+
+/*
+ The first instant after `after` at which the type in force changes,
+ written to `*out_instant` with `*out_found` set, or `*out_found` left
+ false when it never changes again; see `hegel_zone_oracle_t`. Returns
+ as `hegel_zone_offset_fn_t` does.
+ */
+typedef hegel_result_t (*hegel_zone_next_transition_fn_t)(void *user_data,
+                                                          hegel_context_t *ctx,
+                                                          int64_t after,
+                                                          bool *out_found,
+                                                          int64_t *out_instant);
+
+/*
+ An offset oracle: a library that answers lookups but does not expose
+ its zone data, probed into explicit transitions over the years
+ `first_year` to `last_year`.
+
+ With `next_transition` the probe asks for each transition in turn;
+ without it, it samples `offset_at` once a day and bisects each change to
+ the second, which misses a pair of changes less than a day apart.
+ Before `first_year` the type at its start holds; after `last_year`,
+ `after` decides: `HEGEL_ZONE_AFTER_HOLD` holds the last type (as
+ chrono-tz does after its table ends) and `HEGEL_ZONE_AFTER_INFER`
+ infers a yearly rule from the last two years as that value describes
+ (closer for a library that applies the IANA rule for ever, such as
+ `Temporal` and `Intl`), for which the range must span two years at
+ least.
+ */
+typedef struct {
+    /*
+     Required.
+     */
+    hegel_zone_offset_fn_t offset_at;
+    /*
+     Optional; NULL to sample instead.
+     */
+    hegel_zone_next_transition_fn_t next_transition;
+    /*
+     Passed to both callbacks.
+     */
+    void *user_data;
+    int32_t first_year;
+    int32_t last_year;
+    /*
+     `HEGEL_ZONE_AFTER_HOLD` or `HEGEL_ZONE_AFTER_INFER`, 32 bits wide.
+     */
+    uint32_t after;
+} hegel_zone_oracle_t;
+
+/*
+ Supplies a zone source's data for a name the first time a draw or a
+ query needs it: called with the `user_data` given to
+ `hegel_zone_source_set_loader`, a fresh context, the source and the
+ name, it adds that name's zone (or a link) with the
+ `hegel_zone_source_add_*` functions, or adds nothing when it does not
+ know the name. It is called from whichever thread draws or queries, so
+ it must be safe to call from any thread, possibly concurrently and more
+ than once for one name when threads race; it must not draw. Returns
+ `HEGEL_OK`, or any other code to fail the draw or query with
+ `HEGEL_E_INVALID_ARG`, with a message set on `ctx` by
+ `hegel_context_set_error` or by a failed libhegel call.
+ */
+typedef hegel_result_t (*hegel_zone_loader_t)(void *user_data,
+                                              hegel_context_t *ctx,
+                                              hegel_zone_source_t *source,
+                                              hegel_string_t name);
 
 /*
  A drawn zoned datetime: the wall-clock time `civil` in the zone named
@@ -4124,9 +4369,11 @@ hegel_result_t hegel_tzdb_version(hegel_context_t *ctx, hegel_string_t *out_vers
  evaluator testable from every binding.
 
  Parameters:
- `name`: A time zone name exactly as the IANA database spells it (link
-   names included), or `Etc/Unknown`, the zone with a known instant and
-   an unknown offset, in which the civil time is read as UTC.
+ `name`: A time zone name the process's default zone source knows,
+   exactly as it spells it (for the bundled database, as the IANA
+   database spells it, link names included), or `Etc/Unknown`, the zone
+   with a known instant and an unknown offset, in which the civil time
+   is read as UTC.
  `civil`: A valid naive datetime (see `hegel_generate_datetime`).
  `out`: Receives the classification, the offsets and the resolved
    instant; see `hegel_timezone_resolution_t`.
@@ -4134,12 +4381,25 @@ hegel_result_t hegel_tzdb_version(hegel_context_t *ctx, hegel_string_t *out_vers
  Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown name, an
  invalid datetime, or a wall time whose instant in the zone lies
  outside the timestamp range (within an offset's width of the civil
- range's ends).
+ range's ends). `hegel_timezone_resolve_in` asks a given source.
  */
 hegel_result_t hegel_timezone_resolve(hegel_context_t *ctx,
                                       hegel_string_t name,
                                       hegel_datetime_t civil,
                                       hegel_timezone_resolution_t *out);
+
+/*
+ `hegel_timezone_resolve` against the zone data of `source`, or of the
+ process's default zone source when `source` is NULL. A name whose data
+ the source has not loaded is loaded through its loader; a loader's
+ failure, or a declared name with no loader to supply it, is
+ `HEGEL_E_INVALID_ARG`.
+ */
+hegel_result_t hegel_timezone_resolve_in(hegel_context_t *ctx,
+                                         const hegel_zone_source_t *source,
+                                         hegel_string_t name,
+                                         hegel_datetime_t civil,
+                                         hegel_timezone_resolution_t *out);
 
 /*
  The offset a time zone has in force at an instant.
@@ -4153,12 +4413,24 @@ hegel_result_t hegel_timezone_resolve(hegel_context_t *ctx,
    `hegel_timezone_offset_t`.
 
  Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown name or an
- out-of-range timestamp.
+ out-of-range timestamp. `hegel_timezone_offset_at_in` asks a given
+ source.
  */
 hegel_result_t hegel_timezone_offset_at(hegel_context_t *ctx,
                                         hegel_string_t name,
                                         hegel_timestamp_t timestamp,
                                         hegel_timezone_offset_t *out);
+
+/*
+ `hegel_timezone_offset_at` against the zone data of `source`, or of the
+ process's default zone source when `source` is NULL, loading data as
+ `hegel_timezone_resolve_in` does.
+ */
+hegel_result_t hegel_timezone_offset_at_in(hegel_context_t *ctx,
+                                           const hegel_zone_source_t *source,
+                                           hegel_string_t name,
+                                           hegel_timestamp_t timestamp,
+                                           hegel_timezone_offset_t *out);
 
 /*
  What libhegel knows about a time zone name.
@@ -4168,16 +4440,225 @@ hegel_result_t hegel_timezone_offset_at(hegel_context_t *ctx,
    `known` false.
  `out`: Receives the description; see `hegel_timezone_info_t`.
 
- Returns `HEGEL_OK`.
+ Returns `HEGEL_OK`. `hegel_timezone_info_in` asks a given source.
  */
 hegel_result_t hegel_timezone_info(hegel_context_t *ctx,
                                    hegel_string_t name,
                                    hegel_timezone_info_t *out);
 
 /*
- Create a time zone spec allowing every bundled name, with link names
- such as `Asia/Calcutta` included, legacy names such as `EST5EDT`
- excluded and `Etc/Unknown` excluded.
+ `hegel_timezone_info` for the names of `source`, or of the process's
+ default zone source when `source` is NULL: a name is known when the
+ source knows it. A name the bundled catalogue has reports the
+ catalogue's primary name, link flag, rank and tags; one it lacks
+ reports the source's link target, the rank after every catalogued
+ name, and the tags of its data (loaded through the source's loader
+ when the source has one and not the data) and of its spelling, which
+ never makes it legacy.
+
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` when loading the name's
+ data fails.
+ */
+hegel_result_t hegel_timezone_info_in(hegel_context_t *ctx,
+                                      const hegel_zone_source_t *source,
+                                      hegel_string_t name,
+                                      hegel_timezone_info_t *out);
+
+/*
+ Create an empty zone source.
+
+ On success writes a caller-owned handle into `*out_source` (release
+ with `hegel_zone_source_free`) and returns `HEGEL_OK`. Returns
+ `HEGEL_E_INVALID_ARG` for a NULL `out_source`.
+ */
+hegel_result_t hegel_zone_source_new(hegel_context_t *ctx, hegel_zone_source_t **out_source);
+
+/*
+ Get a handle to the bundled time zone database as a zone source, for
+ attaching to a spec when the process's default is another source. It
+ cannot be changed.
+
+ On success writes a caller-owned handle into `*out_source` (release
+ with `hegel_zone_source_free`) and returns `HEGEL_OK`. Returns
+ `HEGEL_E_INVALID_ARG` for a NULL `out_source`.
+ */
+hegel_result_t hegel_zone_source_bundled(hegel_context_t *ctx, hegel_zone_source_t **out_source);
+
+/*
+ Free a handle returned by `hegel_zone_source_new` or
+ `hegel_zone_source_bundled`. The source lives on while it is the
+ process's default or attached to a spec. Safe to call with NULL (a
+ no-op that returns `HEGEL_OK`).
+ */
+hegel_result_t hegel_zone_source_free(hegel_context_t *ctx, hegel_zone_source_t *source);
+
+/*
+ Add a zone to a source from a TZif file (RFC 9636, version 2 or later),
+ such as one under `/usr/share/zoneinfo`.
+
+ Parameters:
+ `name`: The name the zone is drawn and queried by; not empty, without
+   NUL bytes and not `Etc/Unknown`.
+ `bytes`, `len`: The file's contents. Its 64-bit block and its footer
+   (the POSIX TZ string giving the rule after the last transition) are
+   read; the version 1 block and leap-second records are skipped.
+
+ Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `source`, or
+ `HEGEL_E_INVALID_ARG` for a malformed file, an offset of two days or
+ more, a bad name, NULL `bytes` with a nonzero `len`, or the bundled
+ source.
+ */
+hegel_result_t hegel_zone_source_add_tzif(hegel_context_t *ctx,
+                                          hegel_zone_source_t *source,
+                                          hegel_string_t name,
+                                          const uint8_t *bytes,
+                                          size_t len);
+
+/*
+ Add a zone to a source from its data given as fields.
+
+ Parameters:
+ `name`: As for `hegel_zone_source_add_tzif`.
+ `data`: The zone's data; see `hegel_zone_data_t`. Read during the call
+   only.
+
+ Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `source`, or
+ `HEGEL_E_INVALID_ARG` for a NULL `data`, transitions out of order, an
+ offset of two days or more, a field out of range, a string that is not
+ UTF-8 or holds a NUL byte, a bad name, or the bundled source.
+ */
+hegel_result_t hegel_zone_source_add_zone(hegel_context_t *ctx,
+                                          hegel_zone_source_t *source,
+                                          hegel_string_t name,
+                                          const hegel_zone_data_t *data);
+
+/*
+ Add a zone to a source by probing an offset oracle; see
+ `hegel_zone_oracle_t`. The callbacks are called on this thread during
+ the call only.
+
+ Parameters:
+ `name`: As for `hegel_zone_source_add_tzif`.
+ `oracle`: The callbacks and the probe range.
+
+ Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `source`, or
+ `HEGEL_E_INVALID_ARG` for a NULL `oracle` or `offset_at`, a probe range
+ out of order or outside `[-999999, 999999]`, an unknown `after`, a
+ callback that fails or answers an invalid type, a next transition that
+ is not later than the instant asked about, more than 100000
+ transitions, a bad name, or the bundled source.
+ */
+hegel_result_t hegel_zone_source_add_oracle(hegel_context_t *ctx,
+                                            hegel_zone_source_t *source,
+                                            hegel_string_t name,
+                                            const hegel_zone_oracle_t *oracle);
+
+/*
+ Make a name of a source a link to another name of it, whose data then
+ applies to both. The target need not have data, or be known, yet.
+
+ Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `source`, or
+ `HEGEL_E_INVALID_ARG` for a bad name, a link to itself, or the bundled
+ source.
+ */
+hegel_result_t hegel_zone_source_add_link(hegel_context_t *ctx,
+                                          hegel_zone_source_t *source,
+                                          hegel_string_t name,
+                                          hegel_string_t target);
+
+/*
+ Declare names a source knows whose data comes later: from its loader
+ the first time a draw or query needs it, or, without a loader, from an
+ `hegel_zone_source_add_*` call the frontend makes before drawing a zoned
+ datetime in that zone. A name the source already has keeps what it has.
+
+ Without callbacks (the Wasm build), a frontend declares every name,
+ draws a name with `hegel_generate_timezone` from a spec using the
+ source (which needs no data), adds that zone's data, and then draws the
+ zoned datetime from a spec restricted to that one name with
+ `hegel_timezone_spec_set_names`.
+
+ Parameters:
+ `names`, `len`: `len` names, each as for `hegel_zone_source_add_tzif`.
+
+ Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `source`, or
+ `HEGEL_E_INVALID_ARG` for a bad or NULL name, or the bundled source,
+ which leaves the source as it was.
+ */
+hegel_result_t hegel_zone_source_declare(hegel_context_t *ctx,
+                                         hegel_zone_source_t *source,
+                                         const hegel_string_t *names,
+                                         size_t len);
+
+/*
+ Set the loader a zone source asks for the data of a name it lacks
+ (see `hegel_zone_loader_t`), or with a NULL `loader` remove it. A
+ declared name, and an undeclared one a spec's explicit list or a query
+ names, is loaded the first time it is needed; a name the loader adds
+ nothing for is known to be unknown from then on.
+
+ Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `source`, or
+ `HEGEL_E_INVALID_ARG` for the bundled source.
+ */
+hegel_result_t hegel_zone_source_set_loader(hegel_context_t *ctx,
+                                            hegel_zone_source_t *source,
+                                            hegel_zone_loader_t loader,
+                                            void *user_data);
+
+/*
+ Record which release of its database a source holds, such as the
+ `tzdata` package's `IANA_VERSION`. Failure output does not report it.
+
+ Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `source`, or
+ `HEGEL_E_INVALID_ARG` for a string that is not UTF-8, or the bundled
+ source.
+ */
+hegel_result_t hegel_zone_source_set_version(hegel_context_t *ctx,
+                                             hegel_zone_source_t *source,
+                                             hegel_string_t version);
+
+/*
+ Parameters:
+ `out_version`: Receives the release of a zone source's database: for
+   the bundled source the bundled release (as `hegel_tzdb_version`), for
+   another what `hegel_zone_source_set_version` recorded, or an empty
+   string when nothing was. A string valid for the program's lifetime.
+
+ Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `source`, or
+ `HEGEL_E_INVALID_ARG` for a NULL `out_version`.
+ */
+hegel_result_t hegel_zone_source_version(hegel_context_t *ctx,
+                                         const hegel_zone_source_t *source,
+                                         hegel_string_t *out_version);
+
+/*
+ Set the process-wide default zone source: the one a time zone spec
+ built from now on draws from, and the `hegel_timezone_*` queries ask
+ when given no source. Until a frontend sets one it is the bundled
+ database; NULL restores it. A frontend sets its standard library's
+ database once, at startup; specs built earlier keep the source they
+ read.
+
+ Returns `HEGEL_OK`.
+ */
+hegel_result_t hegel_set_default_zone_source(hegel_context_t *ctx,
+                                             const hegel_zone_source_t *source);
+
+/*
+ Set the message a callback reports through the context libhegel passed
+ it (a zone source's loader or oracle), for the error libhegel raises
+ when the callback returns a failure code.
+
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for a message that is not
+ UTF-8.
+ */
+hegel_result_t hegel_context_set_error(hegel_context_t *ctx, hegel_string_t message);
+
+/*
+ Create a time zone spec allowing every name of the process's default
+ zone source, read now, with link names such as `Asia/Calcutta`
+ included, legacy names such as `EST5EDT` excluded and `Etc/Unknown`
+ excluded.
 
  On success writes a caller-owned handle into `*out_spec` (release with
  `hegel_timezone_spec_free`) and returns `HEGEL_OK`. Returns
@@ -4252,6 +4733,26 @@ hegel_result_t hegel_timezone_spec_set_unknown(hegel_context_t *ctx,
 hegel_result_t hegel_timezone_spec_set_opaque(hegel_context_t *ctx,
                                               hegel_timezone_spec_t *spec,
                                               bool opaque);
+
+/*
+ Draw from, and evaluate with the zone data of, a zone source rather
+ than the process's default: the names it knows, filtered by the link
+ and legacy flags or intersected with an explicit list, with each name's
+ data loaded from the source when a zoned datetime is drawn in it.
+
+ Parameters:
+ `source`: The source, which the spec keeps alive; NULL for the
+   process's default zone source as it is now.
+
+ Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
+ `HEGEL_E_INVALID_ARG` when the source lacks a name of the spec's
+ explicit list not allowed as opaque, the source's names leave nothing
+ to draw, or loading a name's data to tag it fails, which leaves the
+ spec as it was.
+ */
+hegel_result_t hegel_timezone_spec_set_source(hegel_context_t *ctx,
+                                              hegel_timezone_spec_t *spec,
+                                              const hegel_zone_source_t *source);
 
 /*
  Draw a time zone name allowed by `spec`.

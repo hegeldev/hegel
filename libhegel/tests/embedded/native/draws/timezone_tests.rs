@@ -63,10 +63,7 @@ fn the_ladder_is_the_rank_order() {
         .unwrap()
         .ladder()
         .iter()
-        .map(|e| match e.zone {
-            Some(TimeZone::Named(name)) => name.rank,
-            _ => unreachable!(),
-        })
+        .map(|e| tzdata::lookup(&e.name).unwrap().unwrap().rank)
         .collect();
     assert!(ranks.windows(2).all(|w| w[0] < w[1]));
 }
@@ -89,7 +86,7 @@ fn the_flags_switch_links_legacy_names_and_the_unknown_zone() {
     let names = names_of(&spec);
     assert_eq!(names.last().unwrap(), UNKNOWN_NAME);
     let unknown = spec.constraint().unwrap().ladder().last().unwrap();
-    assert!(matches!(unknown.zone, Some(TimeZone::Unknown)));
+    assert_eq!(unknown.kind, EntryKind::Unknown);
     assert_eq!(unknown.tags, Tags::EMPTY.with(Tag::Undefined));
     spec.set_unknown(false).unwrap();
     assert_ne!(names_of(&spec).last().unwrap(), UNKNOWN_NAME);
@@ -153,7 +150,7 @@ fn an_unknown_name_is_an_error_unless_opaque_names_are_accepted() {
         ]
     );
     let opaque = &spec.constraint().unwrap().ladder()[3];
-    assert!(opaque.zone.is_none());
+    assert_eq!(opaque.kind, EntryKind::Opaque);
     assert!(opaque.tags.is_empty());
     let err = spec.set_opaque(false).unwrap_err();
     assert!(matches!(err, EngineError::InvalidArgument(_)));
@@ -343,12 +340,176 @@ fn a_drawn_name_maps_back_to_its_entry() {
         let mut ntc = fresh_ntc(seed);
         let entry = draw_timezone(&mut ntc, &spec).unwrap();
         match entry.name.as_str() {
-            "UTC" => assert!(matches!(entry.zone, Some(TimeZone::Named(n)) if n.name == "UTC")),
-            "Mars/Olympus_Mons" => assert!(entry.zone.is_none()),
-            UNKNOWN_NAME => assert!(matches!(entry.zone, Some(TimeZone::Unknown))),
+            "UTC" => assert!(
+                matches!(spec.zone_of(entry).unwrap(), TimeZone::Named(n) if n.name == "UTC")
+            ),
+            "Mars/Olympus_Mons" => {
+                assert_eq!(entry.kind, EntryKind::Opaque);
+                assert!(matches!(spec.zone_of(entry).unwrap(), TimeZone::Unknown));
+            }
+            UNKNOWN_NAME => assert!(matches!(spec.zone_of(entry).unwrap(), TimeZone::Unknown)),
             other => panic!("{other}"),
         }
         seen.insert(entry.name.clone());
     }
     assert_eq!(seen.len(), 3);
+}
+
+fn tzif(name: &str) -> &'static [u8] {
+    jiff_tzdb::get(name).unwrap().1
+}
+
+fn bundled_zone(name: &str) -> &'static tzdata::Zone {
+    tzdata::lookup(name).unwrap().unwrap().zone
+}
+
+fn custom_source() -> Arc<ZoneSource> {
+    let source = Arc::new(ZoneSource::new());
+    for name in ["Europe/London", "Asia/Kolkata"] {
+        source.add_tzif(name, tzif(name)).unwrap();
+    }
+    source
+        .add_tzif("Europe/Atlantis", tzif("Europe/London"))
+        .unwrap();
+    source.add_link("Asia/Calcutta", "Asia/Kolkata").unwrap();
+    source.declare(["Mars/Base"]).unwrap();
+    source
+}
+
+fn sourced_spec(source: &Arc<ZoneSource>) -> TimeZoneSpec {
+    let mut spec = TimeZoneSpec::new().unwrap();
+    spec.set_source(Some(Arc::clone(source))).unwrap();
+    spec
+}
+
+#[test]
+fn a_source_s_names_are_ranked_catalogue_first() {
+    let source = custom_source();
+    let mut spec = sourced_spec(&source);
+    let mut expected = vec!["Europe/London", "Asia/Kolkata", "Asia/Calcutta"];
+    expected.sort_by_key(|name| tzdata::lookup(name).unwrap().unwrap().rank);
+    expected.extend(["Europe/Atlantis", "Mars/Base"]);
+    assert_eq!(names_of(&spec), expected);
+    let atlantis = &spec.constraint().unwrap().ladder()[3];
+    assert_eq!(
+        atlantis.tags,
+        crate::tzdata::classify::zone_tags("Europe/Atlantis", bundled_zone("Europe/London"))
+    );
+    assert_eq!(
+        spec.constraint().unwrap().ladder()[0].tags,
+        tags_of(expected[0])
+    );
+    spec.set_legacy(true).unwrap();
+    assert_eq!(names_of(&spec), expected);
+    spec.set_links(false).unwrap();
+    expected.retain(|name| *name != "Asia/Calcutta");
+    assert_eq!(names_of(&spec), expected);
+}
+
+#[test]
+fn resetting_the_source_reads_the_default() {
+    let mut spec = sourced_spec(&custom_source());
+    spec.set_source(None).unwrap();
+    assert_eq!(names_of(&spec), names_of(&TimeZoneSpec::new().unwrap()));
+}
+
+#[test]
+fn a_source_with_no_allowed_name_is_an_error_when_drawn() {
+    let mut spec = TimeZoneSpec::new().unwrap();
+    spec.set_source(Some(Arc::new(ZoneSource::new()))).unwrap();
+    assert!(names_of(&spec).is_empty());
+    let err = generate_timezone(&mut fresh_ntc(0), &spec).unwrap_err();
+    assert!(
+        matches!(&err, EngineError::InvalidArgument(m) if m.contains("no allowed name")),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn an_explicit_list_can_follow_a_source_with_no_allowed_name() {
+    let source = Arc::new(ZoneSource::new());
+    source.declare(["EST5EDT"]).unwrap();
+    let mut spec = sourced_spec(&source);
+    assert!(names_of(&spec).is_empty());
+    spec.set_names(vec!["EST5EDT".to_string()]).unwrap();
+    assert_eq!(names_of(&spec), vec!["EST5EDT"]);
+    assert_eq!(
+        generate_timezone(&mut fresh_ntc(0), &spec).unwrap(),
+        "EST5EDT"
+    );
+}
+
+#[test]
+fn a_source_s_own_names_are_not_legacy_whatever_their_area() {
+    let source = Arc::new(ZoneSource::new());
+    source.declare(["Mars/Base"]).unwrap();
+    let spec = sourced_spec(&source);
+    assert_eq!(names_of(&spec), vec!["Mars/Base"]);
+    assert_eq!(
+        generate_timezone(&mut fresh_ntc(0), &spec).unwrap(),
+        "Mars/Base"
+    );
+}
+
+#[test]
+fn explicit_names_are_checked_against_the_source() {
+    let source = custom_source();
+    let mut spec = sourced_spec(&source);
+    let err = spec
+        .set_names(vec!["Europe/Paris".to_string()])
+        .unwrap_err();
+    assert!(
+        matches!(&err, EngineError::InvalidArgument(m) if m.contains("unknown time zone")),
+        "{err:?}"
+    );
+    spec.set_opaque(true).unwrap();
+    spec.set_names(
+        [
+            "Europe/Paris",
+            "Mars/Base",
+            "Europe/Atlantis",
+            "Asia/Calcutta",
+        ]
+        .map(String::from)
+        .to_vec(),
+    )
+    .unwrap();
+    assert_eq!(
+        names_of(&spec),
+        [
+            "Asia/Calcutta",
+            "Europe/Atlantis",
+            "Mars/Base",
+            "Europe/Paris"
+        ]
+    );
+    let ladder = spec.constraint().unwrap().ladder();
+    assert_eq!(ladder[3].kind, EntryKind::Opaque);
+    assert!(matches!(
+        spec.zone_of(&ladder[3]).unwrap(),
+        TimeZone::Unknown
+    ));
+    let TimeZone::Sourced(kolkata) = spec.zone_of(&ladder[0]).unwrap() else {
+        panic!()
+    };
+    assert_eq!(&kolkata.zone, bundled_zone("Asia/Kolkata"));
+    assert!(matches!(spec.lookup(&ladder[2]).unwrap(), Lookup::Unloaded));
+    let err = spec.zone_of(&ladder[2]).unwrap_err();
+    assert!(
+        matches!(&err, EngineError::InvalidArgument(m) if m.contains("no data for the time zone \"Mars/Base\"")),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn a_declared_name_is_drawn_without_its_data() {
+    let source = Arc::new(ZoneSource::new());
+    source.declare(["Europe/London", "Asia/Tokyo"]).unwrap();
+    let spec = sourced_spec(&source);
+    let mut seen = BTreeSet::new();
+    for seed in 0..50 {
+        let mut ntc = fresh_ntc(seed);
+        seen.insert(generate_timezone(&mut ntc, &spec).unwrap());
+    }
+    assert_eq!(seen.len(), 2);
 }

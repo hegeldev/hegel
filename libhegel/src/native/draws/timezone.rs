@@ -29,15 +29,28 @@ use crate::native::HashMap;
 use crate::native::core::{Constraint, EngineError, NativeTestCase, StringChoice};
 use crate::native::intervalsets::IntervalSet;
 use crate::native::timezone::{TimeZone, UNKNOWN_NAME};
+use crate::native::zone_source::{Description, Lookup, ZoneSource, default_source};
 use crate::tzdata::{self, Name, Tag, Tags};
 
-/// One allowed name: the name as the caller or the database spells it,
-/// the zone it evaluates as (`None` for an opaque name) and its tags.
+/// What an allowed name evaluates as.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntryKind {
+    /// A zone of the spec's source, whose data the source supplies when
+    /// the name is drawn.
+    Zone,
+    /// A name the source lacks, which evaluates like `Etc/Unknown`.
+    Opaque,
+    /// `Etc/Unknown`.
+    Unknown,
+}
+
+/// One allowed name: the name as the caller or the source spells it,
+/// what it evaluates as and its tags.
 #[derive(Clone, Debug)]
 pub struct Entry {
     pub name: String,
     codepoints: Vec<u32>,
-    pub zone: Option<TimeZone>,
+    pub kind: EntryKind,
     pub tags: Tags,
 }
 
@@ -176,9 +189,10 @@ impl fmt::Debug for TimeZoneConstraint {
 
 /// The configuration of a time zone draw; see the module docs. Built with
 /// [`TimeZoneSpec::new`] and changed with the setters, each of which
-/// rebuilds the constraint and reports a configuration with no name in it
-/// or, without `opaque`, a name the database lacks, leaving the spec as it
-/// was.
+/// rebuilds the constraint and reports, without `opaque`, an explicit name
+/// the source lacks, leaving the spec as it was. A spec whose source has
+/// no name the link and legacy flags allow is an error only when drawn, so
+/// a frontend can attach a source and then set an explicit list.
 #[derive(Clone, Debug)]
 pub struct TimeZoneSpec {
     names: Option<Vec<String>>,
@@ -186,12 +200,13 @@ pub struct TimeZoneSpec {
     legacy: bool,
     unknown: bool,
     opaque: bool,
+    source: Arc<ZoneSource>,
     kind: Arc<StringChoice>,
 }
 
 impl TimeZoneSpec {
-    /// Every bundled name with links on and legacy names off, without
-    /// `Etc/Unknown`.
+    /// Every name of the process's default zone source with links on and
+    /// legacy names off, without `Etc/Unknown`.
     pub fn new() -> Result<TimeZoneSpec, EngineError> {
         let mut spec = TimeZoneSpec {
             names: None,
@@ -199,6 +214,7 @@ impl TimeZoneSpec {
             legacy: false,
             unknown: false,
             opaque: false,
+            source: default_source(),
             kind: Arc::new(StringChoice {
                 intervals: Arc::new(IntervalSet::unicode_scalars()?),
                 min_size: 0,
@@ -210,7 +226,36 @@ impl TimeZoneSpec {
         Ok(spec)
     }
 
-    /// Restrict the draw to `names`, which the database must know unless
+    /// Draw from `source`'s names and evaluate with its data, or with
+    /// `None` from the process's default source as it is now.
+    pub fn set_source(&mut self, source: Option<Arc<ZoneSource>>) -> Result<(), EngineError> {
+        let source = source.unwrap_or_else(default_source);
+        self.apply(|spec| spec.source = source)
+    }
+
+    /// The zone `entry` evaluates as, its data loaded from the spec's
+    /// source when the source has a loader and not yet the data; an
+    /// argument error when the source has no data for it.
+    pub fn zone_of(&self, entry: &Entry) -> Result<TimeZone, EngineError> {
+        match self.lookup(entry)? {
+            Lookup::Zone(zone) => Ok(zone),
+            Lookup::Unloaded | Lookup::Unknown => Err(EngineError::InvalidArgument(format!(
+                "the zone source has no data for the time zone {:?}: it was declared, and the \
+                 source has no loader; add its data before drawing it",
+                entry.name
+            ))),
+        }
+    }
+
+    /// What the spec's source has for `entry`; see [`Lookup`].
+    pub fn lookup(&self, entry: &Entry) -> Result<Lookup, EngineError> {
+        match entry.kind {
+            EntryKind::Zone => self.source.lookup(&entry.name),
+            EntryKind::Opaque | EntryKind::Unknown => Ok(Lookup::Zone(TimeZone::Unknown)),
+        }
+    }
+
+    /// Restrict the draw to `names`, which the source must know unless
     /// opaque names are accepted; the link and legacy flags do not apply
     /// to an explicit list, and an empty list is an error whether or not
     /// `Etc/Unknown` is drawn.
@@ -238,7 +283,7 @@ impl TimeZoneSpec {
         self.apply(|spec| spec.unknown = unknown)
     }
 
-    /// Whether an explicit name the database lacks is accepted as an
+    /// Whether an explicit name the source lacks is accepted as an
     /// opaque zone, which evaluates like `Etc/Unknown`.
     pub fn set_opaque(&mut self, opaque: bool) -> Result<(), EngineError> {
         self.apply(|spec| spec.opaque = opaque)
@@ -268,30 +313,51 @@ impl TimeZoneSpec {
     }
 
     fn rebuild(&mut self) -> Result<(), EngineError> {
-        let mut named: Vec<&'static Name> = Vec::new();
+        let mut catalogued: Vec<(u16, Entry)> = Vec::new();
+        let mut uncatalogued: Vec<Entry> = Vec::new();
         let mut opaque: Vec<Entry> = Vec::new();
         let mut unknown = false;
+        let mut push = |name: &str, description: Description| {
+            let entry = entry(name, EntryKind::Zone, description.tags);
+            match description.catalogued {
+                Some(catalogued_name) => catalogued.push((catalogued_name.rank, entry)),
+                None => uncatalogued.push(entry),
+            }
+        };
         match &self.names {
-            None => {
+            None if self.source.is_bundled() => {
                 for name in tzdata::names()? {
                     let skip = (name.tags.contains(Tag::Legacy) && !self.legacy)
                         || (name.tags.contains(Tag::Link) && !self.links);
                     if !skip {
-                        named.push(name);
+                        push(&name.name, catalogued_description(name));
+                    }
+                }
+            }
+            None => {
+                for name in self.source.names()? {
+                    let description = hegel_internal_unwrap!(
+                        self.source.describe(&name)?,
+                        "the zone source does not know its own name {name:?}"
+                    );
+                    let skip = (description.tags.contains(Tag::Legacy) && !self.legacy)
+                        || (description.is_link && !self.links);
+                    if !skip {
+                        push(&name, description);
                     }
                 }
             }
             Some(names) => {
                 for name in names {
-                    match TimeZone::lookup(name)? {
-                        Some(TimeZone::Unknown) => unknown = true,
-                        Some(TimeZone::Named(name)) => named.push(name),
-                        None if self.opaque => opaque.push(Entry {
-                            name: name.clone(),
-                            codepoints: name.chars().map(u32::from).collect(),
-                            zone: None,
-                            tags: Tags::EMPTY,
-                        }),
+                    if name == UNKNOWN_NAME {
+                        unknown = true;
+                        continue;
+                    }
+                    match self.source.describe(name)? {
+                        Some(description) => push(name, description),
+                        None if self.opaque => {
+                            opaque.push(entry(name, EntryKind::Opaque, Tags::EMPTY));
+                        }
                         None => {
                             return Err(EngineError::InvalidArgument(format!(
                                 "unknown time zone {name:?}; names are matched exactly as the \
@@ -302,24 +368,22 @@ impl TimeZoneSpec {
                 }
             }
         }
-        named.sort_by_key(|name| name.rank);
-        named.dedup_by(|a, b| a.name == b.name);
-        let mut ladder: Vec<Entry> = named.into_iter().map(named_entry).collect();
-        opaque.sort_by(|a, b| a.name.cmp(&b.name));
-        opaque.dedup_by(|a, b| a.name == b.name);
-        ladder.extend(opaque);
-        if unknown || self.unknown {
-            ladder.push(Entry {
-                name: UNKNOWN_NAME.to_string(),
-                codepoints: UNKNOWN_NAME.chars().map(u32::from).collect(),
-                zone: Some(TimeZone::Unknown),
-                tags: Tags::EMPTY.with(Tag::Undefined),
-            });
+        catalogued.sort_by_key(|(rank, _)| *rank);
+        catalogued.dedup_by(|a, b| a.1.name == b.1.name);
+        let mut ladder: Vec<Entry> = catalogued.into_iter().map(|(_, entry)| entry).collect();
+        for mut group in [uncatalogued, opaque] {
+            group.sort_by(|a, b| a.name.cmp(&b.name));
+            group.dedup_by(|a, b| a.name == b.name);
+            ladder.extend(group);
         }
-        let max_size = hegel_internal_unwrap!(
-            ladder.iter().map(|e| e.codepoints.len()).max(),
-            "a time zone spec built an empty ladder"
-        );
+        if unknown || self.unknown {
+            ladder.push(entry(
+                UNKNOWN_NAME,
+                EntryKind::Unknown,
+                Tags::EMPTY.with(Tag::Undefined),
+            ));
+        }
+        let max_size = ladder.iter().map(|e| e.codepoints.len()).max().unwrap_or(0);
         self.kind = Arc::new(StringChoice {
             intervals: Arc::clone(&self.kind.intervals),
             min_size: 0,
@@ -332,12 +396,21 @@ impl TimeZoneSpec {
     }
 }
 
-fn named_entry(name: &'static tzdata::Name) -> Entry {
+fn entry(name: &str, kind: EntryKind, tags: Tags) -> Entry {
     Entry {
-        name: name.name.clone(),
-        codepoints: name.name.chars().map(u32::from).collect(),
-        zone: Some(TimeZone::Named(name)),
+        name: name.to_string(),
+        codepoints: name.chars().map(u32::from).collect(),
+        kind,
+        tags,
+    }
+}
+
+fn catalogued_description(name: &'static Name) -> Description {
+    Description {
+        primary: String::new(),
+        is_link: name.is_link(),
         tags: name.tags,
+        catalogued: Some(name),
     }
 }
 
@@ -347,6 +420,13 @@ pub(crate) fn draw_timezone<'a>(
     spec: &'a TimeZoneSpec,
 ) -> Result<&'a Entry, EngineError> {
     let constraint = spec.constraint()?;
+    if constraint.ladder().is_empty() {
+        return Err(EngineError::InvalidArgument(
+            "a time zone draw has no allowed name: the zone source has none the link and \
+             legacy flags allow"
+                .to_string(),
+        ));
+    }
     let text = ntc.draw_string_from(Arc::clone(spec.kind()), |d| {
         let i = constraint.sample(d)?;
         Ok(constraint.name_at(i).to_vec())

@@ -81,6 +81,7 @@ use crate::native::timezone::{
     Kind, MAX_INSTANT, MIN_INSTANT, Resolution, TimeZone, Timestamp, UNKNOWN_NAME, ZoneTransition,
     transitions, type_at, validate_timestamp,
 };
+use crate::native::zone_source::Lookup;
 use crate::tzdata::Zone;
 
 /// What to do with a wall time the clocks skipped.
@@ -417,8 +418,8 @@ fn targets(zone: TimeZone, window: &Window) -> Result<Vec<Target>, EngineError> 
     let from = (lo_s - 2 * DAY).max(center.saturating_sub(TARGET_RANGE));
     let to = (hi_s + 2 * DAY).min(center.saturating_add(TARGET_RANGE)) + 1;
     let mut list: Vec<Target> = Vec::new();
-    if let TimeZone::Named(name) = zone {
-        list.extend(transitions(name.zone, from, to).filter_map(|t| {
+    if let Some(data) = zone.data() {
+        list.extend(transitions(data, from, to).filter_map(|t| {
             let before = i128::from(t.instant + i64::from(t.before.utoff)) * NS;
             let after = i128::from(t.instant + i64::from(t.after.utoff)) * NS;
             let overlaps = before.min(after) <= window.hi && before.max(after) >= window.lo;
@@ -458,7 +459,11 @@ fn no_value<T>(
     has_value: impl Fn(TimeZone) -> Result<bool, EngineError>,
 ) -> Result<T, EngineError> {
     for other in tz.constraint()?.ladder() {
-        if has_value(other.zone.unwrap_or(TimeZone::Unknown))? {
+        let has = match tz.lookup(other)? {
+            Lookup::Zone(zone) => has_value(zone)?,
+            Lookup::Unloaded | Lookup::Unknown => true,
+        };
+        if has {
             return Err(invalid(ntc));
         }
     }
@@ -596,9 +601,9 @@ fn wall_range(
 ) -> Result<(i128, i128), EngineError> {
     let mut lo = instant_ns(min) + i128::from(zone.offset_at(*min)?.seconds) * NS;
     let mut hi = instant_ns(max) + i128::from(zone.offset_at(*max)?.seconds) * NS;
-    if let TimeZone::Named(name) = zone {
+    if let Some(data) = zone.data() {
         let within = |from: i64, to: i64| {
-            transitions(name.zone, from.max(min.second + 1), to.min(max.second) + 1)
+            transitions(data, from.max(min.second + 1), to.min(max.second) + 1)
         };
         for t in within(min.second + 1, min.second + 2 * DAY) {
             lo = lo.min(i128::from(t.instant + i64::from(t.after.utoff)) * NS);
@@ -607,7 +612,7 @@ fn wall_range(
             hi = hi.max(i128::from(t.instant + i64::from(t.before.utoff)) * NS - 1);
         }
         if gaps {
-            for t in transitions(name.zone, min.second - 2 * DAY, min.second + 1) {
+            for t in transitions(data, min.second - 2 * DAY, min.second + 1) {
                 let width = t.after.utoff - t.before.utoff;
                 if width > 0 && t.instant + i64::from(width) > min.second {
                     lo = lo.min(instant_ns(min) + i128::from(t.before.utoff) * NS);
@@ -630,9 +635,9 @@ fn wall_window(
     unit: i128,
     gaps: bool,
 ) -> Result<Option<Window>, EngineError> {
-    if let TimeZone::Named(name) = zone {
+    if let Some(data) = zone.data() {
         let near = max.second - min.second <= DAY
-            && transitions(name.zone, min.second - 2 * DAY, max.second + 2 * DAY + 1)
+            && transitions(data, min.second - 2 * DAY, max.second + 2 * DAY + 1)
                 .next()
                 .is_some();
         if near {
@@ -686,11 +691,10 @@ impl Values {
             unit: i128::from(spec.precision.unit()),
         };
         let (lo, hi) = (instant_ns(min), instant_ns(max));
-        let TimeZone::Named(name) = zone else {
+        let Some(zone) = zone.data() else {
             values.push(lo, hi, 0, i128::MIN, false);
             return Ok(values);
         };
-        let zone = name.zone;
         let fold_width = |t: &ZoneTransition| i128::from(t.before.utoff - t.after.utoff) * NS;
         let (earlier, later) = (
             spec.ambiguous == Ambiguous::Earlier,
@@ -886,9 +890,8 @@ fn past_gap(
     window: &Window,
 ) -> Result<Option<DateTime>, EngineError> {
     let second = resolution.timestamp.second;
-    let zone = match zone {
-        TimeZone::Named(name) => name.zone,
-        TimeZone::Unknown => hegel_internal_error!("the unknown zone has no gaps"),
+    let Some(zone) = zone.data() else {
+        hegel_internal_error!("the unknown zone has no gaps")
     };
     let transition = hegel_internal_unwrap!(
         transitions(zone, second - 2 * DAY, second + 1).last(),
@@ -943,10 +946,10 @@ fn draw_zoned(
 ) -> Result<ZonedDateTime, EngineError> {
     let unit = i128::from(spec.precision.unit());
     let entry = spanned(ntc, LABEL_TIMEZONE, |ntc| draw_timezone(ntc, tz))?;
-    let zone = entry.zone.unwrap_or(TimeZone::Unknown);
-    let avoid = match (spec.imaginary, zone) {
-        (Imaginary::Avoid, TimeZone::Named(name)) => Some(name.zone),
-        _ => None,
+    let zone = tz.zone_of(entry)?;
+    let avoid = match spec.imaginary {
+        Imaginary::Avoid => zone.data(),
+        Imaginary::Allow => None,
     };
     let (window, instants) = match &spec.bounds {
         ZonedBounds::Civil { min, max } => match civil_window(zone, min, max, unit)? {

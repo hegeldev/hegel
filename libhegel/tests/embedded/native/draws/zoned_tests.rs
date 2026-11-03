@@ -14,7 +14,8 @@ use crate::native::draws::timezone::TimeZoneSpec;
 use crate::native::rng::EngineRng;
 use crate::native::shrinker::{ShrinkRun, Shrinker};
 use crate::native::timezone::{MAX_INSTANT, MIN_INSTANT};
-use crate::tzdata::{self, Tag};
+use crate::native::zone_source::{After, ZoneData, ZoneSource};
+use crate::tzdata::{self, Tag, tzif};
 use alloc::boxed::Box;
 use alloc::collections::BTreeSet;
 use alloc::string::ToString;
@@ -1791,4 +1792,146 @@ fn a_run_between_two_folds_ends_in_the_earlier_repeat() {
             .collect();
         assert_eq!(instants, expected, "{policy:?}");
     }
+}
+
+fn with_source(source: &Arc<ZoneSource>, names: Option<&[&str]>) -> TimeZoneSpec {
+    let mut tz = TimeZoneSpec::new().unwrap();
+    tz.set_source(Some(Arc::clone(source))).unwrap();
+    if let Some(names) = names {
+        tz.set_names(names.iter().map(|s| s.to_string()).collect())
+            .unwrap();
+    }
+    tz
+}
+
+fn april_london() -> Arc<ZoneSource> {
+    let source = Arc::new(ZoneSource::new());
+    let rule = tzif::parse_footer("GMT0BST,M4.1.0/1,M9.1.0").unwrap();
+    let data = ZoneData {
+        initial: rule.standard.clone(),
+        transitions: Vec::new(),
+        after: After::Rule(rule),
+    };
+    source.add_zone("Europe/London", &data).unwrap();
+    source
+}
+
+#[test]
+fn draws_classify_and_target_against_the_source_s_data() {
+    let source = april_london();
+    let tz = with_source(&source, Some(&["Europe/London"]));
+    let zone = source.timezone("Europe/London").unwrap().unwrap();
+    let spec = spec_with(years(2020, 2030));
+    let mut gap_months = BTreeSet::new();
+    for seed in 0..400 {
+        let mut ntc = fresh_ntc(seed);
+        let z = generate_zoned_datetime(&mut ntc, &tz, &spec).unwrap();
+        assert_eq!(
+            z.offset_seconds,
+            zone.offset_at(z.timestamp).unwrap().seconds,
+            "{z}"
+        );
+        if z.kind == Kind::Gap {
+            gap_months.insert(z.civil.date.month);
+        }
+    }
+    assert_eq!(gap_months, BTreeSet::from([4]));
+}
+
+#[test]
+fn a_replayed_draw_against_a_source_is_the_same_value() {
+    let source = april_london();
+    let tz = with_source(&source, None);
+    let spec = spec_with(years(2020, 2030));
+    for seed in 0..20 {
+        let mut ntc = fresh_ntc(seed);
+        let z = generate_zoned_datetime(&mut ntc, &tz, &spec).unwrap();
+        assert_eq!(replay(&tz, &spec, &ntc.nodes), z);
+    }
+}
+
+fn loaded_names(source: &Arc<ZoneSource>) -> Arc<std::sync::Mutex<BTreeSet<String>>> {
+    let loaded = Arc::new(std::sync::Mutex::new(BTreeSet::new()));
+    let record = Arc::clone(&loaded);
+    let loader = move |source: &Arc<ZoneSource>, name: &str| {
+        record.lock().unwrap().insert(name.to_string());
+        source.add_tzif(name, jiff_tzdb::get(name).unwrap().1)
+    };
+    source.set_loader(Some(Arc::new(loader))).unwrap();
+    loaded
+}
+
+#[test]
+fn only_the_drawn_zones_load() {
+    let source = Arc::new(ZoneSource::new());
+    let names = tzdata::names().unwrap();
+    source
+        .declare(names.iter().map(|n| n.name.as_str()))
+        .unwrap();
+    let loaded = loaded_names(&source);
+    let tz = with_source(&source, None);
+    assert!(loaded.lock().unwrap().is_empty());
+    let spec = spec_with(years(1990, 2030));
+    let mut drawn = BTreeSet::new();
+    for seed in 0..30 {
+        let mut ntc = fresh_ntc(seed);
+        drawn.insert(generate_zoned_datetime(&mut ntc, &tz, &spec).unwrap().zone);
+    }
+    assert_eq!(*loaded.lock().unwrap(), drawn);
+}
+
+#[test]
+fn a_loader_error_ends_the_draw() {
+    let source = Arc::new(ZoneSource::new());
+    source.declare(["Europe/London"]).unwrap();
+    let loader = |_: &Arc<ZoneSource>, _: &str| {
+        Err(EngineError::InvalidArgument("no such file".to_string()))
+    };
+    source.set_loader(Some(Arc::new(loader))).unwrap();
+    let tz = with_source(&source, None);
+    let err =
+        generate_zoned_datetime(&mut fresh_ntc(0), &tz, &spec_with(years(2020, 2030))).unwrap_err();
+    assert!(
+        matches!(&err, EngineError::InvalidArgument(m) if m == "no such file"),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn a_zone_without_a_loader_is_drawn_in_two_steps() {
+    let source = Arc::new(ZoneSource::new());
+    source.declare(["Europe/London", "Asia/Tokyo"]).unwrap();
+    let tz = with_source(&source, None);
+    let spec = spec_with(years(2020, 2030));
+    let err = generate_zoned_datetime(&mut fresh_ntc(0), &tz, &spec).unwrap_err();
+    assert!(
+        matches!(&err, EngineError::InvalidArgument(m) if m.contains("has no data for the time zone")),
+        "{err:?}"
+    );
+    let mut ntc = fresh_ntc(0);
+    let name = crate::native::draws::timezone::generate_timezone(&mut ntc, &tz).unwrap();
+    source
+        .add_tzif(&name, jiff_tzdb::get(&name).unwrap().1)
+        .unwrap();
+    let only = with_source(&source, Some(&[name.as_str()]));
+    let z = generate_zoned_datetime(&mut ntc, &only, &spec).unwrap();
+    assert_eq!(z.zone, name);
+}
+
+#[test]
+fn an_unloaded_zone_counts_as_having_a_value() {
+    let name = |s: &str| ChoiceValue::String(s.chars().map(u32::from).collect());
+    let source = Arc::new(ZoneSource::new());
+    source
+        .add_tzif("Asia/Kolkata", jiff_tzdb::get("Asia/Kolkata").unwrap().1)
+        .unwrap();
+    source.declare(["Test/Declared"]).unwrap();
+    let tz = with_source(&source, Some(&["Asia/Kolkata", "Test/Declared"]));
+    let before_the_range = spec_with(ZonedBounds::Civil {
+        min: MIN_CIVIL,
+        max: civil(MIN_YEAR, 1, 1, 5, 0, 0),
+    });
+    let mut ntc = NativeTestCase::for_choices(&[name("Asia/Kolkata")], None, None);
+    let err = generate_zoned_datetime(&mut ntc, &tz, &before_the_range).unwrap_err();
+    assert!(matches!(err, EngineError::InvalidTestCase), "{err:?}");
 }

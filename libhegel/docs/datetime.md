@@ -551,6 +551,14 @@ hegel_generate_span(ctx, tc, spec, out)
 hegel_timezone_resolve(ctx, name, civil, out)   // classify a wall time
 hegel_timezone_offset_at(ctx, name, timestamp, out)
 hegel_timezone_info(ctx, name, out)              // known? primary name, rank, tags
+
+hegel_zone_source_new / _bundled / _free          // zone sources: zone-sources.md §3
+hegel_zone_source_add_tzif / _add_zone / _add_oracle / _add_link
+hegel_zone_source_declare / _set_loader / _set_version / _version
+hegel_set_default_zone_source(ctx, source)
+hegel_timezone_spec_set_source(ctx, spec, source)
+hegel_timezone_resolve_in / _offset_at_in / _info_in(ctx, source, ...)
+hegel_context_set_error(ctx, message)             // a failing callback's message
 ```
 
 `hegel_generate_time` and `hegel_generate_datetime` gain a `precision`
@@ -595,11 +603,17 @@ be noise, and jiff and `time` cannot report a release at all. A frontend
 whose host database is updated independently (Python's `tzdata`, the JVM)
 can warn once per run when the two differ.
 
+Zone sources (`zone-sources.md`) replace this contract as each frontend
+adopts them: a frontend whose host database the engine can read sets it
+as the process-wide default source, and the engine then targets and
+classifies against the host's own data. The engine side is in place; no
+frontend sets a source yet.
+
 ### 8.2 Rust
 
 First-party, the minimum that exposes the engine's data (§10, Q2): a
-`hegel::datetime` module of plain value types mirroring §4 one to one
-(`Date`, `Time`, `DateTime`, `Timestamp`, `UtcOffset`, `TimeZone`,
+`hegel::generators::temporal` module of plain value types mirroring §4
+one to one (`Date`, `Time`, `DateTime`, `Instant`, `UtcOffset`, `TimeZone`,
 `ZonedDateTime`, `SignedDuration`, `Span`), each a public struct of
 public fields (`UtcOffset` is the enum `Known(i32) | Unknown`) deriving
 `Debug`, `Clone`, `Copy` where the type has no
@@ -613,15 +627,17 @@ option enums of §6 (`Precision`, `Granularity`, `Weekday`, `Month`,
 `Ambiguous`, `SpanSign`, `SpanUnit`, `Tag`) and the query
 functions `tzdb_version`, `resolve`, `offset_at` and `info` live in the
 same module.
-Generators over these types live in `hegel::generators` under the names
-the extras also use (`dates`, `times`, `datetimes`, `timestamps`,
-`utc_offsets`, `timezones`, `zoned_datetimes`, `signed_durations`,
-`spans`), each with the builder options of §6 (`min_value`/`max_value`,
-`precision`, `weekdays`/`months`, `allow_imaginary` as a `bool` like
-Hypothesis, `ambiguous`, `unknown`, and `opaque` on `timezones`); `spans()` enables every unit by default,
-and the first `unit_bounds` call replaces that default.
-`durations()` over `std::time::Duration` keeps its API on the engine
-draw, gaining `precision`, and `system_times()` is added. The extras are
+Generators over these types live in the same module, under the names
+every frontend shares (`dates`, `times`, `datetimes`, `instants`,
+`offsets`, `zones`, `zoned_datetimes`, `durations`, `spans`), each with
+the builder options of §6 (`min_value`/`max_value`, `precision`,
+`weekdays`/`months`, `allow_imaginary` as a `bool` like Hypothesis,
+`ambiguous`, `unknown`, and `opaque` on `zones`); `spans()` enables every
+unit by default, and the first `unit_bounds` call replaces that default.
+The released `hegel::generators::durations()` over `std::time::Duration`
+becomes `temporal::std_durations()` on the engine draw, gaining
+`precision` (the old name stays as a deprecated alias), and
+`temporal::system_times()` is added. The extras are
 thin maps over these.
 
 `extras::jiff` becomes complete: `dates`, `times`, `datetimes`,
@@ -659,16 +675,21 @@ since an `OffsetDateTime` holds a civil time and one offset),
 
 ### 8.3 Other frontends (mapping only)
 
-- **Python:** `datetimes(timezones=, allow_imaginary=)` keeps its API and
-  gains instant-mode bounds, `precision` and `ambiguous`; `dates` gains
-  `weekdays`/`months` masks, `times` and `timedeltas` a `precision`,
-  `utc_offsets(granularity=)` draws `datetime.timezone`;
-  `timezone_keys()`/`timezones()` take `names`, `links` and `legacy` and
-  pass the host's `zoneinfo` keys the engine knows as the spec, with
-  `ZoneInfo` resolution; fold set from the engine. Precision and
+- **Python:** the generators move to `gs.temporal` under the shared
+  names (the released `gs.dates`, `gs.times`, `gs.datetimes`,
+  `gs.timedeltas` and `gs.timezones` stay as deprecated aliases).
+  `datetimes(zones=, allow_imaginary=)` gains instant-mode bounds,
+  `precision` and `ambiguous`, and `zoned_datetimes()` is its always-aware
+  form; `dates` gains `weekdays`/`months` masks, `times` and `durations`
+  (`timedelta`) a `precision`; `instants()` draws UTC datetimes,
+  `offsets(granularity=)` draws `datetime.timezone` and `spans()` a
+  `Span` dataclass; `zone_names()`/`zones()` take `names`, `links` and
+  `legacy` and pass the host's `zoneinfo` keys the engine knows as the
+  spec, with `ZoneInfo` resolution; fold set from the engine. Precision and
   granularity are the strings `isoformat(timespec=)` uses. A `whenever`
   extra maps `ZonedDateTime`/`OffsetDateTime` with `disambiguate`.
-- **Java:** `zoneIds()` from the engine; `zonedDateTimes()` via
+- **Java:** `Generators.Temporal.zones()` from the engine;
+  `Temporal.zonedDateTimes()` via
   `ZonedDateTime.ofLocal(ldt, zone, preferredOffset)` with the preferred
   offset chosen by fold; gap times via the shifted instant.
 - **Go:** `time.Location` by name; values built with
@@ -689,7 +710,7 @@ the jiff oracle tests, `generate_timezone`, `generate_zoned_datetime` with
 civil bounds, `generate_timestamp`, `generate_offset`,
 `generate_duration`, precision on time and datetime, targeted values in
 date/time/timestamp samplers, C ABI and header, the first-party
-`hegel::datetime` types and generators, jiff and chrono extras, Python
+`hegel::generators::temporal` types and generators, jiff and chrono extras, Python
 `timezones`/`datetimes`. This is the point at which R1–R9 hold.
 
 Phase 2: instant bounds and the wall-clock-window fallback, `generate_span`,
