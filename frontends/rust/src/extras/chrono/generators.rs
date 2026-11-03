@@ -1,6 +1,6 @@
-use crate::datetime as hd;
-use crate::datetime::{Ambiguous, Granularity, Precision};
 use crate::generators as gs;
+use crate::generators::temporal as hd;
+use crate::generators::temporal::{Ambiguous, Granularity, Precision};
 use crate::generators::{
     DefaultGenerator, Generator, PrintableGenerator, TestCase, combine_labels, hashsets, integers,
     label_from_name,
@@ -94,8 +94,8 @@ fn naive_datetime(dt: hd::DateTime) -> NaiveDateTime {
     NaiveDateTime::new(naive_date(dt.date), naive_time(dt.time))
 }
 
-fn hegel_timestamp(dt: DateTime<Utc>) -> hd::Timestamp {
-    hd::Timestamp {
+fn hegel_timestamp(dt: DateTime<Utc>) -> hd::Instant {
+    hd::Instant {
         second: dt.timestamp(),
         nanosecond: dt.timestamp_subsec_nanos(),
     }
@@ -209,7 +209,7 @@ impl Generator<FixedOffset> for FixedOffsetGenerator {
     }
 
     fn do_draw(&self, tc: &TestCase) -> FixedOffset {
-        let offset = gs::utc_offsets()
+        let offset = gs::temporal::offsets()
             .min_value(hd::UtcOffset::Known(self.min_value.local_minus_utc()))
             .max_value(hd::UtcOffset::Known(self.max_value.local_minus_utc()))
             .granularity(self.granularity)
@@ -275,7 +275,7 @@ fn chrono_time_delta(d: hd::SignedDuration) -> TimeDelta {
 
 /// Generator for [`chrono::TimeDelta`] values. Created by [`time_deltas()`].
 pub struct TimeDeltaGenerator {
-    inner: gs::SignedDurationGenerator,
+    inner: gs::temporal::DurationGenerator,
 }
 
 impl TimeDeltaGenerator {
@@ -337,7 +337,7 @@ impl PrintableGenerator<TimeDelta> for TimeDeltaGenerator {
 /// ```
 pub fn time_deltas() -> TimeDeltaGenerator {
     TimeDeltaGenerator {
-        inner: gs::signed_durations()
+        inner: gs::temporal::durations()
             .min_value(hegel_time_delta(TimeDelta::MIN))
             .max_value(hegel_time_delta(TimeDelta::MAX)),
     }
@@ -345,10 +345,10 @@ pub fn time_deltas() -> TimeDeltaGenerator {
 
 /// Generator for [`chrono::NaiveDate`] values. Created by [`naive_dates()`].
 ///
-/// A thin map over [`gs::dates()`], so it draws, targets and shrinks exactly
+/// A thin map over [`gs::temporal::dates()`], so it draws, targets and shrinks exactly
 /// as that generator does.
 pub struct NaiveDateGenerator {
-    inner: gs::DateGenerator,
+    inner: gs::temporal::DateGenerator,
 }
 
 impl NaiveDateGenerator {
@@ -428,7 +428,7 @@ impl PrintableGenerator<NaiveDate> for NaiveDateGenerator {
 /// ```
 pub fn naive_dates() -> NaiveDateGenerator {
     NaiveDateGenerator {
-        inner: gs::dates()
+        inner: gs::temporal::dates()
             .min_value(hegel_date(NaiveDate::MIN))
             .max_value(hegel_date(NaiveDate::MAX)),
     }
@@ -472,7 +472,7 @@ impl Generator<NaiveTime> for NaiveTimeGenerator {
             invalid_argument!("naive_times bounds cannot use a leap second");
         }
         naive_time(
-            gs::times()
+            gs::temporal::times()
                 .min_value(hegel_time(self.min_value))
                 .max_value(hegel_time(self.max_value))
                 .precision(self.precision)
@@ -498,7 +498,7 @@ impl PrintableGenerator<NaiveTime> for NaiveTimeGenerator {
 ///
 /// ```no_run
 /// use chrono::NaiveTime;
-/// use hegel::datetime::Precision;
+/// use hegel::generators::temporal::Precision;
 /// use hegel::extras::chrono as chrono_gs;
 ///
 /// #[hegel::test]
@@ -554,7 +554,7 @@ impl Generator<NaiveDateTime> for NaiveDateTimeGenerator {
             invalid_argument!("naive_datetimes bounds cannot use a leap second");
         }
         naive_datetime(
-            gs::datetimes()
+            gs::temporal::datetimes()
                 .min_value(hegel_datetime(self.min_value))
                 .max_value(hegel_datetime(self.max_value))
                 .precision(self.precision)
@@ -717,9 +717,9 @@ fn nanos_to_utc_datetime(n: i128) -> DateTime<Utc> {
 
 mod zoned {
     use super::{hegel_datetime, hegel_timestamp, is_leap_second};
-    use crate::datetime::{Ambiguous, Precision};
     use crate::generators as gs;
     use crate::generators::TestCase;
+    use crate::generators::temporal::{Ambiguous, Precision};
     use crate::test_case::invalid_argument;
     use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
     use std::sync::OnceLock;
@@ -759,9 +759,12 @@ mod zoned {
             }
         }
 
-        pub fn generator(&self, zones: gs::TimeZoneGenerator) -> gs::ZonedDateTimeGenerator {
-            let generator = gs::zoned_datetimes()
-                .timezones(zones)
+        pub fn generator(
+            &self,
+            zones: gs::temporal::ZoneGenerator,
+        ) -> gs::temporal::ZonedDateTimeGenerator {
+            let generator = gs::temporal::zoned_datetimes()
+                .zones(zones)
                 .precision(self.precision)
                 .allow_imaginary(self.allow_imaginary)
                 .ambiguous(self.ambiguous);
@@ -784,7 +787,7 @@ mod zoned {
             &self,
             tc: &TestCase,
             config: &Config,
-            zoned: &OnceLock<gs::ZonedDateTimeGenerator>,
+            zoned: &OnceLock<gs::temporal::ZonedDateTimeGenerator>,
         ) -> DateTime<Tz>;
     }
 }
@@ -807,7 +810,7 @@ impl<G: Generator<Utc>> zoned::Zones<Utc> for G {
         &self,
         tc: &TestCase,
         config: &zoned::Config,
-        _: &OnceLock<gs::ZonedDateTimeGenerator>,
+        _: &OnceLock<gs::temporal::ZonedDateTimeGenerator>,
     ) -> DateTime<Utc> {
         let Utc = tc.draw_silent(self);
         wall_time_at_offset(tc, config, Utc.fix()).and_utc()
@@ -825,7 +828,7 @@ impl<G: Generator<FixedOffset>> zoned::Zones<FixedOffset> for G {
         &self,
         tc: &TestCase,
         config: &zoned::Config,
-        _: &OnceLock<gs::ZonedDateTimeGenerator>,
+        _: &OnceLock<gs::temporal::ZonedDateTimeGenerator>,
     ) -> DateTime<FixedOffset> {
         let offset = tc.draw_silent(self);
         offset
@@ -860,7 +863,7 @@ fn wall_time_at_offset(
         tc.reject();
     }
     naive_datetime(
-        gs::datetimes()
+        gs::temporal::datetimes()
             .min_value(hegel_datetime(nanos_to_utc_datetime(lo).naive_utc()))
             .max_value(hegel_datetime(nanos_to_utc_datetime(hi).naive_utc()))
             .precision(config.precision)
@@ -872,7 +875,7 @@ fn wall_time_at_offset(
 pub struct DateTimeGenerator<G = FixedOffsetGenerator, Tz: TimeZone = FixedOffset> {
     tz_gen: G,
     config: zoned::Config,
-    zoned: OnceLock<gs::ZonedDateTimeGenerator>,
+    zoned: OnceLock<gs::temporal::ZonedDateTimeGenerator>,
     label: u64,
     _phantom: PhantomData<fn() -> Tz>,
 }
@@ -1000,8 +1003,8 @@ where
 
 /// Generate [`chrono::DateTime`] values: a zone from the
 /// [`timezones`](DateTimeGenerator::timezones) source and a wall-clock time
-/// in it, drawn through [`gs::zoned_datetimes()`] for an IANA zone and
-/// through [`gs::datetimes()`] for [`Utc`] or a [`FixedOffset`], which has
+/// in it, drawn through [`gs::temporal::zoned_datetimes()`] for an IANA zone and
+/// through [`gs::temporal::datetimes()`] for [`Utc`] or a [`FixedOffset`], which has
 /// no zone to record.
 ///
 /// By default a [`FixedOffset`] from [`fixed_offsets()`] and any wall-clock
@@ -1016,13 +1019,9 @@ where
 /// A `DateTime` holds its instant, so a wall-clock time within a day of
 /// chrono's range whose instant in the drawn zone or offset falls outside
 /// it is rejected as if by `assume(false)`; bounds that leave the range's
-/// last day alone never meet this. So is a wall time chrono-tz's database
-/// skips where the engine's does not, and a wall time whose instant under
-/// chrono-tz's rules falls outside instant bounds the engine kept it
-/// within: the two databases can differ by a release, the engine's being
-/// [`tzdb_version`](crate::datetime::tzdb_version) and chrono-tz's
-/// `chrono_tz::IANA_TZDB_VERSION`, and chrono-tz applies no
-/// daylight-saving rule from 2100 on.
+/// last day alone never meet this. IANA zones are drawn against
+/// chrono-tz's own database, `zone_source()`, so every gap and fold is one
+/// chrono-tz has, including its lack of daylight saving from 2100 on.
 ///
 /// ```no_run
 /// use chrono::{FixedOffset, Utc};
@@ -1068,7 +1067,7 @@ pub struct TimeZoneGenerator {
     names: Option<Vec<chrono_tz::Tz>>,
     links: bool,
     legacy: bool,
-    zones: OnceLock<gs::TimeZoneGenerator>,
+    zones: OnceLock<gs::temporal::ZoneGenerator>,
 }
 
 #[cfg(feature = "chrono-tz")]
@@ -1097,28 +1096,15 @@ impl TimeZoneGenerator {
         self
     }
 
-    /// The names of the allowed zones, as chrono-tz spells them: every
-    /// name it has that the engine's default set would draw, or the
-    /// explicit list. A name the engine's database lacks is drawn as an
-    /// opaque zone, resolved by chrono-tz alone.
-    fn allowed(&self) -> Vec<&'static str> {
+    /// The engine generator over chrono-tz's database, through
+    /// [`zone_source`](super::zone_source): the explicit list, or every
+    /// name it has that the link and legacy flags admit.
+    fn zone_generator(&self) -> gs::temporal::ZoneGenerator {
+        let generator = gs::temporal::zones().source(super::zone_source());
         match &self.names {
-            Some(names) => names.iter().map(|tz| tz.name()).collect(),
-            None => chrono_tz::TZ_VARIANTS
-                .iter()
-                .map(|tz| tz.name())
-                .filter(|name| {
-                    hd::info(name).is_none_or(|info| {
-                        (self.links || !info.is_link)
-                            && (self.legacy || !info.tags.contains(&hd::Tag::Legacy))
-                    })
-                })
-                .collect(),
+            Some(names) => generator.names(names.iter().map(|tz| tz.name())),
+            None => generator.links(self.links).legacy(self.legacy),
         }
-    }
-
-    fn zone_generator(&self) -> gs::TimeZoneGenerator {
-        gs::timezones().names(self.allowed()).opaque(true)
     }
 }
 
@@ -1158,54 +1144,25 @@ impl zoned::Zones<chrono_tz::Tz> for TimeZoneGenerator {
         &self,
         tc: &TestCase,
         config: &zoned::Config,
-        zoned: &OnceLock<gs::ZonedDateTimeGenerator>,
+        zoned: &OnceLock<gs::temporal::ZonedDateTimeGenerator>,
     ) -> DateTime<chrono_tz::Tz> {
         let z = zoned
             .get_or_init(|| config.generator(self.zone_generator()))
             .do_draw(tc);
         let tz: chrono_tz::Tz = z.zone.name.parse().unwrap();
-        let instant = DateTime::<Utc>::from_timestamp(z.timestamp.second, z.timestamp.nanosecond)
-            .unwrap_or_else(|| tc.reject());
-        let dt = chrono_tz_datetime(&z, tz, instant).unwrap_or_else(|| tc.reject());
-        if let zoned::Bounds::Instant(min, max) = config.bounds {
-            if dt < min || dt > max {
-                tc.reject();
-            }
-        }
-        dt
-    }
-}
-
-/// The chrono-tz value of an engine draw: its wall time resolved by
-/// chrono-tz with the engine's fold, or its instant for a wall time both
-/// databases skip. `None` when chrono-tz alone skips the wall time, which
-/// a newer or older database on its side can do; no value of chrono's
-/// has that wall time then.
-#[cfg(feature = "chrono-tz")]
-fn chrono_tz_datetime(
-    z: &hd::ZonedDateTime,
-    tz: chrono_tz::Tz,
-    instant: DateTime<Utc>,
-) -> Option<DateTime<chrono_tz::Tz>> {
-    let resolved = tz.from_local_datetime(&naive_datetime(z.civil));
-    let picked = if z.fold {
-        resolved.latest()
-    } else {
-        resolved.earliest()
-    };
-    match (picked, z.kind) {
-        (Some(dt), _) => Some(dt),
-        (None, hd::Kind::Gap) => Some(instant.with_timezone(&tz)),
-        (None, _) => None,
+        DateTime::<Utc>::from_timestamp(z.instant.second, z.instant.nanosecond)
+            .unwrap_or_else(|| tc.reject())
+            .with_timezone(&tz)
     }
 }
 
 /// Generate [`chrono_tz::Tz`] values, for use on their own or as the
 /// [`timezones`](DateTimeGenerator::timezones) source of [`datetimes()`].
 ///
-/// The zones are the names chrono-tz and the engine's bundled IANA
-/// database share, link names in and legacy names out by default, drawn
-/// and shrunk as [`gs::timezones()`] draws them: down a ladder of names
+/// The zones are the names of chrono-tz's database
+/// ([`zone_source`](super::zone_source)), link names in and legacy names
+/// out by default, drawn
+/// and shrunk as [`gs::temporal::zones()`] draws them: down a ladder of names
 /// to `UTC`, with half the draws weighted toward zones with rare features.
 /// See [`TimeZoneGenerator`] for builder methods.
 ///
@@ -1234,7 +1191,3 @@ pub fn timezones() -> TimeZoneGenerator {
         zones: OnceLock::new(),
     }
 }
-
-#[cfg(all(test, feature = "chrono-tz"))]
-#[path = "../../../tests/embedded/extras/chrono_generators_tests.rs"]
-mod tests;

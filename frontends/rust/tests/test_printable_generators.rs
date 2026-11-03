@@ -570,9 +570,9 @@ fn every_leaf_generator_prints() {
     printed_draw_lines(gs::time_strings());
     printed_draw_lines(gs::datetime_strings());
     printed_draw_lines(gs::uuids());
-    printed_draw_lines(gs::durations());
+    printed_draw_lines(gs::temporal::std_durations());
     assert_eq!(
-        printed_draw_lines(gs::system_times()),
+        printed_draw_lines(gs::temporal::system_times()),
         vec!["let draw_1 = 2000-01-01T00:00:00Z;"]
     );
     printed_draw_lines(gs::floats::<f64>());
@@ -582,38 +582,41 @@ fn every_leaf_generator_prints() {
 #[test]
 fn datetime_generators_print_the_rfc_9557_form() {
     assert_eq!(
-        printed_draw_lines(gs::dates()),
+        printed_draw_lines(gs::temporal::dates()),
         vec!["let draw_1 = 2000-01-01;"]
     );
     assert_eq!(
-        printed_draw_lines(gs::times()),
+        printed_draw_lines(gs::temporal::times()),
         vec!["let draw_1 = 00:00:00;"]
     );
     assert_eq!(
-        printed_draw_lines(gs::datetimes()),
+        printed_draw_lines(gs::temporal::datetimes()),
         vec!["let draw_1 = 2000-01-01T00:00:00;"]
     );
     assert_eq!(
-        printed_draw_lines(gs::timestamps()),
+        printed_draw_lines(gs::temporal::instants()),
         vec!["let draw_1 = 2000-01-01T00:00:00Z;"]
     );
     assert_eq!(
-        printed_draw_lines(gs::utc_offsets()),
+        printed_draw_lines(gs::temporal::offsets()),
         vec!["let draw_1 = +00:00;"]
     );
     assert_eq!(
-        printed_draw_lines(gs::timezones()),
+        printed_draw_lines(gs::temporal::zones()),
         vec!["let draw_1 = UTC;"]
     );
     assert_eq!(
-        printed_draw_lines(gs::zoned_datetimes()),
+        printed_draw_lines(gs::temporal::zoned_datetimes()),
         vec!["let draw_1 = 2000-01-01T00:00:00+00:00[UTC];"]
     );
     assert_eq!(
-        printed_draw_lines(gs::signed_durations()),
+        printed_draw_lines(gs::temporal::durations()),
         vec!["let draw_1 = PT0S;"]
     );
-    assert_eq!(printed_draw_lines(gs::spans()), vec!["let draw_1 = 0s;"]);
+    assert_eq!(
+        printed_draw_lines(gs::temporal::spans()),
+        vec!["let draw_1 = 0s;"]
+    );
 }
 
 #[test]

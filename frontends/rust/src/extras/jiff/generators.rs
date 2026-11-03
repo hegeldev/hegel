@@ -6,9 +6,10 @@ use jiff::tz::{Offset, TimeZone};
 use jiff::{SignedDuration, Span, Timestamp, Zoned};
 use std::sync::LazyLock;
 
-use crate::datetime::{
-    self as dt, Ambiguous, Granularity, Kind, Month, Precision, SpanSign, SpanUnit, Tag, UtcOffset,
-    info,
+use super::source::zone_source;
+use crate::generators::temporal::{
+    self as dt, Ambiguous, Granularity, Month, Precision, SpanSign, SpanUnit, TransitionKind,
+    UtcOffset,
 };
 use crate::generators::{
     self as gs, BoolGenerator, Generator, IntegerGenerator, Mapped, PrintableGenerator, TestCase,
@@ -84,15 +85,15 @@ pub(super) fn jiff_datetime(d: dt::DateTime) -> DateTime {
     DateTime::from_parts(jiff_date(d.date), jiff_time(d.time))
 }
 
-fn engine_timestamp(t: Timestamp) -> dt::Timestamp {
+fn engine_timestamp(t: Timestamp) -> dt::Instant {
     let nanos = t.as_nanosecond();
-    dt::Timestamp {
+    dt::Instant {
         second: nanos.div_euclid(NANOS_PER_SECOND) as i64,
         nanosecond: nanos.rem_euclid(NANOS_PER_SECOND) as u32,
     }
 }
 
-fn jiff_timestamp(t: dt::Timestamp) -> Timestamp {
+fn jiff_timestamp(t: dt::Instant) -> Timestamp {
     Timestamp::new(t.second, t.nanosecond as i32).unwrap()
 }
 
@@ -121,7 +122,7 @@ fn engine_weekday(w: Weekday) -> dt::Weekday {
 
 /// Generator for [`jiff::civil::Date`] values. Created by [`dates()`].
 pub struct DateGenerator {
-    inner: gs::DateGenerator,
+    inner: gs::temporal::DateGenerator,
 }
 
 impl DateGenerator {
@@ -198,7 +199,7 @@ impl PrintableGenerator<Date> for DateGenerator {
 /// ```
 pub fn dates() -> DateGenerator {
     DateGenerator {
-        inner: gs::dates()
+        inner: gs::temporal::dates()
             .min_value(engine_date(Date::constant(1, 1, 1)))
             .max_value(engine_date(Date::constant(9999, 12, 31))),
     }
@@ -206,7 +207,7 @@ pub fn dates() -> DateGenerator {
 
 /// Generator for [`jiff::civil::Time`] values. Created by [`times()`].
 pub struct TimeGenerator {
-    inner: gs::TimeGenerator,
+    inner: gs::temporal::TimeGenerator,
 }
 
 impl TimeGenerator {
@@ -257,7 +258,7 @@ impl PrintableGenerator<Time> for TimeGenerator {
 /// # Example
 ///
 /// ```no_run
-/// use hegel::datetime::Precision;
+/// use hegel::generators::temporal::Precision;
 /// use hegel::extras::jiff as jiff_gs;
 /// use jiff::civil::Time;
 ///
@@ -269,12 +270,14 @@ impl PrintableGenerator<Time> for TimeGenerator {
 /// }
 /// ```
 pub fn times() -> TimeGenerator {
-    TimeGenerator { inner: gs::times() }
+    TimeGenerator {
+        inner: gs::temporal::times(),
+    }
 }
 
 /// Generator for [`jiff::civil::DateTime`] values. Created by [`datetimes()`].
 pub struct DateTimeGenerator {
-    inner: gs::DateTimeGenerator,
+    inner: gs::temporal::DateTimeGenerator,
 }
 
 impl DateTimeGenerator {
@@ -339,7 +342,7 @@ impl PrintableGenerator<DateTime> for DateTimeGenerator {
 /// ```
 pub fn datetimes() -> DateTimeGenerator {
     DateTimeGenerator {
-        inner: gs::datetimes()
+        inner: gs::temporal::datetimes()
             .min_value(engine_datetime(DateTime::MIN))
             .max_value(engine_datetime(DateTime::MAX)),
     }
@@ -347,7 +350,7 @@ pub fn datetimes() -> DateTimeGenerator {
 
 /// Generator for [`jiff::Timestamp`] values. Created by [`timestamps()`].
 pub struct TimestampGenerator {
-    inner: gs::TimestampGenerator,
+    inner: gs::temporal::InstantGenerator,
 }
 
 impl TimestampGenerator {
@@ -413,7 +416,7 @@ impl PrintableGenerator<Timestamp> for TimestampGenerator {
 /// ```
 pub fn timestamps() -> TimestampGenerator {
     TimestampGenerator {
-        inner: gs::timestamps()
+        inner: gs::temporal::instants()
             .min_value(engine_timestamp(Timestamp::MIN))
             .max_value(engine_timestamp(Timestamp::MAX)),
     }
@@ -451,7 +454,7 @@ const UNIT_NAMES: [&str; 10] = [
 pub struct SpanGenerator {
     bounds: Option<[Option<(i64, i64)>; 10]>,
     non_negative: bool,
-    inner: OnceLock<gs::SpanGenerator>,
+    inner: OnceLock<gs::temporal::SpanGenerator>,
 }
 
 impl SpanGenerator {
@@ -557,14 +560,14 @@ impl SpanGenerator {
             .unwrap_or((self.default_min(i64::MAX), i64::MAX))
     }
 
-    fn inner(&self) -> &gs::SpanGenerator {
+    fn inner(&self) -> &gs::temporal::SpanGenerator {
         self.inner.get_or_init(|| {
             let sign = if self.non_negative {
                 SpanSign::NonNegative
             } else {
                 SpanSign::Uniform
             };
-            let mut generator = gs::spans().sign(sign);
+            let mut generator = gs::temporal::spans().sign(sign);
             for (index, unit) in SpanUnit::ALL.into_iter().enumerate() {
                 let (name, limit) = (UNIT_NAMES[index], UNIT_LIMITS[index]);
                 let bound = match self.bounds {
@@ -645,7 +648,7 @@ pub fn spans() -> SpanGenerator {
 /// Generator for [`jiff::SignedDuration`] values. Created by
 /// [`signed_durations()`].
 pub struct SignedDurationGenerator {
-    inner: gs::SignedDurationGenerator,
+    inner: gs::temporal::DurationGenerator,
 }
 
 impl SignedDurationGenerator {
@@ -708,7 +711,7 @@ impl PrintableGenerator<SignedDuration> for SignedDurationGenerator {
 /// ```
 pub fn signed_durations() -> SignedDurationGenerator {
     SignedDurationGenerator {
-        inner: gs::signed_durations()
+        inner: gs::temporal::durations()
             .min_value(engine_duration(SignedDuration::MIN))
             .max_value(engine_duration(SignedDuration::MAX)),
     }
@@ -716,7 +719,7 @@ pub fn signed_durations() -> SignedDurationGenerator {
 
 /// Generator for [`jiff::tz::Offset`] values. Created by [`offsets()`].
 pub struct OffsetGenerator {
-    inner: gs::UtcOffsetGenerator,
+    inner: gs::temporal::OffsetGenerator,
 }
 
 impl OffsetGenerator {
@@ -774,7 +777,7 @@ impl PrintableGenerator<Offset> for OffsetGenerator {
 /// # Example
 ///
 /// ```no_run
-/// use hegel::datetime::Granularity;
+/// use hegel::generators::temporal::Granularity;
 /// use hegel::extras::jiff as jiff_gs;
 /// use jiff::tz::Offset;
 ///
@@ -788,52 +791,21 @@ impl PrintableGenerator<Offset> for OffsetGenerator {
 /// ```
 pub fn offsets() -> OffsetGenerator {
     OffsetGenerator {
-        inner: gs::utc_offsets()
+        inner: gs::temporal::offsets()
             .min_value(UtcOffset::Known(Offset::MIN.seconds()))
             .max_value(UtcOffset::Known(Offset::MAX.seconds())),
     }
 }
 
-struct KnownName {
-    name: String,
-    link: bool,
-    legacy: bool,
-}
-
-/// Every name jiff's database and the engine's both know, with the
-/// engine's link and legacy classification of it.
-fn known_names() -> &'static [KnownName] {
-    static NAMES: OnceLock<Vec<KnownName>> = OnceLock::new();
-    NAMES.get_or_init(|| {
-        jiff::tz::db()
-            .available()
-            .filter_map(|name| {
-                let name = name.to_string();
-                info(&name).map(|info| KnownName {
-                    link: info.is_link,
-                    legacy: info.tags.contains(&Tag::Legacy),
-                    name,
-                })
-            })
-            .collect()
-    })
-}
-
-/// The engine generator over the names of `known` the link and legacy
-/// flags admit, which is every name both databases know by default.
-fn default_names(known: &[KnownName], links: bool, legacy: bool) -> gs::TimeZoneGenerator {
-    if known.is_empty() {
+/// Fail as a usage error when jiff's database has no names, so no zone
+/// can be drawn from it.
+fn require_a_database(empty: bool) {
+    if empty {
         invalid_argument!(
             "jiff's time zone database is empty, so no IANA zone can be drawn: enable one of \
              jiff's tzdb features, such as tzdb-bundle-platform or tzdb-bundle-always"
         );
     }
-    gs::timezones().names(
-        known
-            .iter()
-            .filter(|known| (links || !known.link) && (legacy || !known.legacy))
-            .map(|known| known.name.clone()),
-    )
 }
 
 /// Generator for [`jiff::tz::TimeZone`] values named in the IANA
@@ -843,7 +815,7 @@ pub struct TimeZoneGenerator {
     links: bool,
     legacy: bool,
     unknown: bool,
-    inner: OnceLock<gs::TimeZoneGenerator>,
+    inner: OnceLock<gs::temporal::ZoneGenerator>,
 }
 
 impl TimeZoneGenerator {
@@ -880,11 +852,11 @@ impl TimeZoneGenerator {
         self
     }
 
-    /// The engine generator over the names this one draws: an explicit
-    /// list checked against jiff's database, or every name both
-    /// databases know, so the engine decides which zone to draw and jiff
-    /// decides what it means.
-    pub(super) fn engine_generator(&self) -> gs::TimeZoneGenerator {
+    /// The engine generator over the names this one draws from jiff's
+    /// database, through [`zone_source`]: an explicit list checked against
+    /// it, or every name it has that the link and legacy flags admit.
+    pub(super) fn engine_generator(&self) -> gs::temporal::ZoneGenerator {
+        let generator = gs::temporal::zones().source(zone_source());
         let generator = match &self.names {
             Some(names) => {
                 for name in names {
@@ -892,14 +864,17 @@ impl TimeZoneGenerator {
                         invalid_argument!("jiff's time zone database does not know {name:?}");
                     }
                 }
-                gs::timezones().names(names.clone()).opaque(true)
+                generator.names(names.clone())
             }
-            None => default_names(known_names(), self.links, self.legacy),
+            None => {
+                require_a_database(jiff::tz::db().available().next().is_none());
+                generator.links(self.links).legacy(self.legacy)
+            }
         };
         generator.unknown(self.unknown)
     }
 
-    fn inner(&self) -> &gs::TimeZoneGenerator {
+    fn inner(&self) -> &gs::temporal::ZoneGenerator {
         self.inner.get_or_init(|| self.engine_generator())
     }
 }
@@ -930,8 +905,8 @@ impl PrintableGenerator<TimeZone> for TimeZoneGenerator {
 
 /// Generate [`jiff::tz::TimeZone`] values named in the IANA database.
 ///
-/// By default any name that both jiff's database and the engine's know,
-/// link names in and legacy names out, resolved with [`TimeZone::get`]
+/// By default any name of jiff's database ([`zone_source`]), link names
+/// in and legacy names out, resolved with [`TimeZone::get`]
 /// so a link such as `Asia/Calcutta` keeps its name; shrinks down a
 /// ladder of names to `UTC` when it is allowed. Half the draws are
 /// uniform over the allowed names and half weighted by the zones'
@@ -986,12 +961,12 @@ pub struct ZonedGenerator {
     precision: Precision,
     allow_imaginary: bool,
     ambiguous: Ambiguous,
-    inner: OnceLock<gs::ZonedDateTimeGenerator>,
+    inner: OnceLock<gs::temporal::ZonedDateTimeGenerator>,
 }
 
 impl ZonedGenerator {
-    /// Draw the zone from `zones` rather than from every name both
-    /// databases know.
+    /// Draw the zone from `zones` rather than from every name of jiff's
+    /// database.
     pub fn timezones(mut self, zones: TimeZoneGenerator) -> Self {
         self.zones = zones;
         self.inner = OnceLock::new();
@@ -1072,10 +1047,10 @@ impl ZonedGenerator {
         self
     }
 
-    fn inner(&self) -> &gs::ZonedDateTimeGenerator {
+    fn inner(&self) -> &gs::temporal::ZonedDateTimeGenerator {
         self.inner.get_or_init(|| {
-            let generator = gs::zoned_datetimes()
-                .timezones(self.zones.engine_generator())
+            let generator = gs::temporal::zoned_datetimes()
+                .zones(self.zones.engine_generator())
                 .precision(self.precision)
                 .allow_imaginary(self.allow_imaginary)
                 .ambiguous(self.ambiguous);
@@ -1107,14 +1082,13 @@ impl ZonedGenerator {
 
 /// Build the jiff value of an engine draw from its wall time, zone and
 /// fold, and from its instant for a skipped wall time. `None` when jiff
-/// has no value at that wall time: its database skips it, or it reads
-/// the instant it resolves to back as a different wall time, as it does
-/// in the last second before a pre-1970 gap.
+/// reads the instant it resolves the wall time to back as a different
+/// wall time, as it does in the last second before some pre-1970 gaps.
 fn jiff_zoned(z: &dt::ZonedDateTime) -> Option<Zoned> {
     let zone = jiff_time_zone(&z.zone);
     match z.kind {
-        Kind::Gap => Some(jiff_timestamp(z.timestamp).to_zoned(zone)),
-        Kind::Unique | Kind::Fold => {
+        TransitionKind::Gap => Some(jiff_timestamp(z.instant).to_zoned(zone)),
+        TransitionKind::Unique | TransitionKind::Fold => {
             let civil = jiff_datetime(z.civil);
             let ambiguous = zone.to_ambiguous_zoned(civil);
             let resolved = if z.fold {
@@ -1127,26 +1101,13 @@ fn jiff_zoned(z: &dt::ZonedDateTime) -> Option<Zoned> {
     }
 }
 
-/// Whether jiff's reading of a draw lies within the instant bounds the
-/// engine kept the draw within under its own rules, which jiff's
-/// database can read with another offset near a transition the two
-/// disagree on.
-fn within_instant_bounds(zoned: &Zoned, bounds: &ZonedBounds) -> bool {
-    match bounds {
-        ZonedBounds::Civil(..) => true,
-        ZonedBounds::Instant(min, max) => (min..=max).contains(&&zoned.timestamp()),
-    }
-}
-
 impl Generator<Zoned> for ZonedGenerator {
     fn label(&self) -> u64 {
         *ZONED_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> Zoned {
-        jiff_zoned(&self.inner().do_draw(tc))
-            .filter(|zoned| within_instant_bounds(zoned, &self.bounds))
-            .unwrap_or_else(|| tc.reject())
+        jiff_zoned(&self.inner().do_draw(tc)).unwrap_or_else(|| tc.reject())
     }
 }
 
@@ -1167,14 +1128,11 @@ impl PrintableGenerator<Zoned> for ZonedGenerator {
 /// transition of the zone, which is how folds and the exact boundary
 /// instants are reached. The value is built from the wall time, the zone
 /// name and the fold with jiff's own rules (`to_ambiguous_zoned` and
-/// `earlier` or `later`), so a newer database on jiff's side changes what
-/// a value means; a wall time jiff has no value at, because its database
-/// skips it or it reads the instant back as another wall time, is
-/// rejected as if by `assume(false)`, as is a wall time whose instant
-/// under jiff's rules falls outside instant bounds the engine kept it
-/// within. The engine's database release is
-/// [`tzdb_version`](crate::datetime::tzdb_version). See [`ZonedGenerator`]
-/// for builder methods.
+/// `earlier` or `later`), against the data of jiff's database the engine
+/// drew with ([`zone_source`]); a wall time jiff reads back as another
+/// wall time, as it does in the last second before some pre-1970 gaps
+/// and at some transitions that change only the abbreviation, is rejected
+/// as if by `assume(false)`. See [`ZonedGenerator`] for builder methods.
 ///
 /// # Example
 ///

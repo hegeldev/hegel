@@ -240,6 +240,16 @@ mod drift {
             HEGEL_SPAN_SIGN_MIXED,
             HEGEL_SPAN_SIGN_NONNEGATIVE,
         }
+        hegel_zone_after_t {
+            HEGEL_ZONE_AFTER_HOLD,
+            HEGEL_ZONE_AFTER_RULE,
+            HEGEL_ZONE_AFTER_INFER,
+        }
+        hegel_zone_rule_day_t {
+            HEGEL_ZONE_RULE_DAY_JULIAN,
+            HEGEL_ZONE_RULE_DAY_ZERO_BASED,
+            HEGEL_ZONE_RULE_DAY_MONTH_WEEK_DAY,
+        }
     }
 
     macro_rules! assert_struct_mirrors {
@@ -270,6 +280,11 @@ mod drift {
         hegel_offset_t { seconds, known }
         hegel_duration_t { seconds, nanoseconds }
         hegel_span_t { years, months, weeks, days, hours, minutes, seconds, milliseconds, microseconds, nanoseconds }
+        hegel_zone_type_t { utoff, is_dst, abbreviation }
+        hegel_zone_transition_t { instant, local_type }
+        hegel_zone_rule_date_t { kind, day, month, week, weekday, time }
+        hegel_zone_data_t { initial, transitions, transition_count, after, standard, has_dst, dst, dst_start, dst_end, last_year }
+        hegel_zone_oracle_t { offset_at, next_transition, user_data, first_year, last_year, after }
     }
 
     macro_rules! assert_const_mirrors {
@@ -306,5 +321,6 @@ mod drift {
         assert!(
             size_of::<mirror::hegel_output_callback_t>() == size_of::<hegel_output_callback_t>()
         );
+        assert!(size_of::<mirror::hegel_zone_loader_t>() == size_of::<hegel_zone_loader_t>());
     };
 }

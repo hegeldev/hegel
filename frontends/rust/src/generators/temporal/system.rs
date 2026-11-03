@@ -1,7 +1,8 @@
-use super::datetime::{duration_from_c, duration_to_c, precision_to_c};
-use super::generators::draw_and_print_value;
-use super::{Generator, PrintableGenerator, TestCase, label_from_name};
-use crate::datetime::{Precision, SignedDuration, Timestamp, timestamp_from_c, timestamp_to_c};
+use super::generators::{duration_from_c, duration_to_c, precision_to_c};
+use super::values::{Instant, Precision, SignedDuration, timestamp_from_c, timestamp_to_c};
+use crate::generators::{
+    Generator, PrintableGenerator, TestCase, draw_and_print_value, label_from_name,
+};
 use crate::pretty::PrettyPrinter;
 use crate::test_case::invalid_argument;
 use std::sync::LazyLock;
@@ -13,18 +14,18 @@ static SYSTEM_TIME_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hege
 /// The largest duration the engine draws: `i64::MAX` seconds and change.
 const MAX_SECONDS: u64 = i64::MAX as u64;
 
-/// Generator for [`Duration`] values. Created by [`durations()`].
+/// Generator for [`Duration`] values. Created by [`std_durations()`].
 ///
 /// Draws the non-negative half of the engine's duration range, so the
 /// maximum generatable duration is `i64::MAX` seconds (about 292 billion
 /// years).
-pub struct DurationGenerator {
+pub struct StdDurationGenerator {
     min_value: Duration,
     max_value: Duration,
     precision: Precision,
 }
 
-impl DurationGenerator {
+impl StdDurationGenerator {
     /// Set the minimum duration (inclusive).
     pub fn min_value(mut self, min: Duration) -> Self {
         self.min_value = min;
@@ -56,7 +57,7 @@ fn signed(d: Duration) -> SignedDuration {
     }
 }
 
-impl Generator<Duration> for DurationGenerator {
+impl Generator<Duration> for StdDurationGenerator {
     fn label(&self) -> u64 {
         *DURATION_LABEL
     }
@@ -80,7 +81,7 @@ impl Generator<Duration> for DurationGenerator {
     }
 }
 
-impl PrintableGenerator<Duration> for DurationGenerator {
+impl PrintableGenerator<Duration> for StdDurationGenerator {
     fn do_draw_and_print(&self, tc: &TestCase, printer: &mut PrettyPrinter) -> Duration {
         draw_and_print_value(self, tc, printer)
     }
@@ -90,7 +91,7 @@ impl PrintableGenerator<Duration> for DurationGenerator {
 /// By default, generates durations from zero up to `i64::MAX` seconds
 /// (approximately 292 billion years) at nanosecond precision; shrinks
 /// toward zero. Use builder methods `min_value` and `max_value` to
-/// constrain the range. See [`DurationGenerator`] for more details.
+/// constrain the range. See [`StdDurationGenerator`] for more details.
 ///
 /// # Example
 ///
@@ -99,13 +100,13 @@ impl PrintableGenerator<Duration> for DurationGenerator {
 ///
 /// #[hegel::test]
 /// fn my_test(tc: hegel::TestCase) {
-///     let d = tc.draw(hegel::generators::durations()
+///     let d = tc.draw(hegel::generators::temporal::std_durations()
 ///         .max_value(Duration::from_secs(60)));
 ///     assert!(d <= Duration::from_secs(60));
 /// }
 /// ```
-pub fn durations() -> DurationGenerator {
-    DurationGenerator {
+pub fn std_durations() -> StdDurationGenerator {
+    StdDurationGenerator {
         min_value: Duration::ZERO,
         max_value: Duration::new(MAX_SECONDS, 999_999_999),
         precision: Precision::Nanoseconds,
@@ -140,22 +141,22 @@ impl SystemTimeGenerator {
     }
 }
 
-fn timestamp_of(t: SystemTime) -> Timestamp {
+fn timestamp_of(t: SystemTime) -> Instant {
     match t.duration_since(UNIX_EPOCH) {
-        Ok(since) => Timestamp {
+        Ok(since) => Instant {
             second: since.as_secs() as i64,
             nanosecond: since.subsec_nanos(),
         },
         Err(before) => {
             let before = before.duration();
-            let whole = Timestamp {
+            let whole = Instant {
                 second: -(before.as_secs() as i64),
                 nanosecond: 0,
             };
             if before.subsec_nanos() == 0 {
                 whole
             } else {
-                Timestamp {
+                Instant {
                     second: whole.second - 1,
                     nanosecond: 1_000_000_000 - before.subsec_nanos(),
                 }
@@ -164,7 +165,7 @@ fn timestamp_of(t: SystemTime) -> Timestamp {
     }
 }
 
-fn system_time_of(t: Timestamp) -> SystemTime {
+fn system_time_of(t: Instant) -> SystemTime {
     let nanos = Duration::from_nanos(u64::from(t.nanosecond));
     if t.second >= 0 {
         UNIX_EPOCH + Duration::from_secs(t.second as u64) + nanos
@@ -174,7 +175,7 @@ fn system_time_of(t: Timestamp) -> SystemTime {
 }
 
 impl SystemTimeGenerator {
-    fn draw_timestamp(&self, tc: &TestCase) -> Timestamp {
+    fn draw_timestamp(&self, tc: &TestCase) -> Instant {
         if self.min_value > self.max_value {
             invalid_argument!("Cannot have max_value < min_value");
         }
@@ -210,7 +211,7 @@ impl PrintableGenerator<SystemTime> for SystemTimeGenerator {
 /// nanosecond precision, a range every platform's `SystemTime` holds;
 /// widen it with `min_value` and `max_value` where the platform allows,
 /// up to the engine's years ±999,999. Shrinks toward 2000-01-01T00:00:00Z.
-/// Built on [`timestamps()`](super::timestamps), whose targeting of interesting instants it
+/// Built on [`instants()`](super::instants), whose targeting of interesting instants it
 /// shares and whose RFC 9557 form (`2000-01-01T00:00:00Z`) a drawn value
 /// prints in. On Windows a `SystemTime` counts 100-nanosecond ticks, so
 /// there the value is the drawn instant truncated to that unit while the
@@ -226,7 +227,7 @@ impl PrintableGenerator<SystemTime> for SystemTimeGenerator {
 /// #[hegel::test]
 /// fn my_test(tc: hegel::TestCase) {
 ///     let max = UNIX_EPOCH + Duration::from_secs(1 << 31);
-///     let t = tc.draw(hegel::generators::system_times().max_value(max));
+///     let t = tc.draw(hegel::generators::temporal::system_times().max_value(max));
 ///     assert!(t <= max);
 /// }
 /// ```

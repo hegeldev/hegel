@@ -1,7 +1,7 @@
 use crate::common::utils::{assert_all_examples, check_can_generate_examples, find_any, minimal};
-use hegel::datetime::{Ambiguous, Granularity, Precision, Tag, UNKNOWN_ZONE, info};
 use hegel::extras::jiff as jiff_gs;
 use hegel::generators as gs;
+use hegel::generators::temporal::{Ambiguous, Granularity, Precision, Tag, UNKNOWN_ZONE, info};
 use jiff::civil::DateTime;
 use jiff::tz::{AmbiguousOffset, AmbiguousTimestamp, AmbiguousZoned, Offset, TimeZone};
 use jiff::{Timestamp, Zoned};

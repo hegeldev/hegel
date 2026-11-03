@@ -1,4 +1,4 @@
-use crate::datetime::{self, Ambiguous, Granularity, Precision};
+use crate::generators::temporal::{self, Ambiguous, Granularity, Precision};
 use crate::generators::{self as gs, Generator, PrintableGenerator, TestCase, label_from_name};
 use crate::pretty::PrettyPrinter;
 use std::sync::LazyLock;
@@ -18,41 +18,41 @@ static MONTH_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.time
 
 const NANOS_PER_SECOND: i128 = 1_000_000_000;
 
-const HEGEL_WEEKDAYS: [datetime::Weekday; 7] = [
-    datetime::Weekday::Monday,
-    datetime::Weekday::Tuesday,
-    datetime::Weekday::Wednesday,
-    datetime::Weekday::Thursday,
-    datetime::Weekday::Friday,
-    datetime::Weekday::Saturday,
-    datetime::Weekday::Sunday,
+const HEGEL_WEEKDAYS: [temporal::Weekday; 7] = [
+    temporal::Weekday::Monday,
+    temporal::Weekday::Tuesday,
+    temporal::Weekday::Wednesday,
+    temporal::Weekday::Thursday,
+    temporal::Weekday::Friday,
+    temporal::Weekday::Saturday,
+    temporal::Weekday::Sunday,
 ];
 
-const HEGEL_MONTHS: [datetime::Month; 12] = [
-    datetime::Month::January,
-    datetime::Month::February,
-    datetime::Month::March,
-    datetime::Month::April,
-    datetime::Month::May,
-    datetime::Month::June,
-    datetime::Month::July,
-    datetime::Month::August,
-    datetime::Month::September,
-    datetime::Month::October,
-    datetime::Month::November,
-    datetime::Month::December,
+const HEGEL_MONTHS: [temporal::Month; 12] = [
+    temporal::Month::January,
+    temporal::Month::February,
+    temporal::Month::March,
+    temporal::Month::April,
+    temporal::Month::May,
+    temporal::Month::June,
+    temporal::Month::July,
+    temporal::Month::August,
+    temporal::Month::September,
+    temporal::Month::October,
+    temporal::Month::November,
+    temporal::Month::December,
 ];
 
-fn hegel_weekday(weekday: Weekday) -> datetime::Weekday {
+fn hegel_weekday(weekday: Weekday) -> temporal::Weekday {
     HEGEL_WEEKDAYS[usize::from(weekday.number_days_from_monday())]
 }
 
-fn hegel_month(month: Month) -> datetime::Month {
+fn hegel_month(month: Month) -> temporal::Month {
     HEGEL_MONTHS[month as usize - 1]
 }
 
-fn hegel_date(d: Date) -> datetime::Date {
-    datetime::Date {
+fn hegel_date(d: Date) -> temporal::Date {
+    temporal::Date {
         year: d.year(),
         month: d.month() as u8,
         day: d.day(),
@@ -61,13 +61,13 @@ fn hegel_date(d: Date) -> datetime::Date {
 
 /// The `time::Date` of an engine date, which must lie within
 /// `Date::MIN..=Date::MAX`.
-fn time_date(d: datetime::Date) -> Option<Date> {
+fn time_date(d: temporal::Date) -> Option<Date> {
     Date::from_calendar_date(d.year, Month::try_from(d.month).unwrap(), d.day).ok()
 }
 
-fn hegel_time(t: Time) -> datetime::Time {
+fn hegel_time(t: Time) -> temporal::Time {
     let (hour, minute, second, nanosecond) = t.as_hms_nano();
-    datetime::Time {
+    temporal::Time {
         hour,
         minute,
         second,
@@ -75,35 +75,35 @@ fn hegel_time(t: Time) -> datetime::Time {
     }
 }
 
-fn time_time(t: datetime::Time) -> Time {
+fn time_time(t: temporal::Time) -> Time {
     Time::from_hms_nano(t.hour, t.minute, t.second, t.nanosecond).unwrap()
 }
 
-fn hegel_datetime(dt: PrimitiveDateTime) -> datetime::DateTime {
-    datetime::DateTime {
+fn hegel_datetime(dt: PrimitiveDateTime) -> temporal::DateTime {
+    temporal::DateTime {
         date: hegel_date(dt.date()),
         time: hegel_time(dt.time()),
     }
 }
 
-fn time_datetime(dt: datetime::DateTime) -> Option<PrimitiveDateTime> {
+fn time_datetime(dt: temporal::DateTime) -> Option<PrimitiveDateTime> {
     time_date(dt.date).map(|date| PrimitiveDateTime::new(date, time_time(dt.time)))
 }
 
-fn hegel_offset(o: UtcOffset) -> datetime::UtcOffset {
-    datetime::UtcOffset::Known(o.whole_seconds())
+fn hegel_offset(o: UtcOffset) -> temporal::UtcOffset {
+    temporal::UtcOffset::Known(o.whole_seconds())
 }
 
-fn hegel_duration(d: Duration) -> datetime::SignedDuration {
-    datetime::SignedDuration {
+fn hegel_duration(d: Duration) -> temporal::SignedDuration {
+    temporal::SignedDuration {
         seconds: d.whole_seconds(),
         nanoseconds: d.subsec_nanoseconds(),
     }
 }
 
-fn hegel_timestamp(dt: OffsetDateTime) -> datetime::Timestamp {
+fn hegel_timestamp(dt: OffsetDateTime) -> temporal::Instant {
     let nanos = dt.unix_timestamp_nanos();
-    datetime::Timestamp {
+    temporal::Instant {
         second: nanos.div_euclid(NANOS_PER_SECOND) as i64,
         nanosecond: nanos.rem_euclid(NANOS_PER_SECOND) as u32,
     }
@@ -111,7 +111,7 @@ fn hegel_timestamp(dt: OffsetDateTime) -> datetime::Timestamp {
 
 /// Generator for [`time::Date`] values. Created by [`dates()`].
 pub struct DateGenerator {
-    inner: gs::DateGenerator,
+    inner: gs::temporal::DateGenerator,
 }
 
 impl DateGenerator {
@@ -182,7 +182,7 @@ impl PrintableGenerator<Date> for DateGenerator {
 /// ```
 pub fn dates() -> DateGenerator {
     DateGenerator {
-        inner: gs::dates()
+        inner: gs::temporal::dates()
             .min_value(hegel_date(Date::MIN))
             .max_value(hegel_date(Date::MAX)),
     }
@@ -190,7 +190,7 @@ pub fn dates() -> DateGenerator {
 
 /// Generator for [`time::Time`] values. Created by [`times()`].
 pub struct TimeGenerator {
-    inner: gs::TimeGenerator,
+    inner: gs::temporal::TimeGenerator,
 }
 
 impl TimeGenerator {
@@ -238,7 +238,7 @@ impl PrintableGenerator<Time> for TimeGenerator {
 /// # Example
 ///
 /// ```no_run
-/// use hegel::datetime::Precision;
+/// use hegel::generators::temporal::Precision;
 /// use hegel::extras::time as time_gs;
 ///
 /// #[hegel::test]
@@ -248,13 +248,15 @@ impl PrintableGenerator<Time> for TimeGenerator {
 /// }
 /// ```
 pub fn times() -> TimeGenerator {
-    TimeGenerator { inner: gs::times() }
+    TimeGenerator {
+        inner: gs::temporal::times(),
+    }
 }
 
 /// Generator for [`time::PrimitiveDateTime`] values. Created by
 /// [`primitive_datetimes()`].
 pub struct PrimitiveDateTimeGenerator {
-    inner: gs::DateTimeGenerator,
+    inner: gs::temporal::DateTimeGenerator,
 }
 
 impl PrimitiveDateTimeGenerator {
@@ -317,7 +319,7 @@ impl PrintableGenerator<PrimitiveDateTime> for PrimitiveDateTimeGenerator {
 /// ```
 pub fn primitive_datetimes() -> PrimitiveDateTimeGenerator {
     PrimitiveDateTimeGenerator {
-        inner: gs::datetimes()
+        inner: gs::temporal::datetimes()
             .min_value(hegel_datetime(PrimitiveDateTime::MIN))
             .max_value(hegel_datetime(PrimitiveDateTime::MAX)),
     }
@@ -325,7 +327,7 @@ pub fn primitive_datetimes() -> PrimitiveDateTimeGenerator {
 
 /// Generator for [`time::UtcOffset`] values. Created by [`utc_offsets()`].
 pub struct UtcOffsetGenerator {
-    inner: gs::UtcOffsetGenerator,
+    inner: gs::temporal::OffsetGenerator,
 }
 
 impl UtcOffsetGenerator {
@@ -354,7 +356,7 @@ impl Generator<UtcOffset> for UtcOffsetGenerator {
     }
 
     fn do_draw(&self, tc: &TestCase) -> UtcOffset {
-        let datetime::UtcOffset::Known(seconds) = self.inner.do_draw(tc) else {
+        let temporal::UtcOffset::Known(seconds) = self.inner.do_draw(tc) else {
             unreachable!()
         };
         UtcOffset::from_whole_seconds(seconds).unwrap()
@@ -377,7 +379,7 @@ impl PrintableGenerator<UtcOffset> for UtcOffsetGenerator {
 /// # Example
 ///
 /// ```no_run
-/// use hegel::datetime::Granularity;
+/// use hegel::generators::temporal::Granularity;
 /// use hegel::extras::time as time_gs;
 ///
 /// #[hegel::test]
@@ -388,7 +390,7 @@ impl PrintableGenerator<UtcOffset> for UtcOffsetGenerator {
 /// ```
 pub fn utc_offsets() -> UtcOffsetGenerator {
     UtcOffsetGenerator {
-        inner: gs::utc_offsets(),
+        inner: gs::temporal::offsets(),
     }
 }
 
@@ -410,15 +412,17 @@ fn latest_instant() -> OffsetDateTime {
 /// Generator for [`time::OffsetDateTime`] values. Created by
 /// [`offset_datetimes()`].
 pub struct OffsetDateTimeGenerator {
-    inner: gs::ZonedDateTimeGenerator,
+    inner: gs::temporal::ZonedDateTimeGenerator,
     bounds: OffsetDateTimeBounds,
 }
 
 impl OffsetDateTimeGenerator {
     /// Draw the time zone whose offset the value carries from `zones`
-    /// rather than from every bundled IANA name.
-    pub fn timezones(mut self, zones: gs::TimeZoneGenerator) -> Self {
-        self.inner = self.inner.timezones(zones);
+    /// rather than from every name of the default zone source; give it a
+    /// [`source`](gs::temporal::ZoneGenerator::source) to read the offset
+    /// from another database.
+    pub fn zones(mut self, zones: gs::temporal::ZoneGenerator) -> Self {
+        self.inner = self.inner.zones(zones);
         self
     }
 
@@ -503,8 +507,8 @@ impl Generator<OffsetDateTime> for OffsetDateTimeGenerator {
     fn do_draw(&self, tc: &TestCase) -> OffsetDateTime {
         let z = self.inner.do_draw(tc);
         let offset = match z.offset {
-            datetime::UtcOffset::Known(seconds) => UtcOffset::from_whole_seconds(seconds).unwrap(),
-            datetime::UtcOffset::Unknown => UtcOffset::UTC,
+            temporal::UtcOffset::Known(seconds) => UtcOffset::from_whole_seconds(seconds).unwrap(),
+            temporal::UtcOffset::Unknown => UtcOffset::UTC,
         };
         let civil = time_datetime(z.civil).unwrap_or_else(|| tc.reject());
         let dt = OffsetDateTime::new_in_offset(civil.date(), civil.time(), offset);
@@ -524,17 +528,17 @@ impl PrintableGenerator<OffsetDateTime> for OffsetDateTimeGenerator {
 /// Generate [`time::OffsetDateTime`] values: a wall-clock time in a drawn
 /// IANA time zone, carrying the offset that zone had in force.
 ///
-/// By default any zone [`timezones`](crate::generators::timezones)
+/// By default any zone [`gs::temporal::zones()`](crate::generators::temporal::zones)
 /// draws and any wall-clock time of the [`primitive_datetimes()`] range at
 /// nanosecond precision, with both repeats of a wall time the clocks
 /// repeated drawn and a wall time the clocks skipped never drawn; shrinks
 /// to `UTC`, then toward 2000-01-01T00:00:00. One draw in twenty on
 /// average targets a transition of the zone, so instants on either side
 /// of a daylight-saving change are reached. The offset is the engine's
-/// own reading of the zone, from the IANA release
-/// [`tzdb_version`](crate::datetime::tzdb_version) reports, since the
-/// `time` crate has no database of its own to resolve the wall time
-/// with. The zone with an unknown
+/// reading of the zone from the default zone source, the bundled IANA
+/// database unless [`set_default_zone_source`](crate::generators::temporal::set_default_zone_source)
+/// replaced it, since the `time` crate has no database of its own to
+/// resolve the wall time with. The zone with an unknown
 /// offset, `Etc/Unknown`, is read as UTC. The value's instant lies within
 /// the range too, so `to_utc` never panics on it: a wall time within a
 /// day of the range's ends whose instant at the drawn offset falls outside
@@ -550,14 +554,14 @@ impl PrintableGenerator<OffsetDateTime> for OffsetDateTimeGenerator {
 ///
 /// #[hegel::test]
 /// fn my_test(tc: hegel::TestCase) {
-///     let zones = gs::timezones().names(["Europe/London", "America/New_York"]);
-///     let dt = tc.draw(time_gs::offset_datetimes().timezones(zones));
+///     let zones = gs::temporal::zones().names(["Europe/London", "America/New_York"]);
+///     let dt = tc.draw(time_gs::offset_datetimes().zones(zones));
 ///     assert!(dt.offset().whole_hours() >= -5 && dt.offset().whole_hours() <= 1);
 /// }
 /// ```
 pub fn offset_datetimes() -> OffsetDateTimeGenerator {
     OffsetDateTimeGenerator {
-        inner: gs::zoned_datetimes()
+        inner: gs::temporal::zoned_datetimes()
             .min_value(hegel_datetime(PrimitiveDateTime::MIN))
             .max_value(hegel_datetime(PrimitiveDateTime::MAX))
             .allow_imaginary(false),
@@ -567,7 +571,7 @@ pub fn offset_datetimes() -> OffsetDateTimeGenerator {
 
 /// Generator for [`time::Duration`] values. Created by [`durations()`].
 pub struct DurationGenerator {
-    inner: gs::SignedDurationGenerator,
+    inner: gs::temporal::DurationGenerator,
 }
 
 impl DurationGenerator {
@@ -628,7 +632,7 @@ impl PrintableGenerator<Duration> for DurationGenerator {
 /// ```
 pub fn durations() -> DurationGenerator {
     DurationGenerator {
-        inner: gs::signed_durations()
+        inner: gs::temporal::durations()
             .min_value(hegel_duration(Duration::MIN))
             .max_value(hegel_duration(Duration::MAX)),
     }

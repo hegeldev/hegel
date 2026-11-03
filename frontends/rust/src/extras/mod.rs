@@ -1,11 +1,12 @@
 //! Integrations with third-party libraries, each behind a cargo feature of
 //! the same name: `chrono` (with `chrono-tz` adding IANA time zones),
 //! `jiff`, `rand`, `serde_json` and `time`. The date and time
-//! integrations are thin maps over the first-party generators of
-//! [`hegel::generators`](crate::generators) and the values of
-//! [`hegel::datetime`](crate::datetime), so every library draws from the
-//! engine's bundled time zone database with the same targeting and
-//! shrinking.
+//! integrations are thin maps over the first-party generators and values
+//! of [`hegel::generators::temporal`](crate::generators::temporal), so
+//! every library gets the same targeting and shrinking. The `jiff` and
+//! `chrono-tz` generators draw zones against their own library's time
+//! zone database, through a [`ZoneSource`](crate::generators::temporal::ZoneSource);
+//! `time` has no database, so its zoned draws use the default source.
 
 #[cfg(feature = "chrono")]
 #[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]

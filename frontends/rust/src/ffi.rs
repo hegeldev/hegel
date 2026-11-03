@@ -15,6 +15,9 @@
 //! small and the control-flow policy stays with the test lifecycle.
 
 pub(crate) mod sys;
+mod zone_source;
+
+pub(crate) use zone_source::*;
 
 use self::sys as hegel_c;
 
@@ -2383,10 +2386,12 @@ fn static_string(p: hegel_c::hegel_string_t) -> String {
     string_from_engine_bytes(bytes)
 }
 
-/// Classify the wall time `civil` in the zone `name`
-/// (`hegel_timezone_resolve`); `Err` carries the engine's diagnostic for
-/// an unknown name or an invalid datetime.
+/// Classify the wall time `civil` in the zone `name` of `source`, or of
+/// the default source (`hegel_timezone_resolve_in`); `Err` carries the
+/// engine's diagnostic for an unknown name, an invalid datetime or a
+/// failed load.
 pub(crate) fn timezone_resolve(
+    source: Option<&ZoneSourceHandle>,
     name: &str,
     civil: hegel_c::hegel_datetime_t,
 ) -> Result<hegel_c::hegel_timezone_resolution_t, String> {
@@ -2404,7 +2409,13 @@ pub(crate) fn timezone_resolve(
     // SAFETY: the name outlives the call and &mut out is a valid
     // out-parameter.
     let rc = with_context(|ctx| unsafe {
-        hegel_c::hegel_timezone_resolve(ctx, view(name.as_bytes()), civil, &mut out)
+        hegel_c::hegel_timezone_resolve_in(
+            ctx,
+            source_ptr(source),
+            view(name.as_bytes()),
+            civil,
+            &mut out,
+        )
     });
     rc_to_diagnostic(rc).map(|()| out)
 }
@@ -2418,10 +2429,12 @@ pub(crate) struct ZoneOffsetRaw {
     pub(crate) abbreviation: String,
 }
 
-/// The offset the zone `name` has in force at `timestamp`
-/// (`hegel_timezone_offset_at`); `Err` carries the engine's diagnostic for
-/// an unknown name or an out-of-range timestamp.
+/// The offset the zone `name` of `source`, or of the default source, has
+/// in force at `timestamp` (`hegel_timezone_offset_at_in`); `Err` carries
+/// the engine's diagnostic for an unknown name, an out-of-range timestamp
+/// or a failed load.
 pub(crate) fn timezone_offset_at(
+    source: Option<&ZoneSourceHandle>,
     name: &str,
     timestamp: hegel_c::hegel_timestamp_t,
 ) -> Result<ZoneOffsetRaw, String> {
@@ -2434,7 +2447,13 @@ pub(crate) fn timezone_offset_at(
     // SAFETY: the name outlives the call and &mut out is a valid
     // out-parameter; on success the abbreviation is a static string.
     let rc = with_context(|ctx| unsafe {
-        hegel_c::hegel_timezone_offset_at(ctx, view(name.as_bytes()), timestamp, &mut out)
+        hegel_c::hegel_timezone_offset_at_in(
+            ctx,
+            source_ptr(source),
+            view(name.as_bytes()),
+            timestamp,
+            &mut out,
+        )
     });
     rc_to_diagnostic(rc)?;
     Ok(ZoneOffsetRaw {
@@ -2454,9 +2473,14 @@ pub(crate) struct ZoneInfoRaw {
     pub(crate) tags: u32,
 }
 
-/// What the engine knows about the zone `name` (`hegel_timezone_info`),
-/// or `None` for a name its database lacks.
-pub(crate) fn timezone_info(name: &str) -> Option<ZoneInfoRaw> {
+/// What the engine knows about the zone `name` of `source`, or of the
+/// default source (`hegel_timezone_info_in`): `None` for a name the source
+/// lacks, and `Err` with the engine's diagnostic when loading its data
+/// fails.
+pub(crate) fn timezone_info(
+    source: Option<&ZoneSourceHandle>,
+    name: &str,
+) -> Result<Option<ZoneInfoRaw>, String> {
     let mut out = hegel_c::hegel_timezone_info_t {
         known: false,
         primary_name: hegel_c::hegel_string_t::default(),
@@ -2466,18 +2490,18 @@ pub(crate) fn timezone_info(name: &str) -> Option<ZoneInfoRaw> {
     };
     // SAFETY: the name outlives the call and &mut out is a valid
     // out-parameter; a known name's primary name is a static string.
-    require_ok(with_context(|ctx| unsafe {
-        hegel_c::hegel_timezone_info(ctx, view(name.as_bytes()), &mut out)
-    }));
+    rc_to_diagnostic(with_context(|ctx| unsafe {
+        hegel_c::hegel_timezone_info_in(ctx, source_ptr(source), view(name.as_bytes()), &mut out)
+    }))?;
     if !out.known {
-        return None;
+        return Ok(None);
     }
-    Some(ZoneInfoRaw {
+    Ok(Some(ZoneInfoRaw {
         primary_name: static_string(out.primary_name),
         is_link: out.is_link,
         rank: out.rank,
         tags: out.tags,
-    })
+    }))
 }
 
 /// An owned libhegel date-options handle (`hegel_date_options_t`), freed
@@ -2619,6 +2643,13 @@ impl TimeZoneSpec {
             hegel_c::hegel_timezone_spec_new(ctx, &mut raw)
         }));
         TimeZoneSpec { raw }
+    }
+
+    /// Draw from `source` rather than the default source.
+    pub(crate) fn set_source(&mut self, source: &ZoneSourceHandle) -> Result<(), String> {
+        rc_to_diagnostic(with_context(|ctx| unsafe {
+            hegel_c::hegel_timezone_spec_set_source(ctx, self.raw, source.as_ptr())
+        }))
     }
 
     /// Restrict the draw to `names`.

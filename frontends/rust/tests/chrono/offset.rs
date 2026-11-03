@@ -54,7 +54,7 @@ fn test_fixed_offsets_property(tc: hegel::TestCase) {
 
 #[test]
 fn test_fixed_offsets_granularity() {
-    use hegel::datetime::Granularity;
+    use hegel::generators::temporal::Granularity;
     assert_all_examples(
         chrono_gs::fixed_offsets().granularity(Granularity::QuarterHours),
         |o| o.local_minus_utc() % 900 == 0,

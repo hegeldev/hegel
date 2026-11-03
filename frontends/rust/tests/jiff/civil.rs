@@ -1,7 +1,7 @@
 use crate::common::utils::{assert_all_examples, check_can_generate_examples, find_any, minimal};
-use hegel::datetime::{Month, Precision};
 use hegel::extras::jiff as jiff_gs;
 use hegel::generators as gs;
+use hegel::generators::temporal::{Month, Precision};
 use jiff::civil::{Date, DateTime, Era, ISOWeekDate, Time, Weekday};
 
 const ALL_WEEKDAYS: [Weekday; 7] = [

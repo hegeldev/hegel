@@ -184,7 +184,7 @@ fn test_naive_dates_masks_property(tc: hegel::TestCase) {
 
 #[test]
 fn test_naive_times_precision() {
-    use hegel::datetime::Precision;
+    use hegel::generators::temporal::Precision;
     assert_all_examples(
         chrono_gs::naive_times().precision(Precision::Minutes),
         |t| t.second() == 0 && t.nanosecond() == 0,
@@ -193,7 +193,7 @@ fn test_naive_times_precision() {
 
 #[test]
 fn test_naive_datetimes_precision() {
-    use hegel::datetime::Precision;
+    use hegel::generators::temporal::Precision;
     assert_all_examples(
         chrono_gs::naive_datetimes().precision(Precision::Milliseconds),
         |dt| dt.nanosecond() % 1_000_000 == 0,

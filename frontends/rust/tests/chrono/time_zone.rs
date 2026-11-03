@@ -1,13 +1,11 @@
 use crate::common::utils::{
-    AssertAllExamples, assert_all_examples, check_can_generate_examples, expect_panic, find_any,
-    minimal,
+    assert_all_examples, check_can_generate_examples, expect_panic, find_any, minimal,
 };
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Offset, TimeZone, Timelike, Utc};
 use chrono_tz::Tz;
-use hegel::HealthCheck;
-use hegel::datetime::{Ambiguous, Precision, Tag, info};
 use hegel::extras::chrono as chrono_gs;
 use hegel::generators as gs;
+use hegel::generators::temporal::{Ambiguous, Instant, Precision, Tag, UtcOffset, info};
 
 fn new_york(date: (i32, u32, u32), time: (u32, u32, u32)) -> NaiveDateTime {
     NaiveDateTime::new(
@@ -287,34 +285,111 @@ fn test_datetimes_tz_rebuilt_after_a_draw_uses_the_new_bounds(tc: hegel::TestCas
 }
 
 #[test]
-fn test_datetimes_tz_stay_in_bounds_where_chrono_tz_and_the_engine_disagree_on_a_gap() {
+fn test_datetimes_tz_follow_chrono_tz_where_its_database_differs_from_the_bundled_one() {
     let min = new_york((2027, 3, 14), (2, 0, 0));
     let max = new_york((2027, 3, 14), (3, 59, 59));
-    AssertAllExamples::new(
+    assert_all_examples(
         chrono_gs::datetimes()
             .timezones(chrono_gs::timezones().names([Tz::America__Edmonton]))
             .min_value(min)
             .max_value(max),
         move |dt| dt.naive_local() >= min && dt.naive_local() <= max && resolves_to_itself(dt),
-    )
-    .run_with_health_checks_suppressed(&[HealthCheck::FilterTooMuch]);
+    );
 }
 
 #[test]
-fn test_datetimes_tz_stay_in_instant_bounds_where_chrono_tz_applies_no_daylight_saving() {
+fn test_datetimes_tz_draw_the_one_instant_bounds_allow_where_chrono_tz_has_no_daylight_saving() {
+    let instant = Utc.with_ymd_and_hms(2100, 3, 15, 5, 0, 0).unwrap();
+    assert_all_examples(
+        chrono_gs::datetimes()
+            .timezones(chrono_gs::timezones().names([Tz::America__New_York]))
+            .min_instant(instant)
+            .max_instant(instant),
+        move |dt| dt.to_utc() == instant && dt.offset().fix().local_minus_utc() == -5 * 3600,
+    );
+}
+
+#[test]
+fn test_datetimes_tz_hold_standard_time_after_chrono_tz_table_ends() {
     let min = Utc.with_ymd_and_hms(2100, 3, 15, 0, 0, 0).unwrap();
     let max = min + chrono::TimeDelta::hours(2);
-    let new_york_2100 = || {
+    assert_all_examples(
         chrono_gs::datetimes()
             .timezones(chrono_gs::timezones().names([Tz::America__New_York]))
             .min_instant(min)
-            .max_instant(max)
-    };
-    find_any(new_york_2100(), |dt| {
-        dt.offset().fix().local_minus_utc() == -5 * 3600
-    });
-    AssertAllExamples::new(new_york_2100(), move |dt| {
-        dt.to_utc() >= min && dt.to_utc() <= max && resolves_to_itself(dt)
-    })
-    .run_with_health_checks_suppressed(&[HealthCheck::FilterTooMuch]);
+            .max_instant(max),
+        move |dt| {
+            dt.to_utc() >= min
+                && dt.to_utc() <= max
+                && dt.offset().fix().local_minus_utc() == -5 * 3600
+        },
+    );
+}
+
+#[hegel::test]
+fn test_chrono_tz_zone_source_agrees_with_chrono_tz(tc: hegel::TestCase) {
+    let tz = tc.draw(chrono_gs::timezones().legacy(true));
+    let second = tc.draw(
+        gs::integers::<i64>()
+            .min_value(-7_000_000_000)
+            .max_value(7_000_000_000),
+    );
+    let offset = chrono_gs::zone_source()
+        .offset_at(tz.name(), Instant::new(second, 0).unwrap())
+        .unwrap();
+    let expected =
+        tz.offset_from_utc_datetime(&DateTime::from_timestamp(second, 0).unwrap().naive_utc());
+    assert_eq!(
+        offset.offset,
+        UtcOffset::Known(expected.fix().local_minus_utc())
+    );
+    assert_eq!(offset.abbreviation, expected.to_string());
+}
+
+#[test]
+fn test_chrono_tz_zone_source_loads_every_zone() {
+    let source = chrono_gs::zone_source();
+    for tz in chrono_tz::TZ_VARIANTS {
+        let offset = source
+            .offset_at(tz.name(), Instant::new(1_700_000_000, 0).unwrap())
+            .unwrap();
+        assert_eq!(
+            offset.offset,
+            UtcOffset::Known(
+                tz.offset_from_utc_datetime(
+                    &DateTime::from_timestamp(1_700_000_000, 0)
+                        .unwrap()
+                        .naive_utc()
+                )
+                .fix()
+                .local_minus_utc()
+            )
+        );
+    }
+}
+
+#[test]
+fn test_chrono_tz_zone_source_names_and_version() {
+    let source = chrono_gs::zone_source();
+    assert_eq!(source.version(), chrono_tz::IANA_TZDB_VERSION);
+    assert!(source.info("Europe/London").unwrap().is_some());
+    assert_eq!(source.info("Mars/Olympus_Mons").unwrap(), None);
+}
+
+#[test]
+fn test_chrono_tz_tables_hold_their_last_offset_after_2100() {
+    let start = Utc
+        .with_ymd_and_hms(2101, 1, 1, 0, 0, 0)
+        .unwrap()
+        .timestamp();
+    for tz in chrono_tz::TZ_VARIANTS {
+        let offset_at = |second: i64| {
+            tz.offset_from_utc_datetime(&DateTime::from_timestamp(second, 0).unwrap().naive_utc())
+                .fix()
+        };
+        let held = offset_at(start);
+        for day in (0..365 * 100).step_by(5) {
+            assert_eq!(offset_at(start + day * 86_400), held, "{}", tz.name());
+        }
+    }
 }

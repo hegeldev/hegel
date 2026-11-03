@@ -1,32 +1,3 @@
-//! Plain date and time values, as the engine draws them.
-//!
-//! Every type here is a public struct or enum of public fields mirroring
-//! the engine's value model one to one, with no arithmetic, parsing or
-//! conversions: a test that uses a date library wraps the value it draws
-//! with [`map`](crate::generators::Generator::map) and nothing here
-//! competes with that library. The generators over these types are
-//! [`dates`](crate::generators::dates), [`times`](crate::generators::times),
-//! [`datetimes`](crate::generators::datetimes),
-//! [`timestamps`](crate::generators::timestamps),
-//! [`utc_offsets`](crate::generators::utc_offsets),
-//! [`timezones`](crate::generators::timezones),
-//! [`zoned_datetimes`](crate::generators::zoned_datetimes),
-//! [`signed_durations`](crate::generators::signed_durations) and
-//! [`spans`](crate::generators::spans); the option enums of their builders
-//! live here too.
-//!
-//! Each `Display` implementation prints the RFC 9557 form the engine
-//! prints a counterexample in, so a failing value reads the same from
-//! every language binding: `2024-03-10T01:30:00-05:00[America/New_York]`,
-//! with `[gap]` or `[fold=0]`/`[fold=1]` appended to a skipped or repeated
-//! wall time (`2024-03-10T02:30:00-04:00[America/New_York][gap]`),
-//! `-00:00` for an unknown offset and `Z[Etc/Unknown]` for the unknown
-//! zone.
-//!
-//! The functions [`tzdb_version`], [`resolve`], [`offset_at`] and [`info`]
-//! query the engine's bundled time zone database directly, outside any
-//! test.
-
 use std::fmt;
 
 use crate::ffi;
@@ -36,10 +7,10 @@ pub const MIN_YEAR: i32 = -999_999;
 /// The highest year of a [`Date`].
 pub const MAX_YEAR: i32 = 999_999;
 /// The first second of [`MIN_YEAR`], the lowest `second` of a
-/// [`Timestamp`].
+/// [`Instant`].
 pub const MIN_INSTANT: i64 = -31_619_087_596_800;
 /// The last second of [`MAX_YEAR`], the highest `second` of a
-/// [`Timestamp`].
+/// [`Instant`].
 pub const MAX_INSTANT: i64 = 31_494_784_780_799;
 /// The largest magnitude of a known [`UtcOffset`] in seconds, 25:59:59.
 pub const MAX_OFFSET: i32 = 93_599;
@@ -50,11 +21,28 @@ pub const UNKNOWN_ZONE: &str = "Etc/Unknown";
 const NANOS_PER_SECOND: u32 = 1_000_000_000;
 const SECONDS_PER_DAY: i64 = 86_400;
 
-/// A value outside the range of the type it was meant for, or a time zone
-/// name the bundled database does not know.
+/// A value outside the range of the type it was meant for, a time zone
+/// name a zone source does not know, or zone data a
+/// [`ZoneSource`](super::ZoneSource) rejects or fails to load. A loader or
+/// oracle reports its own failures as one, built from a message with
+/// `From`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error {
     message: String,
+}
+
+impl From<String> for Error {
+    fn from(message: String) -> Error {
+        Error { message }
+    }
+}
+
+impl From<&str> for Error {
+    fn from(message: &str) -> Error {
+        Error {
+            message: message.to_string(),
+        }
+    }
 }
 
 impl fmt::Display for Error {
@@ -191,21 +179,21 @@ impl fmt::Display for DateTime {
 /// forward from that second, so -1.5 s is `{-2, 500000000}`. Prints as
 /// the UTC wall time with a `Z` suffix: `2000-01-01T00:00:00Z`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Timestamp {
+pub struct Instant {
     pub second: i64,
     pub nanosecond: u32,
 }
 
-impl Timestamp {
+impl Instant {
     /// An instant, or an error when the fields are out of range.
-    pub fn new(second: i64, nanosecond: u32) -> Result<Timestamp, Error> {
+    pub fn new(second: i64, nanosecond: u32) -> Result<Instant, Error> {
         if !(MIN_INSTANT..=MAX_INSTANT).contains(&second) || nanosecond >= NANOS_PER_SECOND {
             return Err(error(format!(
-                "second {second}, nanosecond {nanosecond} is not a valid timestamp (seconds in \
+                "second {second}, nanosecond {nanosecond} is not a valid instant (seconds in \
                  [{MIN_INSTANT}, {MAX_INSTANT}], nanoseconds in [0, 999999999])"
             )));
         }
-        Ok(Timestamp { second, nanosecond })
+        Ok(Instant { second, nanosecond })
     }
 }
 
@@ -222,7 +210,7 @@ fn civil_from_days(days: i64) -> (i64, u8, u8) {
     (year, month, day)
 }
 
-impl fmt::Display for Timestamp {
+impl fmt::Display for Instant {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let days = self.second.div_euclid(SECONDS_PER_DAY);
         let second_of_day = self.second.rem_euclid(SECONDS_PER_DAY);
@@ -282,10 +270,10 @@ impl fmt::Display for UtcOffset {
     }
 }
 
-/// A time zone of the bundled IANA database, or [`UNKNOWN_ZONE`]: `name`
+/// A time zone of a zone source, or [`UNKNOWN_ZONE`]: `name`
 /// as it was drawn or written, link names such as `Asia/Calcutta`
 /// included, and `primary_name` the zone it resolves to (`Asia/Kolkata`),
-/// or the name itself for a zone the engine's database lacks and only the
+/// or the name itself for a zone the source lacks and only the
 /// caller's knows. Prints as the name.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TimeZone {
@@ -294,7 +282,7 @@ pub struct TimeZone {
 }
 
 impl TimeZone {
-    /// The zone `name` names, or an error when the bundled database does
+    /// The zone `name` names, or an error when the default zone source does
     /// not know it. Names are matched exactly as the database spells them.
     pub fn new(name: &str) -> Result<TimeZone, Error> {
         match info(name) {
@@ -315,7 +303,7 @@ impl fmt::Display for TimeZone {
 
 /// How a wall-clock time maps to instants in its zone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum Kind {
+pub enum TransitionKind {
     /// Exactly one instant.
     Unique,
     /// None: the clocks skipped it.
@@ -325,11 +313,11 @@ pub enum Kind {
 }
 
 /// A wall-clock time in a time zone, resolved to an instant: the
-/// [`Kind`] of the wall time, the offsets in force before and after the
+/// [`TransitionKind`] of the wall time, the offsets in force before and after the
 /// transition it falls on (both the resolved offset for a unique time),
 /// which repeat of a fold it means (`fold`, the later when set), the
 /// resolved `offset` (unknown in [`UNKNOWN_ZONE`] and in a zone only the
-/// caller's database knows) and the `timestamp`: the unique instant, the
+/// caller's database knows) and the `instant`: the unique instant, the
 /// one `fold` picks, or for a gap the wall time read with `offset_before`.
 /// Prints as `2024-03-10T01:30:00-05:00[America/New_York]`, with `[gap]`
 /// (`2024-03-10T02:30:00-04:00[America/New_York][gap]`) or `[fold=0]` /
@@ -338,12 +326,12 @@ pub enum Kind {
 pub struct ZonedDateTime {
     pub zone: TimeZone,
     pub civil: DateTime,
-    pub kind: Kind,
-    pub offset_before: i32,
-    pub offset_after: i32,
+    pub kind: TransitionKind,
+    pub offset_before: UtcOffset,
+    pub offset_after: UtcOffset,
     pub fold: bool,
     pub offset: UtcOffset,
-    pub timestamp: Timestamp,
+    pub instant: Instant,
 }
 
 impl fmt::Display for ZonedDateTime {
@@ -356,9 +344,9 @@ impl fmt::Display for ZonedDateTime {
         }
         write!(f, "[{}]", self.zone)?;
         match self.kind {
-            Kind::Unique => Ok(()),
-            Kind::Gap => f.write_str("[gap]"),
-            Kind::Fold => write!(f, "[fold={}]", u8::from(self.fold)),
+            TransitionKind::Unique => Ok(()),
+            TransitionKind::Gap => f.write_str("[gap]"),
+            TransitionKind::Fold => write!(f, "[fold={}]", u8::from(self.fold)),
         }
     }
 }
@@ -662,7 +650,7 @@ impl Tag {
     ];
 }
 
-/// What the bundled database knows about a time zone name; see [`info`].
+/// What a zone source knows about a time zone name; see [`info`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ZoneInfo {
     /// The zone the name resolves to: the name itself unless it is a
@@ -689,19 +677,29 @@ pub struct ZoneOffset {
 }
 
 /// The IANA release of the time zone database bundled in the engine, such
-/// as `"2026e"`. A frontend that resolves zones with its own database can
-/// compare the two and warn when they differ: the engine decides what to
-/// generate, the other database what the value means.
+/// as `"2026e"`: the database of [`ZoneSource::bundled`](super::ZoneSource::bundled).
+/// A source over another database reports its own release with
+/// [`ZoneSource::version`](super::ZoneSource::version).
 pub fn tzdb_version() -> String {
     ffi::tzdb_version()
 }
 
-/// What the bundled database knows about `name`, matched exactly as the
-/// database spells it, or `None` for a name it lacks. [`UNKNOWN_ZONE`] is
-/// known, with itself as primary name, [`Tag::Undefined`] and the highest
-/// rank.
+/// What the default zone source knows about `name`, matched exactly as
+/// the source spells it, or `None` for a name it lacks or whose data fails
+/// to load. [`UNKNOWN_ZONE`] is known, with itself as primary name,
+/// [`Tag::Undefined`] and the highest rank. The default is the bundled
+/// database unless [`set_default_zone_source`](super::set_default_zone_source)
+/// replaced it.
 pub fn info(name: &str) -> Option<ZoneInfo> {
-    ffi::timezone_info(name).map(|info| ZoneInfo {
+    info_in(None, name).ok().flatten()
+}
+
+pub(crate) fn info_in(
+    source: Option<&ffi::ZoneSourceHandle>,
+    name: &str,
+) -> Result<Option<ZoneInfo>, Error> {
+    let info = ffi::timezone_info(source, name).map_err(error)?;
+    Ok(info.map(|info| ZoneInfo {
         primary_name: info.primary_name,
         is_link: info.is_link,
         rank: info.rank,
@@ -711,15 +709,15 @@ pub fn info(name: &str) -> Option<ZoneInfo> {
             .filter(|(bit, _)| info.tags & (1 << bit) != 0)
             .map(|(_, tag)| tag)
             .collect(),
-    })
+    }))
 }
 
-pub(crate) fn kind_from_c(kind: ffi::sys::hegel_timezone_kind_t) -> Kind {
+pub(crate) fn kind_from_c(kind: ffi::sys::hegel_timezone_kind_t) -> TransitionKind {
     use ffi::sys::hegel_timezone_kind_t as c;
     match kind {
-        c::HEGEL_TIMEZONE_KIND_UNIQUE => Kind::Unique,
-        c::HEGEL_TIMEZONE_KIND_GAP => Kind::Gap,
-        c::HEGEL_TIMEZONE_KIND_FOLD => Kind::Fold,
+        c::HEGEL_TIMEZONE_KIND_UNIQUE => TransitionKind::Unique,
+        c::HEGEL_TIMEZONE_KIND_GAP => TransitionKind::Gap,
+        c::HEGEL_TIMEZONE_KIND_FOLD => TransitionKind::Fold,
     }
 }
 
@@ -779,46 +777,66 @@ pub(crate) fn datetime_to_c(dt: DateTime) -> ffi::sys::hegel_datetime_t {
     }
 }
 
-pub(crate) fn timestamp_from_c(t: ffi::sys::hegel_timestamp_t) -> Timestamp {
-    Timestamp {
+pub(crate) fn timestamp_from_c(t: ffi::sys::hegel_timestamp_t) -> Instant {
+    Instant {
         second: t.second,
         nanosecond: t.nanosecond,
     }
 }
 
-pub(crate) fn timestamp_to_c(t: Timestamp) -> ffi::sys::hegel_timestamp_t {
+pub(crate) fn timestamp_to_c(t: Instant) -> ffi::sys::hegel_timestamp_t {
     ffi::sys::hegel_timestamp_t {
         second: t.second,
         nanosecond: t.nanosecond,
     }
 }
 
-/// Classify the wall-clock time `civil` in the zone `name` and resolve it
-/// to an instant, meaning the earlier instant of a repeated wall time
-/// (`fold` false); the later is the wall time read with `offset_after`.
-/// An error names a zone the bundled database lacks, a `civil` out of
-/// range, or one whose instant in the zone lies outside the range of
-/// [`Timestamp`], which a wall time within an offset's width of the
-/// civil range's ends can do.
+/// Classify the wall-clock time `civil` in the zone `name` of the default
+/// zone source and resolve it to an instant, meaning the earlier instant
+/// of a repeated wall time (`fold` false); the later is the wall time read
+/// with `offset_after`. An error names a zone the source lacks or fails to
+/// load, a `civil` out of range, or one whose instant in the zone lies
+/// outside the range of [`Instant`], which a wall time within an offset's
+/// width of the civil range's ends can do.
 pub fn resolve(name: &str, civil: DateTime) -> Result<ZonedDateTime, Error> {
-    let r = ffi::timezone_resolve(name, datetime_to_c(civil)).map_err(error)?;
-    let zone = TimeZone::new(name)?;
+    resolve_in(None, name, civil)
+}
+
+pub(crate) fn resolve_in(
+    source: Option<&ffi::ZoneSourceHandle>,
+    name: &str,
+    civil: DateTime,
+) -> Result<ZonedDateTime, Error> {
+    let r = ffi::timezone_resolve(source, name, datetime_to_c(civil)).map_err(error)?;
+    let zone = TimeZone {
+        name: name.to_string(),
+        primary_name: info_in(source, name)?.unwrap().primary_name,
+    };
     Ok(ZonedDateTime {
         zone,
         civil,
         kind: kind_from_c(r.kind),
-        offset_before: r.offset_before,
-        offset_after: r.offset_after,
+        offset_before: offset_from_c(r.offset_before, r.offset_known),
+        offset_after: offset_from_c(r.offset_after, r.offset_known),
         fold: false,
         offset: offset_from_c(r.offset_seconds, r.offset_known),
-        timestamp: timestamp_from_c(r.timestamp),
+        instant: timestamp_from_c(r.timestamp),
     })
 }
 
-/// The offset the zone `name` has in force at `timestamp`. An error names
-/// a zone the bundled database lacks or a `timestamp` out of range.
-pub fn offset_at(name: &str, timestamp: Timestamp) -> Result<ZoneOffset, Error> {
-    let o = ffi::timezone_offset_at(name, timestamp_to_c(timestamp)).map_err(error)?;
+/// The offset the zone `name` of the default zone source has in force at
+/// `instant`. An error names a zone the source lacks or fails to load, or
+/// an `instant` out of range.
+pub fn offset_at(name: &str, instant: Instant) -> Result<ZoneOffset, Error> {
+    offset_at_in(None, name, instant)
+}
+
+pub(crate) fn offset_at_in(
+    source: Option<&ffi::ZoneSourceHandle>,
+    name: &str,
+    instant: Instant,
+) -> Result<ZoneOffset, Error> {
+    let o = ffi::timezone_offset_at(source, name, timestamp_to_c(instant)).map_err(error)?;
     Ok(ZoneOffset {
         offset: offset_from_c(o.seconds, o.known),
         is_dst: o.is_dst,

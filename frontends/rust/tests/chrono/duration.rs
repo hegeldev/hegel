@@ -1,8 +1,8 @@
 use crate::common::utils::{assert_all_examples, check_can_generate_examples, find_any, minimal};
 use chrono::TimeDelta;
-use hegel::datetime::Precision;
 use hegel::extras::chrono as chrono_gs;
 use hegel::generators as gs;
+use hegel::generators::temporal::Precision;
 
 #[test]
 fn test_days_default_generator() {

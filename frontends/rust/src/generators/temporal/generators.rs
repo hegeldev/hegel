@@ -1,15 +1,18 @@
+use std::any::Any;
+use std::collections::HashMap;
 use std::fmt::Display;
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
-use super::{Generator, PrintableGenerator, TestCase, label_from_name};
-use crate::datetime::{
-    Ambiguous, Date, DateTime, Granularity, MAX_INSTANT, MAX_YEAR, MIN_INSTANT, MIN_YEAR, Month,
-    Precision, SignedDuration, Span, SpanSign, SpanUnit, Time, TimeZone, Timestamp, UtcOffset,
-    Weekday, ZonedDateTime, date_from_c, date_to_c, datetime_from_c, datetime_to_c, info,
-    kind_from_c, offset_from_c, time_from_c, time_to_c, timestamp_from_c, timestamp_to_c,
+use super::source::ZoneSource;
+use super::values::{
+    Ambiguous, Date, DateTime, Granularity, Instant, MAX_INSTANT, MAX_YEAR, MIN_INSTANT, MIN_YEAR,
+    Month, Precision, SignedDuration, Span, SpanSign, SpanUnit, Time, TimeZone, UtcOffset, Weekday,
+    ZonedDateTime, date_from_c, date_to_c, datetime_from_c, datetime_to_c, info_in, kind_from_c,
+    offset_from_c, time_from_c, time_to_c, timestamp_from_c, timestamp_to_c,
 };
 use crate::ffi;
 use crate::ffi::sys as hegel_c;
+use crate::generators::{Generator, PrintableGenerator, TestCase, label_from_name};
 use crate::pretty::PrettyPrinter;
 use crate::test_case::invalid_argument;
 use std::sync::LazyLock;
@@ -60,12 +63,12 @@ pub(crate) const MAX_DATETIME: DateTime = DateTime {
     },
 };
 
-const MIN_TIMESTAMP: Timestamp = Timestamp {
+const MIN_TIMESTAMP: Instant = Instant {
     second: MIN_INSTANT,
     nanosecond: 0,
 };
 
-const MAX_TIMESTAMP: Timestamp = Timestamp {
+const MAX_TIMESTAMP: Instant = Instant {
     second: MAX_INSTANT,
     nanosecond: 999_999_999,
 };
@@ -244,13 +247,13 @@ impl PrintableGenerator<Date> for DateGenerator {
 /// # Example
 ///
 /// ```no_run
-/// use hegel::datetime::{Date, Weekday};
+/// use hegel::generators::temporal::{Date, Weekday};
 /// use hegel::generators as gs;
 ///
 /// #[hegel::test]
 /// fn my_test(tc: hegel::TestCase) {
 ///     let min = Date::new(2024, 1, 1).unwrap();
-///     let d = tc.draw(gs::dates().min_value(min).weekdays([Weekday::Saturday, Weekday::Sunday]));
+///     let d = tc.draw(gs::temporal::dates().min_value(min).weekdays([Weekday::Saturday, Weekday::Sunday]));
 ///     assert!(d >= min);
 /// }
 /// ```
@@ -323,12 +326,12 @@ impl PrintableGenerator<Time> for TimeGenerator {
 /// # Example
 ///
 /// ```no_run
-/// use hegel::datetime::Precision;
+/// use hegel::generators::temporal::Precision;
 /// use hegel::generators as gs;
 ///
 /// #[hegel::test]
 /// fn my_test(tc: hegel::TestCase) {
-///     let t = tc.draw(gs::times().precision(Precision::Seconds));
+///     let t = tc.draw(gs::temporal::times().precision(Precision::Seconds));
 ///     assert_eq!(t.nanosecond, 0);
 /// }
 /// ```
@@ -400,13 +403,13 @@ impl PrintableGenerator<DateTime> for DateTimeGenerator {
 /// # Example
 ///
 /// ```no_run
-/// use hegel::datetime::{Date, DateTime, Time};
+/// use hegel::generators::temporal::{Date, DateTime, Time};
 /// use hegel::generators as gs;
 ///
 /// #[hegel::test]
 /// fn my_test(tc: hegel::TestCase) {
 ///     let min = DateTime::new(Date::new(2024, 1, 1).unwrap(), Time::new(0, 0, 0, 0).unwrap()).unwrap();
-///     let dt = tc.draw(gs::datetimes().min_value(min));
+///     let dt = tc.draw(gs::temporal::datetimes().min_value(min));
 ///     assert!(dt >= min);
 /// }
 /// ```
@@ -418,22 +421,22 @@ pub fn datetimes() -> DateTimeGenerator {
     }
 }
 
-/// Generator for [`Timestamp`] values. Created by [`timestamps()`].
-pub struct TimestampGenerator {
-    min_value: Timestamp,
-    max_value: Timestamp,
+/// Generator for [`Instant`] values. Created by [`instants()`].
+pub struct InstantGenerator {
+    min_value: Instant,
+    max_value: Instant,
     precision: Precision,
 }
 
-impl TimestampGenerator {
+impl InstantGenerator {
     /// Set the minimum instant (inclusive).
-    pub fn min_value(mut self, min: Timestamp) -> Self {
+    pub fn min_value(mut self, min: Instant) -> Self {
         self.min_value = min;
         self
     }
 
     /// Set the maximum instant (inclusive).
-    pub fn max_value(mut self, max: Timestamp) -> Self {
+    pub fn max_value(mut self, max: Instant) -> Self {
         self.max_value = max;
         self
     }
@@ -446,12 +449,12 @@ impl TimestampGenerator {
     }
 }
 
-impl Generator<Timestamp> for TimestampGenerator {
+impl Generator<Instant> for InstantGenerator {
     fn label(&self) -> u64 {
         *TIMESTAMP_LABEL
     }
 
-    fn do_draw(&self, tc: &TestCase) -> Timestamp {
+    fn do_draw(&self, tc: &TestCase) -> Instant {
         if self.min_value > self.max_value {
             invalid_argument!("Cannot have max_value < min_value");
         }
@@ -463,50 +466,50 @@ impl Generator<Timestamp> for TimestampGenerator {
     }
 }
 
-impl PrintableGenerator<Timestamp> for TimestampGenerator {
-    fn do_draw_and_print(&self, tc: &TestCase, printer: &mut PrettyPrinter) -> Timestamp {
+impl PrintableGenerator<Instant> for InstantGenerator {
+    fn do_draw_and_print(&self, tc: &TestCase, printer: &mut PrettyPrinter) -> Instant {
         draw_and_print_display(self, tc, printer)
     }
 }
 
-/// Generate [`Timestamp`] values.
+/// Generate [`Instant`] values.
 ///
 /// By default any instant of the engine's range, years ±999,999, at
 /// nanosecond precision; shrinks toward 2000-01-01T00:00:00Z. One draw in
 /// twenty on average targets an interesting instant: the Unix epoch, the
 /// 32-bit and 64-bit boundaries, a leap second's or a time zone
-/// transition's. See [`TimestampGenerator`] for builder methods.
+/// transition's. See [`InstantGenerator`] for builder methods.
 ///
 /// # Example
 ///
 /// ```no_run
-/// use hegel::datetime::Timestamp;
+/// use hegel::generators::temporal::Instant;
 /// use hegel::generators as gs;
 ///
 /// #[hegel::test]
 /// fn my_test(tc: hegel::TestCase) {
-///     let epoch = Timestamp::new(0, 0).unwrap();
-///     let t = tc.draw(gs::timestamps().min_value(epoch));
+///     let epoch = Instant::new(0, 0).unwrap();
+///     let t = tc.draw(gs::temporal::instants().min_value(epoch));
 ///     assert!(t >= epoch);
 /// }
 /// ```
-pub fn timestamps() -> TimestampGenerator {
-    TimestampGenerator {
+pub fn instants() -> InstantGenerator {
+    InstantGenerator {
         min_value: MIN_TIMESTAMP,
         max_value: MAX_TIMESTAMP,
         precision: Precision::Nanoseconds,
     }
 }
 
-/// Generator for [`UtcOffset`] values. Created by [`utc_offsets()`].
-pub struct UtcOffsetGenerator {
+/// Generator for [`UtcOffset`] values. Created by [`offsets()`].
+pub struct OffsetGenerator {
     min_value: UtcOffset,
     max_value: UtcOffset,
     granularity: Granularity,
     unknown: bool,
 }
 
-impl UtcOffsetGenerator {
+impl OffsetGenerator {
     /// Set the minimum offset (inclusive), which must be known.
     pub fn min_value(mut self, min: UtcOffset) -> Self {
         self.min_value = min;
@@ -540,7 +543,7 @@ fn known_bound(what: &str, bound: UtcOffset) -> i32 {
     }
 }
 
-impl Generator<UtcOffset> for UtcOffsetGenerator {
+impl Generator<UtcOffset> for OffsetGenerator {
     fn label(&self) -> u64 {
         *UTC_OFFSET_LABEL
     }
@@ -556,7 +559,7 @@ impl Generator<UtcOffset> for UtcOffsetGenerator {
     }
 }
 
-impl PrintableGenerator<UtcOffset> for UtcOffsetGenerator {
+impl PrintableGenerator<UtcOffset> for OffsetGenerator {
     fn do_draw_and_print(&self, tc: &TestCase, printer: &mut PrettyPrinter) -> UtcOffset {
         draw_and_print_display(self, tc, printer)
     }
@@ -567,32 +570,33 @@ impl PrintableGenerator<UtcOffset> for UtcOffsetGenerator {
 /// By default any known offset within ±25:59:59 at second granularity;
 /// shrinks toward `+00:00`. One draw in twenty on average targets an
 /// offset some time zone has used, so `+05:45` and `-00:44:30` appear.
-/// See [`UtcOffsetGenerator`] for builder methods.
+/// See [`OffsetGenerator`] for builder methods.
 ///
 /// # Example
 ///
 /// ```no_run
-/// use hegel::datetime::{Granularity, UtcOffset};
+/// use hegel::generators::temporal::{Granularity, UtcOffset};
 /// use hegel::generators as gs;
 ///
 /// #[hegel::test]
 /// fn my_test(tc: hegel::TestCase) {
-///     let o = tc.draw(gs::utc_offsets().granularity(Granularity::Minutes));
+///     let o = tc.draw(gs::temporal::offsets().granularity(Granularity::Minutes));
 ///     let UtcOffset::Known(seconds) = o else { unreachable!() };
 ///     assert_eq!(seconds % 60, 0);
 /// }
 /// ```
-pub fn utc_offsets() -> UtcOffsetGenerator {
-    UtcOffsetGenerator {
-        min_value: UtcOffset::Known(-crate::datetime::MAX_OFFSET),
-        max_value: UtcOffset::Known(crate::datetime::MAX_OFFSET),
+pub fn offsets() -> OffsetGenerator {
+    OffsetGenerator {
+        min_value: UtcOffset::Known(-super::values::MAX_OFFSET),
+        max_value: UtcOffset::Known(super::values::MAX_OFFSET),
         granularity: Granularity::Seconds,
         unknown: false,
     }
 }
 
-/// Generator for [`TimeZone`] values. Created by [`timezones()`].
-pub struct TimeZoneGenerator {
+/// Generator for [`TimeZone`] values. Created by [`zones()`].
+pub struct ZoneGenerator {
+    source: Option<ZoneSource>,
     names: Option<Vec<String>>,
     links: bool,
     legacy: bool,
@@ -601,7 +605,16 @@ pub struct TimeZoneGenerator {
     spec: OnceLock<ffi::TimeZoneSpec>,
 }
 
-impl TimeZoneGenerator {
+impl ZoneGenerator {
+    /// Draw against `source` rather than the default zone source: its
+    /// names, and wall times classified by its data when the generator is
+    /// the zone generator of [`zoned_datetimes`].
+    pub fn source(mut self, source: ZoneSource) -> Self {
+        self.source = Some(source);
+        self.spec = OnceLock::new();
+        self
+    }
+
     /// Draw only these names, each exactly as the IANA database spells it
     /// or `Etc/Unknown`. The [`links`](Self::links) and
     /// [`legacy`](Self::legacy) flags do not apply to an explicit list.
@@ -636,7 +649,7 @@ impl TimeZoneGenerator {
     }
 
     /// Whether a name in an explicit [`names`](Self::names) list that the
-    /// engine's database lacks is accepted as an opaque zone (off by
+    /// zone source lacks is accepted as an opaque zone (off by
     /// default): one only the caller's database knows, drawn like any
     /// other name but evaluated like `Etc/Unknown`, with its civil time
     /// read as UTC and an unknown offset.
@@ -649,34 +662,41 @@ impl TimeZoneGenerator {
     pub(crate) fn spec(&self) -> &ffi::TimeZoneSpec {
         self.spec.get_or_init(|| {
             let mut spec = ffi::TimeZoneSpec::new();
-            configured(spec.set_opaque(self.opaque));
+            configured(spec.set_opaque(true));
             if let Some(names) = &self.names {
                 configured(spec.set_names(names));
             }
             configured(spec.set_links(self.links));
             configured(spec.set_legacy(self.legacy));
             configured(spec.set_unknown(self.unknown));
+            if let Some(source) = &self.source {
+                configured(spec.set_source(source.handle()));
+            }
+            configured(spec.set_opaque(self.opaque));
             spec
         })
     }
 }
 
-fn time_zone_named(name: String) -> TimeZone {
-    let primary_name = info(&name).map_or_else(|| name.clone(), |info| info.primary_name);
+fn time_zone_named(source: Option<&ZoneSource>, name: String) -> TimeZone {
+    let primary_name = info_in(source.map(ZoneSource::handle), &name)
+        .ok()
+        .flatten()
+        .map_or_else(|| name.clone(), |info| info.primary_name);
     TimeZone { name, primary_name }
 }
 
-impl Generator<TimeZone> for TimeZoneGenerator {
+impl Generator<TimeZone> for ZoneGenerator {
     fn label(&self) -> u64 {
         *TIME_ZONE_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> TimeZone {
-        time_zone_named(tc.generate_timezone(self.spec()))
+        time_zone_named(self.source.as_ref(), tc.generate_timezone(self.spec()))
     }
 }
 
-impl PrintableGenerator<TimeZone> for TimeZoneGenerator {
+impl PrintableGenerator<TimeZone> for ZoneGenerator {
     fn do_draw_and_print(&self, tc: &TestCase, printer: &mut PrettyPrinter) -> TimeZone {
         draw_and_print_display(self, tc, printer)
     }
@@ -684,13 +704,15 @@ impl PrintableGenerator<TimeZone> for TimeZoneGenerator {
 
 /// Generate [`TimeZone`] values.
 ///
-/// By default any name of the engine's bundled IANA database, link names
-/// in and legacy names out; shrinks down a ladder of names to `UTC` when
+/// By default any name of the default zone source (the engine's bundled
+/// IANA database unless [`set_default_zone_source`](super::set_default_zone_source)
+/// replaced it), link names in and legacy names out; shrinks down a ladder
+/// of names to `UTC` when
 /// it is allowed, otherwise to the lowest-ranked allowed name. Half
 /// the draws are uniform over the allowed names and half weighted by the
 /// zones' features, so a zone with a rare feature (a fractional offset, a
 /// skipped day, negative DST) is drawn at a rate a short run reaches. See
-/// [`TimeZoneGenerator`] for builder methods.
+/// [`ZoneGenerator`] for builder methods.
 ///
 /// # Example
 ///
@@ -699,12 +721,13 @@ impl PrintableGenerator<TimeZone> for TimeZoneGenerator {
 ///
 /// #[hegel::test]
 /// fn my_test(tc: hegel::TestCase) {
-///     let zone = tc.draw(gs::timezones().names(["Europe/London", "Asia/Calcutta"]));
+///     let zone = tc.draw(gs::temporal::zones().names(["Europe/London", "Asia/Calcutta"]));
 ///     assert!(zone.primary_name == "Europe/London" || zone.primary_name == "Asia/Kolkata");
 /// }
 /// ```
-pub fn timezones() -> TimeZoneGenerator {
-    TimeZoneGenerator {
+pub fn zones() -> ZoneGenerator {
+    ZoneGenerator {
+        source: None,
         names: None,
         links: true,
         legacy: false,
@@ -716,24 +739,48 @@ pub fn timezones() -> TimeZoneGenerator {
 
 enum ZonedBounds {
     Civil(DateTime, DateTime),
-    Instant(Timestamp, Timestamp),
+    Instant(Instant, Instant),
 }
+
+trait AnyZones: Generator<TimeZone> + Any + Send + Sync {}
+
+impl<G> AnyZones for G where G: Generator<TimeZone> + Any + Send + Sync {}
 
 /// Generator for [`ZonedDateTime`] values. Created by
 /// [`zoned_datetimes()`].
 pub struct ZonedDateTimeGenerator {
-    zones: TimeZoneGenerator,
+    zones: Box<dyn AnyZones>,
     bounds: ZonedBounds,
     precision: Precision,
     allow_imaginary: bool,
     ambiguous: Ambiguous,
     spec: OnceLock<ffi::ZonedSpec>,
+    zone_specs: Mutex<HashMap<String, Arc<ffi::TimeZoneSpec>>>,
 }
 
 impl ZonedDateTimeGenerator {
-    /// Draw the zone from `zones` rather than from every bundled name.
-    pub fn timezones(mut self, zones: TimeZoneGenerator) -> Self {
-        self.zones = zones;
+    /// Draw the zone from `zones` rather than from every name of the
+    /// default zone source.
+    ///
+    /// When `zones` is a [`ZoneGenerator`] (from [`zones()`]), the
+    /// zone and the wall time come from one engine draw against that
+    /// generator's [`source`](ZoneGenerator::source), so the zone
+    /// shrinks down the engine's ladder of names and transitions are
+    /// targeted across the allowed zones. Any other generator of
+    /// [`TimeZone`], such as `gs::sampled_from(...)` or `gs::just(...)`,
+    /// draws the zone first and then a wall time in that zone of the
+    /// default zone source, with the
+    /// same bounds, precision, gap and fold handling and transition
+    /// targeting, the zone shrinking as that generator shrinks. The value's
+    /// `zone` is the drawn [`TimeZone`] itself. A zone whose name the
+    /// default source lacks is treated as opaque: its wall times are
+    /// read as UTC and its offsets are
+    /// [`UtcOffset::Unknown`].
+    pub fn zones<G>(mut self, zones: G) -> Self
+    where
+        G: Generator<TimeZone> + Send + Sync + 'static,
+    {
+        self.zones = Box::new(zones);
         self
     }
 
@@ -762,7 +809,7 @@ impl ZonedDateTimeGenerator {
     }
 
     /// Set the minimum instant (inclusive). Replaces wall-clock bounds.
-    pub fn min_instant(mut self, min: Timestamp) -> Self {
+    pub fn min_instant(mut self, min: Instant) -> Self {
         let max = match self.bounds {
             ZonedBounds::Instant(_, max) => max,
             ZonedBounds::Civil(..) => MAX_TIMESTAMP,
@@ -773,7 +820,7 @@ impl ZonedDateTimeGenerator {
     }
 
     /// Set the maximum instant (inclusive). Replaces wall-clock bounds.
-    pub fn max_instant(mut self, max: Timestamp) -> Self {
+    pub fn max_instant(mut self, max: Instant) -> Self {
         let min = match self.bounds {
             ZonedBounds::Instant(min, _) => min,
             ZonedBounds::Civil(..) => MIN_TIMESTAMP,
@@ -793,7 +840,7 @@ impl ZonedDateTimeGenerator {
 
     /// Whether a wall time the clocks skipped may be drawn (`true` by
     /// default). Allowed, it is reported with kind
-    /// [`Kind::Gap`](crate::datetime::Kind::Gap), both offsets and the
+    /// [`TransitionKind::Gap`](super::TransitionKind::Gap), both offsets and the
     /// instant it resolves to with the pre-transition offset; disallowed,
     /// another wall time is drawn, and a replayed or shrunk value that
     /// lands in a gap is moved past it.
@@ -834,6 +881,35 @@ impl ZonedDateTimeGenerator {
             spec
         })
     }
+
+    fn zone_spec(&self, name: &str) -> Arc<ffi::TimeZoneSpec> {
+        let mut specs = self
+            .zone_specs
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let spec = specs.entry(name.to_string()).or_insert_with(|| {
+            let mut spec = ffi::TimeZoneSpec::new();
+            configured(spec.set_opaque(true));
+            configured(spec.set_names(&[name.to_string()]));
+            configured(spec.set_links(true));
+            configured(spec.set_legacy(true));
+            Arc::new(spec)
+        });
+        Arc::clone(spec)
+    }
+}
+
+fn zoned_from_c(z: hegel_c::hegel_zoned_datetime_t, zone: TimeZone) -> ZonedDateTime {
+    ZonedDateTime {
+        zone,
+        civil: datetime_from_c(z.civil),
+        kind: kind_from_c(z.kind),
+        offset_before: offset_from_c(z.offset_before, z.offset_known),
+        offset_after: offset_from_c(z.offset_after, z.offset_known),
+        fold: z.fold,
+        offset: offset_from_c(z.offset_seconds, z.offset_known),
+        instant: timestamp_from_c(z.timestamp),
+    }
 }
 
 impl Generator<ZonedDateTime> for ZonedDateTimeGenerator {
@@ -842,17 +918,14 @@ impl Generator<ZonedDateTime> for ZonedDateTimeGenerator {
     }
 
     fn do_draw(&self, tc: &TestCase) -> ZonedDateTime {
-        let (z, name) = tc.generate_zoned_datetime(self.zones.spec(), self.spec());
-        ZonedDateTime {
-            zone: time_zone_named(name),
-            civil: datetime_from_c(z.civil),
-            kind: kind_from_c(z.kind),
-            offset_before: z.offset_before,
-            offset_after: z.offset_after,
-            fold: z.fold,
-            offset: offset_from_c(z.offset_seconds, z.offset_known),
-            timestamp: timestamp_from_c(z.timestamp),
+        let zones: &dyn Any = &*self.zones;
+        if let Some(engine) = zones.downcast_ref::<ZoneGenerator>() {
+            let (z, name) = tc.generate_zoned_datetime(engine.spec(), self.spec());
+            return zoned_from_c(z, time_zone_named(engine.source.as_ref(), name));
         }
+        let zone = tc.draw_silent(&*self.zones);
+        let (z, _) = tc.generate_zoned_datetime(&self.zone_spec(&zone.name), self.spec());
+        zoned_from_c(z, zone)
     }
 }
 
@@ -865,52 +938,60 @@ impl PrintableGenerator<ZonedDateTime> for ZonedDateTimeGenerator {
 /// Generate [`ZonedDateTime`] values: a zone, a wall-clock time in it
 /// and, when the clocks repeated that time, which repeat is meant.
 ///
-/// By default any zone [`timezones()`] draws and any wall-clock time of
+/// By default any zone [`zones()`] draws and any wall-clock time of
 /// the engine's range at nanosecond precision, with skipped wall times
-/// reported as [`Kind::Gap`](crate::datetime::Kind::Gap) and both repeats
+/// reported as [`TransitionKind::Gap`](super::TransitionKind::Gap) and both repeats
 /// of a fold drawn; shrinks down the zone ladder, then toward
 /// 2000-01-01T00:00:00, preferring a unique wall time to a repeated one
 /// (so a shrink whose lower bound lies in a fold ends just after the
 /// fold). One draw in twenty on average targets a transition
 /// of the zone, which is how gaps, folds and the exact boundary instants
 /// are reached. Build a native value from `civil`, the zone name and
-/// `fold` (or, for a gap, from `timestamp`), never from the offsets, so
-/// that a newer database on your side changes what a value means but
-/// never makes it invalid. See [`ZonedDateTimeGenerator`] for builder
-/// methods.
+/// `fold` (or, for a gap, from `instant`), never from the offsets, so
+/// that a database on your side that differs from the zone source
+/// changes what a value means but never makes it invalid; draw against
+/// your library's database with [`ZoneGenerator::source`] to avoid the
+/// difference.
+///
+/// [`zones`](ZonedDateTimeGenerator::zones) takes any generator of
+/// [`TimeZone`]: given a [`ZoneGenerator`], the zone and the wall time
+/// are one engine draw as above; given any other, the zone is drawn from it
+/// and the wall time is then drawn in that zone, under the same bounds and
+/// policies. See [`ZonedDateTimeGenerator`] for builder methods.
 ///
 /// # Example
 ///
 /// ```no_run
-/// use hegel::datetime::Kind;
+/// use hegel::generators::temporal::TransitionKind;
 /// use hegel::generators as gs;
 ///
 /// #[hegel::test]
 /// fn my_test(tc: hegel::TestCase) {
-///     let z = tc.draw(gs::zoned_datetimes().allow_imaginary(false));
-///     assert_ne!(z.kind, Kind::Gap);
+///     let z = tc.draw(gs::temporal::zoned_datetimes().allow_imaginary(false));
+///     assert_ne!(z.kind, TransitionKind::Gap);
 /// }
 /// ```
 pub fn zoned_datetimes() -> ZonedDateTimeGenerator {
     ZonedDateTimeGenerator {
-        zones: timezones(),
+        zones: Box::new(zones()),
         bounds: ZonedBounds::Civil(MIN_DATETIME, MAX_DATETIME),
         precision: Precision::Nanoseconds,
         allow_imaginary: true,
         ambiguous: Ambiguous::Both,
         spec: OnceLock::new(),
+        zone_specs: Mutex::new(HashMap::new()),
     }
 }
 
 /// Generator for [`SignedDuration`] values. Created by
-/// [`signed_durations()`].
-pub struct SignedDurationGenerator {
+/// [`durations()`].
+pub struct DurationGenerator {
     min_value: SignedDuration,
     max_value: SignedDuration,
     precision: Precision,
 }
 
-impl SignedDurationGenerator {
+impl DurationGenerator {
     /// Set the minimum duration (inclusive).
     pub fn min_value(mut self, min: SignedDuration) -> Self {
         self.min_value = min;
@@ -944,7 +1025,7 @@ pub(crate) fn duration_from_c(d: hegel_c::hegel_duration_t) -> SignedDuration {
     }
 }
 
-impl Generator<SignedDuration> for SignedDurationGenerator {
+impl Generator<SignedDuration> for DurationGenerator {
     fn label(&self) -> u64 {
         *SIGNED_DURATION_LABEL
     }
@@ -961,7 +1042,7 @@ impl Generator<SignedDuration> for SignedDurationGenerator {
     }
 }
 
-impl PrintableGenerator<SignedDuration> for SignedDurationGenerator {
+impl PrintableGenerator<SignedDuration> for DurationGenerator {
     fn do_draw_and_print(&self, tc: &TestCase, printer: &mut PrettyPrinter) -> SignedDuration {
         draw_and_print_display(self, tc, printer)
     }
@@ -972,23 +1053,23 @@ impl PrintableGenerator<SignedDuration> for SignedDurationGenerator {
 /// By default any duration of ±`i64` seconds at nanosecond precision;
 /// shrinks toward zero. One draw in twenty on average targets a bound or
 /// a duration such as one unit, 24 hours or the `i32` seconds limit. See
-/// [`SignedDurationGenerator`] for builder methods.
+/// [`DurationGenerator`] for builder methods.
 ///
 /// # Example
 ///
 /// ```no_run
-/// use hegel::datetime::SignedDuration;
+/// use hegel::generators::temporal::SignedDuration;
 /// use hegel::generators as gs;
 ///
 /// #[hegel::test]
 /// fn my_test(tc: hegel::TestCase) {
 ///     let zero = SignedDuration::new(0, 0).unwrap();
-///     let d = tc.draw(gs::signed_durations().min_value(zero));
+///     let d = tc.draw(gs::temporal::durations().min_value(zero));
 ///     assert!(d >= zero);
 /// }
 /// ```
-pub fn signed_durations() -> SignedDurationGenerator {
-    SignedDurationGenerator {
+pub fn durations() -> DurationGenerator {
+    DurationGenerator {
         min_value: SignedDuration {
             seconds: i64::MIN,
             nanoseconds: -999_999_999,
@@ -1086,12 +1167,12 @@ impl PrintableGenerator<Span> for SpanGenerator {
 /// # Example
 ///
 /// ```no_run
-/// use hegel::datetime::SpanUnit;
+/// use hegel::generators::temporal::SpanUnit;
 /// use hegel::generators as gs;
 ///
 /// #[hegel::test]
 /// fn my_test(tc: hegel::TestCase) {
-///     let s = tc.draw(gs::spans().unit_bounds(SpanUnit::Days, 0, 30));
+///     let s = tc.draw(gs::temporal::spans().unit_bounds(SpanUnit::Days, 0, 30));
 ///     assert!((0..=30).contains(&s.days) && s.years == 0);
 /// }
 /// ```

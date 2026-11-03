@@ -2,10 +2,8 @@ use jiff::civil::{Date, DateTime, Era, ISOWeekDate, Time, Weekday};
 use jiff::tz::{AmbiguousOffset, AmbiguousTimestamp, AmbiguousZoned, Offset, TimeZone};
 use jiff::{SignedDuration, Span, Timestamp, Zoned};
 
-use crate::datetime::ZonedDateTime;
-use crate::generators::{
-    self as gs, BoxedGenerator, DefaultGenerator, Generator, Mapped, ZonedDateTimeGenerator, one_of,
-};
+use crate::generators::temporal::{ZonedDateTime, ZonedDateTimeGenerator};
+use crate::generators::{self as gs, BoxedGenerator, DefaultGenerator, Generator, Mapped, one_of};
 
 use super::{
     DateGenerator, DateTimeGenerator, EraGenerator, ISOWeekDateGenerator, MAX_CIVIL, MIN_CIVIL,
@@ -102,12 +100,12 @@ impl DefaultGenerator for Zoned {
 /// kept and no fold drawn, for the ambiguous types that hold a wall time
 /// jiff has not yet resolved.
 fn ambiguous_draws() -> ZonedDateTimeGenerator {
-    gs::zoned_datetimes()
-        .timezones(timezones().engine_generator())
+    gs::temporal::zoned_datetimes()
+        .zones(timezones().engine_generator())
         .min_value(super::engine_datetime(MIN_CIVIL))
         .max_value(super::engine_datetime(MAX_CIVIL))
         .allow_imaginary(true)
-        .ambiguous(crate::datetime::Ambiguous::Earlier)
+        .ambiguous(crate::generators::temporal::Ambiguous::Earlier)
 }
 
 fn ambiguous_zoned(z: ZonedDateTime) -> AmbiguousZoned {

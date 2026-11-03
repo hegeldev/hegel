@@ -1,7 +1,7 @@
 //! Generators for the [`jiff`] datetime crate.
 //!
 //! Enabled by the `jiff` feature flag. Each generator here is the
-//! engine's draw of the matching [`hegel::datetime`](crate::datetime)
+//! engine's draw of the matching [`hegel::generators::temporal`](crate::generators::temporal)
 //! value, converted to jiff's type at the boundary: [`dates`], [`times`],
 //! [`datetimes`], [`timestamps`], [`offsets`], [`signed_durations`] and
 //! [`spans`] with the bounds, precision, granularity and per-unit options
@@ -16,18 +16,20 @@
 //! impl, so `gs::default::<jiff::Zoned>()` works and the types can be used
 //! in a derived generator.
 //!
-//! The option enums come from [`hegel::datetime`](crate::datetime):
-//! [`Precision`](crate::datetime::Precision),
-//! [`Granularity`](crate::datetime::Granularity),
-//! [`Month`](crate::datetime::Month) and
-//! [`Ambiguous`](crate::datetime::Ambiguous).
+//! The option enums come from [`hegel::generators::temporal`](crate::generators::temporal):
+//! [`Precision`](crate::generators::temporal::Precision),
+//! [`Granularity`](crate::generators::temporal::Granularity),
+//! [`Month`](crate::generators::temporal::Month) and
+//! [`Ambiguous`](crate::generators::temporal::Ambiguous).
 //!
-//! The engine's bundled time zone database decides which zone and wall
-//! time are drawn; jiff's database decides what the value means. The two
-//! may differ by a release, which
-//! [`tzdb_version`](crate::datetime::tzdb_version) reports.
+//! Zones are drawn, and wall times classified, against jiff's own time
+//! zone database through [`zone_source`], so the gaps and folds the
+//! engine targets are the ones jiff computes, whichever database jiff's
+//! features and the system give it.
 
 mod default;
 mod generators;
+mod source;
 
 pub use generators::*;
+pub use source::zone_source;

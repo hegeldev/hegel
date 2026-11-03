@@ -5,24 +5,33 @@ use hegel::generators as gs;
 use std::time::Duration;
 
 #[test]
-fn test_durations_default() {
-    assert_all_examples(gs::durations(), |d| *d >= Duration::ZERO);
+fn test_std_durations_default() {
+    assert_all_examples(gs::temporal::std_durations(), |d| *d >= Duration::ZERO);
 }
 
 #[test]
-fn test_durations_bounded() {
+fn test_std_durations_bounded() {
     let min = Duration::from_secs(5);
     let max = Duration::from_secs(60);
-    assert_all_examples(gs::durations().min_value(min).max_value(max), move |d| {
-        *d >= min && *d <= max
-    });
+    assert_all_examples(
+        gs::temporal::std_durations().min_value(min).max_value(max),
+        move |d| *d >= min && *d <= max,
+    );
 }
 
 #[test]
-fn test_durations_in_vec() {
+#[allow(deprecated)]
+fn test_deprecated_top_level_durations_draw_std_durations() {
+    let max = Duration::from_secs(60);
+    let generator: gs::DurationGenerator = gs::durations().max_value(max);
+    assert_all_examples(generator, move |d| *d <= max);
+}
+
+#[test]
+fn test_std_durations_in_vec() {
     let max = Duration::from_secs(60);
     assert_all_examples(
-        gs::vecs(gs::durations().max_value(max)).max_size(5),
+        gs::vecs(gs::temporal::std_durations().max_value(max)).max_size(5),
         move |v| v.iter().all(|d| *d <= max),
     );
 }
@@ -153,77 +162,88 @@ mod datetimes {
 
 mod engine_durations {
     use super::common::utils::{assert_all_examples, check_can_generate_examples, minimal};
-    use hegel::datetime::Precision;
     use hegel::generators as gs;
+    use hegel::generators::temporal::Precision;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     #[test]
-    fn test_durations_precision() {
-        assert_all_examples(gs::durations().precision(Precision::Milliseconds), |d| {
-            d.subsec_nanos() % 1_000_000 == 0
-        });
+    fn test_std_durations_precision() {
+        assert_all_examples(
+            gs::temporal::std_durations().precision(Precision::Milliseconds),
+            |d| d.subsec_nanos() % 1_000_000 == 0,
+        );
     }
 
     #[test]
-    fn test_durations_max_value_saturates() {
-        assert_all_examples(gs::durations().max_value(Duration::MAX), |d| {
-            d.as_secs() <= i64::MAX as u64
-        });
+    fn test_std_durations_max_value_saturates() {
+        assert_all_examples(
+            gs::temporal::std_durations().max_value(Duration::MAX),
+            |d| d.as_secs() <= i64::MAX as u64,
+        );
     }
 
     #[test]
-    fn test_durations_shrink_to_zero() {
-        assert_eq!(minimal(gs::durations(), |_| true), Duration::ZERO);
+    fn test_std_durations_shrink_to_zero() {
+        assert_eq!(
+            minimal(gs::temporal::std_durations(), |_| true),
+            Duration::ZERO
+        );
     }
 
     #[hegel::test]
-    fn test_durations_property(tc: hegel::TestCase) {
-        let lo = tc.draw(gs::durations());
-        let hi = tc.draw(gs::durations().min_value(lo));
-        let d = tc.draw(gs::durations().min_value(lo).max_value(hi));
+    fn test_std_durations_property(tc: hegel::TestCase) {
+        let lo = tc.draw(gs::temporal::std_durations());
+        let hi = tc.draw(gs::temporal::std_durations().min_value(lo));
+        let d = tc.draw(gs::temporal::std_durations().min_value(lo).max_value(hi));
         assert!(d >= lo && d <= hi);
     }
 
     #[test]
     fn test_system_times_default() {
-        assert_all_examples(gs::system_times(), |t| *t >= UNIX_EPOCH);
+        assert_all_examples(gs::temporal::system_times(), |t| *t >= UNIX_EPOCH);
     }
 
     #[test]
     fn test_system_times_min_value() {
         let min = UNIX_EPOCH - Duration::new(86_400, 500_000_000);
-        assert_all_examples(gs::system_times().min_value(min), move |t| *t >= min);
-        let max = UNIX_EPOCH - Duration::from_secs(86_400);
-        assert_all_examples(gs::system_times().min_value(min).max_value(max), move |t| {
-            *t >= min && *t <= max
+        assert_all_examples(gs::temporal::system_times().min_value(min), move |t| {
+            *t >= min
         });
+        let max = UNIX_EPOCH - Duration::from_secs(86_400);
+        assert_all_examples(
+            gs::temporal::system_times().min_value(min).max_value(max),
+            move |t| *t >= min && *t <= max,
+        );
     }
 
     #[test]
     fn test_system_times_max_value() {
         let max = UNIX_EPOCH + Duration::from_secs(60);
-        assert_all_examples(gs::system_times().max_value(max), move |t| *t <= max);
+        assert_all_examples(gs::temporal::system_times().max_value(max), move |t| {
+            *t <= max
+        });
     }
 
     #[test]
     fn test_system_times_precision() {
-        assert_all_examples(gs::system_times().precision(Precision::Seconds), |t| {
-            t.duration_since(UNIX_EPOCH).unwrap().subsec_nanos() == 0
-        });
+        assert_all_examples(
+            gs::temporal::system_times().precision(Precision::Seconds),
+            |t| t.duration_since(UNIX_EPOCH).unwrap().subsec_nanos() == 0,
+        );
     }
 
     #[test]
     fn test_system_times_in_vec() {
         let max = UNIX_EPOCH + Duration::from_secs(60);
         assert_all_examples(
-            gs::vecs(gs::system_times().max_value(max)).max_size(5),
+            gs::vecs(gs::temporal::system_times().max_value(max)).max_size(5),
             move |v| v.iter().all(|t| *t <= max),
         );
     }
 
     #[test]
     fn test_system_times_shrink_to_the_millennium() {
-        let t = minimal(gs::system_times(), |_| true);
+        let t = minimal(gs::temporal::system_times(), |_| true);
         assert_eq!(t, UNIX_EPOCH + Duration::from_secs(946_684_800));
     }
 
@@ -252,7 +272,7 @@ mod engine_durations {
             }
         };
         let (min, max) = (at(lo, lo_ns), at(hi, hi_ns));
-        let t = tc.draw(gs::system_times().min_value(min).max_value(max));
+        let t = tc.draw(gs::temporal::system_times().min_value(min).max_value(max));
         assert!(t >= min && t <= max);
     }
 }

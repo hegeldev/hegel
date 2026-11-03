@@ -9,7 +9,6 @@
 mod collections;
 mod combinators;
 mod compose;
-mod datetime;
 mod default;
 mod deferred;
 #[allow(clippy::module_inception)]
@@ -21,7 +20,7 @@ mod numeric;
 mod recursive;
 mod sequences;
 mod strings;
-mod time;
+pub mod temporal;
 mod tuples;
 
 #[doc(hidden)]
@@ -40,11 +39,7 @@ pub use combinators::{
     SampledFromGenerator, one_of, optional, sampled_from,
 };
 pub use compose::ComposedGenerator;
-pub use datetime::{
-    DateGenerator, DateTimeGenerator, SignedDurationGenerator, SpanGenerator, TimeGenerator,
-    TimeZoneGenerator, TimestampGenerator, UtcOffsetGenerator, ZonedDateTimeGenerator, dates,
-    datetimes, signed_durations, spans, times, timestamps, timezones, utc_offsets, zoned_datetimes,
-};
+
 pub use default::{DefaultGenerator, default};
 pub use deferred::{DeferredGeneratorDefinition, deferred, deferred_silent};
 pub use generators::{
@@ -71,7 +66,16 @@ pub use strings::{
     UuidsGenerator, binary, characters, date_strings, datetime_strings, domains, emails,
     from_regex, ip_addresses, text, time_strings, urls, uuids,
 };
-pub use time::{DurationGenerator, SystemTimeGenerator, durations, system_times};
+/// Deprecated name of [`temporal::StdDurationGenerator`].
+#[deprecated(since = "0.51.0", note = "use `gs::temporal::StdDurationGenerator`")]
+pub type DurationGenerator = temporal::StdDurationGenerator;
+
+/// Deprecated name of [`temporal::std_durations`], which generates
+/// [`std::time::Duration`] values.
+#[deprecated(since = "0.51.0", note = "use `gs::temporal::std_durations()`")]
+pub fn durations() -> temporal::StdDurationGenerator {
+    temporal::std_durations()
+}
 pub use tuples::{
     Tuple0Generator, Tuple1Generator, Tuple2Generator, Tuple3Generator, Tuple4Generator,
     Tuple5Generator, Tuple6Generator, Tuple7Generator, Tuple8Generator, Tuple9Generator,

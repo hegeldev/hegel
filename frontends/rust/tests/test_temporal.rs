@@ -1,13 +1,14 @@
 mod common;
 
 use common::utils::{assert_all_examples, check_can_generate_examples, find_any, minimal};
-use hegel::datetime::{
-    Ambiguous, Date, DateTime, Granularity, Kind, MAX_INSTANT, MAX_OFFSET, MAX_YEAR, MIN_INSTANT,
-    MIN_YEAR, Month, Precision, SignedDuration, Span, SpanSign, SpanUnit, Tag, Time, TimeZone,
-    Timestamp, UNKNOWN_ZONE, UtcOffset, Weekday, ZonedDateTime, info, offset_at, resolve,
-    tzdb_version,
-};
+use hegel::Generator;
 use hegel::generators as gs;
+use hegel::generators::temporal::{
+    Ambiguous, Date, DateTime, Granularity, Instant, MAX_INSTANT, MAX_OFFSET, MAX_YEAR,
+    MIN_INSTANT, MIN_YEAR, Month, Precision, SignedDuration, Span, SpanSign, SpanUnit, Tag, Time,
+    TimeZone, TransitionKind, UNKNOWN_ZONE, UtcOffset, Weekday, ZonedDateTime, info, offset_at,
+    resolve, tzdb_version,
+};
 use jiff::tz::AmbiguousOffset;
 
 fn date(year: i32, month: u8, day: u8) -> Date {
@@ -35,7 +36,7 @@ fn jiff_datetime(dt: DateTime) -> jiff::civil::DateTime {
     )
 }
 
-fn jiff_timestamp(t: Timestamp) -> jiff::Timestamp {
+fn jiff_timestamp(t: Instant) -> jiff::Timestamp {
     jiff::Timestamp::new(t.second, t.nanosecond as i32).unwrap()
 }
 
@@ -113,12 +114,12 @@ fn test_datetime_new_checks_both_parts() {
 }
 
 #[test]
-fn test_timestamp_new_checks_the_range() {
-    assert!(Timestamp::new(MIN_INSTANT, 0).is_ok());
-    assert!(Timestamp::new(MAX_INSTANT, 999_999_999).is_ok());
-    assert!(Timestamp::new(MIN_INSTANT - 1, 0).is_err());
-    assert!(Timestamp::new(MAX_INSTANT + 1, 0).is_err());
-    assert!(Timestamp::new(0, 1_000_000_000).is_err());
+fn test_instant_new_checks_the_range() {
+    assert!(Instant::new(MIN_INSTANT, 0).is_ok());
+    assert!(Instant::new(MAX_INSTANT, 999_999_999).is_ok());
+    assert!(Instant::new(MIN_INSTANT - 1, 0).is_err());
+    assert!(Instant::new(MAX_INSTANT + 1, 0).is_err());
+    assert!(Instant::new(0, 1_000_000_000).is_err());
 }
 
 #[test]
@@ -172,29 +173,29 @@ fn test_display_dates_and_times() {
 }
 
 #[test]
-fn test_display_timestamps() {
+fn test_display_instants() {
     assert_eq!(
-        Timestamp::new(946_684_800, 0).unwrap().to_string(),
+        Instant::new(946_684_800, 0).unwrap().to_string(),
         "2000-01-01T00:00:00Z"
     );
     assert_eq!(
-        Timestamp::new(0, 0).unwrap().to_string(),
+        Instant::new(0, 0).unwrap().to_string(),
         "1970-01-01T00:00:00Z"
     );
     assert_eq!(
-        Timestamp::new(-1, 0).unwrap().to_string(),
+        Instant::new(-1, 0).unwrap().to_string(),
         "1969-12-31T23:59:59Z"
     );
     assert_eq!(
-        Timestamp::new(-2, 500_000_000).unwrap().to_string(),
+        Instant::new(-2, 500_000_000).unwrap().to_string(),
         "1969-12-31T23:59:58.5Z"
     );
     assert_eq!(
-        Timestamp::new(MIN_INSTANT, 0).unwrap().to_string(),
+        Instant::new(MIN_INSTANT, 0).unwrap().to_string(),
         "-999999-01-01T00:00:00Z"
     );
     assert_eq!(
-        Timestamp::new(MAX_INSTANT, 0).unwrap().to_string(),
+        Instant::new(MAX_INSTANT, 0).unwrap().to_string(),
         "+999999-12-31T23:59:59Z"
     );
 }
@@ -209,7 +210,7 @@ fn test_display_offsets() {
 }
 
 #[test]
-fn test_display_signed_durations() {
+fn test_display_durations() {
     assert_eq!(SignedDuration::new(0, 0).unwrap().to_string(), "PT0S");
     assert_eq!(
         SignedDuration::new(5405, 500_000_000).unwrap().to_string(),
@@ -262,18 +263,18 @@ fn test_display_spans() {
 #[test]
 fn test_display_zoned_datetimes_matches_the_engine_form() {
     let gap = resolve("America/New_York", datetime(2024, 3, 10, 2, 30, 0)).unwrap();
-    assert_eq!(gap.kind, Kind::Gap);
-    assert_eq!(gap.offset_before, -18_000);
-    assert_eq!(gap.offset_after, -14_400);
-    assert_eq!(gap.offset, UtcOffset::Known(gap.offset_after));
+    assert_eq!(gap.kind, TransitionKind::Gap);
+    assert_eq!(gap.offset_before, UtcOffset::Known(-18_000));
+    assert_eq!(gap.offset_after, UtcOffset::Known(-14_400));
+    assert_eq!(gap.offset, gap.offset_after);
     assert_eq!(
         gap.to_string(),
         "2024-03-10T02:30:00-04:00[America/New_York][gap]"
     );
-    assert_eq!(gap.timestamp.to_string(), "2024-03-10T07:30:00Z");
+    assert_eq!(gap.instant.to_string(), "2024-03-10T07:30:00Z");
 
     let fold = resolve("America/New_York", datetime(2024, 11, 3, 1, 30, 0)).unwrap();
-    assert_eq!(fold.kind, Kind::Fold);
+    assert_eq!(fold.kind, TransitionKind::Fold);
     assert!(!fold.fold);
     assert_eq!(
         fold.to_string(),
@@ -281,7 +282,7 @@ fn test_display_zoned_datetimes_matches_the_engine_form() {
     );
     let later = ZonedDateTime {
         fold: true,
-        offset: UtcOffset::Known(fold.offset_after),
+        offset: fold.offset_after,
         ..fold.clone()
     };
     assert_eq!(
@@ -290,7 +291,7 @@ fn test_display_zoned_datetimes_matches_the_engine_form() {
     );
 
     let unique = resolve("America/New_York", datetime(2024, 6, 1, 12, 0, 0)).unwrap();
-    assert_eq!(unique.kind, Kind::Unique);
+    assert_eq!(unique.kind, TransitionKind::Unique);
     assert_eq!(unique.offset, UtcOffset::Known(-14_400));
     assert_eq!(
         unique.to_string(),
@@ -300,7 +301,7 @@ fn test_display_zoned_datetimes_matches_the_engine_form() {
     let unknown = resolve(UNKNOWN_ZONE, datetime(2024, 6, 1, 12, 0, 0)).unwrap();
     assert_eq!(unknown.offset, UtcOffset::Unknown);
     assert_eq!(unknown.to_string(), "2024-06-01T12:00:00Z[Etc/Unknown]");
-    assert_eq!(unknown.timestamp.to_string(), "2024-06-01T12:00:00Z");
+    assert_eq!(unknown.instant.to_string(), "2024-06-01T12:00:00Z");
 
     let opaque = ZonedDateTime {
         zone: TimeZone {
@@ -338,26 +339,26 @@ fn test_resolve_rejects_bad_input() {
     let last = datetime(MAX_YEAR, 12, 31, 23, 59, 59);
     assert!(resolve("America/New_York", last).is_err());
     assert_eq!(
-        resolve("UTC", last).unwrap().timestamp,
-        Timestamp::new(MAX_INSTANT, 0).unwrap()
+        resolve("UTC", last).unwrap().instant,
+        Instant::new(MAX_INSTANT, 0).unwrap()
     );
 }
 
 #[test]
 fn test_offset_at_reports_the_offset_in_force() {
-    let summer = offset_at("Europe/London", Timestamp::new(1_717_243_200, 0).unwrap()).unwrap();
+    let summer = offset_at("Europe/London", Instant::new(1_717_243_200, 0).unwrap()).unwrap();
     assert_eq!(summer.offset, UtcOffset::Known(3600));
     assert!(summer.is_dst);
     assert_eq!(summer.abbreviation, "BST");
-    let winter = offset_at("Europe/London", Timestamp::new(1_704_067_200, 0).unwrap()).unwrap();
+    let winter = offset_at("Europe/London", Instant::new(1_704_067_200, 0).unwrap()).unwrap();
     assert_eq!(winter.offset, UtcOffset::Known(0));
     assert!(!winter.is_dst);
     assert_eq!(winter.abbreviation, "GMT");
-    let unknown = offset_at(UNKNOWN_ZONE, Timestamp::new(0, 0).unwrap()).unwrap();
+    let unknown = offset_at(UNKNOWN_ZONE, Instant::new(0, 0).unwrap()).unwrap();
     assert_eq!(unknown.offset, UtcOffset::Unknown);
     assert_eq!(unknown.abbreviation, "-00");
-    assert!(offset_at("Mars/Olympus", Timestamp::new(0, 0).unwrap()).is_err());
-    let out_of_range = Timestamp {
+    assert!(offset_at("Mars/Olympus", Instant::new(0, 0).unwrap()).is_err());
+    let out_of_range = Instant {
         second: 0,
         nanosecond: 1_000_000_000,
     };
@@ -402,25 +403,27 @@ fn test_tzdb_version_is_an_iana_release() {
 
 #[test]
 fn test_dates_default() {
-    assert_all_examples(gs::dates(), |d| Date::new(d.year, d.month, d.day).is_ok());
+    assert_all_examples(gs::temporal::dates(), |d| {
+        Date::new(d.year, d.month, d.day).is_ok()
+    });
 }
 
 #[test]
 fn test_dates_min_value() {
     let min = date(2024, 1, 1);
-    assert_all_examples(gs::dates().min_value(min), move |d| *d >= min);
+    assert_all_examples(gs::temporal::dates().min_value(min), move |d| *d >= min);
 }
 
 #[test]
 fn test_dates_max_value() {
     let max = date(1999, 12, 31);
-    assert_all_examples(gs::dates().max_value(max), move |d| *d <= max);
+    assert_all_examples(gs::temporal::dates().max_value(max), move |d| *d <= max);
 }
 
 #[test]
 fn test_dates_weekdays() {
     assert_all_examples(
-        gs::dates()
+        gs::temporal::dates()
             .min_value(date(-9999, 1, 1))
             .max_value(date(9999, 12, 31))
             .weekdays([Weekday::Saturday, Weekday::Sunday]),
@@ -434,7 +437,7 @@ fn test_dates_weekdays() {
 #[test]
 fn test_dates_months() {
     assert_all_examples(
-        gs::dates().months([Month::February, Month::December]),
+        gs::temporal::dates().months([Month::February, Month::December]),
         |d| d.month == 2 || d.month == 12,
     );
 }
@@ -442,14 +445,15 @@ fn test_dates_months() {
 #[test]
 fn test_dates_in_vec() {
     let max = date(1999, 12, 31);
-    assert_all_examples(gs::vecs(gs::dates().max_value(max)).max_size(5), move |v| {
-        v.iter().all(|d| *d <= max)
-    });
+    assert_all_examples(
+        gs::vecs(gs::temporal::dates().max_value(max)).max_size(5),
+        move |v| v.iter().all(|d| *d <= max),
+    );
 }
 
 #[test]
 fn test_dates_shrink_toward_the_millennium() {
-    assert_eq!(minimal(gs::dates(), |_| true), date(2000, 1, 1));
+    assert_eq!(minimal(gs::temporal::dates(), |_| true), date(2000, 1, 1));
 }
 
 #[test]
@@ -459,15 +463,15 @@ fn test_dates_default_generator() {
 
 #[hegel::test]
 fn test_dates_property(tc: hegel::TestCase) {
-    let lo = tc.draw(gs::dates());
-    let hi = tc.draw(gs::dates().min_value(lo));
-    let d = tc.draw(gs::dates().min_value(lo).max_value(hi));
+    let lo = tc.draw(gs::temporal::dates());
+    let hi = tc.draw(gs::temporal::dates().min_value(lo));
+    let d = tc.draw(gs::temporal::dates().min_value(lo).max_value(hi));
     assert!(d >= lo && d <= hi);
 }
 
 #[test]
 fn test_times_default() {
-    assert_all_examples(gs::times(), |t| {
+    assert_all_examples(gs::temporal::times(), |t| {
         Time::new(t.hour, t.minute, t.second, t.nanosecond).is_ok()
     });
 }
@@ -475,41 +479,44 @@ fn test_times_default() {
 #[test]
 fn test_times_min_value() {
     let min = time(12, 0, 0, 0);
-    assert_all_examples(gs::times().min_value(min), move |t| *t >= min);
+    assert_all_examples(gs::temporal::times().min_value(min), move |t| *t >= min);
 }
 
 #[test]
 fn test_times_max_value() {
     let max = time(12, 0, 0, 0);
-    assert_all_examples(gs::times().max_value(max), move |t| *t <= max);
+    assert_all_examples(gs::temporal::times().max_value(max), move |t| *t <= max);
 }
 
 #[test]
 fn test_times_precision() {
-    assert_all_examples(gs::times().precision(Precision::Minutes), |t| {
+    assert_all_examples(gs::temporal::times().precision(Precision::Minutes), |t| {
         t.second == 0 && t.nanosecond == 0
     });
-    assert_all_examples(gs::times().precision(Precision::Microseconds), |t| {
-        t.nanosecond % 1_000 == 0
-    });
-    assert_all_examples(gs::times().precision(Precision::Milliseconds), |t| {
-        t.nanosecond % 1_000_000 == 0
-    });
+    assert_all_examples(
+        gs::temporal::times().precision(Precision::Microseconds),
+        |t| t.nanosecond % 1_000 == 0,
+    );
+    assert_all_examples(
+        gs::temporal::times().precision(Precision::Milliseconds),
+        |t| t.nanosecond % 1_000_000 == 0,
+    );
 }
 
 #[test]
 fn test_times_in_vec() {
     let max = time(12, 0, 0, 0);
-    assert_all_examples(gs::vecs(gs::times().max_value(max)).max_size(5), move |v| {
-        v.iter().all(|t| *t <= max)
-    });
+    assert_all_examples(
+        gs::vecs(gs::temporal::times().max_value(max)).max_size(5),
+        move |v| v.iter().all(|t| *t <= max),
+    );
 }
 
 #[test]
 fn test_times_shrink_toward_midnight() {
-    assert_eq!(minimal(gs::times(), |_| true), time(0, 0, 0, 0));
+    assert_eq!(minimal(gs::temporal::times(), |_| true), time(0, 0, 0, 0));
     assert_eq!(
-        minimal(gs::times().min_value(time(6, 30, 0, 0)), |_| true),
+        minimal(gs::temporal::times().min_value(time(6, 30, 0, 0)), |_| true),
         time(6, 30, 0, 0)
     );
 }
@@ -521,15 +528,15 @@ fn test_times_default_generator() {
 
 #[hegel::test]
 fn test_times_property(tc: hegel::TestCase) {
-    let lo = tc.draw(gs::times());
-    let hi = tc.draw(gs::times().min_value(lo));
-    let t = tc.draw(gs::times().min_value(lo).max_value(hi));
+    let lo = tc.draw(gs::temporal::times());
+    let hi = tc.draw(gs::temporal::times().min_value(lo));
+    let t = tc.draw(gs::temporal::times().min_value(lo).max_value(hi));
     assert!(t >= lo && t <= hi);
 }
 
 #[test]
 fn test_datetimes_default() {
-    assert_all_examples(gs::datetimes(), |dt| {
+    assert_all_examples(gs::temporal::datetimes(), |dt| {
         DateTime::new(dt.date, dt.time).is_ok()
     });
 }
@@ -537,27 +544,32 @@ fn test_datetimes_default() {
 #[test]
 fn test_datetimes_min_value() {
     let min = datetime(2024, 1, 1, 12, 0, 0);
-    assert_all_examples(gs::datetimes().min_value(min), move |dt| *dt >= min);
+    assert_all_examples(gs::temporal::datetimes().min_value(min), move |dt| {
+        *dt >= min
+    });
 }
 
 #[test]
 fn test_datetimes_max_value() {
     let max = datetime(1999, 12, 31, 12, 0, 0);
-    assert_all_examples(gs::datetimes().max_value(max), move |dt| *dt <= max);
+    assert_all_examples(gs::temporal::datetimes().max_value(max), move |dt| {
+        *dt <= max
+    });
 }
 
 #[test]
 fn test_datetimes_precision() {
-    assert_all_examples(gs::datetimes().precision(Precision::Hours), |dt| {
-        dt.time.minute == 0 && dt.time.second == 0 && dt.time.nanosecond == 0
-    });
+    assert_all_examples(
+        gs::temporal::datetimes().precision(Precision::Hours),
+        |dt| dt.time.minute == 0 && dt.time.second == 0 && dt.time.nanosecond == 0,
+    );
 }
 
 #[test]
 fn test_datetimes_in_vec() {
     let max = datetime(1999, 12, 31, 12, 0, 0);
     assert_all_examples(
-        gs::vecs(gs::datetimes().max_value(max)).max_size(5),
+        gs::vecs(gs::temporal::datetimes().max_value(max)).max_size(5),
         move |v| v.iter().all(|dt| *dt <= max),
     );
 }
@@ -565,7 +577,7 @@ fn test_datetimes_in_vec() {
 #[test]
 fn test_datetimes_shrink_toward_the_millennium() {
     assert_eq!(
-        minimal(gs::datetimes(), |_| true),
+        minimal(gs::temporal::datetimes(), |_| true),
         datetime(2000, 1, 1, 0, 0, 0)
     );
 }
@@ -577,154 +589,159 @@ fn test_datetimes_default_generator() {
 
 #[hegel::test]
 fn test_datetimes_property(tc: hegel::TestCase) {
-    let lo = tc.draw(gs::datetimes());
-    let hi = tc.draw(gs::datetimes().min_value(lo));
-    let dt = tc.draw(gs::datetimes().min_value(lo).max_value(hi));
+    let lo = tc.draw(gs::temporal::datetimes());
+    let hi = tc.draw(gs::temporal::datetimes().min_value(lo));
+    let dt = tc.draw(gs::temporal::datetimes().min_value(lo).max_value(hi));
     assert!(dt >= lo && dt <= hi);
 }
 
 #[test]
-fn test_timestamps_default() {
-    assert_all_examples(gs::timestamps(), |t| {
-        Timestamp::new(t.second, t.nanosecond).is_ok()
+fn test_instants_default() {
+    assert_all_examples(gs::temporal::instants(), |t| {
+        Instant::new(t.second, t.nanosecond).is_ok()
     });
 }
 
 #[test]
-fn test_timestamps_min_value() {
-    let min = Timestamp::new(0, 0).unwrap();
-    assert_all_examples(gs::timestamps().min_value(min), move |t| *t >= min);
+fn test_instants_min_value() {
+    let min = Instant::new(0, 0).unwrap();
+    assert_all_examples(gs::temporal::instants().min_value(min), move |t| *t >= min);
 }
 
 #[test]
-fn test_timestamps_max_value() {
-    let max = Timestamp::new(0, 0).unwrap();
-    assert_all_examples(gs::timestamps().max_value(max), move |t| *t <= max);
+fn test_instants_max_value() {
+    let max = Instant::new(0, 0).unwrap();
+    assert_all_examples(gs::temporal::instants().max_value(max), move |t| *t <= max);
 }
 
 #[test]
-fn test_timestamps_precision() {
-    assert_all_examples(gs::timestamps().precision(Precision::Seconds), |t| {
-        t.nanosecond == 0
-    });
-}
-
-#[test]
-fn test_timestamps_in_vec() {
-    let max = Timestamp::new(0, 0).unwrap();
+fn test_instants_precision() {
     assert_all_examples(
-        gs::vecs(gs::timestamps().max_value(max)).max_size(5),
+        gs::temporal::instants().precision(Precision::Seconds),
+        |t| t.nanosecond == 0,
+    );
+}
+
+#[test]
+fn test_instants_in_vec() {
+    let max = Instant::new(0, 0).unwrap();
+    assert_all_examples(
+        gs::vecs(gs::temporal::instants().max_value(max)).max_size(5),
         move |v| v.iter().all(|t| *t <= max),
     );
 }
 
 #[test]
-fn test_timestamps_shrink_toward_the_millennium() {
+fn test_instants_shrink_toward_the_millennium() {
     assert_eq!(
-        minimal(gs::timestamps(), |_| true),
-        Timestamp::new(946_684_800, 0).unwrap()
+        minimal(gs::temporal::instants(), |_| true),
+        Instant::new(946_684_800, 0).unwrap()
     );
 }
 
 #[test]
-fn test_timestamps_default_generator() {
-    check_can_generate_examples(gs::default::<Timestamp>());
+fn test_instants_default_generator() {
+    check_can_generate_examples(gs::default::<Instant>());
 }
 
 #[hegel::test]
-fn test_timestamps_property(tc: hegel::TestCase) {
-    let lo = tc.draw(gs::timestamps());
-    let hi = tc.draw(gs::timestamps().min_value(lo));
-    let t = tc.draw(gs::timestamps().min_value(lo).max_value(hi));
+fn test_instants_property(tc: hegel::TestCase) {
+    let lo = tc.draw(gs::temporal::instants());
+    let hi = tc.draw(gs::temporal::instants().min_value(lo));
+    let t = tc.draw(gs::temporal::instants().min_value(lo).max_value(hi));
     assert!(t >= lo && t <= hi);
 }
 
 #[hegel::test]
-fn test_timestamps_and_dates_print_as_jiff_does(tc: hegel::TestCase) {
-    let min = Timestamp::new(-377_700_000_000, 0).unwrap();
-    let max = Timestamp::new(253_402_207_200, 0).unwrap();
-    let t = tc.draw(gs::timestamps().min_value(min).max_value(max));
+fn test_instants_and_dates_print_as_jiff_does(tc: hegel::TestCase) {
+    let min = Instant::new(-377_700_000_000, 0).unwrap();
+    let max = Instant::new(253_402_207_200, 0).unwrap();
+    let t = tc.draw(gs::temporal::instants().min_value(min).max_value(max));
     assert_eq!(t.to_string(), jiff_timestamp(t).to_string());
     let d = tc.draw(
-        gs::dates()
+        gs::temporal::dates()
             .min_value(JIFF_MIN.date)
             .max_value(JIFF_MAX.date),
     );
     assert_eq!(d.to_string(), jiff_date(d).to_string());
-    let dt = tc.draw(gs::datetimes().min_value(JIFF_MIN).max_value(JIFF_MAX));
+    let dt = tc.draw(
+        gs::temporal::datetimes()
+            .min_value(JIFF_MIN)
+            .max_value(JIFF_MAX),
+    );
     assert_eq!(dt.to_string(), jiff_datetime(dt).to_string());
 }
 
 #[test]
-fn test_utc_offsets_default() {
+fn test_offsets_default() {
     assert_all_examples(
-        gs::utc_offsets(),
+        gs::temporal::offsets(),
         |o| matches!(o, UtcOffset::Known(s) if s.unsigned_abs() <= MAX_OFFSET.unsigned_abs()),
     );
 }
 
 #[test]
-fn test_utc_offsets_min_value() {
+fn test_offsets_min_value() {
     assert_all_examples(
-        gs::utc_offsets().min_value(UtcOffset::Known(0)),
+        gs::temporal::offsets().min_value(UtcOffset::Known(0)),
         |o| matches!(o, UtcOffset::Known(s) if *s >= 0),
     );
 }
 
 #[test]
-fn test_utc_offsets_max_value() {
+fn test_offsets_max_value() {
     assert_all_examples(
-        gs::utc_offsets().max_value(UtcOffset::Known(0)),
+        gs::temporal::offsets().max_value(UtcOffset::Known(0)),
         |o| matches!(o, UtcOffset::Known(s) if *s <= 0),
     );
 }
 
 #[test]
-fn test_utc_offsets_granularity() {
+fn test_offsets_granularity() {
     assert_all_examples(
-        gs::utc_offsets().granularity(Granularity::Hours),
+        gs::temporal::offsets().granularity(Granularity::Hours),
         |o| matches!(o, UtcOffset::Known(s) if s % 3600 == 0),
     );
     assert_all_examples(
-        gs::utc_offsets().granularity(Granularity::QuarterHours),
+        gs::temporal::offsets().granularity(Granularity::QuarterHours),
         |o| matches!(o, UtcOffset::Known(s) if s % 900 == 0),
     );
     assert_all_examples(
-        gs::utc_offsets().granularity(Granularity::Minutes),
+        gs::temporal::offsets().granularity(Granularity::Minutes),
         |o| matches!(o, UtcOffset::Known(s) if s % 60 == 0),
     );
 }
 
 #[test]
-fn test_utc_offsets_unknown() {
-    find_any(gs::utc_offsets().unknown(true), |o| {
+fn test_offsets_unknown() {
+    find_any(gs::temporal::offsets().unknown(true), |o| {
         *o == UtcOffset::Unknown
     });
 }
 
 #[test]
-fn test_utc_offsets_unknown_shrinks_to_a_known_offset() {
+fn test_offsets_unknown_shrinks_to_a_known_offset() {
     assert_eq!(
-        minimal(gs::utc_offsets().unknown(true), |_| true),
+        minimal(gs::temporal::offsets().unknown(true), |_| true),
         UtcOffset::Known(0)
     );
     assert_eq!(
-        minimal(gs::utc_offsets().unknown(true), |o| {
+        minimal(gs::temporal::offsets().unknown(true), |o| {
             *o == UtcOffset::Unknown || matches!(o, UtcOffset::Known(s) if s.unsigned_abs() >= 3600)
         }),
         UtcOffset::Known(3600)
     );
     assert_eq!(
-        minimal(gs::utc_offsets().unknown(true), |o| *o
+        minimal(gs::temporal::offsets().unknown(true), |o| *o
             == UtcOffset::Unknown),
         UtcOffset::Unknown
     );
 }
 
 #[test]
-fn test_utc_offsets_in_vec() {
+fn test_offsets_in_vec() {
     assert_all_examples(
-        gs::vecs(gs::utc_offsets().max_value(UtcOffset::Known(0))).max_size(5),
+        gs::vecs(gs::temporal::offsets().max_value(UtcOffset::Known(0))).max_size(5),
         |v| {
             v.iter()
                 .all(|o| matches!(o, UtcOffset::Known(s) if *s <= 0))
@@ -733,12 +750,12 @@ fn test_utc_offsets_in_vec() {
 }
 
 #[test]
-fn test_utc_offsets_default_generator() {
+fn test_offsets_default_generator() {
     check_can_generate_examples(gs::default::<UtcOffset>());
 }
 
 #[hegel::test]
-fn test_utc_offsets_property(tc: hegel::TestCase) {
+fn test_offsets_property(tc: hegel::TestCase) {
     let lo = tc.draw(
         gs::integers::<i32>()
             .min_value(-MAX_OFFSET)
@@ -759,7 +776,7 @@ fn test_utc_offsets_property(tc: hegel::TestCase) {
     };
     tc.assume(-(-lo).div_euclid(unit) <= hi.div_euclid(unit));
     let o = tc.draw(
-        gs::utc_offsets()
+        gs::temporal::offsets()
             .min_value(UtcOffset::Known(lo))
             .max_value(UtcOffset::Known(hi))
             .granularity(granularity),
@@ -771,8 +788,8 @@ fn test_utc_offsets_property(tc: hegel::TestCase) {
 }
 
 #[test]
-fn test_timezones_default() {
-    assert_all_examples(gs::timezones(), |zone| {
+fn test_zones_default() {
+    assert_all_examples(gs::temporal::zones(), |zone| {
         let info = info(&zone.name).unwrap();
         info.primary_name == zone.primary_name
             && !info.tags.contains(&Tag::Legacy)
@@ -782,60 +799,62 @@ fn test_timezones_default() {
 }
 
 #[test]
-fn test_timezones_names() {
+fn test_zones_names() {
     let names = ["Europe/London", "Asia/Calcutta"];
-    assert_all_examples(gs::timezones().names(names), move |zone| {
+    assert_all_examples(gs::temporal::zones().names(names), move |zone| {
         names.contains(&zone.name.as_str())
     });
-    find_any(gs::timezones().names(names), |zone| {
+    find_any(gs::temporal::zones().names(names), |zone| {
         zone.primary_name == "Asia/Kolkata"
     });
 }
 
 #[test]
-fn test_timezones_links() {
-    assert_all_examples(gs::timezones().links(false), |zone| {
+fn test_zones_links() {
+    assert_all_examples(gs::temporal::zones().links(false), |zone| {
         !info(&zone.name).unwrap().is_link
     });
-    find_any(gs::timezones(), |zone| info(&zone.name).unwrap().is_link);
+    find_any(gs::temporal::zones(), |zone| {
+        info(&zone.name).unwrap().is_link
+    });
 }
 
 #[test]
-fn test_timezones_legacy() {
-    find_any(gs::timezones().legacy(true), |zone| {
+fn test_zones_legacy() {
+    find_any(gs::temporal::zones().legacy(true), |zone| {
         info(&zone.name).unwrap().tags.contains(&Tag::Legacy)
     });
 }
 
 #[test]
-fn test_timezones_unknown() {
-    find_any(gs::timezones().unknown(true), |zone| {
+fn test_zones_unknown() {
+    find_any(gs::temporal::zones().unknown(true), |zone| {
         zone.name == UNKNOWN_ZONE
     });
 }
 
 #[test]
-fn test_timezones_opaque() {
+fn test_zones_opaque() {
     assert_all_examples(
-        gs::timezones().names(["Mars/Olympus"]).opaque(true),
+        gs::temporal::zones().names(["Mars/Olympus"]).opaque(true),
         |zone| zone.name == "Mars/Olympus" && zone.primary_name == "Mars/Olympus",
     );
 }
 
 #[test]
-fn test_timezones_shrink_to_utc() {
-    assert_eq!(minimal(gs::timezones(), |_| true).name, "UTC");
+fn test_zones_shrink_to_utc() {
+    assert_eq!(minimal(gs::temporal::zones(), |_| true).name, "UTC");
 }
 
 #[test]
-fn test_timezones_in_vec() {
-    assert_all_examples(gs::vecs(gs::timezones()).max_size(5), |v| {
+fn test_zones_in_vec() {
+    assert_all_examples(gs::vecs(gs::temporal::zones()).max_size(5), |v| {
         v.iter().all(|zone| info(&zone.name).is_some())
     });
 }
 
 #[test]
-fn test_timezones_default_generator() {
+fn test_zones_default_generator() {
     check_can_generate_examples(gs::default::<TimeZone>());
 }
 
@@ -843,31 +862,31 @@ fn zoned_agrees_with_jiff(z: &ZonedDateTime) -> bool {
     let tz = jiff::tz::TimeZone::get(&z.zone.name).unwrap();
     let ambiguous = tz.to_ambiguous_timestamp(jiff_datetime(z.civil));
     let (kind, before, after) = match ambiguous.offset() {
-        AmbiguousOffset::Unambiguous { offset } => (Kind::Unique, offset, offset),
-        AmbiguousOffset::Gap { before, after } => (Kind::Gap, before, after),
-        AmbiguousOffset::Fold { before, after } => (Kind::Fold, before, after),
+        AmbiguousOffset::Unambiguous { offset } => (TransitionKind::Unique, offset, offset),
+        AmbiguousOffset::Gap { before, after } => (TransitionKind::Gap, before, after),
+        AmbiguousOffset::Fold { before, after } => (TransitionKind::Fold, before, after),
     };
     let expected = match (kind, z.fold) {
-        (Kind::Fold, true) => ambiguous.later().unwrap(),
+        (TransitionKind::Fold, true) => ambiguous.later().unwrap(),
         _ => ambiguous.compatible().unwrap(),
     };
     let resolved = match kind {
-        Kind::Gap => after,
-        Kind::Fold if z.fold => after,
+        TransitionKind::Gap => after,
+        TransitionKind::Fold if z.fold => after,
         _ => before,
     };
     kind == z.kind
-        && before.seconds() == z.offset_before
-        && after.seconds() == z.offset_after
+        && UtcOffset::Known(before.seconds()) == z.offset_before
+        && UtcOffset::Known(after.seconds()) == z.offset_after
         && z.offset == UtcOffset::Known(resolved.seconds())
-        && expected == jiff_timestamp(z.timestamp)
-        && (z.kind == Kind::Fold || !z.fold)
+        && expected == jiff_timestamp(z.instant)
+        && (z.kind == TransitionKind::Fold || !z.fold)
 }
 
 #[test]
 fn test_zoned_datetimes_default() {
     assert_all_examples(
-        gs::zoned_datetimes()
+        gs::temporal::zoned_datetimes()
             .min_value(JIFF_MIN)
             .max_value(JIFF_MAX),
         zoned_agrees_with_jiff,
@@ -876,32 +895,35 @@ fn test_zoned_datetimes_default() {
 
 #[test]
 fn test_zoned_datetimes_reach_gaps_and_both_folds() {
-    let bounds = |g: gs::ZonedDateTimeGenerator| g.min_value(JIFF_MIN).max_value(JIFF_MAX);
-    find_any(bounds(gs::zoned_datetimes()), |z| z.kind == Kind::Gap);
-    find_any(bounds(gs::zoned_datetimes()), |z| {
-        z.kind == Kind::Fold && !z.fold
+    let bounds =
+        |g: gs::temporal::ZonedDateTimeGenerator| g.min_value(JIFF_MIN).max_value(JIFF_MAX);
+    find_any(bounds(gs::temporal::zoned_datetimes()), |z| {
+        z.kind == TransitionKind::Gap
     });
-    find_any(bounds(gs::zoned_datetimes()), |z| {
-        z.kind == Kind::Fold && z.fold
+    find_any(bounds(gs::temporal::zoned_datetimes()), |z| {
+        z.kind == TransitionKind::Fold && !z.fold
+    });
+    find_any(bounds(gs::temporal::zoned_datetimes()), |z| {
+        z.kind == TransitionKind::Fold && z.fold
     });
 }
 
 #[test]
 fn test_zoned_datetimes_time_zones() {
     assert_all_examples(
-        gs::zoned_datetimes()
-            .timezones(gs::timezones().names(["Europe/London"]))
+        gs::temporal::zoned_datetimes()
+            .zones(gs::temporal::zones().names(["Europe/London"]))
             .min_value(JIFF_MIN)
             .max_value(JIFF_MAX),
         |z| z.zone.name == "Europe/London" && zoned_agrees_with_jiff(z),
     );
     assert_all_examples(
-        gs::zoned_datetimes().timezones(gs::timezones().names([UNKNOWN_ZONE])),
+        gs::temporal::zoned_datetimes().zones(gs::temporal::zones().names([UNKNOWN_ZONE])),
         |z| {
             z.zone.name == UNKNOWN_ZONE
                 && z.offset == UtcOffset::Unknown
-                && z.kind == Kind::Unique
-                && resolve(UNKNOWN_ZONE, z.civil).unwrap().timestamp == z.timestamp
+                && z.kind == TransitionKind::Unique
+                && resolve(UNKNOWN_ZONE, z.civil).unwrap().instant == z.instant
         },
     );
 }
@@ -909,7 +931,7 @@ fn test_zoned_datetimes_time_zones() {
 #[test]
 fn test_zoned_datetimes_min_value() {
     let min = datetime(2024, 1, 1, 0, 0, 0);
-    assert_all_examples(gs::zoned_datetimes().min_value(min), move |z| {
+    assert_all_examples(gs::temporal::zoned_datetimes().min_value(min), move |z| {
         z.civil >= min
     });
 }
@@ -917,33 +939,33 @@ fn test_zoned_datetimes_min_value() {
 #[test]
 fn test_zoned_datetimes_max_value() {
     let max = datetime(1999, 12, 31, 0, 0, 0);
-    assert_all_examples(gs::zoned_datetimes().max_value(max), move |z| {
+    assert_all_examples(gs::temporal::zoned_datetimes().max_value(max), move |z| {
         z.civil <= max
     });
 }
 
 #[test]
 fn test_zoned_datetimes_min_instant() {
-    let min = Timestamp::new(0, 0).unwrap();
-    assert_all_examples(gs::zoned_datetimes().min_instant(min), move |z| {
-        z.timestamp >= min
+    let min = Instant::new(0, 0).unwrap();
+    assert_all_examples(gs::temporal::zoned_datetimes().min_instant(min), move |z| {
+        z.instant >= min
     });
 }
 
 #[test]
 fn test_zoned_datetimes_max_instant() {
-    let max = Timestamp::new(0, 0).unwrap();
-    assert_all_examples(gs::zoned_datetimes().max_instant(max), move |z| {
-        z.timestamp <= max
+    let max = Instant::new(0, 0).unwrap();
+    assert_all_examples(gs::temporal::zoned_datetimes().max_instant(max), move |z| {
+        z.instant <= max
     });
 }
 
 #[test]
 fn test_zoned_datetimes_instant_bounds_replace_civil_bounds_and_back() {
-    let min = Timestamp::new(0, 0).unwrap();
-    let max = Timestamp::new(86_400, 0).unwrap();
+    let min = Instant::new(0, 0).unwrap();
+    let max = Instant::new(86_400, 0).unwrap();
     assert_all_examples(
-        gs::zoned_datetimes()
+        gs::temporal::zoned_datetimes()
             .min_value(datetime(1999, 1, 1, 0, 0, 0))
             .max_instant(max)
             .min_instant(min)
@@ -952,7 +974,7 @@ fn test_zoned_datetimes_instant_bounds_replace_civil_bounds_and_back() {
         |z| z.civil.date.year == 2000,
     );
     assert_all_examples(
-        gs::zoned_datetimes()
+        gs::temporal::zoned_datetimes()
             .min_instant(min)
             .max_value(datetime(1999, 12, 31, 0, 0, 0)),
         |z| z.civil.date.year <= 1999,
@@ -961,41 +983,42 @@ fn test_zoned_datetimes_instant_bounds_replace_civil_bounds_and_back() {
 
 #[test]
 fn test_zoned_datetimes_precision() {
-    assert_all_examples(gs::zoned_datetimes().precision(Precision::Minutes), |z| {
-        z.civil.time.second == 0 && z.civil.time.nanosecond == 0
-    });
+    assert_all_examples(
+        gs::temporal::zoned_datetimes().precision(Precision::Minutes),
+        |z| z.civil.time.second == 0 && z.civil.time.nanosecond == 0,
+    );
 }
 
 #[test]
 fn test_zoned_datetimes_imaginary() {
     assert_all_examples(
-        gs::zoned_datetimes()
+        gs::temporal::zoned_datetimes()
             .min_value(JIFF_MIN)
             .max_value(JIFF_MAX)
             .allow_imaginary(false),
-        |z| z.kind != Kind::Gap && zoned_agrees_with_jiff(z),
+        |z| z.kind != TransitionKind::Gap && zoned_agrees_with_jiff(z),
     );
 }
 
 #[test]
 fn test_zoned_datetimes_ambiguous() {
-    let earlier = gs::zoned_datetimes()
+    let earlier = gs::temporal::zoned_datetimes()
         .min_value(JIFF_MIN)
         .max_value(JIFF_MAX)
         .ambiguous(Ambiguous::Earlier);
     assert_all_examples(earlier, |z| !z.fold && zoned_agrees_with_jiff(z));
-    let later = gs::zoned_datetimes()
+    let later = gs::temporal::zoned_datetimes()
         .min_value(JIFF_MIN)
         .max_value(JIFF_MAX)
         .ambiguous(Ambiguous::Later);
     assert_all_examples(later, |z| {
-        z.fold == (z.kind == Kind::Fold) && zoned_agrees_with_jiff(z)
+        z.fold == (z.kind == TransitionKind::Fold) && zoned_agrees_with_jiff(z)
     });
 }
 
 #[test]
 fn test_zoned_datetimes_in_vec() {
-    assert_all_examples(gs::vecs(gs::zoned_datetimes()).max_size(3), |v| {
+    assert_all_examples(gs::vecs(gs::temporal::zoned_datetimes()).max_size(3), |v| {
         v.iter()
             .all(|z| resolve(&z.zone.name, z.civil).unwrap().kind == z.kind)
     });
@@ -1003,17 +1026,17 @@ fn test_zoned_datetimes_in_vec() {
 
 #[test]
 fn test_zoned_datetimes_shrink_to_utc_at_the_millennium() {
-    let z = minimal(gs::zoned_datetimes(), |_| true);
+    let z = minimal(gs::temporal::zoned_datetimes(), |_| true);
     assert_eq!(z.to_string(), "2000-01-01T00:00:00+00:00[UTC]");
 }
 
 #[test]
 fn test_zoned_datetimes_shrink_past_a_fold_at_the_lower_bound() {
-    let new_york = || gs::timezones().names(["America/New_York"]);
+    let new_york = || gs::temporal::zones().names(["America/New_York"]);
     let in_fold = datetime(2024, 11, 3, 1, 30, 0);
     let both = minimal(
-        gs::zoned_datetimes()
-            .timezones(new_york())
+        gs::temporal::zoned_datetimes()
+            .zones(new_york())
             .min_value(in_fold),
         |_| true,
     );
@@ -1022,18 +1045,18 @@ fn test_zoned_datetimes_shrink_past_a_fold_at_the_lower_bound() {
         "2024-11-03T02:00:00-05:00[America/New_York]"
     );
     let repeated = minimal(
-        gs::zoned_datetimes()
-            .timezones(new_york())
+        gs::temporal::zoned_datetimes()
+            .zones(new_york())
             .min_value(in_fold),
-        |z| z.kind == Kind::Fold,
+        |z| z.kind == TransitionKind::Fold,
     );
     assert_eq!(
         repeated.to_string(),
         "2024-11-03T01:30:00-04:00[America/New_York][fold=0]"
     );
     let earlier = minimal(
-        gs::zoned_datetimes()
-            .timezones(new_york())
+        gs::temporal::zoned_datetimes()
+            .zones(new_york())
             .min_value(in_fold)
             .ambiguous(Ambiguous::Earlier),
         |_| true,
@@ -1051,19 +1074,23 @@ fn test_zoned_datetimes_default_generator() {
 
 #[hegel::test]
 fn test_zoned_datetimes_property(tc: hegel::TestCase) {
-    let lo = tc.draw(gs::datetimes().min_value(JIFF_MIN).max_value(JIFF_MAX));
-    let hi = tc.draw(gs::datetimes().min_value(lo).max_value(JIFF_MAX));
-    let z = tc.draw(gs::zoned_datetimes().min_value(lo).max_value(hi));
+    let lo = tc.draw(
+        gs::temporal::datetimes()
+            .min_value(JIFF_MIN)
+            .max_value(JIFF_MAX),
+    );
+    let hi = tc.draw(gs::temporal::datetimes().min_value(lo).max_value(JIFF_MAX));
+    let z = tc.draw(gs::temporal::zoned_datetimes().min_value(lo).max_value(hi));
     assert!(z.civil >= lo && z.civil <= hi);
     assert!(zoned_agrees_with_jiff(&z));
 }
 
 #[hegel::test]
 fn test_offset_at_agrees_with_jiff(tc: hegel::TestCase) {
-    let zone = tc.draw(gs::timezones());
-    let min = Timestamp::new(-377_700_000_000, 0).unwrap();
-    let max = Timestamp::new(253_402_207_200, 0).unwrap();
-    let t = tc.draw(gs::timestamps().min_value(min).max_value(max));
+    let zone = tc.draw(gs::temporal::zones());
+    let min = Instant::new(-377_700_000_000, 0).unwrap();
+    let max = Instant::new(253_402_207_200, 0).unwrap();
+    let t = tc.draw(gs::temporal::instants().min_value(min).max_value(max));
     let expected = jiff::tz::TimeZone::get(&zone.name)
         .unwrap()
         .to_offset(jiff_timestamp(t));
@@ -1074,58 +1101,59 @@ fn test_offset_at_agrees_with_jiff(tc: hegel::TestCase) {
 }
 
 #[test]
-fn test_signed_durations_default() {
-    assert_all_examples(gs::signed_durations(), |d| {
+fn test_durations_default() {
+    assert_all_examples(gs::temporal::durations(), |d| {
         SignedDuration::new(d.seconds, d.nanoseconds).is_ok()
     });
 }
 
 #[test]
-fn test_signed_durations_min_value() {
+fn test_durations_min_value() {
     let min = SignedDuration::new(0, 0).unwrap();
-    assert_all_examples(gs::signed_durations().min_value(min), move |d| *d >= min);
+    assert_all_examples(gs::temporal::durations().min_value(min), move |d| *d >= min);
 }
 
 #[test]
-fn test_signed_durations_max_value() {
+fn test_durations_max_value() {
     let max = SignedDuration::new(0, 0).unwrap();
-    assert_all_examples(gs::signed_durations().max_value(max), move |d| *d <= max);
+    assert_all_examples(gs::temporal::durations().max_value(max), move |d| *d <= max);
 }
 
 #[test]
-fn test_signed_durations_precision() {
-    assert_all_examples(gs::signed_durations().precision(Precision::Seconds), |d| {
-        d.nanoseconds == 0
-    });
+fn test_durations_precision() {
+    assert_all_examples(
+        gs::temporal::durations().precision(Precision::Seconds),
+        |d| d.nanoseconds == 0,
+    );
 }
 
 #[test]
-fn test_signed_durations_in_vec() {
+fn test_durations_in_vec() {
     let max = SignedDuration::new(0, 0).unwrap();
     assert_all_examples(
-        gs::vecs(gs::signed_durations().max_value(max)).max_size(5),
+        gs::vecs(gs::temporal::durations().max_value(max)).max_size(5),
         move |v| v.iter().all(|d| *d <= max),
     );
 }
 
 #[test]
-fn test_signed_durations_shrink_to_zero() {
+fn test_durations_shrink_to_zero() {
     assert_eq!(
-        minimal(gs::signed_durations(), |_| true),
+        minimal(gs::temporal::durations(), |_| true),
         SignedDuration::new(0, 0).unwrap()
     );
 }
 
 #[test]
-fn test_signed_durations_default_generator() {
+fn test_durations_default_generator() {
     check_can_generate_examples(gs::default::<SignedDuration>());
 }
 
 #[hegel::test]
-fn test_signed_durations_property(tc: hegel::TestCase) {
-    let lo = tc.draw(gs::signed_durations());
-    let hi = tc.draw(gs::signed_durations().min_value(lo));
-    let d = tc.draw(gs::signed_durations().min_value(lo).max_value(hi));
+fn test_durations_property(tc: hegel::TestCase) {
+    let lo = tc.draw(gs::temporal::durations());
+    let hi = tc.draw(gs::temporal::durations().min_value(lo));
+    let d = tc.draw(gs::temporal::durations().min_value(lo).max_value(hi));
     assert!(d >= lo && d <= hi);
     assert_eq!(
         d.to_string(),
@@ -1140,15 +1168,15 @@ fn uniform_sign(s: &Span) -> bool {
 
 #[test]
 fn test_spans_default() {
-    assert_all_examples(gs::spans(), uniform_sign);
-    find_any(gs::spans(), |s| s.years < 0);
-    find_any(gs::spans(), |s| s.nanoseconds > 0);
+    assert_all_examples(gs::temporal::spans(), uniform_sign);
+    find_any(gs::temporal::spans(), |s| s.years < 0);
+    find_any(gs::temporal::spans(), |s| s.nanoseconds > 0);
 }
 
 #[test]
 fn test_spans_unit_bounds() {
     assert_all_examples(
-        gs::spans()
+        gs::temporal::spans()
             .unit_bounds(SpanUnit::Days, 0, 30)
             .unit_bounds(SpanUnit::Hours, -23, 23),
         |s| {
@@ -1164,12 +1192,14 @@ fn test_spans_unit_bounds() {
 
 #[test]
 fn test_spans_sign() {
-    assert_all_examples(gs::spans().sign(SpanSign::NonNegative), |s| {
+    assert_all_examples(gs::temporal::spans().sign(SpanSign::NonNegative), |s| {
         SpanUnit::ALL.iter().all(|u| s.get(*u) >= 0)
     });
-    find_any(gs::spans().sign(SpanSign::Mixed), |s| !uniform_sign(s));
+    find_any(gs::temporal::spans().sign(SpanSign::Mixed), |s| {
+        !uniform_sign(s)
+    });
     assert_all_examples(
-        gs::spans()
+        gs::temporal::spans()
             .unit_bounds(SpanUnit::Days, -30, 30)
             .sign(SpanSign::Uniform),
         uniform_sign,
@@ -1179,14 +1209,14 @@ fn test_spans_sign() {
 #[test]
 fn test_spans_in_vec() {
     assert_all_examples(
-        gs::vecs(gs::spans().unit_bounds(SpanUnit::Days, 0, 30)).max_size(5),
+        gs::vecs(gs::temporal::spans().unit_bounds(SpanUnit::Days, 0, 30)).max_size(5),
         |v| v.iter().all(|s| (0..=30).contains(&s.days)),
     );
 }
 
 #[test]
 fn test_spans_shrink_to_zero() {
-    assert_eq!(minimal(gs::spans(), |_| true), Span::default());
+    assert_eq!(minimal(gs::temporal::spans(), |_| true), Span::default());
 }
 
 #[test]
@@ -1205,6 +1235,160 @@ fn test_spans_property(tc: hegel::TestCase) {
         SpanSign::NonNegative,
     ]));
     tc.assume(sign != SpanSign::NonNegative || lo >= 0);
-    let s = tc.draw(gs::spans().unit_bounds(unit, lo, hi).sign(sign));
+    let s = tc.draw(gs::temporal::spans().unit_bounds(unit, lo, hi).sign(sign));
     assert!((lo..=hi).contains(&s.get(unit)));
+}
+
+fn zone(name: &str) -> TimeZone {
+    TimeZone::new(name).unwrap()
+}
+
+fn in_new_york() -> gs::temporal::ZonedDateTimeGenerator {
+    gs::temporal::zoned_datetimes()
+        .zones(gs::just(zone("America/New_York")))
+        .min_value(JIFF_MIN)
+        .max_value(JIFF_MAX)
+}
+
+#[test]
+fn test_zoned_datetimes_from_any_zone_generator() {
+    let names = ["America/New_York", "Europe/London", "Asia/Calcutta"];
+    assert_all_examples(
+        gs::temporal::zoned_datetimes()
+            .zones(gs::sampled_from(names.map(zone).to_vec()))
+            .min_value(JIFF_MIN)
+            .max_value(JIFF_MAX),
+        move |z| names.contains(&z.zone.name.as_str()) && zoned_agrees_with_jiff(z),
+    );
+}
+
+#[test]
+fn test_zoned_datetimes_from_any_zone_generator_reach_every_zone() {
+    let names = ["America/New_York", "Europe/London", "Asia/Calcutta"];
+    for name in names {
+        find_any(
+            gs::temporal::zoned_datetimes().zones(gs::sampled_from(names.map(zone).to_vec())),
+            move |z| z.zone.name == name,
+        );
+    }
+}
+
+#[test]
+fn test_zoned_datetimes_from_a_boxed_zone_generator() {
+    assert_all_examples(
+        gs::temporal::zoned_datetimes()
+            .zones(gs::temporal::zones().names(["Asia/Calcutta"]).boxed()),
+        |z| z.zone.name == "Asia/Calcutta",
+    );
+    assert_all_examples(
+        gs::temporal::zoned_datetimes().zones(gs::just(zone("Europe/London")).boxed()),
+        |z| z.zone.name == "Europe/London",
+    );
+}
+
+#[test]
+fn test_zoned_datetimes_from_any_zone_generator_keep_the_drawn_zone() {
+    assert_all_examples(
+        gs::temporal::zoned_datetimes().zones(gs::just(zone("Asia/Calcutta"))),
+        |z| z.zone.name == "Asia/Calcutta" && z.zone.primary_name == "Asia/Kolkata",
+    );
+}
+
+#[test]
+fn test_zoned_datetimes_from_any_zone_generator_reach_gaps_and_both_folds() {
+    find_any(in_new_york(), |z| z.kind == TransitionKind::Gap);
+    find_any(in_new_york(), |z| z.kind == TransitionKind::Fold && !z.fold);
+    find_any(in_new_york(), |z| z.kind == TransitionKind::Fold && z.fold);
+}
+
+#[test]
+fn test_zoned_datetimes_from_any_zone_generator_apply_the_settings() {
+    let min = datetime(2024, 1, 1, 0, 0, 0);
+    let max = datetime(2024, 12, 31, 0, 0, 0);
+    assert_all_examples(
+        in_new_york()
+            .min_value(min)
+            .max_value(max)
+            .precision(Precision::Minutes),
+        move |z| {
+            z.civil >= min
+                && z.civil <= max
+                && z.civil.time.second == 0
+                && z.civil.time.nanosecond == 0
+                && zoned_agrees_with_jiff(z)
+        },
+    );
+    let lo = Instant::new(0, 0).unwrap();
+    let hi = Instant::new(86_400, 0).unwrap();
+    assert_all_examples(in_new_york().min_instant(lo).max_instant(hi), move |z| {
+        z.instant >= lo && z.instant <= hi && zoned_agrees_with_jiff(z)
+    });
+    assert_all_examples(in_new_york().allow_imaginary(false), |z| {
+        z.kind != TransitionKind::Gap && zoned_agrees_with_jiff(z)
+    });
+    assert_all_examples(in_new_york().ambiguous(Ambiguous::Earlier), |z| {
+        !z.fold && zoned_agrees_with_jiff(z)
+    });
+    assert_all_examples(in_new_york().ambiguous(Ambiguous::Later), |z| {
+        z.fold == (z.kind == TransitionKind::Fold) && zoned_agrees_with_jiff(z)
+    });
+}
+
+#[test]
+fn test_zoned_datetimes_from_any_zone_generator_shrink_in_the_zone() {
+    let z = minimal(
+        gs::temporal::zoned_datetimes().zones(gs::just(zone("America/New_York"))),
+        |_| true,
+    );
+    assert_eq!(z.to_string(), "2000-01-01T00:00:00-05:00[America/New_York]");
+}
+
+#[test]
+fn test_zoned_datetimes_from_any_zone_generator_with_an_opaque_zone() {
+    let mars = TimeZone {
+        name: "Mars/Olympus".to_string(),
+        primary_name: "Mars/Olympus".to_string(),
+    };
+    assert_all_examples(gs::temporal::zoned_datetimes().zones(gs::just(mars)), |z| {
+        z.zone.name == "Mars/Olympus"
+            && z.offset == UtcOffset::Unknown
+            && z.offset_before == UtcOffset::Unknown
+            && z.kind == TransitionKind::Unique
+            && resolve(UNKNOWN_ZONE, z.civil).unwrap().instant == z.instant
+    });
+}
+
+#[test]
+fn test_zoned_datetimes_from_any_zone_generator_with_the_unknown_zone() {
+    assert_all_examples(
+        gs::temporal::zoned_datetimes().zones(gs::just(zone(UNKNOWN_ZONE))),
+        |z| z.zone.name == UNKNOWN_ZONE && z.offset == UtcOffset::Unknown,
+    );
+}
+
+#[test]
+fn test_zoned_datetimes_from_a_mapped_zones_generator() {
+    assert_all_examples(
+        gs::temporal::zoned_datetimes()
+            .zones(
+                gs::temporal::zones()
+                    .names(["Europe/London"])
+                    .map(|zone| zone),
+            )
+            .min_value(JIFF_MIN)
+            .max_value(JIFF_MAX),
+        |z| z.zone.name == "Europe/London" && zoned_agrees_with_jiff(z),
+    );
+}
+
+#[test]
+fn test_zoned_datetimes_from_any_zone_generator_in_vec() {
+    let zones = gs::sampled_from(vec![zone("UTC"), zone("Australia/Lord_Howe")]);
+    assert_all_examples(
+        gs::vecs(gs::temporal::zoned_datetimes().zones(zones)).max_size(5),
+        |v| {
+            v.iter()
+                .all(|z| resolve(&z.zone.name, z.civil).unwrap().kind == z.kind)
+        },
+    );
 }

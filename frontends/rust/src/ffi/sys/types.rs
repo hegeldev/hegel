@@ -48,6 +48,7 @@ opaque_handles!(
     HegelSpanSpec,
     HegelTimezoneSpec,
     HegelZonedSpec,
+    HegelZoneSource,
 );
 
 #[repr(C)]
@@ -251,6 +252,102 @@ pub(crate) const HEGEL_TIMEZONE_TAG_UNDEFINED: u32 = 1 << 12;
 pub(crate) const HEGEL_TIMEZONE_TAG_LINK: u32 = 1 << 13;
 pub(crate) const HEGEL_TIMEZONE_TAG_LEGACY: u32 = 1 << 14;
 pub(crate) const HEGEL_TIMEZONE_TAG_INVERTED_SIGN: u32 = 1 << 15;
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub(crate) enum hegel_zone_after_t {
+    HEGEL_ZONE_AFTER_HOLD = 0,
+    HEGEL_ZONE_AFTER_RULE = 1,
+    HEGEL_ZONE_AFTER_INFER = 2,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub(crate) enum hegel_zone_rule_day_t {
+    HEGEL_ZONE_RULE_DAY_JULIAN = 0,
+    HEGEL_ZONE_RULE_DAY_ZERO_BASED = 1,
+    HEGEL_ZONE_RULE_DAY_MONTH_WEEK_DAY = 2,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct hegel_zone_type_t {
+    pub utoff: i32,
+    pub is_dst: bool,
+    pub abbreviation: hegel_string_t,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct hegel_zone_transition_t {
+    pub instant: i64,
+    pub local_type: hegel_zone_type_t,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct hegel_zone_rule_date_t {
+    pub kind: u32,
+    pub day: u16,
+    pub month: u8,
+    pub week: u8,
+    pub weekday: u8,
+    pub time: i32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct hegel_zone_data_t {
+    pub initial: hegel_zone_type_t,
+    pub transitions: *const hegel_zone_transition_t,
+    pub transition_count: usize,
+    pub after: u32,
+    pub standard: hegel_zone_type_t,
+    pub has_dst: bool,
+    pub dst: hegel_zone_type_t,
+    pub dst_start: hegel_zone_rule_date_t,
+    pub dst_end: hegel_zone_rule_date_t,
+    pub last_year: i32,
+}
+
+pub(crate) type hegel_zone_offset_fn_t = Option<
+    unsafe extern "C" fn(
+        user_data: *mut c_void,
+        ctx: *mut HegelContext,
+        instant: i64,
+        out_type: *mut hegel_zone_type_t,
+    ) -> hegel_result_t,
+>;
+
+pub(crate) type hegel_zone_next_transition_fn_t = Option<
+    unsafe extern "C" fn(
+        user_data: *mut c_void,
+        ctx: *mut HegelContext,
+        after: i64,
+        out_found: *mut bool,
+        out_instant: *mut i64,
+    ) -> hegel_result_t,
+>;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct hegel_zone_oracle_t {
+    pub offset_at: hegel_zone_offset_fn_t,
+    pub next_transition: hegel_zone_next_transition_fn_t,
+    pub user_data: *mut c_void,
+    pub first_year: i32,
+    pub last_year: i32,
+    pub after: u32,
+}
+
+pub(crate) type hegel_zone_loader_t = Option<
+    unsafe extern "C" fn(
+        user_data: *mut c_void,
+        ctx: *mut HegelContext,
+        source: *mut HegelZoneSource,
+        name: hegel_string_t,
+    ) -> hegel_result_t,
+>;
 
 #[repr(C)]
 #[derive(Copy, Clone)]

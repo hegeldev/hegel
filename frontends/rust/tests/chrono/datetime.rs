@@ -140,7 +140,7 @@ fn test_datetimes_full_range_bounds() {
 #[test]
 fn test_datetimes_precision() {
     use chrono::Timelike;
-    use hegel::datetime::Precision;
+    use hegel::generators::temporal::Precision;
     assert_all_examples(chrono_gs::datetimes().precision(Precision::Minutes), |dt| {
         let local = dt.naive_local();
         local.second() == 0 && local.nanosecond() == 0
@@ -150,7 +150,7 @@ fn test_datetimes_precision() {
 #[test]
 fn test_datetimes_utc_precision() {
     use chrono::Timelike;
-    use hegel::datetime::Precision;
+    use hegel::generators::temporal::Precision;
     assert_all_examples(
         chrono_gs::datetimes()
             .timezones(gs::just(Utc))
@@ -250,7 +250,7 @@ fn test_datetimes_fixed_offset_property(tc: hegel::TestCase) {
 
 #[test]
 fn test_datetimes_imaginary_and_ambiguous_accepted_without_transitions() {
-    use hegel::datetime::Ambiguous;
+    use hegel::generators::temporal::Ambiguous;
     check_can_generate_examples(
         chrono_gs::datetimes()
             .allow_imaginary(true)
