@@ -82,9 +82,8 @@ check-release-script:
 # Coverage is measured over the whole workspace: the engine is covered both
 # by its own tests and by the Rust frontend driving it over the C ABI.
 
-# Whole-workspace line coverage (needs cargo-llvm-cov + llvm-tools-preview).
+# Whole-workspace line coverage (needs cargo-llvm-cov, cargo-nextest + llvm-tools-preview).
 check-coverage:
-    # requires cargo-llvm-cov and llvm-tools-preview
     # Force opt-level 0 (overriding `[profile.dev] opt-level` in Cargo.toml):
     # cargo-llvm-cov needs unoptimized code for accurate line attribution, as
     # optimization inlines small functions and drops their coverage regions.

@@ -25,7 +25,7 @@ The Hegel monorepo. `libhegel/` is the native property-based testing engine (the
 just check                # definition of done for the whole repo: lint + every component's tests
 just lint                 # workspace lints + each component's lints
 just format
-just check-coverage       # whole-workspace coverage (needs cargo-llvm-cov + llvm-tools-preview)
+just check-coverage       # whole-workspace coverage (needs cargo-llvm-cov, cargo-nextest + llvm-tools-preview)
 just libhegel::check      # one component
 just rust::check
 just python::check        # needs `just python::setup` once (uv)
