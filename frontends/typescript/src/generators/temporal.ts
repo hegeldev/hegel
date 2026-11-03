@@ -1,9 +1,35 @@
 /**
- * Date and time generators: calendar dates, wall-clock times, instants, UTC
- * offsets, time zones, zoned datetimes, durations and JavaScript `Date`s.
+ * Date and time generators, reached as `generators.temporal`: calendar dates
+ * ({@link dates}), wall-clock times ({@link times}), datetimes without a zone
+ * ({@link datetimes}), datetimes in a zone ({@link zonedDateTimes}), exact
+ * moments ({@link instants}), UTC offsets ({@link offsets}), IANA time zone
+ * names ({@link zones}), calendar spans ({@link spans}) and JavaScript
+ * `Date`s ({@link jsDates}), plus {@link tzdbVersion}, the time zone
+ * database release the engine bundles.
  *
- * The values are the immutable classes in the `datetime` module, shaped like
+ * ```ts
+ * import * as hegel from "@hegeldev/hegel";
+ * import * as gs from "@hegeldev/hegel/generators";
+ *
+ * hegel.test((tc) => {
+ *   const date = tc.draw(gs.temporal.dates({ minValue: { year: 2000, month: 1, day: 1 } }));
+ *   const zoned = tc.draw(gs.temporal.zonedDateTimes({ zones: gs.temporal.zones() }));
+ * });
+ * ```
+ *
+ * The values are the immutable classes this namespace also exports
+ * ({@link PlainDate}, {@link PlainTime}, {@link PlainDateTime},
+ * {@link Instant}, {@link ZonedDateTime} and {@link Duration}), shaped like
  * their `Temporal` counterparts; see each generator for the conversion.
+ *
+ * Zones are drawn against a {@link ZoneSource}: the time zone database whose
+ * transitions the draws aim at and whose offsets they resolve with. By default
+ * that is the host's own, the one `Temporal` and `Intl` use
+ * ({@link ZoneSource.host}), so a drawn value means the same to the code under
+ * test as to Hegel. {@link ZoneSource.setDefault} changes the default, and
+ * {@link zones} takes a `source` for one generator: {@link ZoneSource.bundled}
+ * for the engine's bundled database, or {@link ZoneSource.custom} for the
+ * database of a date library.
  *
  * @packageDocumentation
  */
@@ -33,17 +59,47 @@ import {
   ZonedDateTime,
   Duration,
   DURATION_UNITS,
-  civilFromDays,
-  formatUtcOffset,
-  parseUtcOffset,
   type PlainDateLike,
   type PlainTimeLike,
   type PlainDateTimeLike,
   type InstantLike,
   type TransitionKind,
   type DurationUnit,
-} from "../datetime.js";
-import { hostKnowsZone } from "../hostZones.js";
+} from "../temporal.js";
+import { civilFromDays, weekdayFromDays, formatUtcOffset, parseUtcOffset } from "../calendar.js";
+import { entryEngine } from "../runtime.js";
+import { ZoneSource, unknownZone, zoneSourceKnows } from "../zoneSource.js";
+
+export {
+  PlainDate,
+  PlainTime,
+  PlainDateTime,
+  Instant,
+  ZonedDateTime,
+  Duration,
+  DURATION_UNITS,
+} from "../temporal.js";
+export type {
+  PlainDateLike,
+  PlainTimeLike,
+  PlainDateTimeLike,
+  InstantLike,
+  ZonedDateTimeLike,
+  TransitionKind,
+  DurationLike,
+  DurationUnit,
+} from "../temporal.js";
+export { ZoneSource } from "../zoneSource.js";
+export type {
+  ZoneType,
+  ZoneTransition,
+  RuleDate,
+  ZoneRule,
+  ZoneData,
+  ZoneOracle,
+  ZoneDefinition,
+  ZoneSourceOptions,
+} from "../zoneSource.js";
 import { Generator, PrintableGenerator, BasicGenerator } from "./core.js";
 
 const NANOSECONDS_PER_SECOND = 1_000_000_000n;
@@ -228,8 +284,12 @@ function hasAllowedDate(
   const first = min.epochDays;
   const last = Math.min(max.epochDays, first + 400);
   for (let days = first; days <= last; days++) {
-    const date = civilFromDays(days);
-    if (allowedBy(weekdays, date.dayOfWeek) && allowedBy(months, date.month)) return true;
+    if (
+      allowedBy(weekdays, weekdayFromDays(days)) &&
+      allowedBy(months, civilFromDays(days).month)
+    ) {
+      return true;
+    }
   }
   return false;
 }
@@ -389,8 +449,8 @@ const GRANULARITIES: Record<string, { code: number; seconds: number }> = {
   second: { code: NativeGranularity.SECONDS, seconds: 1 },
 };
 
-/** Options for {@link utcOffsets}. */
-export interface UtcOffsetOptions {
+/** Options for {@link offsets}. */
+export interface OffsetOptions {
   /** The smallest offset, inclusive, as `±HH:MM[:SS]` or seconds. Defaults to `-23:59`, or `-23:59:59` at second granularity. */
   minValue?: string | number;
   /** The largest offset, inclusive. Defaults to `+23:59`, or `+23:59:59` at second granularity. */
@@ -411,10 +471,12 @@ function offsetSeconds(name: string, value: string | number): number {
 
 /**
  * Generate UTC offsets as `±HH:MM` strings (`±HH:MM:SS` when the offset is
- * not a whole number of minutes), shrinking towards `+00:00`. The strings
- * are valid `Temporal` time zone identifiers.
+ * not a whole number of minutes), shrinking towards `+00:00`. At the default
+ * minute granularity or coarser the strings are valid `Temporal` time zone
+ * identifiers; `Temporal` accepts a `±HH:MM:SS` offset only as the `offset`
+ * of a value, not as a time zone.
  */
-export function utcOffsets(options?: UtcOffsetOptions): PrintableGenerator<string> {
+export function offsets(options?: OffsetOptions): PrintableGenerator<string> {
   const granularity = GRANULARITIES[String(options?.granularity ?? "minute").replace(/s$/, "")];
   if (granularity === undefined) {
     throw new Error(
@@ -424,7 +486,7 @@ export function utcOffsets(options?: UtcOffsetOptions): PrintableGenerator<strin
   const limit = granularity.seconds === 1 ? 86_399 : 86_340;
   const min = offsetSeconds("minValue", options?.minValue ?? -limit);
   const max = offsetSeconds("maxValue", options?.maxValue ?? limit);
-  requireOrdered("utcOffsets()", min > max);
+  requireOrdered("offsets()", min > max);
   if (Math.ceil(min / granularity.seconds) * granularity.seconds > max) {
     throw new Error(
       `No offset between ${formatUtcOffset(min)} and ${formatUtcOffset(max)} has the requested granularity`,
@@ -436,35 +498,43 @@ export function utcOffsets(options?: UtcOffsetOptions): PrintableGenerator<strin
   );
 }
 
-/** Options for {@link timeZones}. */
-export interface TimeZoneOptions {
+/** Options for {@link zones}. */
+export interface ZoneOptions {
   /**
-   * Draw only from these IANA names. Each must be known to both the engine's
-   * database and the host's `Intl`. When given, `links` and `legacy` are ignored.
+   * Draw only from these IANA names, each of which the zone source must know.
+   * When given, `links` and `legacy` are ignored.
    */
   names?: readonly string[];
   /** Include link names (aliases such as `Asia/Calcutta` for `Asia/Kolkata`). Defaults to `true`. */
   links?: boolean;
   /** Include legacy names (`EST5EDT`, `US/Eastern`, ...). Defaults to `false`. */
   legacy?: boolean;
+  /**
+   * The database the zones come from, which a {@link zonedDateTimes} drawing
+   * from this generator draws against. Defaults to {@link ZoneSource.default}
+   * at the time of the draw.
+   */
+  source?: ZoneSource;
 }
 
-class TimeZonesGenerator extends BasicGenerator<string> {
+class ZonesGenerator extends BasicGenerator<string> {
   constructor(
     readonly names: readonly string[] | null,
     readonly links: boolean,
     readonly legacy: boolean,
+    readonly source: ZoneSource | null,
   ) {
-    super({ type: "timezone", names, links, legacy });
+    super({ type: "timezone", names, links, legacy, source });
   }
 }
 
-function checkZoneNames(names: readonly string[]): string[] {
+function checkZoneNames(names: readonly string[], source: ZoneSource | null): string[] {
   const checked = [...new Set(names)];
   if (checked.length === 0) throw new Error("names must not be empty");
+  const known = source ?? ZoneSource.default();
   for (const name of checked) {
-    if (typeof name !== "string" || !hostKnowsZone(name)) {
-      throw new Error(`The time zone ${String(name)} is not known to this host`);
+    if (typeof name !== "string" || !zoneSourceKnows(known, name)) {
+      throw unknownZone(known, String(name));
     }
   }
   return checked;
@@ -472,19 +542,36 @@ function checkZoneNames(names: readonly string[]): string[] {
 
 /**
  * Generate IANA time zone names (`America/New_York`), shrinking towards
- * `UTC`. Only names both the engine's bundled database and the host's `Intl`
- * know are drawn, so `Temporal.ZonedDateTime` and `Intl.DateTimeFormat` accept
- * every value.
+ * `UTC`. Without `names`, the names drawn are the bundled names the host's
+ * `Intl` knows for {@link ZoneSource.host} and {@link ZoneSource.bundled}, so
+ * `Temporal.ZonedDateTime` and `Intl.DateTimeFormat` accept every value, and
+ * the source's own names for a custom source.
  */
-export function timeZones(options?: TimeZoneOptions): PrintableGenerator<string> {
-  const names = options?.names === undefined ? null : checkZoneNames(options.names);
-  return new TimeZonesGenerator(names, options?.links ?? true, options?.legacy ?? false);
+export function zones(options?: ZoneOptions): PrintableGenerator<string> {
+  const source = options?.source ?? null;
+  if (source !== null && !(source instanceof ZoneSource)) {
+    throw new Error(`source must be a ZoneSource, got ${String(source)}`);
+  }
+  const names = options?.names === undefined ? null : checkZoneNames(options.names, source);
+  return new ZonesGenerator(names, options?.links ?? true, options?.legacy ?? false, source);
 }
+
+/**
+ * Which occurrence of a wall-clock time a transition repeated a
+ * {@link zonedDateTimes} draw means: `"both"` draws either, shrinking towards
+ * the earlier; `"earlier"` and `"later"` pin one.
+ */
+export type Ambiguous = "both" | "earlier" | "later";
 
 /** Options for {@link zonedDateTimes}. */
 export interface ZonedDateTimeOptions {
-  /** Where the zone comes from. Defaults to {@link timeZones}`()`; any generator of IANA names the host knows works. */
-  timeZones?: Generator<string>;
+  /**
+   * Where the zone comes from. Defaults to {@link zones}`()`. A
+   * {@link zones} generator's source is the database the value is drawn
+   * against; any other generator of names works too, and draws against
+   * {@link ZoneSource.default}, which must know each name it yields.
+   */
+  zones?: Generator<string>;
   /** The earliest wall-clock time, inclusive. Defaults to `-271821-04-22T00:00:00`. Mutually exclusive with the instant bounds. */
   minValue?: PlainDateTimeLike;
   /** The latest wall-clock time, inclusive. Defaults to `+275760-09-10T23:59:59.999999999`. */
@@ -497,7 +584,7 @@ export interface ZonedDateTimeOptions {
   /** Whether to draw wall-clock times a transition skipped (`kind: "gap"`). Defaults to `true`. */
   allowImaginary?: boolean;
   /** Which occurrence of a wall-clock time a transition repeated to draw. Defaults to `"both"`. */
-  ambiguous?: "both" | "earlier" | "later";
+  ambiguous?: Ambiguous;
 }
 
 const ZONED_MIN_DATETIME = new PlainDateTime(-271821, 4, 22);
@@ -518,8 +605,14 @@ class ZonedDateTimesGenerator extends PrintableGenerator<ZonedDateTime> {
   ) {
     super();
     this.engineSchema =
-      zones instanceof TimeZonesGenerator
-        ? { ...fields, names: zones.names, links: zones.links, legacy: zones.legacy }
+      zones instanceof ZonesGenerator
+        ? {
+            ...fields,
+            names: zones.names,
+            links: zones.links,
+            legacy: zones.legacy,
+            source: zones.source,
+          }
         : null;
   }
 
@@ -529,7 +622,13 @@ class ZonedDateTimesGenerator extends PrintableGenerator<ZonedDateTime> {
     }
     let schema = this.schemas.get(zone);
     if (schema === undefined) {
-      schema = { ...this.fields, names: checkZoneNames([zone]), links: true, legacy: true };
+      schema = {
+        ...this.fields,
+        names: checkZoneNames([zone], null),
+        links: true,
+        legacy: true,
+        source: null,
+      };
       this.schemas.set(zone, schema);
     }
     return schema;
@@ -560,8 +659,10 @@ class ZonedDateTimesGenerator extends PrintableGenerator<ZonedDateTime> {
  * shrinking towards 2000-01-01T00:00:00 in `UTC`. Transitions are explored:
  * values in a gap (`kind: "gap"`, unless `allowImaginary` is false) and in a
  * fold (`kind: "fold"`, with `fold` telling the occurrences apart) are drawn
- * alongside unambiguous ones. A draw whose offset the host's `Intl` disagrees
- * with (the two databases differ) is rejected like a failed assumption.
+ * alongside unambiguous ones, against the zone source of `zones` (see
+ * {@link ZoneSource}). Against {@link ZoneSource.host} or
+ * {@link ZoneSource.bundled}, a draw whose offset the host's `Intl` disagrees
+ * with is rejected like a failed assumption.
  *
  * The default wall-clock range lies two days inside `Temporal.PlainDateTime`'s,
  * so `Temporal.ZonedDateTime.from(value, { offset: "use" })` always succeeds;
@@ -606,23 +707,23 @@ export function zonedDateTimes(options?: ZonedDateTimeOptions): PrintableGenerat
     );
     fields["civil"] = { min: nativeDatetime(min), max: nativeDatetime(max) };
   }
-  return new ZonedDateTimesGenerator(options?.timeZones ?? timeZones(), fields);
+  return new ZonedDateTimesGenerator(options?.zones ?? zones(), fields);
 }
 
-/** Inclusive bounds on one unit of a {@link durations} draw. */
+/** Inclusive bounds on one unit of a {@link spans} draw. */
 export interface UnitBounds {
   min?: number;
   max?: number;
 }
 
 /**
- * Options for {@link durations}. Naming any unit enables only the named
+ * Options for {@link spans}. Naming any unit enables only the named
  * units; with none named every unit is drawn. Each unit's default bounds
  * keep `Temporal.Duration.from(value)` valid: ±4294967295 for years, months
  * and weeks, ±10¹⁰ days, ±10¹¹ hours, ±10¹³ minutes, ±10¹⁵ seconds and
  * ±2⁵³−1 for milliseconds, microseconds and nanoseconds.
  */
-export interface DurationOptions {
+export interface SpanOptions {
   years?: UnitBounds;
   months?: UnitBounds;
   weeks?: UnitBounds;
@@ -673,11 +774,13 @@ function unitBound(unit: DurationUnit, side: string, value: number): number {
 }
 
 /**
- * Generate {@link Duration}s, shrinking towards zero. Every unit of a value
+ * Generate calendar spans as {@link Duration}s, shrinking towards zero. The
+ * units are kept as drawn rather than balanced (90 minutes stays 90 minutes),
+ * so a span of one month is not a fixed amount of time. Every unit of a value
  * has the same sign, as `Temporal.Duration` requires, and
  * `Temporal.Duration.from(value)` converts a value.
  */
-export function durations(options?: DurationOptions): PrintableGenerator<Duration> {
+export function spans(options?: SpanOptions): PrintableGenerator<Duration> {
   const sign = options?.sign ?? "uniform";
   if (sign !== "uniform" && sign !== "non-negative") {
     throw new Error(`sign must be "uniform" or "non-negative", got ${String(sign)}`);
@@ -695,7 +798,7 @@ export function durations(options?: DurationOptions): PrintableGenerator<Duratio
     return { unit: UNIT_CODES[unit], min: BigInt(min), max: BigInt(max) };
   });
   if (units.some((u) => u.min > 0n) && units.some((u) => u.max < 0n)) {
-    throw new Error("durations(): the unit bounds leave no sign every unit can share");
+    throw new Error("spans(): the unit bounds leave no sign every unit can share");
   }
   return new BasicGenerator(
     {
@@ -751,4 +854,13 @@ export function jsDates(options?: JsDateOptions): PrintableGenerator<Date> {
     },
     parseJsDate,
   );
+}
+
+/**
+ * The IANA release of the time zone database the engine bundles, such as
+ * `"2026e"`: the database of {@link ZoneSource.bundled}, which is not the
+ * default; see {@link ZoneSource.version} for any source's.
+ */
+export function tzdbVersion(): string {
+  return entryEngine().tzdbVersion();
 }

@@ -21,9 +21,13 @@
  * Grammars (`hegel_grammar_t`, for `fromLark`) are compiled once per run for
  * each generator in the same cache and freed when the run ends.
  *
- * Time zone draws are limited to the zones the host's `Intl` knows, worked
- * out once per engine, and a zoned draw whose offset the host disagrees with
- * is rejected like a failed assumption.
+ * Time zone draws use the schema's zone source, or the default one when it
+ * has none (`src/zoneSource.ts`). A zoned draw takes two steps: it draws the
+ * name, gives the engine that zone's data if it has not had it yet, and draws
+ * the wall-clock time from a spec of that one name, which gives the same
+ * choice sequence as one step. Against the host's or the bundled database, a
+ * zoned draw whose offset the host's `Intl` disagrees with is rejected like a
+ * failed assumption.
  *
  * @packageDocumentation
  */
@@ -50,8 +54,15 @@ import {
 } from "./engine.js";
 
 import { fitsInt64 } from "./bytes.js";
-import { hostKnowsZone, hostOffsetSeconds } from "./hostZones.js";
-import { TIMEZONE_NAMES } from "./timezone-names.js";
+import { hostOffsetSeconds } from "./hostZones.js";
+import {
+  ZoneSource,
+  bundledZoneNames,
+  checksHostOffsets,
+  engineZoneSource,
+  loadZone,
+  requireZoneName,
+} from "./zoneSource.js";
 
 const UINT32_MAX = 0xffffffff;
 
@@ -366,7 +377,7 @@ export class HandleCache {
   }
 }
 
-/** The zones the host's `Intl` knows, out of the engine's database; computed once per engine. */
+/** The bundled zones the host's `Intl` knows, with their flags; computed once per engine. */
 interface HostZone {
   name: string;
   isLink: boolean;
@@ -377,30 +388,67 @@ const hostZonesByEngine = new WeakMap<Engine, HostZone[]>();
 function hostZones(lib: Engine, ctx: ContextHandle): HostZone[] {
   let zones = hostZonesByEngine.get(lib);
   if (zones === undefined) {
-    zones = [];
-    for (const name of TIMEZONE_NAMES) {
-      if (!hostKnowsZone(name)) continue;
+    zones = bundledZoneNames().map((name) => {
       const info = lib.timezoneInfo(ctx, name);
-      zones.push({
-        name,
-        isLink: info.isLink,
-        legacy: (info.tags & NativeTimeZoneTag.LEGACY) !== 0,
-      });
-    }
+      return { name, isLink: info.isLink, legacy: (info.tags & NativeTimeZoneTag.LEGACY) !== 0 };
+    });
     hostZonesByEngine.set(lib, zones);
   }
   return zones;
 }
 
-/** The zone names a `timezone` or `zoned_datetime` schema draws from. */
-function zoneNames(lib: Engine, ctx: ContextHandle, schema: Record<string, unknown>): string[] {
-  const names = schema["names"] as string[] | null;
-  if (names !== null) return names;
+/** The zone source a `timezone` or `zoned_datetime` schema draws against. */
+function sourceOf(schema: Record<string, unknown>): ZoneSource {
+  return (schema["source"] as ZoneSource | null) ?? ZoneSource.default();
+}
+
+/**
+ * Restrict `spec` to `names`, or to the source's names its link and legacy
+ * flags allow. The flags are set before the source, which needs a name they
+ * allow, and an explicit list allows every name until it replaces them.
+ */
+function configureTimeZoneSpec(
+  lib: Engine,
+  ctx: ContextHandle,
+  spec: TimeZoneSpecHandle,
+  source: ZoneSource,
+  names: readonly string[] | null,
+  schema: Record<string, unknown>,
+): void {
   const links = schema["links"] as boolean;
   const legacy = schema["legacy"] as boolean;
-  return hostZones(lib, ctx)
-    .filter((zone) => (links || !zone.isLink) && (legacy || !zone.legacy))
-    .map((zone) => zone.name);
+  const handle = engineZoneSource(lib, ctx, source);
+  if (handle === null) {
+    lib.timezoneSpecSetNames(
+      ctx,
+      spec,
+      names ??
+        hostZones(lib, ctx)
+          .filter((zone) => (links || !zone.isLink) && (legacy || !zone.legacy))
+          .map((zone) => zone.name),
+    );
+    return;
+  }
+  lib.timezoneSpecSetLinks(ctx, spec, links);
+  lib.timezoneSpecSetLegacy(ctx, spec, legacy);
+  if (names !== null) {
+    for (const name of names) requireZoneName(lib, ctx, source, name);
+  }
+  lib.timezoneSpecSetSource(ctx, spec, handle);
+  if (names !== null) lib.timezoneSpecSetNames(ctx, spec, names);
+}
+
+function newTimeZoneSpec(
+  lib: Engine,
+  ctx: ContextHandle,
+  source: ZoneSource,
+  names: readonly string[] | null,
+  schema: Record<string, unknown>,
+): CachedHandle<TimeZoneSpecHandle> {
+  const spec = lib.timezoneSpecNew(ctx);
+  const free = () => lib.freeTimezoneSpec(spec);
+  withCleanupOnFailure(() => configureTimeZoneSpec(lib, ctx, spec, source, names, schema), free);
+  return { value: spec, free };
 }
 
 function buildTimeZoneSpec(
@@ -408,18 +456,18 @@ function buildTimeZoneSpec(
   ctx: ContextHandle,
   schema: Record<string, unknown>,
 ): CachedHandle<TimeZoneSpecHandle> {
-  const spec = lib.timezoneSpecNew(ctx);
-  const free = () => lib.freeTimezoneSpec(spec);
-  withCleanupOnFailure(
-    () => lib.timezoneSpecSetNames(ctx, spec, zoneNames(lib, ctx, schema)),
-    free,
-  );
-  return { value: spec, free };
+  return newTimeZoneSpec(lib, ctx, sourceOf(schema), schema["names"] as string[] | null, schema);
 }
 
+/**
+ * The handles of a zoned draw: the spec its name is drawn from (`null` when
+ * it names one zone), the zoned spec, and a spec of each zone drawn so far.
+ */
 interface ZonedSpecs {
-  zones: TimeZoneSpecHandle;
+  source: ZoneSource;
+  zones: TimeZoneSpecHandle | null;
   zoned: ZonedSpecHandle;
+  single: Map<string, TimeZoneSpecHandle>;
 }
 
 function buildZonedSpecs(
@@ -427,12 +475,21 @@ function buildZonedSpecs(
   ctx: ContextHandle,
   schema: Record<string, unknown>,
 ): CachedHandle<ZonedSpecs> {
-  const zones = buildTimeZoneSpec(lib, ctx, schema);
-  const zoned = withCleanupOnFailure(() => lib.zonedSpecNew(ctx), zones.free);
+  const source = sourceOf(schema);
+  const names = schema["names"] as string[] | null;
+  const zones = names?.length === 1 ? null : newTimeZoneSpec(lib, ctx, source, names, schema);
+  const releaseZones = () => zones?.free();
+  const zoned = withCleanupOnFailure(() => lib.zonedSpecNew(ctx), releaseZones);
+  const single = new Map<string, TimeZoneSpecHandle>();
   const free = () =>
     withCleanup(
       () => lib.freeZonedSpec(zoned),
-      () => zones.free(),
+      () =>
+        withCleanup(releaseZones, () => {
+          const specs = [...single.values()];
+          single.clear();
+          for (const spec of specs) lib.freeTimezoneSpec(spec);
+        }),
     );
   withCleanupOnFailure(() => {
     const civil = schema["civil"] as { min: NativeDatetime; max: NativeDatetime } | null;
@@ -443,7 +500,7 @@ function buildZonedSpecs(
     lib.zonedSpecSetImaginary(ctx, zoned, schema["imaginary"] as number);
     lib.zonedSpecSetAmbiguous(ctx, zoned, schema["ambiguous"] as number);
   }, free);
-  return { value: { zones: zones.value, zoned }, free };
+  return { value: { source, zones: zones?.value ?? null, zoned, single }, free };
 }
 
 function buildDateOptions(
@@ -492,7 +549,18 @@ function drawZonedDatetime(
   cache: HandleCache,
 ): { value: NativeZonedDatetime; zone: string } {
   const specs = cache.get(lib, ctx, schema, buildZonedSpecs);
-  const drawn = lib.generateZonedDatetime(ctx, tc, specs.zones, specs.zoned);
+  const zone =
+    specs.zones === null
+      ? (schema["names"] as string[])[0]
+      : lib.generateTimezone(ctx, tc, specs.zones);
+  loadZone(lib, ctx, specs.source, zone);
+  let spec = specs.single.get(zone);
+  if (spec === undefined) {
+    spec = newTimeZoneSpec(lib, ctx, specs.source, [zone], schema).value;
+    specs.single.set(zone, spec);
+  }
+  const drawn = lib.generateZonedDatetime(ctx, tc, spec, specs.zoned);
+  if (!checksHostOffsets(specs.source)) return drawn;
   const { timestamp } = drawn.value;
   const epochMilliseconds =
     Number(timestamp.second) * 1000 + Math.floor(timestamp.nanosecond / 1_000_000);

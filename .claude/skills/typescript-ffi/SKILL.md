@@ -131,7 +131,9 @@ is compiled, and a grammar draw when the draw ends. The exceptions:
 object and `hegel_grammar_t` handles per `fromLark` generator (`HandleCache`
 in `src/generate.ts`), each kind capped at 256 live handles (the oldest
 evicted and freed first, never a grammar a draw in progress borrows), and the
-rest freed with the runner.
+rest freed with the runner. A `hegel_zone_source_t` is never freed: `src/zoneSource.ts`
+builds one per `ZoneSource` per engine and keeps it for the engine's
+lifetime, since the engine interns zone data for the process anyway.
 
 ## Making a change
 

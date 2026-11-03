@@ -15,7 +15,8 @@
     "src/generate.ts",
     "src/hostZones.ts",
     "src/timezone-names.ts",
-    "src/datetime.ts",
+    "src/temporal.ts",
+    "src/calendar.ts",
     "src/testCase.ts",
     "src/bytes.ts",
     "src/wtf8.ts"

@@ -30,9 +30,11 @@ test("checksum sidecars are parsed strictly", () => {
 
 test("conditional exports keep node ahead of browser and default to browser", () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json")));
-  assert.deepEqual(Object.keys(pkg.exports["."]), ["types", "node", "browser", "default"]);
-  assert.equal(pkg.exports["."].default, pkg.exports["."].browser);
-  assert.notEqual(pkg.exports["."].node, pkg.exports["."].browser);
+  for (const entry of [".", "./generators"]) {
+    assert.deepEqual(Object.keys(pkg.exports[entry]), ["types", "node", "browser", "default"]);
+    assert.equal(pkg.exports[entry].default, pkg.exports[entry].browser);
+    assert.notEqual(pkg.exports[entry].node, pkg.exports[entry].browser);
+  }
   assert.equal(pkg.exports["./libhegel.wasm"], `./dist/browser/${WASM_ASSET}`);
   const resolved = execFileSync(
     "node",

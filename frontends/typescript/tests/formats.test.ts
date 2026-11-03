@@ -1,7 +1,8 @@
 import { describe, test, expect } from "vitest";
 import * as hegel from "@hegeldev/hegel";
 import * as gs from "@hegeldev/hegel/generators";
-import { PlainDate, PlainTime, PlainDateTime } from "../src/datetime.js";
+
+const { PlainDate, PlainTime, PlainDateTime } = gs.temporal;
 
 describe("gs.emails()", () => {
   test("exposes a schema via asBasic", () => {
@@ -51,15 +52,15 @@ describe("gs.domains()", () => {
     ));
 });
 
-describe("gs.dates()", () => {
+describe("gs.temporal.dates()", () => {
   test("exposes a schema via asBasic", () => {
-    expect(gs.dates().asBasic()).not.toBeNull();
+    expect(gs.temporal.dates().asBasic()).not.toBeNull();
   });
 
   test("generates PlainDates that print as ISO 8601", () =>
     hegel.test(
       (tc) => {
-        const date = tc.draw(gs.dates({ minValue: { year: 1, month: 1, day: 1 } }));
+        const date = tc.draw(gs.temporal.dates({ minValue: { year: 1, month: 1, day: 1 } }));
         expect(date).toBeInstanceOf(PlainDate);
         expect(date.toString()).toMatch(/^(\+\d{6}|\d{4})-\d{2}-\d{2}$/);
       },
@@ -67,15 +68,15 @@ describe("gs.dates()", () => {
     ));
 });
 
-describe("gs.times()", () => {
+describe("gs.temporal.times()", () => {
   test("exposes a schema via asBasic", () => {
-    expect(gs.times().asBasic()).not.toBeNull();
+    expect(gs.temporal.times().asBasic()).not.toBeNull();
   });
 
   test("generates PlainTimes that print as ISO 8601", () =>
     hegel.test(
       (tc) => {
-        const time = tc.draw(gs.times());
+        const time = tc.draw(gs.temporal.times());
         expect(time).toBeInstanceOf(PlainTime);
         expect(time.toString()).toMatch(/^\d{2}:\d{2}:\d{2}(\.\d{1,9})?$/);
       },
@@ -83,15 +84,15 @@ describe("gs.times()", () => {
     ));
 });
 
-describe("gs.datetimes()", () => {
+describe("gs.temporal.datetimes()", () => {
   test("exposes a schema via asBasic", () => {
-    expect(gs.datetimes().asBasic()).not.toBeNull();
+    expect(gs.temporal.datetimes().asBasic()).not.toBeNull();
   });
 
   test("generates PlainDateTimes that print as ISO 8601", () =>
     hegel.test(
       (tc) => {
-        const value = tc.draw(gs.datetimes());
+        const value = tc.draw(gs.temporal.datetimes());
         expect(value).toBeInstanceOf(PlainDateTime);
         expect(value.toString()).toContain("T");
       },

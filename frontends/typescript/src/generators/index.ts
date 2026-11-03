@@ -10,31 +10,8 @@ export type { IntegerOptions, BigIntegerOptions, FloatOptions } from "./numeric.
 export { text, characters, binary, fromRegex } from "./strings.js";
 export { emails, urls, domains, ipAddresses } from "./strings.js";
 export { uuids } from "./strings.js";
-export {
-  dates,
-  times,
-  datetimes,
-  instants,
-  utcOffsets,
-  timeZones,
-  zonedDateTimes,
-  durations,
-  jsDates,
-} from "./datetime.js";
-export type {
-  Precision,
-  Granularity,
-  DateOptions,
-  TimeOptions,
-  DateTimeOptions,
-  InstantOptions,
-  UtcOffsetOptions,
-  TimeZoneOptions,
-  ZonedDateTimeOptions,
-  UnitBounds,
-  DurationOptions,
-  JsDateOptions,
-} from "./datetime.js";
+export * as temporal from "./temporal.js";
+export { dates, times, datetimes } from "./deprecated.js";
 export type {
   CharacterFilterOptions,
   TextOptions,

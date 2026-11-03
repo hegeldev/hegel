@@ -16,6 +16,7 @@ import {
 import { AssumeError, StopTestError } from "../src/testCase.js";
 import { LIBHEGEL_VERSION } from "../src/libhegel-version.js";
 import { testLibPath } from "./libPath.js";
+import { readFileSync } from "node:fs";
 
 // ---------------------------------------------------------------------------
 // Unit tests for the integer wire-format helpers.
@@ -220,6 +221,17 @@ function fakeBindings(overrides: Partial<Bindings>): Bindings {
     },
     timezoneSpecFree: noop,
     timezoneSpecSetNames: () => 0,
+    timezoneSpecSetSource: () => 0,
+    timezoneSpecSetLinks: () => 0,
+    timezoneSpecSetLegacy: () => 0,
+    zoneSourceNew: (_ctx, out) => {
+      out[0] = {} as Ptr;
+      return 0;
+    },
+    zoneSourceAddTzif: () => 0,
+    zoneSourceAddZone: () => 0,
+    zoneSourceAddLink: () => 0,
+    zoneSourceDeclare: () => 0,
     generateTimezone: () => 0,
     zonedSpecNew: (_ctx, out) => {
       out[0] = {} as Ptr;
@@ -290,6 +302,7 @@ function fakeBindings(overrides: Partial<Bindings>): Bindings {
     failureReproductionBlob: () => null,
     failureCaveat: () => null,
     version: () => "0.0.0",
+    tzdbVersion: () => "1999z",
     ...overrides,
   };
   return base;
@@ -539,6 +552,7 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
     const lib = new Libhegel(fakeBindings({}));
     const h = lib.newContext();
     expect(lib.version()).toBe("0.0.0");
+    expect(lib.tzdbVersion()).toBe("1999z");
     lib.freeContext(lib.newContext());
     lib.freeSettings(lib.newSettings(h));
     lib.setTestCases(h, 10);
@@ -680,6 +694,7 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
       "timezoneSpecNew",
       "zonedSpecNew",
       "spanSpecNew",
+      "zoneSourceNew",
     ] as const) {
       const nullHandle = new Libhegel(
         fakeBindings({
@@ -769,6 +784,15 @@ describe("Libhegel against the real library", () => {
 
   it("reports the expected version", () => {
     expect(lib.version()).toBe(LIBHEGEL_VERSION);
+  });
+
+  it("reports the bundled time zone database release", () => {
+    expect(lib.tzdbVersion()).toBe(
+      readFileSync(
+        `${import.meta.dirname}/../../../libhegel/src/tzdata/version.txt`,
+        "utf8",
+      ).trim(),
+    );
   });
 
   it("passes a property that always holds", () => {

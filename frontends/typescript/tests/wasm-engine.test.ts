@@ -12,9 +12,13 @@ import {
 import { FailedHealthCheckError } from "../src/errors.js";
 import { browserRuntime } from "../src/browser/runtime.js";
 import { WasmArena } from "../src/browser/arena.js";
+import { tzif } from "./tzif.js";
 import {
   EngineError,
   NativeVerbosity,
+  NativeZoneAfter,
+  NativeZoneRuleDay,
+  type NativeZoneData,
   RunStatus,
   Status,
   type Engine,
@@ -27,6 +31,7 @@ import { Libhegel } from "../src/libhegel.js";
 import { testLibPath } from "./libPath.js";
 import { fakeRuntime } from "./fakeEngine.js";
 import { prettyPrint, type PrettyPrinter } from "../src/pretty.js";
+import { readFileSync } from "node:fs";
 
 function active<T>(
   engine: Engine,
@@ -73,6 +78,15 @@ const text: TextGeneratorOptions = {
 };
 
 describe("WasmEngine pinned raw ABI", () => {
+  it("reports the bundled time zone database release like the native library", () => {
+    const release = readFileSync(
+      `${import.meta.dirname}/../../../libhegel/src/tzdata/version.txt`,
+      "utf8",
+    ).trim();
+    expect(wasmFixture().engine.tzdbVersion()).toBe(release);
+    expect(Libhegel.load(testLibPath()).tzdbVersion()).toBe(release);
+  });
+
   it("matches native fixed temporal and signed integer draws", () => {
     const wasm = wasmFixture().engine;
     const native = Libhegel.load(testLibPath());
@@ -165,6 +179,82 @@ describe("WasmEngine pinned raw ABI", () => {
         expect(uuid[8] >> 6).toBe(2);
         values.push(Array.from(uuid), Array.from(engine.generateUuid(ctx, tc)));
         return values;
+      });
+    expect(draw(wasm)).toEqual(draw(native));
+  });
+
+  it("matches native zone source uploads and the draws against them", () => {
+    const wasm = wasmFixture().engine;
+    const native = Libhegel.load(testLibPath());
+    const type = (utoff: number, abbreviation: string) => ({ utoff, isDst: false, abbreviation });
+    const date = (month: number, time: number) => ({
+      kind: NativeZoneRuleDay.MONTH_WEEK_DAY,
+      day: 0,
+      month,
+      week: 5,
+      weekday: 0,
+      time,
+    });
+    const rule: NativeZoneData = {
+      initial: type(3600, "CET"),
+      transitions: [{ instant: 1_000_000_000n, type: { ...type(7200, "CEST"), isDst: true } }],
+      after: NativeZoneAfter.RULE,
+      standard: type(3600, "CET"),
+      hasDst: true,
+      dst: { ...type(7200, "CEST"), isDst: true },
+      dstStart: date(3, 7200),
+      dstEnd: date(10, 10800),
+      lastYear: 0,
+    };
+    const fixed: NativeZoneData = {
+      ...rule,
+      initial: type(-12_345, ""),
+      transitions: [],
+      after: NativeZoneAfter.INFER,
+      lastYear: 2000,
+    };
+    const bytes = tzif([{ utoff: 19_800, isDst: false, abbreviation: "IST" }], [], "IST-5:30");
+    const draw = (engine: Engine) =>
+      active(engine, (ctx, tc) => {
+        const source = engine.zoneSourceNew(ctx);
+        engine.zoneSourceDeclare(ctx, source, ["Europe/Rule", "Europe/Fixed", "Asia/Tzif"]);
+        engine.zoneSourceAddZone(ctx, source, "Europe/Rule", rule);
+        engine.zoneSourceAddZone(ctx, source, "Europe/Fixed", fixed);
+        engine.zoneSourceAddTzif(ctx, source, "Asia/Tzif", bytes);
+        engine.zoneSourceAddLink(ctx, source, "Europe/Alias", "Europe/Rule");
+        expect(() =>
+          engine.zoneSourceAddTzif(ctx, source, "Asia/Broken", new Uint8Array([1])),
+        ).toThrow("add_tzif failed");
+        const zones = engine.timezoneSpecNew(ctx);
+        const single = engine.timezoneSpecNew(ctx);
+        const zoned = engine.zonedSpecNew(ctx);
+        try {
+          engine.timezoneSpecSetLinks(ctx, zones, false);
+          engine.timezoneSpecSetLegacy(ctx, zones, true);
+          engine.timezoneSpecSetSource(ctx, zones, source);
+          const names = new Set<string>();
+          for (let i = 0; i < 20; i++) names.add(engine.generateTimezone(ctx, tc, zones));
+          expect(names.has("Europe/Alias")).toBe(false);
+          engine.timezoneSpecSetSource(ctx, single, source);
+          const values: unknown[] = [[...names].sort()];
+          const gap = {
+            date: { year: 2024, month: 3, day: 31 },
+            time: { hour: 2, minute: 30, second: 0, nanosecond: 0 },
+          };
+          engine.zonedSpecSetCivilBounds(ctx, zoned, gap, gap);
+          for (const name of ["Europe/Alias", "Europe/Fixed", "Asia/Tzif"]) {
+            engine.timezoneSpecSetNames(ctx, single, [name]);
+            values.push(engine.generateZonedDatetime(ctx, tc, single, zoned));
+          }
+          expect(values[1]).toMatchObject({ zone: "Europe/Alias", value: { kind: 1 } });
+          expect(values[2]).toMatchObject({ value: { offsetSeconds: -12_345 } });
+          expect(values[3]).toMatchObject({ value: { offsetSeconds: 19_800 } });
+          return values;
+        } finally {
+          engine.freeZonedSpec(zoned);
+          engine.freeTimezoneSpec(single);
+          engine.freeTimezoneSpec(zones);
+        }
       });
     expect(draw(wasm)).toEqual(draw(native));
   });
@@ -447,15 +537,15 @@ describe("WasmEngine pinned raw ABI", () => {
         tc.draw(gs.emails());
         tc.draw(gs.urls());
         tc.draw(gs.domains());
-        tc.draw(gs.dates({ weekdays: [1, 2], months: [3] }));
-        tc.draw(gs.times({ precision: "minutes" }));
-        tc.draw(gs.datetimes());
-        tc.draw(gs.instants());
-        tc.draw(gs.utcOffsets());
-        tc.draw(gs.timeZones());
-        tc.draw(gs.zonedDateTimes());
-        tc.draw(gs.durations());
-        tc.draw(gs.jsDates());
+        tc.draw(gs.temporal.dates({ weekdays: [1, 2], months: [3] }));
+        tc.draw(gs.temporal.times({ precision: "minutes" }));
+        tc.draw(gs.temporal.datetimes());
+        tc.draw(gs.temporal.instants());
+        tc.draw(gs.temporal.offsets());
+        tc.draw(gs.temporal.zones());
+        tc.draw(gs.temporal.zonedDateTimes());
+        tc.draw(gs.temporal.spans());
+        tc.draw(gs.temporal.jsDates());
         tc.draw(gs.uuids());
         tc.draw(gs.uuids({ version: 4 }));
         tc.draw(gs.ipAddresses({ version: 4 }));

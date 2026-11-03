@@ -61,6 +61,9 @@ export type ZonedSpecHandle = { readonly [zonedSpecBrand]: never };
 declare const spanSpecBrand: unique symbol;
 export type SpanSpecHandle = { readonly [spanSpecBrand]: never };
 
+declare const zoneSourceBrand: unique symbol;
+export type ZoneSourceHandle = { readonly [zoneSourceBrand]: never };
+
 /** `hegel_status_t` — outcome of a single test case. */
 export const Status = {
   VALID: 0,
@@ -259,6 +262,50 @@ export const NativeSpanSign = { UNIFORM: 0, MIXED: 1, NONNEGATIVE: 2 } as const;
 /** `hegel_timezone_kind_t`. */
 export const NativeTimeZoneKind = { UNIQUE: 0, GAP: 1, FOLD: 2 } as const;
 
+/** `hegel_zone_after_t`: what a zone has in force after its explicit transitions. */
+export const NativeZoneAfter = { HOLD: 0, RULE: 1, INFER: 2 } as const;
+
+/** `hegel_zone_rule_day_t`: how a rule date names its day. */
+export const NativeZoneRuleDay = { JULIAN: 0, ZERO_BASED: 1, MONTH_WEEK_DAY: 2 } as const;
+
+/** A `hegel_zone_type_t`: a local time type. */
+export interface NativeZoneType {
+  utoff: number;
+  isDst: boolean;
+  abbreviation: string;
+}
+
+/** A `hegel_zone_transition_t`: from `instant` (Unix seconds) on, `type` is in force. */
+export interface NativeZoneTransition {
+  instant: bigint;
+  type: NativeZoneType;
+}
+
+/** A `hegel_zone_rule_date_t`. */
+export interface NativeZoneRuleDate {
+  /** A {@link NativeZoneRuleDay} value. */
+  kind: number;
+  day: number;
+  month: number;
+  week: number;
+  weekday: number;
+  time: number;
+}
+
+/** A `hegel_zone_data_t`: a zone's data as fields. */
+export interface NativeZoneData {
+  initial: NativeZoneType;
+  transitions: readonly NativeZoneTransition[];
+  /** A {@link NativeZoneAfter} value. */
+  after: number;
+  standard: NativeZoneType;
+  hasDst: boolean;
+  dst: NativeZoneType;
+  dstStart: NativeZoneRuleDate;
+  dstEnd: NativeZoneRuleDate;
+  lastYear: number;
+}
+
 /** The `HEGEL_TIMEZONE_TAG_*` bits this client reads. */
 export const NativeTimeZoneTag = { LINK: 1 << 13, LEGACY: 1 << 14 } as const;
 
@@ -374,6 +421,8 @@ export class EngineError extends Error {
 
 export interface Engine {
   version(): string;
+  /** The IANA release of the time zone database the engine bundles, e.g. `"2026e"`. */
+  tzdbVersion(): string;
   newContext(): ContextHandle;
   /**
    * Make the string generators follow the host's Unicode version, process-wide.
@@ -642,7 +691,45 @@ export interface Engine {
     spec: TimeZoneSpecHandle,
     names: readonly string[],
   ): void;
+  /** Draw from and evaluate against `source` rather than the process default. */
+  timezoneSpecSetSource(
+    ctx: ContextHandle,
+    spec: TimeZoneSpecHandle,
+    source: ZoneSourceHandle,
+  ): void;
+  /** Whether `spec`'s default set includes link names. */
+  timezoneSpecSetLinks(ctx: ContextHandle, spec: TimeZoneSpecHandle, links: boolean): void;
+  /** Whether `spec`'s default set includes legacy names. */
+  timezoneSpecSetLegacy(ctx: ContextHandle, spec: TimeZoneSpecHandle, legacy: boolean): void;
   freeTimezoneSpec(spec: TimeZoneSpecHandle): void;
+  /**
+   * Create an empty zone source. It is never freed: a source lives as long as
+   * the engine, like the zone data the engine interns.
+   */
+  zoneSourceNew(ctx: ContextHandle): ZoneSourceHandle;
+  /** Add the zone `name` from a TZif file's bytes. */
+  zoneSourceAddTzif(
+    ctx: ContextHandle,
+    source: ZoneSourceHandle,
+    name: string,
+    bytes: Uint8Array,
+  ): void;
+  /** Add the zone `name` from its data as fields. */
+  zoneSourceAddZone(
+    ctx: ContextHandle,
+    source: ZoneSourceHandle,
+    name: string,
+    data: NativeZoneData,
+  ): void;
+  /** Make `name` a link to `target`. */
+  zoneSourceAddLink(
+    ctx: ContextHandle,
+    source: ZoneSourceHandle,
+    name: string,
+    target: string,
+  ): void;
+  /** Declare `names`, whose data is added before a zoned draw in them. */
+  zoneSourceDeclare(ctx: ContextHandle, source: ZoneSourceHandle, names: readonly string[]): void;
   /** Draw a time zone name allowed by `spec`. */
   generateTimezone(ctx: ContextHandle, tc: TestCaseHandle, spec: TimeZoneSpecHandle): string;
   /** Create a zoned datetime spec with every option at its default; released with {@link freeZonedSpec}. */

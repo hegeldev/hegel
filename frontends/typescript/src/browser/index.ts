@@ -42,22 +42,3 @@ export {
   type DocumentOptions,
   type PrettyPrintable,
 } from "../pretty.js";
-export {
-  PlainDate,
-  PlainTime,
-  PlainDateTime,
-  Instant,
-  ZonedDateTime,
-  Duration,
-  DURATION_UNITS,
-} from "../datetime.js";
-export type {
-  PlainDateLike,
-  PlainTimeLike,
-  PlainDateTimeLike,
-  InstantLike,
-  ZonedDateTimeLike,
-  TransitionKind,
-  DurationLike,
-  DurationUnit,
-} from "../datetime.js";

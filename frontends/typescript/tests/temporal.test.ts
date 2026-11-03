@@ -13,13 +13,15 @@ import {
   ZonedDateTime,
   Duration,
   DURATION_UNITS,
+} from "../src/temporal.js";
+import {
   civilFromDays,
   daysFromCivil,
   daysInMonth,
   isLeapYear,
   formatUtcOffset,
   parseUtcOffset,
-} from "../src/datetime.js";
+} from "../src/calendar.js";
 import { hostKnowsZone, hostOffsetSeconds, hostZoneFormatter } from "../src/hostZones.js";
 import { TIMEZONE_NAMES, TZDB_VERSION } from "../src/timezone-names.js";
 
@@ -33,7 +35,7 @@ describe("calendar arithmetic", () => {
       const date = civilFromDays(days);
       expect(daysFromCivil(date.year, date.month, date.day)).toBe(days);
     }
-    expect(civilFromDays(-1).toString()).toBe("1969-12-31");
+    expect(civilFromDays(-1)).toEqual({ year: 1969, month: 12, day: 31 });
   });
 
   it("knows month lengths and leap years", () => {
@@ -416,8 +418,8 @@ describe("host time zones", () => {
 
   it("reads a bare GMT, as some hosts print a zero offset, as zero", () => {
     const parts = vi
-      .spyOn(Intl.DateTimeFormat.prototype, "formatToParts")
-      .mockReturnValue([{ type: "timeZoneName", value: "GMT" }]);
+      .spyOn(Intl.DateTimeFormat.prototype, "format", "get")
+      .mockReturnValue(() => "1/1/1970, GMT");
     try {
       expect(hostOffsetSeconds("Europe/London", 0)).toBe(0);
     } finally {

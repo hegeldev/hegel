@@ -120,6 +120,14 @@ export const signatures = {
   timezone_spec_new: "II",
   timezone_spec_free: "II",
   timezone_spec_set_names: "IIII",
+  timezone_spec_set_source: "III",
+  timezone_spec_set_links: "III",
+  timezone_spec_set_legacy: "III",
+  zone_source_new: "II",
+  zone_source_add_tzif: "IIIII",
+  zone_source_add_zone: "IIII",
+  zone_source_add_link: "IIII",
+  zone_source_declare: "IIII",
   generate_timezone: "IIII",
   zoned_spec_new: "II",
   zoned_spec_free: "II",
@@ -176,6 +184,7 @@ export const signatures = {
   failure_caveat: "III",
   version: "II",
   set_unicode_version: "II",
+  tzdb_version: "II",
 } as const;
 
 export type Operation = keyof typeof signatures;

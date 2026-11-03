@@ -338,6 +338,9 @@
  *
  * - Browse the `@hegeldev/hegel/generators` module for the full list of
  *   available generators.
+ * - Dates, times, time zones and spans are in the `generators.temporal`
+ *   namespace (`gs.temporal.dates()`, `gs.temporal.zonedDateTimes()`, ...),
+ *   along with the value classes they draw (`gs.temporal.PlainDate`, ...).
  * - See {@link stateful} for stateful (model-based) testing.
  * - See {@link Settings} for more configuration settings to customize how
  *   your test runs.
@@ -374,25 +377,6 @@ export {
   type DocumentOptions,
   type PrettyPrintable,
 } from "./pretty.js";
-export {
-  PlainDate,
-  PlainTime,
-  PlainDateTime,
-  Instant,
-  ZonedDateTime,
-  Duration,
-  DURATION_UNITS,
-} from "./datetime.js";
-export type {
-  PlainDateLike,
-  PlainTimeLike,
-  PlainDateTimeLike,
-  InstantLike,
-  ZonedDateTimeLike,
-  TransitionKind,
-  DurationLike,
-  DurationUnit,
-} from "./datetime.js";
 
 import {
   test as nodeTest,

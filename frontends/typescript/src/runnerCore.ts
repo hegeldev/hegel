@@ -36,6 +36,7 @@ import {
   type PrinterHandle,
 } from "./engine.js";
 import type { RuntimeServices } from "./runtime.js";
+import { entryRuntime, setEntryRuntime } from "./runtime.js";
 import {
   applySettings,
   newSettingsHandle,
@@ -659,8 +660,6 @@ const DID_NOT_REPRODUCE =
   "replay budget (a bug failing 10% of the time escapes it about 5% of the time). Re-run to " +
   "retry, or remove the reproduceFailure call once the failure is fixed.";
 
-let installedRuntime: RuntimeServices | null = null;
-
 /**
  * Set the runtime a {@link Hegel} built without one runs on: what the Node and
  * browser entry points do when loaded.
@@ -668,7 +667,7 @@ let installedRuntime: RuntimeServices | null = null;
  * @internal
  */
 export function installRuntime(runtime: RuntimeServices): void {
-  installedRuntime = runtime;
+  setEntryRuntime(runtime);
   installDocumentEngine(() => runtime.getEngine());
 }
 
@@ -710,7 +709,7 @@ export class Hegel {
     runtime?: RuntimeServices,
     site?: CallSite | null,
   ) {
-    const resolved = runtime ?? installedRuntime;
+    const resolved = runtime ?? entryRuntime();
     if (resolved === null) throw new Error("Hegel has no runtime: import @hegeldev/hegel first");
     this.testFn = testFn;
     this.runtime = resolved;

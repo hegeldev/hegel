@@ -64,6 +64,10 @@ import {
   type TimeZoneSpecHandle,
   type ZonedSpecHandle,
   type SpanSpecHandle,
+  type ZoneSourceHandle,
+  type NativeZoneData,
+  type NativeZoneType,
+  type NativeZoneRuleDate,
   type TextGeneratorOptions,
   type NativeFloatOptions,
   type NativeTestLocation,
@@ -183,6 +187,60 @@ const timezoneInfoType: TypeObject = koffi.struct({
   rank: "uint16_t",
   tags: "uint32_t",
 });
+
+const zoneTypeType: TypeObject = koffi.struct({
+  utoff: "int32_t",
+  is_dst: "bool",
+  abbreviation: stringType,
+});
+const zoneTransitionType: TypeObject = koffi.struct({
+  instant: "int64_t",
+  local_type: zoneTypeType,
+});
+const zoneRuleDateType: TypeObject = koffi.struct({
+  kind: "uint32_t",
+  day: "uint16_t",
+  month: "uint8_t",
+  week: "uint8_t",
+  weekday: "uint8_t",
+  time: "int32_t",
+});
+const zoneDataType: TypeObject = koffi.struct({
+  initial: zoneTypeType,
+  transitions: koffi.pointer(zoneTransitionType),
+  transition_count: "size_t",
+  after: "uint32_t",
+  standard: zoneTypeType,
+  has_dst: "bool",
+  dst: zoneTypeType,
+  dst_start: zoneRuleDateType,
+  dst_end: zoneRuleDateType,
+  last_year: "int32_t",
+});
+
+/** A `hegel_zone_type_t` as koffi marshals it, with the C field names. */
+interface RawZoneType {
+  utoff: number;
+  is_dst: boolean;
+  abbreviation: NativeBuffer;
+}
+
+/** A `hegel_zone_rule_date_t` as koffi marshals it. */
+type RawZoneRuleDate = NativeZoneRuleDate;
+
+/** A `hegel_zone_data_t` as koffi marshals it, with the C field names. */
+interface RawZoneData {
+  initial: RawZoneType;
+  transitions: { instant: bigint; local_type: RawZoneType }[];
+  transition_count: number;
+  after: number;
+  standard: RawZoneType;
+  has_dst: boolean;
+  dst: RawZoneType;
+  dst_start: RawZoneRuleDate;
+  dst_end: RawZoneRuleDate;
+  last_year: number;
+}
 
 /** A `hegel_timestamp_t` as koffi marshals it: the `int64_t` may come back as a `number`. */
 interface RawTimestamp {
@@ -422,6 +480,14 @@ export interface Bindings {
   timezoneSpecNew: (ctx: Ptr, out: Ptr[]) => number;
   timezoneSpecFree: (spec: Ptr) => void;
   timezoneSpecSetNames: (ctx: Ptr, spec: Ptr, names: readonly string[]) => number;
+  timezoneSpecSetSource: (ctx: Ptr, spec: Ptr, source: Ptr) => number;
+  timezoneSpecSetLinks: (ctx: Ptr, spec: Ptr, links: boolean) => number;
+  timezoneSpecSetLegacy: (ctx: Ptr, spec: Ptr, legacy: boolean) => number;
+  zoneSourceNew: (ctx: Ptr, out: Ptr[]) => number;
+  zoneSourceAddTzif: (ctx: Ptr, source: Ptr, name: string, bytes: Uint8Array) => number;
+  zoneSourceAddZone: (ctx: Ptr, source: Ptr, name: string, data: NativeZoneData) => number;
+  zoneSourceAddLink: (ctx: Ptr, source: Ptr, name: string, target: string) => number;
+  zoneSourceDeclare: (ctx: Ptr, source: Ptr, names: readonly string[]) => number;
   generateTimezone: (ctx: Ptr, tc: Ptr, spec: Ptr, out: NativeBuffer[]) => number;
   zonedSpecNew: (ctx: Ptr, out: Ptr[]) => number;
   zonedSpecFree: (spec: Ptr) => void;
@@ -530,6 +596,7 @@ export interface Bindings {
   failureCaveat: (f: Ptr) => string | null;
 
   version: () => string;
+  tzdbVersion: () => string;
 }
 
 /**
@@ -917,6 +984,41 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     koffi.pointer(stringType),
     "size_t",
   ]);
+  const timezoneSpecSetSource = f(
+    "int hegel_timezone_spec_set_source(void* ctx, void* spec, void* source)",
+  );
+  const timezoneSpecSetLinks = f(
+    "int hegel_timezone_spec_set_links(void* ctx, void* spec, bool links)",
+  );
+  const timezoneSpecSetLegacy = f(
+    "int hegel_timezone_spec_set_legacy(void* ctx, void* spec, bool legacy)",
+  );
+  const zoneSourceNew = f("int hegel_zone_source_new(void* ctx, _Out_ void** out)");
+  const zoneSourceAddTzif = fs("hegel_zone_source_add_tzif", [
+    "void*",
+    "void*",
+    stringType,
+    "uint8_t*",
+    "size_t",
+  ]);
+  const zoneSourceAddZone = fs("hegel_zone_source_add_zone", [
+    "void*",
+    "void*",
+    stringType,
+    koffi.pointer(zoneDataType),
+  ]);
+  const zoneSourceAddLink = fs("hegel_zone_source_add_link", [
+    "void*",
+    "void*",
+    stringType,
+    stringType,
+  ]);
+  const zoneSourceDeclare = fs("hegel_zone_source_declare", [
+    "void*",
+    "void*",
+    koffi.pointer(stringType),
+    "size_t",
+  ]);
   const generateTimezone = fs("hegel_generate_timezone", [
     "void*",
     "void*",
@@ -1073,6 +1175,7 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
   );
   const failureCaveat = f("int hegel_failure_caveat(void* ctx, void* f, _Out_ void** out)");
   const version = fs("hegel_version", ["void*", koffi.out(koffi.pointer(stringType))]);
+  const tzdbVersion = fs("hegel_tzdb_version", ["void*", koffi.out(koffi.pointer(stringType))]);
 
   const readString = (result: NativeBuffer): string => wtf8ToString(copyNativeBuffer(result));
   const readOptionalString = (pointer: Ptr): string | null =>
@@ -1085,6 +1188,27 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     value === null ? null : nativeString(value);
   const nativeBytes = (value: Uint8Array | null): NativeBuffer =>
     value === null ? { data: null, len: 0 } : { data: value, len: value.length };
+
+  const rawZoneType = (type: NativeZoneType): RawZoneType => ({
+    utoff: type.utoff,
+    is_dst: type.isDst,
+    abbreviation: nativeString(type.abbreviation),
+  });
+  const rawZoneData = (data: NativeZoneData): RawZoneData => ({
+    initial: rawZoneType(data.initial),
+    transitions: data.transitions.map((t) => ({
+      instant: t.instant,
+      local_type: rawZoneType(t.type),
+    })),
+    transition_count: data.transitions.length,
+    after: data.after,
+    standard: rawZoneType(data.standard),
+    has_dst: data.hasDst,
+    dst: rawZoneType(data.dst),
+    dst_start: data.dstStart,
+    dst_end: data.dstEnd,
+    last_year: data.lastYear,
+  });
 
   const checked = (code: number, op: string, ctx: Ptr = null): void => {
     if (code !== RESULT_OK) {
@@ -1364,6 +1488,18 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     timezoneSpecFree: (spec) => checked(timezoneSpecFree(null, spec), "timezoneSpecFree"),
     timezoneSpecSetNames: (ctx, spec, names) =>
       timezoneSpecSetNames(ctx, spec, names.map(nativeString), names.length),
+    timezoneSpecSetSource: (ctx, spec, source) => timezoneSpecSetSource(ctx, spec, source),
+    timezoneSpecSetLinks: (ctx, spec, links) => timezoneSpecSetLinks(ctx, spec, links),
+    timezoneSpecSetLegacy: (ctx, spec, legacy) => timezoneSpecSetLegacy(ctx, spec, legacy),
+    zoneSourceNew: (ctx, out) => zoneSourceNew(ctx, out),
+    zoneSourceAddTzif: (ctx, source, name, bytes) =>
+      zoneSourceAddTzif(ctx, source, nativeString(name), bytes, bytes.length),
+    zoneSourceAddZone: (ctx, source, name, data) =>
+      zoneSourceAddZone(ctx, source, nativeString(name), rawZoneData(data)),
+    zoneSourceAddLink: (ctx, source, name, target) =>
+      zoneSourceAddLink(ctx, source, nativeString(name), nativeString(target)),
+    zoneSourceDeclare: (ctx, source, names) =>
+      zoneSourceDeclare(ctx, source, names.map(nativeString), names.length),
     generateTimezone: (ctx, tc, spec, out) => generateTimezone(ctx, tc, spec, out),
     zonedSpecNew: (ctx, out) => zonedSpecNew(ctx, out),
     zonedSpecFree: (spec) => checked(zonedSpecFree(null, spec), "zonedSpecFree"),
@@ -1483,6 +1619,11 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
       checked(version(null, out), "version");
       return readString(out[0]);
     },
+    tzdbVersion: () => {
+      const out: NativeBuffer[] = [{ data: null, len: 0 }];
+      checked(tzdbVersion(null, out), "tzdbVersion");
+      return readString(out[0]);
+    },
   };
 }
 
@@ -1555,6 +1696,10 @@ export class Libhegel implements Engine {
 
   version(): string {
     return this.fns.version();
+  }
+
+  tzdbVersion(): string {
+    return this.fns.tzdbVersion();
   }
 
   newContext(): ContextHandle {
@@ -2456,8 +2601,74 @@ export class Libhegel implements Engine {
     );
   }
 
+  /** Draw from and evaluate against `source`. */
+  timezoneSpecSetSource(ctx: Ptr, spec: Ptr, source: Ptr): void {
+    this.check(
+      ctx,
+      this.fns.timezoneSpecSetSource(this.ptr(ctx), this.ptr(spec), this.ptr(source)),
+      "hegel_timezone_spec_set_source",
+    );
+  }
+
+  timezoneSpecSetLinks(ctx: Ptr, spec: Ptr, links: boolean): void {
+    this.check(
+      ctx,
+      this.fns.timezoneSpecSetLinks(this.ptr(ctx), this.ptr(spec), links),
+      "hegel_timezone_spec_set_links",
+    );
+  }
+
+  timezoneSpecSetLegacy(ctx: Ptr, spec: Ptr, legacy: boolean): void {
+    this.check(
+      ctx,
+      this.fns.timezoneSpecSetLegacy(this.ptr(ctx), this.ptr(spec), legacy),
+      "hegel_timezone_spec_set_legacy",
+    );
+  }
+
   freeTimezoneSpec(spec: Ptr): void {
     this.release(spec, (pointer) => this.fns.timezoneSpecFree(pointer));
+  }
+
+  /** Create an empty zone source; it lives as long as the library. */
+  zoneSourceNew(ctx: Ptr): ZoneSourceHandle {
+    const out: Ptr[] = [null];
+    this.check(ctx, this.fns.zoneSourceNew(this.ptr(ctx), out), "hegel_zone_source_new");
+    return this.requireHandle<ZoneSourceHandle>(out[0], "zoneSourceNew");
+  }
+
+  /** Add the zone `name` from a TZif file. Throws {@link LibhegelError} for a malformed file. */
+  zoneSourceAddTzif(ctx: Ptr, source: Ptr, name: string, bytes: Uint8Array): void {
+    this.check(
+      ctx,
+      this.fns.zoneSourceAddTzif(this.ptr(ctx), this.ptr(source), name, bytes),
+      "hegel_zone_source_add_tzif",
+    );
+  }
+
+  /** Add the zone `name` from its data. Throws {@link LibhegelError} for invalid data. */
+  zoneSourceAddZone(ctx: Ptr, source: Ptr, name: string, data: NativeZoneData): void {
+    this.check(
+      ctx,
+      this.fns.zoneSourceAddZone(this.ptr(ctx), this.ptr(source), name, data),
+      "hegel_zone_source_add_zone",
+    );
+  }
+
+  zoneSourceAddLink(ctx: Ptr, source: Ptr, name: string, target: string): void {
+    this.check(
+      ctx,
+      this.fns.zoneSourceAddLink(this.ptr(ctx), this.ptr(source), name, target),
+      "hegel_zone_source_add_link",
+    );
+  }
+
+  zoneSourceDeclare(ctx: Ptr, source: Ptr, names: readonly string[]): void {
+    this.check(
+      ctx,
+      this.fns.zoneSourceDeclare(this.ptr(ctx), this.ptr(source), names),
+      "hegel_zone_source_declare",
+    );
   }
 
   /** Draw a time zone name allowed by `spec`. */

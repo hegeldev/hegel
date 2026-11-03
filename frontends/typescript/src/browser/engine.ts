@@ -34,6 +34,10 @@ import {
   type TimeZoneSpecHandle,
   type ZonedSpecHandle,
   type SpanSpecHandle,
+  type ZoneSourceHandle,
+  type NativeZoneData,
+  type NativeZoneType,
+  type NativeZoneRuleDate,
   type NativeFloatOptions,
   type NativeTestLocation,
   type NativeRunErrorKind,
@@ -166,6 +170,9 @@ export class WasmEngine implements Engine {
 
   version(): string {
     return this.string("version", [0]);
+  }
+  tzdbVersion(): string {
+    return this.string("tzdb_version", [0]);
   }
   newContext(): ContextHandle {
     return this.owned(this.abi.call("context_new") >>> 0);
@@ -949,8 +956,62 @@ export class WasmEngine implements Engine {
       u32(names.length),
     ]);
   }
+  timezoneSpecSetSource(
+    ctx: ContextHandle,
+    spec: TimeZoneSpecHandle,
+    source: ZoneSourceHandle,
+  ): void {
+    this.configure(ctx, "timezone_spec_set_source", spec, () => [this.ptr(source)]);
+  }
+  timezoneSpecSetLinks(ctx: ContextHandle, spec: TimeZoneSpecHandle, links: boolean): void {
+    this.configure(ctx, "timezone_spec_set_links", spec, () => [+links]);
+  }
+  timezoneSpecSetLegacy(ctx: ContextHandle, spec: TimeZoneSpecHandle, legacy: boolean): void {
+    this.configure(ctx, "timezone_spec_set_legacy", spec, () => [+legacy]);
+  }
   freeTimezoneSpec(spec: TimeZoneSpecHandle): void {
     this.free("timezone_spec_free", spec);
+  }
+  zoneSourceNew(ctx: ContextHandle): ZoneSourceHandle {
+    const c = this.ptr(ctx);
+    return this.handle(c, "zone_source_new", [c]);
+  }
+  zoneSourceAddTzif(
+    ctx: ContextHandle,
+    source: ZoneSourceHandle,
+    name: string,
+    bytes: Uint8Array,
+  ): void {
+    this.configure(ctx, "zone_source_add_tzif", source, (a) => [
+      a.text(name),
+      a.input(bytes),
+      u32(bytes.length),
+    ]);
+  }
+  zoneSourceAddZone(
+    ctx: ContextHandle,
+    source: ZoneSourceHandle,
+    name: string,
+    data: NativeZoneData,
+  ): void {
+    this.configure(ctx, "zone_source_add_zone", source, (a) => [
+      a.text(name),
+      writeZoneData(a, data),
+    ]);
+  }
+  zoneSourceAddLink(
+    ctx: ContextHandle,
+    source: ZoneSourceHandle,
+    name: string,
+    target: string,
+  ): void {
+    this.configure(ctx, "zone_source_add_link", source, (a) => [a.text(name), a.text(target)]);
+  }
+  zoneSourceDeclare(ctx: ContextHandle, source: ZoneSourceHandle, names: readonly string[]): void {
+    this.configure(ctx, "zone_source_declare", source, (a) => [
+      a.stringList(names),
+      u32(names.length),
+    ]);
   }
   generateTimezone(ctx: ContextHandle, tc: TestCaseHandle, spec: TimeZoneSpecHandle): string {
     const c = this.ptr(ctx);
@@ -1503,3 +1564,51 @@ const zonedLayout = {
     timestamp: readTimestamp(view, 40),
   }),
 };
+
+/** `hegel_zone_type_t`: `utoff` at 0, `is_dst` at 4, the abbreviation at 8; 16 bytes. */
+function writeZoneType(a: WasmArena, ptr: number, type: NativeZoneType): void {
+  const view = a.view(ptr, 8);
+  view.setInt32(0, i32(type.utoff), true);
+  view.setUint8(4, +type.isDst);
+  a.textAt(ptr + 8, type.abbreviation);
+}
+
+/** `hegel_zone_rule_date_t`: kind, day, month, week, weekday, then `time` at 12; 16 bytes. */
+function writeZoneRuleDate(a: WasmArena, ptr: number, date: NativeZoneRuleDate): void {
+  const view = a.view(ptr, 16);
+  view.setUint32(0, u32(date.kind), true);
+  view.setUint16(4, integer(date.day, 0, 0xffff), true);
+  view.setUint8(6, integer(date.month, 0, 0xff));
+  view.setUint8(7, integer(date.week, 0, 0xff));
+  view.setUint8(8, integer(date.weekday, 0, 0xff));
+  view.setInt32(12, i32(date.time), true);
+}
+
+/**
+ * A `hegel_zone_data_t` (100 bytes): the initial type at 0, the transitions
+ * pointer and count at 16 and 20, `after` at 24, the standard type at 28,
+ * `has_dst` at 44, the daylight type at 48, the rule dates at 64 and 80 and
+ * `last_year` at 96. Each transition is 24 bytes: the instant, then its type
+ * at 8.
+ */
+function writeZoneData(a: WasmArena, data: NativeZoneData): number {
+  const transitions = data.transitions.length === 0 ? 0 : a.alloc(data.transitions.length * 24, 8);
+  data.transitions.forEach((transition, index) => {
+    const ptr = transitions + index * 24;
+    a.view(ptr, 8).setBigInt64(0, i64(transition.instant), true);
+    writeZoneType(a, ptr + 8, transition.type);
+  });
+  const ptr = a.alloc(100, 4);
+  writeZoneType(a, ptr, data.initial);
+  writeZoneType(a, ptr + 28, data.standard);
+  writeZoneType(a, ptr + 48, data.dst);
+  writeZoneRuleDate(a, ptr + 64, data.dstStart);
+  writeZoneRuleDate(a, ptr + 80, data.dstEnd);
+  const view = a.view(ptr, 100);
+  view.setUint32(16, transitions, true);
+  view.setUint32(20, data.transitions.length, true);
+  view.setUint32(24, u32(data.after), true);
+  view.setUint8(44, +data.hasDst);
+  view.setInt32(96, i32(data.lastYear), true);
+  return ptr;
+}

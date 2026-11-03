@@ -23,6 +23,7 @@ import {
   type TimeZoneSpecHandle,
   type ZonedSpecHandle,
   type SpanSpecHandle,
+  type ZoneSourceHandle,
 } from "../src/engine.js";
 import type { RuntimeServices } from "../src/runtime.js";
 
@@ -61,6 +62,7 @@ export const dateOptions = {} as DateOptionsHandle;
 export const timeZoneSpec = {} as TimeZoneSpecHandle;
 export const zonedSpec = {} as ZonedSpecHandle;
 export const spanSpec = {} as SpanSpecHandle;
+export const zoneSource = {} as ZoneSourceHandle;
 
 const epoch2000 = { second: 946_684_800n, nanosecond: 0 };
 
@@ -69,6 +71,7 @@ export function fakeEngine() {
   const printers = new WeakMap<TestCaseHandle, FakePrinter>();
   return {
     version: vi.fn<Engine["version"]>(() => "0.42.4"),
+    tzdbVersion: vi.fn<Engine["tzdbVersion"]>(() => "1999z"),
     newContext: vi.fn<Engine["newContext"]>(() => context),
     freeContext: vi.fn<Engine["freeContext"]>(),
     lastError: vi.fn<Engine["lastError"]>(() => "diagnostic"),
@@ -200,7 +203,15 @@ export function fakeEngine() {
     })),
     timezoneSpecNew: vi.fn<Engine["timezoneSpecNew"]>(() => timeZoneSpec),
     timezoneSpecSetNames: vi.fn<Engine["timezoneSpecSetNames"]>(),
+    timezoneSpecSetSource: vi.fn<Engine["timezoneSpecSetSource"]>(),
+    timezoneSpecSetLinks: vi.fn<Engine["timezoneSpecSetLinks"]>(),
+    timezoneSpecSetLegacy: vi.fn<Engine["timezoneSpecSetLegacy"]>(),
     freeTimezoneSpec: vi.fn<Engine["freeTimezoneSpec"]>(),
+    zoneSourceNew: vi.fn<Engine["zoneSourceNew"]>(() => zoneSource),
+    zoneSourceAddTzif: vi.fn<Engine["zoneSourceAddTzif"]>(),
+    zoneSourceAddZone: vi.fn<Engine["zoneSourceAddZone"]>(),
+    zoneSourceAddLink: vi.fn<Engine["zoneSourceAddLink"]>(),
+    zoneSourceDeclare: vi.fn<Engine["zoneSourceDeclare"]>(),
     generateTimezone: vi.fn<Engine["generateTimezone"]>(() => "UTC"),
     zonedSpecNew: vi.fn<Engine["zonedSpecNew"]>(() => zonedSpec),
     zonedSpecSetCivilBounds: vi.fn<Engine["zonedSpecSetCivilBounds"]>(),
