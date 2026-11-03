@@ -4393,9 +4393,9 @@ pub unsafe extern "C" fn hegel_new_state_machine(
     {
         Ok(machine) => {
             unsafe {
-                *out_state_machine = Box::into_raw(Box::new(HegelStateMachine {
+                *out_state_machine = into_raw_send_sync(HegelStateMachine {
                     machine: Mutex::new(machine),
-                }));
+                });
             }
             HEGEL_OK
         }

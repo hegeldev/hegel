@@ -72,6 +72,14 @@ class Invariant:
     always_run: bool = False
 
 
+def _check_groups(name: str, groups: Iterable[str]) -> tuple[str, ...]:
+    if isinstance(groups, (str, bytes)):
+        raise InvalidArgument(
+            f"rule {name!r}: groups={groups!r} must be a list of group names, not a string"
+        )
+    return tuple(str(g) for g in groups)
+
+
 def _check_weight(name: str, weight: Any) -> float:
     try:
         value = float(weight)
@@ -151,8 +159,9 @@ class Machine:
         rules in different groups never do, and a rule in several groups
         runs in the rounds of each of them (rules without one share the
         anonymous group). ``weight`` is a positive hint of how often to
-        choose the rule relative to the others. A duplicate name or a
-        weight that is not finite and positive is an
+        choose the rule relative to the others. A duplicate name, a
+        weight that is not finite and positive, or a single string in
+        place of the list of ``groups`` is an
         :class:`~hegel.InvalidArgument`; so are an empty ``groups`` and
         one that repeats a group, which the engine reports when the
         machine runs.
@@ -165,7 +174,7 @@ class Machine:
                 Rule(
                     name,
                     fn,
-                    (ANONYMOUS_GROUP,) if groups is None else tuple(str(g) for g in groups),
+                    (ANONYMOUS_GROUP,) if groups is None else _check_groups(name, groups),
                     _check_weight(name, weight),
                 )
             )
@@ -572,10 +581,11 @@ def rule(
 
     def decorate(method: Callable[..., Any]) -> Callable[..., Any]:
         _check_step_method("rule", method)
+        rule_name = name or method.__name__
         method._hegel_rule = {  # type: ignore[attr-defined]
-            "groups": None if groups is None else tuple(str(g) for g in groups),
-            "weight": _check_weight(name or method.__name__, weight),
-            "name": name or method.__name__,
+            "groups": None if groups is None else _check_groups(rule_name, groups),
+            "weight": _check_weight(rule_name, weight),
+            "name": rule_name,
         }
         return method
 

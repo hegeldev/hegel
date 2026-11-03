@@ -576,6 +576,29 @@ def test_a_rule_repeating_a_group_is_an_engine_error():
         run_test(body, test_cases=1)
 
 
+def test_a_single_string_is_not_a_list_of_groups():
+    with pytest.raises(
+        InvalidArgument,
+        match=r"rule 'read': groups='rw' must be a list of group names, not a string",
+    ):
+
+        class Stringly(hegel.StateMachine):
+            @hegel.rule(groups="rw")
+            def read(self, tc):
+                pass
+
+
+def test_machine_rule_rejects_a_single_string_as_groups():
+    def body(tc):
+        Machine(tc).rule("read", lambda tc: None, groups="rw")
+
+    with pytest.raises(
+        InvalidArgument,
+        match=r"rule 'read': groups='rw' must be a list of group names, not a string",
+    ):
+        run_test(body, test_cases=1)
+
+
 def test_concurrent_rules_may_reject_and_use_pools():
     class Pooled(hegel.StateMachine):
         max_concurrency = 3
