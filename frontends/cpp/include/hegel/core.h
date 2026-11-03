@@ -601,16 +601,18 @@ namespace hegel::generators {
             using Predicate = std::function<bool(const T&)>;
 
             PrintedFilterImpl(Generator<T> source, Predicate predicate)
-                : silent_(source, predicate), source_(std::move(source)),
-                  predicate_(std::move(predicate)) {}
+                : source_(std::move(source)), predicate_(std::move(predicate)),
+                  label_(internal::combine_labels(
+                      {internal::label(internal::LabelName::Filter),
+                       source_.label()})) {}
 
             T do_draw(const TestCase& tc) const override {
-                return silent_.do_draw(tc);
+                return source_.do_draw_filtered(tc, predicate_);
             }
 
             T do_draw_filtered(const TestCase& tc,
                                const Predicate& predicate) const override {
-                return silent_.do_draw_filtered(tc, predicate);
+                return source_.do_draw_filtered(tc, both(predicate));
             }
 
             T do_draw_and_print(const TestCase& tc,
@@ -622,20 +624,22 @@ namespace hegel::generators {
             T do_draw_filtered_and_print(const TestCase& tc,
                                          const Predicate& predicate,
                                          Printer& printer) const override {
-                return source_.do_draw_filtered_and_print(
-                    tc,
-                    [first = predicate_, predicate](const T& value) {
-                        return first(value) && predicate(value);
-                    },
-                    printer);
+                return source_.do_draw_filtered_and_print(tc, both(predicate),
+                                                          printer);
             }
 
-            uint64_t label() const override { return silent_.label(); }
+            uint64_t label() const override { return label_; }
 
           private:
-            SilentFilterImpl<T> silent_;
+            Predicate both(const Predicate& predicate) const {
+                return [first = predicate_, predicate](const T& value) {
+                    return first(value) && predicate(value);
+                };
+            }
+
             Generator<T> source_;
             Predicate predicate_;
+            uint64_t label_;
         };
 
         template <typename T>

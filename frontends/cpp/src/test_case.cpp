@@ -162,7 +162,7 @@ namespace hegel {
                 throw;
             } catch (const internal::HegelLoopDone&) {
                 throw;
-            } catch (const std::invalid_argument&) {
+            } catch (const internal::UsageError&) {
                 throw;
             } catch (...) {
                 repeat.failed(*this);

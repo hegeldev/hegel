@@ -903,10 +903,12 @@ namespace hegel::impl {
                                                  &guard.builder));
         for (size_t index = 0;; ++index) {
             hegel_string_t path{nullptr, 0};
-            if (hegel_grammar_builder_file(ctx, guard.builder, index, &path) ==
-                HEGEL_E_NOT_FOUND) {
+            hegel_result_t rc =
+                hegel_grammar_builder_file(ctx, guard.builder, index, &path);
+            if (rc == HEGEL_E_NOT_FOUND) {
                 break;
             }
+            check_arg(ctx, rc);
             std::optional<std::string> text = read_grammar_file(
                 params.import_dir, std::string_view(path.data, path.len));
             hegel_string_t contents =
@@ -1400,7 +1402,9 @@ namespace hegel {
             return false;
         }
         bool live = false;
-        hegel_printer_is_live(impl::thread_context(), handle_, &live);
+        impl::check_rc(
+            impl::thread_context(),
+            hegel_printer_is_live(impl::thread_context(), handle_, &live));
         return live;
     }
 

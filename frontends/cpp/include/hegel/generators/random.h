@@ -88,6 +88,7 @@ namespace hegel::generators {
       private:
         struct Record {
             Printer consumed = Printer::noop();
+            bool live = false;
             std::size_t count = 0;
         };
 

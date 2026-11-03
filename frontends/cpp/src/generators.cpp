@@ -491,6 +491,7 @@ namespace hegel::generators {
     HegelRandom::HegelRandom(const TestCase& tc, Printer consumed)
         : tc_(&tc), engine_(std::nullopt) {
         record_->consumed = std::move(consumed);
+        record_->live = record_->consumed.should_print();
     }
 
     HegelRandom::HegelRandom(uint64_t seed)
@@ -504,7 +505,7 @@ namespace hegel::generators {
             internal::draw_integer(*tc_, std::numeric_limits<uint32_t>::min(),
                                    std::numeric_limits<uint32_t>::max()));
         Printer& slot = record_->consumed;
-        if (slot.should_print()) {
+        if (record_->live) {
             if (record_->count > 0) {
                 slot.separator();
             }

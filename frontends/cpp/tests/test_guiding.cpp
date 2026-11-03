@@ -7,10 +7,15 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <hegel/hegel.h>
 
 namespace gs = hegel::generators;
+
+struct Recursive {
+    std::vector<Recursive> children;
+};
 
 // ---------------------------------------------------------------------------
 // reject()
@@ -219,13 +224,28 @@ TEST(Loop, RepetitionsPrintIndented) {
         << out;
 }
 
-// A usage error inside a repetition propagates untouched.
-TEST(Loop, UsageErrorInsideIsReraised) {
+// An invalid generator argument inside a repetition is reported like any
+// other failure.
+TEST(Loop, InvalidArgumentInsideIsReraised) {
     EXPECT_THROW(hegel::test(
                      [](hegel::TestCase& tc) {
                          tc.repeat([&] {
                              (void)tc.draw(gs::integers<int>(
                                  {.min_value = 1, .max_value = 0}));
+                         });
+                     },
+                     hegel::Settings{.test_cases = 5,
+                                     .derandomize = true,
+                                     .database = hegel::Database::disabled()}),
+                 std::invalid_argument);
+}
+
+// A usage error inside a repetition propagates untouched.
+TEST(Loop, UsageErrorInsideIsReraised) {
+    EXPECT_THROW(hegel::test(
+                     [](hegel::TestCase& tc) {
+                         tc.repeat([&] {
+                             (void)tc.draw(gs::default_generator<Recursive>());
                          });
                      },
                      hegel::Settings{.test_cases = 5,
