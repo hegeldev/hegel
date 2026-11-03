@@ -16,22 +16,27 @@
  * built from the schema. Construction is comparatively expensive (regex
  * compilation, Unicode table lookups), so generators are cached per schema
  * object within each run, with at most 256 entries. Eviction and run teardown
- * free the handles; no cache entry can cross engine instances.
+ * free the handles; no cache entry can cross engine instances. Grammars
+ * (`hegel_grammar_t`, for `fromLark`) are compiled once per run for each
+ * generator in the same cache and freed when the run ends.
  *
  * @packageDocumentation
  */
 
-import { Labels, AssumeError, StopTestError } from "./testCase.js";
+import { AssumeError, StopTestError } from "./testCase.js";
+import { resolveLabel, schemaLabelSpec, type LabelSpec } from "./labels.js";
 import {
   EngineError,
   type Engine,
   type ContextHandle,
   type TestCaseHandle,
   type StringGeneratorHandle,
+  type GrammarHandle,
   type NativeDate,
   type NativeTime,
   type NativeDatetime,
   type UuidVersion,
+  maxSizeArgument,
 } from "./engine.js";
 
 import { fitsInt64 } from "./bytes.js";
@@ -201,8 +206,6 @@ function drawFloat(
   schema: Record<string, unknown>,
 ): number {
   return lib.generateFloat(ctx, tc, {
-    // The float generator always emits width 64; smallest_nonzero_magnitude
-    // is the ABI's "no restriction" sentinel for that width.
     width: schema["width"] as number,
     minValue: (schema["min_value"] as number | undefined) ?? -Infinity,
     maxValue: (schema["max_value"] as number | undefined) ?? Infinity,
@@ -210,22 +213,124 @@ function drawFloat(
     allowInfinity: schema["allow_infinity"] as boolean,
     excludeMin: (schema["exclude_min"] as boolean | undefined) ?? false,
     excludeMax: (schema["exclude_max"] as boolean | undefined) ?? false,
-    smallestNonzeroMagnitude: Number.MIN_VALUE,
+    smallestNonzeroMagnitude: schema["smallest_nonzero_magnitude"] as number,
   });
 }
 
-/** Run-owned cache. Handles never cross engines and are freed before the context.
- * The cap also bounds runs whose user code creates a fresh schema for every draw.
+/**
+ * What a grammar is compiled from: a `fromLark` generator's grammar and
+ * options, one object per generator.
+ */
+export interface GrammarSpec {
+  readonly text: string;
+  readonly start: string | null;
+  /** The most characters, or 0 for the engine's default. */
+  readonly maxSize: number;
+  /** How deeply rules may nest, or 0 for the engine's default. */
+  readonly maxDepth: number;
+  /** The schema of the text generator terminals' characters come from. */
+  readonly alphabet: Record<string, unknown> | null;
+  readonly explicitNames: readonly string[];
+  /** The directory imported grammar files are read from. */
+  readonly importPath: string | null;
+}
+
+/**
+ * Reads the grammar file at `path` (slash-separated, relative) under `dir`:
+ * its text, or `null` when there is no such file.
+ */
+export type GrammarFileReader = (dir: string, path: string) => string | null;
+
+function noGrammarFiles(): never {
+  throw new EngineError("Reading grammar files (importPath) is not supported on this host");
+}
+
+/** How many string generators, and how many grammars, a cache keeps alive. */
+const CACHE_LIMIT = 256;
+
+/**
+ * Run-owned cache. Handles never cross engines and are freed before the
+ * context. Each kind holds at most {@link CACHE_LIMIT} handles, evicting the
+ * oldest first, which bounds runs whose user code creates a fresh schema or
+ * `fromLark` generator for every draw. A grammar is never evicted while a
+ * draw borrows it: a grammar compiled during that draw (for an explicit
+ * terminal) evicts the oldest idle one instead.
  */
 export class StringGeneratorCache {
   private readonly generators = new Map<Record<string, unknown>, StringGeneratorHandle>();
-  constructor(private readonly engine: Engine) {}
+  private readonly grammars = new Map<GrammarSpec, GrammarHandle>();
+  private readonly borrowed = new Map<GrammarSpec, number>();
+  constructor(
+    private readonly engine: Engine,
+    private readonly readGrammarFile: GrammarFileReader = noGrammarFiles,
+  ) {}
+
+  /**
+   * The compiled grammar for `spec`, gathering its imported files on first
+   * use. It is not evicted until a matching {@link releaseGrammar}.
+   */
+  borrowGrammar(ctx: ContextHandle, spec: GrammarSpec): GrammarHandle {
+    const grammar = this.grammar(ctx, spec);
+    this.borrowed.set(spec, (this.borrowed.get(spec) ?? 0) + 1);
+    return grammar;
+  }
+
+  /** End a {@link borrowGrammar}. */
+  releaseGrammar(spec: GrammarSpec): void {
+    const count = this.borrowed.get(spec)! - 1;
+    if (count === 0) this.borrowed.delete(spec);
+    else this.borrowed.set(spec, count);
+  }
+
+  private grammar(ctx: ContextHandle, spec: GrammarSpec): GrammarHandle {
+    const cached = this.grammars.get(spec);
+    if (cached !== undefined) return cached;
+    const lib = this.engine;
+    if (this.grammars.size >= CACHE_LIMIT) {
+      for (const [oldest, handle] of this.grammars) {
+        if (this.borrowed.has(oldest)) continue;
+        this.grammars.delete(oldest);
+        lib.freeGrammar(handle);
+        break;
+      }
+    }
+    const builder = lib.grammarBuilderNew(ctx, spec.text);
+    const grammar = withCleanup(
+      () => {
+        for (let index = 0; ; index++) {
+          const path = lib.grammarBuilderFile(ctx, builder, index);
+          if (path === null) break;
+          const text =
+            spec.importPath === null ? null : this.readGrammarFile(spec.importPath, path);
+          lib.grammarBuilderProvide(ctx, builder, index, text);
+        }
+        const alphabet =
+          spec.alphabet === null ? null : buildStringGenerator(lib, ctx, spec.alphabet);
+        return withCleanup(
+          () =>
+            lib.newGrammar(ctx, builder, {
+              start: spec.start,
+              maxSize: spec.maxSize,
+              maxDepth: spec.maxDepth,
+              alphabet,
+              explicitNames: spec.explicitNames,
+            }),
+          () => {
+            if (alphabet !== null) lib.freeStringGenerator(alphabet);
+          },
+        );
+      },
+      () => lib.freeGrammarBuilder(builder),
+    );
+    this.grammars.set(spec, grammar);
+    return grammar;
+  }
 
   get(lib: Engine, ctx: ContextHandle, schema: Record<string, unknown>): StringGeneratorHandle {
     if (lib !== this.engine) throw new Error("String generator cache belongs to another engine");
     const cached = this.generators.get(schema);
     if (cached !== undefined) return cached;
-    if (this.generators.size >= 256) {
+    if (this.generators.size >= CACHE_LIMIT) {
       const oldest = this.generators.entries().next().value!;
       this.generators.delete(oldest[0]);
       lib.freeStringGenerator(oldest[1]);
@@ -238,10 +343,19 @@ export class StringGeneratorCache {
   dispose(): void {
     const generators = [...this.generators.values()];
     this.generators.clear();
+    const grammars = [...this.grammars.values()];
+    this.grammars.clear();
     const errors: unknown[] = [];
     for (const generator of generators) {
       try {
         this.engine.freeStringGenerator(generator);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    for (const grammar of grammars) {
+      try {
+        this.engine.freeGrammar(grammar);
       } catch (error) {
         errors.push(error);
       }
@@ -262,10 +376,9 @@ function buildStringGenerator(
 ): StringGeneratorHandle {
   switch (schema["type"]) {
     case "string": {
-      const maxSize = schema["max_size"] as number | undefined;
       return lib.stringGeneratorText(ctx, {
         minSize: schema["min_size"] as number,
-        maxSize: maxSize === undefined ? 0xffffffffffffffffn : BigInt(maxSize),
+        maxSize: maxSizeArgument(schema["max_size"] as number | undefined),
         codec: (schema["codec"] as string | undefined) ?? null,
         minCodepoint: (schema["min_codepoint"] as number | undefined) ?? 0,
         maxCodepoint: (schema["max_codepoint"] as number | undefined) ?? UINT32_MAX,
@@ -275,12 +388,23 @@ function buildStringGenerator(
         excludeCharacters: utf8OrNull(schema["exclude_characters"] as string | undefined),
       });
     }
-    case "regex":
-      return lib.stringGeneratorRegex(
-        ctx,
-        schema["pattern"] as string,
-        schema["fullmatch"] as boolean,
+    case "regex": {
+      const alphabetSpec = schema["alphabet"] as Record<string, unknown> | undefined;
+      const alphabet =
+        alphabetSpec === undefined ? null : buildStringGenerator(lib, ctx, alphabetSpec);
+      return withCleanup(
+        () =>
+          lib.stringGeneratorRegex(
+            ctx,
+            schema["pattern"] as string,
+            schema["fullmatch"] as boolean,
+            alphabet,
+          ),
+        () => {
+          if (alphabet !== null) lib.freeStringGenerator(alphabet);
+        },
       );
+    }
     case "email":
       return lib.stringGeneratorEmail(ctx);
     case "url":
@@ -291,8 +415,8 @@ function buildStringGenerator(
   }
 }
 
-// Cleanup must not replace an engine fault with ordinary draw control flow.
-function withCleanup<T>(operation: () => T, cleanup: () => void): T {
+/** Run `operation`, then `cleanup`; cleanup must not replace an engine fault with ordinary draw control flow. */
+export function withCleanup<T>(operation: () => T, cleanup: () => void): T {
   let failed = false;
   let failure: unknown;
   let value!: T;
@@ -323,10 +447,10 @@ function withSpan<T>(
   lib: Engine,
   ctx: ContextHandle,
   tc: TestCaseHandle,
-  label: number,
+  spec: LabelSpec,
   operation: () => T,
 ): T {
-  lib.startSpan(ctx, tc, label);
+  lib.startSpan(ctx, tc, resolveLabel(lib, ctx, spec));
   return withCleanup(operation, () => lib.stopSpan(ctx, tc, false));
 }
 
@@ -339,36 +463,32 @@ function drawList(
 ): unknown[] {
   const elementSchema = schema["elements"] as Record<string, unknown>;
   const unique = schema["unique"] as boolean;
-  return withSpan(lib, ctx, tc, Labels.LIST, () => {
-    const collection = lib.newCollection(
-      ctx,
-      tc,
-      schema["min_size"] as number,
-      schema["max_size"] as number | undefined,
-    );
-    return withCleanup(
-      () => {
-        const values: unknown[] = [];
-        const seen = new Set<string>();
-        while (lib.collectionMore(ctx, tc, collection)) {
-          const value = withSpan(lib, ctx, tc, Labels.LIST_ELEMENT, () =>
-            generateValue(lib, ctx, tc, elementSchema, cache),
-          );
-          if (unique) {
-            const key = valueKey(value);
-            if (seen.has(key)) {
-              lib.collectionReject(ctx, tc, collection, "duplicate element");
-              continue;
-            }
-            seen.add(key);
+  const collection = lib.newCollection(
+    ctx,
+    tc,
+    schema["min_size"] as number,
+    schema["max_size"] as number | undefined,
+  );
+  return withCleanup(
+    () => {
+      const values: unknown[] = [];
+      const seen = new Set<string>();
+      while (lib.collectionMore(ctx, tc, collection)) {
+        const value = drawChild(lib, ctx, tc, elementSchema, cache);
+        if (unique) {
+          const key = valueKey(value);
+          if (seen.has(key)) {
+            lib.collectionReject(ctx, tc, collection, "duplicate element");
+            continue;
           }
-          values.push(value);
+          seen.add(key);
         }
-        return values;
-      },
-      () => lib.freeCollection(collection),
-    );
-  });
+        values.push(value);
+      }
+      return values;
+    },
+    () => lib.freeCollection(collection),
+  );
 }
 
 function drawDict(
@@ -380,35 +500,47 @@ function drawDict(
 ): unknown[] {
   const keySchema = schema["keys"] as Record<string, unknown>;
   const valueSchema = schema["values"] as Record<string, unknown>;
-  return withSpan(lib, ctx, tc, Labels.MAP, () => {
-    const collection = lib.newCollection(
-      ctx,
-      tc,
-      schema["min_size"] as number,
-      schema["max_size"] as number | undefined,
-    );
-    return withCleanup(
-      () => {
-        const entries: unknown[] = [];
-        const seen = new Set<string>();
-        while (lib.collectionMore(ctx, tc, collection)) {
-          const [key, value] = withSpan(lib, ctx, tc, Labels.MAP_ENTRY, () => [
-            generateValue(lib, ctx, tc, keySchema, cache),
-            generateValue(lib, ctx, tc, valueSchema, cache),
-          ]);
-          const identity = valueKey(key);
-          if (seen.has(identity)) {
-            lib.collectionReject(ctx, tc, collection, "duplicate key");
-            continue;
-          }
-          seen.add(identity);
-          entries.push([key, value]);
+  const collection = lib.newCollection(
+    ctx,
+    tc,
+    schema["min_size"] as number,
+    schema["max_size"] as number | undefined,
+  );
+  return withCleanup(
+    () => {
+      const entries: unknown[] = [];
+      const seen = new Set<string>();
+      while (lib.collectionMore(ctx, tc, collection)) {
+        const key = drawChild(lib, ctx, tc, keySchema, cache);
+        const value = drawChild(lib, ctx, tc, valueSchema, cache);
+        const identity = valueKey(key);
+        if (seen.has(identity)) {
+          lib.collectionReject(ctx, tc, collection, "duplicate key");
+          continue;
         }
-        return entries;
-      },
-      () => lib.freeCollection(collection),
-    );
-  });
+        seen.add(identity);
+        entries.push([key, value]);
+      }
+      return entries;
+    },
+    () => lib.freeCollection(collection),
+  );
+}
+
+/**
+ * Draw the component `schema` of a compound schema, inside its own span, as
+ * a generator drawing a component through the test case would.
+ */
+function drawChild(
+  lib: Engine,
+  ctx: ContextHandle,
+  tc: TestCaseHandle,
+  schema: Record<string, unknown>,
+  cache: StringGeneratorCache,
+): unknown {
+  return withSpan(lib, ctx, tc, schemaLabelSpec(schema), () =>
+    generateValue(lib, ctx, tc, schema, cache),
+  );
 }
 
 /**
@@ -433,7 +565,7 @@ export function generateValue(
   const type = schema["type"] as string;
   switch (type) {
     case "boolean":
-      return lib.generateBoolean(ctx, tc, 0.5);
+      return lib.generateBoolean(ctx, tc, (schema["p"] as number | undefined) ?? 0.5);
     case "integer":
       return drawInteger(lib, ctx, tc, schema);
     case "float":
@@ -443,7 +575,7 @@ export function generateValue(
         ctx,
         tc,
         schema["min_size"] as number,
-        schema["max_size"] as number | undefined,
+        maxSizeArgument(schema["max_size"] as number | undefined),
       );
     case "string":
     case "regex":
@@ -474,17 +606,12 @@ export function generateValue(
       return schema["value"];
     case "one_of": {
       const options = schema["generators"] as Record<string, unknown>[];
-      return withSpan(lib, ctx, tc, Labels.ONE_OF, () => {
-        const index = Number(lib.generateInteger(ctx, tc, 0n, BigInt(options.length - 1)));
-        const value = generateValue(lib, ctx, tc, options[index], cache);
-        return [index, value];
-      });
+      const index = Number(lib.generateInteger(ctx, tc, 0n, BigInt(options.length - 1)));
+      return [index, drawChild(lib, ctx, tc, options[index], cache)];
     }
     case "tuple": {
       const elements = schema["elements"] as Record<string, unknown>[];
-      return withSpan(lib, ctx, tc, Labels.TUPLE, () =>
-        elements.map((element) => generateValue(lib, ctx, tc, element, cache)),
-      );
+      return elements.map((element) => drawChild(lib, ctx, tc, element, cache));
     }
     case "list":
       return drawList(lib, ctx, tc, schema, cache);

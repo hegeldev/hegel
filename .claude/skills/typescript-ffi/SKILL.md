@@ -36,8 +36,9 @@ The layers, and what an ABI change usually touches:
   per-primitive draw entry points. Touch it when a draw entry point changes
   shape or a new one replaces schema-level behaviour.
 - **`src/runnerCore.ts` / `src/session.ts`** — the run lifecycle
-  (`run_start` → `next_test_case` → `mark_complete` → `run_result`, plus
-  failure replay via `hegel_test_case_from_blob`) and the process-global
+  (`run_start` or `run_start_blob` → `next_test_case` → `mark_complete` →
+  `run_result`, with each stamped test case's report read from its printer
+  document) and the process-global
   library handle with its `major.minor` version check. Touch only if the
   lifecycle protocol itself changes.
 - **`src/wtf8.ts`** — decodes engine-returned string bytes. Touch only if
@@ -51,6 +52,9 @@ around it:
 - The **first argument** is a `hegel_context_t*` (an error-reporting context).
 - The **return value** is a `hegel_result_t` code (`HEGEL_OK` is 0; failures
   are negative — `-1` is `HEGEL_E_STOP_TEST`, `-2` is `HEGEL_E_ASSUME`).
+  `HEGEL_E_RETRY` (`-10`) is protocol rather than failure:
+  `hegel_recursion_leaf` and `hegel_recursion_finish` surface it as a `false`
+  return, and the recursive generator unwinds and draws the value again.
 - Any **value the call produces** (a handle, a count, a bool, a buffer) is
   written through a **trailing out-parameter**, never returned.
 - On a non-OK return, the message is read back from the context via
@@ -78,16 +82,53 @@ absorbed inside `bindLibrary`'s wrapper, but the absorption must be documented
 in the `Bindings` interface docs so a reader can tell a deliberate default from
 an oversight.
 
+### Constants and multi-call protocols
+
+`hegel.h` also publishes `#define` constants a frontend must use rather than
+hard-code: `HEGEL_MAX_SIZE_DEFAULT` (`UINT64_MAX - 1`, the `max_size` that
+asks libhegel for its default text and binary maximum; a `bigint` in
+TypeScript; reserved, so clamp a user's explicit maximum at or above it to
+`UINT64_MAX`), `HEGEL_FILTER_ATTEMPTS` (how many times `filter` draws before
+rejecting) and `HEGEL_STATE_MACHINE_DONE`. Neither koffi nor the Wasm module
+exports them: copy each into `src/engine.ts` next to the enums, and check the
+header diff for changed values like any other constant.
+
+Some operations are a loop of calls over a caller-owned handle rather than one
+call: the grammar builder (`hegel_grammar_builder_file` /
+`hegel_grammar_builder_provide` until `HEGEL_E_NOT_FOUND`), recursion
+(`hegel_recursion_*`, with `HEGEL_E_RETRY`), and explicit grammar terminals
+(`hegel_grammar_draw_next` / `hegel_grammar_draw_provide` until
+`HEGEL_E_NOT_FOUND`, then `hegel_grammar_draw_result`). There are no
+callbacks: the frontend runs its own code (reading a file, drawing a value)
+between the calls, and frees the handle (`hegel_grammar_builder_free`,
+`hegel_recursion_free`, `hegel_grammar_draw_free`) when the loop ends, on error
+paths too. A grammar draw belongs to the test case it was first advanced
+with, so start one per draw, never cache it on the generator.
+`HEGEL_E_NOT_FOUND` and `HEGEL_E_RETRY` are steps of these
+loops, not errors, so the wrapper returns them to the caller instead of
+throwing through `check`. `hegel_settings_set_from_string` takes a setting's
+`hegel.toml` key and a string value, which is how a command line reaches every
+setting without the frontend parsing values itself.
+
 ### Ownership
 
 Neither adapter frees anything implicitly. Every handle the ABI writes back is
 released with its matching free, in `finally` blocks so error paths release
 too: the runner frees `Context`, `Settings` and `Run`, each test case, the run
-result, each failure and each replay test case; the interpreter frees each
-collection; engine-owned buffers (`hegel_generate_bytes`,
-`hegel_generate_string`) are copied out immediately and then freed. The
-exception: `hegel_string_generator_t` handles are cached per schema object
-(`StringGeneratorCache`) and freed with the runner.
+result and each failure; `EngineDataSource` frees the collections, pools,
+recursions, state machines, printers, deferred printer regions
+(`hegel_printer_deferred`) and cloned or block test cases of its test case;
+an explicit example's `EngineDocument` (`src/pretty.ts`, also behind the
+public `Document`) frees the standalone printer from `hegel_printer_new`, its
+deferred regions and the `hegel_printer_options_t` it was made with;
+engine-owned buffers (`hegel_generate_bytes`, `hegel_generate_string`,
+`hegel_printer_value`, `hegel_grammar_draw_result`) are copied out
+immediately and then freed. A grammar builder is freed as soon as its grammar
+is compiled, and a grammar draw when the draw ends. The exceptions:
+`hegel_string_generator_t` handles are cached per schema object and
+`hegel_grammar_t` handles per `fromLark` generator (`StringGeneratorCache`),
+each kind capped at 256 live handles (the oldest evicted and freed first, never
+a grammar a draw in progress borrows), and the rest freed with the runner.
 
 ## Making a change
 
@@ -106,8 +147,8 @@ exception: `hegel_string_generator_t` handles are cached per schema object
      objects), and `koffi.out(koffi.pointer(t))` for struct out-parameters. A
      `_Out_ void**` that yields a `const hegel_string_t *` is decoded with
      `koffi.decode(ptr, stringType)`. A struct returned by value
-     (`hegel_context_last_error`) is declared with `lib.func(name, stringType,
-     [...])`.
+     (`hegel_context_last_error`) is declared with
+     `lib.func(name, stringType, [...])`.
    - New symbol → bind it **only if the frontend needs it**: the coverage gate
      forbids dead bindings.
    - Changed enum or constant values → the exported `const` objects in

@@ -35,17 +35,34 @@ export function checkVersion(actual: string, expected: string = LIBHEGEL_VERSION
   }
 }
 
-/** Locate, load and version-check the native library. */
-export function loadLibhegel(): Libhegel {
+/**
+ * Locate, load and version-check the native library, and have its string
+ * generators follow `unicodeVersion` when one is given.
+ */
+export function loadLibhegel(unicodeVersion?: string): Libhegel {
   const lib = Libhegel.load(locateLibhegel());
   checkVersion(lib.version());
+  if (unicodeVersion !== undefined) {
+    const ctx = lib.newContext();
+    try {
+      lib.setUnicodeVersion(ctx, unicodeVersion);
+    } finally {
+      lib.freeContext(ctx);
+    }
+  }
   return lib;
 }
 
-/** Returns the process-global libhegel handle, loading it on first use. */
+/**
+ * Returns the process-global libhegel handle, loading it on first use. Its
+ * string generators follow the Unicode version of the host's own tables
+ * (`process.versions.unicode`), so that what the engine generates for a
+ * character category agrees with what JavaScript's regular expressions match;
+ * a host that reports no version keeps the engine's own tables.
+ */
 export function getLibhegel(): Libhegel {
   if (cached === null) {
-    cached = loadLibhegel();
+    cached = loadLibhegel(process.versions["unicode"]);
   }
   return cached;
 }
