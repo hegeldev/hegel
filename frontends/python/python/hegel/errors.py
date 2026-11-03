@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from hegel._native import (
     AssumeFailed,
@@ -13,6 +13,9 @@ from hegel._native import (
     InvalidArgument,
     StopTest,
 )
+
+if TYPE_CHECKING:
+    from hegel.settings import HealthCheck
 
 __all__ = [
     "AssumeFailed",
@@ -24,6 +27,7 @@ __all__ = [
     "InternalError",
     "InvalidArgument",
     "MultipleFailures",
+    "NotPrintable",
     "ResolutionFailed",
     "RunError",
     "StopTest",
@@ -35,6 +39,19 @@ class ResolutionFailed(InvalidArgument):
     """:func:`~hegel.generators.from_type` could not find a generator for a
     type. Raised when the generator is built; a subclass of
     :class:`InvalidArgument`."""
+
+
+class NotPrintable(InvalidArgument):
+    """:meth:`TestCase.draw <hegel.TestCase.draw>` was given a generator
+    that cannot print the values it draws: a
+    :class:`~hegel.generators.Generator` subclass that implements only
+    ``do_draw``, or a structure containing one. Raised from the draw, on
+    the first test case that reaches it; a subclass of
+    :class:`InvalidArgument`, so it ends the run as a usage error. Implement
+    ``do_draw_and_print`` on the generator, make it printable with
+    :meth:`~hegel.generators.Generator.print_with` or
+    :meth:`~hegel.generators.Generator.print_as_repr`, or draw it with
+    :meth:`TestCase.draw_silent <hegel.TestCase.draw_silent>`."""
 
 
 class LoopDone(BaseException):
@@ -51,9 +68,14 @@ class RunError(HegelError):
 
 class FailedHealthCheck(RunError):
     """A health check failed: the run was likely to test poorly or slowly
-    (too many rejected test cases, say). The message explains which check
-    failed, and how to suppress it with ``suppress_health_check`` if the
-    behaviour is intentional. See :class:`~hegel.HealthCheck`."""
+    (too many rejected test cases, say). ``health_check`` is the
+    :class:`~hegel.HealthCheck` that failed, and the message names it and
+    says how to suppress it with ``suppress_health_check`` if the
+    behaviour is intentional."""
+
+    def __init__(self, message: str, health_check: HealthCheck | None = None) -> None:
+        super().__init__(message)
+        self.health_check = health_check
 
 
 class Flaky(RunError):

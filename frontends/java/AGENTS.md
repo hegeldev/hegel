@@ -330,10 +330,11 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   the real libhegel through both backends; `FakeLibhegel` exists only for the
   result-code and error paths the engine cannot be driven into.
 - **Engine divergences are fixed in the engine.** When libhegel misbehaves,
-  fix it in `../../libhegel` (with a `libhegel/RELEASE.md`) in the same PR
-  rather than working around it in the bindings.
-- **Every PR that changes what ships needs a `RELEASE.md` here.** That means
-  any change to `shared/src/main/`, a module's `src/main/` or a `pom.xml`. See
+  fix it in `../../libhegel` (with a `libhegel/RELEASE/<slug>.md`) in the same
+  PR rather than working around it in the bindings.
+- **Every PR that changes what ships needs a release file here**, as
+  `RELEASE/<slug>.md` named after the change. That means any change to
+  `shared/src/main/`, a module's `src/main/` or a `pom.xml`. See
   the root `CONTRIBUTING.md` for the format and the semver rules (on 0.x,
   breaking changes are `minor`, everything else `patch`). CI checks this
   (`.github/scripts/release.py check`); on merge to main the release job bumps
@@ -343,7 +344,7 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   (`.github/scripts/publish_java.py`: `mvn -P release deploy`, signed with
   the Hegel release key, bundling the libhegel GitHub release's binaries). A
   libhegel release re-releases this frontend too, with an auto-generated
-  engine-bump entry unless the PR writes a `RELEASE.md` here. Never edit
+  engine-bump entry unless the PR writes a release file here. Never edit
   `CHANGELOG.md` by hand.
 
 ## Conventions

@@ -44,6 +44,53 @@ fn db_key_fixture_2(tc: hegel::TestCase) {
     assert!(n < 1_000_000);
 }
 
+#[hegel::test(
+    database = Some(std::env::var("HEGEL_TEST_DB_DIR").unwrap()),
+    database_key = "shared_key"
+)]
+#[ignore = "fixture: run via exec::self_test"]
+fn db_key_fixture_shared_1(tc: hegel::TestCase) {
+    let n: i64 = tc.draw(gs::integers());
+    record_test_case("shared_1", n);
+    assert!(n < 1_000_000);
+}
+
+#[hegel::test(
+    database = Some(std::env::var("HEGEL_TEST_DB_DIR").unwrap()),
+    database_key = "shared_key"
+)]
+#[ignore = "fixture: run via exec::self_test"]
+fn db_key_fixture_shared_2(tc: hegel::TestCase) {
+    let n: i64 = tc.draw(gs::integers());
+    record_test_case("shared_2", n);
+    assert!(n < 1_000_000);
+}
+
+#[test]
+fn test_an_explicit_database_key_is_shared_between_tests() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("database");
+    std::fs::create_dir_all(&db_path).unwrap();
+    let db_str = db_path.to_str().unwrap().replace('\\', "/");
+    let values_path = temp_dir.path().join("values");
+    std::fs::create_dir_all(&values_path).unwrap();
+    let values_str = values_path.to_str().unwrap().to_string();
+    let run = |name: &str| {
+        self_test(name)
+            .env("HEGEL_TEST_DB_DIR", &db_str)
+            .env("VALUES_DIR", &values_str)
+            .expect_failure("FAILED")
+            .run();
+    };
+
+    run("db_key_fixture_shared_1");
+    let shrunk_value = *read_values(&values_path, "shared_1").last().unwrap();
+    assert_eq!(shrunk_value, 1_000_000);
+
+    run("db_key_fixture_shared_2");
+    assert_eq!(read_values(&values_path, "shared_2")[0], shrunk_value);
+}
+
 #[test]
 fn test_database_key_replays_failure() {
     let temp_dir = tempfile::TempDir::new().unwrap();

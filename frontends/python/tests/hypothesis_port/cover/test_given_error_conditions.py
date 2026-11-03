@@ -20,14 +20,9 @@ from hegel import generators as gs
 from tests.hypothesis_port.common.utils import fails_with
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="engine: rejecting every input of a finite space fails the FilterTooMuch "
-    "health check rather than raising Unsatisfiable",
-)
-@fails_with(hegel.Unsatisfiable)
+@fails_with(hegel.FailedHealthCheck)
 @hegel.test
-def test_raises_unsatisfiable_if_all_false_in_finite_set(tc):
+def test_fails_health_check_if_all_false_in_finite_set(tc):
     tc.draw(gs.booleans())
     tc.reject()
 

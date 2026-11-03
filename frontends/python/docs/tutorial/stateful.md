@@ -73,7 +73,6 @@ values drawn in each step, and reports a minimal one:
 
 ```
 E       assert 1 == 0
-E       Falsifying example:
 E       Checking invariants on the initial state.
 E       Step 1: push {
 E         x = 0

@@ -6,9 +6,11 @@ side of a single-target assignment is mapped to that target's name.
 
 As in the Rust library's ``#[hegel::test]``, a name is *repeatable* when its
 draw can run more than once per test case: it is assigned inside a loop or
-comprehension, or by more than one draw in the same function. A repeatable
-name is reported numbered from one (``x_1``, ``x_2``, ...); any other name is
-reported as written.
+comprehension, by more than one draw in the same function, or inside a
+function nested in a ``@hegel.test`` function (the ``step`` of a
+``tc.repeat(step)``, say), which may be called any number of times. A
+repeatable name is reported numbered from one (``x_1``, ``x_2``, ...); any
+other name is reported as written.
 """
 
 from __future__ import annotations
@@ -76,8 +78,22 @@ def _draw_assignment(node: ast.AST) -> tuple[str, ast.expr] | None:
     return None if name is None else (name, value)
 
 
+def _is_hegel_test(node: ast.AST) -> bool:
+    """Whether ``node`` is a function decorated with ``hegel.test`` (or
+    ``test``), with or without arguments."""
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return False
+    for decorator in node.decorator_list:
+        if isinstance(decorator, ast.Call):
+            decorator = decorator.func
+        if _target_name(decorator) == "test":
+            return True
+    return False
+
+
 @dataclass
 class _Scope:
+    nested: bool = False
     assignments: list[tuple[str, ast.expr, bool]] = field(default_factory=list)
 
 
@@ -86,12 +102,17 @@ class _Collector(ast.NodeVisitor):
         self.scopes = [_Scope()]
         self.finished: list[_Scope] = []
         self.loop_depth = 0
+        self.test_depth = 0
 
     def _function(self, node: ast.AST) -> None:
         outer_loop_depth = self.loop_depth
-        self.scopes.append(_Scope())
+        nested = self.test_depth > 0
+        in_test = nested or _is_hegel_test(node)
+        self.scopes.append(_Scope(nested=nested))
         self.loop_depth = 0
+        self.test_depth += in_test
         self.generic_visit(node)
+        self.test_depth -= in_test
         self.finished.append(self.scopes.pop())
         self.loop_depth = outer_loop_depth
 
@@ -109,7 +130,8 @@ class _Collector(ast.NodeVisitor):
         found = _draw_assignment(node)
         if found is not None:
             name, value = found
-            self.scopes[-1].assignments.append((name, value, self.loop_depth > 0))
+            scope = self.scopes[-1]
+            scope.assignments.append((name, value, scope.nested or self.loop_depth > 0))
         super().generic_visit(node)
 
 

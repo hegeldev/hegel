@@ -3,8 +3,9 @@ use super::{
 };
 use crate::pretty::PrettyPrinter;
 use std::marker::PhantomData;
+use std::sync::LazyLock;
 
-const TUPLE_LABEL: u64 = label_from_name("hegel.tuple");
+static TUPLE_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.tuple"));
 
 /// Creates a tuple generator from 0–12 component generators.
 ///
@@ -139,7 +140,7 @@ macro_rules! impl_tuple {
             $($field: $G,)+
         ) -> $name<$($G,)+ $($T,)+> {
             $name {
-                label: combine_labels(&[TUPLE_LABEL, $($field.label(),)+]),
+                label: combine_labels(&[*TUPLE_LABEL, $($field.label(),)+]),
                 $($field,)+
                 _phantom: PhantomData,
             }
@@ -162,7 +163,7 @@ pub struct Tuple0Generator;
 
 impl Generator<()> for Tuple0Generator {
     fn label(&self) -> u64 {
-        TUPLE_LABEL
+        *TUPLE_LABEL
     }
 
     fn do_draw(&self, _tc: &TestCase) {}

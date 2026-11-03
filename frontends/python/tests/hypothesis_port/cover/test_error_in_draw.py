@@ -9,7 +9,6 @@
 # v. 2.0. If a copy of the MPL was not distributed with this file, You can
 # obtain one at https://mozilla.org/MPL/2.0/.
 
-import re
 
 import pytest
 
@@ -32,7 +31,7 @@ def test_error_is_in_finally():
     assert "[0, 1, -1]" in "\n".join(notes(err.value))
 
 
-def test_adds_note_showing_which_strategy():
+def test_a_draw_that_raises_is_not_reported():
     class X:
         def __init__(self, y: int) -> None:
             assert y == 7
@@ -42,14 +41,12 @@ def test_adds_note_showing_which_strategy():
         value = tc.draw(gs.from_type(X))
         assert isinstance(value, X)
 
-    rep = re.escape(repr(gs.from_type(X)))
-    with pytest.raises(
-        AssertionError, match=f"value = <AssertionError raised while drawing from {rep}>"
-    ):
+    with pytest.raises(AssertionError, match="assert 0 == 7") as err:
         inner()
+    assert "value" not in "\n".join(notes(err.value))
 
 
-def test_adds_note_showing_which_strategy_stateful():
+def test_a_draw_that_raises_is_not_reported_stateful():
     strategy = gs.integers().map(lambda x: x / 0)
 
     class Machine(hegel.StateMachine):
@@ -58,7 +55,8 @@ def test_adds_note_showing_which_strategy_stateful():
             value = tc.draw(strategy)
             assert value
 
-    msg = f"value = <ZeroDivisionError raised while drawing from {strategy!r}>"
-    with pytest.raises(ZeroDivisionError, match=re.escape(msg)) as err:
+    with pytest.raises(ZeroDivisionError) as err:
         hegel.state_machine_test(Machine)()
-    assert "take_a_step" in "\n".join(notes(err.value))
+    report = "\n".join(notes(err.value))
+    assert "take_a_step" in report
+    assert "value" not in report

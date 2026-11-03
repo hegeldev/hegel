@@ -37,7 +37,6 @@ def test_reports_target_results(testdir, multiple):
     script = testdir.makepyfile(TESTSUITE.format("" if multiple else "# "))
     result = testdir.runpytest(script, "--tb=native", "-rN")
     out = "\n".join(result.stdout.lines)
-    assert "Falsifying example" in out
     assert "x = 101" in out, out
     assert result.ret != 0
 
@@ -77,7 +76,7 @@ def test_targeting_can_be_disabled():
 
 
 def test_issue_2395_regression():
-    @hegel.test(test_cases=1000, database="", seed=93962505385993024185959759429298090872)
+    @hegel.test(test_cases=1000, database="", seed=13479849077938647928)
     def test_targeting_square_loss(tc):
         d = tc.draw(gs.floats().filter(lambda x: abs(x) < 1000))
         tc.target(-((d - 42.5) ** 2.0))

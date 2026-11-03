@@ -100,7 +100,7 @@ def test_floats_bounded():
     check_all(gs.floats(0.0, 1.0), lambda x: 0.0 <= x <= 1.0)
     check_all(gs.floats(min_value=1e300), lambda x: x >= 1e300)
     check_all(gs.floats(max_value=-1e300), lambda x: x <= -1e300)
-    check_all(gs.floats(0.0, 1.0, exclude_min=True, exclude_max=True), lambda x: 0.0 < x < 1.0)
+    check_all(gs.floats(min_value_exclusive=0.0, max_value_exclusive=1.0), lambda x: 0.0 < x < 1.0)
     check_all(gs.floats(allow_nan=False), lambda x: not math.isnan(x))
     check_all(gs.floats(allow_nan=False, allow_infinity=False), lambda x: math.isfinite(x))
     check_all(gs.floats(1, 2), lambda x: 1 <= x <= 2)
@@ -122,6 +122,10 @@ def test_floats_width_32():
     assert repr(gs.floats(width=32)) == "floats(width=32)"
     assert repr(gs.floats(0.0, 1.0)) == "floats(min_value=0.0, max_value=1.0)"
     assert repr(gs.floats(max_value=1.0)) == "floats(max_value=1.0)"
+    assert (
+        repr(gs.floats(min_value_exclusive=0.0, max_value_exclusive=1.0))
+        == "floats(min_value_exclusive=0.0, max_value_exclusive=1.0)"
+    )
 
 
 def test_floats_shrink_to_simple_values():
@@ -135,11 +139,11 @@ def test_floats_shrink_to_simple_values():
     [
         dict(min_value=2.0, max_value=1.0),
         dict(min_value=0.0, max_value=-0.0),
-        dict(min_value=1.0, max_value=1.0, exclude_min=True),
-        dict(exclude_min=True),
-        dict(exclude_max=True),
-        dict(min_value=math.inf, exclude_min=True),
-        dict(max_value=-math.inf, exclude_max=True),
+        dict(min_value_exclusive=1.0, max_value=1.0),
+        dict(min_value=0.0, min_value_exclusive=0.0),
+        dict(max_value=0.0, max_value_exclusive=0.0),
+        dict(min_value_exclusive=math.inf),
+        dict(max_value_exclusive=-math.inf),
         dict(min_value=0.0, allow_nan=True),
         dict(min_value=0.0, max_value=1.0, allow_infinity=True),
         dict(min_value=1.0, allow_subnormal=True),
@@ -151,8 +155,8 @@ def test_floats_shrink_to_simple_values():
         dict(min_value="0"),
         dict(max_value=True),
         dict(min_value=0.1, width=32),
-        dict(exclude_min=None),
-        dict(min_value=0.0, exclude_max=1),
+        dict(min_value_exclusive=math.nan),
+        dict(max_value_exclusive="0"),
     ],
 )
 def test_floats_invalid_arguments(kwargs):
@@ -170,28 +174,28 @@ BELOW_NORMAL = math.nextafter(sys.float_info.min, 0)
         (dict(min_value=math.inf, allow_infinity=False), "excludes min_value=inf"),
         (dict(max_value=-math.inf, allow_infinity=False), "excludes max_value=-inf"),
         (
-            dict(min_value=LARGEST, exclude_min=True, allow_infinity=False),
-            "exclude_min=True turns min_value=1.7976931348623157e+308 into inf",
+            dict(min_value_exclusive=LARGEST, allow_infinity=False),
+            "min_value_exclusive=1.7976931348623157e+308 leaves only inf",
         ),
         (
-            dict(max_value=-LARGEST, exclude_max=True, allow_infinity=False),
-            "exclude_max=True turns max_value=-1.7976931348623157e+308 into -inf",
+            dict(max_value_exclusive=-LARGEST, allow_infinity=False),
+            "max_value_exclusive=-1.7976931348623157e+308 leaves only -inf",
         ),
         (
-            dict(min_value=LARGEST, max_value=LARGEST, exclude_min=True),
-            "exclude_min/exclude_max leave no 64-bit floating-point values",
+            dict(min_value_exclusive=LARGEST, max_value=LARGEST),
+            "min_value_exclusive/max_value_exclusive leave no 64-bit floating-point values",
         ),
         (
-            dict(min_value=BELOW_NORMAL, exclude_min=True, allow_subnormal=True),
-            f"allow_subnormal=True, but min_value={BELOW_NORMAL!r} excludes",
+            dict(min_value_exclusive=BELOW_NORMAL, allow_subnormal=True),
+            f"allow_subnormal=True, but min_value_exclusive={BELOW_NORMAL!r} excludes",
         ),
         (
-            dict(max_value=-BELOW_NORMAL, exclude_max=True, allow_subnormal=True),
-            f"allow_subnormal=True, but max_value={-BELOW_NORMAL!r} excludes",
+            dict(max_value_exclusive=-BELOW_NORMAL, allow_subnormal=True),
+            f"allow_subnormal=True, but max_value_exclusive={-BELOW_NORMAL!r} excludes",
         ),
         (
-            dict(min_value=1e-320, max_value=1e-320, exclude_min=True, allow_subnormal=False),
-            "exclude_min/exclude_max leave no 64-bit floating-point values",
+            dict(min_value_exclusive=1e-320, max_value=1e-320, allow_subnormal=False),
+            "min_value_exclusive/max_value_exclusive leave no 64-bit floating-point values",
         ),
     ],
 )
@@ -209,10 +213,10 @@ def test_floats_infinite_bounds_bound_nothing():
     assert find_example(gs.floats(math.inf, math.inf)) == math.inf
     assert find_example(gs.floats(-math.inf, -math.inf, width=32)) == -math.inf
     check_all(gs.floats(min_value=-math.inf, max_value=0.0, allow_infinity=False), math.isfinite)
-    check_all(gs.floats(min_value=-math.inf, exclude_min=True, allow_infinity=False), math.isfinite)
-    # exclude_min at -inf keeps -inf out but is otherwise unbounded below.
-    check_all(gs.floats(min_value=-math.inf, exclude_min=True), lambda x: x > -math.inf)
-    check_all(gs.floats(min_value=LARGEST, exclude_min=True), lambda x: x == math.inf)
+    check_all(gs.floats(min_value_exclusive=-math.inf, allow_infinity=False), math.isfinite)
+    # An exclusive -inf keeps -inf out but is otherwise unbounded below.
+    check_all(gs.floats(min_value_exclusive=-math.inf), lambda x: x > -math.inf)
+    check_all(gs.floats(min_value_exclusive=LARGEST), lambda x: x == math.inf)
     # Fractions are real numbers too.
     assert gs.floats(Fraction(1, 2)).min_value == 0.5
 
@@ -221,15 +225,15 @@ def test_floats_apply_exclusion_before_subnormal_defaults():
     smallest_normal = sys.float_info.min
     below = math.nextafter(smallest_normal, 0)
     assert gs.floats(min_value=below).allow_subnormal is True
-    assert gs.floats(min_value=below, exclude_min=True).allow_subnormal is False
-    assert gs.floats(max_value=-below, exclude_max=True).allow_subnormal is False
+    assert gs.floats(min_value_exclusive=below).allow_subnormal is False
+    assert gs.floats(max_value_exclusive=-below).allow_subnormal is False
     # Without subnormals, excluding a subnormal bound steps over them.
     check_all(
-        gs.floats(min_value=0.0, exclude_min=True, allow_subnormal=False),
+        gs.floats(min_value_exclusive=0.0, allow_subnormal=False),
         lambda x: x >= smallest_normal,
     )
     check_all(
-        gs.floats(min_value=-1e-310, max_value=0.0, exclude_min=True, allow_subnormal=False),
+        gs.floats(min_value_exclusive=-1e-310, max_value=0.0, allow_subnormal=False),
         lambda x: x == 0.0,
     )
 

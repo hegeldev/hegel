@@ -170,7 +170,7 @@ cargo test
 
 Coverage must stay at 100% on the new code (see the `coverage` skill if anything is uncovered).
 
-`RELEASE.md` is handled by the `self-review` skill at PR time — do not write it here.
+The release file (`RELEASE/<slug>.md`) is handled by the `self-review` skill at PR time — do not write it here.
 
 ## Final checklist
 

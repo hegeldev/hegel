@@ -37,9 +37,9 @@ def kw(marks=(), **kwargs):
         kw(min_value=1),
         kw(max_value=-1),
         kw(min_value=float_info.min),
-        kw(min_value=next_down(float_info.min), exclude_min=True),
+        kw(min_value_exclusive=next_down(float_info.min)),
         kw(max_value=-float_info.min),
-        kw(min_value=next_up(-float_info.min), exclude_max=True),
+        kw(max_value_exclusive=next_up(-float_info.min)),
     ],
 )
 def test_subnormal_validation(kwargs):

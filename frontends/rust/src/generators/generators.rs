@@ -3,15 +3,17 @@ use crate::pretty::PrettyPrinter;
 use crate::test_case::{TestCase, invalid_argument};
 use std::fmt::Debug;
 use std::marker::PhantomData;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
-const MAP_LABEL: u64 = label_from_name("hegel.map");
-const FLAT_MAP_LABEL: u64 = label_from_name("hegel.flat_map");
-const FILTER_LABEL: u64 = label_from_name("hegel.filter");
-pub(crate) const FILTER_ATTEMPT_LABEL: u64 = label_from_name("hegel.filter.attempt");
+static MAP_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.map"));
+static FLAT_MAP_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.flat_map"));
+static FILTER_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.filter"));
+pub(crate) static FILTER_ATTEMPT_LABEL: LazyLock<u64> =
+    LazyLock::new(|| label_from_name("hegel.filter.attempt"));
 
-/// How many values a filtered draw tries before rejecting the test case.
-pub(crate) const FILTER_ATTEMPTS: usize = 3;
+/// How many values a filtered draw tries before rejecting the test case:
+/// the engine's `HEGEL_FILTER_ATTEMPTS`.
+pub(crate) const FILTER_ATTEMPTS: u32 = crate::ffi::sys::HEGEL_FILTER_ATTEMPTS;
 
 /// The core trait for all generators.
 ///
@@ -35,7 +37,8 @@ pub trait Generator<T> {
     /// Produce a value that `predicate` accepts: the draw behind
     /// [`filter`](Self::filter), which calls this on its source generator.
     ///
-    /// The default makes up to three attempts, each a draw of
+    /// The default makes up to three attempts (the engine's
+    /// `HEGEL_FILTER_ATTEMPTS`), each a draw of
     /// this generator inside a span of its own, closed as discarded when the
     /// predicate rejects the value so the shrinker can remove it, and
     /// rejects the test case (as if by `assume(false)`) when every attempt
@@ -50,7 +53,7 @@ pub trait Generator<T> {
     #[doc(hidden)]
     fn do_draw_filtered(&self, tc: &TestCase, predicate: &dyn Fn(&T) -> bool) -> T {
         for _ in 0..FILTER_ATTEMPTS {
-            tc.start_span(FILTER_ATTEMPT_LABEL);
+            tc.start_span(*FILTER_ATTEMPT_LABEL);
             let value = tc.draw_silent(self);
             if predicate(&value) {
                 tc.stop_span(false);
@@ -82,10 +85,11 @@ pub trait Generator<T> {
     /// should return the wrapped generator's label.
     ///
     /// This is called on every draw, so compute the label once — at
-    /// construction, stored in a field, or as a `const` from
+    /// construction, stored in a field, or in a `static`
+    /// [`LazyLock<u64>`](std::sync::LazyLock) initialised from
     /// [`label_from_name`](super::label_from_name) for a generator with no
-    /// components — rather than in this method. The default hashes the type
-    /// name each time it is called.
+    /// components — rather than in this method. The default asks the engine
+    /// to hash the type name each time it is called.
     fn label(&self) -> u64 {
         label_from_name(std::any::type_name::<Self>())
     }
@@ -106,7 +110,7 @@ pub trait Generator<T> {
         F: Fn(T) -> U + Send + Sync,
     {
         Mapped {
-            label: combine_labels(&[MAP_LABEL, self.label()]),
+            label: combine_labels(&[*MAP_LABEL, self.label()]),
             source: self,
             f: Arc::new(f),
             _phantom: PhantomData,
@@ -135,7 +139,7 @@ pub trait Generator<T> {
         F: Fn(T) -> G + Send + Sync,
     {
         FlatMapped {
-            label: combine_labels(&[FLAT_MAP_LABEL, self.label()]),
+            label: combine_labels(&[*FLAT_MAP_LABEL, self.label()]),
             source: self,
             f,
             _phantom: PhantomData,
@@ -165,7 +169,7 @@ pub trait Generator<T> {
         F: Fn(&T) -> bool + Send + Sync,
     {
         Filtered {
-            label: combine_labels(&[FILTER_LABEL, self.label()]),
+            label: combine_labels(&[*FILTER_LABEL, self.label()]),
             source: self,
             predicate,
             _phantom: PhantomData,
@@ -348,7 +352,7 @@ pub trait PrintableGenerator<T>: Generator<T> {
         printer: &mut PrettyPrinter,
     ) -> T {
         for _ in 0..FILTER_ATTEMPTS {
-            tc.start_span(FILTER_ATTEMPT_LABEL);
+            tc.start_span(*FILTER_ATTEMPT_LABEL);
             let mut speculation = printer.speculate();
             let value = tc.draw_and_print(self, speculation.printer());
             if predicate(&value) {

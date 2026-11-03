@@ -1,6 +1,6 @@
 mod common;
 
-use common::utils::{assert_all_examples, assert_no_examples, find_any, known_to_std};
+use common::utils::{assert_all_examples, assert_no_examples, find_any};
 use hegel::generators as gs;
 
 #[test]
@@ -24,9 +24,25 @@ fn test_characters_codepoint_range(tc: hegel::TestCase) {
 }
 
 #[test]
+fn test_characters_follow_the_standard_librarys_unicode_version() {
+    let sidetic = gs::characters()
+        .categories(&["L"])
+        .min_codepoint(0x10940)
+        .max_codepoint(0x10959);
+    if '\u{10940}'.is_alphabetic() {
+        assert_all_examples(sidetic, |c: &char| c.is_alphabetic());
+    } else {
+        common::utils::expect_panic(
+            || common::utils::check_can_generate_examples(sidetic),
+            "No valid characters",
+        );
+    }
+}
+
+#[test]
 fn test_characters_lu() {
     assert_all_examples(gs::characters().categories(&["Lu"]), |c: &char| {
-        c.is_uppercase() || !known_to_std(*c)
+        c.is_uppercase()
     });
 }
 
@@ -98,7 +114,7 @@ fn test_text_codepoint_range(tc: hegel::TestCase) {
 #[test]
 fn test_text_categories() {
     assert_all_examples(gs::text().categories(&["Lu"]).max_size(20), |s: &String| {
-        s.chars().all(|c| c.is_uppercase() || !known_to_std(c))
+        s.chars().all(|c| c.is_uppercase())
     });
 }
 
@@ -1639,4 +1655,27 @@ mod regex_shrinking {
             "000"
         );
     }
+}
+
+#[test]
+fn test_text_default_max_size_is_the_engines() {
+    assert_all_examples(gs::text(), |s: &String| s.chars().count() <= 100);
+    assert_all_examples(gs::text().min_size(150), |s: &String| {
+        (150..=250).contains(&s.chars().count())
+    });
+}
+
+#[test]
+fn test_binary_default_max_size_is_the_engines() {
+    assert_all_examples(gs::binary(), |b: &Vec<u8>| b.len() <= 100);
+    assert_all_examples(gs::binary().min_size(150), |b: &Vec<u8>| {
+        (150..=250).contains(&b.len())
+    });
+}
+
+#[test]
+fn test_huge_max_size_is_unbounded() {
+    assert_all_examples(gs::text().max_size(usize::MAX), |_: &String| true);
+    assert_all_examples(gs::binary().max_size(usize::MAX), |_: &Vec<u8>| true);
+    assert_all_examples(gs::text().max_size(usize::MAX - 1), |_: &String| true);
 }

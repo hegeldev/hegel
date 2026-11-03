@@ -66,7 +66,7 @@ def test_composite_draws_are_reported_as_one_value():
         pair = tc.draw(ordered_pair())
         assert pair == (0, 0)
 
-    assert notes(failing(body))[0] == "Falsifying example:\npair = (0, 1)"
+    assert notes(failing(body))[0] == "pair = (0, 1)"
 
 
 def test_builds():

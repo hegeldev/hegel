@@ -64,7 +64,7 @@ fn a_deterministic_failure_reports_without_a_caveat() {
         "unexpected caveat in:\n{text}"
     );
     assert!(
-        text.contains("#[hegel::reproduce_failure("),
+        text.contains(".reproduce_failure(\""),
         "expected a reproducer line in:\n{text}"
     );
 }

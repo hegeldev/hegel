@@ -43,8 +43,6 @@ def test_shrinks_downwards_to_integers(tc):
 def test_shrinks_downwards_to_integers_when_fractional(tc):
     b = tc.draw(gs.integers(1, 2**16 - 1))
     g = minimal(
-        gs.floats(min_value=b, max_value=2**53, exclude_min=True, exclude_max=True).filter(
-            lambda x: int(x) != x
-        )
+        gs.floats(min_value_exclusive=b, max_value_exclusive=2**53).filter(lambda x: int(x) != x)
     )
     assert g == b + 0.5

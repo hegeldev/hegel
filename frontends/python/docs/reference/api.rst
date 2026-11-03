@@ -20,7 +20,7 @@ The test case
 -------------
 
 .. autoclass:: hegel.TestCase()
-   :members: draw, draw_silent, assume, reject, note, target, event, event_value, repeat
+   :members: draw, draw_silent, assume, reject, note, target, event, event_value, repeat, clone, set_worker
 
 Settings
 --------

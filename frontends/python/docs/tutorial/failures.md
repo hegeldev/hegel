@@ -18,7 +18,6 @@ def test_sorted_concatenation(tc):
 
 ```
 E       assert [-1, 0] == [0, -1]
-E       Falsifying example:
 E       xs = [0]
 E       ys = [-1]
 E       To reproduce this failure, add this decorator below @hegel.test:
@@ -33,10 +32,10 @@ input. Hegel attaches the rest of the report to the exception as
 
 ## Draw names
 
-Under `Falsifying example:` Hegel lists every value the test drew, in the
-order it drew them. A draw assigned to a variable is named after the variable.
+The report lists every value the test drew, in the order it drew them. A draw assigned to a variable is named after the variable.
 A draw made in a loop, or assigned to a variable that is assigned more than
-once in the test, is numbered:
+once in the test, is numbered, each name on its own, in the order the draws
+run:
 
 ```python
 @hegel.test
@@ -50,15 +49,17 @@ def test_totals(tc):
 ```
 
 ```
-E       Falsifying example:
 E       n = 1
 E       x_1 = 1000
 ```
 
 A draw that is not assigned to a variable at all is named `draw_1`, `draw_2`,
 and so on. To choose the name yourself, pass `name=` to
-{meth}`~hegel.TestCase.draw`; to leave a draw out of the report, use
-{meth}`~hegel.TestCase.draw_silent`.
+{meth}`~hegel.TestCase.draw`; a name given this way is always numbered
+(`total_1`, `total_2`, ...), since it typically names a draw in a helper that
+may run more than once. A draw made inside another draw, such as a
+composite's, is not listed on its own: it is part of the outer value. To leave
+a draw out of the report, use {meth}`~hegel.TestCase.draw_silent`.
 
 ## Adding notes
 
@@ -76,7 +77,6 @@ def test_sorted_concatenation(tc):
 ```
 
 ```
-E       Falsifying example:
 E       xs = [0]
 E       ys = [-1]
 E       xs + ys = [0, -1]
@@ -109,6 +109,12 @@ any. Remove it once the bug is fixed: the blob describes the choices Hegel
 made for one version of the test, so it stops reproducing anything once the
 test or the generators change, and Hegel then raises
 {class}`~hegel.DidNotReproduce`.
+
+A report of several failures (with `report_multiple_failures` on) prints a
+decorator for each. Stack them all on the test to replay every one: each blob
+is replayed in turn, and every failure that still happens is raised, together
+as a {class}`~hegel.MultipleFailures` when there is more than one.
+{class}`~hegel.DidNotReproduce` is raised only when none of them fails.
 
 ## Explicit test cases
 

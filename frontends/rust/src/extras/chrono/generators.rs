@@ -4,15 +4,23 @@ use crate::generators::{
     label_from_name,
 };
 use crate::pretty::PrettyPrinter;
+use std::sync::LazyLock;
 
-const WEEKDAY_SET_LABEL: u64 = label_from_name("hegel.chrono.weekday_sets");
-const FIXED_OFFSET_LABEL: u64 = label_from_name("hegel.chrono.fixed_offsets");
-const TIME_DELTA_LABEL: u64 = label_from_name("hegel.chrono.time_deltas");
-const NAIVE_DATE_LABEL: u64 = label_from_name("hegel.chrono.naive_dates");
-const NAIVE_TIME_LABEL: u64 = label_from_name("hegel.chrono.naive_times");
-const NAIVE_DATETIME_LABEL: u64 = label_from_name("hegel.chrono.naive_datetimes");
-const NAIVE_WEEK_LABEL: u64 = label_from_name("hegel.chrono.naive_weeks");
-const DATETIME_LABEL: u64 = label_from_name("hegel.chrono.datetimes");
+static WEEKDAY_SET_LABEL: LazyLock<u64> =
+    LazyLock::new(|| label_from_name("hegel.chrono.weekday_sets"));
+static FIXED_OFFSET_LABEL: LazyLock<u64> =
+    LazyLock::new(|| label_from_name("hegel.chrono.fixed_offsets"));
+static TIME_DELTA_LABEL: LazyLock<u64> =
+    LazyLock::new(|| label_from_name("hegel.chrono.time_deltas"));
+static NAIVE_DATE_LABEL: LazyLock<u64> =
+    LazyLock::new(|| label_from_name("hegel.chrono.naive_dates"));
+static NAIVE_TIME_LABEL: LazyLock<u64> =
+    LazyLock::new(|| label_from_name("hegel.chrono.naive_times"));
+static NAIVE_DATETIME_LABEL: LazyLock<u64> =
+    LazyLock::new(|| label_from_name("hegel.chrono.naive_datetimes"));
+static NAIVE_WEEK_LABEL: LazyLock<u64> =
+    LazyLock::new(|| label_from_name("hegel.chrono.naive_weeks"));
+static DATETIME_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.chrono.datetimes"));
 
 use crate::test_case::invalid_argument;
 use chrono::{
@@ -67,7 +75,7 @@ pub struct WeekdaySetGenerator;
 
 impl Generator<WeekdaySet> for WeekdaySetGenerator {
     fn label(&self) -> u64 {
-        WEEKDAY_SET_LABEL
+        *WEEKDAY_SET_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> WeekdaySet {
@@ -127,7 +135,7 @@ impl FixedOffsetGenerator {
 
 impl Generator<FixedOffset> for FixedOffsetGenerator {
     fn label(&self) -> u64 {
-        FIXED_OFFSET_LABEL
+        *FIXED_OFFSET_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> FixedOffset {
@@ -210,7 +218,7 @@ impl TimeDeltaGenerator {
 
 impl Generator<TimeDelta> for TimeDeltaGenerator {
     fn label(&self) -> u64 {
-        TIME_DELTA_LABEL
+        *TIME_DELTA_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> TimeDelta {
@@ -281,7 +289,7 @@ impl NaiveDateGenerator {
 
 impl Generator<NaiveDate> for NaiveDateGenerator {
     fn label(&self) -> u64 {
-        NAIVE_DATE_LABEL
+        *NAIVE_DATE_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> NaiveDate {
@@ -354,7 +362,7 @@ impl NaiveTimeGenerator {
 
 impl Generator<NaiveTime> for NaiveTimeGenerator {
     fn label(&self) -> u64 {
-        NAIVE_TIME_LABEL
+        *NAIVE_TIME_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> NaiveTime {
@@ -426,7 +434,7 @@ impl NaiveDateTimeGenerator {
 
 impl Generator<NaiveDateTime> for NaiveDateTimeGenerator {
     fn label(&self) -> u64 {
-        NAIVE_DATETIME_LABEL
+        *NAIVE_DATETIME_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> NaiveDateTime {
@@ -514,7 +522,7 @@ impl<S> NaiveWeekGenerator<S> {
     {
         NaiveWeekGenerator {
             date_gen: self.date_gen,
-            label: combine_labels(&[NAIVE_WEEK_LABEL, start_gen.label()]),
+            label: combine_labels(&[*NAIVE_WEEK_LABEL, start_gen.label()]),
             start_gen,
         }
     }
@@ -580,7 +588,7 @@ pub fn naive_weeks() -> NaiveWeekGenerator {
                     .checked_sub_days(chrono::Days::new(7))
                     .unwrap(),
             ),
-        label: combine_labels(&[NAIVE_WEEK_LABEL, start_gen.label()]),
+        label: combine_labels(&[*NAIVE_WEEK_LABEL, start_gen.label()]),
         start_gen,
     }
 }
@@ -630,7 +638,7 @@ impl<G, Tz: TimeZone> DateTimeGenerator<G, Tz> {
         Tz2: TimeZone,
     {
         DateTimeGenerator {
-            label: combine_labels(&[DATETIME_LABEL, tz_gen.label()]),
+            label: combine_labels(&[*DATETIME_LABEL, tz_gen.label()]),
             tz_gen,
             min_value: self.min_value,
             max_value: self.max_value,
@@ -697,7 +705,7 @@ where
 /// ```
 pub fn datetimes() -> DateTimeGenerator<FixedOffsetGenerator, FixedOffset> {
     DateTimeGenerator {
-        label: combine_labels(&[DATETIME_LABEL, FIXED_OFFSET_LABEL]),
+        label: combine_labels(&[*DATETIME_LABEL, *FIXED_OFFSET_LABEL]),
         tz_gen: fixed_offsets(),
         min_value: DateTime::<Utc>::MIN_UTC.naive_utc(),
         max_value: DateTime::<Utc>::MAX_UTC.naive_utc(),

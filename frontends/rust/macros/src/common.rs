@@ -412,7 +412,7 @@ fn is_reproduce_failure_attr(attr: &syn::Attribute) -> bool {
 }
 
 /// Extract the `#[hegel::reproduce_failure(blob)]` attributes, removing them
-/// in-place, and return the **first** blob expression.
+/// in-place, and return every blob expression, in source order.
 ///
 /// The argument is any expression that evaluates to something convertible to a
 /// `String` via `.to_string()` — a string literal, a `const`/`static` `&str`,
@@ -420,24 +420,20 @@ fn is_reproduce_failure_attr(attr: &syn::Attribute) -> bool {
 /// `#[hegel::test]`-family attributes, which take expressions rather than only
 /// literals).
 ///
-/// Stacking is allowed, but only the first attribute replays — the rest are
-/// bookkeeping for additional failures, to be deleted one by one as they are
-/// fixed. Returns `Ok(None)` when the attribute is absent, or
-/// `Err` with a compile error when an argument isn't a single expression.
+/// Stacking is allowed, and every attribute replays. Returns an empty `Vec`
+/// when the attribute is absent, or `Err` with a compile error when an
+/// argument isn't a single expression.
 pub fn extract_reproduce_failure(
     attrs: &mut Vec<syn::Attribute>,
-) -> Result<Option<Expr>, TokenStream> {
-    let mut blob: Option<Expr> = None;
+) -> Result<Vec<Expr>, TokenStream> {
+    let mut blobs: Vec<Expr> = Vec::new();
     let mut error = None;
     attrs.retain(|attr| {
         if !is_reproduce_failure_attr(attr) {
             return true;
         }
-        if blob.is_some() {
-            return false;
-        }
         match attr.parse_args::<Expr>() {
-            Ok(expr) => blob = Some(expr),
+            Ok(expr) => blobs.push(expr),
             Err(_) => {
                 error = Some(
                     syn::Error::new_spanned(
@@ -455,18 +451,41 @@ pub fn extract_reproduce_failure(
     if let Some(err) = error {
         return Err(err);
     }
-    Ok(blob)
+    Ok(blobs)
 }
 
-/// Generate a sequence of explicit test case blocks. Each block constructs an
-/// `ExplicitTestCase` populated with `with_value` calls and then runs the body
-/// via `ExplicitTestCase::run`.
-pub fn build_explicit_blocks(
+/// The builder calls that replay `blobs`: one `.reproduce_failure(..)` per
+/// blob, in order.
+pub fn reproduce_failure_calls(blobs: &[Expr]) -> TokenStream {
+    quote! { #( .reproduce_failure((#blobs).to_string()) )* }
+}
+
+/// The tokens of a test's explicit phase: the statements that run its
+/// explicit test cases through a `hegel::ExplicitRun` named
+/// `__hegel_explicit`, reading the settings from `__hegel_settings`, and the
+/// `Hegel` builder call that hands that run on. Both are empty without
+/// explicit test cases.
+pub struct ExplicitRunTokens {
+    pub section: TokenStream,
+    pub builder_call: TokenStream,
+}
+
+/// Generate a test's explicit phase (see [`ExplicitRunTokens`]). Each
+/// explicit test case constructs an `ExplicitTestCase` populated with
+/// `with_value` calls and runs the body on it through `ExplicitRun::case`,
+/// which runs it at once.
+pub fn build_explicit_run(
     cases: &[ParsedExplicitTestCase],
     param_pat: &Pat,
     body: &syn::Block,
-) -> Vec<TokenStream> {
-    cases
+) -> ExplicitRunTokens {
+    if cases.is_empty() {
+        return ExplicitRunTokens {
+            section: quote! {},
+            builder_call: quote! {},
+        };
+    }
+    let case_calls: Vec<TokenStream> = cases
         .iter()
         .map(|case| {
             let with_value_calls: Vec<TokenStream> = case
@@ -484,14 +503,23 @@ pub fn build_explicit_blocks(
                 .collect();
 
             quote! {
-                {
-                    let __hegel_etc = ::hegel::ExplicitTestCase::new()
-                        #(#with_value_calls)*;
-                    __hegel_etc.run(|#param_pat: &::hegel::ExplicitTestCase| #body);
-                }
+                __hegel_explicit.case(
+                    ::hegel::ExplicitTestCase::new() #(#with_value_calls)*,
+                    |#param_pat: &::hegel::ExplicitTestCase| #body,
+                );
             }
         })
-        .collect()
+        .collect();
+
+    ExplicitRunTokens {
+        section: quote! {
+            let mut __hegel_explicit = ::hegel::ExplicitRun::new(&__hegel_settings);
+            if __hegel_settings.has_phase(::hegel::Phase::Explicit) {
+                #(#case_calls)*
+            }
+        },
+        builder_call: quote! { .__explicit_run(__hegel_explicit) },
+    }
 }
 
 #[cfg(test)]

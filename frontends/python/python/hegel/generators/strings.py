@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from hegel import _native
 from hegel._labels import label_from_name
 from hegel.errors import InvalidArgument
-from hegel.generators.base import Generator
+from hegel.generators.base import Generator, _PrintsValue
 
 if TYPE_CHECKING:
     from hegel.test_case import TestCase
@@ -28,7 +28,6 @@ __all__ = [
     "uuids",
 ]
 
-DEFAULT_MAX_SIZE = 100
 SUPPORTED_CODECS = ("ascii", "latin-1", "iso-8859-1", "utf-8")
 
 TEXT_LABEL = label_from_name("hegel.text")
@@ -44,12 +43,21 @@ IPV6_LABEL = label_from_name("hegel.ip_addresses.v6")
 UUID_LABEL = label_from_name("hegel.uuids")
 
 
-def _default_max_size(min_size: int, max_size: int | None) -> int:
-    if max_size is not None:
-        if max_size < min_size:
-            raise InvalidArgument(f"Cannot have max_size={max_size!r} < min_size={min_size!r}")
-        return max_size
-    return min_size + DEFAULT_MAX_SIZE if min_size > DEFAULT_MAX_SIZE else DEFAULT_MAX_SIZE
+def _check_max_size(min_size: int, max_size: object) -> int | None:
+    """``max_size`` checked against ``min_size``; ``None`` (no maximum
+    given) stays ``None``, for the engine to apply its default."""
+    if max_size is None:
+        return None
+    max_size = _check_size("max_size", max_size)
+    if max_size < min_size:
+        raise InvalidArgument(f"Cannot have max_size={max_size!r} < min_size={min_size!r}")
+    return max_size
+
+
+def _sizes(min_size: int, max_size: int | None) -> str:
+    if max_size is None:
+        return f"min_size={min_size}"
+    return f"min_size={min_size}, max_size={max_size}"
 
 
 def _check_size(name: str, value: object) -> int:
@@ -151,7 +159,7 @@ class CharacterSpec:
         self.include_characters = _check_characters("include_characters", include_characters)
         self.exclude_characters = _check_characters("exclude_characters", exclude_characters)
 
-    def build(self, min_size: int, max_size: int) -> _native.StringGenerator:
+    def build(self, min_size: int, max_size: int | None) -> _native.StringGenerator:
         return _native.StringGenerator.text(
             min_size,
             max_size,
@@ -165,18 +173,36 @@ class CharacterSpec:
         )
 
 
-def _alphabet_spec(alphabet: Any) -> CharacterSpec | Generator[str]:
+def _alphabet_spec(alphabet: Any) -> CharacterSpec:
     if isinstance(alphabet, Characters):
         return alphabet.spec
     if isinstance(alphabet, Generator):
-        return alphabet
+        raise InvalidArgument(
+            f"alphabet={alphabet!r} must be a string of characters, a collection of single "
+            "characters or a characters() generator; to build text from an arbitrary "
+            'generator of characters, use lists(alphabet).map("".join)'
+        )
     if isinstance(alphabet, (bytes, bytearray)):
         raise InvalidArgument(f"alphabet={alphabet!r} must be a collection of characters")
     return CharacterSpec(categories=[], include_characters=_check_characters("alphabet", alphabet))
 
 
-class Text(Generator[str]):
-    def __init__(self, spec: CharacterSpec, min_size: int, max_size: int, args: str = "") -> None:
+def _pattern_alphabet(who: str, alphabet: Any) -> _native.StringGenerator | None:
+    """The engine alphabet constraining the characters a pattern draws:
+    ``None`` for no constraint, else a string of characters or a
+    :func:`characters` generator, which must not be empty."""
+    if alphabet is None:
+        return None
+    spec = _alphabet_spec(alphabet)
+    if not isinstance(alphabet, Characters) and not spec.include_characters:
+        raise InvalidArgument(f"{who} alphabet must not be empty")
+    return spec.build(0, 0)
+
+
+class Text(_PrintsValue[str]):
+    def __init__(
+        self, spec: CharacterSpec, min_size: int, max_size: int | None, args: str = ""
+    ) -> None:
         self.spec = spec
         self.min_size = min_size
         self.max_size = max_size
@@ -189,35 +215,7 @@ class Text(Generator[str]):
 
     def __repr__(self) -> str:
         prefix = f"{self._args}, " if self._args else ""
-        return f"text({prefix}min_size={self.min_size}, max_size={self.max_size})"
-
-
-class TextFromAlphabet(Generator[str]):
-    """Text whose characters come from an arbitrary generator."""
-
-    def __init__(self, alphabet: Generator[str], min_size: int, max_size: int) -> None:
-        from hegel.generators.collections import lists
-
-        self.alphabet = alphabet
-        self.min_size = min_size
-        self.max_size = max_size
-        self._lists = lists(alphabet, min_size=min_size, max_size=max_size)
-        self.label = TEXT_LABEL
-
-    def __repr__(self) -> str:
-        return (
-            f"text(alphabet={self.alphabet!r}, min_size={self.min_size}, max_size={self.max_size})"
-        )
-
-    def do_draw(self, tc: TestCase) -> str:
-        chars = tc.draw_silent(self._lists)
-        for char in chars:
-            if not isinstance(char, str) or len(char) != 1:
-                raise InvalidArgument(
-                    "The alphabet generator for text() must produce single characters, "
-                    f"got {char!r}"
-                )
-        return "".join(chars)
+        return f"text({prefix}{_sizes(self.min_size, self.max_size)})"
 
 
 def text(
@@ -237,14 +235,16 @@ def text(
     characters, shrinking toward shorter strings of simpler characters
     (``""``, then ``"0"``).
 
-    ``max_size`` defaults to 100, or ``min_size + 100`` when ``min_size``
-    is larger than that. A negative size or ``max_size < min_size`` is an
+    Without ``max_size`` the engine applies its default maximum for text:
+    100 characters, or ``min_size + 100`` when ``min_size`` is larger than
+    that, whatever the alphabet. A negative size or ``max_size < min_size`` is an
     :class:`~hegel.InvalidArgument`.
 
     ``alphabet`` restricts the characters: a string or sequence of
-    characters, a :func:`characters` generator, or any generator of single
-    characters (any other value it produces is an
-    :class:`~hegel.InvalidArgument` when drawn). An empty alphabet gives
+    characters, or a :func:`characters` generator. Any other generator is
+    an :class:`~hegel.InvalidArgument`; to build text from an arbitrary
+    generator of characters, draw a list of them and join it:
+    ``gs.lists(chars).map("".join)``. An empty alphabet gives
     only ``""``. The keyword filters (``codec``, codepoint bounds, Unicode
     categories, included and excluded characters) are shorthand for a
     :func:`characters` alphabet, with the same meanings, and cannot be
@@ -261,9 +261,7 @@ def text(
         ascii_text = tc.draw(gs.text(codec="ascii"))
     """
     min_size = _check_size("min_size", min_size)
-    max_size = _default_max_size(
-        min_size, None if max_size is None else _check_size("max_size", max_size)
-    )
+    max_size = _check_max_size(min_size, max_size)
     char_params = any(
         p is not None
         for p in (
@@ -280,8 +278,6 @@ def text(
         if char_params:
             raise InvalidArgument("Cannot combine alphabet with character filtering arguments")
         spec = _alphabet_spec(alphabet)
-        if isinstance(spec, Generator):
-            return TextFromAlphabet(spec, min_size, max_size)
         if not isinstance(alphabet, Characters) and not spec.include_characters:
             # An empty alphabet spells only the empty string.
             if min_size > 0:
@@ -336,7 +332,7 @@ def _default_spec(
     )
 
 
-class Characters(Generator[str]):
+class Characters(_PrintsValue[str]):
     def __init__(self, spec: CharacterSpec, args: str = "") -> None:
         self.spec = spec
         self._handle = spec.build(1, 1)
@@ -409,20 +405,11 @@ def characters(
     return Characters(spec, args)
 
 
-class Regex(Generator[str]):
+class Regex(_PrintsValue[str]):
     def __init__(self, pattern: str, fullmatch: bool, alphabet: Any) -> None:
         self.pattern = pattern
         self.fullmatch = fullmatch
-        alphabet_handle = None
-        if alphabet is not None:
-            spec = _alphabet_spec(alphabet)
-            if isinstance(spec, Generator):
-                raise InvalidArgument(
-                    "from_regex alphabet must be a string of characters or characters()"
-                )
-            if not isinstance(alphabet, Characters) and not spec.include_characters:
-                raise InvalidArgument("from_regex alphabet must not be empty")
-            alphabet_handle = spec.build(0, 0)
+        alphabet_handle = _pattern_alphabet("from_regex", alphabet)
         self._handle = _native.StringGenerator.regex(pattern, fullmatch, alphabet_handle)
         self.label = REGEX_LABEL
 
@@ -487,8 +474,8 @@ def _inline_flags(flags: int) -> str:
     return f"(?{letters})" if letters else ""
 
 
-class Binary(Generator[bytes]):
-    def __init__(self, min_size: int, max_size: int) -> None:
+class Binary(_PrintsValue[bytes]):
+    def __init__(self, min_size: int, max_size: int | None) -> None:
         self.min_size = min_size
         self.max_size = max_size
         self.label = BINARY_LABEL
@@ -497,27 +484,23 @@ class Binary(Generator[bytes]):
         return tc._generate_bytes(self.min_size, self.max_size)
 
     def __repr__(self) -> str:
-        return f"binary(min_size={self.min_size}, max_size={self.max_size})"
+        return f"binary({_sizes(self.min_size, self.max_size)})"
 
 
 def binary(*, min_size: int = 0, max_size: int | None = None) -> Generator[bytes]:
     """Generate byte strings of between ``min_size`` and ``max_size``
     bytes, shrinking toward shorter strings of zero bytes.
 
-    ``max_size`` defaults to 100, or ``min_size + 100`` when ``min_size``
-    is larger than that. A negative size or ``max_size < min_size`` is an
+    Without ``max_size`` the engine applies its default maximum: 100
+    bytes, or ``min_size + 100`` when ``min_size`` is larger than that. A
+    negative size or ``max_size < min_size`` is an
     :class:`~hegel.InvalidArgument`.
     """
     min_size = _check_size("min_size", min_size)
-    return Binary(
-        min_size,
-        _default_max_size(
-            min_size, None if max_size is None else _check_size("max_size", max_size)
-        ),
-    )
+    return Binary(min_size, _check_max_size(min_size, max_size))
 
 
-class EngineString(Generator[str]):
+class EngineString(_PrintsValue[str]):
     def __init__(self, handle: _native.StringGenerator, label: int, name: str) -> None:
         self._handle = handle
         self.label = label
@@ -560,7 +543,7 @@ def domains(*, max_length: int = 255) -> Generator[str]:
     )
 
 
-class IpAddresses(Generator[Any]):
+class IpAddresses(_PrintsValue[Any]):
     def __init__(self, v: int | None) -> None:
         self.v = v
         self.label = {None: IP_LABEL, 4: IPV4_LABEL, 6: IPV6_LABEL}[v]
@@ -610,7 +593,7 @@ def ip_addresses(*, v: int | None = None, network: Any = None) -> Generator[Any]
     return IpAddresses(v)
 
 
-class Uuids(Generator[_uuid.UUID]):
+class Uuids(_PrintsValue[_uuid.UUID]):
     def __init__(self, version: int | None, allow_nil: bool) -> None:
         self.version = version
         self.allow_nil = allow_nil

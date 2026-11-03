@@ -34,7 +34,6 @@ find that shows the bug:
 
 ```
 E   assert [0] == [0, 0]
-E   Falsifying example:
 E   ls = [0, 0]
 ```
 

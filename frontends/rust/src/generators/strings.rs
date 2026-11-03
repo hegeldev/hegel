@@ -1,4 +1,4 @@
-use std::sync::OnceLock;
+use std::sync::{LazyLock, OnceLock};
 
 use super::generators::draw_and_print_value;
 use super::{Generator, PrintableGenerator, TestCase, label_from_name};
@@ -11,9 +11,6 @@ use crate::test_case::{full_ranges, invalid_argument};
 /// Categories that include surrogate codepoints. Rust strings cannot contain
 /// surrogates, so these are forbidden in `categories()`.
 const SURROGATE_CATEGORIES: &[&str] = &["Cs", "C"];
-
-/// Default upper bound for string/byte sizes when the caller doesn't set one.
-const DEFAULT_MAX_SIZE: usize = 100;
 
 /// Codec names accepted by [`TextGenerator::codec`] and
 /// [`CharactersGenerator::codec`], mirroring the engine's supported set.
@@ -109,7 +106,9 @@ impl TextGenerator {
         self
     }
 
-    /// Set the maximum length in characters.
+    /// Set the maximum length in characters. Without one, the engine's
+    /// default applies: 100, or `min_size + 100` when `min_size` is above
+    /// 100.
     pub fn max_size(mut self, max_size: usize) -> Self {
         self.handle = OnceLock::new();
         self.max_size = Some(max_size);
@@ -223,24 +222,29 @@ impl TextGenerator {
                     invalid_argument!("Cannot have max_size < min_size");
                 }
             }
-            let max_size = self
-                .max_size
-                .unwrap_or(if self.min_size > DEFAULT_MAX_SIZE {
-                    self.min_size + DEFAULT_MAX_SIZE
-                } else {
-                    DEFAULT_MAX_SIZE
-                });
             self.char_fields
-                .build_text_handle(self.min_size as u64, max_size as u64)
+                .build_text_handle(self.min_size as u64, engine_max_size(self.max_size))
         })
     }
 }
 
-const TEXT_LABEL: u64 = label_from_name("hegel.text");
+/// The `max_size` to give the engine for a text or binary generator: the
+/// user's maximum, or `HEGEL_MAX_SIZE_DEFAULT` for the engine's default
+/// when there is none. A maximum at or above the reserved sentinel is
+/// beyond any allocation, so it goes as `u64::MAX`, no upper bound.
+fn engine_max_size(max_size: Option<usize>) -> u64 {
+    match max_size {
+        None => hegel_c::HEGEL_MAX_SIZE_DEFAULT,
+        Some(max) if max as u64 >= hegel_c::HEGEL_MAX_SIZE_DEFAULT => u64::MAX,
+        Some(max) => max as u64,
+    }
+}
+
+static TEXT_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.text"));
 
 impl Generator<String> for TextGenerator {
     fn label(&self) -> u64 {
-        TEXT_LABEL
+        *TEXT_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> String {
@@ -352,11 +356,11 @@ impl CharactersGenerator {
     }
 }
 
-const CHARACTERS_LABEL: u64 = label_from_name("hegel.characters");
+static CHARACTERS_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.characters"));
 
 impl Generator<char> for CharactersGenerator {
     fn label(&self) -> u64 {
-        CHARACTERS_LABEL
+        *CHARACTERS_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> char {
@@ -420,11 +424,11 @@ impl RegexGenerator {
     }
 }
 
-const REGEX_LABEL: u64 = label_from_name("hegel.from_regex");
+static REGEX_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.from_regex"));
 
 impl Generator<String> for RegexGenerator {
     fn label(&self) -> u64 {
-        REGEX_LABEL
+        *REGEX_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> String {
@@ -465,18 +469,19 @@ impl BinaryGenerator {
         self
     }
 
-    /// Set the maximum length in bytes.
+    /// Set the maximum length in bytes. Without one, the engine's default
+    /// applies: 100, or `min_size + 100` when `min_size` is above 100.
     pub fn max_size(mut self, max_size: usize) -> Self {
         self.max_size = Some(max_size);
         self
     }
 }
 
-const BINARY_LABEL: u64 = label_from_name("hegel.binary");
+static BINARY_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.binary"));
 
 impl Generator<Vec<u8>> for BinaryGenerator {
     fn label(&self) -> u64 {
-        BINARY_LABEL
+        *BINARY_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> Vec<u8> {
@@ -485,14 +490,7 @@ impl Generator<Vec<u8>> for BinaryGenerator {
                 invalid_argument!("Cannot have max_size < min_size");
             }
         }
-        let max_size = self
-            .max_size
-            .unwrap_or(if self.min_size > DEFAULT_MAX_SIZE {
-                self.min_size + DEFAULT_MAX_SIZE
-            } else {
-                DEFAULT_MAX_SIZE
-            });
-        tc.generate_bytes(self.min_size, max_size)
+        tc.generate_bytes(self.min_size as u64, engine_max_size(self.max_size))
     }
 }
 
@@ -511,11 +509,11 @@ pub struct EmailGenerator {
     handle: OnceLock<ffi::StringGenerator>,
 }
 
-const EMAIL_LABEL: u64 = label_from_name("hegel.emails");
+static EMAIL_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.emails"));
 
 impl Generator<String> for EmailGenerator {
     fn label(&self) -> u64 {
-        EMAIL_LABEL
+        *EMAIL_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> String {
@@ -538,11 +536,11 @@ pub struct UrlGenerator {
     handle: OnceLock<ffi::StringGenerator>,
 }
 
-const URL_LABEL: u64 = label_from_name("hegel.urls");
+static URL_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.urls"));
 
 impl Generator<String> for UrlGenerator {
     fn label(&self) -> u64 {
-        URL_LABEL
+        *URL_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> String {
@@ -575,11 +573,11 @@ impl DomainGenerator {
     }
 }
 
-const DOMAIN_LABEL: u64 = label_from_name("hegel.domains");
+static DOMAIN_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.domains"));
 
 impl Generator<String> for DomainGenerator {
     fn label(&self) -> u64 {
-        DOMAIN_LABEL
+        *DOMAIN_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> String {
@@ -621,13 +619,15 @@ impl IpAddressGenerator {
     }
 }
 
-const IP_ADDRESS_LABEL: u64 = label_from_name("hegel.ip_addresses");
-const IPV4_ADDRESS_LABEL: u64 = label_from_name("hegel.ip_addresses.v4");
-const IPV6_ADDRESS_LABEL: u64 = label_from_name("hegel.ip_addresses.v6");
+static IP_ADDRESS_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.ip_addresses"));
+static IPV4_ADDRESS_LABEL: LazyLock<u64> =
+    LazyLock::new(|| label_from_name("hegel.ip_addresses.v4"));
+static IPV6_ADDRESS_LABEL: LazyLock<u64> =
+    LazyLock::new(|| label_from_name("hegel.ip_addresses.v6"));
 
 impl Generator<std::net::IpAddr> for IpAddressGenerator {
     fn label(&self) -> u64 {
-        IP_ADDRESS_LABEL
+        *IP_ADDRESS_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> std::net::IpAddr {
@@ -644,7 +644,7 @@ pub struct Ipv4AddressGenerator {}
 
 impl Generator<std::net::Ipv4Addr> for Ipv4AddressGenerator {
     fn label(&self) -> u64 {
-        IPV4_ADDRESS_LABEL
+        *IPV4_ADDRESS_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> std::net::Ipv4Addr {
@@ -657,7 +657,7 @@ pub struct Ipv6AddressGenerator {}
 
 impl Generator<std::net::Ipv6Addr> for Ipv6AddressGenerator {
     fn label(&self) -> u64 {
-        IPV6_ADDRESS_LABEL
+        *IPV6_ADDRESS_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> std::net::Ipv6Addr {
@@ -694,11 +694,11 @@ pub(crate) fn format_time(t: hegel_c::hegel_time_t) -> String {
 /// [`date_strings()`].
 pub struct DateStringGenerator;
 
-const DATE_STRING_LABEL: u64 = label_from_name("hegel.dates");
+static DATE_STRING_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.dates"));
 
 impl Generator<String> for DateStringGenerator {
     fn label(&self) -> u64 {
-        DATE_STRING_LABEL
+        *DATE_STRING_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> String {
@@ -720,11 +720,11 @@ pub fn date_strings() -> DateStringGenerator {
 /// [`time_strings()`].
 pub struct TimeStringGenerator;
 
-const TIME_STRING_LABEL: u64 = label_from_name("hegel.times");
+static TIME_STRING_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.times"));
 
 impl Generator<String> for TimeStringGenerator {
     fn label(&self) -> u64 {
-        TIME_STRING_LABEL
+        *TIME_STRING_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> String {
@@ -745,11 +745,11 @@ pub fn time_strings() -> TimeStringGenerator {
 /// Generator for ISO 8601 datetime strings. Created by [`datetime_strings()`].
 pub struct DateTimeStringGenerator;
 
-const DATETIME_STRING_LABEL: u64 = label_from_name("hegel.datetimes");
+static DATETIME_STRING_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.datetimes"));
 
 impl Generator<String> for DateTimeStringGenerator {
     fn label(&self) -> u64 {
-        DATETIME_STRING_LABEL
+        *DATETIME_STRING_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> String {
@@ -785,11 +785,11 @@ impl UuidsGenerator {
     }
 }
 
-const UUIDS_LABEL: u64 = label_from_name("hegel.uuids");
+static UUIDS_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.uuids"));
 
 impl Generator<String> for UuidsGenerator {
     fn label(&self) -> u64 {
-        UUIDS_LABEL
+        *UUIDS_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> String {

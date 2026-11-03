@@ -9,7 +9,7 @@ import pytest
 
 import hegel
 from hegel import generators as gs
-from hegel.generators.strings import Characters, CharacterSpec, Text, TextFromAlphabet
+from hegel.generators.strings import Characters, CharacterSpec, Text
 from tests.helpers import find_example, run_test
 
 
@@ -26,7 +26,8 @@ def test_text_defaults():
     check_all(gs.text(), lambda s: all(unicodedata.category(c) != "Cs" for c in s))
     check_all(gs.text(min_size=3, max_size=5), lambda s: 3 <= len(s) <= 5)
     check_all(gs.text(min_size=150), lambda s: 150 <= len(s) <= 250, test_cases=5)
-    assert repr(gs.text()) == "text(min_size=0, max_size=100)"
+    check_all(gs.text(max_size=2**64 - 2), lambda s: isinstance(s, str), test_cases=5)
+    assert repr(gs.text()) == "text(min_size=0)"
     assert find_example(gs.text()) == ""
     assert find_example(gs.text(min_size=1)) == "0"
 
@@ -78,8 +79,6 @@ def test_text_alphabets():
     check_all(gs.text("xyz", min_size=1), lambda s: set(s) <= set("xyz"))
     check_all(gs.text(["x", "y"], min_size=1), lambda s: set(s) <= set("xy"))
     check_all(gs.text(gs.characters(codec="ascii"), min_size=1), lambda s: s.isascii())
-    check_all(gs.text(gs.sampled_from("ab"), min_size=2), lambda s: set(s) <= set("ab"))
-    assert isinstance(gs.text(gs.sampled_from("ab")), TextFromAlphabet)
     assert isinstance(gs.text(gs.characters()), Text)
     assert isinstance(gs.characters(), Characters)
     assert repr(gs.characters()) == "characters()"
@@ -93,16 +92,12 @@ def test_empty_alphabet_spells_only_the_empty_string():
 
 
 def test_text_and_characters_repr_their_arguments():
-    assert repr(gs.text("abc", min_size=2)) == "text(alphabet='abc', min_size=2, max_size=100)"
+    assert repr(gs.text("abc", min_size=2)) == "text(alphabet='abc', min_size=2)"
     assert (
-        repr(gs.text(gs.sampled_from("ab")))
-        == "text(alphabet=sampled_from('ab'), min_size=0, max_size=100)"
+        repr(gs.text(gs.characters(codec="ascii"), max_size=3))
+        == "text(alphabet=characters(max_codepoint=127), min_size=0, max_size=3)"
     )
-    assert (
-        repr(gs.text(gs.characters(codec="ascii")))
-        == "text(alphabet=characters(max_codepoint=127), min_size=0, max_size=100)"
-    )
-    assert repr(gs.text(codec="utf-8")) == "text(codec='utf-8', min_size=0, max_size=100)"
+    assert repr(gs.text(codec="utf-8")) == "text(codec='utf-8', min_size=0)"
     assert repr(gs.characters(codec="ascii", max_codepoint=200)) == "characters(max_codepoint=127)"
     assert repr(gs.characters(codec="ascii", max_codepoint=50)) == "characters(max_codepoint=50)"
     assert (
@@ -135,12 +130,10 @@ def test_text_alphabet_errors():
         gs.text(max_size=True)
     with pytest.raises(hegel.InvalidArgument):
         gs.text(min_size=3, max_size=2)
-
-    def body(tc):
-        with pytest.raises(hegel.InvalidArgument):
-            tc.draw(gs.text(gs.just("ab"), min_size=1))
-
-    run_test(body, test_cases=1)
+    with pytest.raises(hegel.InvalidArgument, match=r'lists\(alphabet\)\.map\(""\.join\)'):
+        gs.text(gs.sampled_from("ab"))
+    with pytest.raises(hegel.InvalidArgument, match=r'lists\(alphabet\)\.map\(""\.join\)'):
+        gs.text(gs.just("ab"), min_size=1)
 
 
 @pytest.mark.parametrize(
@@ -228,7 +221,11 @@ def test_from_regex():
 def test_binary():
     check_all(gs.binary(), lambda b: isinstance(b, bytes) and len(b) <= 100)
     check_all(gs.binary(min_size=2, max_size=3), lambda b: 2 <= len(b) <= 3)
-    assert repr(gs.binary()) == "binary(min_size=0, max_size=100)"
+    check_all(gs.binary(min_size=150), lambda b: 150 <= len(b) <= 250, test_cases=5)
+    check_all(gs.binary(max_size=2**64 - 1), lambda b: isinstance(b, bytes), test_cases=5)
+    check_all(gs.binary(max_size=2**64 - 2), lambda b: isinstance(b, bytes), test_cases=5)
+    assert repr(gs.binary()) == "binary(min_size=0)"
+    assert repr(gs.binary(max_size=7)) == "binary(min_size=0, max_size=7)"
     assert find_example(gs.binary(min_size=2)) == b"\x00\x00"
     with pytest.raises(hegel.InvalidArgument):
         gs.binary(min_size=2, max_size=1)

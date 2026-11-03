@@ -64,4 +64,4 @@ def test_note_pretty_prints():
     with pytest.raises(AssertionError) as err:
         test()
 
-    assert "\n".join(notes(err.value)) == "Falsifying example:\nn = 5\nCanBePrettyPrinted(n=5)"
+    assert "\n".join(notes(err.value)) == "n = 5\nCanBePrettyPrinted(n=5)"

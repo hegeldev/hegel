@@ -118,6 +118,50 @@ fn snapshot_loop_accumulates_state_across_iterations() {
     ");
 }
 
+/// A blob printed before `repeat` moved into the engine still replays:
+/// the engine's loop makes the choices the frontend's loop made (a silent
+/// minimum length in `[0, 2^40]`, a collection with that minimum, one
+/// silent boolean before a failure is rethrown), so the blob reaches the
+/// same draws under the same headings.
+#[test]
+fn snapshot_loop_replays_a_blob_from_the_native_repeat() {
+    let buf: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let buf_writer = buf.clone();
+    let sink: Arc<dyn Fn(&str) + Send + Sync> =
+        Arc::new(move |s: &str| buf_writer.lock().unwrap().push(s.to_string()));
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        hegel::with_output_override(sink, || {
+            Hegel::new(|tc| {
+                let total: Rc<Cell<i32>> = Rc::new(Cell::new(0));
+                let total_inside = total.clone();
+                tc.repeat(|| {
+                    let n: i32 = tc.draw(gs::integers::<i32>().min_value(0).max_value(100));
+                    tc.assume(n != 7);
+                    total_inside.set(total_inside.get() + n);
+                    assert!(total_inside.get() < 150);
+                });
+            })
+            .settings(Settings::new().database(None))
+            .reproduce_failure("AXicY2MAAi5GEMnICGEYwRgpjAwABskAww==")
+            .run();
+        });
+    }));
+    assert!(result.is_err(), "the blob reproduces the failure");
+    let lines = buf.lock().unwrap().clone();
+    let output = lines
+        .iter()
+        .take_while(|line| !line.starts_with("thread '"))
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join("\n");
+    insta::assert_snapshot!(output, @"
+    // Repetition #1
+      let draw_1 = 50;
+    // Repetition #2
+      let draw_2 = 100;
+    ");
+}
+
 #[test]
 fn loop_recovers_from_assumption_failures() {
     let result = catch_unwind(AssertUnwindSafe(|| {

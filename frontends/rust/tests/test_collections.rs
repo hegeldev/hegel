@@ -72,6 +72,54 @@ fn test_vec_unique_with_min_size(tc: TestCase) {
     assert_eq!(set.len(), vec.len());
 }
 
+#[hegel::test]
+fn test_vec_unique_by_key(tc: TestCase) {
+    let min_size: usize = tc.draw(gs::integers().max_value(10));
+    let vec: Vec<(u8, bool)> = tc.draw(
+        gs::vecs(hegel::tuples!(gs::integers::<u8>(), gs::booleans()))
+            .min_size(min_size)
+            .unique_by(|pair: &(u8, bool)| pair.0),
+    );
+    assert!(vec.len() >= min_size);
+    let keys: Vec<u8> = vec.iter().map(|pair| pair.0).collect();
+    assert_all_unique(&keys);
+}
+
+#[hegel::test]
+fn test_vec_unique_by_bounds_the_size_by_the_number_of_keys(tc: TestCase) {
+    let vec: Vec<i32> = tc.draw(
+        gs::vecs(gs::integers::<i32>())
+            .min_size(2)
+            .max_size(5)
+            .unique_by(|x: &i32| x.rem_euclid(2)),
+    );
+    assert_eq!(vec.len(), 2);
+    assert_ne!(vec[0].rem_euclid(2), vec[1].rem_euclid(2));
+}
+
+#[test]
+fn test_vec_unique_by_allows_equal_values_after_unique_false() {
+    common::utils::find_any(
+        gs::vecs(gs::integers::<i32>().min_value(0).max_value(3))
+            .unique_by(|x: &i32| *x)
+            .unique(false)
+            .min_size(5),
+        |vec: &Vec<i32>| vec.len() >= 5,
+    );
+}
+
+#[hegel::test]
+fn test_vec_unique_replaces_unique_by(tc: TestCase) {
+    let vec: Vec<i32> = tc.draw(
+        gs::vecs(gs::integers::<i32>())
+            .unique_by(|_: &i32| 0)
+            .unique(true)
+            .min_size(3),
+    );
+    assert!(vec.len() >= 3);
+    assert_all_unique(&vec);
+}
+
 #[hegel::composite]
 fn composite_integer(tc: &TestCase) -> i32 {
     tc.draw(gs::integers())

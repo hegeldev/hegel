@@ -202,6 +202,9 @@ pub(crate) struct TestCaseLocalData {
 /// }
 /// ```
 ///
+/// Give each clone a worker index with [`set_worker`](TestCase::set_worker)
+/// so that a failure report marks which thread printed each line.
+///
 /// ## What is guaranteed
 ///
 /// Each clone owns its own stream, so a clone may be moved to and driven
@@ -362,21 +365,6 @@ pub fn with_output_override<R>(sink: OutputSink, f: impl FnOnce() -> R) -> R {
 /// them in-process without having to spawn a subprocess.
 pub(crate) fn current_output_sink() -> Option<OutputSink> {
     OUTPUT_OVERRIDE.with(|cell| cell.borrow().clone())
-}
-
-/// Emit a single line of verbose runner output, going through the
-/// installed output sink if there is one and otherwise to stderr.
-///
-/// Resolves the sink thread-locally at emit time, so it is only correct for
-/// output produced synchronously on the thread that installed the override
-/// (e.g. an explicit test case). A run resolves its destination once up
-/// front instead — see [`RunOutput`].
-pub(crate) fn emit_verbose_line(msg: &str) {
-    if let Some(sink) = current_output_sink() {
-        sink(msg);
-    } else {
-        eprintln!("{}", msg);
-    }
 }
 
 /// The output destination a run resolved when it started.
@@ -675,6 +663,47 @@ impl TestCase {
         tolerate(self.with_ctc(|ctc| ctc.note(message)));
     }
 
+    /// Attribute this test case's output to worker `index`.
+    ///
+    /// Every line it prints from now on, drawn values and notes alike, is
+    /// prefixed with `[worker N +X.XXXms]`, the time since the test case
+    /// started, so a failure report from several threads shows which
+    /// thread printed each line and how their lines interleaved. Clones
+    /// made from it afterwards inherit the attribution, and may be given
+    /// their own. Call it on the [`clone`](Clone::clone) you hand to each
+    /// thread (see [Threading](#threading)).
+    ///
+    /// # Panics
+    ///
+    /// Panics with an invalid-argument error if `index` exceeds
+    /// `i64::MAX`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use hegel::generators as gs;
+    ///
+    /// #[hegel::test]
+    /// fn my_test(tc: hegel::TestCase) {
+    ///     let handles: Vec<_> = (0..2)
+    ///         .map(|i| {
+    ///             let worker = tc.clone();
+    ///             worker.set_worker(i);
+    ///             std::thread::spawn(move || worker.draw(gs::integers::<i32>()))
+    ///         })
+    ///         .collect();
+    ///     for handle in handles {
+    ///         handle.join().unwrap();
+    ///     }
+    /// }
+    /// ```
+    pub fn set_worker(&self, index: usize) {
+        let Ok(index) = i64::try_from(index) else {
+            invalid_argument!("set_worker: index {index} is larger than i64::MAX")
+        };
+        self.with_ctc(|ctc| ctc.set_worker(index));
+    }
+
     /// Record a targeting observation to help the engine find extreme inputs.
     ///
     /// Call this inside a test body to guide generation toward inputs that
@@ -783,12 +812,15 @@ impl TestCase {
         }
     }
 
-    /// Run `body` in a loop that should runs "logically infinitely" or until
+    /// Run `body` in a loop that should run "logically infinitely" or until
     /// error. Roughly equivalent to a `loop` but with better interaction with
-    /// the test runner: This loop will never exit until the test case completes.
+    /// the test runner: the engine decides how many iterations to run, so a
+    /// failing loop shrinks to the fewest, and this loop never exits until
+    /// the test case completes.
     ///
-    /// At the start of each iteration a `// Loop iteration N` note is emitted
-    /// into the failing-test replay output.
+    /// Each iteration's output is indented under a `// Repetition #N` note.
+    /// An iteration that fails an assumption is skipped and the loop goes
+    /// on; any other panic fails the test case.
     ///
     /// # Example
     ///
@@ -806,15 +838,10 @@ impl TestCase {
     /// }
     /// ```
     pub fn repeat<F: FnMut()>(&self, mut body: F) -> ! {
-        use crate::generators::{booleans, integers};
-
-        let max_safe_min_size = usize::try_from(1u64 << 40).unwrap_or(usize::MAX / 2);
-        let min_size = self.draw_silent(integers::<usize>().max_value(max_safe_min_size));
-
-        let mut collection = Collection::new(self, min_size, None);
+        let repeat = self.draw_or_raise(|ctc| ctc.new_repeat());
         let mut iteration: u64 = 0;
 
-        while collection.more() {
+        while self.draw_or_raise(|ctc| ctc.repeat_more(&repeat)) {
             iteration += 1;
             self.note(&format!("// Repetition #{}", iteration));
 
@@ -833,7 +860,7 @@ impl TestCase {
                     resume_unwind(e);
                 }
                 Err(e) => {
-                    self.draw_silent(booleans());
+                    self.draw_or_raise(|ctc| ctc.repeat_failed(&repeat));
                     resume_unwind(e);
                 }
             }
@@ -1078,8 +1105,8 @@ impl TestCase {
     }
 
     /// Draw a byte string with length in `[min_size, max_size]`.
-    pub(crate) fn generate_bytes(&self, min_size: usize, max_size: usize) -> Vec<u8> {
-        self.draw_or_raise(|ctc| ctc.generate_bytes(min_size as u64, max_size as u64))
+    pub(crate) fn generate_bytes(&self, min_size: u64, max_size: u64) -> Vec<u8> {
+        self.draw_or_raise(|ctc| ctc.generate_bytes(min_size, max_size))
     }
 
     /// Draw a string described by a prebuilt libhegel string generator.
@@ -1090,6 +1117,12 @@ impl TestCase {
     /// Draw a string of the grammar described by a prebuilt libhegel grammar.
     pub(crate) fn generate_grammar(&self, grammar: &crate::ffi::Grammar, max_size: u64) -> String {
         self.draw_or_raise(|ctc| ctc.generate_grammar(grammar, max_size))
+    }
+
+    /// Advance a grammar draw to the explicit terminal whose value is due
+    /// next, or `None` once its string is complete.
+    pub(crate) fn grammar_draw_next(&self, draw: &crate::ffi::GrammarDraw<'_>) -> Option<usize> {
+        self.draw_or_raise(|ctc| ctc.grammar_draw_next(draw))
     }
 
     /// Draw a Gregorian calendar date in `[min, max]`.

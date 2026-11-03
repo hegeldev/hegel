@@ -416,7 +416,7 @@ def test_when_set_to_no_simplifies_runs_failing_example_twice():
     # the example runs more than Hypothesis's twice; it is still never shrunk.
     assert len(failing) >= 2
     assert len(set(failing)) == 1
-    assert "Falsifying example" in "\n".join(notes(err.value))
+    assert "x = " in "\n".join(notes(err.value))
     assert "Lo" in "\n".join(notes(err.value))
 
 
@@ -500,16 +500,11 @@ def test_notes_high_filter_rates_in_unsatisfiable_error():
         f()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="engine: a run whose every case is rejected fails the FilterTooMuch "
-    "health check rather than raising Unsatisfiable",
-)
-def test_rejecting_every_input_is_unsatisfiable():
+def test_rejecting_every_input_fails_health_check():
     @hegel.test
     def f(tc):
         tc.draw(gs.booleans())
         tc.assume(False)
 
-    with pytest.raises(hegel.Unsatisfiable):
+    with pytest.raises(hegel.FailedHealthCheck):
         f()

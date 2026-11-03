@@ -37,8 +37,10 @@ probability = gs.floats(min_value=0.0, max_value=1.0)
 
 There are also generators for dates and times ({func}`~hegel.generators.dates`,
 {func}`~hegel.generators.datetimes`, {func}`~hegel.generators.timedeltas`, ...),
-UUIDs, IP addresses, email addresses, URLs and domain names, and strings
-matching a regular expression ({func}`~hegel.generators.from_regex`).
+UUIDs, IP addresses, email addresses, URLs and domain names, strings
+matching a regular expression ({func}`~hegel.generators.from_regex`), and
+strings of a grammar written in Lark's syntax
+({func}`~hegel.generators.from_lark`).
 
 ## Collections
 

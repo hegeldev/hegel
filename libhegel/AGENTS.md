@@ -20,7 +20,7 @@ cargo test -p hegeltest-c test_name
 ## Gotchas
 
 - `include/hegel.h` and `frontends/rust/src/ffi/sys/fns.rs` are generated from `src/lib.rs`; never edit them by hand, run `just libhegel::header` after changing an exported `hegel_*` function.
-- Every frontend talks to the engine only through the `hegel_*` functions; a C ABI change is a libhegel release (`RELEASE.md` here) and usually needs matching changes in `frontends/`.
+- Every frontend talks to the engine only through the `hegel_*` functions; a C ABI change is a libhegel release (a `RELEASE/<slug>.md` here) and usually needs matching changes in `frontends/`.
 - Never panic across the FFI boundary: `hegel_internal_assert!` returns an `InternalError`, `invalid_argument!` / `EngineError::InvalidArgument` rejects bad arguments. `src/control.rs` must not contain a `panic!`.
 - Nondeterministic-test handling is documented in `docs/nondeterminism.md`; read it before touching `counterexample.rs`, `graph*.rs`, `nd/`, or `core/replay.rs`.
 - Grammar strings (`src/native/lark/`) are mapped in `docs/grammar-strings.md`: a string is one grammar-constrained choice, checked on replay by the Earley parser in `lark/parse.rs` and shrunk through its derivation in `shrinker/grammar.rs`; the module docs of `lark/generate.rs` describe the generator's sizing and lexability design. A grammar or pattern is user input that can make the engine build without bound, so probe such code under a memory cap.

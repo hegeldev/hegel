@@ -11,6 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from hegel import _native
 from hegel._labels import combine_labels, label_from_name
 from hegel.errors import (
     AssumeFailed,
@@ -19,7 +20,7 @@ from hegel.errors import (
     LoopDone,
     StopTest,
 )
-from hegel.generators.base import FILTER_ATTEMPT_LABEL, FILTER_LABEL, Generator, _name
+from hegel.generators.base import FILTER_ATTEMPT_LABEL, FILTER_LABEL, Generator, _name, _PrintsValue
 
 if TYPE_CHECKING:
     from hegel._native import StateMachine as NativeMachine
@@ -489,10 +490,10 @@ def _run_concurrent(
                 raise InternalError(f"state_machine_next_group returned unknown group id {group}")
             round_number += 1
             name = group_names[group]
-            tc.note(f"---------------- Round {round_number}: group {name!r} ----------------")
+            tc.note(f'---------------- Round {round_number}: group "{name}" ----------------')
             for worker, rounds in enumerate(round_queues):
-                worker_tc = tc._clone()
-                worker_tc._set_worker(worker)
+                worker_tc = tc.clone()
+                worker_tc.set_worker(worker)
                 rounds.put(worker_tc)
             events: list[_Event] = []
             for worker, event_queue in enumerate(event_queues):
@@ -604,8 +605,7 @@ class StateMachine:
     methods of the same names do; with ``max_concurrency > 1`` the rules
     run on worker threads against the shared instance. A fresh instance is
     made for every test case: ``__init__`` takes either no arguments or
-    just the test case, to draw the initial state from, and
-    :meth:`teardown` runs at the end of each.
+    just the test case, to draw the initial state from.
 
     ::
 
@@ -664,9 +664,6 @@ class StateMachine:
         machine.max_concurrency(self.max_concurrency)
         return machine
 
-    def teardown(self) -> None:
-        """Called after each test case, whether or not it failed."""
-
 
 def run_state_machine(
     tc: TestCase, machine: type[StateMachine] | StateMachine | Machine, **overrides: Any
@@ -688,13 +685,7 @@ def run_state_machine(
         instance = _instantiate(machine, tc) if isinstance(machine, type) else machine
         if not isinstance(instance, StateMachine):
             raise InvalidArgument(f"{machine!r} is not a StateMachine")
-        try:
-            built = instance.build_machine(tc)
-            _apply_overrides(built, overrides)
-            built.run()
-        finally:
-            instance.teardown()
-        return
+        built = instance.build_machine(tc)
     _apply_overrides(built, overrides)
     built.run()
 
@@ -755,7 +746,7 @@ def state_machine_test(machine: type[StateMachine], **settings: Any) -> Callable
 # -- pools ------------------------------------------------------------------
 
 
-class _PoolValues(Generator[Any]):
+class _PoolValues(_PrintsValue[Any]):
     def __init__(self, pool: Pool, consume: bool) -> None:
         self.pool = pool
         self.consume = consume
@@ -776,10 +767,10 @@ class _PoolValues(Generator[Any]):
         return f"{self.pool!r}.{'values_consumed' if self.consume else 'values_reusable'}()"
 
 
-FILTER_ATTEMPTS = 3
+FILTER_ATTEMPTS = _native.FILTER_ATTEMPTS
 
 
-class _FilteredPoolValues(Generator[Any]):
+class _FilteredPoolValues(_PrintsValue[Any]):
     """``values_consumed().filter(...)``: each attempt consumes an
     engine-chosen value and tests it while it is still in the pool, so a
     rejected value never leaves the pool's map. Rejected values stay
