@@ -125,9 +125,7 @@ type t =
 let step db sql ?(params = []) () =
   let stmt = Sqlite3.prepare db sql in
   Fun.protect
-    ~finally:(fun () ->
-      ignore (Sqlite3.finalize stmt);
-      ignore (Sys.opaque_identity stmt))
+    ~finally:(fun () -> ignore (Sqlite3.finalize stmt))
     (fun () ->
        Sqlite3.Rc.check (Sqlite3.bind_values stmt params);
        match Sqlite3.step stmt with
