@@ -1,4 +1,4 @@
-package dev.hegel.generators;
+package dev.hegel.generators.temporal;
 
 import dev.hegel.SpecHandle;
 import dev.hegel.TestCase;

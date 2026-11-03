@@ -110,6 +110,11 @@ class RealLibhegelTest {
     }
 
     @Test
+    void zoneSourcesCrossTheBinding() {
+        BindingEdges.zoneSources(real());
+    }
+
+    @Test
     void booleanDrawReportsNullHandle() {
         RealLibhegel lib = real();
         // Seeded true because the draw's scratch segment is arena-allocated and therefore zeroed:

@@ -129,6 +129,16 @@ public final class Abi {
     public static final int TIMEZONE_TAG_LEGACY = 1 << 14;
     public static final int TIMEZONE_TAG_INVERTED_SIGN = 1 << 15;
 
+    // hegel_zone_after_t: what a zone source's zone has in force after its explicit transitions.
+    public static final int ZONE_AFTER_HOLD = 0;
+    public static final int ZONE_AFTER_RULE = 1;
+    public static final int ZONE_AFTER_INFER = 2;
+
+    // hegel_zone_rule_day_t: how a hegel_zone_rule_date_t names its day (RFC 9636 section 3.3.1).
+    public static final int ZONE_RULE_DAY_JULIAN = 0;
+    public static final int ZONE_RULE_DAY_ZERO_BASED = 1;
+    public static final int ZONE_RULE_DAY_MONTH_WEEK_DAY = 2;
+
     // Sentinel written by hegel_state_machine_next_group / hegel_state_machine_next_rule (INT64_MIN).
     public static final long STATE_MACHINE_DONE = Long.MIN_VALUE;
     public static final long UNBOUNDED = -1L; // 0xFFFFFFFFFFFFFFFF as a Java long

@@ -223,11 +223,12 @@ final class LiveDataSource implements DataSource {
     }
 
     @Override
-    public SpecHandle timezoneSpec(List<String> names, boolean links, boolean legacy) {
+    public SpecHandle timezoneSpec(List<String> names, boolean links, boolean legacy, long source) {
         checkLive();
         long[] out = new long[1];
         translate(lib.timezoneSpecNew(out), "timezone_spec_new");
         SpecHandle.Freer freer = Libhegel::timezoneSpecFree;
+        configure(out[0], freer, lib.timezoneSpecSetSource(out[0], source), "timezone_spec_set_source");
         configure(out[0], freer, lib.timezoneSpecSetNames(out[0], names), "timezone_spec_set_names");
         lib.timezoneSpecSetLinks(out[0], links);
         lib.timezoneSpecSetLegacy(out[0], legacy);
@@ -288,8 +289,15 @@ final class LiveDataSource implements DataSource {
     }
 
     @Override
-    public Libhegel.TimezoneInfo timezoneInfo(String name) {
-        return lib.timezoneInfo(name);
+    public Libhegel.TimezoneInfo timezoneInfo(long source, String name) {
+        Libhegel.TimezoneInfo[] out = new Libhegel.TimezoneInfo[1];
+        translate(lib.timezoneInfo(source, name, out), "timezone_info_in");
+        return out[0];
+    }
+
+    @Override
+    public Libhegel binding() {
+        return lib;
     }
 
     @Override

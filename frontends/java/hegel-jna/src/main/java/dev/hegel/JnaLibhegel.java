@@ -13,6 +13,7 @@ import com.sun.jna.ptr.LongByReference;
 import com.sun.jna.ptr.PointerByReference;
 import dev.hegel.lowlevel.Abi;
 import dev.hegel.lowlevel.Libhegel;
+import java.lang.ref.Reference;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -22,6 +23,8 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalLong;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
@@ -39,6 +42,10 @@ final class JnaLibhegel implements Libhegel {
     // hegel_run_start registers the output callback with the engine until hegel_run_free, so a
     // strong reference is held per run (JNA frees the native thunk when the Callback is collected).
     private final Map<Long, LineCallback> runCallbacks = new ConcurrentHashMap<>();
+
+    // A zone source may call its loader for as long as the source lives, which no handle bounds,
+    // so every loader callback is held for the life of the binding.
+    private final Set<LoaderCallback> loaders = ConcurrentHashMap.newKeySet();
 
     private final HegelNative lib;
     private final ThreadLocal<Pointer> context;
@@ -247,7 +254,50 @@ final class JnaLibhegel implements Libhegel {
 
         int hegel_span_spec_set_sign(Pointer ctx, Pointer spec, int sign);
 
-        int hegel_timezone_info(Pointer ctx, HegelString.ByValue name, HegelTimezoneInfo out);
+        int hegel_timezone_spec_set_source(Pointer ctx, Pointer spec, Pointer source);
+
+        int hegel_timezone_info_in(Pointer ctx, Pointer source, HegelString.ByValue name, HegelTimezoneInfo out);
+
+        int hegel_timezone_offset_at_in(
+                Pointer ctx,
+                Pointer source,
+                HegelString.ByValue name,
+                HegelTimestamp.ByValue timestamp,
+                HegelTimezoneOffset out);
+
+        int hegel_timezone_resolve_in(
+                Pointer ctx,
+                Pointer source,
+                HegelString.ByValue name,
+                HegelDatetime.ByValue civil,
+                HegelTimezoneResolution out);
+
+        int hegel_zone_source_new(Pointer ctx, PointerByReference out);
+
+        int hegel_zone_source_bundled(Pointer ctx, PointerByReference out);
+
+        int hegel_zone_source_free(Pointer ctx, Pointer source);
+
+        int hegel_zone_source_add_tzif(Pointer ctx, Pointer source, HegelString.ByValue name, Pointer bytes, long len);
+
+        int hegel_zone_source_add_zone(Pointer ctx, Pointer source, HegelString.ByValue name, HegelZoneData data);
+
+        int hegel_zone_source_add_oracle(Pointer ctx, Pointer source, HegelString.ByValue name, HegelZoneOracle oracle);
+
+        int hegel_zone_source_add_link(
+                Pointer ctx, Pointer source, HegelString.ByValue name, HegelString.ByValue target);
+
+        int hegel_zone_source_declare(Pointer ctx, Pointer source, Pointer names, long len);
+
+        int hegel_zone_source_set_loader(Pointer ctx, Pointer source, ZoneLoaderCallback loader, Pointer userData);
+
+        int hegel_zone_source_set_version(Pointer ctx, Pointer source, HegelString.ByValue version);
+
+        int hegel_zone_source_version(Pointer ctx, Pointer source, HegelString out);
+
+        int hegel_set_default_zone_source(Pointer ctx, Pointer source);
+
+        int hegel_context_set_error(Pointer ctx, HegelString.ByValue message);
 
         int hegel_tzdb_version(Pointer ctx, HegelString out);
 
@@ -448,6 +498,212 @@ final class JnaLibhegel implements Libhegel {
         public int tags;
     }
 
+    /**
+     * {@code struct hegel_timezone_offset_t { int32_t offset_seconds; bool offset_known; bool
+     * is_dst; hegel_string_t abbreviation; }}
+     */
+    @Structure.FieldOrder({"offset_seconds", "offset_known", "is_dst", "abbreviation"})
+    public static class HegelTimezoneOffset extends Structure {
+        public int offset_seconds;
+        public byte offset_known;
+        public byte is_dst;
+        public HegelString abbreviation;
+    }
+
+    /**
+     * {@code struct hegel_timezone_resolution_t { hegel_timezone_kind_t kind; int32_t
+     * offset_before; int32_t offset_after; int32_t offset_seconds; bool offset_known;
+     * hegel_timestamp_t timestamp; }}
+     */
+    @Structure.FieldOrder({"kind", "offset_before", "offset_after", "offset_seconds", "offset_known", "timestamp"})
+    public static class HegelTimezoneResolution extends Structure {
+        public int kind;
+        public int offset_before;
+        public int offset_after;
+        public int offset_seconds;
+        public byte offset_known;
+        public HegelTimestamp timestamp;
+    }
+
+    /** {@code struct hegel_zone_type_t { int32_t utoff; bool is_dst; hegel_string_t abbreviation; }} */
+    @Structure.FieldOrder({"utoff", "is_dst", "abbreviation"})
+    public static class HegelZoneType extends Structure {
+        public int utoff;
+        public byte is_dst;
+        public HegelString abbreviation;
+
+        public HegelZoneType() {}
+
+        HegelZoneType(Pointer p) {
+            super(p);
+        }
+    }
+
+    /** {@code struct hegel_zone_transition_t { int64_t instant; hegel_zone_type_t local_type; }} */
+    @Structure.FieldOrder({"instant", "local_type"})
+    public static class HegelZoneTransition extends Structure {
+        public long instant;
+        public HegelZoneType local_type;
+    }
+
+    /**
+     * {@code struct hegel_zone_rule_date_t { uint32_t kind; uint16_t day; uint8_t month; uint8_t
+     * week; uint8_t weekday; int32_t time; }}
+     */
+    @Structure.FieldOrder({"kind", "day", "month", "week", "weekday", "time"})
+    public static class HegelZoneRuleDate extends Structure {
+        public int kind;
+        public short day;
+        public byte month;
+        public byte week;
+        public byte weekday;
+        public int time;
+    }
+
+    /**
+     * {@code struct hegel_zone_data_t { hegel_zone_type_t initial; const hegel_zone_transition_t
+     * *transitions; size_t transition_count; uint32_t after; hegel_zone_type_t standard; bool
+     * has_dst; hegel_zone_type_t dst; hegel_zone_rule_date_t dst_start, dst_end; int32_t last_year; }}
+     */
+    @Structure.FieldOrder({
+        "initial",
+        "transitions",
+        "transition_count",
+        "after",
+        "standard",
+        "has_dst",
+        "dst",
+        "dst_start",
+        "dst_end",
+        "last_year"
+    })
+    public static class HegelZoneData extends Structure {
+        public HegelZoneType initial;
+        public Pointer transitions;
+        public long transition_count;
+        public int after;
+        public HegelZoneType standard;
+        public byte has_dst;
+        public HegelZoneType dst;
+        public HegelZoneRuleDate dst_start;
+        public HegelZoneRuleDate dst_end;
+        public int last_year;
+    }
+
+    /**
+     * {@code struct hegel_zone_oracle_t { hegel_zone_offset_fn_t offset_at;
+     * hegel_zone_next_transition_fn_t next_transition; void *user_data; int32_t first_year; int32_t
+     * last_year; uint32_t after; }}
+     */
+    @Structure.FieldOrder({"offset_at", "next_transition", "user_data", "first_year", "last_year", "after"})
+    public static class HegelZoneOracle extends Structure {
+        public ZoneOffsetCallback offset_at;
+        public ZoneNextTransitionCallback next_transition;
+        public Pointer user_data;
+        public int first_year;
+        public int last_year;
+        public int after;
+    }
+
+    /** {@code hegel_zone_loader_t}. */
+    interface ZoneLoaderCallback extends Callback {
+        int invoke(Pointer userData, Pointer ctx, Pointer source, HegelString.ByValue name);
+    }
+
+    /** {@code hegel_zone_offset_fn_t}. */
+    interface ZoneOffsetCallback extends Callback {
+        int invoke(Pointer userData, Pointer ctx, long instant, Pointer outType);
+    }
+
+    /** {@code hegel_zone_next_transition_fn_t}. */
+    interface ZoneNextTransitionCallback extends Callback {
+        int invoke(Pointer userData, Pointer ctx, long after, Pointer outFound, Pointer outInstant);
+    }
+
+    /** Bridges a zone source's loader to its {@link ZoneLoader}, on the context libhegel passes. */
+    final class LoaderCallback implements ZoneLoaderCallback {
+        private final ZoneLoader loader;
+
+        LoaderCallback(ZoneLoader loader) {
+            this.loader = loader;
+        }
+
+        @Override
+        public int invoke(Pointer userData, Pointer ctx, Pointer source, HegelString.ByValue name) {
+            return callback(ctx, () -> loader.load(address(source), readString(name)));
+        }
+    }
+
+    /**
+     * Bridges an oracle's {@code offset_at} to its {@link ZoneOffsetOracle}. The abbreviation's
+     * bytes must outlive the call, until the oracle is next called, so the last buffer is kept.
+     */
+    final class OffsetCallback implements ZoneOffsetCallback {
+        private final ZoneOffsetOracle oracle;
+        private HegelZoneType last;
+
+        OffsetCallback(ZoneOffsetOracle oracle) {
+            this.oracle = oracle;
+        }
+
+        @Override
+        public int invoke(Pointer userData, Pointer ctx, long instant, Pointer outType) {
+            return callback(ctx, () -> {
+                HegelZoneType type = new HegelZoneType(outType);
+                fillZoneType(type, oracle.typeAt(instant));
+                type.write();
+                last = type;
+            });
+        }
+    }
+
+    /** Bridges an oracle's {@code next_transition} to its {@link ZoneTransitionOracle}. */
+    final class NextTransitionCallback implements ZoneNextTransitionCallback {
+        private final ZoneTransitionOracle oracle;
+
+        NextTransitionCallback(ZoneTransitionOracle oracle) {
+            this.oracle = oracle;
+        }
+
+        @Override
+        public int invoke(Pointer userData, Pointer ctx, long after, Pointer outFound, Pointer outInstant) {
+            return callback(ctx, () -> {
+                OptionalLong next = oracle.nextTransition(after);
+                outFound.setByte(0, cbool(next.isPresent()));
+                outInstant.setLong(0, next.orElse(0));
+            });
+        }
+    }
+
+    /**
+     * Run a zone source callback's Java body on the context libhegel passed it: the binding's calls
+     * made from the body report to that context, and a throwable becomes its error message.
+     */
+    private int callback(Pointer ctx, Runnable body) {
+        Pointer saved = context.get();
+        context.set(ctx);
+        try {
+            return ZoneCallbacks.guard(body, message -> lib.hegel_context_set_error(ctx, str(message)));
+        } finally {
+            context.set(saved);
+        }
+    }
+
+    private static void fillZoneType(HegelZoneType value, ZoneType type) {
+        value.utoff = type.utoff();
+        value.is_dst = cbool(type.isDst());
+        value.abbreviation = fillString(new HegelString(), type.abbreviation());
+    }
+
+    private static void fillRuleDate(HegelZoneRuleDate value, ZoneRuleDate date) {
+        value.kind = date.kind();
+        value.day = (short) date.day();
+        value.month = (byte) date.month();
+        value.week = (byte) date.week();
+        value.weekday = (byte) date.weekday();
+        value.time = date.time();
+    }
+
     /** The number of {@code int64_t} units in a {@code hegel_span_t}. */
     private static final int SPAN_UNITS = 10;
 
@@ -542,7 +798,10 @@ final class JnaLibhegel implements Libhegel {
      * bytes stay alive as long as the struct is referenced (the call's argument list does).
      */
     private static HegelString.ByValue str(String s) {
-        HegelString.ByValue value = new HegelString.ByValue();
+        return fillString(new HegelString.ByValue(), s);
+    }
+
+    private static <T extends HegelString> T fillString(T value, String s) {
         if (s != null) {
             byte[] bytes = s.getBytes(StandardCharsets.UTF_8);
             Memory buf = new Memory(Math.max(bytes.length, 1));
@@ -1127,16 +1386,171 @@ final class JnaLibhegel implements Libhegel {
     }
 
     @Override
-    public TimezoneInfo timezoneInfo(String name) {
+    public int timezoneSpecSetSource(long spec, long source) {
+        return lib.hegel_timezone_spec_set_source(ctx(), pointer(spec), pointer(source));
+    }
+
+    @Override
+    public int timezoneInfo(long source, String name, TimezoneInfo[] out) {
         HegelTimezoneInfo info = new HegelTimezoneInfo();
-        check("hegel_timezone_info", lib.hegel_timezone_info(ctx(), str(name), info));
-        String primary = readString(info.primary_name);
-        return new TimezoneInfo(
-                jbool(info.known),
-                primary == null ? "" : primary,
-                jbool(info.is_link),
-                Short.toUnsignedInt(info.rank),
-                info.tags);
+        int code = lib.hegel_timezone_info_in(ctx(), pointer(source), str(name), info);
+        if (code == Abi.OK) {
+            String primary = readString(info.primary_name);
+            out[0] = new TimezoneInfo(
+                    jbool(info.known),
+                    primary == null ? "" : primary,
+                    jbool(info.is_link),
+                    Short.toUnsignedInt(info.rank),
+                    info.tags);
+        }
+        return code;
+    }
+
+    @Override
+    public int timezoneOffsetAt(long source, String name, Instant instant, TimezoneOffset[] out) {
+        HegelTimezoneOffset offset = new HegelTimezoneOffset();
+        int code = lib.hegel_timezone_offset_at_in(ctx(), pointer(source), str(name), timestampValue(instant), offset);
+        if (code == Abi.OK) {
+            out[0] = new TimezoneOffset(
+                    offset.offset_seconds,
+                    jbool(offset.offset_known),
+                    jbool(offset.is_dst),
+                    readString(offset.abbreviation));
+        }
+        return code;
+    }
+
+    @Override
+    public int timezoneResolve(long source, String name, LocalDateTime civil, TimezoneResolution[] out) {
+        HegelTimezoneResolution resolution = new HegelTimezoneResolution();
+        int code = lib.hegel_timezone_resolve_in(ctx(), pointer(source), str(name), datetimeValue(civil), resolution);
+        if (code == Abi.OK) {
+            out[0] = new TimezoneResolution(
+                    resolution.kind,
+                    resolution.offset_before,
+                    resolution.offset_after,
+                    resolution.offset_seconds,
+                    jbool(resolution.offset_known),
+                    readTimestamp(resolution.timestamp));
+        }
+        return code;
+    }
+
+    // --- zone sources ---
+
+    @Override
+    public int zoneSourceNew(long[] out) {
+        PointerByReference ref = new PointerByReference();
+        int code = lib.hegel_zone_source_new(ctx(), ref);
+        out[0] = address(ref.getValue());
+        return code;
+    }
+
+    @Override
+    public int zoneSourceBundled(long[] out) {
+        PointerByReference ref = new PointerByReference();
+        int code = lib.hegel_zone_source_bundled(ctx(), ref);
+        out[0] = address(ref.getValue());
+        return code;
+    }
+
+    @Override
+    public void zoneSourceFree(long source) {
+        check("hegel_zone_source_free", lib.hegel_zone_source_free(ctx(), pointer(source)));
+    }
+
+    @Override
+    public int zoneSourceAddTzif(long source, String name, byte[] tzif) {
+        Memory bytes = new Memory(Math.max(tzif.length, 1));
+        bytes.write(0, tzif, 0, tzif.length);
+        return lib.hegel_zone_source_add_tzif(ctx(), pointer(source), str(name), bytes, tzif.length);
+    }
+
+    @Override
+    public int zoneSourceAddZone(long source, String name, ZoneData data) {
+        List<ZoneTransition> transitions = data.transitions();
+        HegelZoneTransition[] array =
+                (HegelZoneTransition[]) new HegelZoneTransition().toArray(Math.max(transitions.size(), 1));
+        for (int i = 0; i < transitions.size(); i++) {
+            array[i].instant = transitions.get(i).instant();
+            array[i].local_type = new HegelZoneType();
+            fillZoneType(array[i].local_type, transitions.get(i).type());
+            array[i].write();
+        }
+        HegelZoneData value = new HegelZoneData();
+        value.initial = new HegelZoneType();
+        fillZoneType(value.initial, data.initial());
+        value.transitions = array[0].getPointer();
+        value.transition_count = transitions.size();
+        value.after = data.after();
+        value.standard = new HegelZoneType();
+        fillZoneType(value.standard, data.standard());
+        value.has_dst = cbool(data.hasDst());
+        value.dst = new HegelZoneType();
+        fillZoneType(value.dst, data.dst());
+        value.dst_start = new HegelZoneRuleDate();
+        fillRuleDate(value.dst_start, data.dstStart());
+        value.dst_end = new HegelZoneRuleDate();
+        fillRuleDate(value.dst_end, data.dstEnd());
+        value.last_year = data.lastYear();
+        int code = lib.hegel_zone_source_add_zone(ctx(), pointer(source), str(name), value);
+        Reference.reachabilityFence(array);
+        return code;
+    }
+
+    @Override
+    public int zoneSourceAddOracle(
+            long source,
+            String name,
+            ZoneOffsetOracle typeAt,
+            ZoneTransitionOracle nextTransition,
+            int firstYear,
+            int lastYear,
+            int after) {
+        HegelZoneOracle oracle = new HegelZoneOracle();
+        oracle.offset_at = new OffsetCallback(typeAt);
+        oracle.next_transition = nextTransition == null ? null : new NextTransitionCallback(nextTransition);
+        oracle.first_year = firstYear;
+        oracle.last_year = lastYear;
+        oracle.after = after;
+        return lib.hegel_zone_source_add_oracle(ctx(), pointer(source), str(name), oracle);
+    }
+
+    @Override
+    public int zoneSourceAddLink(long source, String name, String target) {
+        return lib.hegel_zone_source_add_link(ctx(), pointer(source), str(name), str(target));
+    }
+
+    @Override
+    public int zoneSourceDeclare(long source, List<String> names) {
+        return lib.hegel_zone_source_declare(ctx(), pointer(source), strArray(names), names.size());
+    }
+
+    @Override
+    public int zoneSourceSetLoader(long source, ZoneLoader loader) {
+        LoaderCallback callback = null;
+        if (loader != null) {
+            callback = new LoaderCallback(loader);
+            loaders.add(callback);
+        }
+        return lib.hegel_zone_source_set_loader(ctx(), pointer(source), callback, null);
+    }
+
+    @Override
+    public int zoneSourceSetVersion(long source, String version) {
+        return lib.hegel_zone_source_set_version(ctx(), pointer(source), str(version));
+    }
+
+    @Override
+    public String zoneSourceVersion(long source) {
+        HegelString out = new HegelString();
+        check("hegel_zone_source_version", lib.hegel_zone_source_version(ctx(), pointer(source), out));
+        return readString(out);
+    }
+
+    @Override
+    public void setDefaultZoneSource(long source) {
+        check("hegel_set_default_zone_source", lib.hegel_set_default_zone_source(ctx(), pointer(source)));
     }
 
     private static HegelDate.ByValue dateValue(LocalDate date) {

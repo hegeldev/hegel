@@ -1,4 +1,4 @@
-package dev.hegel.generators;
+package dev.hegel.generators.temporal;
 
 import dev.hegel.Generator;
 import dev.hegel.SpecHandle;
@@ -12,11 +12,11 @@ import java.time.Period;
  * <p>By default every unit spans the whole {@code int} range. The first of {@link #years(int,
  * int)}, {@link #months(int, int)} and {@link #days(int, int)} called replaces that default with
  * just its unit, and later calls add units, so a period of days and months is {@code
- * periods().days(0, 30).months(0, 11)}; a unit never enabled is always 0. {@link
+ * spans().days(0, 30).months(0, 11)}; a unit never enabled is always 0. {@link
  * #nonNegative(boolean)} draws magnitudes only. Values shrink toward {@link Period#ZERO}, or the
  * nearest value to it in each unit's bounds.
  */
-public final class PeriodGenerator implements Generator<Period> {
+public final class SpanGenerator implements Generator<Period> {
     private static final int YEARS = 0;
     private static final int MONTHS = 1;
     private static final int DAYS = 2;
@@ -29,22 +29,22 @@ public final class PeriodGenerator implements Generator<Period> {
     private final boolean nonNegative;
     private final SpecCache spec = new SpecCache();
 
-    public PeriodGenerator() {
+    public SpanGenerator() {
         this(null, false);
     }
 
-    private PeriodGenerator(int[][] bounds, boolean nonNegative) {
+    private SpanGenerator(int[][] bounds, boolean nonNegative) {
         this.bounds = bounds;
         this.nonNegative = nonNegative;
     }
 
-    private PeriodGenerator unit(int unit, int min, int max) {
+    private SpanGenerator unit(int unit, int min, int max) {
         if (min > max) {
-            throw new IllegalArgumentException("periods: min (" + min + ") > max (" + max + ")");
+            throw new IllegalArgumentException("spans: min (" + min + ") > max (" + max + ")");
         }
         int[][] next = bounds == null ? new int[3][] : bounds.clone();
         next[unit] = new int[] {min, max};
-        return new PeriodGenerator(next, nonNegative);
+        return new SpanGenerator(next, nonNegative);
     }
 
     /**
@@ -55,7 +55,7 @@ public final class PeriodGenerator implements Generator<Period> {
      * @param max the inclusive upper bound
      * @return a copy with the bounds set
      */
-    public PeriodGenerator years(int min, int max) {
+    public SpanGenerator years(int min, int max) {
         return unit(YEARS, min, max);
     }
 
@@ -67,7 +67,7 @@ public final class PeriodGenerator implements Generator<Period> {
      * @param max the inclusive upper bound
      * @return a copy with the bounds set
      */
-    public PeriodGenerator months(int min, int max) {
+    public SpanGenerator months(int min, int max) {
         return unit(MONTHS, min, max);
     }
 
@@ -79,7 +79,7 @@ public final class PeriodGenerator implements Generator<Period> {
      * @param max the inclusive upper bound
      * @return a copy with the bounds set
      */
-    public PeriodGenerator days(int min, int max) {
+    public SpanGenerator days(int min, int max) {
         return unit(DAYS, min, max);
     }
 
@@ -89,8 +89,8 @@ public final class PeriodGenerator implements Generator<Period> {
      *     is then rejected with an {@link IllegalArgumentException} at the first draw
      * @return a copy with the setting applied
      */
-    public PeriodGenerator nonNegative(boolean nonNegative) {
-        return new PeriodGenerator(bounds, nonNegative);
+    public SpanGenerator nonNegative(boolean nonNegative) {
+        return new SpanGenerator(bounds, nonNegative);
     }
 
     private SpecHandle buildSpec(TestCase tc) {

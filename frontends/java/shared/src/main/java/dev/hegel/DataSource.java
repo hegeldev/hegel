@@ -66,7 +66,8 @@ interface DataSource {
     /** A weekday or month mask of 0 leaves that restriction unset. */
     SpecHandle dateOptions(int weekdayMask, int monthMask);
 
-    SpecHandle timezoneSpec(List<String> names, boolean links, boolean legacy);
+    /** {@code source} is a zone source handle of this binding, or 0 for the process default. */
+    SpecHandle timezoneSpec(List<String> names, boolean links, boolean legacy, long source);
 
     /**
      * Exactly one pair of bounds is non-null: civil (wall-clock) or instant. {@code imaginary} is an
@@ -90,8 +91,11 @@ interface DataSource {
     /** Whether {@code spec} was built by the binding behind this source; see {@link #ownsStringGenerator}. */
     boolean ownsSpec(SpecHandle spec);
 
-    /** {@code hegel_timezone_info}: a query of the bundled database, not a draw. */
-    Libhegel.TimezoneInfo timezoneInfo(String name);
+    /** {@code hegel_timezone_info_in}: a query of {@code source} (0 for the process default), not a draw. */
+    Libhegel.TimezoneInfo timezoneInfo(long source, String name);
+
+    /** The binding behind this source, which engine handles used with it must come from. */
+    Libhegel binding();
 
     UUID generateUuid(Integer version);
 

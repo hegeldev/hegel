@@ -407,8 +407,8 @@ public final class TestCase {
     }
 
     /** @hidden */
-    public SpecHandle timezoneSpec(List<String> names, boolean links, boolean legacy) {
-        return source.timezoneSpec(names, links, legacy);
+    public SpecHandle timezoneSpec(List<String> names, boolean links, boolean legacy, long zoneSource) {
+        return source.timezoneSpec(names, links, legacy, zoneSource);
     }
 
     /** @hidden */
@@ -434,8 +434,13 @@ public final class TestCase {
     }
 
     /** @hidden */
-    public Libhegel.TimezoneInfo timezoneInfo(String name) {
-        return source.timezoneInfo(name);
+    public Libhegel.TimezoneInfo timezoneInfo(long zoneSource, String name) {
+        return source.timezoneInfo(zoneSource, name);
+    }
+
+    /** @hidden */
+    public Libhegel binding() {
+        return source.binding();
     }
 
     /** @hidden */

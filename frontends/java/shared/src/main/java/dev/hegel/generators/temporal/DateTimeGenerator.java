@@ -1,4 +1,4 @@
-package dev.hegel.generators;
+package dev.hegel.generators.temporal;
 
 import dev.hegel.Generator;
 import dev.hegel.Generators;
@@ -19,7 +19,7 @@ import java.time.temporal.ChronoUnit;
  * drawn time of day a whole number of some unit with {@link #precision(ChronoUnit)}. Values shrink
  * toward 2000-01-01T00:00:00, or the nearest bound when that is out of range.
  *
- * <p>Attach a time zone to produce zone-aware values: {@link #timezones(Generator)} draws each
+ * <p>Attach a time zone to produce zone-aware values: {@link #zones(Generator)} draws each
  * wall-clock time in a {@link ZoneId} to make a DST-aware {@link ZonedDateTime} (see {@link
  * ZonedDateTimeGenerator}), and {@link #offsets(Generator)} pairs it with a fixed {@link
  * ZoneOffset} to make an {@link OffsetDateTime}.
@@ -102,20 +102,33 @@ public final class DateTimeGenerator implements Generator<LocalDateTime> {
     /**
      * Produce DST-aware {@link ZonedDateTime} values: a {@link ZonedDateTimeGenerator} with this
      * generator's wall-clock bounds and precision, drawing its zones from {@code zones} (e.g. {@link
-     * Generators#zoneIds()} for every zone both the engine and the JVM know, or {@code
-     * just(ZoneId.of("Europe/London"))} to pin one). Skipped wall times are avoided and both
-     * repeats of a repeated one are drawn; see {@link ZonedDateTimeGenerator} to change that.
+     * Generators.Temporal#zones()} for every zone both the engine and the JVM know, or {@code
+     * just(ZoneId.of("Europe/London"))} to pin one). Skipped wall times, which a {@link
+     * ZonedDateTime} cannot hold, are never drawn, and both repeats of a repeated one are; see
+     * {@link ZonedDateTimeGenerator#ambiguous} to pick one.
      *
      * @param zones the zone generator
      * @return a generator of zone-aware datetimes
      */
-    public ZonedDateTimeGenerator timezones(Generator<? extends ZoneId> zones) {
+    public ZonedDateTimeGenerator zones(Generator<? extends ZoneId> zones) {
         return new ZonedDateTimeGenerator().zones(zones).min(min).max(max).precision(precision);
     }
 
     /**
+     * Produce DST-aware {@link ZonedDateTime} values; the old name of {@link #zones(Generator)}.
+     *
+     * @param zones the zone generator
+     * @return a generator of zone-aware datetimes
+     * @deprecated use {@link #zones(Generator)}
+     */
+    @Deprecated
+    public ZonedDateTimeGenerator timezones(Generator<? extends ZoneId> zones) {
+        return zones(zones);
+    }
+
+    /**
      * Produce {@link OffsetDateTime} values by pairing each generated wall-clock datetime with a
-     * fixed offset drawn from {@code offsets} (e.g. {@link Generators#zoneOffsets()}, or {@code
+     * fixed offset drawn from {@code offsets} (e.g. {@link Generators.Temporal#offsets()}, or {@code
      * just(ZoneOffset.UTC)} to pin one).
      *
      * @param offsets the offset generator

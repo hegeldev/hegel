@@ -85,43 +85,43 @@ public final class Derive {
             return Generators.binary();
         }
         if (cls == java.time.Duration.class) {
-            return Generators.durations();
+            return Generators.Temporal.durations();
         }
         if (cls == java.time.LocalDate.class) {
-            return Generators.dates();
+            return Generators.Temporal.dates();
         }
         if (cls == java.time.LocalTime.class) {
-            return Generators.times();
+            return Generators.Temporal.times();
         }
         if (cls == java.time.LocalDateTime.class) {
-            return Generators.datetimes();
+            return Generators.Temporal.datetimes();
         }
         if (cls == java.time.OffsetDateTime.class) {
-            return Generators.datetimes().offsets(Generators.zoneOffsets());
+            return Generators.Temporal.datetimes().offsets(Generators.Temporal.offsets());
         }
         if (cls == java.time.ZonedDateTime.class) {
-            return Generators.zonedDateTimes();
+            return Generators.Temporal.zonedDateTimes();
         }
         if (cls == java.time.ZoneOffset.class) {
-            return Generators.zoneOffsets();
+            return Generators.Temporal.offsets();
         }
         if (cls == java.time.ZoneId.class) {
-            return Generators.zoneIds();
+            return Generators.Temporal.zones();
         }
         if (cls == java.time.Instant.class) {
-            return Generators.instants();
+            return Generators.Temporal.instants();
         }
         if (cls == java.time.Period.class) {
-            return Generators.periods();
+            return Generators.Temporal.spans();
         }
         if (cls == java.time.Year.class) {
-            return Generators.dates().map(d -> java.time.Year.of(d.getYear()));
+            return Generators.Temporal.dates().map(d -> java.time.Year.of(d.getYear()));
         }
         if (cls == java.time.YearMonth.class) {
-            return Generators.dates().map(java.time.YearMonth::from);
+            return Generators.Temporal.dates().map(java.time.YearMonth::from);
         }
         if (cls == java.time.MonthDay.class) {
-            return Generators.dates().map(java.time.MonthDay::from);
+            return Generators.Temporal.dates().map(java.time.MonthDay::from);
         }
         return null;
     }

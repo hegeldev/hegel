@@ -8,6 +8,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Iterator;
 import java.util.List;
+import java.util.OptionalLong;
 import java.util.ServiceLoader;
 import java.util.function.Consumer;
 
@@ -23,7 +24,8 @@ import java.util.function.Consumer;
  *
  * <p>Opaque handles ({@code hegel_settings_t*}, {@code hegel_run_t*}, {@code hegel_test_case_t*},
  * {@code hegel_run_result_t*}, {@code hegel_string_generator_t*}, {@code hegel_date_options_t*},
- * {@code hegel_timezone_spec_t*}, {@code hegel_zoned_spec_t*}, {@code hegel_span_spec_t*}) are
+ * {@code hegel_timezone_spec_t*}, {@code hegel_zoned_spec_t*}, {@code hegel_span_spec_t*}, {@code
+ * hegel_zone_source_t*}) are
  * passed as raw addresses
  * ({@code long}; {@code 0} is NULL); callers treat them as opaque and never dereference them.
  * Handles are caller-owned: every handle a method returns must be released with its matching
@@ -368,14 +370,166 @@ public interface Libhegel {
     int spanSpecSetSign(long spec, int sign);
 
     /**
-     * What {@code hegel_timezone_info} knows about a name: whether it is in the bundled database,
-     * the primary zone it resolves to ({@code ""} when not known), whether it is a link, its shrink
+     * {@code hegel_timezone_spec_set_source}: draw from, and evaluate with, the zone source {@code
+     * source} (a handle from {@link #zoneSourceNew} or {@link #zoneSourceBundled}), or with {@code
+     * 0} the process's default source as it is now.
+     */
+    int timezoneSpecSetSource(long spec, long source);
+
+    /**
+     * What {@code hegel_timezone_info_in} knows about a name: whether the source knows it, the
+     * primary zone it resolves to ({@code ""} when not known), whether it is a link, its shrink
      * rank and its {@code Abi.TIMEZONE_TAG_*} bits.
      */
     record TimezoneInfo(boolean known, String primaryName, boolean link, int rank, int tags) {}
 
-    /** {@code hegel_timezone_info}: a query, never a draw; an unknown name reports {@code known} false. */
-    TimezoneInfo timezoneInfo(String name);
+    /**
+     * {@code hegel_timezone_info_in}: a query of {@code source}, or with {@code 0} of the process's
+     * default zone source, never a draw. An unknown name reports {@code known} false; a source
+     * whose loader fails returns {@link Abi#E_INVALID_ARG}. On OK the description is written to
+     * {@code out[0]}.
+     */
+    int timezoneInfo(long source, String name, TimezoneInfo[] out);
+
+    /** {@code hegel_timezone_offset_t}: the offset in force at an instant. */
+    record TimezoneOffset(int offsetSeconds, boolean offsetKnown, boolean isDst, String abbreviation) {}
+
+    /**
+     * {@code hegel_timezone_offset_at_in}: the offset {@code name} has in force at {@code instant}
+     * in {@code source}, or with {@code 0} the process's default zone source. On OK the offset is
+     * written to {@code out[0]}.
+     */
+    int timezoneOffsetAt(long source, String name, Instant instant, TimezoneOffset[] out);
+
+    /**
+     * {@code hegel_timezone_resolution_t}: how a wall-clock time resolves in a zone. {@code kind}
+     * is one of the {@code Abi.TIMEZONE_KIND_*} constants.
+     */
+    record TimezoneResolution(
+            int kind, int offsetBefore, int offsetAfter, int offsetSeconds, boolean offsetKnown, Instant timestamp) {}
+
+    /**
+     * {@code hegel_timezone_resolve_in}: classify {@code civil} in {@code name} and resolve it to an
+     * instant, against {@code source} or with {@code 0} the process's default zone source. On OK
+     * the resolution is written to {@code out[0]}.
+     */
+    int timezoneResolve(long source, String name, LocalDateTime civil, TimezoneResolution[] out);
+
+    // Zone sources. Constructors write the new handle (0 on failure) and return the raw rc; so do
+    // the calls that add data, which reject malformed data with INVALID_ARG. The free,
+    // zoneSourceVersion and setDefaultZoneSource follow the infrastructure convention.
+
+    /** {@code hegel_zone_type_t}: a local time type, as seconds east of UT, a DST flag and an abbreviation. */
+    record ZoneType(int utoff, boolean isDst, String abbreviation) {}
+
+    /** {@code hegel_zone_transition_t}: from {@code instant} (Unix seconds) on, {@code type} is in force. */
+    record ZoneTransition(long instant, ZoneType type) {}
+
+    /**
+     * {@code hegel_zone_rule_date_t}: when a yearly rule's transition happens. {@code kind} is one
+     * of the {@code Abi.ZONE_RULE_DAY_*} constants; {@code time} is in seconds after local midnight
+     * of the named day, in the offset in force before the transition.
+     */
+    record ZoneRuleDate(int kind, int day, int month, int week, int weekday, int time) {}
+
+    /**
+     * {@code hegel_zone_data_t}: a zone's data as fields. {@code after} is one of the {@code
+     * Abi.ZONE_AFTER_*} constants; {@code standard}, {@code hasDst}, {@code dst}, {@code dstStart}
+     * and {@code dstEnd} are read for {@link Abi#ZONE_AFTER_RULE} and {@code lastYear} for {@link
+     * Abi#ZONE_AFTER_INFER}, but none may be null.
+     */
+    record ZoneData(
+            ZoneType initial,
+            List<ZoneTransition> transitions,
+            int after,
+            ZoneType standard,
+            boolean hasDst,
+            ZoneType dst,
+            ZoneRuleDate dstStart,
+            ZoneRuleDate dstEnd,
+            int lastYear) {}
+
+    /**
+     * {@code hegel_zone_loader_t}: adds the data of {@code name} to {@code source} (a handle valid
+     * for the call only, never freed) with the {@code zoneSourceAdd*} methods, or adds nothing for
+     * a name it does not know. Called on whichever thread draws or queries, during that call; the
+     * binding's calls made from it report to the context libhegel passed the loader. Throwing fails
+     * the draw or query with the exception's message.
+     */
+    @FunctionalInterface
+    interface ZoneLoader {
+        void load(long source, String name);
+    }
+
+    /** {@code hegel_zone_offset_fn_t}: the type in force at {@code instant} (Unix seconds); throwing fails the probe. */
+    @FunctionalInterface
+    interface ZoneOffsetOracle {
+        ZoneType typeAt(long instant);
+    }
+
+    /**
+     * {@code hegel_zone_next_transition_fn_t}: the first instant after {@code after} at which the
+     * type in force changes, or empty when it never changes again; throwing fails the probe.
+     */
+    @FunctionalInterface
+    interface ZoneTransitionOracle {
+        OptionalLong nextTransition(long after);
+    }
+
+    /** {@code hegel_zone_source_new}: an empty source; on OK {@code out[0]} receives the handle. */
+    int zoneSourceNew(long[] out);
+
+    /** {@code hegel_zone_source_bundled}: a handle on the engine's bundled database. */
+    int zoneSourceBundled(long[] out);
+
+    /** {@code hegel_zone_source_free}: the source lives on while it is the default or a spec's. */
+    void zoneSourceFree(long source);
+
+    /** {@code hegel_zone_source_add_tzif}: add {@code name} from the contents of a TZif file. */
+    int zoneSourceAddTzif(long source, String name, byte[] tzif);
+
+    /** {@code hegel_zone_source_add_zone}: add {@code name} from its data as fields. */
+    int zoneSourceAddZone(long source, String name, ZoneData data);
+
+    /**
+     * {@code hegel_zone_source_add_oracle}: add {@code name} by probing {@code typeAt} (and {@code
+     * nextTransition}, or with {@code null} by sampling daily) over the years {@code firstYear} to
+     * {@code lastYear}; {@code after} is {@link Abi#ZONE_AFTER_HOLD} or {@link
+     * Abi#ZONE_AFTER_INFER}. The oracles are called on this thread during the call only.
+     */
+    int zoneSourceAddOracle(
+            long source,
+            String name,
+            ZoneOffsetOracle typeAt,
+            ZoneTransitionOracle nextTransition,
+            int firstYear,
+            int lastYear,
+            int after);
+
+    /** {@code hegel_zone_source_add_link}: make {@code name} a link to {@code target}. */
+    int zoneSourceAddLink(long source, String name, String target);
+
+    /** {@code hegel_zone_source_declare}: names the source knows whose data comes later. */
+    int zoneSourceDeclare(long source, List<String> names);
+
+    /**
+     * {@code hegel_zone_source_set_loader}: {@code loader} supplies the data of a name the first
+     * time a draw or query needs it; {@code null} removes it. The binding keeps the loader
+     * reachable for the life of the process, since the source may outlive every handle on it.
+     */
+    int zoneSourceSetLoader(long source, ZoneLoader loader);
+
+    /** {@code hegel_zone_source_set_version}: record which release of its database a source holds. */
+    int zoneSourceSetVersion(long source, String version);
+
+    /** {@code hegel_zone_source_version}: the release a source holds, or {@code ""} when none was recorded. */
+    String zoneSourceVersion(long source);
+
+    /**
+     * {@code hegel_set_default_zone_source}: the source specs built from now on draw from and the
+     * queries given {@code 0} ask; {@code 0} restores the bundled database.
+     */
+    void setDefaultZoneSource(long source);
 
     /** On OK writes the UUID's 16 big-endian bytes into {@code out16}. */
     int generateUuid(long tc, int version, boolean hasVersion, byte[] out16);

@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -46,7 +47,7 @@ class BindingErrorPathsTest {
         assertEquals(Instant.EPOCH, ds.generateTimestamp(Instant.EPOCH, Instant.EPOCH, Abi.PRECISION_SECONDS));
         assertEquals(-3600, ds.generateOffset(-3600, 3600, Abi.OFFSET_GRANULARITY_HOURS));
         assertEquals(Duration.ZERO, ds.generateDuration(Duration.ZERO, Duration.ZERO, Abi.PRECISION_NANOSECONDS));
-        SpecHandle zones = ds.timezoneSpec(List.of("UTC"), false, true);
+        SpecHandle zones = ds.timezoneSpec(List.of("UTC"), false, true, FakeLibhegel.ZONE_SOURCE);
         assertEquals(List.of("UTC"), fake.timezoneNames);
         assertEquals(false, fake.timezoneLinks);
         assertEquals(true, fake.timezoneLegacy);
@@ -72,8 +73,10 @@ class BindingErrorPathsTest {
         assertEquals(3, fake.monthMask);
         assertEquals(DATE, ds.generateDate(DATE, DATE, options));
         assertEquals(FakeLibhegel.DATE_OPTIONS, fake.dateOptionsPassed);
-        assertTrue(ds.timezoneInfo("UTC").known());
-        assertFalse(ds.timezoneInfo("Mars/Olympus_Mons").known());
+        assertTrue(ds.timezoneInfo(0, "UTC").known());
+        assertEquals(FakeLibhegel.ZONE_SOURCE, fake.timezoneSource);
+        assertSame(fake, ds.binding());
+        assertFalse(ds.timezoneInfo(0, "Mars/Olympus_Mons").known());
         assertEquals(new UUID(0, 1), ds.generateUuid(null));
         assertArrayEquals(new byte[] {127, 0, 0, 1}, ds.generateIpv4());
         assertArrayEquals(new byte[16], ds.generateIpv6());
@@ -198,7 +201,7 @@ class BindingErrorPathsTest {
         assertThrows(StopTest.class, () -> ds.generateZonedDatetime(null, null));
         assertThrows(StopTest.class, () -> ds.generateSpan(null));
         assertThrows(StopTest.class, () -> ds.dateOptions(1, 1));
-        assertThrows(StopTest.class, () -> ds.timezoneSpec(List.of("UTC"), true, false));
+        assertThrows(StopTest.class, () -> ds.timezoneSpec(List.of("UTC"), true, false, 0));
         assertThrows(
                 StopTest.class,
                 () -> ds.zonedSpec(
@@ -269,7 +272,8 @@ class BindingErrorPathsTest {
         FakeLibhegel names = new FakeLibhegel();
         names.timezoneSpecSetNamesRc = Abi.E_INVALID_ARG;
         assertThrows(
-                IllegalArgumentException.class, () -> source(names).timezoneSpec(List.of("Mars/Olympus"), true, false));
+                IllegalArgumentException.class,
+                () -> source(names).timezoneSpec(List.of("Mars/Olympus"), true, false, 0));
         assertEquals(1, names.freedTimezoneSpecs);
 
         FakeLibhegel bounds = new FakeLibhegel();

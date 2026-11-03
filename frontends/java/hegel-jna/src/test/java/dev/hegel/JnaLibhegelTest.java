@@ -121,6 +121,11 @@ class JnaLibhegelTest {
     }
 
     @Test
+    void zoneSourcesCrossTheBinding() {
+        BindingEdges.zoneSources(real());
+    }
+
+    @Test
     void fixedBytesDrawsReportNullHandles() {
         JnaLibhegel lib = real();
         // A NULL test case is rejected before the engine writes anything, so fixedBytesDraw never

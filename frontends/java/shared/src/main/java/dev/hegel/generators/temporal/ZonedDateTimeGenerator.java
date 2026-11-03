@@ -1,4 +1,4 @@
-package dev.hegel.generators;
+package dev.hegel.generators.temporal;
 
 import dev.hegel.Generator;
 import dev.hegel.Label;
@@ -17,29 +17,29 @@ import java.time.temporal.ChronoUnit;
  * Generates {@link ZonedDateTime} values: a zone, a wall-clock time in it and, when the clocks
  * repeated that time, which repeat is meant.
  *
- * <p>The zones come from {@link #zones(Generator)}, by default every region zone both the engine
- * and this JVM know (see {@link ZoneIdGenerator}). The bounds are either on the wall clock of
+ * <p>The zones come from {@link #zones(Generator)}, by default every region zone of the default
+ * {@link ZoneSource} this JVM knows (see {@link ZoneGenerator}). The bounds are either on the wall clock of
  * whatever zone is drawn ({@link #min(LocalDateTime)} / {@link #max(LocalDateTime)}, the default:
  * the engine's whole range of years {@code [-999999, 999999]}) or on the instant ({@link
  * #min(Instant)} / {@link #max(Instant)}, or a {@link ZonedDateTime} standing for its instant);
  * setting a bound of one kind replaces the bounds of the other. Values shrink down a ladder of
  * zones to {@code UTC}, then toward 2000-01-01T00:00.
  *
- * <p>The engine knows every zone's daylight-saving and offset transitions: one draw in twenty on
- * average lands within a second, an hour or a day of one, or of a well-known instant such as the
- * Unix epoch, so the skipped and repeated wall times where date bugs live are generated
- * deliberately. A repeated wall time is drawn as either instant by default; {@link
+ * <p>The engine knows every zone's daylight-saving and offset transitions, from the zone source:
+ * one draw in twenty on average lands within a second, an hour or a day of one, or of a well-known
+ * instant such as the Unix epoch, so the skipped and repeated wall times where date bugs live are
+ * generated deliberately. A repeated wall time is drawn as either instant by default; {@link
  * #ambiguous(Ambiguous)} picks one. A skipped wall time cannot be a {@link ZonedDateTime}, so it is
- * avoided by default; with {@link #allowImaginary(boolean) allowImaginary(true)} it is resolved the
- * way {@link ZonedDateTime#of(LocalDateTime, ZoneId)} resolves it, shifted later by the length of
- * the gap, which is the instant the engine targeted.
+ * never drawn; the real wall times either side of the gap are.
  *
- * <p>The value is built from the drawn wall-clock time with this JVM's own zone rules; when they
- * resolve it to a different instant than the engine's bundled database (the two are updated
- * separately), the test case is rejected as if by {@code assume(false)}. A {@link ZoneOffset}, or a
- * region zone only this JVM knows, has no transitions the engine can see: the drawn wall-clock time
- * is attached to it as is, with the earlier offset at an overlap unless {@link Ambiguous#LATER} is
- * chosen, and a skipped wall time rejects the test case unless imaginary times are allowed.
+ * <p>The value is built from the drawn wall-clock time with this JVM's own zone rules. Against the
+ * default {@link ZoneSource#javaTime()} source the engine resolves it exactly as they do; against
+ * another source (such as {@link ZoneSource#bundled()}) a value the two resolve to different
+ * instants rejects the test case as if by {@code assume(false)}. Zones drawn by a generator other
+ * than a {@link ZoneGenerator} are evaluated against the default source. A {@link ZoneOffset}, or a
+ * region zone the default source lacks, has no transitions the engine can see: the drawn
+ * wall-clock time is attached to it as is, with the earlier offset at an overlap unless {@link
+ * Ambiguous#LATER} is chosen, and a skipped wall time rejects the test case.
  */
 public final class ZonedDateTimeGenerator implements Generator<ZonedDateTime> {
     private final Generator<? extends ZoneId> zones;
@@ -49,19 +49,17 @@ public final class ZonedDateTimeGenerator implements Generator<ZonedDateTime> {
     private final Instant instantMax;
     private final ChronoUnit precision;
     private final int precisionCode;
-    private final boolean allowImaginary;
     private final Ambiguous ambiguous;
     private final SpecCache spec = new SpecCache();
 
     public ZonedDateTimeGenerator() {
         this(
-                new ZoneIdGenerator(),
+                new ZoneGenerator(),
                 DateTimeGenerator.MIN_CIVIL,
                 DateTimeGenerator.MAX_CIVIL,
                 null,
                 null,
                 ChronoUnit.NANOS,
-                false,
                 Ambiguous.BOTH);
     }
 
@@ -72,7 +70,6 @@ public final class ZonedDateTimeGenerator implements Generator<ZonedDateTime> {
             Instant instantMin,
             Instant instantMax,
             ChronoUnit precision,
-            boolean allowImaginary,
             Ambiguous ambiguous) {
         if (civilMin != null) {
             DateTimeGenerator.validateCivil(civilMin, "zonedDateTimes");
@@ -95,16 +92,15 @@ public final class ZonedDateTimeGenerator implements Generator<ZonedDateTime> {
         this.instantMax = instantMax;
         this.precision = precision;
         this.precisionCode = Precisions.engine(precision, "zonedDateTimes");
-        this.allowImaginary = allowImaginary;
         this.ambiguous = ambiguous;
     }
 
     private ZonedDateTimeGenerator civil(LocalDateTime min, LocalDateTime max) {
-        return new ZonedDateTimeGenerator(zones, min, max, null, null, precision, allowImaginary, ambiguous);
+        return new ZonedDateTimeGenerator(zones, min, max, null, null, precision, ambiguous);
     }
 
     private ZonedDateTimeGenerator instant(Instant min, Instant max) {
-        return new ZonedDateTimeGenerator(zones, null, null, min, max, precision, allowImaginary, ambiguous);
+        return new ZonedDateTimeGenerator(zones, null, null, min, max, precision, ambiguous);
     }
 
     /**
@@ -112,8 +108,7 @@ public final class ZonedDateTimeGenerator implements Generator<ZonedDateTime> {
      * @return a copy drawing its zones from {@code zones}
      */
     public ZonedDateTimeGenerator zones(Generator<? extends ZoneId> zones) {
-        return new ZonedDateTimeGenerator(
-                zones, civilMin, civilMax, instantMin, instantMax, precision, allowImaginary, ambiguous);
+        return new ZonedDateTimeGenerator(zones, civilMin, civilMax, instantMin, instantMax, precision, ambiguous);
     }
 
     /**
@@ -177,19 +172,7 @@ public final class ZonedDateTimeGenerator implements Generator<ZonedDateTime> {
      * @return a copy with the precision set
      */
     public ZonedDateTimeGenerator precision(ChronoUnit precision) {
-        return new ZonedDateTimeGenerator(
-                zones, civilMin, civilMax, instantMin, instantMax, precision, allowImaginary, ambiguous);
-    }
-
-    /**
-     * @param allowImaginary whether a wall-clock time the clocks skipped may be drawn (off by
-     *     default); allowed, it becomes the instant the pre-transition offset reads it as, which
-     *     is how {@link ZonedDateTime#of(LocalDateTime, ZoneId)} resolves it
-     * @return a copy with the setting applied
-     */
-    public ZonedDateTimeGenerator allowImaginary(boolean allowImaginary) {
-        return new ZonedDateTimeGenerator(
-                zones, civilMin, civilMax, instantMin, instantMax, precision, allowImaginary, ambiguous);
+        return new ZonedDateTimeGenerator(zones, civilMin, civilMax, instantMin, instantMax, precision, ambiguous);
     }
 
     /**
@@ -198,19 +181,12 @@ public final class ZonedDateTimeGenerator implements Generator<ZonedDateTime> {
      * @return a copy with the policy set
      */
     public ZonedDateTimeGenerator ambiguous(Ambiguous ambiguous) {
-        return new ZonedDateTimeGenerator(
-                zones, civilMin, civilMax, instantMin, instantMax, precision, allowImaginary, ambiguous);
+        return new ZonedDateTimeGenerator(zones, civilMin, civilMax, instantMin, instantMax, precision, ambiguous);
     }
 
     private SpecHandle buildSpec(TestCase tc) {
         return tc.zonedSpec(
-                civilMin,
-                civilMax,
-                instantMin,
-                instantMax,
-                precisionCode,
-                allowImaginary ? Abi.IMAGINARY_ALLOW : Abi.IMAGINARY_AVOID,
-                ambiguous.engineValue);
+                civilMin, civilMax, instantMin, instantMax, precisionCode, Abi.IMAGINARY_AVOID, ambiguous.engineValue);
     }
 
     /** @hidden */
@@ -218,11 +194,11 @@ public final class ZonedDateTimeGenerator implements Generator<ZonedDateTime> {
     public ZonedDateTime doDraw(TestCase tc) {
         tc.startSpan(Label.ZONED_DATETIME);
         try {
-            if (zones instanceof ZoneIdGenerator) {
-                return fromEngine(tc, ((ZoneIdGenerator) zones).spec(tc));
+            if (zones instanceof ZoneGenerator) {
+                return fromEngine(tc, ((ZoneGenerator) zones).spec(tc));
             }
             ZoneId zone = zones.doDraw(tc);
-            SpecHandle single = ZoneIdGenerator.specFor(tc, zone);
+            SpecHandle single = ZoneGenerator.specFor(tc, zone);
             return single != null ? fromEngine(tc, single) : attached(tc, zone);
         } finally {
             tc.stopSpan(false);
@@ -232,9 +208,8 @@ public final class ZonedDateTimeGenerator implements Generator<ZonedDateTime> {
     private ZonedDateTime fromEngine(TestCase tc, SpecHandle tzSpec) {
         Libhegel.ZonedDatetime drawn = tc.generateZonedDatetime(tzSpec, spec.get(tc, this::buildSpec));
         ZoneId zone = ZoneId.of(drawn.zone());
-        ZonedDateTime value = drawn.kind() == Abi.TIMEZONE_KIND_GAP
-                ? drawn.timestamp().atZone(zone)
-                : ZonedDateTime.ofLocal(drawn.civil(), zone, ZoneOffset.ofTotalSeconds(drawn.offsetSeconds()));
+        ZonedDateTime value =
+                ZonedDateTime.ofLocal(drawn.civil(), zone, ZoneOffset.ofTotalSeconds(drawn.offsetSeconds()));
         tc.assume(value.toInstant().equals(drawn.timestamp()));
         return value;
     }
@@ -252,7 +227,7 @@ public final class ZonedDateTimeGenerator implements Generator<ZonedDateTime> {
         if (ambiguous == Ambiguous.LATER) {
             value = value.withLaterOffsetAtOverlap();
         }
-        tc.assume(allowImaginary || value.toLocalDateTime().equals(civil));
+        tc.assume(value.toLocalDateTime().equals(civil));
         if (civilMin == null) {
             Instant instant = value.toInstant();
             tc.assume(!instant.isBefore(instantMin) && !instant.isAfter(instantMax));

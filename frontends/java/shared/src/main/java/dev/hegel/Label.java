@@ -78,7 +78,7 @@ public final class Label {
     /** A value built imperatively from several draws ({@link Generators#composite}). */
     public static final long COMPOSITE = of("dev.hegel.composite");
 
-    /** A zone and a wall-clock time in it ({@link Generators#zonedDateTimes}). */
+    /** A zone and a wall-clock time in it ({@link Generators.Temporal#zonedDateTimes}). */
     public static final long ZONED_DATETIME = of("dev.hegel.zoned_datetime");
 
     /**

@@ -29,6 +29,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalLong;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
@@ -136,22 +137,137 @@ final class RealLibhegel implements Libhegel {
     private static final long INFO_RANK = INFO_IS_LINK + 2;
     private static final long INFO_TAGS = INFO_RANK + 2;
 
+    // struct hegel_timezone_offset_t { int32_t offset_seconds; bool offset_known; bool is_dst;
+    //     hegel_string_t abbreviation; }
+    private static final StructLayout TIMEZONE_OFFSET_LAYOUT = MemoryLayout.structLayout(
+            JAVA_INT.withName("offset_seconds"),
+            JAVA_BOOLEAN.withName("offset_known"),
+            JAVA_BOOLEAN.withName("is_dst"),
+            MemoryLayout.paddingLayout(2),
+            STRING_LAYOUT.withName("abbreviation"));
+
+    // struct hegel_timezone_resolution_t { hegel_timezone_kind_t kind; int32_t offset_before;
+    //     int32_t offset_after; int32_t offset_seconds; bool offset_known; hegel_timestamp_t timestamp; }
+    private static final StructLayout RESOLUTION_LAYOUT = MemoryLayout.structLayout(
+            JAVA_INT.withName("kind"),
+            JAVA_INT.withName("offset_before"),
+            JAVA_INT.withName("offset_after"),
+            JAVA_INT.withName("offset_seconds"),
+            JAVA_BOOLEAN.withName("offset_known"),
+            MemoryLayout.paddingLayout(7),
+            TIMESTAMP_LAYOUT.withName("timestamp"));
+
+    // struct hegel_zone_type_t { int32_t utoff; bool is_dst; hegel_string_t abbreviation; }
+    private static final StructLayout ZONE_TYPE_LAYOUT = MemoryLayout.structLayout(
+            JAVA_INT.withName("utoff"),
+            JAVA_BOOLEAN.withName("is_dst"),
+            MemoryLayout.paddingLayout(3),
+            STRING_LAYOUT.withName("abbreviation"));
+
+    // struct hegel_zone_transition_t { int64_t instant; hegel_zone_type_t local_type; }
+    private static final StructLayout ZONE_TRANSITION_LAYOUT =
+            MemoryLayout.structLayout(JAVA_LONG.withName("instant"), ZONE_TYPE_LAYOUT.withName("local_type"));
+
+    // struct hegel_zone_rule_date_t { uint32_t kind; uint16_t day; uint8_t month; uint8_t week;
+    //     uint8_t weekday; int32_t time; }
+    private static final StructLayout RULE_DATE_LAYOUT = MemoryLayout.structLayout(
+            JAVA_INT.withName("kind"),
+            JAVA_SHORT.withName("day"),
+            JAVA_BYTE.withName("month"),
+            JAVA_BYTE.withName("week"),
+            JAVA_BYTE.withName("weekday"),
+            MemoryLayout.paddingLayout(3),
+            JAVA_INT.withName("time"));
+
+    // struct hegel_zone_data_t { hegel_zone_type_t initial; const hegel_zone_transition_t *transitions;
+    //     size_t transition_count; uint32_t after; hegel_zone_type_t standard; bool has_dst;
+    //     hegel_zone_type_t dst; hegel_zone_rule_date_t dst_start, dst_end; int32_t last_year; }
+    private static final StructLayout ZONE_DATA_LAYOUT = MemoryLayout.structLayout(
+            ZONE_TYPE_LAYOUT.withName("initial"),
+            ADDRESS.withName("transitions"),
+            JAVA_LONG.withName("transition_count"),
+            JAVA_INT.withName("after"),
+            MemoryLayout.paddingLayout(4),
+            ZONE_TYPE_LAYOUT.withName("standard"),
+            JAVA_BOOLEAN.withName("has_dst"),
+            MemoryLayout.paddingLayout(7),
+            ZONE_TYPE_LAYOUT.withName("dst"),
+            RULE_DATE_LAYOUT.withName("dst_start"),
+            RULE_DATE_LAYOUT.withName("dst_end"),
+            JAVA_INT.withName("last_year"),
+            MemoryLayout.paddingLayout(4));
+    private static final long DATA_TRANSITIONS = ZONE_TYPE_LAYOUT.byteSize();
+    private static final long DATA_COUNT = DATA_TRANSITIONS + 8;
+    private static final long DATA_AFTER = DATA_COUNT + 8;
+    private static final long DATA_STANDARD = DATA_AFTER + 8;
+    private static final long DATA_HAS_DST = DATA_STANDARD + ZONE_TYPE_LAYOUT.byteSize();
+    private static final long DATA_DST = DATA_HAS_DST + 8;
+    private static final long DATA_DST_START = DATA_DST + ZONE_TYPE_LAYOUT.byteSize();
+    private static final long DATA_DST_END = DATA_DST_START + RULE_DATE_LAYOUT.byteSize();
+    private static final long DATA_LAST_YEAR = DATA_DST_END + RULE_DATE_LAYOUT.byteSize();
+
+    // struct hegel_zone_oracle_t { hegel_zone_offset_fn_t offset_at; hegel_zone_next_transition_fn_t
+    //     next_transition; void *user_data; int32_t first_year; int32_t last_year; uint32_t after; }
+    private static final StructLayout ORACLE_LAYOUT = MemoryLayout.structLayout(
+            ADDRESS.withName("offset_at"),
+            ADDRESS.withName("next_transition"),
+            ADDRESS.withName("user_data"),
+            JAVA_INT.withName("first_year"),
+            JAVA_INT.withName("last_year"),
+            JAVA_INT.withName("after"),
+            MemoryLayout.paddingLayout(4));
+
     private static final FunctionDescriptor OUTPUT_CALLBACK_DESC =
             FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, JAVA_LONG);
+    private static final FunctionDescriptor LOADER_DESC =
+            FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, STRING_LAYOUT);
+    private static final FunctionDescriptor OFFSET_FN_DESC =
+            FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, ADDRESS);
+    private static final FunctionDescriptor NEXT_TRANSITION_FN_DESC =
+            FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, ADDRESS, ADDRESS);
 
-    private static final MethodHandle EMIT_LINE = findEmitLine();
+    private static final MethodHandle EMIT_LINE = findBridge(
+            "emitLine",
+            MethodType.methodType(void.class, Consumer.class, MemorySegment.class, MemorySegment.class, long.class));
+    private static final MethodHandle LOAD_ZONE = findBridge(
+            "loadZone",
+            MethodType.methodType(
+                    int.class,
+                    RealLibhegel.class,
+                    ZoneLoader.class,
+                    MemorySegment.class,
+                    MemorySegment.class,
+                    MemorySegment.class,
+                    MemorySegment.class));
+    private static final MethodHandle ZONE_TYPE_AT = findBridge(
+            "zoneTypeAt",
+            MethodType.methodType(
+                    int.class,
+                    RealLibhegel.class,
+                    ZoneOffsetOracle.class,
+                    Arena.class,
+                    MemorySegment.class,
+                    MemorySegment.class,
+                    long.class,
+                    MemorySegment.class));
+    private static final MethodHandle NEXT_ZONE_TRANSITION = findBridge(
+            "nextZoneTransition",
+            MethodType.methodType(
+                    int.class,
+                    RealLibhegel.class,
+                    ZoneTransitionOracle.class,
+                    MemorySegment.class,
+                    MemorySegment.class,
+                    long.class,
+                    MemorySegment.class,
+                    MemorySegment.class));
 
-    @Generated // MethodHandles cannot fail to find a private static method of this class.
-    private static MethodHandle findEmitLine() {
+    @Generated // MethodHandles cannot fail to find a static method of this class.
+    private static MethodHandle findBridge(String name, MethodType type) {
         try {
-            return MethodHandles.lookup()
-                    .findStatic(
-                            RealLibhegel.class,
-                            "emitLine",
-                            MethodType.methodType(
-                                    void.class, Consumer.class, MemorySegment.class, MemorySegment.class, long.class));
+            return MethodHandles.lookup().findStatic(RealLibhegel.class, name, type);
         } catch (ReflectiveOperationException e) {
-            throw new HegelException("failed to resolve the output-callback bridge", e);
+            throw new HegelException("failed to resolve the callback bridge " + name, e);
         }
     }
 
@@ -221,7 +337,23 @@ final class RealLibhegel implements Libhegel {
     private final MethodHandle spanSpecFree;
     private final MethodHandle spanSpecSetUnitBounds;
     private final MethodHandle spanSpecSetSign;
+    private final MethodHandle timezoneSpecSetSource;
     private final MethodHandle timezoneInfo;
+    private final MethodHandle timezoneOffsetAt;
+    private final MethodHandle timezoneResolve;
+    private final MethodHandle zoneSourceNew;
+    private final MethodHandle zoneSourceBundled;
+    private final MethodHandle zoneSourceFree;
+    private final MethodHandle zoneSourceAddTzif;
+    private final MethodHandle zoneSourceAddZone;
+    private final MethodHandle zoneSourceAddOracle;
+    private final MethodHandle zoneSourceAddLink;
+    private final MethodHandle zoneSourceDeclare;
+    private final MethodHandle zoneSourceSetLoader;
+    private final MethodHandle zoneSourceSetVersion;
+    private final MethodHandle zoneSourceVersion;
+    private final MethodHandle setDefaultZoneSource;
+    private final MethodHandle contextSetError;
     private final MethodHandle tzdbVersion;
     private final MethodHandle generateUuid;
     private final MethodHandle generateIpv4;
@@ -549,11 +681,76 @@ final class RealLibhegel implements Libhegel {
                 lookup,
                 "hegel_span_spec_set_sign",
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT));
+        this.timezoneSpecSetSource = h(
+                linker,
+                lookup,
+                "hegel_timezone_spec_set_source",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
         this.timezoneInfo = h(
                 linker,
                 lookup,
-                "hegel_timezone_info",
-                FunctionDescriptor.of(JAVA_INT, ADDRESS, STRING_LAYOUT, ADDRESS));
+                "hegel_timezone_info_in",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, STRING_LAYOUT, ADDRESS));
+        this.timezoneOffsetAt = h(
+                linker,
+                lookup,
+                "hegel_timezone_offset_at_in",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, STRING_LAYOUT, TIMESTAMP_LAYOUT, ADDRESS));
+        this.timezoneResolve = h(
+                linker,
+                lookup,
+                "hegel_timezone_resolve_in",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, STRING_LAYOUT, DATETIME_LAYOUT, ADDRESS));
+        this.zoneSourceNew =
+                h(linker, lookup, "hegel_zone_source_new", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.zoneSourceBundled =
+                h(linker, lookup, "hegel_zone_source_bundled", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.zoneSourceFree =
+                h(linker, lookup, "hegel_zone_source_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.zoneSourceAddTzif = h(
+                linker,
+                lookup,
+                "hegel_zone_source_add_tzif",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, STRING_LAYOUT, ADDRESS, JAVA_LONG));
+        this.zoneSourceAddZone = h(
+                linker,
+                lookup,
+                "hegel_zone_source_add_zone",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, STRING_LAYOUT, ADDRESS));
+        this.zoneSourceAddOracle = h(
+                linker,
+                lookup,
+                "hegel_zone_source_add_oracle",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, STRING_LAYOUT, ADDRESS));
+        this.zoneSourceAddLink = h(
+                linker,
+                lookup,
+                "hegel_zone_source_add_link",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, STRING_LAYOUT, STRING_LAYOUT));
+        this.zoneSourceDeclare = h(
+                linker,
+                lookup,
+                "hegel_zone_source_declare",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, JAVA_LONG));
+        this.zoneSourceSetLoader = h(
+                linker,
+                lookup,
+                "hegel_zone_source_set_loader",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
+        this.zoneSourceSetVersion = h(
+                linker,
+                lookup,
+                "hegel_zone_source_set_version",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, STRING_LAYOUT));
+        this.zoneSourceVersion = h(
+                linker,
+                lookup,
+                "hegel_zone_source_version",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+        this.setDefaultZoneSource =
+                h(linker, lookup, "hegel_set_default_zone_source", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.contextSetError =
+                h(linker, lookup, "hegel_context_set_error", FunctionDescriptor.of(JAVA_INT, ADDRESS, STRING_LAYOUT));
         this.tzdbVersion = h(linker, lookup, "hegel_tzdb_version", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
         this.generateUuid = h(
                 linker,
@@ -1373,18 +1570,255 @@ final class RealLibhegel implements Libhegel {
     }
 
     @Override
-    public TimezoneInfo timezoneInfo(String name) {
+    public int timezoneSpecSetSource(long spec, long source) {
+        return rc(timezoneSpecSetSource, segment(spec), segment(source));
+    }
+
+    @Override
+    public int timezoneInfo(long source, String name, TimezoneInfo[] out) {
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment outSeg = arena.allocate(TIMEZONE_INFO_LAYOUT);
-            check("hegel_timezone_info", rc(timezoneInfo, str(arena, name), outSeg));
-            String primary = readString(outSeg.asSlice(INFO_PRIMARY_NAME, STRING_LAYOUT.byteSize()));
-            return new TimezoneInfo(
-                    outSeg.get(JAVA_BOOLEAN, 0),
-                    primary == null ? "" : primary,
-                    outSeg.get(JAVA_BOOLEAN, INFO_IS_LINK),
-                    Short.toUnsignedInt(outSeg.get(JAVA_SHORT, INFO_RANK)),
-                    outSeg.get(JAVA_INT, INFO_TAGS));
+            int code = rc(timezoneInfo, segment(source), str(arena, name), outSeg);
+            if (code == Abi.OK) {
+                String primary = readString(outSeg.asSlice(INFO_PRIMARY_NAME, STRING_LAYOUT.byteSize()));
+                out[0] = new TimezoneInfo(
+                        outSeg.get(JAVA_BOOLEAN, 0),
+                        primary == null ? "" : primary,
+                        outSeg.get(JAVA_BOOLEAN, INFO_IS_LINK),
+                        Short.toUnsignedInt(outSeg.get(JAVA_SHORT, INFO_RANK)),
+                        outSeg.get(JAVA_INT, INFO_TAGS));
+            }
+            return code;
         }
+    }
+
+    @Override
+    public int timezoneOffsetAt(long source, String name, Instant instant, TimezoneOffset[] out) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment outSeg = arena.allocate(TIMEZONE_OFFSET_LAYOUT);
+            int code =
+                    rc(timezoneOffsetAt, segment(source), str(arena, name), timestampSegment(arena, instant), outSeg);
+            if (code == Abi.OK) {
+                out[0] = new TimezoneOffset(
+                        outSeg.get(JAVA_INT, 0),
+                        outSeg.get(JAVA_BOOLEAN, 4),
+                        outSeg.get(JAVA_BOOLEAN, 5),
+                        readString(outSeg.asSlice(8, STRING_LAYOUT.byteSize())));
+            }
+            return code;
+        }
+    }
+
+    @Override
+    public int timezoneResolve(long source, String name, LocalDateTime civil, TimezoneResolution[] out) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment outSeg = arena.allocate(RESOLUTION_LAYOUT);
+            int code = rc(timezoneResolve, segment(source), str(arena, name), datetimeSegment(arena, civil), outSeg);
+            if (code == Abi.OK) {
+                out[0] = new TimezoneResolution(
+                        outSeg.get(JAVA_INT, 0),
+                        outSeg.get(JAVA_INT, 4),
+                        outSeg.get(JAVA_INT, 8),
+                        outSeg.get(JAVA_INT, 12),
+                        outSeg.get(JAVA_BOOLEAN, 16),
+                        readTimestamp(outSeg, 24));
+            }
+            return code;
+        }
+    }
+
+    // --- zone sources ---
+
+    @Override
+    public int zoneSourceNew(long[] out) {
+        return handleConstructor(zoneSourceNew, out);
+    }
+
+    @Override
+    public int zoneSourceBundled(long[] out) {
+        return handleConstructor(zoneSourceBundled, out);
+    }
+
+    @Override
+    public void zoneSourceFree(long source) {
+        check("hegel_zone_source_free", rc(zoneSourceFree, segment(source)));
+    }
+
+    @Override
+    public int zoneSourceAddTzif(long source, String name, byte[] tzif) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment bytes = arena.allocate(Math.max(tzif.length, 1));
+            MemorySegment.copy(tzif, 0, bytes, JAVA_BYTE, 0, tzif.length);
+            return rc(zoneSourceAddTzif, segment(source), str(arena, name), bytes, (long) tzif.length);
+        }
+    }
+
+    @Override
+    public int zoneSourceAddZone(long source, String name, ZoneData data) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment seg = arena.allocate(ZONE_DATA_LAYOUT);
+            writeZoneType(arena, seg, 0, data.initial());
+            List<ZoneTransition> transitions = data.transitions();
+            MemorySegment array = arena.allocate(ZONE_TRANSITION_LAYOUT, Math.max(transitions.size(), 1));
+            for (int i = 0; i < transitions.size(); i++) {
+                long base = i * ZONE_TRANSITION_LAYOUT.byteSize();
+                array.set(JAVA_LONG, base, transitions.get(i).instant());
+                writeZoneType(arena, array, base + 8, transitions.get(i).type());
+            }
+            seg.set(ADDRESS, DATA_TRANSITIONS, array);
+            seg.set(JAVA_LONG, DATA_COUNT, transitions.size());
+            seg.set(JAVA_INT, DATA_AFTER, data.after());
+            writeZoneType(arena, seg, DATA_STANDARD, data.standard());
+            seg.set(JAVA_BOOLEAN, DATA_HAS_DST, data.hasDst());
+            writeZoneType(arena, seg, DATA_DST, data.dst());
+            writeRuleDate(seg, DATA_DST_START, data.dstStart());
+            writeRuleDate(seg, DATA_DST_END, data.dstEnd());
+            seg.set(JAVA_INT, DATA_LAST_YEAR, data.lastYear());
+            return rc(zoneSourceAddZone, segment(source), str(arena, name), seg);
+        }
+    }
+
+    private static void writeZoneType(Arena arena, MemorySegment seg, long offset, ZoneType type) {
+        seg.set(JAVA_INT, offset, type.utoff());
+        seg.set(JAVA_BOOLEAN, offset + 4, type.isDst());
+        MemorySegment.copy(str(arena, type.abbreviation()), 0, seg, offset + 8, STRING_LAYOUT.byteSize());
+    }
+
+    private static void writeRuleDate(MemorySegment seg, long offset, ZoneRuleDate date) {
+        seg.set(JAVA_INT, offset, date.kind());
+        seg.set(JAVA_SHORT, offset + 4, (short) date.day());
+        seg.set(JAVA_BYTE, offset + 6, (byte) date.month());
+        seg.set(JAVA_BYTE, offset + 7, (byte) date.week());
+        seg.set(JAVA_BYTE, offset + 8, (byte) date.weekday());
+        seg.set(JAVA_INT, offset + 12, date.time());
+    }
+
+    @Override
+    public int zoneSourceAddOracle(
+            long source,
+            String name,
+            ZoneOffsetOracle typeAt,
+            ZoneTransitionOracle nextTransition,
+            int firstYear,
+            int lastYear,
+            int after) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment oracle = arena.allocate(ORACLE_LAYOUT);
+            oracle.set(
+                    ADDRESS,
+                    0,
+                    linker.upcallStub(ZONE_TYPE_AT.bindTo(this).bindTo(typeAt).bindTo(arena), OFFSET_FN_DESC, arena));
+            oracle.set(
+                    ADDRESS,
+                    ADDRESS.byteSize(),
+                    nextTransition == null
+                            ? MemorySegment.NULL
+                            : linker.upcallStub(
+                                    NEXT_ZONE_TRANSITION.bindTo(this).bindTo(nextTransition),
+                                    NEXT_TRANSITION_FN_DESC,
+                                    arena));
+            oracle.set(JAVA_INT, 3 * ADDRESS.byteSize(), firstYear);
+            oracle.set(JAVA_INT, 3 * ADDRESS.byteSize() + 4, lastYear);
+            oracle.set(JAVA_INT, 3 * ADDRESS.byteSize() + 8, after);
+            return rc(zoneSourceAddOracle, segment(source), str(arena, name), oracle);
+        }
+    }
+
+    @Override
+    public int zoneSourceAddLink(long source, String name, String target) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(zoneSourceAddLink, segment(source), str(arena, name), str(arena, target));
+        }
+    }
+
+    @Override
+    public int zoneSourceDeclare(long source, List<String> names) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(zoneSourceDeclare, segment(source), strArray(arena, names), (long) names.size());
+        }
+    }
+
+    @Override
+    public int zoneSourceSetLoader(long source, ZoneLoader loader) {
+        // The engine may call the loader for as long as the source lives, which no handle bounds,
+        // so its stub lives as long as the library.
+        MemorySegment stub = loader == null
+                ? MemorySegment.NULL
+                : linker.upcallStub(LOAD_ZONE.bindTo(this).bindTo(loader), LOADER_DESC, libArena);
+        return rc(zoneSourceSetLoader, segment(source), stub, MemorySegment.NULL);
+    }
+
+    @Override
+    public int zoneSourceSetVersion(long source, String version) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(zoneSourceSetVersion, segment(source), str(arena, version));
+        }
+    }
+
+    @Override
+    public String zoneSourceVersion(long source) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment seg = arena.allocate(STRING_LAYOUT);
+            check("hegel_zone_source_version", rc(zoneSourceVersion, segment(source), seg));
+            return readString(seg);
+        }
+    }
+
+    @Override
+    public void setDefaultZoneSource(long source) {
+        check("hegel_set_default_zone_source", rc(setDefaultZoneSource, segment(source)));
+    }
+
+    /**
+     * Run a zone source callback's Java body on the context libhegel passed it: the binding's calls
+     * made from the body report to that context, and a throwable becomes its error message.
+     */
+    private int callback(MemorySegment ctx, Runnable body) {
+        MemorySegment saved = context.get();
+        context.set(ctx);
+        try {
+            return ZoneCallbacks.guard(body, message -> rc(contextSetError, str(Arena.ofAuto(), message)));
+        } finally {
+            context.set(saved);
+        }
+    }
+
+    static int loadZone(
+            RealLibhegel self,
+            ZoneLoader loader,
+            MemorySegment userData,
+            MemorySegment ctx,
+            MemorySegment source,
+            MemorySegment name) {
+        return self.callback(ctx, () -> loader.load(source.address(), readString(name)));
+    }
+
+    static int zoneTypeAt(
+            RealLibhegel self,
+            ZoneOffsetOracle oracle,
+            Arena arena,
+            MemorySegment userData,
+            MemorySegment ctx,
+            long instant,
+            MemorySegment out) {
+        return self.callback(
+                ctx,
+                () -> writeZoneType(arena, out.reinterpret(ZONE_TYPE_LAYOUT.byteSize()), 0, oracle.typeAt(instant)));
+    }
+
+    static int nextZoneTransition(
+            RealLibhegel self,
+            ZoneTransitionOracle oracle,
+            MemorySegment userData,
+            MemorySegment ctx,
+            long after,
+            MemorySegment outFound,
+            MemorySegment outInstant) {
+        return self.callback(ctx, () -> {
+            OptionalLong next = oracle.nextTransition(after);
+            outFound.reinterpret(1).set(JAVA_BOOLEAN, 0, next.isPresent());
+            outInstant.reinterpret(8).set(JAVA_LONG, 0, next.orElse(0));
+        });
     }
 
     private static MemorySegment dateSegment(Arena arena, LocalDate date) {

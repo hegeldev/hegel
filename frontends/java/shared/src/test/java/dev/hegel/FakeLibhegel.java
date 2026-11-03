@@ -7,6 +7,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -30,6 +31,7 @@ final class FakeLibhegel implements Libhegel {
     static final long TIMEZONE_SPEC = 0x800;
     static final long ZONED_SPEC = 0x900;
     static final long SPAN_SPEC = 0xA00;
+    static final long ZONE_SOURCE = 0xB00;
     /** Clone handles are {@code CLONE_BASE + n} for the n-th clone made, so they are distinct from {@link #TC}. */
     static final long CLONE_BASE = 0x1000;
 
@@ -154,6 +156,10 @@ final class FakeLibhegel implements Libhegel {
     int freedSpanSpecs;
     /** The names timezoneInfo reports as known (every other name is unknown). */
     List<String> knownZones = List.of("UTC", "Europe/London", "America/New_York", "Asia/Calcutta", "EST5EDT");
+
+    long timezoneSource = -1;
+    int freedZoneSources;
+    long defaultZoneSource = -1;
 
     String tzdbVersion = "2026a";
     int generateUuidRc = Abi.OK;
@@ -667,13 +673,102 @@ final class FakeLibhegel implements Libhegel {
     }
 
     @Override
-    public TimezoneInfo timezoneInfo(String name) {
+    public int timezoneSpecSetSource(long spec, long source) {
+        timezoneSource = source;
+        return Abi.OK;
+    }
+
+    @Override
+    public int timezoneInfo(long source, String name, TimezoneInfo[] out) {
         if (!knownZones.contains(name)) {
-            return new TimezoneInfo(false, "", false, 0, 0);
+            out[0] = new TimezoneInfo(false, "", false, 0, 0);
+            return Abi.OK;
         }
         boolean link = name.equals("Asia/Calcutta");
         int tags = name.equals("EST5EDT") ? Abi.TIMEZONE_TAG_LEGACY : 0;
-        return new TimezoneInfo(true, link ? "Asia/Kolkata" : name, link, name.equals("UTC") ? 0 : 1, tags);
+        out[0] = new TimezoneInfo(true, link ? "Asia/Kolkata" : name, link, name.equals("UTC") ? 0 : 1, tags);
+        return Abi.OK;
+    }
+
+    @Override
+    public int timezoneOffsetAt(long source, String name, Instant instant, TimezoneOffset[] out) {
+        out[0] = new TimezoneOffset(0, true, false, "UTC");
+        return Abi.OK;
+    }
+
+    @Override
+    public int timezoneResolve(long source, String name, LocalDateTime civil, TimezoneResolution[] out) {
+        out[0] = new TimezoneResolution(Abi.TIMEZONE_KIND_UNIQUE, 0, 0, 0, true, civil.toInstant(ZoneOffset.UTC));
+        return Abi.OK;
+    }
+
+    @Override
+    public int zoneSourceNew(long[] out) {
+        out[0] = ZONE_SOURCE;
+        return Abi.OK;
+    }
+
+    @Override
+    public int zoneSourceBundled(long[] out) {
+        out[0] = ZONE_SOURCE;
+        return Abi.OK;
+    }
+
+    @Override
+    public void zoneSourceFree(long source) {
+        freedZoneSources++;
+    }
+
+    @Override
+    public int zoneSourceAddTzif(long source, String name, byte[] tzif) {
+        return Abi.OK;
+    }
+
+    @Override
+    public int zoneSourceAddZone(long source, String name, ZoneData data) {
+        return Abi.OK;
+    }
+
+    @Override
+    public int zoneSourceAddOracle(
+            long source,
+            String name,
+            ZoneOffsetOracle typeAt,
+            ZoneTransitionOracle nextTransition,
+            int firstYear,
+            int lastYear,
+            int after) {
+        return Abi.OK;
+    }
+
+    @Override
+    public int zoneSourceAddLink(long source, String name, String target) {
+        return Abi.OK;
+    }
+
+    @Override
+    public int zoneSourceDeclare(long source, List<String> names) {
+        return Abi.OK;
+    }
+
+    @Override
+    public int zoneSourceSetLoader(long source, ZoneLoader loader) {
+        return Abi.OK;
+    }
+
+    @Override
+    public int zoneSourceSetVersion(long source, String version) {
+        return Abi.OK;
+    }
+
+    @Override
+    public String zoneSourceVersion(long source) {
+        return tzdbVersion;
+    }
+
+    @Override
+    public void setDefaultZoneSource(long source) {
+        defaultZoneSource = source;
     }
 
     @Override
