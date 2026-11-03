@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1 - 2026-11-03
+
+This release updates the bundled libhegel engine to 0.50.0.
+
 ## 0.5.0 - 2026-11-03
 
 This release makes the engine the source of every setting a TypeScript test does not set itself, adds the settings that were missing, changes what a failing or aborted run throws and how a failure is reported, makes printing a drawn value the job of the generator that drew it (so `tc.draw` now needs a generator that can print), and adds the test-case features the other Hegel frontends have.
