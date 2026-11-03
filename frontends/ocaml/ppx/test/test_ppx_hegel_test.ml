@@ -243,7 +243,6 @@ module%hegel_concurrent_state_machine Ledger = struct
   [@@rule { weight = 4.0; groups = [ "money" ] }]
   ;;
 
-  let refund _tc () (n : int Atomic.t) = Atomic.incr n [@@rule { groups = "audit" }]
   let nonnegative _tc (_n : int Atomic.t) = () [@@invariant]
 end
 
@@ -256,7 +255,7 @@ let test_concurrent_state_machine_collects_groups_and_weights () =
   let module R = Hegel.Stateful.Concurrent_rule in
   Alcotest.(check (list string))
     "rule names"
-    [ "deposit"; "withdraw"; "audit"; "settle"; "reconcile"; "refund" ]
+    [ "deposit"; "withdraw"; "audit"; "settle"; "reconcile" ]
     (List.map Ledger.rules ~f:R.name);
   Alcotest.(check (list (list string)))
     "rule groups"
@@ -265,12 +264,11 @@ let test_concurrent_state_machine_collects_groups_and_weights () =
     ; [ "<anonymous>" ]
     ; [ "money"; "audit" ]
     ; [ "money" ]
-    ; [ "audit" ]
     ]
     (List.map Ledger.rules ~f:R.groups);
   Alcotest.(check (list (float 0.)))
     "rule weights"
-    [ 1.0; 1.0; 2.5; 3.0; 4.0; 1.0 ]
+    [ 1.0; 1.0; 2.5; 3.0; 4.0 ]
     (List.map Ledger.rules ~f:R.weight);
   with_tempdir ~f:(fun dir -> with_env_dir dir ~f:runs_ledger)
 ;;

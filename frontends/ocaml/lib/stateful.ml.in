@@ -133,7 +133,6 @@ let unique_groups rules =
   |> List.rev
 ;;
 
-(* converts group names to indices *)
 let to_engine_rules rules names =
   List.map
     (fun (rule : rule_info) : Internal.rule_info ->

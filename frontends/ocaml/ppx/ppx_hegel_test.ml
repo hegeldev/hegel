@@ -62,8 +62,7 @@
     A rule in a [module%hegel_concurrent_state_machine] also takes its
     [groups], as [[@@rule { groups = [ "io"; "flush" ]; weight = 2.5 }]]: the
     concurrency groups the rule belongs to, in each of whose rounds it may
-    run. A single group may be written without the list, as
-    [[@@rule { groups = "io" }]]. Groups on a sequential rule are an error. A module that declares
+    run; groups on a sequential rule are an error. A module that declares
     [type ctx] gets a [run ~concurrency ...] whose capability must supply that
     context. Otherwise, [type ctx = unit] and [concurrency] defaults to
     [Hegel.Concurrency.threads].
@@ -110,13 +109,7 @@ let weight_pattern () =
 
 let record_payload fields = Ast_pattern.(single_expr_payload (pexp_record fields none))
 let field name pattern = Ast_pattern.(loc (lident (string name)) ** pattern)
-
-let groups_field () =
-  field
-    "groups"
-    Ast_pattern.(elist (estring __) ||| map1 (estring __) ~f:(fun group -> [ group ]))
-;;
-
+let groups_field () = field "groups" Ast_pattern.(elist (estring __))
 let weight_field () = field "weight" (weight_pattern ())
 
 let rule_attribute =
