@@ -1,0 +1,296 @@
+package libhegel
+
+import (
+	"errors"
+	"os"
+	"strings"
+	"testing"
+)
+
+// TestLoadLibVersion checks the real library against the pinned version.
+func TestLoadLibVersion(t *testing.T) {
+	lib, err := load()
+	if err != nil {
+		t.Fatalf("loadLib: %v", err)
+	}
+	defer lib.Close()
+
+	got := lib.versionString()
+	if got != hegelVersion {
+		t.Fatalf("hegel_version: got %q, want %q (rebuild libhegel.so if it's stale)", got, hegelVersion)
+	}
+}
+
+// TestRegisterSymbolsMissing covers the dlsym / registerSymbols error path: a
+// symbol that the library does not export must surface a wrapped error.
+func TestRegisterSymbolsMissing(t *testing.T) {
+	lib, err := load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	defer lib.Close()
+
+	var fn func()
+	err = registerSymbols(lib.handle, []symbol{
+		{name: "hegel_definitely_missing_symbol", dst: &fn},
+	})
+	if err == nil {
+		t.Fatal("expected error resolving a missing symbol")
+	}
+}
+
+// TestLoadLibMissing verifies the failure path when no library can be found.
+func TestLoadLibMissing(t *testing.T) {
+	t.Setenv(LibraryPathEnv, "/nonexistent/path/to/libhegel.so")
+
+	_, err := load()
+	if err == nil {
+		t.Fatal("expected loadLib to fail with a bogus path")
+	}
+	if !strings.Contains(err.Error(), "load libhegel") {
+		t.Errorf("expected error to mention libhegel; got %q", err)
+	}
+	if !strings.Contains(err.Error(), "/nonexistent/path/to/libhegel.so") {
+		t.Errorf("expected error to mention the bogus path; got %q", err)
+	}
+}
+
+// TestLoadEmbeddedWriteFails covers the fallback path in load: with no path
+// override, writing the embedded library must fail when both materialization
+// locations are unavailable.
+func TestLoadEmbeddedWriteFails(t *testing.T) {
+	t.Setenv(LibraryPathEnv, "")
+	testHomeOverride(t)
+	stubVar(t, &chmodCacheDir, func(string, os.FileMode) error { return errors.New("cache denied") })
+	stubVar(t, &resolveTempCacheDir, func(string) (string, error) { return "", errors.New("temp denied") })
+
+	_, err := load()
+	if err == nil {
+		t.Fatal("expected load to fail when the embedded library cannot be written")
+	}
+	if !strings.Contains(err.Error(), "write libhegel") {
+		t.Errorf("expected error to mention write libhegel; got %q", err)
+	}
+}
+
+func TestProfileSettingsRoundTrip(t *testing.T) {
+	ctx := NewContext()
+	s, err := ctx.SettingsNewForProfile("base")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if db, hasDB, err := s.GetDatabase(ctx); err != nil || hasDB || db != "" {
+		t.Fatalf("default database = %v, %q, %v", hasDB, db, err)
+	}
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(s.TestCases(ctx, 17))
+	must(s.Verbosity(ctx, VERBOSITY_DEBUG))
+	must(s.Seed(ctx, 123, true))
+	must(s.Derandomize(ctx, true))
+	must(s.Database(ctx, ""))
+	must(s.Phases(ctx, PHASE_GENERATE|PHASE_SHRINK))
+	must(s.SuppressHealthCheck(ctx, HC_TOO_SLOW))
+	must(s.ReportMultipleFailures(ctx, false))
+	must(s.ShowStatistics(ctx, true))
+	must(s.StopOnFirstFailure(ctx, false))
+	must(s.UnboundedChoices(ctx, true))
+	must(s.PrintBlob(ctx, false))
+	must(s.Backend(ctx, BACKEND_DEFAULT))
+	must(s.NondeterminismStrictness(ctx, NONDETERMINISM_ERROR))
+	must(s.TestLocation(ctx, "example_test.go", 42, "Example", "TestProperty"))
+	if got, err := s.GetTestCases(ctx); got != 17 || err != nil {
+		t.Fatalf("test cases = %v, %v", got, err)
+	}
+	if got, err := s.GetVerbosity(ctx); got != VERBOSITY_DEBUG || err != nil {
+		t.Fatalf("verbosity = %v, %v", got, err)
+	}
+	if seed, has, err := s.GetSeed(ctx); seed != 123 || !has || err != nil {
+		t.Fatalf("seed = %v, %v, %v", seed, has, err)
+	}
+	if got, err := s.GetDerandomize(ctx); !got || err != nil {
+		t.Fatalf("derandomize = %v, %v", got, err)
+	}
+	if db, hasDB, err := s.GetDatabase(ctx); !hasDB || db != "" || err != nil {
+		t.Fatalf("database = %v, %q, %v", hasDB, db, err)
+	}
+	if got, err := s.GetPhases(ctx); got != PHASE_GENERATE|PHASE_SHRINK || err != nil {
+		t.Fatalf("phases = %v, %v", got, err)
+	}
+	if got, err := s.GetSuppressHealthCheck(ctx); got != HC_TOO_SLOW || err != nil {
+		t.Fatalf("health checks = %v, %v", got, err)
+	}
+	if got, err := s.GetReportMultipleFailures(ctx); got || err != nil {
+		t.Fatalf("multiple failures = %v, %v", got, err)
+	}
+	if got, err := s.GetShowStatistics(ctx); !got || err != nil {
+		t.Fatalf("statistics = %v, %v", got, err)
+	}
+	if got, err := s.GetStopOnFirstFailure(ctx); got || err != nil {
+		t.Fatalf("stop on first failure = %v, %v", got, err)
+	}
+	if got, err := s.GetUnboundedChoices(ctx); !got || err != nil {
+		t.Fatalf("unbounded choices = %v, %v", got, err)
+	}
+	if got, err := s.GetPrintBlob(ctx); got || err != nil {
+		t.Fatalf("print blob = %v, %v", got, err)
+	}
+	if got, err := s.GetBackend(ctx); got != BACKEND_DEFAULT || err != nil {
+		t.Fatalf("backend = %v, %v", got, err)
+	}
+	if got, err := s.GetNondeterminismStrictness(ctx); got != NONDETERMINISM_ERROR || err != nil {
+		t.Fatalf("nondeterminism strictness = %v, %v", got, err)
+	}
+}
+
+func TestSettingsSetFromString(t *testing.T) {
+	ctx := NewContext()
+	s, err := ctx.SettingsNew()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetFromString(ctx, "test_cases", "50"); err != nil {
+		t.Fatalf("SetFromString: %v", err)
+	}
+	if got, err := s.GetTestCases(ctx); got != 50 || err != nil {
+		t.Fatalf("test cases = %v, %v", got, err)
+	}
+	// An unknown key is rejected with E_INVALID_ARG and leaves settings unchanged.
+	if err := s.SetFromString(ctx, "bogus_key", "x"); !errors.Is(err, E_INVALID_ARG) {
+		t.Fatalf("unknown key = %v", err)
+	}
+	if got, err := s.GetTestCases(ctx); got != 50 || err != nil {
+		t.Fatalf("test cases after failed set = %v, %v", got, err)
+	}
+}
+
+func TestProfileRegistrationBindings(t *testing.T) {
+	// Process-global mutations stay stubbed so unrelated tests retain their configuration.
+	ctx := Stub(t, OK, OK, OK, OK, OK)
+	s := &Settings{pointer: pointer[settingsT]{syms: ctx.syms, raw: 2}}
+	if err := s.RegisterProfile(ctx, "unit-profile"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctx.SetDefaultProfile("unit-profile"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctx.SetDefaultProfile(""); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctx.SetDefaultProfile("profile\x00name"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctx.SetUnicodeVersion("15.1.0"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProfileBindingErrors(t *testing.T) {
+	ctx := Stub(t, uintptr(0), E_INVALID_ARG, "unknown profile")
+	if got, err := ctx.SettingsNewForProfile("missing"); got != nil || !errors.Is(err, E_INVALID_ARG) {
+		t.Fatalf("settings = %v, %v", got, err)
+	}
+	ctx = Stub(t, "", E_INVALID_HANDLE, "missing settings")
+	s := &Settings{pointer: pointer[settingsT]{syms: ctx.syms, raw: 2}}
+	if db, hasDB, err := s.GetDatabase(ctx); hasDB || db != "" || !errors.Is(err, E_INVALID_HANDLE) {
+		t.Fatalf("database = %v, %q, %v", hasDB, db, err)
+	}
+	ctx = Stub(t, uintptr(0), E_INVALID_HANDLE, "missing test case")
+	tc := &TestCase{pointer: &pointer[testCaseT]{syms: ctx.syms, raw: 2}}
+	if got, err := tc.Block(ctx, 2); got != nil || !errors.Is(err, E_INVALID_HANDLE) {
+		t.Fatalf("block = %v, %v", got, err)
+	}
+}
+
+func TestSettingsEnumOutParameters(t *testing.T) {
+	ctx := Stub(t, int32(VERBOSITY_QUIET), OK, uint32(PHASE_ALL), OK, int32(BACKEND_URANDOM), OK)
+	s := &Settings{pointer: pointer[settingsT]{syms: ctx.syms, raw: 2}}
+	if got, err := s.GetVerbosity(ctx); got != VERBOSITY_QUIET || err != nil {
+		t.Fatalf("verbosity = %v, %v", got, err)
+	}
+	if got, err := s.GetPhases(ctx); got != PHASE_ALL || err != nil {
+		t.Fatalf("phases = %v, %v", got, err)
+	}
+	if got, err := s.GetBackend(ctx); got != BACKEND_URANDOM || err != nil {
+		t.Fatalf("backend = %v, %v", got, err)
+	}
+}
+
+func TestNativeBlockSharesChoiceSequence(t *testing.T) {
+	ctx := NewContext()
+	settings, err := ctx.SettingsNewForProfile("base")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := settings.Database(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	run, err := settings.RunStart(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tc, err := run.NextTestCase(ctx)
+	if err != nil || tc == nil {
+		t.Fatalf("case = %v, %v", tc, err)
+	}
+	block, err := tc.Block(ctx, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := block.Note(ctx, "inside"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := block.GenerateInteger(ctx, 7, 7); got != 7 || err != nil {
+		t.Fatalf("draw = %v, %v", got, err)
+	}
+	if err := tc.Note(ctx, "outside"); err != nil {
+		t.Fatal(err)
+	}
+	printer, err := tc.Printer(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := printer.Resolve(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := printer.Value(ctx); got != "  inside\noutside\n" || err != nil {
+		t.Fatalf("document = %q, %v", got, err)
+	}
+	if err := tc.SetWorker(ctx, 3); err != nil {
+		t.Fatal(err)
+	}
+	if err := tc.MarkComplete(ctx, STATUS_VALID, ""); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDerivedLabels(t *testing.T) {
+	ctx := NewContext()
+	list, err := ctx.LabelFromName("hegel.go.list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	listAgain, err := ctx.LabelFromName("hegel.go.list")
+	if err != nil || listAgain != list {
+		t.Fatalf("repeated list label = %v, %v; want %v", listAgain, err, list)
+	}
+	integer, err := ctx.LabelFromName("hegel.go.integer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := ctx.LabelCombine([]Label{list, integer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := ctx.LabelCombine([]Label{integer, list})
+	if err != nil || a == b {
+		t.Fatalf("order-sensitive label = %v, %v", b, err)
+	}
+	if _, err := ctx.LabelCombine(nil); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -1,0 +1,265 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: stable
+
+      - uses: ./.github/actions/install-tools
+        with:
+          tools: just
+
+      - name: Lint
+        run: just lint
+      - name: Build examples
+        run: go build ./examples/...
+      - name: Install zizmor
+        run: pip install zizmor==1.23.1
+      - name: Run zizmor
+        run: zizmor --format plain .github/
+
+  test:
+    name: "test (go ${{ matrix.go-version }})"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # needed for ratchet auto-update
+      pull-requests: write  # needed for creating PRs on main
+    strategy:
+      matrix:
+        go-version: [oldstable, stable]
+    steps:
+      # persist-credentials needed for git push in the auto-update step below
+      # For fork PRs, head_ref points to a branch that doesn't exist on the base repo,
+      # so we fall back to the default ref (the merge commit).
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4 # zizmor: ignore[artipacked]
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        with:
+          ref: ${{ github.head_ref || github.ref }}
+          lfs: true  # pull the vendored libhegel binaries that get go:embed'd
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        with:
+          persist-credentials: false
+          lfs: true  # pull the vendored libhegel binaries that get go:embed'd
+
+      - uses: ./.github/actions/install-tools
+        with:
+          tools: just
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      # Go 1.27 changed coverage block positions so go-test-coverage no longer
+      # associates coverage-ignore annotations with their blocks. Keep the
+      # coverage ratchet on oldstable while still running the full suite,
+      # including go1.27-tagged tests, under stable.
+      - name: Run tests with coverage
+        if: matrix.go-version == 'oldstable'
+        run: just test
+
+      - name: Run tests
+        if: matrix.go-version == 'stable'
+        run: go test -race ./...
+
+      - name: Auto-update coverage annotations and ratchet
+        if: success() && matrix.go-version == 'oldstable' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet && git diff --quiet .github/coverage-ratchet.json; then
+            echo "No coverage annotation changes needed"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -u
+          git add .github/coverage-ratchet.json
+
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git commit -m "Auto-update coverage annotations and ratchet"
+            git push
+          else
+            BRANCH="auto/coverage-ratchet-update"
+            git checkout -b "$BRANCH"
+            git commit -m "Auto-update coverage annotations and ratchet"
+            git push -f origin "$BRANCH"
+            gh pr create \
+              --title "Auto-update coverage ratchet" \
+              --body "The coverage ratchet has tightened on main. This PR updates the ratchet file and removes unnecessary annotations." \
+              --base main \
+              --head "$BRANCH" || true
+          fi
+
+  # Compile and vet for every target GOOS/GOARCH. The runtime tests only run on
+  # Linux (test) plus macOS/Windows amd64 (smoke), so this is the only guard for
+  # targets without a runner — notably windows/arm64 and darwin/amd64. It exists
+  # because the FFI loader is platform-split (purego.Dlopen on POSIX,
+  # LoadLibrary on Windows); a Linux-only CI silently shipped code that did not
+  # compile on Windows at all.
+  cross-build:
+    name: "cross-build (${{ matrix.target }})"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      matrix:
+        target:
+          - linux/amd64
+          - linux/arm64
+          - darwin/amd64
+          - darwin/arm64
+          - windows/amd64
+          - windows/arm64
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          lfs: true  # pull the vendored libhegel binaries that get go:embed'd
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: stable
+
+      - name: Build, link tests, and vet
+        env:
+          TARGET: ${{ matrix.target }}
+          CGO_ENABLED: "0"
+        run: |
+          export GOOS="${TARGET%/*}" GOARCH="${TARGET#*/}"
+          echo "Building for $GOOS/$GOARCH"
+          go build ./...
+          # Link test binaries without executing foreign-platform code.
+          go test -exec=true ./...
+          go vet ./...
+
+  # Run the real test suite against the vendored, go:embed'd libhegel on the
+  # OSes we have runners for, so the FFI loader is exercised end-to-end off
+  # Linux. Coverage and the ratchet stay on the Linux `test` job; here we just
+  # run `go test`. macos-latest is arm64 and windows-latest is amd64, matching
+  # the vendored libhegel-darwin-arm64.dylib / libhegel-windows-amd64.dll.
+  smoke:
+    name: "smoke (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          lfs: true  # pull the vendored libhegel binaries that get go:embed'd
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: stable
+
+      - name: Run tests
+        shell: bash
+        run: go test ./...
+
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: stable
+
+      - uses: ./.github/actions/install-tools
+        with:
+          tools: just
+
+      - name: Check docs
+        run: just check-docs
+
+  release:
+    name: release
+    if: github.event_name == 'push' && github.repository == 'hegeldev/hegel-go'
+    needs: [lint, test, cross-build, smoke, docs]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      checks: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Check for RELEASE.md
+        id: check
+        run: |
+          if [ ! -f RELEASE.md ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate app token
+        if: steps.check.outputs.skip != 'true'
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1
+        id: app-token
+        with:
+          app-id: ${{ vars.HEGEL_RELEASE_APP_ID }}
+          private-key: ${{ secrets.HEGEL_RELEASE_APP_PRIVATE_KEY }}
+
+      - name: Re-checkout with app token # zizmor: ignore[artipacked]
+        if: steps.check.outputs.skip != 'true'
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 0
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        if: steps.check.outputs.skip != 'true'
+        with:
+          go-version: '1.23'
+
+      - name: Release
+        if: steps.check.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          HEGEL_RELEASE_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: python .github/scripts/release.py release
+
+      # poke go proxy so it knows to index our new release
+      # https://go.dev/doc/modules/publishing
+      - name: Update Go module proxy
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          VERSION=$(git describe --tags --abbrev=0)
+          GOPROXY=proxy.golang.org go list -m "hegel.dev/go/hegel@${VERSION}"

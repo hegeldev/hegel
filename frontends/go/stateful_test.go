@@ -1,0 +1,1003 @@
+package hegel
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"runtime"
+	"slices"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"testing/synctest"
+	"time"
+
+	"hegel.dev/go/hegel/internal/libhegel"
+)
+
+type goodCounter struct{ n int }
+
+func (c *goodCounter) RuleIncrement(_ TestCase) { c.n++ }
+func (c *goodCounter) RuleDecrement(_ TestCase) { c.n-- }
+func (c *goodCounter) InvariantSensible(_ TestCase) {
+	if c.n < -10000 || c.n > 10000 {
+		panic("counter out of sensible range")
+	}
+}
+
+type singleRuleMachine struct{ n int }
+
+func (m *singleRuleMachine) RuleStep(_ TestCase) { m.n++ }
+
+type synctestMachine struct {
+	steps      atomic.Int64
+	active     atomic.Int64
+	overlapped *atomic.Bool
+}
+
+func (m *synctestMachine) RuleStep(_ TestCase) {
+	m.steps.Add(1)
+	if m.active.Add(1) > 1 {
+		m.overlapped.Store(true)
+	}
+	defer m.active.Add(-1)
+	time.Sleep(time.Hour)
+}
+
+type outputRuleMachine struct{}
+
+func (*outputRuleMachine) RuleStep(TestCase) {}
+
+type helperMachine struct{ n int }
+
+func (m *helperMachine) RuleBump(_ TestCase) { m.n++ }
+func (m *helperMachine) Helper() int         { return m.n } //nolint:unused
+
+type noRulesMachine struct{}
+
+func (noRulesMachine) InvariantTrue(_ TestCase) {}
+
+type badRuleSig struct{}
+
+func (badRuleSig) RuleBad(_ TestCase, _ string) {}
+
+type badInvariantSig struct{}
+
+func (badInvariantSig) RuleOK(_ TestCase)     {}
+func (badInvariantSig) InvariantBad(_ string) {}
+
+type strayTestCaseMachine struct{}
+
+func (strayTestCaseMachine) RuleOK(_ TestCase)  {}
+func (strayTestCaseMachine) DoStuff(_ TestCase) {}
+
+// gatedMachine.RuleGated rejects via Assume until RuleOpen has run, so
+// the test exercises that an Assume rejection retries with a different
+// rule rather than killing the test case.
+type gatedMachine struct {
+	opened    bool
+	gateCount int
+}
+
+func (m *gatedMachine) RuleOpen(_ TestCase) { m.opened = true }
+
+func (m *gatedMachine) RuleGated(tc TestCase) {
+	tc.Assume(m.opened)
+	m.gateCount++
+}
+
+// ruleFailer.RuleFail marks the case failed via Fail (which sets INTERESTING
+// without panicking), so callRule's deferred block observes a non-VALID status
+// after the rule returns and aborts via abort(nil).
+type ruleFailer struct{}
+
+func (ruleFailer) RuleFail(tc TestCase) { tc.Fail() }
+
+type invariantViolator struct{ n int }
+
+func (m *invariantViolator) RuleStep(_ TestCase) { m.n++ }
+func (m *invariantViolator) InvariantSmall(tc TestCase) {
+	if m.n >= 3 {
+		tc.FailNow()
+	}
+}
+
+type groupedMachine struct{}
+
+func (*groupedMachine) RuleAlpha(TestCase)   {}
+func (*groupedMachine) RuleBeta(TestCase)    {}
+func (*groupedMachine) RuleDelta(TestCase)   {}
+func (*groupedMachine) RuleGamma(TestCase)   {}
+func (*groupedMachine) InvariantOK(TestCase) {}
+
+type invariantSelectionMachine struct {
+	alwaysCalls  int
+	sampledCalls int
+}
+
+func (*invariantSelectionMachine) RuleStep(TestCase) {}
+func (m *invariantSelectionMachine) InvariantAlways(TestCase) {
+	m.alwaysCalls++
+}
+func (m *invariantSelectionMachine) InvariantSampled(TestCase) {
+	m.sampledCalls++
+}
+
+type rejectingMachine struct{}
+
+func (*rejectingMachine) RuleReject(tc TestCase) { tc.Assume(false) }
+
+type concurrentExecutionProbe struct {
+	expectedWorkers        int64
+	active                 atomic.Int64
+	entered                atomic.Int64
+	barrierTimedOut        atomic.Bool
+	allEntered             chan struct{}
+	invariantCalls         int
+	invariantWhileRuleRuns bool
+}
+
+func (m *concurrentExecutionProbe) RuleOverlap(_ TestCase) {
+	m.active.Add(1)
+	defer m.active.Add(-1)
+	if m.entered.Add(1) == m.expectedWorkers {
+		close(m.allEntered)
+	}
+	select {
+	case <-m.allEntered:
+	case <-time.After(2 * time.Second):
+		m.barrierTimedOut.Store(true)
+	}
+}
+
+func (m *concurrentExecutionProbe) InvariantAtJoin(_ TestCase) {
+	m.invariantCalls++
+	if m.active.Load() != 0 {
+		m.invariantWhileRuleRuns = true
+	}
+}
+
+// concurrentTestCase replaces only the state-machine protocol. Embedding the
+// interface keeps unrelated TestCase operations unavailable to this focused
+// orchestration test.
+type concurrentTestCase struct {
+	TestCase
+	shared   *concurrentTestCaseShared
+	drewRule bool
+	out      io.Writer
+}
+
+type concurrentTestCaseShared struct {
+	outputMu                sync.Mutex // Protects the fallback writer shared by test clones.
+	selectedConcurrency     int64
+	selectedGroup           libhegel.StateMachineGroup
+	requestedMaxConcurrency int
+	requestedStepCount      int
+	ruleGroups              []int64
+	invariantAlwaysCheck    []bool
+	invariantChecks         []int64
+	shouldCheckInvariant    func(int64) (bool, error)
+	cloneCount              int64
+	freedClones             int64
+	cloneErr                error
+	workerErr               error
+	selectedRounds          int
+	ranGroups               int
+	spanStarts              atomic.Int64
+	spanStops               atomic.Int64
+	spanDiscarded           atomic.Bool
+	rejectedRules           int
+	nextRuleErrors          map[int64]error
+	reverseWorkerOrder      bool
+	workerOrderGate         chan struct{}
+}
+
+func (tc *concurrentTestCase) Note(message string) {
+	if tc.TestCase != nil {
+		tc.TestCase.Note(message)
+		return
+	}
+	if tc.out != nil {
+		tc.shared.outputMu.Lock()
+		defer tc.shared.outputMu.Unlock()
+		fmt.Fprintln(tc.out, message)
+	}
+}
+
+func (tc *concurrentTestCase) log(format string, args ...any) {
+	if tc.TestCase != nil {
+		tc.TestCase.log(format, args...)
+		return
+	}
+	if tc.out != nil {
+		tc.shared.outputMu.Lock()
+		defer tc.shared.outputMu.Unlock()
+		fmt.Fprintln(tc.out, fmt.Sprintf(format, args...))
+	}
+}
+
+func (tc *concurrentTestCase) setWorker(index int64) error {
+	if tc.shared.workerErr != nil {
+		return tc.shared.workerErr
+	}
+	if tc.TestCase != nil {
+		return tc.TestCase.setWorker(index)
+	}
+	return nil
+}
+
+func (tc *concurrentTestCase) Assume(condition bool) {
+	if !condition {
+		panic(libhegel.E_ASSUME)
+	}
+}
+
+func (tc *concurrentTestCase) abort(err error) { panic(err) }
+
+func (tc *concurrentTestCase) invoke(fn testBody) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			if recovered == libhegel.E_ASSUME {
+				err = libhegel.E_ASSUME
+				return
+			}
+			panic(recovered)
+		}
+	}()
+	fn(tc)
+	return nil
+}
+
+func (tc *concurrentTestCase) startSpan(_ libhegel.Label) error {
+	tc.shared.spanStarts.Add(1)
+	return nil
+}
+
+func (tc *concurrentTestCase) stopSpan(discard bool) error {
+	tc.shared.spanStops.Add(1)
+	if discard {
+		tc.shared.spanDiscarded.Store(true)
+	}
+	return nil
+}
+
+func (tc *concurrentTestCase) clone() (TestCase, error) {
+	tc.shared.cloneCount++
+	if tc.shared.cloneErr != nil {
+		return nil, tc.shared.cloneErr
+	}
+	var clone TestCase
+	if tc.TestCase != nil {
+		var err error
+		clone, err = tc.TestCase.clone()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return &concurrentTestCase{TestCase: clone, shared: tc.shared, out: tc.out}, nil
+}
+
+func (tc *concurrentTestCase) free() {
+	tc.shared.freedClones++
+	if tc.TestCase != nil {
+		tc.TestCase.free()
+	}
+}
+
+func (tc *concurrentTestCase) stateMachineNew(_ []string, ruleGroups []int64, _ []string, invariantAlwaysCheck []bool, maxConcurrency, stepCount int) (*libhegel.StateMachine, int64, error) {
+	tc.shared.requestedMaxConcurrency = maxConcurrency
+	tc.shared.requestedStepCount = stepCount
+	tc.shared.ruleGroups = slices.Clone(ruleGroups)
+	tc.shared.invariantAlwaysCheck = slices.Clone(invariantAlwaysCheck)
+	return new(libhegel.StateMachine), tc.shared.selectedConcurrency, nil
+}
+
+func (tc *concurrentTestCase) stateMachineNextGroup(*libhegel.StateMachine) (libhegel.StateMachineGroup, error) {
+	rounds := tc.shared.selectedRounds
+	if rounds == 0 {
+		rounds = 1
+	}
+	if tc.shared.ranGroups < rounds {
+		tc.shared.ranGroups++
+		if tc.shared.reverseWorkerOrder {
+			tc.shared.workerOrderGate = make(chan struct{})
+		}
+		return tc.shared.selectedGroup, nil
+	}
+	return libhegel.StateMachineDone, nil
+}
+
+func (tc *concurrentTestCase) stateMachineNextRule(_ *libhegel.StateMachine, worker int64) (int64, error) {
+	if err := tc.shared.nextRuleErrors[worker]; err != nil {
+		return 0, err
+	}
+	if tc.drewRule {
+		return libhegel.StateMachineDone, nil
+	}
+	if tc.shared.workerOrderGate != nil {
+		if worker == 0 {
+			<-tc.shared.workerOrderGate
+		} else {
+			close(tc.shared.workerOrderGate)
+		}
+	}
+	tc.drewRule = true
+	return 0, nil
+}
+
+func (tc *concurrentTestCase) stateMachineRuleRejected(*libhegel.StateMachine, int64) error {
+	tc.shared.rejectedRules++
+	return nil
+}
+
+func (tc *concurrentTestCase) stateMachineShouldCheckInvariant(_ *libhegel.StateMachine, invariant int64) (bool, error) {
+	tc.shared.invariantChecks = append(tc.shared.invariantChecks, invariant)
+	if tc.shared.shouldCheckInvariant == nil {
+		return true, nil
+	}
+	return tc.shared.shouldCheckInvariant(invariant)
+}
+
+func TestNewStateMachineNilPointer(t *testing.T) {
+	t.Parallel()
+	_, err := newStateMachine((*goodCounter)(nil))
+	assertErrorContains(t, "must not be nil", err)
+}
+
+func TestNewStateMachineValidationErrors(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name        string
+		newMachine  func() (*stateMachine, error)
+		wantSubstrs []string
+	}{
+		{
+			name:        "NoRules",
+			newMachine:  func() (*stateMachine, error) { return newStateMachine(&noRulesMachine{}) },
+			wantSubstrs: []string{"no rules"},
+		},
+		{
+			name:        "BadRuleSignature",
+			newMachine:  func() (*stateMachine, error) { return newStateMachine(&badRuleSig{}) },
+			wantSubstrs: []string{"RuleBad", "func(TestCase)"},
+		},
+		{
+			name:        "BadInvariantSignature",
+			newMachine:  func() (*stateMachine, error) { return newStateMachine(&badInvariantSig{}) },
+			wantSubstrs: []string{"InvariantBad"},
+		},
+		{
+			name:        "StrayTestCaseMethod",
+			newMachine:  func() (*stateMachine, error) { return newStateMachine(&strayTestCaseMachine{}) },
+			wantSubstrs: []string{"DoStuff", "Rule or Invariant"},
+		},
+		{
+			name:        "NonStructPointer",
+			newMachine:  func() (*stateMachine, error) { n := 0; return newStateMachine(&n) },
+			wantSubstrs: []string{"no rules"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := tc.newMachine()
+			for _, s := range tc.wantSubstrs {
+				assertErrorContains(t, s, err)
+			}
+		})
+	}
+}
+
+func TestNewStateMachineHelperIgnored(t *testing.T) {
+	t.Parallel()
+	sm, err := newStateMachine(&helperMachine{})
+	if err != nil {
+		t.Fatalf("helper-only method should be ignored, got: %v", err)
+	}
+	if len(sm.rules) != 1 {
+		t.Errorf("expected 1 rule, got %d", len(sm.rules))
+	}
+	if len(sm.invariants) != 0 {
+		t.Errorf("expected 0 invariants, got %d", len(sm.invariants))
+	}
+}
+
+func TestNewStateMachineDiscoversRulesAndInvariants(t *testing.T) {
+	t.Parallel()
+	sm, err := newStateMachine(&goodCounter{})
+	if err != nil {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+	if len(sm.rules) != 2 {
+		t.Errorf("expected 2 rules, got %d", len(sm.rules))
+	}
+	if len(sm.invariants) != 1 {
+		t.Errorf("expected 1 invariant, got %d", len(sm.invariants))
+	}
+}
+
+func TestNewStateMachineConcurrency(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Default", func(t *testing.T) {
+		sm, err := newStateMachine(&goodCounter{})
+		if err != nil {
+			t.Fatalf("unexpected validation error: %v", err)
+		}
+		if sm.maxConcurrency != 1 {
+			t.Errorf("expected maximum concurrency 1, got %d", sm.maxConcurrency)
+		}
+	})
+
+	t.Run("Explicit", func(t *testing.T) {
+		sm, err := newStateMachine(&goodCounter{}, WithBoundedConcurrency(3))
+		if err != nil {
+			t.Fatalf("unexpected validation error: %v", err)
+		}
+		if sm.maxConcurrency != 3 {
+			t.Errorf("expected maximum concurrency 3, got %d", sm.maxConcurrency)
+		}
+	})
+
+	t.Run("GOMAXPROCS", func(t *testing.T) {
+		sm, err := newStateMachine(&goodCounter{}, WithConcurrency())
+		if err != nil {
+			t.Fatalf("unexpected validation error: %v", err)
+		}
+		if want := runtime.GOMAXPROCS(0); sm.maxConcurrency != want {
+			t.Errorf("expected maximum concurrency %d, got %d", want, sm.maxConcurrency)
+		}
+	})
+
+	for _, n := range []int{0, -1} {
+		t.Run(fmt.Sprintf("Invalid/%d", n), func(t *testing.T) {
+			_, err := newStateMachine(&goodCounter{}, WithBoundedConcurrency(n))
+			assertErrorContains(t, "must be positive", err)
+		})
+	}
+}
+
+func TestNewStateMachineRuleGroups(t *testing.T) {
+	t.Parallel()
+
+	sm, err := newStateMachine(
+		&groupedMachine{},
+		WithRuleGroup("alpha", "RuleAlpha"),
+		WithRuleGroup("alpha", "RuleGamma"),
+		WithRuleGroup("beta", "RuleBeta"),
+	)
+	if err != nil {
+		t.Fatalf("newStateMachine: %v", err)
+	}
+
+	// Reflection discovers methods alphabetically. Explicit groups are numbered
+	// in option order; the unmentioned RuleDelta remains in default group zero.
+	if want := []int64{1, 2, 0, 1}; !slices.Equal(sm.ruleGroups, want) {
+		t.Errorf("rule groups = %v, want %v", sm.ruleGroups, want)
+	}
+}
+
+func TestNewStateMachineRuleGroupValidation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		opts []StateMachineOption
+		want string
+	}{
+		{name: "Empty", opts: []StateMachineOption{WithRuleGroup("empty")}, want: "group 1 is empty"},
+		{name: "Unknown", opts: []StateMachineOption{WithRuleGroup("missing", "RuleMissing")}, want: `unknown rule "RuleMissing"`},
+		{name: "Invariant", opts: []StateMachineOption{WithRuleGroup("invariant", "InvariantOK")}, want: `names invariant "InvariantOK"`},
+		{name: "Duplicate", opts: []StateMachineOption{WithRuleGroup("alpha", "RuleAlpha"), WithRuleGroup("beta", "RuleAlpha")}, want: `belongs to both group 1 and group 2`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := newStateMachine(&groupedMachine{}, tt.opts...)
+			assertErrorContains(t, tt.want, err)
+		})
+	}
+}
+
+func TestNewStateMachineAlwaysCheckInvariants(t *testing.T) {
+	t.Parallel()
+
+	sm, err := newStateMachine(
+		&invariantSelectionMachine{},
+		WithAlwaysCheckInvariants("InvariantAlways"),
+	)
+	if err != nil {
+		t.Fatalf("newStateMachine: %v", err)
+	}
+	if want := []bool{true, false}; !slices.Equal(sm.invariantAlwaysCheck, want) {
+		t.Errorf("always-check flags = %v, want %v", sm.invariantAlwaysCheck, want)
+	}
+}
+
+func TestNewStateMachineAlwaysCheckInvariantValidation(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"RuleStep", "InvariantMissing"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, err := newStateMachine(
+				&invariantSelectionMachine{},
+				WithAlwaysCheckInvariants(name),
+			)
+			assertErrorContains(t, fmt.Sprintf("unknown invariant %q", name), err)
+		})
+	}
+}
+
+func TestStateMachineSelectsInvariantsAtJoinPoints(t *testing.T) {
+	t.Parallel()
+
+	probe := &invariantSelectionMachine{}
+	sm, err := newStateMachine(probe, WithAlwaysCheckInvariants("InvariantAlways"))
+	if err != nil {
+		t.Fatalf("newStateMachine: %v", err)
+	}
+	shared := &concurrentTestCaseShared{
+		selectedConcurrency: 1,
+		selectedRounds:      2,
+		shouldCheckInvariant: func(invariant int64) (bool, error) {
+			return invariant == 0, nil
+		},
+	}
+	sm.Run(&concurrentTestCase{shared: shared})
+
+	if want := []bool{true, false}; !slices.Equal(shared.invariantAlwaysCheck, want) {
+		t.Errorf("registered always-check flags = %v, want %v", shared.invariantAlwaysCheck, want)
+	}
+	if want := []int64{0, 1, 0, 1}; !slices.Equal(shared.invariantChecks, want) {
+		t.Errorf("intermediate invariant checks = %v, want %v", shared.invariantChecks, want)
+	}
+	if probe.alwaysCalls != 4 {
+		t.Errorf("always-check invariant calls = %d, want initial, two intermediate, and final checks", probe.alwaysCalls)
+	}
+	if probe.sampledCalls != 2 {
+		t.Errorf("sampled invariant calls = %d, want unconditional initial and final checks", probe.sampledCalls)
+	}
+}
+
+func TestStateMachineInvariantSelectionErrorAborts(t *testing.T) {
+	t.Parallel()
+
+	want := errors.New("invariant selection failed")
+	sm, err := newStateMachine(&invariantSelectionMachine{})
+	if err != nil {
+		t.Fatalf("newStateMachine: %v", err)
+	}
+	shared := &concurrentTestCaseShared{
+		selectedConcurrency: 1,
+		shouldCheckInvariant: func(int64) (bool, error) {
+			return false, want
+		},
+	}
+	defer expectErrorPanic(t, want)
+	sm.Run(&concurrentTestCase{shared: shared})
+}
+
+func TestStateMachineRunsSequentiallyByDefault(t *testing.T) {
+	t.Parallel()
+
+	probe := &concurrentExecutionProbe{
+		expectedWorkers: 1,
+		allEntered:      make(chan struct{}),
+	}
+	sm, err := newStateMachine(probe)
+	if err != nil {
+		t.Fatalf("newStateMachine: %v", err)
+	}
+	shared := &concurrentTestCaseShared{selectedConcurrency: 1}
+	sm.Run(&concurrentTestCase{shared: shared})
+
+	if shared.requestedMaxConcurrency != 1 {
+		t.Errorf("requested maximum concurrency = %d, want 1", shared.requestedMaxConcurrency)
+	}
+	if shared.cloneCount != 1 {
+		t.Errorf("worker clones = %d, want 1", shared.cloneCount)
+	}
+	if got := probe.entered.Load(); got != 1 {
+		t.Errorf("workers entering rule = %d, want 1", got)
+	}
+	if starts, stops := shared.spanStarts.Load(), shared.spanStops.Load(); starts != 0 || stops != 0 {
+		t.Errorf("stateful spans = %d starts, %d stops; want none", starts, stops)
+	}
+}
+
+func TestStateMachineAbortsWhenWorkerCloneFails(t *testing.T) {
+	t.Parallel()
+
+	want := errors.New("clone failed")
+	sm, err := newStateMachine(&goodCounter{})
+	if err != nil {
+		t.Fatalf("newStateMachine: %v", err)
+	}
+	shared := &concurrentTestCaseShared{selectedConcurrency: 1, cloneErr: want}
+
+	defer expectErrorPanic(t, want)
+	sm.Run(&concurrentTestCase{shared: shared})
+}
+
+func TestStateMachineAbortsWhenWorkerAttributionFails(t *testing.T) {
+	want := errors.New("worker attribution failed")
+	sm, err := newStateMachine(&goodCounter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared := &concurrentTestCaseShared{selectedConcurrency: 2, workerErr: want}
+	defer expectErrorPanic(t, want)
+	sm.Run(&concurrentTestCase{shared: shared})
+}
+
+func TestStateMachineReportsRejectedRule(t *testing.T) {
+	t.Parallel()
+
+	sm, err := newStateMachine(&rejectingMachine{})
+	if err != nil {
+		t.Fatalf("newStateMachine: %v", err)
+	}
+	var out strings.Builder
+	shared := &concurrentTestCaseShared{selectedConcurrency: 1}
+	sm.Run(&concurrentTestCase{shared: shared, out: &out})
+
+	if shared.rejectedRules != 1 {
+		t.Errorf("rejected rules = %d, want 1", shared.rejectedRules)
+	}
+	if !strings.Contains(out.String(), "Rule stopped early due to violated assumption.\n") {
+		t.Errorf("output did not report the rejected rule:\n%s", out.String())
+	}
+}
+
+func TestStateMachineRunsEngineSelectedWorkersConcurrently(t *testing.T) {
+	t.Parallel()
+
+	const selectedConcurrency = int64(2)
+	probe := &concurrentExecutionProbe{
+		expectedWorkers: selectedConcurrency,
+		allEntered:      make(chan struct{}),
+	}
+	sm, err := newStateMachine(probe, WithBoundedConcurrency(4), WithRuleGroup("overlap", "RuleOverlap"))
+	if err != nil {
+		t.Fatalf("newStateMachine: %v", err)
+	}
+	shared := &concurrentTestCaseShared{selectedConcurrency: selectedConcurrency, selectedGroup: 1}
+	sm.Run(&concurrentTestCase{shared: shared})
+
+	if shared.requestedMaxConcurrency != 4 {
+		t.Errorf("requested maximum concurrency = %d, want 4", shared.requestedMaxConcurrency)
+	}
+	if want := []int64{1}; !slices.Equal(shared.ruleGroups, want) {
+		t.Errorf("rule groups passed to engine = %v, want %v", shared.ruleGroups, want)
+	}
+	if shared.cloneCount != selectedConcurrency {
+		t.Errorf("worker clones = %d, want engine-selected count %d", shared.cloneCount, selectedConcurrency)
+	}
+	if got := probe.entered.Load(); got != selectedConcurrency {
+		t.Errorf("workers entering rule = %d, want %d", got, selectedConcurrency)
+	}
+	if probe.barrierTimedOut.Load() {
+		t.Error("a worker did not enter the rule while the other worker was active")
+	}
+	if probe.invariantWhileRuleRuns {
+		t.Error("invariant ran before all workers reached the join point")
+	}
+	if got := probe.invariantCalls; got != 3 {
+		t.Errorf("invariant calls = %d, want initial, post-round, and final checks", got)
+	}
+	if starts, stops := shared.spanStarts.Load(), shared.spanStops.Load(); starts != 0 || stops != 0 {
+		t.Errorf("stateful spans = %d starts, %d stops; want none", starts, stops)
+	}
+}
+
+func TestRunStatefulInSynctest(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var overlapped atomic.Bool
+		Test(t, func(ht *T) {
+			machine := &synctestMachine{overlapped: &overlapped}
+			RunStateful(ht, machine, WithBoundedConcurrency(2), WithStatefulStepCount(10))
+			if machine.steps.Load() == 0 {
+				ht.Fatal("state machine did not run a rule")
+			}
+		}, WithTestCases(50), WithDatabase(""))
+		if !overlapped.Load() {
+			t.Fatal("state machine never ran rules concurrently")
+		}
+	})
+}
+
+type nativeOutputRuleMachine struct{}
+
+func (*nativeOutputRuleMachine) RuleStep(tc TestCase) {
+	tc.Note("first note\nsecond note")
+	_ = Draw(tc, Just([]int{111111111, 222222222, 333333333, 444444444}))
+}
+
+func TestStateMachineGroupsRoundOutputByWorker(t *testing.T) {
+	t.Parallel()
+
+	sm, err := newStateMachine(&nativeOutputRuleMachine{}, WithBoundedConcurrency(2))
+	if err != nil {
+		t.Fatalf("newStateMachine: %v", err)
+	}
+	var out strings.Builder
+	var shared *concurrentTestCaseShared
+	err = run(1, func(tc TestCase) {
+		shared = &concurrentTestCaseShared{selectedConcurrency: 2, selectedRounds: 2, reverseWorkerOrder: true}
+		sm.Run(&concurrentTestCase{TestCase: tc, shared: shared})
+		tc.Fail()
+	}, WithTestCases(1), WithDatabase(""), withOutput(&out))
+	if err == nil {
+		t.Fatal("expected failure")
+	}
+	if got, want := shared.freedClones, int64(4); got != want {
+		t.Fatalf("freed clones = %d, want %d", got, want)
+	}
+
+	output := out.String()
+	positions := []int{
+		strings.Index(output, "Initial invariant check."),
+		strings.Index(output, "Round 1:"),
+		strings.Index(output, "[worker 0 +"),
+		strings.Index(output, "[worker 1 +"),
+		strings.Index(output, "Round 2:"),
+		strings.LastIndex(output, "[worker 0 +"),
+		strings.LastIndex(output, "[worker 1 +"),
+	}
+	if slices.Contains(positions, -1) || !slices.IsSorted(positions) {
+		t.Fatalf("round and worker output is not in execution order:\n%s", output)
+	}
+	for _, want := range []string{"Round 1:", "Round 2:"} {
+		if strings.Count(output, want) != 1 {
+			t.Errorf("output contains %d copies of %q, want one:\n%s", strings.Count(output, want), want, output)
+		}
+	}
+	for _, want := range []string{"Rule: RuleStep", "first note", "second note", "_ = Draw("} {
+		if count := strings.Count(output, want); count != 4 {
+			t.Errorf("output contains %d copies of %q, want four:\n%s", count, want, output)
+		}
+	}
+
+}
+
+func TestStateMachineOmitsWorkerMetadataAtConcurrencyOne(t *testing.T) {
+	t.Parallel()
+
+	sm, err := newStateMachine(&outputRuleMachine{})
+	if err != nil {
+		t.Fatalf("newStateMachine: %v", err)
+	}
+	var out strings.Builder
+	shared := &concurrentTestCaseShared{selectedConcurrency: 1}
+	sm.Run(&concurrentTestCase{shared: shared, out: &out})
+	if got := out.String(); strings.Contains(got, "Concurrency level:") || strings.Contains(got, "[worker") {
+		t.Fatalf("sequential output contains concurrency metadata:\n%s", got)
+	}
+}
+
+func TestWorkgroupWaitReturnsAllErrorsInPriorityOrder(t *testing.T) {
+	t.Parallel()
+
+	control := errors.New("control")
+	overrun := libhegel.E_STOP_TEST
+	invalid := libhegel.E_ASSUME
+	user0 := interestingInvocationError(errors.New("user zero"))
+	user1 := interestingInvocationError(errors.New("user one"))
+	g := make(workgroup, 6)
+	g.Go(4, func() error { return user1 })
+	g.Go(3, func() error { return invalid })
+	g.Go(2, func() error { return overrun })
+	g.Go(5, func() error { return nil })
+	g.Go(1, func() error { return control })
+	g.Go(0, func() error { return user0 })
+
+	errs := g.Wait()
+	want := []struct {
+		worker int
+		err    error
+	}{{1, control}, {2, overrun}, {3, invalid}, {0, user0}, {4, user1}}
+	if len(errs) != len(want) {
+		t.Fatalf("Wait returned %d errors, want %d", len(errs), len(want))
+	}
+	for i, expected := range want {
+		var worker *workerError
+		if !errors.As(errs[i], &worker) || worker.worker != expected.worker || !errors.Is(errs[i], expected.err) {
+			t.Errorf("error %d = %#v, want worker %d error %v", i, errs[i], expected.worker, expected.err)
+		}
+	}
+}
+
+func TestStateMachineLogsDroppedWorkerErrors(t *testing.T) {
+	t.Parallel()
+
+	firstPanic := interestingInvocationError(errors.New("first panic"))
+	secondFailure := failureInvocationError("second failure")
+	primary := errors.New("primary framework error")
+	sm, err := newStateMachine(&outputRuleMachine{}, WithBoundedConcurrency(4))
+	if err != nil {
+		t.Fatalf("newStateMachine: %v", err)
+	}
+	var out strings.Builder
+	shared := &concurrentTestCaseShared{
+		selectedConcurrency: 4,
+		nextRuleErrors: map[int64]error{
+			0: primary,
+			1: errors.New("secondary framework error"),
+			2: firstPanic,
+			3: secondFailure,
+		},
+	}
+	defer func() {
+		var worker *workerError
+		if got := recover(); !errors.As(got.(error), &worker) || worker.worker != 0 {
+			t.Fatalf("panic = %#v, want worker 0 framework error", got)
+		}
+		text := out.String()
+		if strings.Contains(text, "secondary framework error") {
+			t.Fatalf("secondary framework error was logged:\n%s", text)
+		}
+		if !strings.Contains(text, "Dropped concurrent panic from worker 2") || !strings.Contains(text, ": first panic") ||
+			!strings.Contains(text, "Dropped concurrent failure from worker 3") || !strings.Contains(text, ": second failure") {
+			t.Fatalf("dropped errors not logged:\n%s", text)
+		}
+	}()
+	sm.Run(&concurrentTestCase{shared: shared, out: &out})
+}
+
+func TestStateMachineSelectsWorkerError(t *testing.T) {
+	t.Parallel()
+
+	userFailure := interestingInvocationError(errors.New("user failure"))
+	invalid := libhegel.E_ASSUME
+	overrun := libhegel.E_STOP_TEST
+	control := errors.New("control")
+	lowest := errors.New("worker zero")
+
+	tests := []struct {
+		name   string
+		errs   map[int64]error
+		want   error
+		worker int
+	}{
+		{"lowest worker breaks ties", map[int64]error{0: lowest, 1: errors.New("worker one")}, lowest, 0},
+		{"invalid beats user failure", map[int64]error{0: userFailure, 1: invalid}, invalid, 1},
+		{"overrun beats invalid", map[int64]error{0: invalid, 1: overrun}, overrun, 1},
+		{"control beats overrun", map[int64]error{0: overrun, 1: control}, control, 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			sm, err := newStateMachine(&singleRuleMachine{}, WithBoundedConcurrency(2))
+			if err != nil {
+				t.Fatalf("newStateMachine: %v", err)
+			}
+			shared := &concurrentTestCaseShared{
+				selectedConcurrency: 2,
+				nextRuleErrors:      test.errs,
+			}
+			defer func() {
+				got, ok := recover().(*workerError)
+				if !ok || got.worker != test.worker || !errors.Is(got, test.want) {
+					t.Fatalf("panic = %#v, want worker %d error %v", got, test.worker, test.want)
+				}
+			}()
+			sm.Run(&concurrentTestCase{shared: shared})
+		})
+	}
+}
+
+func TestRunStatefulSingleRule(t *testing.T) {
+	t.Parallel()
+	Test(t, func(ht *T) {
+		RunStateful(ht, &singleRuleMachine{})
+	})
+}
+
+func TestRunStatefulPanicsOnValidationError(t *testing.T) {
+	t.Parallel()
+	assertPanicsWithMessage(t, "no rules", func() {
+		RunStateful(&testCase{}, &noRulesMachine{})
+	})
+}
+
+func TestRunStatefulAssumeRejectionRetries(t *testing.T) {
+	t.Parallel()
+	totalGateRuns := 0
+	err := Run(func(tc TestCase) {
+		m := &gatedMachine{}
+		RunStateful(tc, m)
+		totalGateRuns += m.gateCount
+	}, WithTestCases(10))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if totalGateRuns == 0 {
+		t.Error("RuleGated never succeeded; assume retry appears broken")
+	}
+}
+
+// TestRunStatefulNextRuleErrorAborts covers the error branch after
+// stateMachineNextRule in Run: when the engine fails to draw the next rule (for
+// example E_STOP_TEST once its per-test-case choice budget is exhausted), Run
+// aborts the test case. The engine no longer surfaces this through the
+// integration tests, so it is injected via a stubbed test case.
+func TestRunStatefulNextRuleErrorAborts(t *testing.T) {
+	t.Parallel()
+	sm, err := newStateMachine(&singleRuleMachine{})
+	if err != nil {
+		t.Fatalf("newStateMachine: %v", err)
+	}
+	tc := newStubTestCase(t,
+		uintptr(2), int64(1), libhegel.OK, // new_state_machine
+		libhegel.StateMachineGroup(0), libhegel.OK, // state_machine_next_group
+		uintptr(3), libhegel.OK, // test_case_clone
+		uintptr(4),                                // context_new for the cloned test case
+		int64(0), libhegel.E_STOP_TEST, "overrun", // state_machine_next_rule + last-error message
+	)
+	defer expectErrorPanic(t, libhegel.E_STOP_TEST)
+	sm.Run(tc)
+}
+
+func TestRunStatefulInvariantViolationFails(t *testing.T) {
+	t.Parallel()
+	err := run(1, func(tc TestCase) {
+		RunStateful(tc, &invariantViolator{})
+	}, WithTestCases(10))
+	if err == nil {
+		t.Fatal("Expected error")
+	}
+}
+
+// TestRunStatefulRuleFailureAborts covers callRule's deferred abort(nil) when a
+// rule leaves the case in a non-VALID status (via Fail) rather than panicking.
+func TestRunStatefulRuleFailureAborts(t *testing.T) {
+	t.Parallel()
+	err := run(1, func(tc TestCase) {
+		RunStateful(tc, &ruleFailer{})
+	}, WithTestCases(10))
+	if err == nil {
+		t.Fatal("Expected error")
+	}
+}
+
+func TestStatefulStepCount(t *testing.T) {
+	t.Parallel()
+	for _, count := range []int{0, -1} {
+		if _, err := newStateMachine(&singleRuleMachine{}, WithStatefulStepCount(count)); err == nil {
+			t.Fatalf("invalid step count %d accepted", count)
+		}
+	}
+	for _, test := range []struct {
+		opts []StateMachineOption
+		want int
+	}{
+		{nil, 50},
+		{[]StateMachineOption{WithStatefulStepCount(7)}, 7},
+		{[]StateMachineOption{WithStatefulStepCount(0), WithStatefulStepCount(3)}, 3},
+	} {
+		shared := &concurrentTestCaseShared{selectedConcurrency: 1}
+		tc := &concurrentTestCase{shared: shared}
+		RunStateful(tc, &singleRuleMachine{}, test.opts...)
+		if got := shared.requestedStepCount; got != test.want {
+			t.Fatalf("constructor step count = %d, want %d", got, test.want)
+		}
+	}
+}
+
+type stepBudgetMachine struct{ steps int }
+
+func (m *stepBudgetMachine) RuleStep(TestCase) { m.steps++ }
+
+func TestRunStatefulIndependentStepBudgets(t *testing.T) {
+	t.Parallel()
+	Test(t, func(tc *T) {
+		for _, budget := range []int{1, 3, 2} {
+			machine := new(stepBudgetMachine)
+			RunStateful(tc, machine, WithStatefulStepCount(budget))
+			if machine.steps < 1 || machine.steps > budget {
+				tc.Fatalf("completed %d rules with budget %d", machine.steps, budget)
+			}
+		}
+	}, WithDatabase(""), WithTestCases(10))
+}
