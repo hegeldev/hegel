@@ -21,8 +21,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import json
 import re
+import subprocess
 import release
-from release import CPP, JAVA, LIBHEGEL, OCAML, PYTHON, RUST, TYPESCRIPT
+from release import CPP, GO, JAVA, LIBHEGEL, OCAML, PYTHON, RUST, TYPESCRIPT
 
 RUST_CARGO = """\
 [package]
@@ -314,7 +315,9 @@ class ApplyVersionBumpTest(unittest.TestCase):
 
     def test_install_docs_in_the_checkout_name_the_current_version(self) -> None:
         for component in release.COMPONENTS:
-            version = release.current_version(component.manifest())
+            if not component.install_docs:
+                continue
+            version = release.component_version(release.ROOT, component)
             for doc in component.install_docs:
                 self.assertIn(version, (release.ROOT / doc).read_text(), doc)
 
@@ -376,6 +379,14 @@ class ApplyVersionBumpTest(unittest.TestCase):
             TYPESCRIPT_PIN.replace("0.5.0", "0.6.0"),
         )
 
+    def test_a_go_release_rewrites_no_manifest(self) -> None:
+        before = {
+            path: path.read_text() for path in self.root.rglob("*") if path.is_file()
+        }
+        release.apply_version_bump(self.root, {GO: "0.9.29"})
+        after = {path: path.read_text() for path in before}
+        self.assertEqual(after, before)
+
     def test_engine_pin_must_be_unambiguous(self) -> None:
         pin = self.root / "frontends/typescript/src/libhegel-version.ts"
         pin.write_text("export const OTHER = 1;\n")
@@ -430,6 +441,7 @@ CURRENT = {
     CPP: "0.13.1",
     JAVA: "0.10.2",
     OCAML: "0.26.3",
+    GO: "0.9.28",
 }
 
 
@@ -460,6 +472,7 @@ class PlanReleaseTest(unittest.TestCase):
                 ),
                 JAVA: ("0.10.3", "This release updates the bundled libhegel engine to 0.5.1."),
                 OCAML: ("0.26.4", "This release updates the bundled libhegel engine to 0.5.1."),
+                GO: ("0.9.29", "This release updates the bundled libhegel engine to 0.5.1."),
             },
         )
 
@@ -563,6 +576,10 @@ class ComponentTest(unittest.TestCase):
         self.assertEqual(JAVA.tag("0.10.3"), "frontends/java/0.10.3")
         self.assertEqual(OCAML.tag("0.26.4"), "frontends/ocaml/0.26.4")
 
+    def test_go_tags_carry_the_v_a_go_module_version_needs(self) -> None:
+        self.assertEqual(GO.tag("0.9.29"), "frontends/go/v0.9.29")
+
+
     def test_release_files_live_in_the_component(self) -> None:
         for component in release.COMPONENTS:
             self.assertEqual(component.release_dir, f"{component.path}/RELEASE")
@@ -640,6 +657,17 @@ class ReleaseTagsTest(unittest.TestCase):
     def test_libhegel_release_is_titled_after_libhegel(self) -> None:
         self.assertEqual(release.libhegel_release_title("0.24.0"), "libhegel v0.24.0")
 
+    def test_the_go_tag_is_left_off_the_release_commit(self) -> None:
+        versions = {LIBHEGEL: "0.24.0", OCAML: "0.26.4", GO: "0.9.29"}
+        self.assertEqual(
+            release.release_tags(versions),
+            ["libhegel/0.24.0", "frontends/ocaml/0.26.4", "frontends/go/v0.9.29"],
+        )
+        self.assertEqual(
+            release.release_commit_tags(versions), ["libhegel/0.24.0", "frontends/ocaml/0.26.4"]
+        )
+        self.assertEqual(release.release_commit_tags({GO: "0.9.29"}), [])
+
     def test_commit_message_names_the_tags_and_skips_ci(self) -> None:
         message = release.release_commit_message(["libhegel/0.24.0", "frontends/rust/0.23.3"])
         self.assertEqual(
@@ -698,6 +726,34 @@ class ReleaseFilesTest(unittest.TestCase):
             release.combine_entries([("minor", "One."), ("major", "Two.")]), ("major", "One.\n\nTwo.")
         )
         self.assertEqual(release.combine_entries([("patch", "Only.")]), ("patch", "Only."))
+
+
+class TaggedVersionTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.git("init", "--quiet")
+        self.git(
+            "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet",
+            "--allow-empty", "-m", "root",
+        )
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def git(self, *args: str) -> None:
+        subprocess.run(["git", *args], cwd=self.root, check=True)
+
+    def test_reads_the_highest_tag_by_version_order(self) -> None:
+        for tag in ["frontends/go/v0.9.9", "frontends/go/v0.9.28", "frontends/go/v0.10.0-rc1"]:
+            self.git("tag", tag)
+        self.git("tag", "frontends/rust/0.99.0")
+        self.assertEqual(release.tagged_version(self.root, GO), "0.9.28")
+        self.assertEqual(release.component_version(self.root, GO), "0.9.28")
+
+    def test_no_tag_is_an_error(self) -> None:
+        with self.assertRaises(ValueError):
+            release.tagged_version(self.root, GO)
 
 
 class CheckReleaseFilesTest(unittest.TestCase):
@@ -764,6 +820,14 @@ class CheckReleaseFilesTest(unittest.TestCase):
         errors = self.check(["frontends/rust/src/lib.rs"])
         self.assertEqual(len(errors), 1)
         self.assertIn("frontends/rust/RELEASE/<slug>.md", errors[0])
+
+    def test_any_go_module_change_needs_a_go_release_file(self) -> None:
+        # A Go module ships every file under its directory, tests and docs
+        # included.
+        for rel in ["frontends/go/runner.go", "frontends/go/runner_test.go", "frontends/go/README.md"]:
+            errors = self.check([rel])
+            self.assertEqual(len(errors), 1, rel)
+            self.assertIn("frontends/go/RELEASE/<slug>.md", errors[0])
 
     def test_a_deleted_release_file_is_not_this_pull_requests_file(self) -> None:
         errors = self.check(["frontends/rust/src/lib.rs", "frontends/rust/RELEASE/gone.md"])

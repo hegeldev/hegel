@@ -48,6 +48,7 @@ jobs:
       cpp: ${{ (github.event_name == 'push' && steps.code.outputs.code == 'true') || steps.filter.outputs.cpp == 'true' }}
       java: ${{ (github.event_name == 'push' && steps.code.outputs.code == 'true') || steps.filter.outputs.java == 'true' }}
       ocaml: ${{ (github.event_name == 'push' && steps.code.outputs.code == 'true') || steps.filter.outputs.ocaml == 'true' }}
+      go: ${{ (github.event_name == 'push' && steps.code.outputs.code == 'true') || steps.filter.outputs.go == 'true' }}
       website: ${{ github.event_name == 'push' || steps.filter.outputs.website == 'true' }}
       code: ${{ steps.code.outputs.code == 'true' }}
     steps:
@@ -127,6 +128,10 @@ jobs:
               - *shared
               - 'libhegel/**'
               - 'frontends/ocaml/**'
+            go:
+              - *shared
+              - 'libhegel/**'
+              - 'frontends/go/**'
             website:
               - *shared
               - 'website/**'
@@ -177,6 +182,11 @@ jobs:
           cache-restore-keys: |
             opam-${{ runner.os }}-5.2.1-lint-
           packages: ocamlformat.0.29.0
+      # The Go frontend's lints (gofmt, go fix, go vet, staticcheck).
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: stable
+          cache-dependency-path: frontends/go/go.sum
       - name: Check lint
         env:
           CLANG_TIDY: clang-tidy-18
@@ -252,6 +262,13 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/frontend-ocaml.yml
+  go:
+    name: go
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/frontend-go.yml
 
   website:
     name: website
@@ -384,7 +401,7 @@ jobs:
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [changes, lint, libhegel, rust, python, typescript, cpp, java, ocaml, website, test-minimal-versions, coverage, nix]
+    needs: [changes, lint, libhegel, rust, python, typescript, cpp, java, ocaml, go, website, test-minimal-versions, coverage, nix]
     runs-on: ubuntu-latest
     permissions: {}
     steps:
@@ -404,7 +421,7 @@ jobs:
     # job evaluate its condition at all when a dependency was skipped. A push
     # confined to website/ tested nothing it could release.
     if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.changes.outputs.code == 'true' }}
-    needs: [changes, lint, libhegel, rust, python, typescript, cpp, java, ocaml, website, test-minimal-versions, coverage, nix]
+    needs: [changes, lint, libhegel, rust, python, typescript, cpp, java, ocaml, go, website, test-minimal-versions, coverage, nix]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -423,6 +440,9 @@ jobs:
     # `ocaml_released` / `ocaml_tag` for the opam source tarball. Each
     # is read off the tags release.py left on the release
     # commit, so a frontend dragged along by a libhegel release counts too.
+    # The Go frontend is tagged on a commit of its own (release-go), so
+    # release.py reports `go_tag` instead, and `commit` is the release commit
+    # that commit builds on.
     outputs:
       c_released: ${{ steps.released.outputs.libhegel_tag != '' }}
       version: ${{ steps.released.outputs.libhegel_version }}
@@ -437,6 +457,9 @@ jobs:
       java_tag: ${{ steps.released.outputs.java_tag }}
       ocaml_released: ${{ steps.released.outputs.ocaml_tag != '' }}
       ocaml_tag: ${{ steps.released.outputs.ocaml_tag }}
+      go_released: ${{ steps.released.outputs.go_tag != '' }}
+      go_tag: ${{ steps.released.outputs.go_tag }}
+      commit: ${{ steps.release.outputs.commit }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -456,11 +479,14 @@ jobs:
           private-key: ${{ secrets.HEGEL_RELEASE_APP_PRIVATE_KEY }}
           repositories: hegel
 
+      # Every tag, because the Go frontend's current version is its highest
+      # frontends/go/vX.Y.Z tag (it has no manifest).
       - name: Re-checkout with app token # zizmor: ignore[artipacked]
         if: steps.check.outputs.skip != 'true'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           token: ${{ steps.app-token.outputs.token }}
+          fetch-tags: true
 
       - name: Install Rust
         if: steps.check.outputs.skip != 'true'
@@ -490,6 +516,8 @@ jobs:
       - name: Capture released versions
         id: released
         if: steps.release.outputs.released == 'true'
+        env:
+          GO_TAG: ${{ steps.release.outputs.go_tag }}
         run: |
           set -euo pipefail
           libhegel_tag=$(git tag --points-at HEAD --list 'libhegel/*')
@@ -499,7 +527,7 @@ jobs:
           cpp_tag=$(git tag --points-at HEAD --list 'frontends/cpp/*')
           java_tag=$(git tag --points-at HEAD --list 'frontends/java/*')
           ocaml_tag=$(git tag --points-at HEAD --list 'frontends/ocaml/*')
-          if [ -z "$libhegel_tag$rust_tag$python_tag$typescript_tag$cpp_tag$java_tag$ocaml_tag" ]; then
+          if [ -z "$libhegel_tag$rust_tag$python_tag$typescript_tag$cpp_tag$java_tag$ocaml_tag$GO_TAG" ]; then
             echo "release.py left no release tag on the release commit" >&2
             exit 1
           fi
@@ -513,6 +541,7 @@ jobs:
             echo "cpp_tag=$cpp_tag"
             echo "java_tag=$java_tag"
             echo "ocaml_tag=$ocaml_tag"
+            echo "go_tag=$GO_TAG"
           } >> "$GITHUB_OUTPUT"
 
       - name: Authenticate with crates.io
@@ -1256,43 +1285,135 @@ jobs:
           HEGEL_RELEASE_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
         run: python3 .github/scripts/push_ocaml_docs.py
 
-  # Notify each downstream language binding that still lives in its own repo
-  # that a new libhegel release is live so it can bump its pinned version.
-  # One matrix entry per consumer repo; remove an entry when that frontend
-  # moves into this monorepo. Gated on `release-binaries-verify`, not just
-  # `release`: the downstream bumps read the per-asset SHA-256 digests off
-  # this release, so we only dispatch once every libhegel binary is confirmed
-  # uploaded. `fail-fast: false` keeps a dispatch failure for one repo from
-  # cancelling the others. The event type keeps its historical name so the
-  # consumers' existing workflows keep matching.
-  bump-libhegel:
-    name: bump-libhegel
-    if: github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.outputs.c_released == 'true'
+
+  # The Go frontend's release. A Go module version is the tree its tag names,
+  # and the module embeds the libhegel binaries, which only exist once
+  # release-binaries-verify has published the libhegel release (or, on a
+  # Go-only release, are those of the already-published engine version in
+  # libhegel/Cargo.toml). So the tag goes on a commit of its own: the release
+  # commit with internal/libhegel/libs/ filled in, never pushed to a branch.
+  # First the suite runs against those embedded binaries on each OS with a
+  # runner; then release-go makes the commit, pushes its LFS objects and the
+  # tag, and creates the GitHub release with the changelog entry as notes.
+  release-go-verify:
+    name: release-go-verify (${{ matrix.os }})
+    if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.go_released == 'true' && (needs.release.outputs.c_released != 'true' || needs.release-binaries-verify.result == 'success') }}
     needs: [release, release-binaries-verify]
-    runs-on: ubuntu-latest
-    # The cross-repo dispatch uses the app token below, not GITHUB_TOKEN.
-    permissions: {}
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
-        repo: [hegel-go]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - name: Generate app token
-        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
-        id: app-token
+      - name: Checkout release commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          app-id: ${{ vars.HEGEL_RELEASE_APP_ID }}
-          private-key: ${{ secrets.HEGEL_RELEASE_APP_PRIVATE_KEY }}
-          repositories: ${{ matrix.repo }}
-
-      - name: Dispatch hegel-rust-release to ${{ matrix.repo }}
+          persist-credentials: false
+          ref: ${{ needs.release.outputs.commit }}
+      - uses: ./.github/actions/install-tools
+        with:
+          tools: just
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: stable
+          cache-dependency-path: frontends/go/go.sum
+      - name: Embed the libhegel release binaries
         env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.release.outputs.version }}
-          TAG: ${{ needs.release.outputs.libhegel_tag }}
-          REPO: ${{ matrix.repo }}
+        run: just go::vendor-libhegel "$VERSION"
+      - name: Run the test suite against the embedded binaries
+        working-directory: frontends/go
+        shell: bash
+        env:
+          HEGEL_EXPECT_EMBEDDED_LIBHEGEL: "1"
+        run: go test ./...
+
+  release-go:
+    name: release-go
+    if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.go_released == 'true' && needs.release-go-verify.result == 'success' }}
+    needs: [release, release-go-verify]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.release.outputs.go_tag }}
+    steps:
+      # Credentials persist for the tag push below.
+      - name: Checkout release commit # zizmor: ignore[artipacked]
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.release.outputs.commit }}
+      - uses: ./.github/actions/install-tools
+        with:
+          tools: just
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: stable
+          cache-dependency-path: frontends/go/go.sum
+      # A Go tag must never move once pushed: Go records each version's
+      # checksum, so a re-run that finds the tag on origin only (re)creates
+      # the GitHub release.
+      - name: Check whether the tag is on origin
+        id: tagged
         run: |
-          gh api "repos/hegeldev/$REPO/dispatches" \
-            -f event_type=hegel-rust-release \
-            -F "client_payload[version]=$VERSION" \
-            -F "client_payload[tag]=$TAG"
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then
+            echo "tagged=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Write the release notes
+        id: notes
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#frontends/go/v}"
+          awk -v version="$VERSION" '
+            /^## / { printing = ($2 == version) ; next }
+            printing { print }
+          ' frontends/go/CHANGELOG.md > "${RUNNER_TEMP}/notes.md"
+          if [ ! -s "${RUNNER_TEMP}/notes.md" ]; then
+            echo "no $VERSION entry in frontends/go/CHANGELOG.md" >&2
+            exit 1
+          fi
+          {
+            echo "version=$VERSION"
+            echo "notes=${RUNNER_TEMP}/notes.md"
+          } >> "$GITHUB_OUTPUT"
+      - name: Embed the libhegel release binaries
+        if: steps.tagged.outputs.tagged != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: just go::vendor-libhegel "$VERSION"
+      # git-lfs's pre-push hook uploads the binaries before the tag lands.
+      - name: Commit the binaries and push the tag
+        if: steps.tagged.outputs.tagged != 'true'
+        env:
+          NOTES: ${{ steps.notes.outputs.notes }}
+        run: |
+          set -euo pipefail
+          git lfs install --local
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontends/go/internal/libhegel/libs
+          { printf 'Release %s\n\n' "$TAG"; cat "$NOTES"; } | git commit --quiet --file=-
+          git tag "$TAG"
+          git push origin "refs/tags/$TAG"
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.notes.outputs.version }}
+          NOTES: ${{ steps.notes.outputs.notes }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag \
+              --title "Hegel for Go v${VERSION}" \
+              --notes-file "$NOTES"
+          fi
+      # Ask the public module proxy for the new version so it indexes it
+      # (https://go.dev/doc/modules/publishing), once the GitHub release exists.
+      - name: Update the Go module proxy
+        env:
+          VERSION: ${{ steps.notes.outputs.version }}
+        run: GOPROXY=proxy.golang.org go list -m "hegel.dev/go/hegel@v${VERSION}"
