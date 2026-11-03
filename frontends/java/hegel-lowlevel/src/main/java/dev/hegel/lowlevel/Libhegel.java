@@ -308,27 +308,37 @@ public interface Libhegel {
     int poolGenerate(long tc, long poolId, boolean consume, long[] outVariableId);
 
     /**
-     * {@code hegel_new_state_machine}: {@code ruleGroups} is parallel to {@code ruleNames} (any
-     * value but {@link Abi#STATE_MACHINE_DONE}), as is {@code ruleWeights} — each rule's selection
-     * weight relative to the other enabled rules of its group, finite and strictly positive, or
-     * {@code null} for all-equal weights. {@code invariantAlwaysCheck} is parallel to {@code
-     * invariantNames}. The engine draws the concurrency level in {@code [minConcurrency,
-     * maxConcurrency]} and writes it to {@code outConcurrency}; pass {@code 1, 1} for a sequential
-     * machine. {@code stepCount} is the target number of counted rounds per test case (at least 1;
-     * the engine has no default, and 50 is the conventional choice).
+     * {@code hegel_new_state_machine}: an empty machine with its concurrency bounds and step count.
+     * Declare its rules and invariants with {@link #stateMachineAddRule} and {@link
+     * #stateMachineAddInvariant}, then seal them with {@link #stateMachineStart}. The engine draws
+     * the concurrency level in {@code [minConcurrency, maxConcurrency]} when the machine starts;
+     * pass {@code 1, 1} for a sequential machine. {@code stepCount} is the target number of
+     * counted rounds per test case (at least 1; the engine has no default, and 50 is the
+     * conventional choice).
      */
-    int newStateMachine(
-            long tc,
-            List<String> ruleNames,
-            long[] ruleGroups,
-            double[] ruleWeights,
-            List<String> invariantNames,
-            boolean[] invariantAlwaysCheck,
-            long minConcurrency,
-            long maxConcurrency,
-            long stepCount,
-            long[] outId,
-            long[] outConcurrency);
+    int newStateMachine(long tc, long minConcurrency, long maxConcurrency, long stepCount, long[] outId);
+
+    /**
+     * {@code hegel_state_machine_add_rule}: declares the next rule, whose index is the number of
+     * rules declared before it. {@code weight} is its selection weight relative to the other
+     * enabled rules of the current group, finite and strictly positive ({@code 1.0} for an
+     * unweighted rule); {@code groups} lists the ids of the concurrency groups it belongs to — at
+     * least one, distinct, any value but {@link Abi#STATE_MACHINE_DONE}.
+     */
+    int stateMachineAddRule(long tc, long stateMachineId, String name, double weight, long[] groups);
+
+    /**
+     * {@code hegel_state_machine_add_invariant}: declares the next invariant, whose index is the
+     * number of invariants declared before it; {@code alwaysCheck} makes {@link
+     * #stateMachineShouldCheckInvariant} answer true for it unconditionally.
+     */
+    int stateMachineAddInvariant(long tc, long stateMachineId, String name, boolean alwaysCheck);
+
+    /**
+     * {@code hegel_state_machine_start}: seals the declared rules and invariants and draws the
+     * concurrency level into {@code outConcurrency}.
+     */
+    int stateMachineStart(long tc, long stateMachineId, long[] outConcurrency);
 
     /** The id of the group current for the new round, or {@link Abi#STATE_MACHINE_DONE}. */
     int stateMachineNextGroup(long tc, long stateMachineId, long[] outGroupId);

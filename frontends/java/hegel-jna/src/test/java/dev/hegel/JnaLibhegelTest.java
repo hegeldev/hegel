@@ -157,38 +157,12 @@ class JnaLibhegelTest {
         long[] out = {7};
         long[] concurrency = {9};
         boolean[] check = {true};
-        assertEquals(
-                Abi.E_INVALID_HANDLE,
-                lib.newStateMachine(
-                        0,
-                        List.of("r"),
-                        new long[] {0},
-                        null,
-                        List.of("i"),
-                        new boolean[] {true},
-                        1,
-                        1,
-                        50,
-                        out,
-                        concurrency));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.newStateMachine(0, 1, 1, 50, out));
         assertEquals(7, out[0]);
+        assertEquals(Abi.E_INVALID_HANDLE, lib.stateMachineAddRule(0, 0, "r", 2.5, new long[] {0}));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.stateMachineAddInvariant(0, 0, "i", true));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.stateMachineStart(0, 0, concurrency));
         assertEquals(9, concurrency[0]);
-        // Explicit weights are marshalled too (NULL above keeps the engine's all-equal default).
-        assertEquals(
-                Abi.E_INVALID_HANDLE,
-                lib.newStateMachine(
-                        0,
-                        List.of("r"),
-                        new long[] {0},
-                        new double[] {2.5},
-                        List.of("i"),
-                        new boolean[] {true},
-                        1,
-                        1,
-                        50,
-                        out,
-                        concurrency));
-        assertEquals(7, out[0]);
         assertEquals(Abi.E_INVALID_HANDLE, lib.stateMachineNextGroup(0, 0, out));
         assertEquals(7, out[0]);
         assertEquals(Abi.E_INVALID_HANDLE, lib.stateMachineNextRule(0, 0, 0, out));
@@ -287,6 +261,19 @@ class JnaLibhegelTest {
     }
 
     @Test
+    void stringArraysCarryEmptyEntriesAsNullData() {
+        // An empty name inside a list crosses as {NULL, 0}: the engine reads it as the empty
+        // string and rejects it as a category by name, proving the entry survived the trip.
+        JnaLibhegel lib = real();
+        long[] out = new long[1];
+        assertEquals(
+                Abi.E_INVALID_ARG,
+                lib.stringGeneratorText(
+                        0, 5, "ascii", 0, Abi.NO_MAX_CODEPOINT, List.of("Lu", ""), null, null, null, out));
+        assertTrue(lib.lastErrorMessage().contains("\"\" is not a valid Unicode category"), lib.lastErrorMessage());
+    }
+
+    @Test
     void regexPatternCrossesAsALengthDelimitedBuffer() {
         // A NUL inside the pattern must survive the call (the pattern crosses as a hegel_string_t:
         // pointer + byte length), and a null pattern crosses as {NULL, 0}, which the engine reads
@@ -337,9 +324,9 @@ class JnaLibhegelTest {
     }
 
     @Test
-    void stringArraysCrossAsContiguousStructs() {
-        // An empty name inside the list crosses as {NULL, 0}; a valid machine comes back, proving
-        // the engine read every entry of the contiguous hegel_string_t array.
+    void stateMachinesAreDeclaredRuleByRule() {
+        // Names cross by value, an empty one with a zero length; the started machine reports the
+        // fixed concurrency level, proving every declaration reached the engine.
         JnaLibhegel lib = real();
         long s = newSettings(lib);
         lib.settingsDatabase(s, "");
@@ -348,21 +335,14 @@ class JnaLibhegelTest {
         long tc;
         while ((tc = lib.nextTestCase(run)) != 0) {
             long[] id = new long[1];
+            assertEquals(Abi.OK, lib.newStateMachine(tc, 1, 1, 1, id));
+            for (String rule : List.of("rule", "", "other")) {
+                assertEquals(Abi.OK, lib.stateMachineAddRule(tc, id[0], rule, 1.0, new long[] {0}));
+            }
+            assertEquals(Abi.OK, lib.stateMachineAddInvariant(tc, id[0], "inv", true));
             long[] concurrency = new long[1];
-            assertEquals(
-                    Abi.OK,
-                    lib.newStateMachine(
-                            tc,
-                            List.of("rule", "", "other"),
-                            new long[] {0, 0, 0},
-                            null,
-                            List.of(),
-                            new boolean[0],
-                            1,
-                            1,
-                            1,
-                            id,
-                            concurrency));
+            assertEquals(Abi.OK, lib.stateMachineStart(tc, id[0], concurrency));
+            assertEquals(1, concurrency[0]);
             lib.stateMachineFree(id[0]);
             assertEquals(Abi.OK, lib.markComplete(tc, Abi.STATUS_VALID, null));
             lib.testCaseFree(tc);

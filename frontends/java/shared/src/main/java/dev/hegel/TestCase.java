@@ -503,24 +503,20 @@ public final class TestCase {
         return source.poolGenerate(poolId, consume);
     }
 
-    DataSource.StateMachine newStateMachine(
-            List<String> ruleNames,
-            long[] ruleGroups,
-            double[] ruleWeights,
-            List<String> invariantNames,
-            boolean[] invariantAlwaysCheck,
-            long minConcurrency,
-            long maxConcurrency,
-            int stepCount) {
-        return source.newStateMachine(
-                ruleNames,
-                ruleGroups,
-                ruleWeights,
-                invariantNames,
-                invariantAlwaysCheck,
-                minConcurrency,
-                maxConcurrency,
-                stepCount);
+    long newStateMachine(long minConcurrency, long maxConcurrency, int stepCount) {
+        return source.newStateMachine(minConcurrency, maxConcurrency, stepCount);
+    }
+
+    void stateMachineAddRule(long stateMachineId, String name, double weight, long[] groups) {
+        source.stateMachineAddRule(stateMachineId, name, weight, groups);
+    }
+
+    void stateMachineAddInvariant(long stateMachineId, String name, boolean alwaysCheck) {
+        source.stateMachineAddInvariant(stateMachineId, name, alwaysCheck);
+    }
+
+    int stateMachineStart(long stateMachineId) {
+        return source.stateMachineStart(stateMachineId);
     }
 
     long stateMachineNextGroup(long stateMachineId) {

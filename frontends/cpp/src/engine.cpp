@@ -745,37 +745,46 @@ namespace hegel::internal {
 
     StateMachineHandle::StateMachineHandle(
         const TestCase& tc, const std::vector<std::string>& rule_names,
-        const std::vector<int64_t>& rule_groups,
+        const std::vector<std::vector<int64_t>>& rule_groups,
         const std::vector<std::string>& invariant_names,
         int64_t min_concurrency, int64_t max_concurrency) {
         impl::DrawScope scope(tc);
 
-        auto to_strings = [](const std::vector<std::string>& names) {
-            std::vector<hegel_string_t> strings;
-            strings.reserve(names.size());
-            for (const std::string& name : names) {
-                strings.push_back(hegel_string_t{name.data(), name.size()});
+        // The step budget is Settings::stateful_step_count, carried on the
+        // test case.
+        scope.raise_for_rc(
+            hegel_new_state_machine(scope.ctx, scope.tc, min_concurrency,
+                                    max_concurrency,
+                                    tc.data()->stateful_step_count, &handle_),
+            "hegel_new_state_machine");
+        try {
+            // Every rule has the same weight, and every invariant is
+            // sampled at the engine's default probability; the public API
+            // exposes neither knob. The engine validates each rule's group
+            // list.
+            for (std::size_t i = 0; i < rule_names.size(); ++i) {
+                const std::string& name = rule_names[i];
+                const std::vector<int64_t>& groups = rule_groups[i];
+                scope.raise_for_rc(hegel_state_machine_add_rule(
+                                       scope.ctx, scope.tc, handle_,
+                                       hegel_string_t{name.data(), name.size()},
+                                       1.0, groups.data(), groups.size()),
+                                   "hegel_state_machine_add_rule");
             }
-            return strings;
-        };
-
-        std::vector<hegel_string_t> rule_name_strings = to_strings(rule_names);
-        std::vector<hegel_string_t> invariant_name_strings =
-            to_strings(invariant_names);
-
-        // A NULL `rule_weights` array gives every rule the same weight and a
-        // NULL `invariant_always_check` array leaves every invariant sampled
-        // at its default probability; the public API exposes neither. The
-        // step budget is Settings::stateful_step_count, carried on the test
-        // case.
-        scope.raise_for_rc(hegel_new_state_machine(
-                               scope.ctx, scope.tc, rule_name_strings.data(),
-                               rule_groups.data(), nullptr, rule_names.size(),
-                               invariant_name_strings.data(), nullptr,
-                               invariant_names.size(), min_concurrency,
-                               max_concurrency, tc.data()->stateful_step_count,
-                               &handle_, &concurrency_),
-                           "hegel_new_state_machine");
+            for (const std::string& name : invariant_names) {
+                scope.raise_for_rc(hegel_state_machine_add_invariant(
+                                       scope.ctx, scope.tc, handle_,
+                                       hegel_string_t{name.data(), name.size()},
+                                       false),
+                                   "hegel_state_machine_add_invariant");
+            }
+            scope.raise_for_rc(hegel_state_machine_start(
+                                   scope.ctx, scope.tc, handle_, &concurrency_),
+                               "hegel_state_machine_start");
+        } catch (...) {
+            hegel_state_machine_free(scope.ctx, handle_);
+            throw;
+        }
     }
 
     StateMachineHandle::~StateMachineHandle() {

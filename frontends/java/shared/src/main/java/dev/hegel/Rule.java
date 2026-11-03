@@ -19,16 +19,21 @@ import java.lang.annotation.Target;
 @Retention(RetentionPolicy.RUNTIME)
 public @interface Rule {
     /**
-     * The rule's concurrency group, for machines run with {@link Stateful.Options#maxConcurrency
-     * maxConcurrency} above 1. Each round the engine picks one group and hands out only that
-     * group's rules, so rules in the same group may run concurrently with each other and rules in
-     * different groups never overlap. Rules that name no group share the {@link
-     * Stateful#ANONYMOUS_GROUP anonymous group}. Group names are arbitrary and only appear in the
-     * round headers of a failure report. Groups have no observable effect on a sequential machine.
+     * The rule's concurrency groups, for machines run with {@link Stateful.Options#maxConcurrency
+     * maxConcurrency} above 1. Each round the engine picks one group and hands out only the rules
+     * that belong to it, so rules sharing a group may run concurrently with each other and rules
+     * with no group in common never overlap. A rule in several groups runs in the rounds of each
+     * of them: {@code @Rule(groups = {"write", "flush"})} overlaps both the write rules and the
+     * flush rules, which is how a read that races a flush is observed. A single group may be
+     * written without braces, {@code @Rule(groups = "write")}. An empty array, the default, puts
+     * the rule in the {@link Stateful#ANONYMOUS_GROUP anonymous group}. The groups of one rule must
+     * be distinct; the engine rejects a repeated group with an {@link IllegalArgumentException}.
+     * Group names are arbitrary and only appear in the round headers of a failure report. Groups
+     * have no observable effect on a sequential machine.
      *
-     * @return the group name, or the empty string for the anonymous group
+     * @return the group names, or an empty array for the anonymous group
      */
-    String group() default "";
+    String[] groups() default {};
 
     /**
      * How often the engine should pick this rule relative to the machine's other rules: a rule of
