@@ -19,14 +19,14 @@
 # internals: transition probing, ConjectureData);
 # test_timezone_keys_argument_validation,
 # test_can_generate_prefixes_if_allowed_and_available,
-# test_can_disallow_prefixes (timezone_keys() has no allow_prefix: the
+# test_can_disallow_prefixes (zone_names() has no allow_prefix: the
 # posix/ and right/ variants are never generated);
 # test_datetimes_stay_within_aware_bounds,
 # test_allow_imaginary_is_not_an_error_for_aware_bounds,
 # test_bounds_at_either_side_of_a_fold, test_fold_bound_with_long_interval,
 # test_bounds_inside_a_fold, test_equal_bounds_at_ambiguous_moment_preserves_fold
 # and test_generates_ambiguous_datetimes_in_both_folds are covered by
-# tests/test_generators_time.py against Hegel's own semantics.
+# tests/test_generators_temporal.py against Hegel's own semantics.
 
 import datetime as dt
 import zoneinfo
@@ -41,20 +41,22 @@ from tests.hypothesis_port.common.debug import find_any, minimal
 
 
 def test_utc_is_minimal():
-    assert minimal(gs.timezones()) is zoneinfo.ZoneInfo("UTC")
+    assert minimal(gs.temporal.zones()) is zoneinfo.ZoneInfo("UTC")
 
 
 def test_can_generate_non_utc():
-    find_any(gs.datetimes(timezones=gs.timezones()).filter(lambda d: d.tzinfo.key != "UTC"))
+    find_any(
+        gs.temporal.datetimes(zones=gs.temporal.zones()).filter(lambda d: d.tzinfo.key != "UTC")
+    )
 
 
 @hegel.test
 def test_datetimes_stay_within_naive_bounds(tc):
-    lo = tc.draw(gs.datetimes())
-    hi = tc.draw(gs.datetimes())
+    lo = tc.draw(gs.temporal.datetimes())
+    hi = tc.draw(gs.temporal.datetimes())
     if lo > hi:
         lo, hi = hi, lo
-    out = tc.draw(gs.datetimes(lo, hi, timezones=gs.timezones()))
+    out = tc.draw(gs.temporal.datetimes(lo, hi, zones=gs.temporal.zones()))
     assert lo <= out.replace(tzinfo=None) <= hi
 
 
@@ -81,15 +83,15 @@ def test_fold_inverted_bounds_are_invalid(key, day):
     assert lo.replace(tzinfo=None) < hi.replace(tzinfo=None)
     assert _instant(hi) < _instant(lo)
     with pytest.raises(InvalidArgument):
-        gs.datetimes(lo, hi, timezones=gs.just(lo.tzinfo))
+        gs.temporal.datetimes(lo, hi, zones=gs.just(lo.tzinfo))
 
 
 @pytest.mark.parametrize("kwargs", [{"no_cache": 1}])
 def test_timezones_argument_validation(kwargs):
     with pytest.raises(InvalidArgument):
-        gs.timezones(**kwargs)
+        gs.temporal.zones(**kwargs)
 
 
 def test_generates_imaginary_datetimes():
     tz = zoneinfo.ZoneInfo("America/New_York")
-    find_any(gs.datetimes(timezones=gs.just(tz)), datetime_does_not_exist)
+    find_any(gs.temporal.datetimes(zones=gs.just(tz)), datetime_does_not_exist)

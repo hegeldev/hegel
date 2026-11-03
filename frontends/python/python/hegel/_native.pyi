@@ -1,7 +1,8 @@
 """Type stubs for the ``hegel._native`` extension module (pyo3 bindings
 over libhegel). Keep in sync with ``src/*.rs``."""
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from typing import Any
 
 # -- exceptions ---------------------------------------------------------------
 
@@ -50,6 +51,12 @@ TIMEZONE_KIND_GAP: int
 TIMEZONE_KIND_FOLD: int
 TIMEZONE_TAG_LINK: int
 TIMEZONE_TAG_LEGACY: int
+ZONE_AFTER_HOLD: int
+ZONE_AFTER_RULE: int
+ZONE_AFTER_INFER: int
+ZONE_RULE_DAY_JULIAN: int
+ZONE_RULE_DAY_ZERO_BASED: int
+ZONE_RULE_DAY_MONTH_WEEK_DAY: int
 AMBIGUOUS_BOTH: int
 AMBIGUOUS_EARLIER: int
 AMBIGUOUS_LATER: int
@@ -62,6 +69,19 @@ GRANULARITY_HOURS: int
 GRANULARITY_QUARTER_HOURS: int
 GRANULARITY_MINUTES: int
 GRANULARITY_SECONDS: int
+SPAN_SIGN_UNIFORM: int
+SPAN_SIGN_MIXED: int
+SPAN_SIGN_NONNEGATIVE: int
+SPAN_UNIT_YEARS: int
+SPAN_UNIT_MONTHS: int
+SPAN_UNIT_WEEKS: int
+SPAN_UNIT_DAYS: int
+SPAN_UNIT_HOURS: int
+SPAN_UNIT_MINUTES: int
+SPAN_UNIT_SECONDS: int
+SPAN_UNIT_MILLISECONDS: int
+SPAN_UNIT_MICROSECONDS: int
+SPAN_UNIT_NANOSECONDS: int
 
 # -- functions ----------------------------------------------------------------
 
@@ -72,10 +92,15 @@ def set_default_profile(name: str | None) -> None: ...
 def set_unicode_version(version: str) -> None: ...
 def register_profile(name: str, settings: Settings) -> None: ...
 def tzdb_version() -> str: ...
-def timezone_info(name: str) -> tuple[str, bool, int, int] | None: ...
+def timezone_info(
+    name: str, source: ZoneSource | None = None
+) -> tuple[str, bool, int, int] | None: ...
 def timezone_resolve(
-    name: str, civil: tuple[int, int, int, int, int, int, int]
+    name: str,
+    civil: tuple[int, int, int, int, int, int, int],
+    source: ZoneSource | None = None,
 ) -> tuple[int, int, int, int, bool, tuple[int, int]]: ...
+def set_default_zone_source(source: ZoneSource | None) -> None: ...
 
 # -- classes ------------------------------------------------------------------
 
@@ -242,6 +267,12 @@ class TestCase:
     def generate_duration(
         self, min_value: tuple[int, int], max_value: tuple[int, int], precision: int
     ) -> tuple[int, int]: ...
+    def generate_timestamp(
+        self, min_value: tuple[int, int], max_value: tuple[int, int], precision: int
+    ) -> tuple[int, int]: ...
+    def generate_span(
+        self, spec: SpanSpec
+    ) -> tuple[int, int, int, int, int, int, int, int, int, int]: ...
     def generate_offset(self, min_seconds: int, max_seconds: int, granularity: int) -> int: ...
     def generate_timezone(self, spec: TimeZoneSpec) -> str: ...
     def generate_zoned_datetime(
@@ -286,7 +317,44 @@ class TimeZoneSpec:
         legacy: bool,
         unknown: bool,
         opaque: bool,
+        source: ZoneSource | None = None,
     ) -> None: ...
+
+_ZoneType = tuple[int, bool, str]
+_RuleDate = tuple[int, int, int, int, int, int]
+
+class ZoneSource:
+    def __init__(self) -> None: ...
+    @staticmethod
+    def bundled() -> ZoneSource: ...
+    def add_tzif(self, name: str, data: bytes) -> None: ...
+    def add_zone(
+        self,
+        name: str,
+        data: tuple[
+            _ZoneType,
+            Sequence[tuple[int, _ZoneType]],
+            int,
+            _ZoneType | None,
+            _ZoneType | None,
+            tuple[_RuleDate, _RuleDate] | None,
+            int,
+        ],
+    ) -> None: ...
+    def add_oracle(
+        self,
+        name: str,
+        offset_at: Callable[[int], _ZoneType],
+        next_transition: Callable[[int], int | None] | None,
+        first_year: int,
+        last_year: int,
+        after: int,
+    ) -> None: ...
+    def add_link(self, name: str, target: str) -> None: ...
+    def declare(self, names: Sequence[str]) -> None: ...
+    def set_loader(self, loader: Callable[[str], tuple[str, Any] | None] | None) -> None: ...
+    def set_version(self, version: str) -> None: ...
+    def version(self) -> str: ...
 
 class ZonedSpec:
     def __init__(
@@ -300,6 +368,9 @@ class ZonedSpec:
         allow_imaginary: bool,
         ambiguous: int,
     ) -> None: ...
+
+class SpanSpec:
+    def __init__(self, bounds: Sequence[tuple[int, int, int]], sign: int) -> None: ...
 
 class Collection:
     def more(self, tc: TestCase) -> bool: ...

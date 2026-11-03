@@ -21,6 +21,7 @@ mod settings;
 mod strings;
 mod test_case;
 mod time;
+mod zone_source;
 
 pub(crate) use grammar::{Grammar, GrammarBuilder, GrammarDraw};
 pub(crate) use printer::Printer;
@@ -30,6 +31,7 @@ pub(crate) use test_case::{
     Collection, Pool, Recursion, Repeat, Run, RunResult, StateMachine, TestCase,
 };
 pub(crate) use time::{DateOptions, TimeZoneSpec, ZonedSpec};
+pub(crate) use zone_source::ZoneSource;
 
 // Defined here, but exported (and so named) from hegel.errors.
 create_exception!(
@@ -156,7 +158,9 @@ pub(crate) fn check(rc: Rc) -> PyResult<()> {
         Rc::HEGEL_E_STOP_TEST => Err(StopTest::new_err(())),
         Rc::HEGEL_E_ASSUME => Err(AssumeFailed::new_err(())),
         Rc::HEGEL_E_RETRY => Err(RetrySignal::new_err(())),
-        Rc::HEGEL_E_INVALID_ARG => Err(InvalidArgument::new_err(last_error())),
+        Rc::HEGEL_E_INVALID_ARG => Err(zone_source::with_callback_cause(InvalidArgument::new_err(
+            last_error(),
+        ))),
         Rc::HEGEL_E_BACKEND => Err(BackendError::new_err(last_error())),
         // A test body can't see its own test case finish, so this means a
         // TestCase (or a pool or collection holding one) outlived its test.
@@ -306,6 +310,8 @@ fn _native(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<DateOptions>()?;
     m.add_class::<TimeZoneSpec>()?;
     m.add_class::<ZonedSpec>()?;
+    m.add_class::<time::SpanSpec>()?;
+    m.add_class::<ZoneSource>()?;
     m.add_class::<Printer>()?;
     m.add_class::<GrammarBuilder>()?;
     m.add_class::<Grammar>()?;
@@ -314,6 +320,7 @@ fn _native(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(time::tzdb_version, m)?)?;
     m.add_function(wrap_pyfunction!(time::timezone_info, m)?)?;
     m.add_function(wrap_pyfunction!(time::timezone_resolve, m)?)?;
+    m.add_function(wrap_pyfunction!(zone_source::set_default_zone_source, m)?)?;
     m.add_function(wrap_pyfunction!(label_from_name, m)?)?;
     m.add_function(wrap_pyfunction!(label_combine, m)?)?;
     m.add_function(wrap_pyfunction!(set_default_profile, m)?)?;
@@ -436,6 +443,30 @@ fn _native(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
         "TIMEZONE_KIND_FOLD",
         c::hegel_timezone_kind_t::HEGEL_TIMEZONE_KIND_FOLD as u32,
     )?;
+    m.add(
+        "ZONE_AFTER_HOLD",
+        c::hegel_zone_after_t::HEGEL_ZONE_AFTER_HOLD as u32,
+    )?;
+    m.add(
+        "ZONE_AFTER_RULE",
+        c::hegel_zone_after_t::HEGEL_ZONE_AFTER_RULE as u32,
+    )?;
+    m.add(
+        "ZONE_AFTER_INFER",
+        c::hegel_zone_after_t::HEGEL_ZONE_AFTER_INFER as u32,
+    )?;
+    m.add(
+        "ZONE_RULE_DAY_JULIAN",
+        c::hegel_zone_rule_day_t::HEGEL_ZONE_RULE_DAY_JULIAN as u32,
+    )?;
+    m.add(
+        "ZONE_RULE_DAY_ZERO_BASED",
+        c::hegel_zone_rule_day_t::HEGEL_ZONE_RULE_DAY_ZERO_BASED as u32,
+    )?;
+    m.add(
+        "ZONE_RULE_DAY_MONTH_WEEK_DAY",
+        c::hegel_zone_rule_day_t::HEGEL_ZONE_RULE_DAY_MONTH_WEEK_DAY as u32,
+    )?;
     m.add("TIMEZONE_TAG_LINK", c::HEGEL_TIMEZONE_TAG_LINK)?;
     m.add("TIMEZONE_TAG_LEGACY", c::HEGEL_TIMEZONE_TAG_LEGACY)?;
     m.add(
@@ -486,5 +517,58 @@ fn _native(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
         "AMBIGUOUS_LATER",
         c::hegel_ambiguous_t::HEGEL_AMBIGUOUS_LATER as u32,
     )?;
+    m.add(
+        "SPAN_SIGN_UNIFORM",
+        c::hegel_span_sign_t::HEGEL_SPAN_SIGN_UNIFORM as u32,
+    )?;
+    m.add(
+        "SPAN_SIGN_MIXED",
+        c::hegel_span_sign_t::HEGEL_SPAN_SIGN_MIXED as u32,
+    )?;
+    m.add(
+        "SPAN_SIGN_NONNEGATIVE",
+        c::hegel_span_sign_t::HEGEL_SPAN_SIGN_NONNEGATIVE as u32,
+    )?;
+    for (name, unit) in [
+        (
+            "SPAN_UNIT_YEARS",
+            c::hegel_span_unit_t::HEGEL_SPAN_UNIT_YEARS,
+        ),
+        (
+            "SPAN_UNIT_MONTHS",
+            c::hegel_span_unit_t::HEGEL_SPAN_UNIT_MONTHS,
+        ),
+        (
+            "SPAN_UNIT_WEEKS",
+            c::hegel_span_unit_t::HEGEL_SPAN_UNIT_WEEKS,
+        ),
+        ("SPAN_UNIT_DAYS", c::hegel_span_unit_t::HEGEL_SPAN_UNIT_DAYS),
+        (
+            "SPAN_UNIT_HOURS",
+            c::hegel_span_unit_t::HEGEL_SPAN_UNIT_HOURS,
+        ),
+        (
+            "SPAN_UNIT_MINUTES",
+            c::hegel_span_unit_t::HEGEL_SPAN_UNIT_MINUTES,
+        ),
+        (
+            "SPAN_UNIT_SECONDS",
+            c::hegel_span_unit_t::HEGEL_SPAN_UNIT_SECONDS,
+        ),
+        (
+            "SPAN_UNIT_MILLISECONDS",
+            c::hegel_span_unit_t::HEGEL_SPAN_UNIT_MILLISECONDS,
+        ),
+        (
+            "SPAN_UNIT_MICROSECONDS",
+            c::hegel_span_unit_t::HEGEL_SPAN_UNIT_MICROSECONDS,
+        ),
+        (
+            "SPAN_UNIT_NANOSECONDS",
+            c::hegel_span_unit_t::HEGEL_SPAN_UNIT_NANOSECONDS,
+        ),
+    ] {
+        m.add(name, unit as u32)?;
+    }
     Ok(())
 }

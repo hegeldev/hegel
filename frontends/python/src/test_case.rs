@@ -1,8 +1,8 @@
 use crate::printer::{Printer, with_options};
 use crate::time::{
-    DateOptions, PyDate, PyDateTime, PyDuration, PyTime, TimeZoneSpec, ZonedSpec, date_from_c,
-    date_to_c, datetime_from_c, datetime_to_c, duration_from_c, duration_to_c, time_from_c,
-    time_to_c, timestamp_from_c,
+    DateOptions, PyDate, PyDateTime, PyDuration, PySpan, PyTime, PyTimestamp, SpanSpec,
+    TimeZoneSpec, ZonedSpec, date_from_c, date_to_c, datetime_from_c, datetime_to_c,
+    duration_from_c, duration_to_c, time_from_c, time_to_c, timestamp_from_c, timestamp_to_c,
 };
 use crate::{
     InternalError, OutputBuffer, SendPtr, Settings, StringGenerator, big_from_le, big_to_le, check,
@@ -516,6 +516,63 @@ impl TestCase {
         Ok(duration_from_c(out))
     }
 
+    /// Draw an instant in `[min_value, max_value]`, each `(seconds,
+    /// nanoseconds)` since the Unix epoch, that is a whole number of
+    /// `precision` units since the epoch.
+    fn generate_timestamp(
+        &self,
+        min_value: PyTimestamp,
+        max_value: PyTimestamp,
+        precision: u32,
+    ) -> PyResult<PyTimestamp> {
+        let mut out = timestamp_to_c(min_value);
+        with_ctx(|ctx| {
+            check(unsafe {
+                c::hegel_generate_timestamp(
+                    ctx,
+                    self.tc(),
+                    timestamp_to_c(min_value),
+                    timestamp_to_c(max_value),
+                    precision,
+                    &mut out,
+                )
+            })
+        })?;
+        Ok(timestamp_from_c(out))
+    }
+
+    /// Draw a calendar span within `spec`, as its ten unit values from
+    /// years to nanoseconds.
+    fn generate_span(&self, spec: &SpanSpec) -> PyResult<PySpan> {
+        let mut out = c::hegel_span_t {
+            years: 0,
+            months: 0,
+            weeks: 0,
+            days: 0,
+            hours: 0,
+            minutes: 0,
+            seconds: 0,
+            milliseconds: 0,
+            microseconds: 0,
+            nanoseconds: 0,
+        };
+        with_ctx(|ctx| {
+            check(unsafe { c::hegel_generate_span(ctx, self.tc(), spec.raw(), &mut out) })
+        })?;
+        Ok((
+            out.years,
+            out.months,
+            out.weeks,
+            out.days,
+            out.hours,
+            out.minutes,
+            out.seconds,
+            out.milliseconds,
+            out.microseconds,
+            out.nanoseconds,
+        ))
+    }
+
     /// Draw a known UTC offset in `[min_seconds, max_seconds]` that is a
     /// whole number of `granularity` units (a `GRANULARITY_*` constant).
     fn generate_offset(
@@ -556,50 +613,60 @@ impl TestCase {
     }
 
     /// Draw a zoned datetime, as `(zone, civil, fold, kind, offset_seconds,
-    /// offset_known, timestamp)`.
+    /// offset_known, timestamp)`. The draw may run a zone source's loader,
+    /// so the GIL is released meanwhile.
     #[allow(clippy::type_complexity)]
     fn generate_zoned_datetime(
         &self,
+        py: Python<'_>,
         tz_spec: &TimeZoneSpec,
         zoned_spec: &ZonedSpec,
     ) -> PyResult<(String, PyDateTime, bool, u32, i32, bool, (i64, u32))> {
-        let mut zone = c::hegel_owned_string_t::default();
-        let mut out = c::hegel_zoned_datetime_t {
-            civil: datetime_to_c((2000, 1, 1, 0, 0, 0, 0)),
-            offset_seconds: 0,
-            offset_known: false,
-            fold: false,
-            kind: c::hegel_timezone_kind_t::HEGEL_TIMEZONE_KIND_UNIQUE,
-            offset_before: 0,
-            offset_after: 0,
-            timestamp: c::hegel_timestamp_t {
-                second: 0,
-                nanosecond: 0,
-            },
-        };
-        with_ctx(|ctx| {
-            check(unsafe {
-                c::hegel_generate_zoned_datetime(
+        let tc = SendPtr(self.tc());
+        let tz_spec = SendPtr(tz_spec.raw() as *mut c::HegelTimezoneSpec);
+        let zoned_spec = SendPtr(zoned_spec.raw() as *mut c::HegelZonedSpec);
+        let (rc, name, out) = py.detach(move || {
+            let mut zone = c::hegel_owned_string_t::default();
+            let mut out = c::hegel_zoned_datetime_t {
+                civil: datetime_to_c((2000, 1, 1, 0, 0, 0, 0)),
+                offset_seconds: 0,
+                offset_known: false,
+                fold: false,
+                kind: c::hegel_timezone_kind_t::HEGEL_TIMEZONE_KIND_UNIQUE,
+                offset_before: 0,
+                offset_after: 0,
+                timestamp: c::hegel_timestamp_t {
+                    second: 0,
+                    nanosecond: 0,
+                },
+            };
+            with_ctx(|ctx| unsafe {
+                let rc = c::hegel_generate_zoned_datetime(
                     ctx,
-                    self.tc(),
-                    tz_spec.raw(),
-                    zoned_spec.raw(),
+                    tc.get(),
+                    tz_spec.get(),
+                    zoned_spec.get(),
                     &mut out,
                     &mut zone,
-                )
-            })?;
-            let name = string_from(zone);
-            let _ = unsafe { c::hegel_owned_string_free(ctx, &mut zone) };
-            Ok((
-                name,
-                datetime_from_c(out.civil),
-                out.fold,
-                out.kind as u32,
-                out.offset_seconds,
-                out.offset_known,
-                timestamp_from_c(out.timestamp),
-            ))
-        })
+                );
+                if rc != Rc::HEGEL_OK {
+                    return (rc, String::new(), out);
+                }
+                let name = string_from(zone);
+                let _ = c::hegel_owned_string_free(ctx, &mut zone);
+                (rc, name, out)
+            })
+        });
+        check(rc)?;
+        Ok((
+            name,
+            datetime_from_c(out.civil),
+            out.fold,
+            out.kind as u32,
+            out.offset_seconds,
+            out.offset_known,
+            timestamp_from_c(out.timestamp),
+        ))
     }
 
     #[pyo3(signature = (version))]

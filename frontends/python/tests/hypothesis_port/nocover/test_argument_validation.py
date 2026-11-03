@@ -48,9 +48,16 @@ test_raise_invalid_argument = argument_validation_test(BAD_ARGS)
 
 
 ALL_GENERATORS_COPY = {
-    name: getattr(gs, name)
-    for name in gs.__all__
-    if callable(getattr(gs, name)) and not isinstance(getattr(gs, name), type)
+    **{
+        name: getattr(gs, name)
+        for name in gs.__all__
+        if callable(getattr(gs, name)) and not isinstance(getattr(gs, name), type)
+    },
+    **{
+        name: getattr(gs.temporal, name)
+        for name in gs.temporal.__all__
+        if not isinstance(getattr(gs.temporal, name), type)
+    },
 }
 
 

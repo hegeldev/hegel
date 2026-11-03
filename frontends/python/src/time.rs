@@ -1,4 +1,4 @@
-use crate::{SendPtr, check, hstr, hstrs, string_from, with_ctx};
+use crate::{SendPtr, ZoneSource, check, hstr, hstrs, string_from, with_ctx};
 use hegel_c as c;
 use pyo3::prelude::*;
 use std::ptr;
@@ -8,6 +8,7 @@ pub(crate) type PyTime = (u8, u8, u8, u32);
 pub(crate) type PyDateTime = (i32, u8, u8, u8, u8, u8, u32);
 pub(crate) type PyTimestamp = (i64, u32);
 pub(crate) type PyDuration = (i64, i32);
+pub(crate) type PySpan = (i64, i64, i64, i64, i64, i64, i64, i64, i64, i64);
 
 pub(crate) fn date_to_c(d: PyDate) -> c::hegel_date_t {
     c::hegel_date_t {
@@ -143,33 +144,52 @@ impl Drop for TimeZoneSpec {
 
 #[pymethods]
 impl TimeZoneSpec {
-    /// The engine's default set with the link, legacy, `Etc/Unknown` and
-    /// opaque-name switches applied, or the explicit list `names`.
+    /// The names of `source` (the process's default when `None`) with
+    /// the link, legacy, `Etc/Unknown` and opaque-name switches applied,
+    /// or the explicit list `names`. Building it may run the source's
+    /// loader, so the GIL is released meanwhile.
     #[new]
-    #[pyo3(signature = (names, links, legacy, unknown, opaque))]
+    #[pyo3(signature = (names, links, legacy, unknown, opaque, source=None))]
     fn new(
+        py: Python<'_>,
         names: Option<Vec<String>>,
         links: bool,
         legacy: bool,
         unknown: bool,
         opaque: bool,
+        source: Option<&ZoneSource>,
     ) -> PyResult<Self> {
         let mut raw: *mut c::HegelTimezoneSpec = ptr::null_mut();
         with_ctx(|ctx| check(unsafe { c::hegel_timezone_spec_new(ctx, &mut raw) }))?;
         let spec = TimeZoneSpec { raw: SendPtr(raw) };
-        with_ctx(|ctx| {
-            check(unsafe { c::hegel_timezone_spec_set_links(ctx, raw, links) })?;
-            check(unsafe { c::hegel_timezone_spec_set_legacy(ctx, raw, legacy) })?;
-            check(unsafe { c::hegel_timezone_spec_set_unknown(ctx, raw, unknown) })?;
-            check(unsafe { c::hegel_timezone_spec_set_opaque(ctx, raw, opaque) })?;
-            if let Some(names) = &names {
-                let views = hstrs(names);
-                check(unsafe {
-                    c::hegel_timezone_spec_set_names(ctx, raw, views.as_ptr(), views.len())
-                })?;
-            }
-            Ok::<(), PyErr>(())
-        })?;
+        let raw = SendPtr(raw);
+        let source =
+            SendPtr(source.map_or(ptr::null(), ZoneSource::raw) as *mut c::HegelZoneSource);
+        let rc = py.detach(move || {
+            with_ctx(|ctx| unsafe {
+                let raw = raw.get();
+                let steps: [&dyn Fn() -> c::hegel_result_t; 6] = [
+                    &|| c::hegel_timezone_spec_set_source(ctx, raw, source.get()),
+                    &|| c::hegel_timezone_spec_set_links(ctx, raw, links),
+                    &|| c::hegel_timezone_spec_set_legacy(ctx, raw, legacy),
+                    &|| c::hegel_timezone_spec_set_unknown(ctx, raw, unknown),
+                    &|| c::hegel_timezone_spec_set_opaque(ctx, raw, opaque),
+                    &|| match &names {
+                        Some(names) => {
+                            let views = hstrs(names);
+                            c::hegel_timezone_spec_set_names(ctx, raw, views.as_ptr(), views.len())
+                        }
+                        None => c::hegel_result_t::HEGEL_OK,
+                    },
+                ];
+                steps
+                    .into_iter()
+                    .map(|step| step())
+                    .find(|rc| *rc != c::hegel_result_t::HEGEL_OK)
+                    .unwrap_or(c::hegel_result_t::HEGEL_OK)
+            })
+        });
+        check(rc)?;
         Ok(spec)
     }
 }
@@ -248,6 +268,49 @@ impl ZonedSpec {
     }
 }
 
+/// An owned libhegel span-spec handle: the unit bounds and sign policy of
+/// a calendar span draw. Immutable after construction.
+#[pyclass(frozen, name = "SpanSpec", module = "hegel._native")]
+pub(crate) struct SpanSpec {
+    raw: SendPtr<c::HegelSpanSpec>,
+}
+
+impl SpanSpec {
+    pub(crate) fn raw(&self) -> *const c::HegelSpanSpec {
+        self.raw.0
+    }
+}
+
+impl Drop for SpanSpec {
+    fn drop(&mut self) {
+        with_ctx(|ctx| unsafe {
+            let _ = c::hegel_span_spec_free(ctx, self.raw.0);
+        });
+    }
+}
+
+#[pymethods]
+impl SpanSpec {
+    /// The inclusive bounds of each enabled unit, as `(unit, min, max)`
+    /// with `unit` a `SPAN_UNIT_*` constant, and the sign policy (a
+    /// `SPAN_SIGN_*` constant).
+    #[new]
+    #[pyo3(signature = (bounds, sign))]
+    fn new(bounds: Vec<(u32, i64, i64)>, sign: u32) -> PyResult<Self> {
+        let mut raw: *mut c::HegelSpanSpec = ptr::null_mut();
+        with_ctx(|ctx| check(unsafe { c::hegel_span_spec_new(ctx, &mut raw) }))?;
+        let spec = SpanSpec { raw: SendPtr(raw) };
+        with_ctx(|ctx| {
+            check(unsafe { c::hegel_span_spec_set_sign(ctx, raw, sign) })?;
+            for (unit, min, max) in bounds {
+                check(unsafe { c::hegel_span_spec_set_unit_bounds(ctx, raw, unit, min, max) })?;
+            }
+            Ok::<(), PyErr>(())
+        })?;
+        Ok(spec)
+    }
+}
+
 /// The IANA release of the time zone database bundled in the engine.
 #[pyfunction]
 pub(crate) fn tzdb_version() -> PyResult<String> {
@@ -256,46 +319,77 @@ pub(crate) fn tzdb_version() -> PyResult<String> {
     Ok(string_from(out))
 }
 
-/// What the engine knows about the zone `name`, as `(primary_name,
-/// is_link, rank, tags)`, or `None` for a name its database lacks.
+/// What `source` (the process's default when `None`) knows about the
+/// zone `name`, as `(primary_name, is_link, rank, tags)`, or `None` for a
+/// name it lacks.
 #[pyfunction]
-pub(crate) fn timezone_info(name: &str) -> PyResult<Option<(String, bool, u16, u32)>> {
-    let mut out = c::hegel_timezone_info_t {
-        known: false,
-        primary_name: c::hegel_string_t::default(),
-        is_link: false,
-        rank: 0,
-        tags: 0,
-    };
-    with_ctx(|ctx| check(unsafe { c::hegel_timezone_info(ctx, hstr(name), &mut out) }))?;
-    Ok(out.known.then(|| {
+#[pyo3(signature = (name, source=None))]
+pub(crate) fn timezone_info(
+    py: Python<'_>,
+    name: &str,
+    source: Option<&ZoneSource>,
+) -> PyResult<Option<(String, bool, u16, u32)>> {
+    let source = SendPtr(source.map_or(ptr::null(), ZoneSource::raw) as *mut c::HegelZoneSource);
+    let (rc, out) = py.detach(move || {
+        let mut out = c::hegel_timezone_info_t {
+            known: false,
+            primary_name: c::hegel_string_t::default(),
+            is_link: false,
+            rank: 0,
+            tags: 0,
+        };
+        let rc = with_ctx(|ctx| unsafe {
+            c::hegel_timezone_info_in(ctx, source.get(), hstr(name), &mut out)
+        });
         (
-            string_from(out.primary_name),
-            out.is_link,
-            out.rank,
-            out.tags,
+            rc,
+            out.known.then(|| {
+                (
+                    string_from(out.primary_name),
+                    out.is_link,
+                    out.rank,
+                    out.tags,
+                )
+            }),
         )
-    }))
+    });
+    check(rc)?;
+    Ok(out)
 }
 
-/// Classify the wall time `civil` in the zone `name`, as `(kind,
-/// offset_before, offset_after, offset_seconds, offset_known, timestamp)`.
+/// Classify the wall time `civil` in the zone `name` of `source` (the
+/// process's default when `None`), as `(kind, offset_before, offset_after,
+/// offset_seconds, offset_known, timestamp)`.
 #[pyfunction]
+#[pyo3(signature = (name, civil, source=None))]
 pub(crate) fn timezone_resolve(
+    py: Python<'_>,
     name: &str,
     civil: PyDateTime,
+    source: Option<&ZoneSource>,
 ) -> PyResult<(u32, i32, i32, i32, bool, PyTimestamp)> {
-    let mut out = c::hegel_timezone_resolution_t {
-        kind: c::hegel_timezone_kind_t::HEGEL_TIMEZONE_KIND_UNIQUE,
-        offset_before: 0,
-        offset_after: 0,
-        offset_seconds: 0,
-        offset_known: false,
-        timestamp: timestamp_to_c((0, 0)),
-    };
-    with_ctx(|ctx| {
-        check(unsafe { c::hegel_timezone_resolve(ctx, hstr(name), datetime_to_c(civil), &mut out) })
-    })?;
+    let source = SendPtr(source.map_or(ptr::null(), ZoneSource::raw) as *mut c::HegelZoneSource);
+    let (rc, out) = py.detach(move || {
+        let mut out = c::hegel_timezone_resolution_t {
+            kind: c::hegel_timezone_kind_t::HEGEL_TIMEZONE_KIND_UNIQUE,
+            offset_before: 0,
+            offset_after: 0,
+            offset_seconds: 0,
+            offset_known: false,
+            timestamp: timestamp_to_c((0, 0)),
+        };
+        let rc = with_ctx(|ctx| unsafe {
+            c::hegel_timezone_resolve_in(
+                ctx,
+                source.get(),
+                hstr(name),
+                datetime_to_c(civil),
+                &mut out,
+            )
+        });
+        (rc, out)
+    });
+    check(rc)?;
     Ok((
         out.kind as u32,
         out.offset_before,

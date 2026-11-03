@@ -22,6 +22,7 @@ does, with a note per file of what was dropped.
 | `RuleBasedStateMachine`, `Bundle` | `hegel.StateMachine`, `hegel.Machine`, `hegel.Pool` | Rules take the test case and draw their own arguments; a precondition is `tc.assume` at the top of a rule. |
 | `find(strategy, condition)` | none; write a test | A test whose failure is finding the value gets it shrunk. |
 | `dictionaries`, `fixed_dictionaries` | `dicts`, `fixed_dicts` | |
+| `dates`, `times`, `datetimes`, `timedeltas`, `timezones`, `timezone_keys` | `gs.temporal.dates`, `times`, `datetimes`, `durations`, `zones`, `zone_names` | The date and time generators share their names with every Hegel frontend; the `timezones=` argument of `times()` and `datetimes()` is `zones=`. `gs.dates`, `gs.times`, `gs.datetimes`, `gs.timedeltas` and `gs.timezones` remain as deprecated aliases. |
 | `from_regex(pattern)` matches anywhere | `gs.from_regex(pattern)` matches the whole string | Hegel defaults to `fullmatch=True`, as the Rust library does. |
 | `hypothesis.extra.lark.from_lark(Lark(grammar))` | `gs.from_lark(grammar)` | Takes the grammar's text, not a `lark.Lark` object, and does not need Lark installed. `explicit` and `alphabet` are as in Hypothesis; `max_size`, `max_depth` and `import_path` are Hegel's. |
 | `is_hypothesis_test(f)`, `f.hypothesis.inner_test` | `f.is_hegel_test`, `f.hegel_inner_test` | |
@@ -45,12 +46,15 @@ does, with a note per file of what was dropped.
   repeated replay and reports it with a caveat describing how reliably it
   reproduced. `nondeterminism_strictness` makes that silent (the default), a
   one-line notice, or a `Flaky` error, which is Hypothesis's behaviour.
-- Date and time options every Hegel frontend shares: `dates()` takes
-  `weekdays` and `months`, `times()`, `datetimes()` and `timedeltas()` a
-  `precision` (the `timespec` names of `isoformat`), `datetimes()` an
-  `ambiguous` policy for repeated wall times, `timezone_keys()` and
-  `timezones()` a `names` list, and `utc_offsets()` draws fixed
-  `datetime.timezone` offsets at a `granularity`.
+- Date and time generators and options every Hegel frontend shares, in
+  `gs.temporal`: `dates()` takes `weekdays` and `months`, `times()`,
+  `datetimes()` and `durations()` a `precision` (the `timespec` names of
+  `isoformat`), `datetimes()` an `ambiguous` policy for repeated wall times,
+  and `zone_names()` and `zones()` a `names` list. `zoned_datetimes()` draws
+  only aware datetimes, `instants()` moments in time as UTC datetimes,
+  `offsets()` fixed `datetime.timezone` offsets at a `granularity`, and
+  `spans()` calendar spans (`gs.temporal.Span`, such as "1 month and 2
+  days") that `timedelta` cannot represent.
 - An engine shared with the Rust, Go, TypeScript and other bindings, so the
   example database and reproduce blobs behave the same everywhere.
 
@@ -130,20 +134,21 @@ does, with a note per file of what was dropped.
 - A skipped test ends the run before anything is saved to the database.
 - Generator arguments are validated when the generator is built, not when
   the test runs.
-- `timezone_keys()` and `timezones()` draw from Hegel's own copy of the
-  IANA database, restricted to the names this Python can load, so a saved
-  failure means the same zone on every machine; the `posix/` and `right/`
-  variants are never generated (there is no `allow_prefix`), and legacy
-  names such as `EST5EDT` are excluded unless `legacy=True`. A name shrinks
-  down a ladder from `UTC` through the zones with a whole-hour offset and a
-  simple daylight-saving rule, not alphabetically.
-- `datetimes()` draws the wall-clock time and the time zone in one engine
-  draw, so `fold` is set only when the wall time is repeated and a skipped
-  wall time is drawn deliberately rather than by luck; `times()` never sets
+- `zone_names()` and `zones()` draw the names `zoneinfo` can load, as
+  Hypothesis does, but the `posix/` and `right/` variants are never
+  generated (there is no `allow_prefix`), and legacy names such as
+  `EST5EDT` are excluded unless `legacy=True`. A name shrinks down a ladder
+  from `UTC` through the zones with a whole-hour offset and a simple
+  daylight-saving rule, not alphabetically; the ladder comes from Hegel's
+  own copy of the IANA database, so it is the same on every machine.
+- `datetimes()` and `zoned_datetimes()` draw the wall-clock time and the time zone in one engine
+  draw, against the transitions `zoneinfo` itself reads (see
+  `ZoneSource`), so `fold` is set only when the wall time is repeated and a
+  skipped wall time is drawn deliberately rather than by luck; `times()` never sets
   `fold`. A `tzinfo` that is not a `zoneinfo.ZoneInfo` (pytz, dateutil, a
   fixed `datetime.timezone`) gets the drawn wall-clock time attached as
   Hypothesis attaches it, without the targeting of its transitions.
-- `timedeltas()` shrink toward zero as a whole, so the simplest negative
+- `durations()` shrink toward zero as a whole, so the simplest negative
   delta is a microsecond below zero rather than a whole day.
 - `from_regex` depends on the engine's regex generator rather than Python's
   `re`. A pattern

@@ -690,6 +690,18 @@ class TestCase:
         )
         return _dt.timedelta(seconds=seconds, microseconds=nanoseconds // 1000)
 
+    def _generate_instant(
+        self, min_value: tuple[int, int], max_value: tuple[int, int], precision: int
+    ) -> tuple[int, int]:
+        """Draw an instant, each value ``(seconds, nanoseconds)`` since the
+        Unix epoch."""
+        return self._handle.generate_timestamp(min_value, max_value, precision)
+
+    def _generate_span(
+        self, spec: _native.SpanSpec
+    ) -> tuple[int, int, int, int, int, int, int, int, int, int]:
+        return self._handle.generate_span(spec)
+
     def _generate_offset(self, min_seconds: int, max_seconds: int, granularity: int) -> int:
         return self._handle.generate_offset(min_seconds, max_seconds, granularity)
 

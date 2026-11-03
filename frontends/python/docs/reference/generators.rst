@@ -95,21 +95,86 @@ Inferring generators from types
 Dates and times
 ---------------
 
+.. module:: hegel.generators.temporal
+
+The date and time generators live in the ``temporal`` namespace, with the
+names every Hegel frontend uses for them:
+
+.. code-block:: python
+
+   when = tc.draw(gs.temporal.datetimes(zones=gs.temporal.zones()))
+
 .. autofunction:: dates
 
 .. autofunction:: times
 
 .. autofunction:: datetimes
 
-.. autofunction:: timedeltas
+.. autofunction:: zoned_datetimes
 
-.. autofunction:: timezones
+.. autofunction:: instants
 
-.. autofunction:: timezone_keys
+.. autofunction:: durations
+
+.. autofunction:: spans
+
+.. autoclass:: Span
+   :members:
+
+.. autofunction:: zones
+
+.. autofunction:: zone_names
+
+.. autofunction:: offsets
 
 .. autofunction:: tzdb_version
 
-.. autofunction:: utc_offsets
+Time zone data
+~~~~~~~~~~~~~~
+
+Zoned draws aim at the gaps and folds of the zone's transitions, so they
+need the same time zone data as the code under test. They draw against a
+:class:`ZoneSource`: by default :meth:`ZoneSource.zoneinfo`, the database
+:mod:`zoneinfo` itself reads (the system's zone files, or the ``tzdata``
+package), so a zone has exactly the transitions its
+:class:`~zoneinfo.ZoneInfo` has. Pass ``source`` to :func:`zones` or
+:func:`zone_names` to draw one generator against another source, or call
+:func:`set_default_zone_source` to change it for every generator built
+afterwards:
+
+.. code-block:: python
+
+   bundled = gs.temporal.zones(source=gs.temporal.ZoneSource.bundled())
+
+An integration with another date and time library fills a ``ZoneSource()``
+with that library's data: TZif files, :class:`ZoneData` given as fields,
+or a :class:`ZoneOracle` it answers lookups for, added up front or loaded
+the first time a draw needs a zone.
+
+.. autoclass:: ZoneSource
+   :members:
+
+.. autofunction:: default_zone_source
+
+.. autofunction:: set_default_zone_source
+
+.. autoclass:: ZoneType
+
+.. autoclass:: ZoneData
+
+.. autoclass:: ZoneRule
+
+.. autoclass:: RuleDate
+   :members: julian, zero_based, month_week_day
+
+.. autoclass:: ZoneOracle
+
+.. currentmodule:: hegel.generators
+
+The top-level names the date and time generators had before they moved,
+``gs.dates``, ``gs.times``, ``gs.datetimes`` (with its ``timezones=``
+argument), ``gs.timedeltas`` and ``gs.timezones``, still work but emit a
+:class:`DeprecationWarning`; use the ``gs.temporal`` names instead.
 
 Identifiers and network values
 ------------------------------
