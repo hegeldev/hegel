@@ -1071,37 +1071,43 @@ fn grammar_mutation_leaves_what_it_cannot_grow_alone() {
 
 /// A recursive value's span and its first sub-value's span share a label
 /// and a start; whichever the probe picks as the donor, the proposal must
-/// splice without reaching outside the choice sequence.
+/// splice without reaching outside the choice sequence. Which span the probe
+/// takes first is the RNG's call, so the test runs under enough seeds for
+/// both orders (the outer span nesting the inner, and the inner span with no
+/// choices between its end and the outer's start) to come up.
 #[test]
 fn span_mutation_handles_same_label_spans_sharing_a_start() {
-    with_counting_ctx(
-        |ds| {
-            for _ in 0..3 {
-                if rbool(ds).is_err() {
-                    return TestCaseResult::Overrun;
+    for seed in 0..10u64 {
+        with_counting_ctx_under(
+            Settings::new().database(None).seed(Some(seed)),
+            |ds| {
+                for _ in 0..3 {
+                    if rbool(ds).is_err() {
+                        return TestCaseResult::Overrun;
+                    }
                 }
-            }
-            TestCaseResult::Valid
-        },
-        async |ctx, count| {
-            let nodes = vec![bool_node(false), bool_node(true), bool_node(false)];
-            let span = |start, end| Span {
-                start,
-                end,
-                label: 1,
-                depth: 0,
-                parent: None,
-                discarded: false,
-            };
-            let spans = vec![span(0, 3), span(0, 1)];
+                TestCaseResult::Valid
+            },
+            async |ctx, count| {
+                let nodes = vec![bool_node(false), bool_node(true), bool_node(false)];
+                let span = |start, end| Span {
+                    start,
+                    end,
+                    label: 1,
+                    depth: 0,
+                    parent: None,
+                    discarded: false,
+                };
+                let spans = vec![span(0, 3), span(0, 1)];
 
-            ctx.try_span_mutation(&nodes, &spans).await.unwrap();
+                ctx.try_span_mutation(&nodes, &spans).await.unwrap();
 
-            assert!(count.get() >= 1);
-            assert_eq!(ctx.calls as usize, count.get());
-            assert!(!ctx.origins.any_live());
-        },
-    );
+                assert!(count.get() >= 1, "seed {seed}");
+                assert_eq!(ctx.calls as usize, count.get(), "seed {seed}");
+                assert!(!ctx.origins.any_live(), "seed {seed}");
+            },
+        );
+    }
 }
 
 /// Two same-label spans whose first draws are of different kinds come from
