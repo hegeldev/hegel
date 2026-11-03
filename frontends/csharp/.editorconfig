@@ -1,0 +1,19 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+indent_style = space
+indent_size = 4
+trim_trailing_whitespace = true
+
+[*.{yml,yaml,json,props,csproj,sln}]
+indent_size = 2
+
+[*.cs]
+dotnet_sort_system_directives_first = true
+csharp_style_namespace_declarations = file_scoped:warning
+csharp_prefer_braces = true:warning
+dotnet_diagnostic.IDE0005.severity = warning
+dotnet_diagnostic.IDE0161.severity = warning

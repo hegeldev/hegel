@@ -4,7 +4,7 @@ set ignore-comments := true
 # Per-component recipes live next to the code they drive and run from that
 # directory: `just libhegel::test`, `just rust::test`, `just python::test`,
 # `just typescript::test`, `just cpp::test`, `just java::test`,
-# `just ocaml::test`.
+# `just csharp::test`, `just ocaml::test`.
 # Recipes here are the ones that span the whole Cargo workspace (libhegel,
 # the Rust frontend and the Python extension share one workspace and
 # lockfile; the coverage report covers the first two).
@@ -24,6 +24,9 @@ mod cpp 'frontends/cpp'
 # The Java frontend (needs a JDK and Maven)
 mod java 'frontends/java'
 
+# The C# frontend (needs the .NET SDK)
+mod csharp 'frontends/csharp'
+
 # The OCaml frontend (needs opam; `just ocaml::setup` first)
 mod ocaml 'frontends/ocaml'
 
@@ -31,10 +34,10 @@ mod ocaml 'frontends/ocaml'
 mod website
 
 # Definition of done for the whole repo: lint + every component's tests.
-check: check-lint libhegel::check rust::check python::check typescript::check cpp::check java::check ocaml::check
+check: check-lint libhegel::check rust::check python::check typescript::check cpp::check java::check csharp::check ocaml::check
 
 # Lints spanning the Cargo workspace, plus each component's own.
-check-lint: check-format check-clippy check-nocov-style check-test-modules check-internal-asserts check-settings-env check-release-script libhegel::check-lint rust::check-lint python::check-lint typescript::check-lint cpp::check-lint java::check-lint ocaml::check-lint
+check-lint: check-format check-clippy check-nocov-style check-test-modules check-internal-asserts check-settings-env check-release-script libhegel::check-lint rust::check-lint python::check-lint typescript::check-lint cpp::check-lint java::check-lint csharp::check-lint ocaml::check-lint
 
 format:
     cargo fmt --all
@@ -42,6 +45,7 @@ format:
     just typescript::format
     just cpp::format
     just java::format
+    just csharp::format
     just ocaml::format
     # also run format-nix if we have nix installed
     @which nix && just format-nix || true
@@ -112,6 +116,6 @@ insta *ARGS:
 # These aliases are provided as ux improvements for local developers. CI
 # should use the longer forms.
 
-test: libhegel::test rust::test python::check-tests typescript::check-test cpp::check-tests java::test ocaml::check-test
+test: libhegel::test rust::test python::check-tests typescript::check-test cpp::check-tests java::test csharp::test ocaml::check-test
 coverage: check-coverage
 lint: check-lint

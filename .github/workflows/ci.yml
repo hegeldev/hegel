@@ -2,8 +2,8 @@
 # workspace-wide checks, calls each component's reusable workflow
 # (libhegel.yml, frontend-rust.yml, frontend-python.yml,
 # frontend-typescript.yml, frontend-cpp.yml, frontend-java.yml,
-# frontend-ocaml.yml, website.yml) only when that component is affected, and —
-# on a push to main — releases whatever has a release file pending.
+# frontend-csharp.yml, frontend-ocaml.yml, website.yml) only when that component
+# is affected, and — on a push to main — releases whatever has a release file pending.
 #
 # Adding a frontend: add a `frontends/<lang>/**` filter below, a
 # `.github/workflows/frontend-<lang>.yml` reusable workflow, a job here that
@@ -47,6 +47,7 @@ jobs:
       typescript: ${{ (github.event_name == 'push' && steps.code.outputs.code == 'true') || steps.filter.outputs.typescript == 'true' }}
       cpp: ${{ (github.event_name == 'push' && steps.code.outputs.code == 'true') || steps.filter.outputs.cpp == 'true' }}
       java: ${{ (github.event_name == 'push' && steps.code.outputs.code == 'true') || steps.filter.outputs.java == 'true' }}
+      csharp: ${{ (github.event_name == 'push' && steps.code.outputs.code == 'true') || steps.filter.outputs.csharp == 'true' }}
       ocaml: ${{ (github.event_name == 'push' && steps.code.outputs.code == 'true') || steps.filter.outputs.ocaml == 'true' }}
       website: ${{ github.event_name == 'push' || steps.filter.outputs.website == 'true' }}
       code: ${{ steps.code.outputs.code == 'true' }}
@@ -123,6 +124,10 @@ jobs:
               - *shared
               - 'libhegel/**'
               - 'frontends/java/**'
+            csharp:
+              - *shared
+              - 'libhegel/**'
+              - 'frontends/csharp/**'
             ocaml:
               - *shared
               - 'libhegel/**'
@@ -169,6 +174,11 @@ jobs:
           distribution: temurin
           java-version: "25"
           cache: maven
+      # The C# frontend's lints (dotnet format, the analyzers with warnings
+      # as errors) need the .NET SDK.
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: "10.0.x"
       # The OCaml frontend's lints (dune build @fmt, the generated opam files,
       # opam lint) run from an opam switch.
       - uses: ./.github/actions/setup-opam
@@ -245,6 +255,13 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/frontend-java.yml
+  csharp:
+    name: csharp
+    needs: changes
+    if: needs.changes.outputs.csharp == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/frontend-csharp.yml
   ocaml:
     name: ocaml
     needs: changes
@@ -384,7 +401,7 @@ jobs:
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [changes, lint, libhegel, rust, python, typescript, cpp, java, ocaml, website, test-minimal-versions, coverage, nix]
+    needs: [changes, lint, libhegel, rust, python, typescript, cpp, java, csharp, ocaml, website, test-minimal-versions, coverage, nix]
     runs-on: ubuntu-latest
     permissions: {}
     steps:
@@ -404,7 +421,7 @@ jobs:
     # job evaluate its condition at all when a dependency was skipped. A push
     # confined to website/ tested nothing it could release.
     if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.changes.outputs.code == 'true' }}
-    needs: [changes, lint, libhegel, rust, python, typescript, cpp, java, ocaml, website, test-minimal-versions, coverage, nix]
+    needs: [changes, lint, libhegel, rust, python, typescript, cpp, java, csharp, ocaml, website, test-minimal-versions, coverage, nix]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -419,7 +436,8 @@ jobs:
     # `python_released` / `python_tag` do the same for the Python wheel
     # builds, `typescript_released` / `typescript_tag` for the npm
     # publish, `cpp_released` / `cpp_tag` for the C++ docs push,
-    # `java_released` / `java_tag` for the Maven Central publish and
+    # `java_released` / `java_tag` for the Maven Central publish,
+    # `csharp_released` / `csharp_tag` for the NuGet publish and
     # `ocaml_released` / `ocaml_tag` for the opam source tarball. Each
     # is read off the tags release.py left on the release
     # commit, so a frontend dragged along by a libhegel release counts too.
@@ -435,6 +453,8 @@ jobs:
       cpp_tag: ${{ steps.released.outputs.cpp_tag }}
       java_released: ${{ steps.released.outputs.java_tag != '' }}
       java_tag: ${{ steps.released.outputs.java_tag }}
+      csharp_released: ${{ steps.released.outputs.csharp_tag != '' }}
+      csharp_tag: ${{ steps.released.outputs.csharp_tag }}
       ocaml_released: ${{ steps.released.outputs.ocaml_tag != '' }}
       ocaml_tag: ${{ steps.released.outputs.ocaml_tag }}
     steps:
@@ -498,8 +518,9 @@ jobs:
           typescript_tag=$(git tag --points-at HEAD --list 'frontends/typescript/*')
           cpp_tag=$(git tag --points-at HEAD --list 'frontends/cpp/*')
           java_tag=$(git tag --points-at HEAD --list 'frontends/java/*')
+          csharp_tag=$(git tag --points-at HEAD --list 'frontends/csharp/*')
           ocaml_tag=$(git tag --points-at HEAD --list 'frontends/ocaml/*')
-          if [ -z "$libhegel_tag$rust_tag$python_tag$typescript_tag$cpp_tag$java_tag$ocaml_tag" ]; then
+          if [ -z "$libhegel_tag$rust_tag$python_tag$typescript_tag$cpp_tag$java_tag$csharp_tag$ocaml_tag" ]; then
             echo "release.py left no release tag on the release commit" >&2
             exit 1
           fi
@@ -512,6 +533,7 @@ jobs:
             echo "typescript_tag=$typescript_tag"
             echo "cpp_tag=$cpp_tag"
             echo "java_tag=$java_tag"
+            echo "csharp_tag=$csharp_tag"
             echo "ocaml_tag=$ocaml_tag"
           } >> "$GITHUB_OUTPUT"
 
@@ -1114,6 +1136,45 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+
+  # The C# frontend: the `Hegel` NuGet package, bundling every platform's
+  # libhegel shared library downloaded from the GitHub release of the engine
+  # version in libhegel/Cargo.toml, and the `Hegel.FSharp` package over it. When libhegel released in the same run
+  # those binaries are only on the release once `release-binaries-verify`
+  # has published it, so this job waits for that; a frontend-only release
+  # bundles the already-published engine release and needs no wait. The
+  # packages are pushed to nuget.org with a short-lived API key obtained
+  # through NuGet trusted publishing (`.github/scripts/publish_csharp.py`).
+  release-csharp:
+    name: release-csharp
+    if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.csharp_released == 'true' && (needs.release.outputs.c_released != 'true' || needs.release-binaries-verify.result == 'success') }}
+    needs: [release, release-binaries-verify]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # NuGet trusted publishing exchanges the workflow's OIDC token for a
+      # short-lived API key.
+      id-token: write
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: refs/tags/${{ needs.release.outputs.csharp_tag }}
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: "10.0.x"
+      - name: Log in to NuGet
+        id: nuget-login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        with:
+          # The nuget.org account whose trusted publishing policy names this
+          # repository and workflow.
+          user: ${{ vars.NUGET_USER }}
+      - name: Publish to NuGet
+        env:
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+        run: python3 .github/scripts/publish_csharp.py
 
   # The OCaml frontend: the opam source tarball — the frontends/ocaml subtree
   # plus a `prebuilt/` directory holding the Linux amd64/arm64 and macOS
