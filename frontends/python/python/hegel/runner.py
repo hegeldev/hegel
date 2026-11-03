@@ -834,11 +834,11 @@ def main(
             workload()
 
     A failure is raised as from :func:`test`, and its report ends with a
-    ``rerun with: --failure-blob BLOB`` line. The ``too_slow`` and 
+    ``rerun with: --failure-blob BLOB`` line. The ``too_slow`` and
     ``test_cases_too_large`` health checks are always suppressed.
 
     Each setting except ``test_cases`` is a command-line option named after
-    its ``hegel.toml`` key, with ``-`` in place of ``_``. Values use the same 
+    its ``hegel.toml`` key, with ``-`` in place of ``_``. Values use the same
     format as in ``hegel.toml``, and options override the decorator's settings.
     ``test_cases`` cannot be set.
 
@@ -862,9 +862,7 @@ def main(
         try:
             inspect.signature(inner).bind(None)
         except TypeError:
-            raise InvalidArgument(
-                f"{inner.__name__} must only take the test case"
-            ) from None
+            raise InvalidArgument(f"{inner.__name__} must only take the test case") from None
         location = _location_of(inner)
         database_key = _database_key_of(inner)
         if location is not None and database_key.startswith("__main__."):
