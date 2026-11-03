@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
 import struct
 import sys
 import threading
@@ -254,6 +255,7 @@ def zoneinfo_finds(name):
         "Nowhere/Nothing",
         "",
         "/etc/localtime",
+        os.path.join(os.path.abspath(os.sep), "etc", "localtime"),
         "../Europe/London",
         "Europe/../UTC",
         "./UTC",
