@@ -1,29 +1,32 @@
 import type { Engine } from "./engine.js";
-import type { Settings, TestLocation } from "./runnerCore.js";
-
-export interface Diagnostics {
-  reportFinalValue(value: unknown, drawNumber: number): void;
-  reportFinalError(error: unknown): void;
-  note(message: string): void;
-}
+import type { Settings } from "./settings.js";
+import type { GrammarFileReader } from "./generate.js";
 
 /** Only host services used by the shared run loop. */
-export interface RuntimeServices extends Diagnostics {
+export interface RuntimeServices {
   getEngine(): Engine;
-  defaultSettings(): Settings;
+  /** Throw for settings the host cannot honour. */
   validateSettings(settings: Settings): void;
-  emitAntithesisAssertion(location: TestLocation, passed: boolean): void;
+  /**
+   * Whether the host can keep a database. Without one, every run's database
+   * is disabled, whatever the profile says.
+   */
+  persistence: boolean;
+  /**
+   * The directory test files' paths are taken relative to in their database
+   * keys, so that a key does not depend on where the project is checked out.
+   */
+  projectRoot: string;
+  /**
+   * Read a grammar file a `fromLark` grammar imports from its `importPath`.
+   * Absent where the host has no filesystem.
+   */
+  readGrammarFile?: GrammarFileReader;
+  /** Print one line of a run's report. */
+  output(line: string): void;
 }
 
-export const portableDiagnostics: Diagnostics = {
-  reportFinalValue(value, drawNumber) {
-    console.error(`var draw_${drawNumber} =`, value);
-  },
-  reportFinalError(error) {
-    console.error(`\n${error instanceof Error ? error.message : String(error)}`);
-    if (error instanceof Error && error.stack) console.error(error.stack);
-  },
-  note(message) {
-    console.error(message);
-  },
-};
+/** Where a run's report goes on every host: the console's error stream. */
+export function consoleOutput(line: string): void {
+  console.error(line);
+}
