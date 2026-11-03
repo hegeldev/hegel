@@ -336,7 +336,7 @@ jobs:
           components: llvm-tools-preview
           # `uv` is needed for the `check-coverage.py` script's
           # `#!/usr/bin/env -S uv run --script` shebang.
-          tools: just uv
+          tools: just uv cargo-nextest
       - name: Install cargo-llvm-cov
         run: cargo install --locked cargo-llvm-cov
 

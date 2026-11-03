@@ -30,7 +30,7 @@ Run `git diff origin/main...HEAD` and read through it. Look for:
 
 ## Coverage check
 
-If `cargo-llvm-cov` is available, run `just check-coverage` and review the output; for the Go frontend, `just go::check-test`. If new code is uncovered, address it before the PR — don't rely on CI to catch it. See the `coverage` skill (`go-coverage` for Go) for how to approach coverage gaps.
+If `cargo-llvm-cov` and `cargo-nextest` are available, run `just check-coverage` and review the output; for the Go frontend, `just go::check-test`. If new code is uncovered, address it before the PR — don't rely on CI to catch it. See the `coverage` skill (`go-coverage` for Go) for how to approach coverage gaps.
 
 ## Final gut check
 
