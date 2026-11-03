@@ -107,12 +107,124 @@ fn test_naive_times_min_greater_than_max(tc: hegel::TestCase) {
 }
 
 #[test]
-fn test_naive_times_preserves_leap_second_bound() {
+fn test_naive_times_end_of_day_leap_bound_is_a_usage_error() {
+    use crate::common::utils::expect_panic;
     let leap = NaiveTime::from_hms_nano_opt(23, 59, 59, 1_500_000_000).unwrap();
-    assert_eq!(leap.nanosecond(), 1_500_000_000);
+    expect_panic(
+        || {
+            hegel::Hegel::new(move |tc| {
+                let _ = tc.draw(chrono_gs::naive_times().min_value(leap));
+            })
+            .settings(hegel::Settings::new().database(None))
+            .run();
+        },
+        "leap second",
+    );
+}
+
+#[test]
+fn test_naive_dates_weekdays() {
     assert_all_examples(
-        chrono_gs::naive_times().min_value(leap).max_value(leap),
-        move |t| *t == leap,
+        chrono_gs::naive_dates().weekdays([Weekday::Sat, Weekday::Sun]),
+        |d| matches!(d.weekday(), Weekday::Sat | Weekday::Sun),
+    );
+}
+
+#[test]
+fn test_naive_dates_months() {
+    use chrono::Month;
+    assert_all_examples(
+        chrono_gs::naive_dates().months([Month::February, Month::December]),
+        |d| d.month() == 2 || d.month() == 12,
+    );
+}
+
+#[hegel::test]
+fn test_naive_dates_masks_property(tc: hegel::TestCase) {
+    use chrono::Month;
+    let weekdays = tc.draw(
+        gs::vecs(gs::sampled_from(vec![
+            Weekday::Mon,
+            Weekday::Tue,
+            Weekday::Wed,
+            Weekday::Thu,
+            Weekday::Fri,
+            Weekday::Sat,
+            Weekday::Sun,
+        ]))
+        .min_size(1),
+    );
+    let months = tc.draw(
+        gs::vecs(gs::sampled_from(vec![
+            Month::January,
+            Month::February,
+            Month::March,
+            Month::April,
+            Month::May,
+            Month::June,
+            Month::July,
+            Month::August,
+            Month::September,
+            Month::October,
+            Month::November,
+            Month::December,
+        ]))
+        .min_size(1),
+    );
+    let d = tc.draw(
+        chrono_gs::naive_dates()
+            .min_value(NaiveDate::from_ymd_opt(1900, 1, 1).unwrap())
+            .max_value(NaiveDate::from_ymd_opt(2100, 12, 31).unwrap())
+            .weekdays(weekdays.iter().copied())
+            .months(months.iter().copied()),
+    );
+    assert!(weekdays.contains(&d.weekday()));
+    assert!(months.iter().any(|m| m.number_from_month() == d.month()));
+}
+
+#[test]
+fn test_naive_times_precision() {
+    use hegel::datetime::Precision;
+    assert_all_examples(
+        chrono_gs::naive_times().precision(Precision::Minutes),
+        |t| t.second() == 0 && t.nanosecond() == 0,
+    );
+}
+
+#[test]
+fn test_naive_datetimes_precision() {
+    use hegel::datetime::Precision;
+    assert_all_examples(
+        chrono_gs::naive_datetimes().precision(Precision::Milliseconds),
+        |dt| dt.nanosecond() % 1_000_000 == 0,
+    );
+}
+
+#[hegel::test]
+fn test_naive_datetimes_property(tc: hegel::TestCase) {
+    let lo = tc.draw(
+        gs::integers::<i64>()
+            .min_value(-4_000_000_000)
+            .max_value(4_000_000_000),
+    );
+    let hi = tc.draw(gs::integers::<i64>().min_value(lo).max_value(4_000_000_000));
+    let min = chrono::DateTime::<chrono::Utc>::from_timestamp(lo, 0)
+        .unwrap()
+        .naive_utc();
+    let max = chrono::DateTime::<chrono::Utc>::from_timestamp(hi, 999_999_999)
+        .unwrap()
+        .naive_utc();
+    let v = tc.draw(chrono_gs::naive_datetimes().min_value(min).max_value(max));
+    assert!(v >= min && v <= max);
+}
+
+#[hegel::test]
+#[should_panic(expected = "max_value < min_value")]
+fn test_naive_datetimes_min_greater_than_max(tc: hegel::TestCase) {
+    tc.draw(
+        chrono_gs::naive_datetimes()
+            .min_value(NaiveDate::from_ymd_opt(2025, 1, 1).unwrap().into())
+            .max_value(NaiveDate::from_ymd_opt(2024, 1, 1).unwrap().into()),
     );
 }
 

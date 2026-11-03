@@ -208,24 +208,91 @@ impl DataSource for NativeDataSource {
         &self,
         min: crate::native::draws::special::Date,
         max: crate::native::draws::special::Date,
+        options: &crate::native::draws::special::DateOptions,
     ) -> Result<crate::native::draws::special::Date, DataSourceError> {
-        self.with_ntc(|ntc| crate::native::draws::special::generate_date(ntc, min, max))
+        self.with_ntc(|ntc| crate::native::draws::special::generate_date(ntc, min, max, options))
     }
 
     fn generate_time(
         &self,
         min: crate::native::draws::special::Time,
         max: crate::native::draws::special::Time,
+        precision: crate::native::draws::special::Precision,
     ) -> Result<crate::native::draws::special::Time, DataSourceError> {
-        self.with_ntc(|ntc| crate::native::draws::special::generate_time(ntc, min, max))
+        self.with_ntc(|ntc| crate::native::draws::special::generate_time(ntc, min, max, precision))
     }
 
     fn generate_datetime(
         &self,
         min: crate::native::draws::special::DateTime,
         max: crate::native::draws::special::DateTime,
+        precision: crate::native::draws::special::Precision,
     ) -> Result<crate::native::draws::special::DateTime, DataSourceError> {
-        self.with_ntc(|ntc| crate::native::draws::special::generate_datetime(ntc, min, max))
+        self.with_ntc(|ntc| {
+            crate::native::draws::special::generate_datetime(ntc, min, max, precision)
+        })
+    }
+
+    fn generate_timestamp(
+        &self,
+        min: crate::native::timezone::Timestamp,
+        max: crate::native::timezone::Timestamp,
+        precision: crate::native::draws::special::Precision,
+    ) -> Result<crate::native::timezone::Timestamp, DataSourceError> {
+        self.with_ntc(|ntc| {
+            crate::native::draws::scalar::generate_timestamp(ntc, min, max, precision)
+        })
+    }
+
+    fn generate_offset(
+        &self,
+        min_seconds: i32,
+        max_seconds: i32,
+        granularity: crate::native::draws::scalar::Granularity,
+        allow_unknown: bool,
+    ) -> Result<crate::native::draws::scalar::UtcOffset, DataSourceError> {
+        self.with_ntc(|ntc| {
+            crate::native::draws::scalar::generate_offset(
+                ntc,
+                min_seconds,
+                max_seconds,
+                granularity,
+                allow_unknown,
+            )
+        })
+    }
+
+    fn generate_duration(
+        &self,
+        min: crate::native::draws::scalar::Duration,
+        max: crate::native::draws::scalar::Duration,
+        precision: crate::native::draws::special::Precision,
+    ) -> Result<crate::native::draws::scalar::Duration, DataSourceError> {
+        self.with_ntc(|ntc| {
+            crate::native::draws::scalar::generate_duration(ntc, min, max, precision)
+        })
+    }
+
+    fn generate_span(
+        &self,
+        spec: &crate::native::draws::scalar::SpanSpec,
+    ) -> Result<crate::native::draws::scalar::Span, DataSourceError> {
+        self.with_ntc(|ntc| crate::native::draws::scalar::generate_span(ntc, spec))
+    }
+
+    fn generate_timezone(
+        &self,
+        spec: &crate::native::draws::timezone::TimeZoneSpec,
+    ) -> Result<String, DataSourceError> {
+        self.with_ntc(|ntc| crate::native::draws::timezone::generate_timezone(ntc, spec))
+    }
+
+    fn generate_zoned_datetime(
+        &self,
+        tz: &crate::native::draws::timezone::TimeZoneSpec,
+        spec: &crate::native::draws::zoned::ZonedSpec,
+    ) -> Result<crate::native::draws::zoned::ZonedDateTime, DataSourceError> {
+        self.with_ntc(|ntc| crate::native::draws::zoned::generate_zoned_datetime(ntc, tz, spec))
     }
 
     fn generate_uuid(&self, version: Option<u8>) -> Result<[u8; 16], DataSourceError> {

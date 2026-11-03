@@ -52,6 +52,22 @@ fn test_fixed_offsets_property(tc: hegel::TestCase) {
     assert!(v.local_minus_utc() <= hi);
 }
 
+#[test]
+fn test_fixed_offsets_granularity() {
+    use hegel::datetime::Granularity;
+    assert_all_examples(
+        chrono_gs::fixed_offsets().granularity(Granularity::QuarterHours),
+        |o| o.local_minus_utc() % 900 == 0,
+    );
+}
+
+#[test]
+fn test_fixed_offsets_shrink_toward_utc() {
+    use crate::common::utils::minimal;
+    let o: FixedOffset = minimal(chrono_gs::fixed_offsets(), |_| true);
+    assert_eq!(o.local_minus_utc(), 0);
+}
+
 #[hegel::test]
 #[should_panic(expected = "max_value < min_value")]
 fn test_fixed_offsets_min_greater_than_max(tc: hegel::TestCase) {

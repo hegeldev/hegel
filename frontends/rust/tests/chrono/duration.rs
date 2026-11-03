@@ -1,5 +1,6 @@
-use crate::common::utils::{assert_all_examples, check_can_generate_examples};
+use crate::common::utils::{assert_all_examples, check_can_generate_examples, find_any, minimal};
 use chrono::TimeDelta;
+use hegel::datetime::Precision;
 use hegel::extras::chrono as chrono_gs;
 use hegel::generators as gs;
 
@@ -66,6 +67,30 @@ fn test_time_deltas_min_greater_than_max(tc: hegel::TestCase) {
             .min_value(TimeDelta::seconds(10))
             .max_value(TimeDelta::seconds(5)),
     );
+}
+
+#[test]
+fn test_time_deltas_precision() {
+    assert_all_examples(
+        chrono_gs::time_deltas().precision(Precision::Seconds),
+        |d| d.subsec_nanos() == 0,
+    );
+    find_any(
+        chrono_gs::time_deltas().precision(Precision::Seconds),
+        |d| *d == TimeDelta::seconds(-1),
+    );
+}
+
+#[test]
+fn test_time_deltas_shrink_to_zero() {
+    assert_eq!(
+        minimal(chrono_gs::time_deltas(), |_| true),
+        TimeDelta::zero()
+    );
+    let p = minimal(chrono_gs::time_deltas(), |d| d.subsec_nanos() != 0);
+    assert_eq!(p, TimeDelta::nanoseconds(1));
+    let n = minimal(chrono_gs::time_deltas(), |d| *d < TimeDelta::zero());
+    assert_eq!(n, TimeDelta::nanoseconds(-1));
 }
 
 #[test]

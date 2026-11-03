@@ -130,6 +130,15 @@ check-miri:
 check-lark:
     scripts/check-lark.py
 
+# Regenerate the engine's bundled time zone table in src/tzdata/ from the
+# tzdata PyPI release the script pins (needs uv, which fetches it).
+tzdata:
+    scripts/generate_tzdata.py
+
+# Check that src/tzdata/ is what `just tzdata` would write (needs uv).
+check-tzdata:
+    scripts/generate_tzdata.py --check
+
 # Compare the engine's grammar parser with Lark's Earley parser on strings
 # generated from the fixture grammars and mutations of them (needs uv).
 check-parse:
