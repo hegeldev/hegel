@@ -1,4 +1,5 @@
 ; Set HEGEL_SQLITE_EXAMPLES=1 to build this example.
+
 (executable
  (name main)
  (enabled_if
