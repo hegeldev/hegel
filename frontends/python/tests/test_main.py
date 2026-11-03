@@ -211,5 +211,5 @@ def test_rejects_what_it_cannot_run():
         pass
 
     for fn in (no_arguments, two_arguments):
-        with pytest.raises(hegel.InvalidArgument, match="exactly one argument"):
+        with pytest.raises(hegel.InvalidArgument, match="must only take the test case"):
             hegel.main(fn)  # type: ignore[arg-type]
