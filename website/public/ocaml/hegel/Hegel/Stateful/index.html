@@ -25,7 +25,7 @@
   ;;
 end
 
-let%hegel_test integer_stack tc = Stack.run tc ~init:(ref [])</code></pre><h3 id="concurrent-stateful-testing"><a href="#concurrent-stateful-testing" class="anchor"></a>Concurrent stateful testing</h3><p><a href="#val-run_concurrent"><code>run_concurrent</code></a> with <code>max_concurrency &gt; 1</code> runs rules on several workers concurrently. libhegel draws the number of workers in <code>[min_concurrency, max_concurrency]</code>. Rules belong to a group, and only rules in the same group may run concurrently. Rules without a group all belong to the <code>&lt;anonymous&gt;</code> group.</p><p>A round is a step of a concurrent test. Each round selects one rule group, and each worker runs a sequence of rules from that group. Invariants run after all workers finish the round.</p><p>How the workers run is a <a href="../Concurrency/index.html#type-t"><code>Concurrency.t</code></a>. The default implementation is <a href="../Concurrency/index.html#val-threads"><code>Concurrency.threads</code></a>, which puts workers on systhreads. See <a href="../Concurrency/index.html"><code>Concurrency</code></a> for more details.</p><p>A concurrent rule takes a context after the test case. If using <a href="../Concurrency/index.html#val-threads"><code>Concurrency.threads</code></a> or <a href="../Concurrency/index.html#val-domains"><code>Concurrency.domains</code></a> it is <code>()</code>. A capability wrapping a scheduler passes the scheduler's per-task handle. This can be used by the system under test or the rule to spawn its own tasks.</p><p>With the <code>ppx_hegel_test</code> PPX, a concurrent state machine is a module written as <code>module%hegel_concurrent_state_machine M = struct … end</code>. Mark rules with <code>[@@rule]</code> and invariants with <code>[@@invariant]</code>. See <a href="Concurrent_rule/index.html"><code>Concurrent_rule</code></a> and <a href="Invariant/index.html"><code>Invariant</code></a> for valid options. The PPX generates the <code>run</code> function for the state machine. If the module defines <code>sexp_of_state</code>, <code>run</code> uses it to print the state after each step.</p><p>The example store below has a bug. The store locks individual reads and writes, but releases the lock between reading a counter and writing its incremented value. Two workers can therefore overwrite each other's updates.</p><pre class="language-ocaml"><code>module Store = struct
+let%hegel_test integer_stack tc = Stack.run tc ~init:(ref [])</code></pre><h3 id="concurrent-stateful-testing"><a href="#concurrent-stateful-testing" class="anchor"></a>Concurrent stateful testing</h3><p><a href="#val-run_concurrent"><code>run_concurrent</code></a> with <code>max_concurrency &gt; 1</code> runs rules on several workers concurrently. libhegel draws the number of workers in <code>[min_concurrency, max_concurrency]</code>. Rules belong to one or more groups, and only rules in the same group may run concurrently. Rules without groups all belong to the <code>&lt;anonymous&gt;</code> group.</p><p>A round is a step of a concurrent test. Each round selects one rule group, and each worker runs a sequence of rules from that group. A rule in several groups runs in the rounds of each of them, so it may overlap the rules of every group it belongs to, while those groups' other rules never overlap each other. Invariants run after all workers finish the round.</p><p>How the workers run is a <a href="../Concurrency/index.html#type-t"><code>Concurrency.t</code></a>. The default implementation is <a href="../Concurrency/index.html#val-threads"><code>Concurrency.threads</code></a>, which puts workers on systhreads. See <a href="../Concurrency/index.html"><code>Concurrency</code></a> for more details.</p><p>A concurrent rule takes a context after the test case. If using <a href="../Concurrency/index.html#val-threads"><code>Concurrency.threads</code></a> or <a href="../Concurrency/index.html#val-domains"><code>Concurrency.domains</code></a> it is <code>()</code>. A capability wrapping a scheduler passes the scheduler's per-task handle. This can be used by the system under test or the rule to spawn its own tasks.</p><p>With the <code>ppx_hegel_test</code> PPX, a concurrent state machine is a module written as <code>module%hegel_concurrent_state_machine M = struct … end</code>. Mark rules with <code>[@@rule]</code> and invariants with <code>[@@invariant]</code>. See <a href="Concurrent_rule/index.html"><code>Concurrent_rule</code></a> and <a href="Invariant/index.html"><code>Invariant</code></a> for valid options. The PPX generates the <code>run</code> function for the state machine. If the module defines <code>sexp_of_state</code>, <code>run</code> uses it to print the state after each step.</p><p>The example store below has a bug. The store locks individual reads and writes, but releases the lock between reading a counter and writing its incremented value. Two workers can therefore overwrite each other's updates.</p><pre class="language-ocaml"><code>module Store = struct
   type t =
     { lock : Mutex.t
     ; values : (int, int) Hashtbl.t
@@ -68,14 +68,14 @@ module%hegel_concurrent_state_machine Key_value_store = struct
   let register tc () state =
     let key = draw tc (integers ~min_value:0 ~max_value:3 ()) in
     if Store.put_if_absent state.store key then Stateful.Concurrent_pool.add state.keys tc key
-  [@@rule { group = &quot;operations&quot; }]
+  [@@rule { groups = [ &quot;operations&quot; ] }]
   ;;
 
   let increment tc () state =
     let key = draw_silent tc (Stateful.Concurrent_pool.values_reusable state.keys) in
     Store.increment state.store key;
     Atomic.incr state.increments
-  [@@rule { group = &quot;operations&quot; }]
+  [@@rule { groups = [ &quot;operations&quot; ] }]
   ;;
 
   let read tc () state =
@@ -83,13 +83,13 @@ module%hegel_concurrent_state_machine Key_value_store = struct
     match Store.get state.store key with
     | Some value -&gt; note tc (Printf.sprintf &quot;read %d -&gt; %d&quot; key value)
     | None -&gt; note tc (Printf.sprintf &quot;key %d is absent&quot; key)
-  [@@rule { group = &quot;operations&quot; }]
+  [@@rule { groups = [ &quot;operations&quot;; &quot;snapshot&quot; ] }]
   ;;
 
   let snapshot tc () state =
     let count = Hashtbl.length (Store.snapshot state.store) in
     note tc (Printf.sprintf &quot;snapshot holds %d keys&quot; count)
-  [@@rule { group = &quot;snapshot&quot; }]
+  [@@rule { groups = [ &quot;snapshot&quot; ] }]
   ;;
 
   let no_lost_updates _tc state =
@@ -116,7 +116,7 @@ let%hegel_test concurrent_store tc =
     }
   in
   Key_value_store.run tc ~init ~max_concurrency:4
-;;</code></pre><p>The <code>operations</code> group allows registration, increments, and reads to overlap. The <code>snapshot</code> group runs separately. The invariant compares stored values with an atomic count of completed increments.</p><p>Concurrent failures are usually nondeterministic. Use <code>Settings.nondeterminism_strictness</code> to configure how Hegel handles nondeterministic failures.</p><p>In the failure output, each line a worker prints is prefixed with the worker index and the time since the test case began.</p><pre>--- Failure: concurrent_store (...) -------------------------
+;;</code></pre><p>The <code>operations</code> group allows registration, increments, and reads to overlap. The <code>snapshot</code> group runs separately from registration and increments, but <code>read</code> is in both groups, so reads also overlap snapshots. The invariant compares stored values with an atomic count of completed increments.</p><p>Concurrent failures are usually nondeterministic. Use <code>Settings.nondeterminism_strictness</code> to configure how Hegel handles nondeterministic failures.</p><p>In the failure output, each line a worker prints is prefixed with the worker index and the time since the test case began.</p><pre>--- Failure: concurrent_store (...) -------------------------
 
 Concurrency level: 4
 ---------------- Round 1: group &quot;operations&quot; ----------------
@@ -131,6 +131,8 @@ Concurrency level: 4
 ---------------- Round 2: group &quot;snapshot&quot; ------------------
 [worker 0 +0.363ms] Rule: snapshot
 [worker 0 +0.365ms]   snapshot holds 3 keys
+[worker 1 +0.359ms] Rule: read
+[worker 1 +0.362ms]   read 0 -&gt; 1
 ...
 ---------------- Round 3: group &quot;operations&quot; ----------------
 [worker 0 +0.486ms] Rule: increment
