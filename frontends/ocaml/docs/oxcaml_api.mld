@@ -69,16 +69,20 @@ val%template sampled_from
 
 [with_printer], [printer], [composite], [flat_map], [filter], [one_of],
 [optional], [tuples2]/[tuples3]/[tuples4], [lists], [assoc_lists],
-[hash_tables], [make_hash_tables], [make_characters], [make_dates],
-[make_times], [make_datetimes], [functions]/[functions2]/[functions3], and
+[hash_tables], [make_hash_tables], [make_characters], the deprecated
+[make_dates]/[make_times]/[make_datetimes], [functions]/[functions2]/[functions3], {!Hegel.Temporal.zoned_datetimes} and
 {!Hegel_jane.hash_tables} use the same template as [map].
 
 The primitives return [@ portable] and have one version: {!Hegel.booleans},
 {!Hegel.integers}, {!Hegel.floats}, {!Hegel.text}, {!Hegel.characters},
 {!Hegel.chars}, {!Hegel.binary}, {!Hegel.emails}, {!Hegel.urls},
-{!Hegel.domains}, {!Hegel.from_regex}, {!Hegel.dates}, {!Hegel.times},
-{!Hegel.datetimes}, {!Hegel.ip_addresses}, and the {!Hegel_jane} generators
-other than {!Hegel_jane.hash_tables}.
+{!Hegel.domains}, {!Hegel.from_regex}, {!Hegel.ip_addresses}, the deprecated
+[dates]/[times]/[datetimes], the
+{!Hegel.Temporal} generators other than {!Hegel.Temporal.zoned_datetimes}, and
+the {!Hegel_jane} generators other than {!Hegel_jane.hash_tables}.
+
+{!Hegel.Temporal.Zone_source.t} crosses portability and contention, so a
+portable generator can hold a zone source.
 
 {1 Hegel.Stateful}
 

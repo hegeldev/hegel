@@ -340,40 +340,11 @@ let generate_domain tc ~max_length =
   with_string_generator tc (fun ctx -> Ffi.string_generator_domain ctx ~max_length)
 ;;
 
-(** A proleptic Gregorian calendar date, as drawn by {!generate_date}. *)
-type date = Ffi.date =
-  { year : int
-  ; month : int
-  ; day : int
-  }
+let with_draw tc f = with_stop_guard tc (fun () -> f tc.context tc.handle)
 
-(** A time of day at nanosecond resolution, as drawn by {!generate_time}. *)
-type time = Ffi.time =
-  { hour : int
-  ; minute : int
-  ; second : int
-  ; nanosecond : int
-  }
-
-(** [generate_date tc ~min_value ~max_value] draws a Gregorian date in the
-    inclusive range. *)
-let generate_date tc ~min_value ~max_value =
-  with_stop_guard tc (fun () ->
-    Ffi.generate_date tc.context tc.handle ~min_value ~max_value)
-;;
-
-(** [generate_time tc ~min_value ~max_value] draws a time in the inclusive
-    range. *)
-let generate_time tc ~min_value ~max_value =
-  with_stop_guard tc (fun () ->
-    Ffi.generate_time tc.context tc.handle ~min_value ~max_value)
-;;
-
-(** [generate_datetime tc ~min_value ~max_value] draws a naive datetime in the
-    inclusive range as a [(date, time)] pair. *)
-let generate_datetime tc ~min_value ~max_value =
-  with_stop_guard tc (fun () ->
-    Ffi.generate_datetime tc.context tc.handle ~min_value ~max_value)
+let with_context f =
+  let ctx = Ffi.context_new () in
+  Fun.protect ~finally:(fun () -> Ffi.context_free ctx) (fun () -> f ctx)
 ;;
 
 (** [generate_ipv4 tc] draws an IPv4 address as its 4 network-order bytes. *)
@@ -441,9 +412,37 @@ let note tc message = if should_print tc then Ffi.note tc.context tc.handle mess
 
 (** [render_sexp ctx printer sexp] writes [sexp] to [printer] in s-expression
     syntax. Lists are printed with breaks between elemnts when the line overflows. *)
+module Raw_atoms = Ephemeron.K1.Make (struct
+    type t = Sexp.t
+
+    let equal = ( == )
+    let hash = Hashtbl.hash
+  end)
+
+#ifdef OXCAML
+let raw_atoms_create = Obj.magic_portable Raw_atoms.create
+let raw_atoms_replace = Obj.magic_portable Raw_atoms.replace
+let raw_atoms_mem = Obj.magic_portable Raw_atoms.mem
+#else
+let raw_atoms_create = Raw_atoms.create
+let raw_atoms_replace = Raw_atoms.replace
+let raw_atoms_mem = Raw_atoms.mem
+#endif
+
+let raw_atoms = Locked.create (fun () -> raw_atoms_create 16)
+
+let raw_text text =
+  let atom = Sexp.Atom text in
+  Locked.protect raw_atoms (fun table -> raw_atoms_replace table atom ());
+  atom
+;;
+
+let is_raw_text sexp = Locked.protect raw_atoms (fun table -> raw_atoms_mem table sexp)
+
 let rec render_sexp ctx printer (sexp : Sexp.t) =
   match sexp with
-  | Sexp.Atom _ -> Ffi.printer_text ctx printer (Sexp.to_string sexp)
+  | Sexp.Atom text ->
+    Ffi.printer_text ctx printer (if is_raw_text sexp then text else Sexp.to_string sexp)
   | Sexp.List children ->
     Ffi.printer_begin_group ctx printer ~indent:1 "(";
     List.iteri

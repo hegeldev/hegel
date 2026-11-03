@@ -30,5 +30,7 @@ let () =
     ; "generators_combinators", Test_generators_combinators.tests
     ; "generators_functions", Test_generators_functions.tests
     ; "stateful", Test_stateful.tests
+    ; "temporal", Test_temporal.tests
+    ; "legacy_dates", Test_legacy_dates.tests
     ]
 ;;

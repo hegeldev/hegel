@@ -682,114 +682,6 @@ val urls : unit -> (string, printable) generator MODE(portable)
     ]} *)
 val domains : ?max_length:int -> unit -> (string, printable) generator MODE(portable)
 
-(** A proleptic Gregorian calendar date. [year] is in [\[-999999, 999999\]],
-    [month] in [\[1, 12\]], and [day] in [\[1, days-in-month\]]. *)
-type date =
-  { year : int
-  ; month : int
-  ; day : int
-  }
-
-(** A time of day at nanosecond resolution. [hour] is in [\[0, 23\]],
-    [minute] and [second] in [\[0, 59\]], and [nanosecond] in [\[0, 999999999\]]. *)
-type time =
-  { hour : int
-  ; minute : int
-  ; second : int
-  ; nanosecond : int
-  }
-
-(** [make_dates ~of_date ~sexp_of ?min_date ?max_date ()] builds a generator
-    for dates in [\[min_date, max_date\]] over any representation. [of_date]
-    converts each drawn {!date} to the desired representation. The default
-    range is [\[0001-01-01, 9999-12-31\]].
-
-    {[
-      let core_dates =
-        make_dates
-          ~of_date:(fun { year; month; day } ->
-            Core.Date.create_exn ~y:year ~m:(Core.Month.of_int_exn month) ~d:day)
-          ~sexp_of:Core.Date.sexp_of_t
-          ()
-    ]} *)
-val%template make_dates
-  :  of_date:(date -> 'a) MODE(m)
-  -> sexp_of:('a -> Sexplib0.Sexp.t) MODE(m)
-  -> ?min_date:date
-  -> ?max_date:date
-  -> unit
-  -> ('a, printable) generator MODE(m)
-[@@mode m = (nonportable, portable)]
-
-(** [make_times ~of_time ~sexp_of ?min_time ?max_time ()] builds a generator
-    for times of day in [\[min_time, max_time\]] over any representation.
-    [of_time] converts each drawn {!time} to the desired representation. The
-    default range is [\[00:00:00.000000000, 23:59:59.999999999\]]. *)
-val%template make_times
-  :  of_time:(time -> 'a) MODE(m)
-  -> sexp_of:('a -> Sexplib0.Sexp.t) MODE(m)
-  -> ?min_time:time
-  -> ?max_time:time
-  -> unit
-  -> ('a, printable) generator MODE(m)
-[@@mode m = (nonportable, portable)]
-
-(** [make_datetimes ~of_datetime ~sexp_of ?min_datetime ?max_datetime ()] builds a
-    generator for naive datetimes in [\[min_datetime, max_datetime\]] over any
-    representation. [of_datetime] converts each drawn [(date, time)] pair to the
-    desired representation. The default range is [\[0001-01-01T00:00:00.000000000, 9999-12-31T23:59:59.999999999\]]. *)
-val%template make_datetimes
-  :  of_datetime:(date * time -> 'a) MODE(m)
-  -> sexp_of:('a -> Sexplib0.Sexp.t) MODE(m)
-  -> ?min_datetime:date * time
-  -> ?max_datetime:date * time
-  -> unit
-  -> ('a, printable) generator MODE(m)
-[@@mode m = (nonportable, portable)]
-
-(** [dates ?min_date ?max_date ()] creates a generator for ISO 8601
-    [YYYY-MM-DD] date strings in [\[min_date, max_date\]]. The default range is
-    [\[0001-01-01, 9999-12-31\]].
-
-    {[
-      let%hegel_test dates_example tc =
-        let d = draw tc (dates ()) in
-        assert (String.length d = 10)
-      ;;
-    ]} *)
-val dates : ?min_date:date -> ?max_date:date -> unit -> (string, printable) generator MODE(portable)
-
-(** [times ?min_time ?max_time ()] creates a generator for ISO 8601
-    [HH:MM:SS.fffffffff] time-of-day strings in [\[min_time, max_time\]]. The
-    default range is [\[00:00:00.000000000, 23:59:59.999999999\]].
-
-    {[
-      let%hegel_test times_example tc =
-        let t =
-          draw tc (times ~min_time:{ hour = 9; minute = 0; second = 0; nanosecond = 0 } ())
-        in
-        assert (String.length t = 18 && String.compare t "09:00:00.000000000" >= 0)
-      ;;
-    ]} *)
-val times : ?min_time:time -> ?max_time:time -> unit -> (string, printable) generator MODE(portable)
-
-(** [datetimes ?min_datetime ?max_datetime ()] creates a generator for naive
-    ISO 8601 [YYYY-MM-DDTHH:MM:SS.fffffffff] datetime strings in
-    [\[min_datetime, max_datetime\]]. The default range is
-    [\[0001-01-01T00:00:00.000000000, 9999-12-31T23:59:59.999999999\]].
-
-    {[
-      let%hegel_test datetimes_example tc =
-        let dt = draw tc (datetimes ()) in
-        assert (String.contains dt 'T')
-      ;;
-    ]} *)
-val datetimes
-  :  ?min_datetime:date * time
-  -> ?max_datetime:date * time
-  -> unit
-  -> (string, printable) generator MODE(portable)
-
 (** [ip_addresses ?version ()] creates a generator for typed [Ipaddr.t] IP
     addresses. [version] selects IPv4 ([`V4], RFC 791) or IPv6 ([`V6],
     RFC 4291); when omitted, either version is generated. Render a drawn
@@ -894,6 +786,877 @@ val%template filter
   -> ('a, 'p) generator MODE(m)
   -> ('a, 'p) generator MODE(m)
 [@@mode m = (nonportable, portable)]
+
+(** Date and time generators: dates, times, instants, UTC offsets, time
+    zones, zoned datetimes, durations and calendar spans, drawn by default
+    against the IANA time zone database bundled in the engine. *)
+module Temporal : sig
+  (** Dates, times, instants, UTC offsets, time zones, durations and calendar
+      spans, as the engine draws them.
+
+      The generators are {!dates}, {!times}, {!datetimes}, {!instants},
+      {!offsets}, {!zones}, {!zoned_datetimes}, {!durations} and {!spans}. The
+      values they draw are the plain records and variants of this module,
+      mirroring the engine's value model field for field, with no arithmetic and
+      no parsing: a test that uses a date library converts the value it draws
+      with {!map}. Each generator is printable, and prints a value in the RFC
+      9557 form the engine prints a counterexample in, so a failing value reads
+      the same from every language binding:
+      [2024-03-10T01:30:00-05:00[America/New_York]], with [[gap]] or
+      [[fold=0]]/[[fold=1]] appended to a skipped or repeated wall time,
+      [-00:00] for an unknown offset and [Z[Etc/Unknown]] for the unknown zone.
+      Failure output prints that text as it is, without the quotes and escapes
+      of an s-expression atom, also when the value is part of a larger one
+      such as a list; the [sexp_of_*] printers return it as an atom.
+
+      {[
+        let%hegel_test weekend_dates tc =
+          let d =
+            draw
+              tc
+              (Temporal.dates
+                 ~min_value:Temporal.{ year = 2024; month = 1; day = 1 }
+                 ~weekdays:Temporal.[ Saturday; Sunday ]
+                 ())
+          in
+          assert (d.year >= 2024)
+        ;;
+      ]}
+
+      {2 Time zone data}
+
+      Zones are drawn, and wall times classified and resolved, against a
+      {!Zone_source.t}. OCaml's standard library has no time zone database, so
+      by default every draw and query uses the IANA database bundled in the
+      engine, whose release {!tzdb_version} names. {!set_default_zone_source}
+      replaces that default for the whole process, and [zones ~source] for one
+      generator. {!Zone_source} fills a source from any other database (TZif
+      files, zone data as fields, an offset oracle, or a loader that supplies
+      each zone the first time it is needed), so that the gaps and folds the
+      engine targets are the ones the code under test computes. The functions
+      {!resolve}, {!offset_at} and {!info} query a source directly, outside any
+      test. *)
+
+  (** {2 Values} *)
+
+  (** The lowest year of a {!type-date}, [-999999]. *)
+  val min_year : int
+
+  (** The highest year of a {!type-date}, [999999]. *)
+  val max_year : int
+
+  (** The first second of {!min_year}, the lowest [second] of an {!type-instant}. *)
+  val min_instant : int
+
+  (** The last second of {!max_year}, the highest [second] of an {!type-instant}. *)
+  val max_instant : int
+
+  (** The largest magnitude of a known {!utc_offset} in seconds, 25:59:59. *)
+  val max_offset : int
+
+  (** ["Etc/Unknown"], the zone whose instants are known and whose offset is
+      not. *)
+  val unknown_zone : string
+
+  (** A proleptic Gregorian calendar date: [year] in
+      [\[min_year, max_year\]], [month] in [\[1, 12\]] and [day] in
+      [\[1, days in the month\]]. Prints as [2024-03-10], with a signed
+      six-digit year outside [0000] to [9999]. *)
+  type date =
+    { year : int
+    ; month : int
+    ; day : int
+    }
+
+  (** A time of day from [00:00:00] to [23:59:59.999999999]: [hour] in
+      [\[0, 23\]], [minute] and [second] in [\[0, 59\]] (no leap seconds) and
+      [nanosecond] in [\[0, 999999999\]]. Prints as [02:30:00], with the
+      fraction appended when it is not zero: [02:30:00.5]. *)
+  type time =
+    { hour : int
+    ; minute : int
+    ; second : int
+    ; nanosecond : int
+    }
+
+  (** A wall-clock date and time with no zone or offset. Prints as
+      [2024-03-10T02:30:00]. *)
+  type datetime =
+    { date : date
+    ; time : time
+    }
+
+  (** An instant: [second]s since the Unix epoch in
+      [\[min_instant, max_instant\]] and a [nanosecond] in [\[0, 999999999\]]
+      counted forward from that second, so -1.5 s is
+      [{ second = -2; nanosecond = 500_000_000 }]. Prints as the UTC wall
+      time with a [Z] suffix: [2000-01-01T00:00:00Z]. *)
+  type instant =
+    { second : int
+    ; nanosecond : int
+    }
+
+  (** A UTC offset: a known number of seconds east of UTC within
+      [±max_offset], or the unknown offset of RFC 3339's [-00:00]. Prints as
+      [+05:30], [-00:44:30] (the seconds appended when they are not zero) or
+      [-00:00]. *)
+  type utc_offset =
+    | Known of int
+    | Unknown
+
+  (** A time zone: [name] as it was drawn or written, link names such as
+      [Asia/Calcutta] included, and [primary_name] the zone it resolves to
+      ([Asia/Kolkata]), or the name itself for a zone the source lacks. Prints
+      as the name. *)
+  type time_zone =
+    { name : string
+    ; primary_name : string
+    }
+
+  (** How a wall-clock time maps to instants in its zone. *)
+  type transition_kind =
+    | Unique (** Exactly one instant. *)
+    | Gap (** None: the clocks skipped it. *)
+    | Fold (** Two: the clocks repeated it. *)
+
+  (** A wall-clock time in a time zone, resolved to an instant: the
+      {!transition_kind} of the wall time, the offsets in force before and
+      after the transition it falls on (both the resolved offset for a unique
+      time), which repeat of a fold it means ([fold], the later when set), the
+      resolved [offset] ({!Unknown} in {!unknown_zone} and in a zone only the
+      caller's database knows) and the [instant]: the unique instant, the one
+      [fold] picks, or for a gap the wall time read with [offset_before].
+      Build a value of your own date library from [civil], the zone name and
+      [fold] (or, for a gap, from [instant]), never from the offsets, so that
+      a newer database on your side changes what a value means but never
+      makes it invalid. *)
+  type zoned_datetime =
+    { zone : time_zone
+    ; civil : datetime
+    ; kind : transition_kind
+    ; offset_before : utc_offset
+    ; offset_after : utc_offset
+    ; fold : bool
+    ; offset : utc_offset
+    ; instant : instant
+    }
+
+  (** A signed duration: [seconds] plus [nanoseconds] of the same sign, the
+      latter within [±999999999], so -1.5 s is
+      [{ seconds = -1; nanoseconds = -500_000_000 }]. Prints in the ISO 8601
+      form [PT1H30M5.5S], with a leading [-] when negative and [PT0S] for
+      zero. *)
+  type signed_duration =
+    { seconds : int
+    ; nanoseconds : int
+    }
+
+  (** A calendar span: a signed count of each unit from years to nanoseconds,
+      never normalised (90 minutes is not an hour and a half, and a month is
+      not a number of days). Every unit shares one sign unless the span was
+      drawn with {!Mixed}. Prints each nonzero unit as
+      [1y 2mo 3w 4d 5h 6m 7s 8ms 9µs 10ns], with one leading [-] when every
+      unit is negative or zero, a [-] on each negative unit when the signs are
+      mixed, and [0s] for zero. *)
+  type span =
+    { years : int
+    ; months : int
+    ; weeks : int
+    ; days : int
+    ; hours : int
+    ; minutes : int
+    ; seconds : int
+    ; milliseconds : int
+    ; microseconds : int
+    ; nanoseconds : int
+    }
+
+  (** The unit the time part of a drawn value is counted in: the value is a
+      whole number of these units and shrinks in them. *)
+  type precision =
+    | Nanoseconds
+    | Microseconds
+    | Milliseconds
+    | Seconds
+    | Minutes
+    | Hours
+
+  (** The values an offset draw restricts itself to. *)
+  type granularity =
+    | Hours
+    | Quarter_hours
+    | Minutes
+    | Seconds
+
+  (** A day of the week. *)
+  type weekday =
+    | Monday
+    | Tuesday
+    | Wednesday
+    | Thursday
+    | Friday
+    | Saturday
+    | Sunday
+
+  (** A month of the year. *)
+  type month =
+    | January
+    | February
+    | March
+    | April
+    | May
+    | June
+    | July
+    | August
+    | September
+    | October
+    | November
+    | December
+
+  (** Which instant a zoned datetime draw means by a wall time the clocks
+      repeated. *)
+  type ambiguous =
+    | Both (** Either, decided by a drawn fold that shrinks to the earlier. *)
+    | Earlier (** The earlier instant, with no fold drawn. *)
+    | Later (** The later instant, with no fold drawn. *)
+
+  (** How the signs of a span's units are drawn. *)
+  type span_sign =
+    | Uniform (** One sign for every unit. *)
+    | Mixed (** Each unit signed on its own. *)
+    | Non_negative (** Magnitudes only. *)
+
+  (** A unit of a {!span}, largest first. *)
+  type span_unit =
+    | Years
+    | Months
+    | Weeks
+    | Days
+    | Hours
+    | Minutes
+    | Seconds
+    | Milliseconds
+    | Microseconds
+    | Nanoseconds
+
+  (** A feature of a time zone, derived from its offsets and name. "After
+      1970" means at any instant from 1970-01-01T00:00:00Z on, the rule in
+      force after the last explicit transition included. *)
+  type tag =
+    | Fixed (** No transition after 1970. *)
+    | Whole_hour (** Every offset after 1970 is a whole number of hours. *)
+    | Fractional
+    (** Some offset after 1970 is a whole number of minutes but not of hours. *)
+    | Seconds (** Some offset in the zone's history is not a whole number of minutes. *)
+    | Dst (** The current rule has a DST offset exactly one hour from standard. *)
+    | Dst_other (** The current rule has a DST offset of another size. *)
+    | Multi (** Some calendar year has more than two offset changes. *)
+    | Base_change
+    (** The lowest offset in force during some year after 1970 differs from
+        the previous year's. *)
+    | Midnight (** A transition after 1970 whose wall time before or after it is midnight. *)
+    | Spans_midnight
+    (** A transition after 1970 whose wall times before and after it fall on
+        different dates. *)
+    | Whole_day (** A transition that skips or repeats a whole day. *)
+    | Same_offset
+    (** A transition after 1970 that changes the abbreviation but not the offset. *)
+    | Undefined (** The zone uses the [-00] undefined-offset abbreviation. *)
+    | Link (** The name is a link to another zone. *)
+    | Legacy (** The name is not [Area/Location] for a current area. *)
+    | Inverted_sign (** The name is one of the [Etc/GMT+5] family. *)
+
+  (** What a zone source knows about a time zone name; see {!info}. [rank] is
+      the name's position on the shrink ladder ([UTC] is 0) and [tags] its
+      features in declaration order. *)
+  type zone_info =
+    { primary_name : string
+    ; is_link : bool
+    ; rank : int
+    ; tags : tag list
+    }
+
+  (** The offset a zone has in force at an instant; see {!offset_at}.
+      [is_dst] is the database's daylight-saving flag, informational only, and
+      [abbreviation] the abbreviation in force, such as [EST], or [-00] when
+      the offset is unknown. *)
+  type zone_offset =
+    { offset : utc_offset
+    ; is_dst : bool
+    ; abbreviation : string
+    }
+
+  (** Prints a {!type-date}. *)
+  val sexp_of_date : date -> Sexplib0.Sexp.t
+
+  (** Prints a {!type-time}. *)
+  val sexp_of_time : time -> Sexplib0.Sexp.t
+
+  (** Prints a {!datetime}. *)
+  val sexp_of_datetime : datetime -> Sexplib0.Sexp.t
+
+  (** Prints an {!type-instant}. *)
+  val sexp_of_instant : instant -> Sexplib0.Sexp.t
+
+  (** Prints a {!utc_offset}. *)
+  val sexp_of_utc_offset : utc_offset -> Sexplib0.Sexp.t
+
+  (** Prints a {!time_zone}. *)
+  val sexp_of_time_zone : time_zone -> Sexplib0.Sexp.t
+
+  (** Prints a {!zoned_datetime}. *)
+  val sexp_of_zoned_datetime : zoned_datetime -> Sexplib0.Sexp.t
+
+  (** Prints a {!signed_duration}. *)
+  val sexp_of_signed_duration : signed_duration -> Sexplib0.Sexp.t
+
+  (** Prints a {!span}. *)
+  val sexp_of_span : span -> Sexplib0.Sexp.t
+
+  (** {2 Zone sources} *)
+
+  (** A source of time zone data: the database {!zones} and
+      {!zoned_datetimes} draw names from and classify, target and resolve wall
+      times against, and {!resolve}, {!offset_at} and {!info} query.
+
+      Zone names, their link and legacy flags, their feature tags and the
+      order they shrink in always come from the engine's bundled catalogue, so
+      a stored failure shrinks the same way everywhere; only what a wall time
+      means in a zone comes from the source. A name the catalogue lacks is
+      drawn too, after every catalogued name, tagged from its data.
+
+      A source takes data in three shapes, TZif files ({!Zone_source.add_tzif}), fields
+      ({!Zone_source.add_zone}) and an offset oracle ({!Zone_source.add_oracle}), plus links
+      ({!Zone_source.add_link}) and names whose data a loader supplies the first time a
+      draw or query needs it ({!Zone_source.declare} and {!Zone_source.set_loader}). Data added for a
+      name replaces what the source had for it. Add or declare names before
+      building generators that draw from the source.
+
+      {[
+        let source = Temporal.Zone_source.create () in
+        Temporal.Zone_source.declare source [ "America/New_York"; "Europe/London" ];
+        Temporal.Zone_source.set_loader source (fun source name ->
+          match In_channel.with_open_bin ("/usr/share/zoneinfo/" ^ name) In_channel.input_all with
+          | bytes -> Temporal.Zone_source.add_tzif source name bytes
+          | exception Sys_error _ -> ());
+        let%hegel_test zoned tc =
+          let z =
+            draw tc (Temporal.zoned_datetimes ~zones:(Temporal.zones ~source ()) ())
+          in
+          ignore z
+        ;;
+      ]}
+
+      A source lives for the rest of the process: the engine shares it with
+      every generator and default that uses it. Every function raises
+      [Usage_error] with the engine's reason when it rejects the data
+      or the call. *)
+  module Zone_source : sig
+    (** A zone source. *)
+    type t KIND(value mod portable contended)
+
+    (** A local time type of a zone: an offset of less than two days in
+        seconds east of UTC, its daylight-saving flag (informational: reported
+        by {!offset_at}, never used to classify a wall time) and its
+        abbreviation, such as [EST]. *)
+    type zone_type =
+      { offset_seconds : int
+      ; is_dst : bool
+      ; abbreviation : string
+      }
+
+    (** An explicit transition: from [instant] (Unix seconds) on, [local_type]
+        is in force. *)
+    type zone_transition =
+      { instant : int
+      ; local_type : zone_type
+      }
+
+    (** The day a yearly rule's transition happens on, as a POSIX TZ string
+        names it (RFC 9636 §3.3.1). *)
+    type rule_day =
+      | Julian of int
+      (** [Jn]: the day of the year in [\[1, 365\]], February 29 never counted. *)
+      | Zero_based of int
+      (** [n]: the zero-based day of the year in [\[0, 365\]], February 29 counted. *)
+      | Month_week_day of
+          { month : month
+          ; week : int
+          ; weekday : weekday
+          }
+      (** [Mm.w.d]: the [week]th [weekday] of [month], [week] in [\[1, 5\]]
+          with 5 meaning the last. *)
+
+    (** When a yearly rule's transition happens: [time] seconds (within ±167
+        hours) after local midnight of [day], in the offset in force before
+        the transition. *)
+    type rule_date =
+      { day : rule_day
+      ; time : int
+      }
+
+    (** The daylight-saving half of a {!zone_rule}: [local_type] is in force
+        from [starts] to [ends] each year. *)
+    type dst_rule =
+      { local_type : zone_type
+      ; starts : rule_date
+      ; ends : rule_date
+      }
+
+    (** A zone's rule for every year after its last explicit transition, the
+        footer of a TZif file: a standard type and, when the zone observes
+        daylight saving time, a {!dst_rule}. *)
+    type zone_rule =
+      { standard : zone_type
+      ; dst : dst_rule option
+      }
+
+    (** What a zone has in force after its last explicit transition. *)
+    type after =
+      | Hold (** The last type, for ever. *)
+      | Rule of zone_rule (** The yearly rule. *)
+      | Infer of int
+      (** A yearly rule inferred from the transitions of the given last year
+          the transitions cover and the year before it, or the last type held
+          when they show none. *)
+
+    (** A zone's data as fields, the TZif model of RFC 9636: the type in force
+        before the first transition, the transitions strictly ascending by
+        instant, and what follows them. *)
+    type zone_data =
+      { initial : zone_type
+      ; transitions : zone_transition list
+      ; after : after
+      }
+
+    (** [bundled ()] is the engine's bundled IANA database. It cannot be
+        changed: every [add_*] and [set_*] function raises on it. *)
+    val bundled : unit -> t
+
+    (** [create ()] is a new, empty source. *)
+    val create : unit -> t
+
+    (** [add_tzif source name bytes] adds the zone [name] from the contents of
+        a TZif file (RFC 9636, version 2 or later), such as one under
+        [/usr/share/zoneinfo]. A name is not empty, has no NUL bytes and is not
+        {!unknown_zone}. *)
+    val add_tzif : t -> string -> string -> unit
+
+    (** [add_zone source name data] adds the zone [name] from its data as
+        fields. *)
+    val add_zone : t -> string -> zone_data -> unit
+
+    (** [add_oracle source name offset_at] adds the zone [name] from a library
+        that answers lookups but does not expose its data, probing
+        [offset_at], the type in force at an instant in Unix seconds, over the
+        years [first_year] (default 1900) to [last_year] (default 2100). With
+        [next_transition], the first instant after the one given at which the
+        type in force changes ([None] when it never changes again), the probe
+        asks for each transition in turn; without it, it samples [offset_at]
+        once a day and bisects each change to the second, which misses a pair
+        of changes less than a day apart. Before [first_year] the type at its
+        start holds; after [last_year] the last type holds, or with [~infer:true]
+        a yearly rule inferred from the last two years probed (closer for a
+        library that applies the current rule for ever). The callbacks run on
+        the calling thread, during the call only; an exception they raise
+        fails the call with its message. *)
+    val add_oracle
+      :  t
+      -> string
+      -> ?next_transition:(int -> int option)
+      -> ?first_year:int
+      -> ?last_year:int
+      -> ?infer:bool
+      -> (int -> zone_type)
+      -> unit
+
+    (** [add_link source name ~target] makes [name] a link to [target], whose
+        data then applies to both. The target need not have data, or be
+        known, yet. *)
+    val add_link : t -> string -> target:string -> unit
+
+    (** [declare source names] declares names the source knows whose data
+        comes later: from the loader the first time a draw or query needs it,
+        or from an [add_*] call before a zoned datetime is drawn in that zone.
+        A name the source already has keeps what it has. A declared name
+        whose data never comes raises [Usage_error] from a query of the name
+        and from a draw from the source that loads it; drawing zones from a
+        source loads every name it could draw. *)
+    val declare : t -> string list -> unit
+
+    (** [set_loader source load] sets the loader asked for the data of a
+        name the source lacks, the first time a draw or query needs it: [load
+        source name] adds that name's zone (or a link) with the [add_*]
+        functions, or adds nothing when it does not know the name, which is
+        then unknown (an error for a {!declare}d name). It runs on whichever
+        thread draws or queries, possibly more than once for one name, and
+        must not draw. An exception it raises fails the draw or query with
+        [Usage_error] carrying its message. *)
+    val set_loader : t -> (t -> string -> unit) -> unit
+
+    (** [set_version source version] records which release of its database
+        the source holds, such as ["2026e"]. Failure output does not report
+        it. *)
+    val set_version : t -> string -> unit
+
+    (** [version source] is the release of the source's database: for the
+        bundled source {!tzdb_version}, for another what {!set_version}
+        recorded, or [""]. *)
+    val version : t -> string
+  end
+
+  (** [default_zone_source ()] is the process-wide default zone source: the
+      one {!zones}, a {!zoned_datetimes} over another zone generator, and the
+      queries use when given no source. It is {!Zone_source.bundled} until
+      {!set_default_zone_source} sets another. *)
+  val default_zone_source : unit -> Zone_source.t
+
+  (** [set_default_zone_source source] replaces the process-wide default.
+      A generator that draws from the default reads it at every draw, so the
+      new default applies to generators built earlier too. *)
+  val set_default_zone_source : Zone_source.t -> unit
+
+  (** [tzdb_version ()] is the IANA release of the time zone database bundled
+      in the engine, such as ["2026e"]. *)
+  val tzdb_version : unit -> string
+
+  (** [info ?source name] is what [source] (default {!default_zone_source})
+      knows about [name], matched exactly as the source spells it, or [None]
+      for a name it lacks. {!unknown_zone} is known, with itself as primary
+      name, {!Undefined} and the highest rank. A name the catalogue lacks
+      reports the source's link target, the rank after every catalogued name
+      and the tags of its data and spelling. Raises [Usage_error] when
+      loading the name's data fails. *)
+  val info : ?source:Zone_source.t -> string -> zone_info option
+
+  (** [resolve ?source name civil] classifies the wall time [civil] in the
+      zone [name] of [source] (default {!default_zone_source}) and resolves it
+      to an instant, meaning the earlier instant of a repeated wall time
+      ([fold] false). Raises [Usage_error] for a zone the source lacks
+      or fails to load, an invalid [civil], or one whose instant lies outside
+      the range of {!type-instant}. *)
+  val resolve : ?source:Zone_source.t -> string -> datetime -> zoned_datetime
+
+  (** [offset_at ?source name instant] is the offset the zone [name] of
+      [source] (default {!default_zone_source}) has in force at [instant].
+      Raises [Usage_error] for a zone the source lacks or fails to load,
+      or an invalid [instant]. *)
+  val offset_at : ?source:Zone_source.t -> string -> instant -> zone_offset
+
+  (** {2 Generators}
+
+      Every bound is inclusive and validated by the engine. Building a
+      generator does not touch the engine: on its first draw a generator
+      builds its engine configuration (date options, or a time zone, zoned
+      or span spec), which the engine validates, and reuses it for every later
+      draw, building one per zone source for a generator that follows the
+      default source. An invalid or inverted bound, or bounds holding no value
+      at the precision, raises [Usage_error] from the generator's first draw,
+      and from every later one, since a rejected configuration is not kept.
+      Only an {!Unknown} offset bound, and civil and instant bounds given
+      together, raise when the generator is built.
+
+      In failure output a drawn value is printed as its text, without the
+      quoting and escaping of s-expression atoms. *)
+
+  (** [dates ?min_value ?max_value ?weekdays ?months ()] generates dates in
+      [\[min_value, max_value\]] (default: the whole range of {!type-date}) on the
+      given [weekdays] and in the given [months] (default: all of them). A
+      drawn day on another weekday or in another month is moved to the
+      nearest allowed day inside the bounds rather than rejected. Shrinks
+      toward 2000-01-01 or the nearest bound; one draw in twenty on average
+      targets an interesting date in the bounds: a bound, the nearest leap day
+      or year boundary, the Unix epoch, the 32-bit and 64-bit boundaries or the
+      Gregorian cutover. An empty [weekdays] or [months] list is an error. *)
+  val dates
+    :  ?min_value:date
+    -> ?max_value:date
+    -> ?weekdays:weekday list
+    -> ?months:month list
+    -> unit
+    -> (date, printable) generator MODE(portable)
+
+  (** [times ?min_value ?max_value ?precision ()] generates times of day in
+      [\[min_value, max_value\]] (default: the whole day), a whole number of
+      [precision] units (default {!Nanoseconds}) since midnight. Shrinks
+      toward midnight or the lower bound. *)
+  val times
+    :  ?min_value:time
+    -> ?max_value:time
+    -> ?precision:precision
+    -> unit
+    -> (time, printable) generator MODE(portable)
+
+  (** [datetimes ?min_value ?max_value ?precision ()] generates naive
+      datetimes in [\[min_value, max_value\]] (default: the whole range of
+      {!type-date}) whose time of day is a whole number of [precision] units
+      (default {!Nanoseconds}). Shrinks toward 2000-01-01T00:00:00 or the
+      nearest bound. *)
+  val datetimes
+    :  ?min_value:datetime
+    -> ?max_value:datetime
+    -> ?precision:precision
+    -> unit
+    -> (datetime, printable) generator MODE(portable)
+
+  (** [instants ?min_value ?max_value ?precision ()] generates instants in
+      [\[min_value, max_value\]] (default: the whole range of {!type-instant}), a
+      whole number of [precision] units (default {!Nanoseconds}) since the
+      epoch. Shrinks toward 2000-01-01T00:00:00Z or the nearest bound; one
+      draw in twenty on average targets an interesting instant: the Unix
+      epoch, the 32-bit and 64-bit boundaries, a leap second's or a time zone
+      transition's. *)
+  val instants
+    :  ?min_value:instant
+    -> ?max_value:instant
+    -> ?precision:precision
+    -> unit
+    -> (instant, printable) generator MODE(portable)
+
+  (** [offsets ?min_value ?max_value ?granularity ?unknown ()] generates UTC
+      offsets in [\[min_value, max_value\]] (default [±max_offset], both
+      bounds {!Known}) that are a whole number of [granularity] units (default
+      {!Seconds}), and the unknown offset as well when [unknown] (default
+      [false]). Shrinks to a known offset, then toward [+00:00]; one draw in
+      twenty on average targets an offset some time zone has used, so
+      [+05:45] and [-00:44:30] appear. An {!Unknown} bound raises
+      [Usage_error]. *)
+  val offsets
+    :  ?min_value:utc_offset
+    -> ?max_value:utc_offset
+    -> ?granularity:granularity
+    -> ?unknown:bool
+    -> unit
+    -> (utc_offset, printable) generator MODE(portable)
+
+  (** [zones ?names ?links ?legacy ?unknown ?opaque ?source ()] generates
+      time zones of [source] (default: {!default_zone_source} as it is at each
+      draw). Without [names] it draws every name of the source,
+      link names such as [Asia/Calcutta] included unless [links] is [false],
+      legacy names such as [EST5EDT] and [US/Eastern] excluded unless [legacy]
+      is [true]; with [names] it draws only those, each exactly as the source
+      spells it, and the flags do not apply. [unknown] (default [false]) adds
+      {!unknown_zone}. With [opaque] (default [false]), a name of [names] the
+      source lacks is accepted as an opaque zone, one only the caller's
+      database knows: drawn like any other name, evaluated like
+      {!unknown_zone}. Shrinks down a ladder of names to [UTC] when it is
+      allowed; half the draws are uniform over the allowed names and half
+      weighted by the zones' features, so a zone with a rare feature is drawn
+      at a rate a short run reaches. A name the source lacks that [opaque]
+      does not admit, or a source with no name the flags allow, raises
+      [Usage_error]. *)
+  val zones
+    :  ?names:string list
+    -> ?links:bool
+    -> ?legacy:bool
+    -> ?unknown:bool
+    -> ?opaque:bool
+    -> ?source:Zone_source.t
+    -> unit
+    -> (time_zone, printable) generator MODE(portable)
+
+  (** [zoned_datetimes ?zones ?min_value ?max_value ?min_instant ?max_instant
+      ?precision ?allow_imaginary ?ambiguous ()] generates a zone, a wall-clock
+      time in it and, when the clocks repeated that time, which repeat is
+      meant.
+
+      The zone comes from [zones] (default [zones ()]). A generator {!zones}
+      returned gives its names and its source to the engine, and the zone and
+      the wall time come from one engine draw. Any other generator draws a
+      zone first, then the wall time in that zone, resolved against
+      {!default_zone_source} as it is at each draw; a name
+      that source lacks is then an opaque zone.
+
+      The bounds are either on the wall clock in whatever zone is drawn
+      ([min_value] / [max_value], default the whole range of {!type-date}) or on
+      the instant ([min_instant] / [max_instant]); giving one of each kind
+      raises [Usage_error]. The wall time is a whole number of
+      [precision] units (default {!Nanoseconds}) since midnight. With
+      [allow_imaginary] (default [true]) a wall time the clocks skipped is
+      drawn and reported with kind {!Gap}; without, another wall time is
+      drawn, and a replayed or shrunk value that lands in a gap is moved past
+      it. [ambiguous] (default {!Both}) says which instant a repeated wall
+      time means.
+
+      Shrinks down the zone ladder, then toward 2000-01-01T00:00, preferring a
+      unique wall time to a repeated one; one draw in twenty on average
+      targets a transition of the zone, which is how gaps, folds and the exact
+      boundary instants are reached.
+
+      {[
+        let%hegel_test new_york tc =
+          let z =
+            draw
+              tc
+              (Temporal.zoned_datetimes
+                 ~zones:(Temporal.zones ~names:[ "America/New_York" ] ())
+                 ~precision:Temporal.Seconds
+                 ~allow_imaginary:false
+                 ())
+          in
+          assert (z.kind <> Temporal.Gap)
+        ;;
+      ]} *)
+  val%template zoned_datetimes
+    :  ?zones:(time_zone, 'p) generator MODE(m)
+    -> ?min_value:datetime
+    -> ?max_value:datetime
+    -> ?min_instant:instant
+    -> ?max_instant:instant
+    -> ?precision:precision
+    -> ?allow_imaginary:bool
+    -> ?ambiguous:ambiguous
+    -> unit
+    -> (zoned_datetime, printable) generator MODE(m)
+  [@@mode m = (nonportable, portable)]
+
+  (** [durations ?min_value ?max_value ?precision ()] generates signed
+      durations in [\[min_value, max_value\]] (default: [±max_int] seconds and
+      [±999999999] nanoseconds), a whole number of [precision] units (default
+      {!Nanoseconds}). Shrinks toward zero; one draw in twenty on average
+      targets a bound or a duration such as one unit, 24 hours or the 32-bit
+      seconds limit. *)
+  val durations
+    :  ?min_value:signed_duration
+    -> ?max_value:signed_duration
+    -> ?precision:precision
+    -> unit
+    -> (signed_duration, printable) generator MODE(portable)
+
+  (** [spans ?years ?months ?weeks ?days ?hours ?minutes ?seconds
+      ?milliseconds ?microseconds ?nanoseconds ?sign ()] generates calendar
+      spans. A unit given inclusive [(min, max)] bounds is drawn within them
+      and a unit without is always 0; with no unit given, every unit is drawn
+      within [±max_int], or [\[0, max_int\]] under {!Non_negative}. [sign]
+      (default {!Uniform}) says how the units' signs are drawn. Shrinks toward
+      the zero span. Inverted bounds, or bounds the sign policy does not
+      admit, raise [Usage_error].
+
+      {[
+        let%hegel_test short_spans tc =
+          let s = draw tc (Temporal.spans ~days:(0, 30) ~hours:(0, 23) ()) in
+          assert (s.days <= 30 && s.years = 0)
+        ;;
+      ]} *)
+  val spans
+    :  ?years:int * int
+    -> ?months:int * int
+    -> ?weeks:int * int
+    -> ?days:int * int
+    -> ?hours:int * int
+    -> ?minutes:int * int
+    -> ?seconds:int * int
+    -> ?milliseconds:int * int
+    -> ?microseconds:int * int
+    -> ?nanoseconds:int * int
+    -> ?sign:span_sign
+    -> unit
+    -> (span, printable) generator MODE(portable)
+end
+
+(** {2 Deprecated date and time generators}
+
+    The string date and time generators that preceded {!Temporal}. They draw
+    through {!Temporal.dates}, {!Temporal.times} and {!Temporal.datetimes}
+    and produce the same values as before. *)
+
+(** A proleptic Gregorian calendar date; the same type as {!Temporal.type-date}.
+
+    @deprecated [since 2026-10] use {!Temporal.type-date}. *)
+type date = Temporal.date =
+  { year : int
+  ; month : int
+  ; day : int
+  }
+
+(** A time of day at nanosecond resolution; the same type as
+    {!Temporal.type-time}.
+
+    @deprecated [since 2026-10] use {!Temporal.type-time}. *)
+type time = Temporal.time =
+  { hour : int
+  ; minute : int
+  ; second : int
+  ; nanosecond : int
+  }
+
+(** [make_dates ~of_date ~sexp_of ?min_date ?max_date ()] builds a generator
+    for dates in [\[min_date, max_date\]] over any representation. [of_date]
+    converts each drawn date to the desired representation. The default range
+    is [\[0001-01-01, 9999-12-31\]]. Use [map] over {!Temporal.dates}
+    instead. *)
+val%template make_dates
+  :  of_date:(Temporal.date -> 'a) MODE(m)
+  -> sexp_of:('a -> Sexplib0.Sexp.t) MODE(m)
+  -> ?min_date:Temporal.date
+  -> ?max_date:Temporal.date
+  -> unit
+  -> ('a, printable) generator MODE(m)
+[@@mode m = (nonportable, portable)]
+[@@deprecated "[since 2026-10] use map over Temporal.dates"]
+
+(** [make_times ~of_time ~sexp_of ?min_time ?max_time ()] builds a generator
+    for times of day in [\[min_time, max_time\]] over any representation.
+    The default range is [\[00:00:00.000000000, 23:59:59.999999999\]]. Use
+    [map] over {!Temporal.times} instead. *)
+val%template make_times
+  :  of_time:(Temporal.time -> 'a) MODE(m)
+  -> sexp_of:('a -> Sexplib0.Sexp.t) MODE(m)
+  -> ?min_time:Temporal.time
+  -> ?max_time:Temporal.time
+  -> unit
+  -> ('a, printable) generator MODE(m)
+[@@mode m = (nonportable, portable)]
+[@@deprecated "[since 2026-10] use map over Temporal.times"]
+
+(** [make_datetimes ~of_datetime ~sexp_of ?min_datetime ?max_datetime ()]
+    builds a generator for naive datetimes in [\[min_datetime,
+    max_datetime\]] over any representation, as [(date, time)] pairs. The
+    default range is
+    [\[0001-01-01T00:00:00.000000000, 9999-12-31T23:59:59.999999999\]]. Use
+    [map] over {!Temporal.datetimes} instead. *)
+val%template make_datetimes
+  :  of_datetime:(Temporal.date * Temporal.time -> 'a) MODE(m)
+  -> sexp_of:('a -> Sexplib0.Sexp.t) MODE(m)
+  -> ?min_datetime:Temporal.date * Temporal.time
+  -> ?max_datetime:Temporal.date * Temporal.time
+  -> unit
+  -> ('a, printable) generator MODE(m)
+[@@mode m = (nonportable, portable)]
+[@@deprecated "[since 2026-10] use map over Temporal.datetimes"]
+
+(** [dates ?min_date ?max_date ()] creates a generator for ISO 8601
+    [YYYY-MM-DD] date strings in [\[min_date, max_date\]]. The default range
+    is [\[0001-01-01, 9999-12-31\]]. Use {!Temporal.dates} instead. *)
+val dates
+  :  ?min_date:Temporal.date
+  -> ?max_date:Temporal.date
+  -> unit
+  -> (string, printable) generator MODE(portable)
+[@@deprecated "[since 2026-10] use Temporal.dates"]
+
+(** [times ?min_time ?max_time ()] creates a generator for ISO 8601
+    [HH:MM:SS.fffffffff] time-of-day strings in [\[min_time, max_time\]].
+    The default range is [\[00:00:00.000000000, 23:59:59.999999999\]]. Use
+    {!Temporal.times} instead. *)
+val times
+  :  ?min_time:Temporal.time
+  -> ?max_time:Temporal.time
+  -> unit
+  -> (string, printable) generator MODE(portable)
+[@@deprecated "[since 2026-10] use Temporal.times"]
+
+(** [datetimes ?min_datetime ?max_datetime ()] creates a generator for naive
+    ISO 8601 [YYYY-MM-DDTHH:MM:SS.fffffffff] datetime strings in
+    [\[min_datetime, max_datetime\]]. The default range is
+    [\[0001-01-01T00:00:00.000000000, 9999-12-31T23:59:59.999999999\]]. Use
+    {!Temporal.datetimes} instead. *)
+val datetimes
+  :  ?min_datetime:Temporal.date * Temporal.time
+  -> ?max_datetime:Temporal.date * Temporal.time
+  -> unit
+  -> (string, printable) generator MODE(portable)
+[@@deprecated "[since 2026-10] use Temporal.datetimes"]
 end
 
 (**/**)
