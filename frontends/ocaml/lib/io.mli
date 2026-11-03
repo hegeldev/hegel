@@ -35,6 +35,7 @@ module Make (B : S) : sig
     -> ?test_location:Internal.test_location
     -> ?database_key:string
     -> ?failure_blobs:string list
+    -> ?examples:(string list * (Internal.test_case -> unit B.t)) list
     -> (Internal.test_case -> unit B.t)
     -> unit B.t
 
@@ -101,7 +102,6 @@ module Make (B : S) : sig
         the next one starts. *)
     val run
       :  ?step_count:int
-      -> ?sexp_of_state:('state -> Sexplib0.Sexp.t)
       -> Internal.test_case
       -> (module State_machine with type state = 'state)
       -> init:'state
@@ -114,7 +114,6 @@ module Make (B : S) : sig
       :  init:'state
       -> rules:'state Rule.t list
       -> invariants:'state Invariant.t list
-      -> ?sexp_of_state:('state -> Sexplib0.Sexp.t)
       -> ?step_count:int
       -> Internal.test_case
       -> unit B.t

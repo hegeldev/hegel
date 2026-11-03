@@ -70,8 +70,8 @@ let () =
 
 Run `dune runtest`. Hegel generates up to 100 random input pairs and reports the
 minimal counterexample if it finds one. When a test fails, Hegel prints a
-report naming each value you drew from the failing case (`a = …`, `b = …`, named
-after the `let` binding) and a copy-pasteable line to replay it. Alcotest
+report naming each value you drew from the failing case (`let a = … in`,
+`let b = … in`, named after the `let` binding) and a copy-pasteable line to replay it. Alcotest
 reports the test as failed and exits non-zero.
 
 To override the default settings, attach a `[@@settings ...]` attribute:

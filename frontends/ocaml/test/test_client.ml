@@ -38,9 +38,12 @@ let test_default_settings_not_ci () =
     let s = Settings.default () in
     Alcotest.(check int) "test_cases" 100 s.test_cases;
     Alcotest.(check bool) "verbosity normal" true (Poly.equal s.verbosity Settings.Normal);
-    Alcotest.(check (option int)) "no seed" None s.seed;
+    Alcotest.(check (option Test_helpers.uint64)) "no seed" None s.seed;
     Alcotest.(check bool) "derandomize off" false s.derandomize;
-    Alcotest.(check bool) "database unset" true (Poly.equal s.database Settings.Unset);
+    Alcotest.(check bool)
+      "default database"
+      true
+      (Poly.equal s.database Settings.Default_location);
     Alcotest.(check bool)
       "no health checks suppressed"
       true
@@ -108,7 +111,7 @@ let test_register_profile_round_trip () =
       let s =
         { Settings.test_cases = 7 + i
         ; verbosity
-        ; seed = Some (40 + i)
+        ; seed = Some (Unsigned.UInt64.of_int (40 + i))
         ; derandomize = true
         ; database = Settings.Path "/tmp/hegel-ocaml-profile-db"
         ; suppress_health_check =
@@ -124,6 +127,7 @@ let test_register_profile_round_trip () =
              | 0 -> Quiet
              | 1 -> Warn
              | _ -> Error)
+        ; unbounded_choices = i mod 2 = 0
         }
       in
       Settings.register_profile name s;
@@ -163,7 +167,11 @@ let config_child () =
       (Poly.equal
          (Settings.from_profile "noblob").nondeterminism_strictness
          Settings.Nondeterminism_strictness.Warn)
-  then failwith "noblob: expected nondeterminism_strictness warn from hegel.toml"
+  then failwith "noblob: expected nondeterminism_strictness warn from hegel.toml";
+  match (Settings.from_profile "bigseed").seed with
+  | Some seed when Unsigned.UInt64.equal seed (Unsigned.UInt64.of_int64 Int64.max_value)
+    -> ()
+  | _ -> failwith "bigseed: expected seed 2^63-1 from hegel.toml"
 ;;
 
 let test_hegel_toml_config () =
@@ -177,7 +185,9 @@ let test_hegel_toml_config () =
          test_cases = 7\n\n\
          [profiles.noblob]\n\
          print_blob = false\n\
-         nondeterminism_strictness = \"warn\"\n";
+         nondeterminism_strictness = \"warn\"\n\n\
+         [profiles.bigseed]\n\
+         seed = 9223372036854775807\n";
     let pid =
       Unix.create_process_env
         ~prog:Stdlib.Sys.executable_name
@@ -196,10 +206,42 @@ let test_hegel_toml_config () =
 let test_settings_create () =
   let s = Settings.create ~test_cases:42 ~seed:7 () in
   Alcotest.(check int) "test_cases" 42 s.test_cases;
-  Alcotest.(check (option int)) "seed" (Some 7) s.seed;
+  Alcotest.(check (option Test_helpers.uint64))
+    "seed"
+    (Some (Unsigned.UInt64.of_int 7))
+    s.seed;
   let d = Settings.create () in
   Alcotest.(check int) "default test_cases" 100 d.test_cases;
-  Alcotest.(check (option int)) "no seed" None d.seed
+  Alcotest.(check (option Test_helpers.uint64)) "no seed" None d.seed;
+  Alcotest.check_raises
+    "negative seed"
+    (Usage_error "Settings.create: negative seed -1")
+    (fun () -> ignore (Settings.create ~seed:(-1) () : Settings.t))
+;;
+
+let max_seed = Unsigned.UInt64.max_int
+
+let test_large_seed_round_trip () =
+  let s = { (Settings.create ()) with seed = Some max_seed } in
+  Alcotest.(check (option Test_helpers.uint64))
+    "round trip"
+    (Some max_seed)
+    (Settings.set_from_strings s []).seed
+;;
+
+let test_large_seed_from_env () =
+  let saved = Sys.getenv "HEGEL_SEED" in
+  Unix.putenv ~key:"HEGEL_SEED" ~data:(Unsigned.UInt64.to_string max_seed);
+  Exn.protect
+    ~finally:(fun () ->
+      match saved with
+      | Some v -> Unix.putenv ~key:"HEGEL_SEED" ~data:v
+      | None -> Test_helpers.unsetenv "HEGEL_SEED")
+    ~f:(fun () ->
+      Alcotest.(check (option Test_helpers.uint64))
+        "HEGEL_SEED"
+        (Some max_seed)
+        (Settings.default ()).seed)
 ;;
 
 let test_health_check_to_string () =
@@ -288,23 +330,10 @@ let test_extract_origin_skips_stdlib_internal_frames () =
     (Test_helpers.contains_substring origin "test_client.ml")
 ;;
 
-(* ==== Sexp renderer tests ==== *)
+(* ==== Printer.of_sexp tests ==== *)
 
 let render_to_string ~max_width sexp =
-  let module Ffi = Hegel_ffi.Ffi in
-  let ctx = Ffi.context_new () in
-  Exn.protect
-    ~finally:(fun () -> Ffi.context_free ctx)
-    ~f:(fun () ->
-      let options = Ffi.printer_options_new ctx in
-      Ffi.printer_options_set_max_width ctx options max_width;
-      let p = Ffi.printer_new ctx (Some options) in
-      Ffi.printer_options_free ctx options;
-      Exn.protect
-        ~finally:(fun () -> Ffi.printer_free ctx p)
-        ~f:(fun () ->
-          Internal.render_sexp ctx p sexp;
-          Ffi.printer_value ctx p))
+  Printer.to_string ~max_width (Printer.of_sexp Fn.id sexp)
 ;;
 
 let test_render_sexp_atoms () =
@@ -422,7 +451,8 @@ let test_run_nested_guard () =
      run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:5 ()) (fun _tc ->
        run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:1 ()) (fun _ -> ()))
    with
-   | Failure msg when Test_helpers.contains_substring msg "nest" -> got_failure := true
+   | Usage_error msg when Test_helpers.contains_substring msg "nest" ->
+     got_failure := true
    | _ -> ());
   Alcotest.(check bool) "nested run rejected" true !got_failure
 ;;
@@ -456,8 +486,63 @@ let test_event_bad_label () =
   | exception Hegel.Usage_error _ -> ()
 ;;
 
-(** Force [database = Settings.Unset] (independent of CI auto-detection) to cover the
-    [Unset] arm of settings translation. *)
+let test_database_unset_keeps_the_profile () =
+  Exn.protect
+    ~finally:(fun () -> Settings.set_default_profile None)
+    ~f:(fun () ->
+      Settings.register_profile
+        "database_unset_test"
+        { (Settings.default ()) with database = Settings.Path "profile_db" };
+      Settings.set_default_profile (Some "database_unset_test");
+      let base = Settings.from_profile "default" in
+      let round_trip database =
+        (Settings.set_from_strings { base with database } []).database
+      in
+      Alcotest.(check bool)
+        "unset keeps the profile's database"
+        true
+        (Poly.equal (round_trip Settings.Unset) (Settings.Path "profile_db"));
+      Alcotest.(check bool)
+        "default_location overrides it"
+        true
+        (Poly.equal (round_trip Settings.Default_location) Settings.Default_location))
+;;
+
+let test_default_database_key () =
+  Test_helpers.with_tempdir ~prefix:"hegel-db" ~f:(fun dir ->
+    let settings phases =
+      { (Settings.create ~test_cases:50 ~seed:0 ()) with
+        database = Settings.Path dir
+      ; phases
+      ; verbosity = Settings.Quiet
+      }
+    in
+    let location = { function_name = "keyed"; file = "keyed.ml"; begin_line = 1 } in
+    let fails () =
+      match
+        run_hegel_test
+          ~settings:(settings [ Settings.Generate; Shrink ])
+          ~test_location:location
+          (fun tc -> if Hegel.draw tc (Hegel.booleans ()) then failwith "keyed")
+      with
+      | () -> Alcotest.fail "expected a failure"
+      | exception Failure _ -> ()
+    in
+    fails ();
+    let replays key =
+      match
+        run_hegel_test
+          ~settings:(settings [ Settings.Reuse ])
+          ~database_key:key
+          (fun tc -> if Hegel.draw tc (Hegel.booleans ()) then failwith "keyed")
+      with
+      | () -> false
+      | exception Failure _ -> true
+    in
+    Alcotest.(check bool) "stored under file::name" true (replays "keyed.ml::keyed");
+    Alcotest.(check bool) "not under file:name" false (replays "keyed.ml:keyed"))
+;;
+
 let test_run_database_unset () =
   let settings =
     { (Hegel.Settings.create ~test_cases:3 ()) with database = Settings.Unset }
@@ -616,102 +701,141 @@ let test_run_flaky_strategy () =
 exception A
 exception B
 
+(* Under [Verbose], a test case that stops short says why: a failed
+   assumption, or running out of data (here, while shrinking the failing
+   list). A case that passes prints no line of its own. *)
+let verbose_settings =
+  { (Hegel.Settings.create ~test_cases:20 ~seed:0 ()) with
+    verbosity = Settings.Verbose
+  ; database = Settings.Disabled
+  ; print_blob = false
+  }
+;;
+
+let expect_failure run =
+  match run () with
+  | exception Failure _ -> ()
+  | () -> Alcotest.fail "expected the test to fail"
+;;
+
+let test_verbose_says_why_a_case_stopped_short () =
+  let has output substring = Test_helpers.contains_substring output substring in
+  let output =
+    Test_helpers.capture_stderr (fun () ->
+      run_hegel_test ~settings:verbose_settings (fun tc ->
+        assume tc (Hegel.draw tc (integers ~min_value:0 ~max_value:1 ()) = 0)))
+  in
+  Alcotest.(check bool)
+    "failed assumption"
+    true
+    (has output "Test case stopped: failed assumption\n");
+  Alcotest.(check bool)
+    "no out of data"
+    false
+    (has output "Test case stopped: out of data");
+  let output =
+    Test_helpers.capture_stderr (fun () ->
+      expect_failure (fun () ->
+        run_hegel_test ~settings:verbose_settings (fun tc ->
+          let xs = Hegel.draw tc (lists (integers ()) ~min_size:10 ()) in
+          if List.exists xs ~f:(fun x -> Int.abs x >= 1000) then failwith "large")))
+  in
+  Alcotest.(check bool) "out of data" true (has output "Test case stopped: out of data\n");
+  let output =
+    Test_helpers.capture_stderr (fun () ->
+      run_hegel_test ~settings:verbose_settings (fun tc ->
+        ignore (Hegel.draw tc (booleans ()) : bool)))
+  in
+  Alcotest.(check bool)
+    "no stop line for passing cases"
+    false
+    (has output "Test case stopped")
+;;
+
 (** Two distinct failing assertions surface as an aggregate failure. *)
 let test_run_multiple_failures () =
-  let msg =
-    try
-      run_hegel_test
-        ~settings:
-          { (Hegel.Settings.create ~test_cases:300 ~seed:9 ()) with
-            report_multiple_failures = true
-          }
-        (fun tc ->
-           let v = Hegel.draw tc int_gen in
-           if v >= 60 then raise A;
-           if v <= 30 then raise B);
-      None
-    with
-    | Failure m -> Some m
-    | _ -> None
-  in
-  match msg with
-  | Some m -> Alcotest.(check string) "reports both failures" "2 failures found!" m
-  | None -> Alcotest.fail "expected multiple failures"
+  match
+    run_hegel_test
+      ~settings:
+        { (Hegel.Settings.create ~test_cases:300 ~seed:9 ()) with
+          report_multiple_failures = true
+        }
+      (fun tc ->
+         let v = Hegel.draw tc int_gen in
+         if v >= 60 then raise A;
+         if v <= 30 then raise B)
+  with
+  | () -> Alcotest.fail "expected multiple failures"
+  | exception Hegel.Multiple_failures [ A; B ] -> ()
+  | exception Hegel.Multiple_failures exns ->
+    Alcotest.failf "unexpected failures: %d" (List.length exns)
 ;;
 
-(** [color_enabled] decision table: a HEGEL_COLOR override of 1/0 wins, anything
-    else falls back to the tty state. *)
-let test_color_enabled () =
-  let check name expected ~override ~isatty =
-    Alcotest.(check bool) name expected (Internal.color_enabled ~override ~isatty)
-  in
-  check "1 forces on" true ~override:(Some "1") ~isatty:false;
-  check "0 forces off" false ~override:(Some "0") ~isatty:true;
-  check "unset: tty" true ~override:None ~isatty:true;
-  check "unset: not a tty" false ~override:None ~isatty:false;
-  check "junk: falls back to tty" true ~override:(Some "junk") ~isatty:true
-;;
-
-(** Run [f] with HEGEL_COLOR set to [value], restoring the variable after. *)
-let with_hegel_color value f =
-  let saved = Sys.getenv "HEGEL_COLOR" in
-  Unix.putenv ~key:"HEGEL_COLOR" ~data:value;
-  Exn.protect
-    ~finally:(fun () ->
-      match saved with
-      | Some v -> Unix.putenv ~key:"HEGEL_COLOR" ~data:v
-      | None -> Test_helpers.unsetenv "HEGEL_COLOR")
-    ~f
-;;
-
-(** [stderr_color_enabled] reads HEGEL_COLOR from the environment. *)
-let test_stderr_color_enabled () =
-  with_hegel_color "1" (fun () ->
-    Alcotest.(check bool)
-      "HEGEL_COLOR=1 forces on"
-      true
-      (Internal.stderr_color_enabled ()));
-  with_hegel_color "0" (fun () ->
-    Alcotest.(check bool)
-      "HEGEL_COLOR=0 forces off"
-      false
-      (Internal.stderr_color_enabled ()))
-;;
-
-(** [stderr_color] wraps in SGR codes only when colors are enabled. *)
-let test_stderr_color () =
-  with_hegel_color "1" (fun () ->
-    Alcotest.(check string)
-      "enabled wraps"
-      "\027[31mx\027[0m"
-      (Internal.stderr_color "31" "x"));
-  with_hegel_color "0" (fun () ->
-    Alcotest.(check string) "disabled is identity" "x" (Internal.stderr_color "31" "x"))
-;;
-
-(** A health-check failure is a run-level error (no counterexample), surfaced as
-    a [Failure] carrying the engine's error message. *)
+(** A health-check failure is a run-level error (no counterexample), raised as
+    [Failed_health_check] naming the check, with the engine's message. *)
 let test_run_health_check_failure () =
-  let raised =
-    try
-      run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:50 ()) (fun tc ->
-        let v = Hegel.draw tc int_gen in
-        (* Always-false precondition: every case is invalid →
-           FilterTooMuch. *)
-        assume tc (v > 1_000_000));
-      false
-    with
-    | Failure msg -> String.is_substring msg ~substring:"FailedHealthCheck: FilterTooMuch"
-    | _ -> false
-  in
-  Alcotest.(check bool) "filter health-check diagnostic surfaced" true raised
+  match
+    run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:50 ()) (fun tc ->
+      let v = Hegel.draw tc int_gen in
+      (* Always-false precondition: every case is invalid →
+         FilterTooMuch. *)
+      assume tc (v > 1_000_000))
+  with
+  | () -> Alcotest.fail "expected Failed_health_check"
+  | exception Hegel.Failed_health_check { check; message } ->
+    Alcotest.(check bool)
+      "the failed check"
+      true
+      (Poly.equal check (Some Settings.Filter_too_much));
+    Alcotest.(check bool)
+      "filter health-check diagnostic surfaced"
+      true
+      (String.is_substring message ~substring:"FilterTooMuch")
 ;;
 
-(** Exercise the optional-argument default paths of the primitives: [start_span]
-    without [~label], [pool_generate] without [~consume]. *)
+(** Each engine run-error kind maps to its own exception. *)
+let test_run_error_kinds () =
+  let classify kind health_check =
+    Internal.run_error_exn (kind, health_check) "message"
+  in
+  Alcotest.(check bool)
+    "health check"
+    true
+    (match classify Hegel_ffi.Ffi.Run_error_health_check Hegel_ffi.Ffi.hc_too_slow with
+     | Hegel.Failed_health_check { check = Some Settings.Too_slow; message = "message" }
+       -> true
+     | _ -> false);
+  Alcotest.(check bool)
+    "unknown health check"
+    true
+    (match classify Hegel_ffi.Ffi.Run_error_health_check 0 with
+     | Hegel.Failed_health_check { check = None; _ } -> true
+     | _ -> false);
+  Alcotest.(check bool)
+    "flaky"
+    true
+    (match classify Hegel_ffi.Ffi.Run_error_flaky 0 with
+     | Hegel.Flaky "message" -> true
+     | _ -> false);
+  Alcotest.(check bool)
+    "unsatisfiable"
+    true
+    (match classify Hegel_ffi.Ffi.Run_error_unsatisfiable 0 with
+     | Hegel.Unsatisfiable "message" -> true
+     | _ -> false);
+  Alcotest.(check bool)
+    "other"
+    true
+    (match classify Hegel_ffi.Ffi.Run_error_other 0 with
+     | Hegel.Run_error "message" -> true
+     | _ -> false)
+;;
+
+(** Exercise the optional-argument default paths of the primitives:
+    [stop_span] without [~discard], [pool_generate] without [~consume]. *)
 let test_run_primitive_defaults () =
   run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:3 ()) (fun tc ->
-    Internal.start_span tc;
+    Internal.start_span ~label:(Internal.Label.of_name "test.span") tc;
     let v = Hegel.draw tc int_gen in
     Internal.stop_span tc;
     let pool = Internal.new_pool tc in
@@ -739,8 +863,17 @@ let test_stop_test_does_not_fail_run () =
          raise Internal.Stop_test))
 ;;
 
+let test_engine_version () =
+  let version = Hegel.engine_version () in
+  Alcotest.(check bool)
+    "looks like a version"
+    true
+    (String.length version > 0 && Char.is_digit version.[0] && String.mem version '.')
+;;
+
 let tests =
-  [ Alcotest.test_case "default settings non-ci" `Quick test_default_settings_not_ci
+  [ Alcotest.test_case "engine_version" `Quick test_engine_version
+  ; Alcotest.test_case "default settings non-ci" `Quick test_default_settings_not_ci
   ; Alcotest.test_case "default settings ci" `Quick test_default_settings_ci
   ; Alcotest.test_case "from_profile unknown" `Quick test_from_profile_unknown
   ; Alcotest.test_case
@@ -750,6 +883,8 @@ let tests =
   ; Alcotest.test_case "set_default_profile" `Quick test_set_default_profile
   ; Alcotest.test_case "hegel.toml via HEGEL_CONFIG" `Quick test_hegel_toml_config
   ; Alcotest.test_case "Settings.create" `Quick test_settings_create
+  ; Alcotest.test_case "large seed round trip" `Quick test_large_seed_round_trip
+  ; Alcotest.test_case "large seed from HEGEL_SEED" `Quick test_large_seed_from_env
   ; Alcotest.test_case "health_check_to_string" `Quick test_health_check_to_string
   ; Alcotest.test_case "phase_to_string" `Quick test_phase_to_string
   ; Alcotest.test_case
@@ -764,13 +899,10 @@ let tests =
       "extract_origin skips stdlib internal frames"
       `Quick
       test_extract_origin_skips_stdlib_internal_frames
-  ; Alcotest.test_case "color_enabled" `Quick test_color_enabled
   ; Alcotest.test_case
       "Stop_test does not fail the run"
       `Quick
       test_stop_test_does_not_fail_run
-  ; Alcotest.test_case "stderr_color_enabled" `Quick test_stderr_color_enabled
-  ; Alcotest.test_case "stderr_color" `Quick test_stderr_color
   ; Alcotest.test_case
       "test_location reports result"
       `Quick
@@ -798,11 +930,21 @@ let tests =
   ; Alcotest.test_case "event_value non-finite" `Quick test_event_value_non_finite
   ; Alcotest.test_case "event bad label" `Quick test_event_bad_label
   ; Alcotest.test_case "run database unset" `Quick test_run_database_unset
+  ; Alcotest.test_case "default database key" `Quick test_default_database_key
+  ; Alcotest.test_case
+      "database unset keeps the profile"
+      `Quick
+      test_database_unset_keeps_the_profile
   ; Alcotest.test_case "run with full settings" `Quick test_run_with_full_settings
   ; Alcotest.test_case "run all settings branches" `Quick test_run_all_settings_branches
   ; Alcotest.test_case "run flaky strategy" `Quick test_run_flaky_strategy
   ; Alcotest.test_case "run multiple failures" `Quick test_run_multiple_failures
+  ; Alcotest.test_case
+      "verbose says why a case stopped short"
+      `Quick
+      test_verbose_says_why_a_case_stopped_short
   ; Alcotest.test_case "run health-check failure" `Quick test_run_health_check_failure
+  ; Alcotest.test_case "run error kinds" `Quick test_run_error_kinds
   ; Alcotest.test_case "run primitive defaults" `Quick test_run_primitive_defaults
   ]
 ;;

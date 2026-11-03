@@ -16,6 +16,11 @@ OxCaml only. The entry point of this library is the module: {{!page-hegel_jane_c
 
 The entry point of this library is the module: {{!page-hegel_jane_async}[Hegel_jane_async]}.
 
+{1 Library hegel.zarith}
+
+Built when zarith is installed. The entry point of this library is the module
+[Hegel_zarith].
+
 {1 Pages}
 
 - {{!page-oxcaml_api}Mode-annotated API}

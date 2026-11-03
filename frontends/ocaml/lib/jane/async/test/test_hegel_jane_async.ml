@@ -128,12 +128,7 @@ let run_counter ~buggify () =
   H.run_hegel_test ~settings (fun tc ->
     Counter.create ~buggify
     >>= fun counter ->
-    H.Stateful.run
-      ~step_count:10
-      ~sexp_of_state:(fun (s : Counter_machine.state) -> Int.sexp_of_t s.model)
-      tc
-      (module Counter_machine)
-      ~init:{ counter; model = 0 })
+    H.Stateful.run ~step_count:10 tc (module Counter_machine) ~init:{ counter; model = 0 })
 ;;
 
 let stateful_passes () = run_async (run_counter ~buggify:false)

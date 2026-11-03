@@ -9,6 +9,17 @@ let%hegel_test[@async] async_hegel_test tc =
 [@@settings Hegel.Settings.create ~test_cases:5 ()]
 ;;
 
+let async_examples_seen = ref []
+
+let%hegel_test[@async] async_with_examples tc =
+  let n = Hegel.draw tc (Hegel.integers ~min_value:0 ~max_value:9 ()) in
+  Scheduler.yield ()
+  >>| fun () -> if n > 9 then async_examples_seen := n :: !async_examples_seen
+[@@example { n = 10 }]
+[@@example { n = 11 }]
+[@@settings Hegel.Settings.create ~test_cases:5 ()]
+;;
+
 module%hegel_state_machine [@async] Counter_machine = struct
   type state = { mutable n : int }
 
@@ -48,11 +59,18 @@ let test_collects_rules_and_invariants () =
 
 let test_generated_run () = run_async runs_machine
 
+let test_runs_examples () =
+  run_async async_with_examples;
+  Alcotest.(check (list int)) "examples" [ 11; 10 ] !async_examples_seen
+;;
+
 let () =
   Alcotest.run
     "hegel-ppx-hegel-test-async"
     [ ( "let%hegel_test [@async]"
-      , [ Alcotest.test_case "runs as a Deferred" `Quick test_runs_as_a_deferred ] )
+      , [ Alcotest.test_case "runs as a Deferred" `Quick test_runs_as_a_deferred
+        ; Alcotest.test_case "runs explicit examples" `Quick test_runs_examples
+        ] )
     ; ( "module%hegel_state_machine [@async]"
       , [ Alcotest.test_case
             "collects rules and invariants"

@@ -13,9 +13,10 @@ let%expect_test "no-draw failure prints a report without drawn values" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
     Exception: Failure("boom")
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
@@ -34,12 +35,11 @@ let%expect_test "failure report prints the shrunk counterexample" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
-    draw_1 = 60
-
+    let draw_1 = 60 in
     Exception: Failure("large values are broken")
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
@@ -64,7 +64,6 @@ let%expect_test "a flaky failure is reported with a caveat" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
     Exception: Failure("first call only")
     note: unconfirmed failure: failed 0 of 10 replays after the observed failure — a rare failure, or the environment changed between executions
     first call only
@@ -72,7 +71,7 @@ let%expect_test "a flaky failure is reported with a caveat" =
 ;;
 
 (* A fixed explicit position keeps wrapping identical across compilers.
-   Continuation lines align under the sexp, including the location prefix. *)
+   Continuation lines align under the value, including the location prefix. *)
 let%expect_test "a multiline drawn value aligns under its name" =
   (try
      Hegel.run_hegel_test
@@ -95,25 +94,24 @@ let%expect_test "a multiline drawn value aligns under its name" =
   print_string (Expect_scrub.scrub_report ~hide_draw_positions:false [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
-
-    l @ draw.ml:<LINE> = (00000
-     00000
-     00000
-     00000
-     00000
-     00000
-     00000
-     00000
-     00000
-     00000
-     00000
-     00000
-     00000
-     00000
-     00000)
-
+    let l_1 = ["00000";  (* draw.ml:<LINE> *)
+     "00000";
+     "00000";
+     "00000";
+     "00000";
+     "00000";
+     "00000";
+     "00000";
+     "00000";
+     "00000";
+     "00000";
+     "00000";
+     "00000";
+     "00000";
+     "00000"] in
     Exception: File "ppx/test/expect_tests/test_failure_report.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;

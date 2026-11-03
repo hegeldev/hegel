@@ -17,6 +17,7 @@ let integers ?(min_value = Int.min_int) ?(max_value = Int.max_int) (): _ MODE(po
     ~name:"integers"
     ~draw:(fun tc -> Internal.generate_integer tc ~min_value ~max_value)
     ~sexp_of:sexp_of_int
+    ~print:Printer.int
 ;;
 
 (** [booleans ?p ()] creates a generator for boolean values, [true] with
@@ -26,31 +27,57 @@ let booleans ?(p = 0.5) (): _ MODE(portable) =
     ~name:"booleans"
     ~draw:(fun tc -> Internal.generate_boolean tc p None)
     ~sexp_of:sexp_of_bool
+    ~print:Printer.bool
 ;;
 
-(** The smallest positive (subnormal) 64-bit float. Passed as
-    [smallest_nonzero_magnitude] so the engine places no magnitude restriction
-    on drawn floats. *)
-let smallest_nonzero_magnitude = 5e-324
+(** [unit ()] creates a generator for the unit value, printed as [()]. It is
+    the constant generator of [()], labelled as {!just}. *)
+let unit () : _ MODE(portable) =
+  (leaf [@mode portable])
+    ~name:"just"
+    ~draw:(fun _ -> ())
+    ~sexp_of:sexp_of_unit
+    ~print:Printer.unit
+;;
 
-(** [floats ?min_value ?max_value ?exclude_min ?exclude_max ?allow_nan ?allow_infinity ()] creates a generator for floating-point values.
+(** [floats ?width ?min_value ?max_value ?min_value_exclusive
+     ?max_value_exclusive ?allow_nan ?allow_infinity ?allow_subnormal ()]
+    creates a generator for floating-point values.
+
+    With [~width:`W32] every drawn value is exactly representable as a 32-bit
+    float, and the bounds must be too. The smallest nonzero magnitude the
+    engine may draw is the width's smallest subnormal, or its smallest normal
+    when subnormals are not allowed.
 
     Unbounded ends are sent to the engine as [neg_infinity] / [infinity].
 
     Defaults:
-    - [exclude_min]: [false]
-    - [exclude_max]: [false]
     - [allow_nan]: [true] only when no bounds are set
-    - [allow_infinity]: [true] when at most one bound is set *)
+    - [allow_infinity]: [true] when at most one bound is set
+    - [allow_subnormal]: [true] when the bounds admit a subnormal value *)
 let floats
+      ?(width = `W64)
       ?(min_value : float option)
       ?(max_value : float option)
-      ?(exclude_min = false)
-      ?(exclude_max = false)
+      ?(min_value_exclusive : float option)
+      ?(max_value_exclusive : float option)
       ?(allow_nan : bool option)
       ?(allow_infinity : bool option)
+      ?(allow_subnormal : bool option)
       ()
  : _ MODE(portable) =
+  (match min_value, min_value_exclusive with
+   | Some _, Some _ ->
+     raise (Internal.Usage_error "min_value and min_value_exclusive are mutually exclusive")
+   | _ -> ());
+  (match max_value, max_value_exclusive with
+   | Some _, Some _ ->
+     raise (Internal.Usage_error "max_value and max_value_exclusive are mutually exclusive")
+   | _ -> ());
+  let exclude_min = Option.is_some min_value_exclusive in
+  let exclude_max = Option.is_some max_value_exclusive in
+  let min_value = if exclude_min then min_value_exclusive else min_value in
+  let max_value = if exclude_max then max_value_exclusive else max_value in
   let has_min = Option.is_some min_value in
   let has_max = Option.is_some max_value in
   let eff_allow_nan =
@@ -63,6 +90,51 @@ let floats
     | Some v -> v
     | None -> (not has_min) || not has_max
   in
+  let width, smallest_normal, smallest_subnormal =
+    match width with
+    | `W64 -> 64, Float.min_float, 5e-324
+    | `W32 -> 32, Float.ldexp 1.0 (-126), Float.ldexp 1.0 (-149)
+  in
+  let allow_subnormal =
+    match allow_subnormal with
+    | Some v -> v
+    | None ->
+      (match min_value, max_value with
+       | Some lo, Some hi when lo = hi -> -.smallest_normal < lo && lo < smallest_normal
+       | Some lo, Some hi -> lo < smallest_normal && hi > -.smallest_normal
+       | Some lo, None -> lo < smallest_normal
+       | None, Some hi -> hi > -.smallest_normal
+       | None, None -> true)
+  in
+  (if allow_subnormal
+   then (
+     (match min_value with
+      | Some lo when lo >= smallest_normal ->
+        raise
+          (Internal.Usage_error
+             "allow_subnormal=true, but min_value excludes all values below the smallest \
+              positive normal")
+      | _ -> ());
+     match max_value with
+     | Some hi when hi <= -.smallest_normal ->
+       raise
+         (Internal.Usage_error
+            "allow_subnormal=true, but max_value excludes all values above the smallest \
+             negative normal")
+     | _ -> ())
+   else
+     match min_value, max_value with
+     | Some lo, Some hi
+       when (not (lo <= 0.0 && hi >= 0.0)) && hi < smallest_normal && lo > -.smallest_normal
+       ->
+       raise
+         (Internal.Usage_error
+            "allow_subnormal=false leaves no floating-point values between min_value and \
+             max_value")
+     | _ -> ());
+  let smallest_nonzero_magnitude =
+    if allow_subnormal then smallest_subnormal else smallest_normal
+  in
   let min_value = Option.value min_value ~default:neg_infinity in
   let max_value = Option.value max_value ~default:infinity in
   (leaf [@mode portable])
@@ -70,6 +142,7 @@ let floats
     ~draw:(fun tc ->
       Internal.generate_float
         tc
+        ~width
         ~min_value
         ~max_value
         ~allow_nan:eff_allow_nan
@@ -78,50 +151,14 @@ let floats
         ~exclude_max
         ~smallest_nonzero_magnitude)
     ~sexp_of:sexp_of_float
-;;
-
-(** Unicode general categories that include surrogate codepoints. OCaml strings
-    are conventionally UTF-8, and surrogates in UTF-8 are ill-formed. *)
-let surrogate_categories = [ "Cs"; "C" ]
-
-(** [effective_categories ?categories ?exclude_categories ()] applies the
-    character-category validation and surrogate auto-exclusion shared by {!text}
-    and {!characters}, returning the effective
-    [(categories, exclude_categories)] options to pass to the engine. *)
-let effective_categories ?categories ?exclude_categories () =
-  (match categories, exclude_categories with
-   | Some _, Some _ ->
-     raise
-       (Internal.Usage_error "categories and exclude_categories are mutually exclusive")
-   | _ -> ());
-  (* Surrogate auto-exclusion *)
-  (match categories with
-   | Some cats ->
-     List.iter
-       (fun cat ->
-          if List.mem cat surrogate_categories
-          then
-            raise
-              (Internal.Usage_error
-                 (Printf.sprintf
-                    "Category %S includes surrogate codepoints (Cs), which OCaml UTF-8 \
-                     strings cannot represent"
-                    cat)))
-       cats
-   | None -> ());
-  let effective_exclude_categories =
-    match categories with
-    | Some _ -> exclude_categories
-    | None ->
-      let excl = Option.value exclude_categories ~default:[] in
-      if List.mem "Cs" excl then Some excl else Some (excl @ [ "Cs" ])
-  in
-  categories, effective_exclude_categories
+    ~print:Printer.float
 ;;
 
 (** [text_generator ~min_size ~max_size ...] is the shared {!Leaf} builder
-    behind {!text} and {!characters}: it resolves the effective character
-    categories and draws a text string over the described alphabet. *)
+    behind {!text} and {!characters}: it draws a text string over the described
+    alphabet, which the engine validates. The engine applies [exclude_categories]
+    only when [categories] is absent, so giving both is rejected here rather
+    than ignoring one. *)
 let text_generator
       ~min_size
       ~max_size
@@ -134,9 +171,9 @@ let text_generator
       ?(exclude_characters : string option)
       ()
  : _ MODE(portable) =
-  let categories, exclude_categories =
-    effective_categories ?categories ?exclude_categories ()
-  in
+  if Option.is_some categories && Option.is_some exclude_categories
+  then
+    raise (Internal.Usage_error "categories and exclude_categories are mutually exclusive");
   (leaf [@mode portable])
     ~name:"text"
     ~draw:(fun tc ->
@@ -152,6 +189,7 @@ let text_generator
         ~include_characters
         ~exclude_characters)
     ~sexp_of:sexp_of_string
+    ~print:Printer.string
 ;;
 
 (** [text ?min_size ?max_size ?codec ?min_codepoint ?max_codepoint ?categories ?exclude_categories ?include_characters ?exclude_characters ?alphabet ()]
@@ -159,8 +197,8 @@ let text_generator
 
     Character filtering options restrict which characters may appear. The
     [alphabet] parameter is mutually exclusive with all individual character
-    filtering parameters. Surrogate codepoints (category Cs) are always excluded
-    since OCaml strings are conventionally UTF-8. *)
+    filtering parameters. The engine always excludes surrogate codepoints, so
+    the drawn strings are valid UTF-8. *)
 let text
       ?(min_size = 0)
       ?max_size
@@ -183,13 +221,16 @@ let text
      raise (Internal.Usage_error (Printf.sprintf "max_size=%d must be non-negative" ms))
    | _ -> ());
   let has_char_param =
-    Option.is_some codec
-    || Option.is_some min_codepoint
-    || Option.is_some max_codepoint
-    || Option.is_some categories
-    || Option.is_some exclude_categories
-    || Option.is_some include_characters
-    || Option.is_some exclude_characters
+    List.mem
+      true
+      [ Option.is_some codec
+      ; Option.is_some min_codepoint
+      ; Option.is_some max_codepoint
+      ; Option.is_some categories
+      ; Option.is_some exclude_categories
+      ; Option.is_some include_characters
+      ; Option.is_some exclude_characters
+      ]
   in
   (match alphabet with
    | Some _ when has_char_param ->
@@ -219,9 +260,8 @@ let text
 (** [characters ?codec ?min_codepoint ?max_codepoint ?categories ?exclude_categories ?include_characters ?exclude_characters ()] creates a
     generator for single Unicode characters (as single-character UTF-8 strings).
 
-    Character filtering options restrict which characters may appear. Surrogate
-    codepoints (category Cs) are always excluded since OCaml strings are
-    conventionally UTF-8. *)
+    Character filtering options restrict which characters may appear. The engine
+    always excludes surrogate codepoints, so the drawn strings are valid UTF-8. *)
 let characters
       ?codec
       ?min_codepoint
@@ -269,18 +309,29 @@ let draw_char tc =
 
 (** [make_characters ~of_char ~sexp_of ()] builds a generator for single
     characters over any representation ['a], covering the full native [char]
-    range (codepoints 0-255, i.e. Latin-1). *)
+    range (codepoints 0-255, i.e. Latin-1). Drawn characters print as the
+    s-expressions [sexp_of] gives. *)
 let%template make_characters
   : type a. of_char:(char -> a) MODE(m) -> sexp_of:(a -> Sexp.t) MODE(m) -> unit -> (a, printable) generator MODE(m)
   =
   fun ~of_char ~sexp_of () ->
-  (leaf [@mode m]) ~name:"characters" ~draw:(fun tc -> of_char (draw_char tc)) ~sexp_of
+  (leaf [@mode m])
+    ~name:"characters"
+    ~draw:(fun tc -> of_char (draw_char tc))
+    ~sexp_of
+    ~print:(fun v -> Printer.of_sexp sexp_of v)
 [@@mode m = (nonportable, portable)]
 ;;
 
 (** [chars ()] creates a generator for single characters (codepoints 0-255, i.e.
     Latin-1) as native [char] values. *)
-let chars () : _ MODE(portable) = (leaf [@mode portable]) ~name:"characters" ~draw:draw_char ~sexp_of:sexp_of_char
+let chars () : _ MODE(portable) =
+  (leaf [@mode portable])
+    ~name:"characters"
+    ~draw:draw_char
+    ~sexp_of:sexp_of_char
+    ~print:Printer.char
+;;
 
 (** [binary ?min_size ?max_size ()] creates a generator for binary byte strings. *)
 let binary ?(min_size = 0) ?(max_size : int option) (): _ MODE(portable) =
@@ -296,6 +347,7 @@ let binary ?(min_size = 0) ?(max_size : int option) (): _ MODE(portable) =
     ~name:"binary"
     ~draw:(fun tc -> Internal.generate_bytes tc ~min_size ~max_size)
     ~sexp_of:sexp_of_string
+    ~print:Printer.bytes
 ;;
 
 (** [just value] creates a generator that always produces [value].
@@ -308,15 +360,128 @@ let%template just ABSTRACT(a, value mod c) (value : a MODE(m))
 [@@mode (m, c) = ((nonportable, uncontended), (portable, contended))]
 ;;
 
-(** [from_regex pattern ?fullmatch ()] creates a generator for strings matching
-    a regular expression [pattern], written in the syntax of Python's [re]
-    module. When [fullmatch] is [true] (the default) the whole string must match
-    [pattern]; otherwise a match anywhere suffices. *)
-let from_regex pattern ?(fullmatch = true) (): _ MODE(portable) =
+(** [char_alphabet ?codec ... ?alphabet ()] is the character set the
+    filtering options of {!text} describe, for a generator that draws every
+    character from it ([None] when no option is given). *)
+let char_alphabet
+      ?codec
+      ?min_codepoint
+      ?max_codepoint
+      ?categories
+      ?exclude_categories
+      ?include_characters
+      ?exclude_characters
+      ?alphabet
+      ()
+  : Internal.alphabet option
+  =
+  if Option.is_some categories && Option.is_some exclude_categories
+  then
+    raise (Internal.Usage_error "categories and exclude_categories are mutually exclusive");
+  let has_char_param =
+    List.mem
+      true
+      [ Option.is_some codec
+      ; Option.is_some min_codepoint
+      ; Option.is_some max_codepoint
+      ; Option.is_some categories
+      ; Option.is_some exclude_categories
+      ; Option.is_some include_characters
+      ; Option.is_some exclude_characters
+      ]
+  in
+  match alphabet with
+  | Some _ when has_char_param ->
+    raise
+      (Internal.Usage_error
+         "alphabet is mutually exclusive with individual character filtering parameters")
+  | Some chars ->
+    Some
+      { codec = None
+      ; min_codepoint = 0
+      ; max_codepoint = 0xFFFFFFFF
+      ; categories = Some []
+      ; exclude_categories = None
+      ; include_characters = Some chars
+      ; exclude_characters = None
+      }
+  | None when has_char_param ->
+    Some
+      { codec
+      ; min_codepoint = Option.value min_codepoint ~default:0
+      ; max_codepoint = Option.value max_codepoint ~default:0xFFFFFFFF
+      ; categories
+      ; exclude_categories
+      ; include_characters
+      ; exclude_characters
+      }
+  | None -> None
+;;
+
+(** [from_regex pattern ?fullmatch ?codec ... ?alphabet ()] creates a
+    generator for strings matching a regular expression [pattern], written in
+    the syntax of Python's [re] module. When [fullmatch] is [true] (the
+    default) the whole string must match [pattern]; otherwise a match anywhere
+    suffices. The character filtering options restrict the characters of the
+    drawn string as they do for {!text}. *)
+let from_regex
+      pattern
+      ?(fullmatch = true)
+      ?codec
+      ?min_codepoint
+      ?max_codepoint
+      ?categories
+      ?exclude_categories
+      ?include_characters
+      ?exclude_characters
+      ?alphabet
+      ()
+  : _ MODE(portable)
+  =
+  let alphabet =
+    char_alphabet
+      ?codec
+      ?min_codepoint
+      ?max_codepoint
+      ?categories
+      ?exclude_categories
+      ?include_characters
+      ?exclude_characters
+      ?alphabet
+      ()
+  in
   (leaf [@mode portable])
     ~name:"from_regex"
-    ~draw:(fun tc -> Internal.generate_regex tc ~pattern ~fullmatch)
+    ~draw:(fun tc -> Internal.generate_regex tc ~pattern ~fullmatch ~alphabet)
     ~sexp_of:sexp_of_string
+    ~print:Printer.string
+;;
+
+(** [format_uuid bytes] renders 16 big-endian bytes as a lowercase hyphenated
+    UUID. *)
+let format_uuid bytes =
+  let hex i j =
+    String.concat
+      ""
+      (List.init (j - i) (fun k -> Printf.sprintf "%02x" (Char.code bytes.[i + k])))
+  in
+  String.concat "-" [ hex 0 4; hex 4 6; hex 6 8; hex 8 10; hex 10 16 ]
+;;
+
+(** [uuids ?version ()] creates a generator for UUIDs, as lowercase hyphenated
+    strings. With [version] (1 to 5), the version and variant are set as in
+    RFC 4122. The nil UUID is never generated. *)
+let uuids ?version () : _ MODE(portable) =
+  (match version with
+   | Some v when v < 1 || v > 5 ->
+     raise
+       (Internal.Usage_error (Printf.sprintf "version=%d must be between 1 and 5" v))
+   | _ -> ());
+  (leaf [@mode portable])
+    ~name:"uuids"
+    ~draw:(fun tc -> format_uuid (Internal.generate_uuid tc ~version))
+    ~sexp_of:sexp_of_string
+    ~print:Printer.string
 ;;
 
 (** [emails ()] creates a generator for valid email address strings.
@@ -324,7 +489,7 @@ let from_regex pattern ?(fullmatch = true) (): _ MODE(portable) =
     Addresses follow RFC 5321/5322: a local part of 1 to 64 characters from the
     RFC 5322 [atext] set, an [@], and a domain from {!domains}, with the overall
     address length capped at 254 octets (RFC 5321 §4.5.3.1.3). *)
-let emails () : _ MODE(portable) = (leaf [@mode portable]) ~name:"emails" ~draw:Internal.generate_email ~sexp_of:sexp_of_string
+let emails () : _ MODE(portable) = (leaf [@mode portable]) ~name:"emails" ~draw:Internal.generate_email ~sexp_of:sexp_of_string ~print:Printer.string
 
 (** [urls ()] creates a generator for valid URL strings.
 
@@ -333,7 +498,7 @@ let emails () : _ MODE(portable) = (leaf [@mode portable]) ~name:"emails" ~draw:
     255 characters), an optional port in [1, 65535], zero or more [/]-separated
     path segments of up to 100 characters each, and an optional fragment of up
     to 100 characters. Path and fragment characters are percent-encoded. *)
-let urls () : _ MODE(portable) = (leaf [@mode portable]) ~name:"urls" ~draw:Internal.generate_url ~sexp_of:sexp_of_string
+let urls () : _ MODE(portable) = (leaf [@mode portable]) ~name:"urls" ~draw:Internal.generate_url ~sexp_of:sexp_of_string ~print:Printer.string
 
 (** [domains ?max_length ()] creates a generator for domain name strings.
 
@@ -349,6 +514,7 @@ let domains ?(max_length : int option) (): _ MODE(portable) =
     ~name:"domains"
     ~draw:(fun tc -> Internal.generate_domain tc ~max_length)
     ~sexp_of:sexp_of_string
+    ~print:Printer.string
 ;;
 
 type date = Internal.date =
@@ -376,13 +542,16 @@ let last_date = { year = 9999; month = 12; day = 31 }
 let first_time = { hour = 0; minute = 0; second = 0; nanosecond = 0 }
 let last_time = { hour = 23; minute = 59; second = 59; nanosecond = 999_999_999 }
 
-(** [make_dates ~of_date ~sexp_of ?min_date ?max_date ()] builds a generator for
-    dates in [[min_date, max_date]] over any representation. [of_date] converts
-    each drawn {!date} to the desired representation. The default range is
-    [[0001-01-01, 9999-12-31]]. *)
-let%template make_dates
+(** [make_dates ~of_date ~sexp_of ?min_date ?max_date ()] builds a generator
+    for dates in [[min_date, max_date]] over any representation. [of_date]
+    converts each drawn {!date} to the desired representation, and drawn dates
+    print as the s-expressions [sexp_of] gives. The default range is
+    [[0001-01-01, 9999-12-31]]. [make_dates_printed] also takes the [print]
+    that displays them. *)
+let%template make_dates_printed
       ~(of_date : (date -> 'a) MODE(m))
       ~(sexp_of : ('a -> Sexp.t) MODE(m))
+      ~(print : ('a -> Printer.doc) MODE(m))
       ?(min_date = first_date)
       ?(max_date = last_date)
       ()
@@ -393,16 +562,38 @@ let%template make_dates
     ~draw:(fun tc ->
       of_date (Internal.generate_date tc ~min_value:min_date ~max_value:max_date))
     ~sexp_of
+    ~print
 [@@mode m = (nonportable, portable)]
 ;;
 
-(** [make_times ~of_time ~sexp_of ?min_time ?max_time ()] builds a generator for
-    times of day in [[min_time, max_time]] over any representation. [of_time]
-    converts each drawn {!time} to the desired representation. The default range
-    is [[00:00:00.000000000, 23:59:59.999999999]]. *)
-let%template make_times
+let%template make_dates
+      ~(of_date : (date -> 'a) MODE(m))
+      ~(sexp_of : ('a -> Sexp.t) MODE(m))
+      ?min_date
+      ?max_date
+      ()
+  : ('a, printable) generator MODE(m)
+  =
+  (make_dates_printed [@mode m])
+    ~of_date
+    ~sexp_of
+    ~print:(fun v -> Printer.of_sexp sexp_of v)
+    ?min_date
+    ?max_date
+    ()
+[@@mode m = (nonportable, portable)]
+;;
+
+(** [make_times ~of_time ~sexp_of ?min_time ?max_time ()] builds a generator
+    for times of day in [[min_time, max_time]] over any representation.
+    [of_time] converts each drawn {!time} to the desired representation, and
+    drawn times print as the s-expressions [sexp_of] gives. The default range
+    is [[00:00:00.000000000, 23:59:59.999999999]]. [make_times_printed] also
+    takes the [print] that displays them. *)
+let%template make_times_printed
       ~(of_time : (time -> 'a) MODE(m))
       ~(sexp_of : ('a -> Sexp.t) MODE(m))
+      ~(print : ('a -> Printer.doc) MODE(m))
       ?(min_time = first_time)
       ?(max_time = last_time)
       ()
@@ -413,17 +604,39 @@ let%template make_times
     ~draw:(fun tc ->
       of_time (Internal.generate_time tc ~min_value:min_time ~max_value:max_time))
     ~sexp_of
+    ~print
 [@@mode m = (nonportable, portable)]
 ;;
 
-(** [make_datetimes ~of_datetime ~sexp_of ?min_datetime ?max_datetime ()] builds
-    a generator for naive datetimes in [[min_datetime, max_datetime]] over any
-    representation. [of_datetime] converts each drawn [(date, time)] pair to the
-    desired representation. The default range is
-    [[0001-01-01T00:00:00.000000000, 9999-12-31T23:59:59.999999999]]. *)
-let%template make_datetimes
+let%template make_times
+      ~(of_time : (time -> 'a) MODE(m))
+      ~(sexp_of : ('a -> Sexp.t) MODE(m))
+      ?min_time
+      ?max_time
+      ()
+  : ('a, printable) generator MODE(m)
+  =
+  (make_times_printed [@mode m])
+    ~of_time
+    ~sexp_of
+    ~print:(fun v -> Printer.of_sexp sexp_of v)
+    ?min_time
+    ?max_time
+    ()
+[@@mode m = (nonportable, portable)]
+;;
+
+(** [make_datetimes ~of_datetime ~sexp_of ?min_datetime ?max_datetime ()]
+    builds a generator for naive datetimes in [[min_datetime, max_datetime]]
+    over any representation. [of_datetime] converts each drawn [(date, time)]
+    pair to the desired representation, and drawn datetimes print as the
+    s-expressions [sexp_of] gives. The default range is
+    [[0001-01-01T00:00:00.000000000, 9999-12-31T23:59:59.999999999]].
+    [make_datetimes_printed] also takes the [print] that displays them. *)
+let%template make_datetimes_printed
       ~(of_datetime : (date * time -> 'a) MODE(m))
       ~(sexp_of : ('a -> Sexp.t) MODE(m))
+      ~(print : ('a -> Printer.doc) MODE(m))
       ?(min_datetime = first_date, first_time)
       ?(max_datetime = last_date, last_time)
       ()
@@ -435,6 +648,25 @@ let%template make_datetimes
       of_datetime
         (Internal.generate_datetime tc ~min_value:min_datetime ~max_value:max_datetime))
     ~sexp_of
+    ~print
+[@@mode m = (nonportable, portable)]
+;;
+
+let%template make_datetimes
+      ~(of_datetime : (date * time -> 'a) MODE(m))
+      ~(sexp_of : ('a -> Sexp.t) MODE(m))
+      ?min_datetime
+      ?max_datetime
+      ()
+  : ('a, printable) generator MODE(m)
+  =
+  (make_datetimes_printed [@mode m])
+    ~of_datetime
+    ~sexp_of
+    ~print:(fun v -> Printer.of_sexp sexp_of v)
+    ?min_datetime
+    ?max_datetime
+    ()
 [@@mode m = (nonportable, portable)]
 ;;
 
@@ -442,14 +674,26 @@ let%template make_datetimes
     date strings in [[min_date, max_date]]. The default range is
     [[0001-01-01, 9999-12-31]]. *)
 let dates ?min_date ?max_date () : _ MODE(portable) =
-  (make_dates [@mode portable]) ~of_date:format_date ~sexp_of:sexp_of_string ?min_date ?max_date ()
+  (make_dates_printed [@mode portable])
+    ~of_date:format_date
+    ~sexp_of:sexp_of_string
+    ~print:Printer.string
+    ?min_date
+    ?max_date
+    ()
 ;;
 
 (** [times ?min_time ?max_time ()] creates a generator for ISO 8601
     [HH:MM:SS.fffffffff] time-of-day strings in [[min_time, max_time]]. The
     default range is [[00:00:00.000000000, 23:59:59.999999999]]. *)
 let times ?min_time ?max_time () : _ MODE(portable) =
-  (make_times [@mode portable]) ~of_time:format_time ~sexp_of:sexp_of_string ?min_time ?max_time ()
+  (make_times_printed [@mode portable])
+    ~of_time:format_time
+    ~sexp_of:sexp_of_string
+    ~print:Printer.string
+    ?min_time
+    ?max_time
+    ()
 ;;
 
 (** [datetimes ?min_datetime ?max_datetime ()] creates a generator for naive ISO
@@ -457,9 +701,10 @@ let times ?min_time ?max_time () : _ MODE(portable) =
     [[min_datetime, max_datetime]]. The default range is
     [[0001-01-01T00:00:00.000000000, 9999-12-31T23:59:59.999999999]]. *)
 let datetimes ?min_datetime ?max_datetime () : _ MODE(portable) =
-  (make_datetimes [@mode portable])
+  (make_datetimes_printed [@mode portable])
     ~of_datetime:format_datetime
     ~sexp_of:sexp_of_string
+    ~print:Printer.string
     ?min_datetime
     ?max_datetime
     ()

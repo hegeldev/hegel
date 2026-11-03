@@ -16,9 +16,10 @@ let%expect_test "require fails with the default message" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
     Exception: Failure("require: condition was false")
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
@@ -31,9 +32,10 @@ let%expect_test "require fails with a custom message" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
     Exception: Failure("the invariant broke")
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
+
+    To reproduce this failure, pass this argument to run_hegel_test:
+        ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
 
@@ -59,16 +61,12 @@ let%expect_test "require failures get caller-derived origins" =
   print_string (Expect_scrub.scrub_report [%expect.output]);
   [%expect
     {|
-    --- Failure --------------------------------------------------------------------
+    Property-based test failed with 2 distinct failures.
 
-    Failure 1 of 2:
-    draw_1 = 60
-
+    let draw_1 = 60 in
     Exception: Failure("too big")
 
-    Failure 2 of 2:
-    draw_1 = 0
-
+    let draw_1 = 0 in
     Exception: Failure("too small")
     |}]
 ;;

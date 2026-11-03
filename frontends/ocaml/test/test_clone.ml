@@ -43,7 +43,7 @@ let test_clone_reproducible () =
   let run () =
     let pair = ref (0, 0) in
     Hegel.run_hegel_test
-      ~settings:{ (one_case_settings ()) with seed = Some 42 }
+      ~settings:{ (one_case_settings ()) with seed = Some (Unsigned.UInt64.of_int 42) }
       (fun tc ->
          let p = Hegel.draw_silent tc small_int in
          let c = Hegel.draw_silent (Hegel.clone tc) small_int in
@@ -96,6 +96,31 @@ let test_clone_shares_draw_names () =
     !names
 ;;
 
+(* Each name numbers on its own: a repeatable name from its first use, a bare
+   name from its second, and a numbered name already taken is skipped. *)
+let test_draw_names () =
+  let names = ref [] in
+  Hegel.run_hegel_test ~settings:(one_case_settings ()) (fun tc ->
+    let name label repeatable = Hegel.Internal.draw_display_name tc ~label ~repeatable in
+    List.iter
+      [ "x", false
+      ; "x", false
+      ; "y", true
+      ; "y", false
+      ; "y_1", false
+      ; "z_1", false
+      ; "z", true
+      ; "z", true
+      ; "w_1", true
+      ; "w", false
+      ]
+      ~f:(fun (label, repeatable) -> names := name label repeatable :: !names));
+  Alcotest.(check (list string))
+    "names"
+    [ "x"; "x_2"; "y_1"; "y_2"; "y_1_1"; "z_1"; "z_2"; "z_3"; "w_1_1"; "w" ]
+    (List.rev !names)
+;;
+
 (* A clone copies the parent's current span depth (rather than resetting to 0),
    so a clone forked inside a span treats its own draws as nested too. *)
 let test_clone_copies_draw_depth () =
@@ -118,6 +143,7 @@ let tests =
   ; Alcotest.test_case "clone of clone" `Quick test_clone_of_clone
   ; Alcotest.test_case "clones owned by case" `Quick test_clones_owned_by_case
   ; Alcotest.test_case "clone shares draw names" `Quick test_clone_shares_draw_names
+  ; Alcotest.test_case "draw names" `Quick test_draw_names
   ; Alcotest.test_case "clone copies draw depth" `Quick test_clone_copies_draw_depth
   ]
 ;;

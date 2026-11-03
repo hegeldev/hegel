@@ -20,6 +20,13 @@
     [@@deriving hegel_generator]
     ]}
 
+    A derived generator prints what it draws as OCaml syntax as it draws it,
+    each part printed by its own generator: a record as [{ x = 1; y = 2 }], a
+    variant as [Leaf] or [Node (l, r)], a tuple as [(1, "a")]. A part whose
+    generator has no printer is drawn silently and printed as the
+    s-expression its [sexp_of] gives, the one place a value is printed
+    implicitly.
+
     On OxCaml, [[@@deriving hegel_generator ~portable]] makes the generator
     portable, so a concurrent rule body can capture it. On upstream OCaml,
     [~portable] has no effect.
@@ -57,6 +64,7 @@
 
 val hegel_generator_int : (int, Generators.printable) Generators.generator
 val hegel_generator_bool : (bool, Generators.printable) Generators.generator
+val hegel_generator_unit : (unit, Generators.printable) Generators.generator
 val hegel_generator_float : (float, Generators.printable) Generators.generator
 val hegel_generator_string : (string, Generators.printable) Generators.generator
 val hegel_generator_char : (char, Generators.printable) Generators.generator

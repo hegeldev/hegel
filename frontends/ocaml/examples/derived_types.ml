@@ -3,7 +3,8 @@
     This example shows how to use the PPX deriver to automatically generate test
     data for user-defined types. Instead of manually constructing generators,
     you annotate your types with [@@deriving hegel_generator] and get a
-    [hegel_generator_<type>] value for free, drawn with [draw_silent]. *)
+    [hegel_generator_<type>] value for free, which prints what it draws as
+    OCaml syntax. *)
 
 open Hegel
 
@@ -41,7 +42,7 @@ type entity =
     [int] fields span the full native range, so the squares are computed in
     floating point — [p.x * p.x] would wrap around for large coordinates. *)
 let%hegel_test test_point_distance_nonnegative tc =
-  let p = draw_silent tc hegel_generator_point in
+  let p = draw tc hegel_generator_point in
   let x = float_of_int p.x
   and y = float_of_int p.y in
   let dist = sqrt ((x *. x) +. (y *. y)) in
@@ -53,7 +54,7 @@ let%hegel_test test_point_distance_nonnegative tc =
 let saw_colors = Hashtbl.create 3
 
 let%hegel_test test_color_all_variants tc =
-  let c = draw_silent tc hegel_generator_color in
+  let c = draw tc hegel_generator_color in
   (match c with
    | Red -> Hashtbl.replace saw_colors "red" true
    | Green -> Hashtbl.replace saw_colors "green" true
@@ -68,7 +69,7 @@ let saw_labeled = ref false
 let saw_dot = ref false
 
 let%hegel_test test_shape_all_variants tc =
-  let s = draw_silent tc hegel_generator_shape in
+  let s = draw tc hegel_generator_shape in
   match s with
   | Circle r ->
     assert (Float.is_finite r);
@@ -87,7 +88,7 @@ let saw_tagged = ref false
 let saw_untagged = ref false
 
 let%hegel_test test_entity_valid tc =
-  let e = draw_silent tc hegel_generator_entity in
+  let e = draw tc hegel_generator_entity in
   ignore (String.length e.name);
   ignore e.active;
   match e.tag with

@@ -13,6 +13,12 @@ module Unix = Core_unix
     files inside it) on exit — including on exception. Intended for tests whose
     tempdirs only contain top-level files; subdirectories are not recursively
     removed. *)
+let uint64 =
+  Alcotest.testable
+    (fun f x -> Format.pp_print_string f (Unsigned.UInt64.to_string x))
+    Unsigned.UInt64.equal
+;;
+
 let with_tempdir ~prefix ~f =
   let dir =
     Core_unix.mkdtemp (Filename.concat (Stdlib.Filename.get_temp_dir_name ()) prefix)
@@ -49,7 +55,7 @@ let expect_usage_error gen substring =
 let expect_unsatisfiable run =
   match run () with
   | () -> Alcotest.fail "expected Unsatisfiable"
-  | exception Failure msg ->
+  | exception Hegel.Unsatisfiable msg ->
     Alcotest.(check bool)
       (Printf.sprintf "%S is Unsatisfiable" msg)
       true
@@ -85,4 +91,25 @@ let parallel_concurrency : unit Hegel.Concurrency.t =
 
 let sequential_concurrency : unit Hegel.Concurrency.t =
   { spawn_join_n = (fun ~n ~f -> Stdlib.List.init n (fun i -> f () i)) }
+;;
+
+(** [capture_stderr f] runs [f ()] with the process's standard error sent to a
+    file, and returns what it wrote there. *)
+let capture_stderr f =
+  with_tempdir ~prefix:"hegel-stderr" ~f:(fun dir ->
+    let path = Filename.concat dir "stderr" in
+    let file = Core_unix.openfile path ~mode:[ O_WRONLY; O_CREAT; O_TRUNC ] ~perm:0o600 in
+    let saved = Core_unix.dup Core_unix.stderr in
+    Stdlib.flush Stdlib.stderr;
+    Core_unix.dup2 ~src:file ~dst:Core_unix.stderr ();
+    Core_unix.close file;
+    let () =
+      Exn.protect
+        ~finally:(fun () ->
+          Stdlib.flush Stdlib.stderr;
+          Core_unix.dup2 ~src:saved ~dst:Core_unix.stderr ();
+          Core_unix.close saved)
+        ~f
+    in
+    In_channel.read_all path)
 ;;

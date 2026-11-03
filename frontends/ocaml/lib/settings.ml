@@ -21,6 +21,7 @@ type verbosity =
 
 type database =
   | Unset
+  | Default_location
   | Disabled
   | Path of string
 
@@ -53,7 +54,7 @@ let phase_to_string = function
 type t =
   { test_cases : int
   ; verbosity : verbosity
-  ; seed : int option
+  ; seed : Unsigned.UInt64.t option
   ; derandomize : bool
   ; database : database
   ; suppress_health_check : health_check list
@@ -64,6 +65,7 @@ type t =
   ; show_statistics : bool
   ; backend : backend
   ; nondeterminism_strictness : Nondeterminism_strictness.t
+  ; unbounded_choices : bool
   }
 
 (* ------------------------------------------------------------------ *)
@@ -127,6 +129,10 @@ let health_check_bit = function
   | Large_initial_test_case -> Ffi.hc_large_initial_test_case
 ;;
 
+let health_check_of_bit bit =
+  List.find_opt (fun hc -> health_check_bit hc = bit) all_health_checks
+;;
+
 let bitmask bit_of items = List.fold_left (fun acc x -> acc lor bit_of x) 0 items
 let of_bitmask bit_of all mask = List.filter (fun x -> mask land bit_of x <> 0) all
 
@@ -137,7 +143,7 @@ let of_ffi ctx s =
   ; derandomize = Ffi.settings_get_derandomize ctx s
   ; database =
       (match Ffi.settings_get_database ctx s with
-       | None -> Unset
+       | None -> Default_location
        | Some "" -> Disabled
        | Some dir -> Path dir)
   ; suppress_health_check =
@@ -153,6 +159,7 @@ let of_ffi ctx s =
   ; backend = backend_of_ffi (Ffi.settings_get_backend ctx s)
   ; nondeterminism_strictness =
       nondeterminism_strictness_of_ffi (Ffi.settings_get_nondeterminism_strictness ctx s)
+  ; unbounded_choices = Ffi.settings_get_unbounded_choices ctx s
   }
 ;;
 
@@ -171,13 +178,12 @@ let to_ffi ctx t ~database_key =
     s
     (ffi_nondeterminism_strictness t.nondeterminism_strictness);
   Ffi.settings_print_blob ctx s t.print_blob;
-  Ffi.settings_database
-    ctx
-    s
-    (match t.database with
-     | Unset -> None
-     | Disabled -> Some ""
-     | Path p -> Some p);
+  Ffi.settings_unbounded_choices ctx s t.unbounded_choices;
+  (match t.database with
+   | Unset -> ()
+   | Default_location -> Ffi.settings_database ctx s None
+   | Disabled -> Ffi.settings_database ctx s (Some "")
+   | Path p -> Ffi.settings_database ctx s (Some p));
   Option.iter (fun k -> Ffi.settings_database_key ctx s (Some k)) database_key;
   Ffi.settings_phases ctx s (bitmask phase_bit t.phases);
   Ffi.settings_suppress_health_check
@@ -209,7 +215,13 @@ let create ?test_cases ?seed () =
   let s =
     Option.fold ~none:s ~some:(fun test_cases -> { s with test_cases }) test_cases
   in
-  Option.fold ~none:s ~some:(fun v -> { s with seed = Some v }) seed
+  Option.fold
+    ~none:s
+    ~some:(fun v ->
+      if v < 0
+      then raise (Ffi.Usage_error (Printf.sprintf "Settings.create: negative seed %d" v));
+      { s with seed = Some (Ffi.uint64_of_int v) })
+    seed
 ;;
 
 let register_profile name t =
@@ -221,3 +233,15 @@ let register_profile name t =
 ;;
 
 let set_default_profile name = with_context (fun ctx -> Ffi.set_default_profile ctx name)
+
+let set_from_strings t pairs =
+  with_context (fun ctx ->
+    let s = to_ffi ctx t ~database_key:None in
+    Fun.protect
+      ~finally:(fun () -> Ffi.settings_free ctx s)
+      (fun () ->
+         List.iter
+           (fun (key, value) -> Ffi.settings_set_from_string ctx s ~key ~value)
+           pairs;
+         of_ffi ctx s))
+;;
