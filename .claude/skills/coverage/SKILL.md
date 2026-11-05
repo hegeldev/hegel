@@ -31,6 +31,6 @@ When CI coverage fails:
    - **Just needs testing**: most code that has not been covered just needs a test written for it. Your default assumption should be that it is straightforwardly testable and you just need to write a normal test.
    - **Needs refactoring**: some code cannot easily be tested in its current form and needs refactoring to make it testable. See `references/patterns.md` for information on how to do that.
    - **Dead code**: if it's truly unreachable, delete it, or replace it with an `unreachable!` annotation.
-3. Run `just check-coverage` locally if `cargo-llvm-cov` is available to iterate faster than CI.
+3. Run `just check-coverage` locally if `cargo-llvm-cov` and `cargo-nextest` are available to iterate faster than CI.
 
 For details on how the coverage script works and what it auto-excludes, see `references/internals.md`.

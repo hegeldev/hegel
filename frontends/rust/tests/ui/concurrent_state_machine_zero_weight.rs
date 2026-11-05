@@ -4,7 +4,7 @@ struct Machine;
 
 #[hegel::concurrent_state_machine]
 impl Machine {
-    #[rule(group = "rw", weight = 0)]
+    #[rule(groups = ["rw"], weight = 0)]
     fn act(&self, _: hegel::TestCase) {}
 }
 

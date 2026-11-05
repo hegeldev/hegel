@@ -265,21 +265,33 @@ export class EngineDataSource implements DataSource {
   }
 
   newStateMachine(spec: StateMachineSpec): number {
-    this.family.machines.push(
-      this.call(() =>
-        this.lib.newStateMachine(this.ctx, this.tc, {
-          ruleNames: spec.ruleNames,
-          // One concurrency group, so rules never need to be kept apart.
-          ruleGroups: spec.ruleNames.map(() => 0),
-          ruleWeights: spec.ruleWeights,
-          invariantNames: spec.invariantNames,
-          invariantAlwaysCheck: spec.invariantAlwaysCheck,
-          minConcurrency: 1,
-          maxConcurrency: 1,
-          stepCount: spec.stepCount,
-        }),
-      ),
+    const machine = this.call(() =>
+      this.lib.newStateMachine(this.ctx, this.tc, 1, 1, spec.stepCount),
     );
+    this.family.machines.push(machine);
+    this.call(() => {
+      // One concurrency group, so rules never need to be kept apart.
+      spec.ruleNames.forEach((name, index) => {
+        this.lib.stateMachineAddRule(
+          this.ctx,
+          this.tc,
+          machine,
+          name,
+          spec.ruleWeights[index],
+          [0],
+        );
+      });
+      spec.invariantNames.forEach((name, index) => {
+        this.lib.stateMachineAddInvariant(
+          this.ctx,
+          this.tc,
+          machine,
+          name,
+          spec.invariantAlwaysCheck[index],
+        );
+      });
+      this.lib.stateMachineStart(this.ctx, this.tc, machine);
+    });
     return this.family.machines.length - 1;
   }
 

@@ -59,11 +59,13 @@
     any order and any of which may be left out: [[@@rule { weight = 2.5 }]],
     [[@@invariant { always_check = true }]]. A rule's [weight] tells the engine
     how often to pick that rule relative to the others, and defaults to [1.0].
-    A rule in a [module%hegel_concurrent_state_machine] also takes a [group],
-    as [[@@rule { group = "io"; weight = 2.5 }]]; a group on a sequential rule
-    is an error. A module that declares [type ctx] gets a [run ~concurrency ...]
-    whose capability must supply that context. Otherwise, [type ctx = unit] and
-    [concurrency] defaults to [Hegel.Concurrency.threads].
+    A rule in a [module%hegel_concurrent_state_machine] also takes its
+    [groups], as [[@@rule { groups = [ "io"; "flush" ]; weight = 2.5 }]]: the
+    concurrency groups the rule belongs to, in each of whose rounds it may
+    run; groups on a sequential rule are an error. A module that declares
+    [type ctx] gets a [run ~concurrency ...] whose capability must supply that
+    context. Otherwise, [type ctx = unit] and [concurrency] defaults to
+    [Hegel.Concurrency.threads].
 
     [[@async]] before the name, as in [let%hegel_test [@async] my_test tc = ...]
     or [module%hegel_state_machine [@async] M = struct ... end], makes the test
@@ -97,7 +99,7 @@ let failure_blobs_attribute =
 ;;
 
 type rule_payload =
-  { group : string option
+  { groups : string list option
   ; weight : string option
   }
 
@@ -107,7 +109,7 @@ let weight_pattern () =
 
 let record_payload fields = Ast_pattern.(single_expr_payload (pexp_record fields none))
 let field name pattern = Ast_pattern.(loc (lident (string name)) ** pattern)
-let group_field () = field "group" Ast_pattern.(estring __)
+let groups_field () = field "groups" Ast_pattern.(elist (estring __))
 let weight_field () = field "weight" (weight_pattern ())
 
 let rule_attribute =
@@ -115,19 +117,19 @@ let rule_attribute =
     "hegel.rule"
     Attribute.Context.value_binding
     Ast_pattern.(
-      map0 (pstr nil) ~f:{ group = None; weight = None }
+      map0 (pstr nil) ~f:{ groups = None; weight = None }
       ||| map1
-            (record_payload (group_field () ^:: nil))
-            ~f:(fun group -> { weight = None; group = Some group })
+            (record_payload (groups_field () ^:: nil))
+            ~f:(fun groups -> { weight = None; groups = Some groups })
       ||| map1
             (record_payload (weight_field () ^:: nil))
-            ~f:(fun weight -> { group = None; weight = Some weight })
+            ~f:(fun weight -> { groups = None; weight = Some weight })
       ||| map2
-            (record_payload (group_field () ^:: weight_field () ^:: nil))
-            ~f:(fun group weight -> { group = Some group; weight = Some weight })
+            (record_payload (groups_field () ^:: weight_field () ^:: nil))
+            ~f:(fun groups weight -> { groups = Some groups; weight = Some weight })
       ||| map2
-            (record_payload (weight_field () ^:: group_field () ^:: nil))
-            ~f:(fun weight group -> { group = Some group; weight = Some weight }))
+            (record_payload (weight_field () ^:: groups_field () ^:: nil))
+            ~f:(fun weight groups -> { groups = Some groups; weight = Some weight }))
     (fun ~attr_loc payload -> attr_loc, payload)
 ;;
 
@@ -479,19 +481,19 @@ let expand_main_binding ~loc (vb : value_binding) : structure_item list =
 (** A marker attribute on a binding inside a [module%hegel_state_machine]. *)
 type marker =
   | Rule of
-      { group : string option
+      { groups : string list option
       ; weight : string
       }
   | Invariant of { always_check : bool }
 
-let rule_marker ~concurrent ~attr_loc { group; weight } =
-  if Option.is_some group && not concurrent
+let rule_marker ~concurrent ~attr_loc { groups; weight } =
+  if Option.is_some groups && not concurrent
   then
     Location.raise_errorf
       ~loc:attr_loc
       "ppx_hegel_test: rule groups are only supported in \
        module%%hegel_concurrent_state_machine";
-  Rule { group; weight = Option.value weight ~default:"1.0" }
+  Rule { groups; weight = Option.value weight ~default:"1.0" }
 ;;
 
 (** [marker_of_binding ~concurrent vb] is [vb] with its marker attribute
@@ -621,7 +623,7 @@ let expand_state_machine ~concurrent ~loc (mb : module_binding) : structure_item
     List.fold_right
       (fun (name, marker) (rules, invariants) ->
          match marker with
-         | Rule { group; weight } -> (name, group, weight) :: rules, invariants
+         | Rule { groups; weight } -> (name, groups, weight) :: rules, invariants
          | Invariant { always_check } -> rules, (name, always_check) :: invariants)
       marked
       ([], [])
@@ -636,16 +638,17 @@ let expand_state_machine ~concurrent ~loc (mb : module_binding) : structure_item
   let open Ast_builder.Default in
   let rule_exprs =
     List.map
-      (fun (name, group, weight) ->
+      (fun (name, groups, weight) ->
          if concurrent
          then
            [%expr
              [%e stateful "Concurrent_rule.create"]
-               ?group:
+               ?groups:
                  [%e
-                   match group with
+                   match groups with
                    | None -> [%expr None]
-                   | Some group -> [%expr Some [%e estring ~loc group]]]
+                   | Some groups ->
+                     [%expr Some [%e elist ~loc (List.map (estring ~loc) groups)]]]
                ~weight:[%e efloat ~loc weight]
                ~name:[%e estring ~loc name]
                ~step:[%e evar ~loc name]

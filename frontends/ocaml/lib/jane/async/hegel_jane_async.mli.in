@@ -41,7 +41,7 @@ module Stateful : sig
     type 'state t
 
     val create
-      :  ?group:string
+      :  ?groups:string list
       -> ?weight:float
       -> name:string
       -> step:(Hegel.test_case -> 'state -> unit Async.Deferred.t)
@@ -49,7 +49,7 @@ module Stateful : sig
       -> 'state t
 
     val name : _ t -> string
-    val group : _ t -> string
+    val groups : _ t -> string list
     val weight : _ t -> float
   end
 

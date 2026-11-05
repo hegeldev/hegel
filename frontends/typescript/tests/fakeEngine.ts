@@ -286,6 +286,9 @@ export function fakeEngine() {
     recursionFinish: vi.fn<Engine["recursionFinish"]>(() => true),
     freeRecursion: vi.fn<Engine["freeRecursion"]>(),
     newStateMachine: vi.fn<Engine["newStateMachine"]>(() => stateMachine),
+    stateMachineAddRule: vi.fn<Engine["stateMachineAddRule"]>(),
+    stateMachineAddInvariant: vi.fn<Engine["stateMachineAddInvariant"]>(),
+    stateMachineStart: vi.fn<Engine["stateMachineStart"]>(() => 1),
     stateMachineNextGroup: vi
       .fn<Engine["stateMachineNextGroup"]>()
       .mockReturnValueOnce(0)

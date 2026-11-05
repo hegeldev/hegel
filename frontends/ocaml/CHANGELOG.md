@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.27.0 - 2026-11-03
+
+This release lets a rule of a concurrent state machine belong to several concurrency groups.
+
+Before:
+
+```ocaml
+let write tc () state = ... [@@rule { group = "write" }]
+```
+
+After:
+
+```ocaml
+let write tc () state = ... [@@rule { groups = [ "write" ] }]
+let flush tc () state = ... [@@rule { groups = [ "flush" ] }]
+let read tc () state = ... [@@rule { groups = [ "write"; "flush" ] }]
+```
+
+Without the PPX, `Stateful.Concurrent_rule.create` takes `?groups:string list` in place of `?group:string`, and `Stateful.Concurrent_rule.groups` replaces `Stateful.Concurrent_rule.group`:
+
+```ocaml
+let read =
+  Stateful.Concurrent_rule.create ~name:"read" ~groups:[ "write"; "flush" ] ~step ()
+;;
+
+let groups : string list = Stateful.Concurrent_rule.groups read
+```
+
 ## 0.26.7 - 2026-10-28
 
 This patch adds `Stateful.Pool.to_list` and `Stateful.Concurrent_pool.to_list`, which return a pool's values, each passed to the pool's `clone`.

@@ -974,7 +974,7 @@ mod stateful {
                 .settings(Settings::new().database(None))
                 .run();
             },
-            "cannot run a state machine with no rules",
+            "cannot start a state machine with no rules",
         );
     }
 

@@ -79,18 +79,31 @@ fn method_entries(methods: &[MethodInfo], invariants: bool) -> Vec<TokenStream> 
         .collect()
 }
 
-/// The concurrency group of one `#[rule]` in a concurrent state machine:
-/// the string from `#[rule(group = "...")]`, or the shared anonymous group
-/// for a bare `#[rule]`.
+/// The concurrency groups of one `#[rule]` in a concurrent state machine:
+/// the strings from `#[rule(groups = ["...", ...])]`, or the shared
+/// anonymous group for a bare `#[rule]`.
 enum RuleGroup {
     Anonymous,
-    Named(String),
+    Named(Vec<syn::LitStr>),
 }
 
 /// The arguments of one `#[rule]` attribute.
 struct RuleArgs {
     group: RuleGroup,
     weight: Option<f64>,
+}
+
+/// Parse the `groups = ["...", ...]` value of a `#[rule]` attribute: a
+/// bracketed list of string literals. The engine rejects an empty list and
+/// a repeated group when the machine runs.
+fn rule_groups(meta: &syn::meta::ParseNestedMeta) -> syn::Result<Vec<syn::LitStr>> {
+    let input = meta.value()?;
+    let content;
+    syn::bracketed!(content in input);
+    Ok(content
+        .parse_terminated(|input| input.parse::<syn::LitStr>(), syn::Token![,])?
+        .into_iter()
+        .collect())
 }
 
 /// Parse the `weight = <number>` value of a `#[rule]` attribute: an integer
@@ -116,7 +129,7 @@ fn rule_weight(meta: &syn::meta::ParseNestedMeta) -> syn::Result<f64> {
     Ok(weight)
 }
 
-/// Extract the arguments of a `#[rule]` attribute. `group = "..."` is
+/// Extract the arguments of a `#[rule]` attribute. `groups = [...]` is
 /// accepted only when `concurrent`. `weight = ...` is accepted in both
 /// kinds of machine.
 fn rule_args(attr: &Attribute, concurrent: bool) -> syn::Result<RuleArgs> {
@@ -130,22 +143,21 @@ fn rule_args(attr: &Attribute, concurrent: bool) -> syn::Result<RuleArgs> {
     let mut any = false;
     attr.parse_nested_meta(|meta| {
         any = true;
-        if concurrent && meta.path.is_ident("group") {
-            let value: syn::LitStr = meta.value()?.parse()?;
-            args.group = RuleGroup::Named(value.value());
+        if concurrent && meta.path.is_ident("groups") {
+            args.group = RuleGroup::Named(rule_groups(&meta)?);
             Ok(())
         } else if meta.path.is_ident("weight") {
             args.weight = Some(rule_weight(&meta)?);
             Ok(())
         } else if concurrent {
-            Err(meta.error("unsupported #[rule] argument; expected `group = \"...\"`"))
+            Err(meta.error("unsupported #[rule] argument; expected `groups = [...]`"))
         } else {
             Err(meta.error("unsupported #[rule] argument"))
         }
     })?;
     if !any {
         let message = if concurrent {
-            "#[rule(...)] requires `group = \"...\"`"
+            "#[rule(...)] requires `groups = [...]`"
         } else {
             "#[rule()] has no arguments; write #[rule] instead"
         };
@@ -199,16 +211,18 @@ fn concurrent_method_entries(methods: &[ConcurrentMethodInfo]) -> Vec<TokenStrea
                 .collect();
             match &m.group {
                 Some(group) => {
-                    let group = match group {
-                        RuleGroup::Anonymous => quote! { ::hegel::stateful::ANONYMOUS_GROUP },
-                        RuleGroup::Named(name) => quote! { #name },
+                    let groups = match group {
+                        RuleGroup::Anonymous => {
+                            quote! { &[::hegel::stateful::ANONYMOUS_GROUP] }
+                        }
+                        RuleGroup::Named(names) => quote! { &[ #( #names ),* ] },
                     };
                     let weight = m.weight.unwrap_or(1.0);
                     quote! {
                         #(#attrs)*
                         ::hegel::stateful::ConcurrentRule::new(
                             #name_str,
-                            #group,
+                            #groups,
                             #weight,
                             |__hegel_machine: &Self, __hegel_tc: ::hegel::TestCase| {
                                 __hegel_machine.#name(__hegel_tc)

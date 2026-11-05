@@ -1,0 +1,97 @@
+# Recipes for the Go frontend (the hegel.dev/go/hegel module). Run as
+# `just go::<recipe>` from anywhere in the repo; recipes execute from this
+# directory. The engine is the in-tree libhegel: `build-libhegel` compiles it
+# into the workspace's `target/`, and the test recipes point the loader at
+# that build through `HEGEL_LIBHEGEL_PATH` (an already-set value wins;
+# scripts/libhegel-path.sh is the one place that knows where the build is).
+# The binaries under internal/libhegel/libs/ are empty on main: only the
+# commit a release tags embeds the libhegel release binaries.
+set ignore-comments := true
+
+set windows-shell := ["bash", "-uc"]
+
+# Build libhegel (release) into the workspace's target/.
+build-libhegel:
+    cargo build --release -p hegeltest-c --manifest-path ../../Cargo.toml
+
+# Print the path of the in-tree libhegel build the tests load.
+libhegel-path:
+    @scripts/libhegel-path.sh
+
+# The coverage-ignore count is ratcheted in coverage-ratchet.json.
+#
+# The full suite with the race detector, enforcing 100% coverage per file.
+check-test: build-libhegel
+    #!/usr/bin/env bash
+    set -euo pipefail
+    HEGEL_LIBHEGEL_PATH="${HEGEL_LIBHEGEL_PATH:-$(scripts/libhegel-path.sh)}"
+    export HEGEL_LIBHEGEL_PATH
+    go test -race -coverprofile=coverage.out -covermode=atomic \
+        -coverpkg=hegel.dev/go/hegel/... \
+        ./...
+    python3 scripts/check-coverage.py
+
+# Arguments replace the default `./...`, e.g. `-race ./...` or
+# `-run TestLibhegelEndToEnd ./internal/libhegel`.
+#
+# The suite without coverage, passing its arguments to `go test`.
+check-test-no-coverage *args: build-libhegel
+    #!/usr/bin/env bash
+    set -euo pipefail
+    HEGEL_LIBHEGEL_PATH="${HEGEL_LIBHEGEL_PATH:-$(scripts/libhegel-path.sh)}"
+    export HEGEL_LIBHEGEL_PATH
+    go test {{ if args == "" { "./..." } else { args } }}
+
+format:
+    gofmt -w .
+
+check-format:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    unformatted=$(gofmt -l .)
+    if [ -n "$unformatted" ]; then
+        echo "The following files need formatting (run 'just go::format'):"
+        echo "$unformatted"
+        exit 1
+    fi
+
+# Only a release commit, which is never on main, embeds the binaries.
+#
+# The libhegel binaries under internal/libhegel/libs/ must be empty.
+check-libs-empty:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    nonempty=$(find internal/libhegel/libs -type f -size +0c)
+    if [ -n "$nonempty" ]; then
+        echo "These files must be empty outside a release commit:" >&2
+        echo "$nonempty" >&2
+        exit 1
+    fi
+
+check-lint: check-format check-libs-empty
+    go fix -diff ./...
+    go vet ./...
+    go tool staticcheck ./...
+    go build ./examples/...
+
+# Verify all exported symbols have doc comments.
+check-docs:
+    go doc -all . > /dev/null 2>&1
+
+# Serve the API docs locally; open the printed URL.
+docs:
+    go doc -http .
+
+# The binaries come from hegeldev/hegel's `libhegel/<version>` GitHub release,
+# checksum-verified. The release automation runs this for the commit it tags;
+# on main the binaries stay empty. With no argument it takes the latest libhegel release; pass a
+# version (`0.49.0`) or a tag (`libhegel/0.49.0`) for an exact one.
+#
+# Download a libhegel release's binaries into internal/libhegel/libs.
+vendor-libhegel version="":
+    go run scripts/vendor-libhegel.go -version={{version}}
+
+check: check-lint check-docs check-test
+
+test: check-test
+lint: check-lint
