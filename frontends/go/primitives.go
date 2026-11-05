@@ -621,7 +621,7 @@ func (g DateGenerator) draw(tc TestCase) (time.Time, error) {
 		}
 	}
 	ctx, ltc := tc.engine()
-	d, err := ltc.GenerateDate(ctx, minVal, maxVal)
+	d, err := ltc.GenerateDate(ctx, minVal, maxVal, 0)
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -675,7 +675,7 @@ func (g DatetimeGenerator) draw(tc TestCase) (time.Time, error) {
 		}
 	}
 	ctx, ltc := tc.engine()
-	dt, err := ltc.GenerateDatetime(ctx, minVal, maxVal)
+	dt, err := ltc.GenerateDatetime(ctx, minVal, maxVal, libhegel.PRECISION_NANOSECONDS)
 	if err != nil {
 		return time.Time{}, err
 	}
