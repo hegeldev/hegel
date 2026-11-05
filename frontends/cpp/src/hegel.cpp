@@ -136,8 +136,9 @@ namespace hegel {
         };
 
         // How a report prints its "rerun with:" line. The annotation form
-        // names a test defined by the HEGEL_TEST macro.
-        enum class RerunForm { Call, Annotation };
+        // names a test defined by the HEGEL_TEST macro. The option form is
+        // the command-line option of a program defined by HEGEL_MAIN.
+        enum class RerunForm { Call, Annotation, Option };
 
         // The installed test framework integration
         internal::FrameworkHooks& framework_hooks() {
@@ -441,6 +442,9 @@ namespace hegel {
                 std::fprintf(
                     stderr, "rerun with: HEGEL_REPRODUCE_FAILURE(%s, \"%s\")\n",
                     location->name.c_str(), blob->c_str());
+            } else if (rerun_form == RerunForm::Option) {
+                std::fprintf(stderr, "rerun with: --failure-blob %s\n",
+                             blob->c_str());
             } else {
                 std::fprintf(
                     stderr,

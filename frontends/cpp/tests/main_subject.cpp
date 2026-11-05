@@ -2,7 +2,7 @@
 //
 // HEGEL_MAIN_SUBJECT_BODY selects what the test case does: `pass` (the
 // default), `fail`, `empty_message`, `reject` or `throw_int`. Each test case
-// prints one `test case` line to stdout. HEGEL_MAIN_SUBJECT_STEPS sets
+// prints one `subject: test case` line to stdout. HEGEL_MAIN_SUBJECT_STEPS sets
 // Settings::stateful_step_count.
 //
 // The build compiles this file twice. The second program defines
@@ -26,7 +26,7 @@ namespace {
     }
 
     void body(hegel::TestCase& tc) {
-        std::printf("test case\n");
+        std::printf("subject: test case\n");
         std::fflush(stdout);
         int n = tc.draw("n", gs::integers<int>());
         std::string kind = env("HEGEL_MAIN_SUBJECT_BODY", "pass");

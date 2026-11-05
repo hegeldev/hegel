@@ -35,9 +35,9 @@ namespace {
 
     size_t test_cases_run(const SubprocessResult& r) {
         size_t count = 0;
-        for (size_t at = r.stdout_data.find("test case\n");
+        for (size_t at = r.stdout_data.find("subject: test case\n");
              at != std::string::npos;
-             at = r.stdout_data.find("test case\n", at + 1)) {
+             at = r.stdout_data.find("subject: test case\n", at + 1)) {
             count++;
         }
         return count;
@@ -73,7 +73,8 @@ TEST(Main, HelpPrintsUsage) {
         SubprocessResult r = run_main({"--seed", "1", help});
         EXPECT_EQ(r.exit_code, 0);
         EXPECT_TRUE(contains(r.stdout_data, "Usage: ")) << r.stdout_data;
-        EXPECT_TRUE(contains(r.stdout_data, "--failure-blob BLOB"));
+        EXPECT_TRUE(contains(r.stdout_data, "--failure-blob <BLOB>"));
+        EXPECT_TRUE(contains(r.stdout_data, "--unbounded-choices <BOOL>"));
         EXPECT_EQ(test_cases_run(r), 0u);
     }
 }

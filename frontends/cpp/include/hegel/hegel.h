@@ -326,7 +326,7 @@
  *
  * @subsection write_workload Write a workload program
  *
- * @ref HEGEL_MAIN defines a Hegel test as a standalone binary that runs one 
+ * @ref HEGEL_MAIN defines a Hegel test as a standalone binary that runs one
  * test case each time it is invoked, for example as an Antithesis workload:
  *
  * @code{.cpp}
@@ -630,8 +630,8 @@ namespace hegel {
  * Settings::test_cases has no effect, and the `TooSlow` and
  * `TestCasesTooLarge` health checks are always suppressed.
  *
- * Each setting is a command-line option named after its `hegel.toml` key 
- * (e.g. `--seed 42`, `--phases generate,shrink`, ...). Each option also takes 
+ * Each setting is a command-line option named after its `hegel.toml` key
+ * (e.g. `--seed 42`, `--phases generate,shrink`, ...). Each option also takes
  * the form `--option=VALUE`. Options override settings in the test code.
  *
  * A failure report ends with the line that replays it:
