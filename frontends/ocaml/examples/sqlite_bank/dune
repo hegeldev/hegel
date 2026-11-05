@@ -1,0 +1,15 @@
+; Set HEGEL_SQLITE_EXAMPLES=1 to build this example.
+
+(executable
+ (name main)
+ (enabled_if
+  (= %{env:HEGEL_SQLITE_EXAMPLES=0} 1))
+ (libraries hegel sqlite3)
+ (preprocess
+  (pps
+   ppx_js_style
+   ppx_hegel_test
+   --
+   -allow-unannotated-ignores
+   -check
+   -locations-check)))
