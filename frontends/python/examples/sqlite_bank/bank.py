@@ -1,7 +1,7 @@
 """Bank workload that tests an ACID database with Hegel's concurrent
 stateful testing.
 
-Each run of ``main.py`` runs the workload once.
+Each run of this file runs the workload once.
 
 The state is a file-backed SQLite database in WAL mode with one
 ``accounts(account_id, balance, opCount)`` table, the workload's client-side
@@ -286,7 +286,7 @@ class Machine(hegel.StateMachine):
     def no_negative_balance(self, tc: hegel.TestCase) -> None:
         self.bank.verify_no_negative()
 
-    @hegel.rule(group="bank", weight=6)
+    @hegel.rule(groups=["bank"], weight=6)
     def transfer(self, tc: hegel.TestCase) -> None:
         n = self.bank.config.accounts
         source = tc.draw(gs.integers(min_value=0, max_value=n - 1))
@@ -296,15 +296,15 @@ class Machine(hegel.StateMachine):
         tc.event(f"transfer: {outcome}")
         tc.note(f"transfer {amount} from {source} to {dest}: {outcome}")
 
-    @hegel.rule(group="bank")
+    @hegel.rule(groups=["bank"])
     def verify_total_balance(self, tc: hegel.TestCase) -> None:
         self.bank.verify_total_balance()
 
-    @hegel.rule(group="bank")
+    @hegel.rule(groups=["bank"])
     def verify_ops_not_lost(self, tc: hegel.TestCase) -> None:
         self.bank.verify_ops_not_lost()
 
-    @hegel.rule(group="bank")
+    @hegel.rule(groups=["bank"])
     def verify_no_negative(self, tc: hegel.TestCase) -> None:
         self.bank.verify_no_negative()
 
@@ -324,3 +324,12 @@ def run(tc: hegel.TestCase, workload: Workload) -> None:
             min_concurrency=workload.min_concurrency,
             max_concurrency=workload.max_concurrency,
         )
+
+
+@hegel.main(show_statistics=True)
+def workload(tc: hegel.TestCase) -> None:
+    run(tc, bank_workload(tc))
+
+
+if __name__ == "__main__":
+    workload()

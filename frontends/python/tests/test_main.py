@@ -111,7 +111,7 @@ def test_explicit_cases_and_reproduce_blobs_apply(captured):
     main(["--failure-blob", "BLOB2"])
     assert [case.kwargs for case in captured["explicit_cases"]] == [{"n": 1}, {"n": 2}]
     assert captured["blobs"] == ["BLOB1", "BLOB2"]
-    assert captured["suggestion"] == "remove the decorator and do not pass --failure-blob"
+    assert captured["suggestion"] == "remove the decorator and stop passing --failure-blob"
 
     @hegel.main
     @hegel.reproduce_failure("BLOB1")
@@ -159,14 +159,16 @@ def test_failure_reports_how_to_rerun_and_replays(output):
         tc.draw(gs.integers(min_value=1))
 
     with pytest.raises(
-        hegel.DidNotReproduce, match="do not pass --failure-blob once the failure is fixed"
+        hegel.DidNotReproduce, match="stop passing --failure-blob once the failure is fixed"
     ):
         fixed(["--failure-blob", blob])
 
 
 def test_usage_errors(capsys):
     main = hegel.main(workload)
-    assert "--test-cases cannot be set" in usage_error(main, ["--test-cases", "5"], capsys)
+    assert "unrecognized arguments: --test-cases 5" in usage_error(
+        main, ["--test-cases", "5"], capsys
+    )
     assert '--seed: `seed` expects an integer or "none", got "nope"' in usage_error(
         main, ["--seed", "nope"], capsys
     )
@@ -201,15 +203,28 @@ def test_rejects_what_it_cannot_run():
     async def coroutine(tc):
         pass
 
-    with pytest.raises(hegel.InvalidArgument, match="is async"):
+    with pytest.raises(hegel.InvalidArgument, match=r"is async.*asyncio\.run\(\)"):
         hegel.main(coroutine)
 
     def no_arguments():
         pass
 
+    def keyword_only(*, tc):
+        pass
+
     def two_arguments(tc, other):
         pass
 
-    for fn in (no_arguments, two_arguments):
-        with pytest.raises(hegel.InvalidArgument, match="must only take the test case"):
-            hegel.main(fn)  # type: ignore[arg-type]
+    with pytest.raises(hegel.InvalidArgument, match="must take the test case as its argument"):
+        hegel.main(no_arguments)  # type: ignore[arg-type]
+    with pytest.raises(hegel.InvalidArgument, match="'tc' cannot be passed positionally"):
+        hegel.main(keyword_only)  # type: ignore[arg-type]
+    with pytest.raises(
+        hegel.InvalidArgument, match="must take only the test case, but it also takes 'other'"
+    ):
+        hegel.main(two_arguments)  # type: ignore[arg-type]
+
+    def with_defaults(tc, other=1, *args, **kwargs):
+        pass
+
+    hegel.main(with_defaults)

@@ -858,11 +858,29 @@ def main(
         if not callable(inner) or inspect.isclass(inner):
             raise InvalidArgument("@hegel.main must decorate a function")
         if inspect.iscoroutinefunction(inner) or inspect.isasyncgenfunction(inner):
-            raise InvalidArgument(f"{inner.__name__} is async, and Hegel does not run async tests")
-        try:
-            inspect.signature(inner).bind(None)
-        except TypeError:
-            raise InvalidArgument(f"{inner.__name__} must only take the test case") from None
+            raise InvalidArgument(
+                f"{inner.__name__} is async, and Hegel does not run async tests. Make it "
+                "synchronous, running the async code under test with asyncio.run()."
+            )
+        parameters = list(inspect.signature(inner).parameters.values())
+        if not parameters:
+            raise InvalidArgument(f"{inner.__name__} must take the test case as its argument")
+        if "POSITIONAL" not in parameters[0].kind.name:
+            raise InvalidArgument(
+                f"{inner.__name__} must take the test case as a positional parameter, but "
+                f"{parameters[0].name!r} cannot be passed positionally"
+            )
+        unsupplied = [
+            parameter.name
+            for parameter in parameters[1:]
+            if parameter.default is parameter.empty
+            and parameter.kind not in (parameter.VAR_POSITIONAL, parameter.VAR_KEYWORD)
+        ]
+        if unsupplied:
+            raise InvalidArgument(
+                f"{inner.__name__} must take only the test case, but it also takes "
+                f"{unsupplied[0]!r}"
+            )
         location = _location_of(inner)
         database_key = _database_key_of(inner)
         if location is not None and database_key.startswith("__main__."):
@@ -880,8 +898,6 @@ def main(
                 )
             parser = _main_parser()
             args = parser.parse_args(argv)
-            if args.test_cases is not None:
-                parser.error("--test-cases cannot be set: @hegel.main runs one test case")
             base = settings
             if args.profile is not None:
                 try:
@@ -891,7 +907,7 @@ def main(
                 if base is None:
                     base = profile
             resolved = Settings(base, **overrides)
-            for key in _FIELDS:
+            for key in _MAIN_OPTIONS:
                 value = getattr(args, key)
                 if value is None:
                     continue
@@ -906,7 +922,7 @@ def main(
                     "remove the decorator" if len(decorator_blobs) == 1 else "remove the decorators"
                 )
             if args.failure_blob:
-                suggestions.append("do not pass --failure-blob")
+                suggestions.append("stop passing --failure-blob")
             _run(
                 inner,
                 resolved.replace(
@@ -934,15 +950,18 @@ def main(
     return decorate
 
 
+_MAIN_OPTIONS = [key for key in _FIELDS if key != "test_cases"]
+
+
 def _main_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run one Hegel test case.", allow_abbrev=False)
     parser.add_argument("--profile", metavar="NAME", help="the settings profile to use")
-    for key in _FIELDS:
+    for key in _MAIN_OPTIONS:
         parser.add_argument(
             f"--{key.replace('_', '-')}",
             dest=key,
             metavar="VALUE",
-            help=argparse.SUPPRESS if key == "test_cases" else f"the {key} setting",
+            help=f"the {key} setting",
         )
     parser.add_argument(
         "--failure-blob",

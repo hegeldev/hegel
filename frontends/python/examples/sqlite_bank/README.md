@@ -4,8 +4,8 @@ An example of testing an ACID database with Hegel's concurrent stateful
 testing. The database is SQLite in WAL mode.
 
 ```sh
-uv run python examples/sqlite_bank/main.py                    # one run per invocation
-BANK_INJECT_BUG=1 uv run python examples/sqlite_bank/main.py  # a broken transfer; the run fails
+uv run python examples/sqlite_bank/bank.py                    # one run per invocation
+BANK_INJECT_BUG=1 uv run python examples/sqlite_bank/bank.py  # a broken transfer; the run fails
 ```
 
 ## The workload
