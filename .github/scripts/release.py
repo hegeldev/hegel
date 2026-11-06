@@ -39,6 +39,14 @@ class Component:
     version it ships in a generated source file names it in `engine_pin`;
     its `LIBHEGEL_VERSION = "..."` follows the libhegel version.
 
+    A component without `manifests` (the Go frontend: a Go module's version
+    is its tag) reads its current version from its highest local
+    `<path>/<tag_version_prefix>X.Y.Z` tag; `tag_version_prefix` is the `v` a
+    Go module version needs. `tagged_on_release_commit` is False for a component whose tag the release
+    automation puts on a commit of its own, after the release commit: the Go
+    frontend's release commit embeds the libhegel binaries, which only exist
+    once the release commit has been tagged and built.
+
     `install_docs` are documents, such as a README, whose install snippets
     name the component's own version: a release rewrites every occurrence of
     the version it replaces to the new one.
@@ -51,6 +59,8 @@ class Component:
     engine_bump_entry: str | None = None
     engine_pin: str | None = None
     install_docs: tuple[str, ...] = ()
+    tag_version_prefix: str = ""
+    tagged_on_release_commit: bool = True
 
     @property
     def release_dir(self) -> str:
@@ -90,10 +100,8 @@ class Component:
         return f"{self.path}/CHANGELOG.md"
 
     def tag(self, version: str) -> str:
-        return f"{self.path}/{version}"
+        return f"{self.path}/{self.tag_version_prefix}{version}"
 
-    def manifest(self) -> Path:
-        return ROOT / self.manifests[0]
 
 
 # libhegel (the `hegeltest-c` crate) and the frontends carry independent
@@ -196,7 +204,24 @@ OCAML = Component(
     ),
     engine_bump_entry="This release updates the bundled libhegel engine to {version}.",
 )
-FRONTENDS = [RUST, PYTHON, TYPESCRIPT, CPP, JAVA, OCAML]
+# The Go frontend (the hegel.dev/go/hegel module). A Go module ships every
+# file under its directory, so any change there needs a release file (or the
+# `skip release` label). Go resolves a module version from its tag alone, so
+# there is no manifest: the version is read off the highest
+# `frontends/go/vX.Y.Z` tag. Its tag goes on a commit of its own
+# whose parent is the release commit, made by ci.yml's `release-go` job: that
+# commit fills internal/libhegel/libs/ with the libhegel release binaries the
+# module embeds, which are empty on main.
+GO = Component(
+    path="frontends/go",
+    manifests=(),
+    crates=(),
+    source_dirs=("frontends/go/",),
+    engine_bump_entry="This release updates the bundled libhegel engine to {version}.",
+    tag_version_prefix="v",
+    tagged_on_release_commit=False,
+)
+FRONTENDS = [RUST, PYTHON, TYPESCRIPT, CPP, JAVA, OCAML, GO]
 COMPONENTS = [LIBHEGEL, *FRONTENDS]
 
 
@@ -289,6 +314,31 @@ def current_version(manifest: Path) -> str:
     pattern, _ = version_pattern(manifest)
     m = re.search(pattern, manifest.read_text(), re.MULTILINE)
     return re.search(r"\d+\.\d+\.\d+", m.group(0)).group(0)
+
+
+def tagged_version(root: Path, component: Component) -> str:
+    """The version of the component's highest `<path>/<prefix>X.Y.Z` tag in
+    the repository at `root`. The release job fetches every tag first."""
+    prefix = f"{component.path}/{component.tag_version_prefix}"
+    tags = subprocess.check_output(
+        ["git", "tag", "--list", f"{prefix}*", "--sort=-v:refname"], text=True, cwd=root
+    ).split()
+    versions = [
+        tag.removeprefix(prefix)
+        for tag in tags
+        if re.fullmatch(r"\d+\.\d+\.\d+", tag.removeprefix(prefix))
+    ]
+    if not versions:
+        raise ValueError(f"no {prefix}X.Y.Z tag to read the {component.path} version from")
+    return versions[0]
+
+
+def component_version(root: Path, component: Component) -> str:
+    """The component's current version: its first manifest's, or its highest
+    tag's when it has no manifest."""
+    if component.manifests:
+        return current_version(root / component.manifests[0])
+    return tagged_version(root, component)
 
 
 def set_version(manifest: Path, new_version: str) -> None:
@@ -398,14 +448,15 @@ def apply_version_bump(root: Path, versions: dict[Component, str]) -> None:
     can be tested without the publish/git/gh machinery.
     """
     for component, version in versions.items():
-        old_version = current_version(root / component.manifests[0])
+        if component.install_docs:
+            old_version = component_version(root, component)
+            for rel in component.install_docs:
+                set_install_doc_version(root / rel, old_version, version)
         for rel in component.manifests:
             set_version(root / rel, version)
-        for rel in component.install_docs:
-            set_install_doc_version(root / rel, old_version, version)
 
     pins = {
-        crate: versions.get(component) or current_version(root / component.manifests[0])
+        crate: versions.get(component) or component_version(root, component)
         for component in COMPONENTS
         for crate in component.crates
     }
@@ -622,7 +673,7 @@ def release() -> None:
         for component in COMPONENTS
     }
 
-    current = {component: current_version(component.manifest()) for component in COMPONENTS}
+    current = {component: component_version(ROOT, component) for component in COMPONENTS}
     plan = plan_release(current, releases)
     versions = {component: version for component, (version, _) in plan.items()}
     tags = release_tags(versions)
@@ -674,10 +725,18 @@ def release() -> None:
     # changed. A frontend-only release publishes to its package index,
     # updates the changelog and pushes its tag — no GitHub release.
     # None of the tags is on origin (checked above), so a local one of the
-    # same name is stale and is overwritten.
-    for tag in tags:
+    # same name is stale and is overwritten. The Go frontend's tag is not
+    # among them: ci.yml's `release-go` puts it on a commit of its own (see
+    # `GO`), so a Go-only release pushes no tag here at all.
+    commit_tags = release_commit_tags(versions)
+    for tag in commit_tags:
         git("tag", "--force", tag, cwd=ROOT)
-    git("push", "--atomic", "origin", *tags, cwd=ROOT)
+    if commit_tags:
+        git("push", "--atomic", "origin", *commit_tags, cwd=ROOT)
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True, cwd=ROOT).strip()
+    set_output("commit", head)
+    if GO in plan:
+        set_output("go_tag", GO.tag(plan[GO][0]))
     if LIBHEGEL in plan:
         c_version, c_content = plan[LIBHEGEL]
         subprocess.run(
@@ -699,9 +758,20 @@ def release() -> None:
 
 
 def release_tags(versions: dict[Component, str]) -> list[str]:
-    """The tags a release commit gets: one per released component, libhegel
-    first, then the frontends in `COMPONENTS` order."""
+    """The tags a release cuts, which its commit message names: one per
+    released component, libhegel first, then the frontends in `COMPONENTS`
+    order."""
     return [c.tag(versions[c]) for c in COMPONENTS if c in versions]
+
+
+def release_commit_tags(versions: dict[Component, str]) -> list[str]:
+    """The tags `release()` puts on the release commit itself: all but those
+    of components tagged on a commit of their own (see `Component`)."""
+    return [
+        c.tag(versions[c])
+        for c in COMPONENTS
+        if c in versions and c.tagged_on_release_commit
+    ]
 
 
 def release_commit_message(tags: list[str]) -> str:

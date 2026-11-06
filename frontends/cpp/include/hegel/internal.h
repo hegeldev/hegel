@@ -218,11 +218,16 @@ namespace hegel::internal {
     class AttemptMispriced : public std::exception {};
 
     inline constexpr int64_t state_machine_done = INT64_MIN;
+    // Owns a started engine state machine: the constructor creates it with
+    // the concurrency bounds and the step budget, declares rule_names[i] in
+    // the groups rule_groups[i] with the weight rule_weights[i] and each
+    // invariant with its always_check flag, then starts it, which draws the
+    // concurrency level.
     class StateMachineHandle {
       public:
         StateMachineHandle(const TestCase& tc,
                            const std::vector<std::string>& rule_names,
-                           const std::vector<int64_t>& rule_groups,
+                           const std::vector<std::vector<int64_t>>& rule_groups,
                            const std::vector<double>& rule_weights,
                            const std::vector<std::string>& invariant_names,
                            const std::vector<bool>& invariant_always_check,

@@ -90,7 +90,9 @@ struct FeatureFlags {
     /// the group's full membership and is emptied when any member is
     /// enabled. When a group's set shrinks to a single undecided candidate,
     /// that rule is forced enabled — disabling every rule of a group would
-    /// leave rounds on that group unable to progress.
+    /// leave rounds on that group unable to progress. A rule in several
+    /// groups is a candidate of each, and is forced enabled as soon as it
+    /// is the last candidate of any of them, whichever group's round asks.
     at_least_one_of: Vec<HashSet<usize>>,
 }
 
@@ -111,35 +113,42 @@ impl FeatureFlags {
         })
     }
 
+    /// Decide (or re-record) whether rule `i` is enabled for this worker.
+    /// `memberships[i]` lists the groups the rule belongs to.
     fn is_enabled(
         &mut self,
         ntc: &mut NativeTestCase,
-        group: usize,
+        memberships: &[Vec<usize>],
         i: usize,
     ) -> Result<bool, EngineError> {
         ntc.start_span(draws::LABEL_FEATURE_FLAG);
-        let candidates = &self.at_least_one_of[group];
-        let forced = if candidates.len() == 1 && candidates.contains(&i) {
+        let last_candidate = memberships[i].iter().any(|&group| {
+            let candidates = &self.at_least_one_of[group];
+            candidates.len() == 1 && candidates.contains(&i)
+        });
+        let forced = if last_candidate {
             Some(false)
         } else {
             self.is_disabled[i]
         };
         let is_disabled = ntc.weighted(self.p_disabled, forced)?;
         self.is_disabled[i] = Some(is_disabled);
-        if !is_disabled {
-            self.at_least_one_of[group].clear();
+        for &group in &memberships[i] {
+            if !is_disabled {
+                self.at_least_one_of[group].clear();
+            }
+            self.at_least_one_of[group].remove(&i);
         }
-        self.at_least_one_of[group].remove(&i);
         ntc.stop_span(false);
         Ok(!is_disabled)
     }
 }
 
-/// Per-worker state, fully constructed at machine creation and refreshed in
-/// place at every join point — so `next_rule` only ever reads state that
-/// already exists.
+/// Per-worker state, fully constructed when the machine starts and
+/// refreshed in place at every join point — so `next_rule` only ever reads
+/// state that already exists.
 ///
-/// The flags' disabling probability is drawn from the *creating* handle's
+/// The flags' disabling probability is drawn from the *starting* handle's
 /// stream (a quiescent moment), so draws on one worker never affect draws
 /// on another; the per-rule enable decisions inside [`FeatureFlags`] and
 /// the per-round continue/stop decisions stay lazy and are drawn from the
@@ -168,13 +177,16 @@ struct WorkerState {
 /// Engine-side driver for a single stateful (rule-based) test case,
 /// sequential or concurrent.
 ///
-/// The test body registers a fixed set of rules — each belonging to exactly
-/// one concurrency group — plus the invariants and the concurrency bounds
-/// (the level itself is drawn at creation), and drives execution in rounds:
+/// The test body builds the machine in three steps: [`Self::new`] fixes the
+/// concurrency bounds and the step count, [`Self::add_rule`] and
+/// [`Self::add_invariant`] declare the rules (each a member of one or more
+/// concurrency groups, with a selection weight) and the invariants, and
+/// [`Self::start`] seals that declaration and draws the concurrency level
+/// and each worker's swarm parameters. It then drives execution in rounds:
 /// the root handle asks [`Self::next_group`] whether to run another round
 /// (and which group is current), then each worker pulls rules for that
 /// round via [`Self::next_rule`] until it returns `None`. Rules in the same
-/// group may run concurrently; rules in different groups never overlap,
+/// group may run concurrently; rules that share no group never overlap,
 /// because only the current group's rules are handed out and the group
 /// changes only at the join points between rounds. A sequential machine is
 /// the special case of one group and concurrency 1, where each round hands
@@ -183,17 +195,35 @@ pub struct NativeStateMachine {
     /// Per group: the global indices of its member rules, in registration
     /// order. Selection draws range over the current group's list only, so
     /// every selection is in-group by construction. Groups are indexed by
-    /// order of first appearance in the creating `rule_groups`; the
+    /// order of first appearance across the `add_rule` calls; the
     /// caller-supplied identifiers live in `group_ids`, parallel to this.
     groups: Vec<Vec<usize>>,
-    /// Per group: the caller-supplied identifier, as it appeared in
-    /// `rule_groups`. `next_group` reports the current group by this id.
+    /// Per group: the caller-supplied identifier, as first passed to
+    /// `add_rule`. `next_group` reports the current group by this id.
     group_ids: Vec<i64>,
-    /// Per rule: its selection weight relative to the other rules of its
-    /// group, as supplied at creation (parallel to `rule_groups`). Every
-    /// weight is finite and strictly positive. See [`Self::select_rule`]
-    /// for how the weights combine with swarm testing.
+    /// Per rule: the indices (into `groups`) of the groups it belongs to,
+    /// in the order its `add_rule` call listed them.
+    memberships: Vec<Vec<usize>>,
+    /// Per rule: its selection weight relative to the other rules of
+    /// whichever group is current. Every weight is finite and strictly
+    /// positive. See [`Self::select_rule`] for how the weights combine
+    /// with swarm testing.
     rule_weights: Vec<f64>,
+    /// Per registered invariant: whether [`Self::should_check_invariant`]
+    /// answers `true` unconditionally instead of sampling. The length is the
+    /// number of registered invariants, bounding the indices that method
+    /// accepts.
+    invariant_always_check: Vec<bool>,
+    min_concurrency: i64,
+    max_concurrency: i64,
+    /// Target number of counted rounds this machine runs, supplied at
+    /// creation. Bounds the per-round stop decision in [`Self::next_group`]
+    /// and sets the sampling rate of [`Self::should_check_invariant`].
+    step_count: i64,
+    /// Whether [`Self::start`] has run: the rule set is sealed and the
+    /// per-worker state below exists.
+    started: bool,
+    /// The concurrency level drawn by `start`; 0 until then.
     concurrency: i64,
     /// The group whose rules are handed out this round, written by every
     /// `next_group` call. Meaningful only once `rounds_started > 0`;
@@ -209,49 +239,21 @@ pub struct NativeStateMachine {
     /// round counts and rejections refund only the worker's within-round
     /// budget.
     rounds_rejected: i64,
-    /// Target number of counted rounds this machine runs, supplied at
-    /// creation. Bounds the per-round stop decision in [`Self::next_group`]
-    /// and sets the sampling rate of [`Self::should_check_invariant`].
-    step_count: i64,
-    /// Per registered invariant: whether [`Self::should_check_invariant`]
-    /// answers `true` unconditionally instead of sampling. The length is the
-    /// number of registered invariants, bounding the indices that method
-    /// accepts.
-    invariant_always_check: Vec<bool>,
     workers: Vec<WorkerState>,
 }
 
 impl NativeStateMachine {
-    /// Create a machine, fully constructed: the concurrency level (in
-    /// `[min_concurrency, max_concurrency]`, weighted toward the maximum —
-    /// see [`draw_concurrency`]) and every worker's swarm disabling
-    /// probability are drawn here, from the creating handle's stream, so no
-    /// per-worker state is ever pending. `rule_weights` gives each rule's
-    /// selection weight relative to the other rules of its group, parallel
-    /// to `rule_groups`; every weight must be finite and strictly positive.
-    /// `step_count` is the target number of counted rounds the machine
-    /// runs; see [`Self::next_group`].
+    /// Create an empty machine with its concurrency bounds and step count.
+    /// Nothing is drawn: rules and invariants are declared with
+    /// [`Self::add_rule`] and [`Self::add_invariant`], and [`Self::start`]
+    /// seals them and makes the machine's creation-time draws. `step_count`
+    /// is the target number of counted rounds the machine runs; see
+    /// [`Self::next_group`].
     pub fn new(
-        ntc: &mut NativeTestCase,
-        rule_groups: Vec<i64>,
-        rule_weights: Vec<f64>,
-        invariant_always_check: Vec<bool>,
         min_concurrency: i64,
         max_concurrency: i64,
         step_count: i64,
     ) -> Result<Self, EngineError> {
-        hegel_internal_assert!(
-            !rule_groups.is_empty(),
-            "Stateful testing: there must be at least one rule"
-        );
-        hegel_internal_assert!(
-            rule_weights.len() == rule_groups.len(),
-            "Stateful testing: rule weights must be parallel to rule groups"
-        );
-        hegel_internal_assert!(
-            rule_weights.iter().all(|w| w.is_finite() && *w > 0.0),
-            "Stateful testing: rule weights must be finite and positive"
-        );
         hegel_internal_assert!(
             min_concurrency >= 1 && min_concurrency <= max_concurrency,
             "Stateful testing: concurrency bounds must satisfy 1 <= min <= max"
@@ -260,23 +262,114 @@ impl NativeStateMachine {
             step_count >= 1,
             "Stateful testing: step count must be at least 1"
         );
+        Ok(NativeStateMachine {
+            groups: Vec::new(),
+            group_ids: Vec::new(),
+            memberships: Vec::new(),
+            rule_weights: Vec::new(),
+            invariant_always_check: Vec::new(),
+            min_concurrency,
+            max_concurrency,
+            step_count,
+            started: false,
+            concurrency: 0,
+            current_group: 0,
+            rounds_started: 0,
+            rounds_rejected: 0,
+            workers: Vec::new(),
+        })
+    }
 
-        let mut group_ids: Vec<i64> = Vec::new();
-        let mut groups: Vec<Vec<usize>> = Vec::new();
-        for (rule, &id) in rule_groups.iter().enumerate() {
-            let group = group_ids.iter().position(|&g| g == id).unwrap_or_else(|| {
-                group_ids.push(id);
-                groups.push(Vec::new());
-                groups.len() - 1
-            });
-            groups[group].push(rule);
+    /// Declare the next rule: its index is the number of rules declared
+    /// before it. `weight` is its selection weight relative to the other
+    /// rules of whichever group is current (finite and strictly positive);
+    /// `groups` lists the ids of the concurrency groups it belongs to (at
+    /// least one, no duplicates). Group ids are arbitrary: the machine has
+    /// one group per distinct id across every `add_rule` call.
+    ///
+    /// Errors with `InvalidArgument` once the machine has started.
+    pub fn add_rule(&mut self, weight: f64, groups: &[i64]) -> Result<(), EngineError> {
+        if self.started {
+            return Err(EngineError::InvalidArgument(
+                "state machine rule added after the machine was started".to_string(),
+            ));
         }
+        hegel_internal_assert!(
+            weight.is_finite() && weight > 0.0,
+            "Stateful testing: rule weights must be finite and positive"
+        );
+        hegel_internal_assert!(
+            !groups.is_empty(),
+            "Stateful testing: a rule must belong to at least one group"
+        );
+        hegel_internal_assert!(
+            groups
+                .iter()
+                .enumerate()
+                .all(|(i, id)| !groups[..i].contains(id)),
+            "Stateful testing: a rule's groups must be distinct"
+        );
+        let rule = self.rule_weights.len();
+        let mut membership = Vec::with_capacity(groups.len());
+        for &id in groups {
+            let group = self
+                .group_ids
+                .iter()
+                .position(|&g| g == id)
+                .unwrap_or_else(|| {
+                    self.group_ids.push(id);
+                    self.groups.push(Vec::new());
+                    self.groups.len() - 1
+                });
+            self.groups[group].push(rule);
+            membership.push(group);
+        }
+        self.memberships.push(membership);
+        self.rule_weights.push(weight);
+        Ok(())
+    }
 
-        let concurrency = draw_concurrency(ntc, min_concurrency, max_concurrency)?;
+    /// Declare the next invariant: its index is the number of invariants
+    /// declared before it. With `always_check`,
+    /// [`Self::should_check_invariant`] answers `true` for it
+    /// unconditionally instead of sampling.
+    ///
+    /// Errors with `InvalidArgument` once the machine has started.
+    pub fn add_invariant(&mut self, always_check: bool) -> Result<(), EngineError> {
+        if self.started {
+            return Err(EngineError::InvalidArgument(
+                "state machine invariant added after the machine was started".to_string(),
+            ));
+        }
+        self.invariant_always_check.push(always_check);
+        Ok(())
+    }
+
+    /// Seal the declared rules and invariants and make the machine's
+    /// creation-time draws, from the calling handle's stream: the
+    /// concurrency level (in `[min_concurrency, max_concurrency]`, weighted
+    /// toward the maximum — see [`draw_concurrency`]) and every worker's
+    /// swarm disabling probability, so no per-worker state is ever
+    /// pending once rules are requested. Returns the concurrency level.
+    ///
+    /// Errors with `InvalidArgument` when called twice. At least one rule
+    /// must have been declared.
+    pub fn start(&mut self, ntc: &mut NativeTestCase) -> Result<i64, EngineError> {
+        if self.started {
+            return Err(EngineError::InvalidArgument(
+                "state machine started twice".to_string(),
+            ));
+        }
+        hegel_internal_assert!(
+            !self.rule_weights.is_empty(),
+            "Stateful testing: there must be at least one rule"
+        );
+        let concurrency = draw_concurrency(ntc, self.min_concurrency, self.max_concurrency)?;
+        let num_rules = self.rule_weights.len();
         let workers = (0..concurrency)
             .map(|_| {
                 Ok(WorkerState {
-                    flags: FeatureFlags::new(ntc, &groups, rule_groups.len())?,
+                    flags: FeatureFlags::new(ntc, &self.groups, num_rules)?,
                     steps_drawn: 0,
                     steps_rejected: 0,
                     rule_outstanding: false,
@@ -284,24 +377,26 @@ impl NativeStateMachine {
                 })
             })
             .collect::<Result<Vec<WorkerState>, EngineError>>()?;
-        Ok(NativeStateMachine {
-            groups,
-            group_ids,
-            rule_weights,
-            concurrency,
-            current_group: 0,
-            rounds_started: 0,
-            rounds_rejected: 0,
-            step_count,
-            invariant_always_check,
-            workers,
-        })
+        self.workers = workers;
+        self.concurrency = concurrency;
+        self.started = true;
+        Ok(concurrency)
     }
 
-    /// The concurrency level drawn at creation: the number of workers that
-    /// will pull rules from this machine.
-    pub fn concurrency(&self) -> i64 {
-        self.concurrency
+    /// The number of rules declared so far.
+    pub fn rule_count(&self) -> usize {
+        self.rule_weights.len()
+    }
+
+    /// Reject a call that needs the machine started.
+    fn checked_started(&self) -> Result<(), EngineError> {
+        if self.started {
+            Ok(())
+        } else {
+            Err(EngineError::InvalidArgument(
+                "state machine used before it was started".to_string(),
+            ))
+        }
     }
 
     /// Start the next round: draw whether another round should run at all
@@ -322,8 +417,10 @@ impl NativeStateMachine {
     /// [`MIN_ATTEMPTS_WITHOUT_SUCCESS`] while no rule has succeeded.
     ///
     /// Must be called from the root handle at each join point, including
-    /// before the first `next_rule` call.
+    /// before the first `next_rule` call. Errors with `InvalidArgument`
+    /// before [`Self::start`].
     pub fn next_group(&mut self, ntc: &mut NativeTestCase) -> Result<Option<i64>, EngineError> {
+        self.checked_started()?;
         let counted_rounds = self.rounds_started - self.rounds_rejected;
         let step_count = self.step_count;
         let attempt_cap = if counted_rounds == 0 {
@@ -386,6 +483,7 @@ impl NativeStateMachine {
         ntc: &mut NativeTestCase,
         worker_index: i64,
     ) -> Result<Option<i64>, EngineError> {
+        self.checked_started()?;
         let worker_idx = self.checked_worker(worker_index)?;
         if self.rounds_started == 0 {
             return Err(EngineError::InvalidArgument(
@@ -430,6 +528,7 @@ impl NativeStateMachine {
     /// already rejected, or it has already pulled another rule (implicitly
     /// completing the previous one).
     pub fn rule_rejected(&mut self, worker_index: i64) -> Result<(), EngineError> {
+        self.checked_started()?;
         let worker_idx = self.checked_worker(worker_index)?;
         let worker = &mut self.workers[worker_idx];
         if !worker.rule_outstanding {
@@ -457,12 +556,13 @@ impl NativeStateMachine {
     /// last round — and runs those without consulting this draw.
     ///
     /// Errors with `InvalidArgument` when `invariant_index` is outside the
-    /// registered invariants.
+    /// registered invariants, or before [`Self::start`].
     pub fn should_check_invariant(
         &mut self,
         ntc: &mut NativeTestCase,
         invariant_index: i64,
     ) -> Result<bool, EngineError> {
+        self.checked_started()?;
         let always = usize::try_from(invariant_index)
             .ok()
             .and_then(|i| self.invariant_always_check.get(i).copied());
@@ -520,6 +620,7 @@ impl NativeStateMachine {
         group: usize,
     ) -> Result<i64, EngineError> {
         let members = &self.groups[group];
+        let memberships = &self.memberships;
         let n = members.len();
         let flags = &mut self.workers[worker_idx].flags;
         let mut candidate_weights: Vec<f64> = members
@@ -530,7 +631,7 @@ impl NativeStateMachine {
         for _ in 0..3 {
             let k = ntc.draw_index_weighted(&candidate_weights)?;
             if candidate_weights[k] > 0.0 {
-                if flags.is_enabled(ntc, group, members[k])? {
+                if flags.is_enabled(ntc, memberships, members[k])? {
                     return Ok(members[k] as i64);
                 }
                 // exclude rule from later tries
@@ -541,7 +642,7 @@ impl NativeStateMachine {
         let mut allowed: Vec<usize> = Vec::new();
         let mut allowed_weights: Vec<f64> = Vec::new();
         for (k, &rule) in members.iter().enumerate() {
-            if candidate_weights[k] > 0.0 && flags.is_enabled(ntc, group, rule)? {
+            if candidate_weights[k] > 0.0 && flags.is_enabled(ntc, memberships, rule)? {
                 allowed.push(k);
                 allowed_weights.push(candidate_weights[k]);
             }

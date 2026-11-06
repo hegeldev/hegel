@@ -4,9 +4,9 @@ import * as gs from "@hegeldev/hegel/generators";
 import { Pool, run, runAsync, DEFAULT_STEP_COUNT, type StateMachine } from "../src/stateful.js";
 
 /**
- * Run `body` as a Hegel test with deterministic settings, swallowing its
- * failure, and return everything written to stderr — where the final replay
- * of a failing case prints its notes and draws.
+ * Run `body` as a Hegel test with deterministic settings and return the
+ * report of its failing example (written to stderr), followed by a line
+ * holding the message of the error the test threw.
  */
 function captureReplay(body: (tc: hegel.TestCase) => void, testCases = 200): string {
   const lines: string[] = [];
@@ -14,9 +14,15 @@ function captureReplay(body: (tc: hegel.TestCase) => void, testCases = 200): str
     lines.push(args.map(String).join(" "));
   });
   try {
-    hegel.test(body, { testCases, database: hegel.Database.disabled, derandomize: true });
-  } catch {
-    // The failure itself is what the caller is inspecting the replay of.
+    hegel.test(body, {
+      testCases,
+      database: hegel.Database.disabled,
+      derandomize: true,
+      printBlob: false,
+    });
+    lines.push("Passed");
+  } catch (error) {
+    lines.push(`Thrown: ${(error as Error).message}`);
   } finally {
     spy.mockRestore();
   }
@@ -76,6 +82,36 @@ describe("stateful.run", () => {
       },
       { testCases: 5 },
     ));
+
+  test("a heavily weighted rule is chosen more often than an equal one", () => {
+    const counts = { light: 0, heavy: 0 };
+    hegel.test(
+      (tc) => {
+        run(
+          tc,
+          {
+            rules: {
+              light: {
+                apply: () => {
+                  counts.light++;
+                },
+              },
+              heavy: {
+                apply: () => {
+                  counts.heavy++;
+                },
+                weight: 20,
+              },
+            },
+          },
+          {},
+        );
+      },
+      { ...deterministic, testCases: 20 },
+    );
+    expect(counts.light).toBeGreaterThan(0);
+    expect(counts.heavy).toBeGreaterThan(counts.light * 2);
+  });
 
   test("a violated invariant fails the test with the invariant's error", () => {
     interface Linear {
@@ -138,11 +174,19 @@ describe("stateful.run", () => {
     const output = captureReplay((tc) => {
       run(tc, bump, { count: 0 });
     });
-    const stepLines = output.split("\n").filter((line) => line.startsWith("Step "));
-    expect(stepLines).toEqual(["Step 1: bump", "Step 2: bump", "Step 3: bump"]);
-    expect(output).not.toContain("noop");
-    expect(output).toContain("Invariant belowThree failed after step 3:");
-    expect(output).toContain("count is 3");
+    expect(output).toBe(
+      [
+        "Checking invariants on the initial state.",
+        "Step 1: bump {",
+        "}",
+        "Step 2: bump {",
+        "}",
+        "Step 3: bump {",
+        "}",
+        "Invariant belowThree failed:",
+        "Thrown: count is 3",
+      ].join("\n"),
+    );
   });
 
   test("the replay shows a rule's draws and names a failing rule", () => {
@@ -160,10 +204,48 @@ describe("stateful.run", () => {
         {},
       );
     });
-    expect(output).toContain("Step 1: tooBig");
-    expect(output).toContain("var draw_1 = 10;");
-    expect(output).toContain("Rule tooBig failed:");
-    expect(output).not.toContain("violated assumption");
+    expect(output).toBe(
+      [
+        "Step 1: tooBig {",
+        "  const draw_1 = 10;",
+        "}",
+        "Rule tooBig failed:",
+        "Thrown: 10 is too big",
+      ].join("\n"),
+    );
+  });
+
+  test("the replay prints a pool's values, and only the value a filtered draw accepts", () => {
+    const output = captureReplay((tc) => {
+      const pool = new Pool<string>(tc);
+      for (const name of ["a", "b", "c"]) pool.add(name);
+      run(
+        tc,
+        {
+          rules: {
+            pick: (tc) => {
+              tc.draw(pool.valuesReusable(), "any");
+              tc.draw(
+                pool.valuesConsumed().filter((name) => name !== "a"),
+                "taken",
+              );
+              throw new Error("picked");
+            },
+          },
+        },
+        {},
+      );
+    });
+    expect(output).toBe(
+      [
+        "Step 1: pick {",
+        '  const any_1 = "a";',
+        '  const taken_1 = "b";',
+        "}",
+        "Rule pick failed:",
+        "Thrown: picked",
+      ].join("\n"),
+    );
   });
 
   test("a rejected step is reported as a violated assumption in the replay", () => {
@@ -192,8 +274,16 @@ describe("stateful.run", () => {
         { marked: false },
       );
     });
-    expect(output).toContain("Step 1: mark");
-    expect(output).toContain("Rule stopped early due to violated assumption.");
+    expect(output).toBe(
+      [
+        "Checking invariants on the initial state.",
+        "Step 1: mark {",
+        "  Rule stopped early due to violated assumption.",
+        "}",
+        "Invariant unmarked failed:",
+        "Thrown: marked",
+      ].join("\n"),
+    );
   });
 
   test("invariants are checked on the initial state", () => {
@@ -215,8 +305,13 @@ describe("stateful.run", () => {
         { num: 0 },
       );
     });
-    expect(output).toContain("Invariant nonZero failed in the initial state:");
-    expect(output).toContain("num is 0");
+    expect(output).toBe(
+      [
+        "Checking invariants on the initial state.",
+        "Invariant nonZero failed:",
+        "Thrown: num is 0",
+      ].join("\n"),
+    );
   });
 
   test("every invariant runs at each guaranteed check", () => {
@@ -440,6 +535,16 @@ describe("usage errors", () => {
         run(tc, { rules: {} }, {});
       }, deterministic),
     ).toThrow(/cannot run a state machine with no rules/);
+  });
+
+  test("a rule weight that is not finite and positive is rejected", () => {
+    for (const weight of [0, -1, NaN, Infinity]) {
+      expect(() =>
+        hegel.test((tc) => {
+          run(tc, { rules: { noop: { apply: () => {}, weight } } }, {});
+        }, deterministic),
+      ).toThrow(/the weight of rule noop must be finite and positive/);
+    }
   });
 
   test("a stepCount below 1 or non-integral is rejected", () => {
@@ -668,6 +773,71 @@ describe("stateful.Pool", () => {
     expect(output).toContain("depth 3 is not less than 3");
     const stepLines = output.split("\n").filter((line) => line.startsWith("Step "));
     expect(stepLines).toHaveLength(5);
+  });
+
+  test("a filtered consuming draw consumes only the value it yields", () => {
+    let rejectedSome = false;
+    hegel.test(
+      (tc) => {
+        const pool = new Pool<number>(tc);
+        for (let i = 0; i < 6; i++) pool.add(i);
+        const even = tc.draw(pool.valuesConsumed().filter((x) => x % 2 === 0));
+        if (even !== 0) rejectedSome = true;
+        expect(even % 2).toBe(0);
+        expect(pool.size).toBe(5);
+        const rest = [0, 1, 2, 3, 4].map(() => tc.draw(pool.valuesConsumed()));
+        expect(new Set([even, ...rest]).size).toBe(6);
+      },
+      { testCases: 100, ...deterministic },
+    );
+    expect(rejectedSome).toBe(true);
+  });
+
+  test("filters on a consuming draw chain, and stop once every value is rejected", () => {
+    let accepted = 0;
+    hegel.test(
+      (tc) => {
+        const pool = new Pool<number>(tc);
+        const n = tc.draw(gs.integers({ minValue: 1, maxValue: 10 }));
+        for (let i = 0; i < n; i++) pool.add(i);
+        const value = tc.draw(
+          pool
+            .valuesConsumed()
+            .filter((x) => x >= 1)
+            .filter((x) => x % 2 === 1),
+        );
+        expect(value % 2).toBe(1);
+        expect(pool.size).toBe(n - 1);
+        accepted++;
+      },
+      { testCases: 100, ...deterministic },
+    );
+    expect(accepted).toBeGreaterThan(0);
+  });
+
+  test("a filtered reusable draw leaves the pool alone", () =>
+    hegel.test(
+      (tc) => {
+        const pool = new Pool<number>(tc);
+        for (let i = 0; i < 4; i++) pool.add(i);
+        expect(tc.draw(pool.valuesReusable().filter((x) => x > 0))).toBeGreaterThan(0);
+        expect(pool.size).toBe(4);
+      },
+      { testCases: 30, ...deterministic },
+    ));
+
+  test("pool draws are labelled by how they draw", () => {
+    hegel.test(
+      (tc) => {
+        const pool = new Pool<number>(tc);
+        expect(pool.valuesReusable().label.name).toBe("hegel.pool.values_reusable");
+        expect(pool.valuesConsumed().label.name).toBe("hegel.pool.values_consumed");
+        const filtered = pool.valuesConsumed().filter(() => true).label;
+        expect(filtered.name).toBe("hegel.filter");
+        expect(filtered.parts[0].name).toBe("hegel.pool.values_consumed");
+      },
+      { testCases: 1, ...deterministic },
+    );
   });
 
   test("using a pool with another test case is an error", () => {

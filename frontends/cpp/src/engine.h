@@ -78,6 +78,12 @@ namespace hegel::impl {
     void settings_register_profile(hegel_context_t* ctx, std::string_view name,
                                    const hegel_settings_t* s);
     void set_default_profile(hegel_context_t* ctx, std::string_view name);
+    /// Sets the `hegel.toml` key `key` from its text form. Returns the
+    /// engine's diagnostic when the key or the value is not accepted.
+    std::optional<std::string> settings_set_from_string(hegel_context_t* ctx,
+                                                        hegel_settings_t* s,
+                                                        std::string_view key,
+                                                        std::string_view value);
     std::string engine_version(hegel_context_t* ctx);
     void settings_set_show_statistics(hegel_context_t* ctx, hegel_settings_t* s,
                                       bool yes);

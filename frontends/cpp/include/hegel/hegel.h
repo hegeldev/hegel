@@ -21,7 +21,7 @@
  * FetchContent_Declare(
  *     hegel
  *     GIT_REPOSITORY https://github.com/hegeldev/hegel.git
- *     GIT_TAG frontends/cpp/0.13.4
+ *     GIT_TAG frontends/cpp/0.14.0
  *     SOURCE_SUBDIR frontends/cpp
  *     GIT_CONFIG lfs.fetchexclude=website
  * )
@@ -358,6 +358,22 @@
  * you. hegel::test() can still be used: it derives the database key from the
  * function that calls it, and you can pass a TestLocation to name the test.
  *
+ * @subsection write_workload Write a workload program
+ *
+ * @ref HEGEL_MAIN defines a Hegel test as a standalone binary that runs one
+ * test case each time it is invoked, for example as an Antithesis workload:
+ *
+ * @code{.cpp}
+ * HEGEL_MAIN(workload)(hegel::TestCase& tc) {
+ *     auto n = tc.draw("n", gs::integers<int>());
+ *     if (n + 0 != n) {
+ *         throw std::runtime_error("n + 0 != n");
+ *     }
+ * }
+ * @endcode
+ *
+ * Inside Antithesis, Hegel uses its `workload` settings profile.
+ *
  * @subsection learning_more Learning more
  *
  * - Browse the hegel::generators namespace for the full list of available
@@ -591,6 +607,17 @@ namespace hegel {
                         const TestLocation& location, const Settings& settings,
                         const std::vector<std::string>& failure_blobs,
                         const std::vector<ExplicitTestCase>& explicit_cases);
+
+        // What the main() that HEGEL_MAIN defines calls. It creates the
+        // Settings once the command line's --profile is in force. Returns
+        // the exit status.
+        int
+        main_from_macro(int argc, char** argv,
+                        const std::function<void(TestCase&)>& test_fn,
+                        const TestLocation& location,
+                        const std::function<Settings()>& make_settings,
+                        const std::vector<std::string>& failure_blobs,
+                        const std::vector<ExplicitTestCase>& explicit_cases);
     } // namespace internal
     /// @endcond
 } // namespace hegel
@@ -644,6 +671,54 @@ namespace hegel {
         ::hegel::internal::test_from_macro(                                    \
             hegel_test_body_##name,                                            \
             ::hegel::TestLocation{#name, __FILE__, __LINE__}, settings,        \
+            ::hegel::internal::reproduce_blobs_for(__FILE__ "::" #name),       \
+            ::hegel::internal::explicit_cases_for(__FILE__ "::" #name));       \
+    }                                                                          \
+    static void hegel_test_body_##name
+
+/**
+ * @brief Define a standalone test binary that runs one test case.
+ *
+ * @code{.cpp}
+ * HEGEL_MAIN(workload)(hegel::TestCase& tc) {
+ *     namespace gs = hegel::generators;
+ *     auto n = tc.draw("n", gs::integers<int>());
+ *     if (n + 0 != n) {
+ *         throw std::runtime_error("n + 0 != n");
+ *     }
+ * }
+ * @endcode
+ *
+ * Settings::test_cases has no effect, and the `TooSlow` and
+ * `TestCasesTooLarge` health checks are always suppressed.
+ *
+ * Each setting is a command-line option named after its `hegel.toml` key
+ * (e.g. `--seed 42`, `--phases generate,shrink`, ...). Each option also takes
+ * the form `--option=VALUE`. Options override settings in the test code, and
+ * `--profile` selects the settings profile those settings are created from.
+ *
+ * A failure report ends with the option that replays it, then the test
+ * case's exception:
+ *
+ * @code{.txt}
+ * To reproduce this failure, run the program with:
+ *     --failure-blob AAEAAAAACgEAAAAy
+ * Exception: std::runtime_error: n + 0 != n
+ * @endcode
+ *
+ * The program exits with status 0 if the test case passes, 1 if it fails,
+ * and 2 for a usage error. @ref HEGEL_REPRODUCE_FAILURE and
+ * @ref HEGEL_EXPLICIT_TEST_CASE work with the same name.
+ *
+ * @see HEGEL_TEST
+ */
+#define HEGEL_MAIN(name, ...)                                                  \
+    static void hegel_test_body_##name(::hegel::TestCase&);                    \
+    int main(int argc, char** argv) {                                          \
+        return ::hegel::internal::main_from_macro(                             \
+            argc, argv, hegel_test_body_##name,                                \
+            ::hegel::TestLocation{#name, __FILE__, __LINE__},                  \
+            [] { return ::hegel::Settings(__VA_ARGS__); },                     \
             ::hegel::internal::reproduce_blobs_for(__FILE__ "::" #name),       \
             ::hegel::internal::explicit_cases_for(__FILE__ "::" #name));       \
     }                                                                          \

@@ -8,6 +8,8 @@
 #include <memory>
 #include <mutex>
 #include <regex>
+#include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -651,13 +653,13 @@ namespace {
         std::vector<hs::ConcurrentRule<Grouped>> rules() {
             return {
                 hs::ConcurrentRule<Grouped>(
-                    "alpha", "letters",
+                    "alpha", {"letters"},
                     [](hegel::TestCase&, Grouped& m) {
                         std::lock_guard<std::mutex> lock(m.mutex);
                         m.log.push_back("alpha");
                     }),
                 hs::ConcurrentRule<Grouped>(
-                    "beta", "letters",
+                    "beta", {"letters"},
                     [](hegel::TestCase& tc, Grouped& m) {
                         int8_t n = tc.draw(gs::integers<int8_t>());
                         tc.assume(n != 0);
@@ -665,7 +667,7 @@ namespace {
                         m.log.push_back("beta");
                     }),
                 hs::ConcurrentRule<Grouped>(
-                    "one", "numbers",
+                    "one", {"numbers"},
                     [](hegel::TestCase&, Grouped& m) {
                         std::lock_guard<std::mutex> lock(m.mutex);
                         m.log.push_back("one");
@@ -835,6 +837,33 @@ namespace {
                 })};
         }
     };
+
+    struct Rounds : hs::ConcurrentStateMachine<Rounds> {
+        std::vector<hs::ConcurrentRule<Rounds>> rules() {
+            return {
+                hs::ConcurrentRule<Rounds>("write", {"write"},
+                                           [](hegel::TestCase&, Rounds&) {}),
+                hs::ConcurrentRule<Rounds>("flush", {"flush"},
+                                           [](hegel::TestCase&, Rounds&) {}),
+                hs::ConcurrentRule<Rounds>("read", {"write", "flush"},
+                                           [](hegel::TestCase&, Rounds&) {}),
+            };
+        }
+    };
+
+    struct NoGroups : hs::ConcurrentStateMachine<NoGroups> {
+        std::vector<hs::ConcurrentRule<NoGroups>> rules() {
+            return {hs::ConcurrentRule<NoGroups>(
+                "homeless", {}, [](hegel::TestCase&, NoGroups&) {})};
+        }
+    };
+
+    struct RepeatedGroup : hs::ConcurrentStateMachine<RepeatedGroup> {
+        std::vector<hs::ConcurrentRule<RepeatedGroup>> rules() {
+            return {hs::ConcurrentRule<RepeatedGroup>(
+                "twice", {"g", "g"}, [](hegel::TestCase&, RepeatedGroup&) {})};
+        }
+    };
 } // namespace
 
 // A worker whose repeat() loop the engine ends ends the test case, as
@@ -883,6 +912,96 @@ TEST(ConcurrentStateful, GroupedMachinePasses) {
         },
         hegel::Settings{.test_cases = 10,
                         .database = hegel::Database::disabled()});
+}
+
+TEST(ConcurrentStateful, RuleGroupsAreTheGroupsGiven) {
+    Rounds rounds;
+    std::vector<hs::ConcurrentRule<Rounds>> rules = rounds.rules();
+    ASSERT_EQ(rules.size(), 3);
+    EXPECT_EQ(rules[0].groups(), std::vector<std::string>{"write"});
+    EXPECT_EQ(rules[1].groups(), std::vector<std::string>{"flush"});
+    EXPECT_EQ(rules[2].groups(), (std::vector<std::string>{"write", "flush"}));
+
+    Grouped grouped;
+    EXPECT_EQ(grouped.rules().back().groups(),
+              std::vector<std::string>{hs::anonymous_group});
+}
+
+TEST(ConcurrentStateful, RuleInSeveralGroupsRunsInTheRoundsOfEach) {
+    testing::internal::CaptureStderr();
+    hegel::test(
+        [](hegel::TestCase& tc) {
+            Rounds machine;
+            hs::run_concurrent(machine, tc, 2, 2, {.step_count = 40});
+        },
+        hegel::Settings{.test_cases = 20,
+                        .verbosity = hegel::Verbosity::Verbose,
+                        .database = hegel::Database::disabled()});
+    std::string output = testing::internal::GetCapturedStderr();
+
+    std::string current_group;
+    std::set<std::string> read_under;
+    std::istringstream lines(output);
+    std::string line;
+    while (std::getline(lines, line)) {
+        std::size_t round = line.find(": group \"");
+        if (line.find("Round ") != std::string::npos &&
+            round != std::string::npos) {
+            std::size_t start = round + std::string(": group \"").size();
+            current_group = line.substr(start, line.find('"', start) - start);
+        } else if (line.find("Rule: read") != std::string::npos) {
+            read_under.insert(current_group);
+        } else if (line.find("Rule: write") != std::string::npos) {
+            EXPECT_EQ(current_group, "write") << line;
+        } else if (line.find("Rule: flush") != std::string::npos) {
+            EXPECT_EQ(current_group, "flush") << line;
+        }
+    }
+    EXPECT_EQ(read_under, (std::set<std::string>{"write", "flush"})) << output;
+}
+
+TEST(ConcurrentStateful, RuleWithoutGroupsIsRejectedByTheEngine) {
+    std::string message;
+    EXPECT_THROW(
+        try {
+            hegel::test(
+                [](hegel::TestCase& tc) {
+                    NoGroups machine;
+                    hs::run_concurrent(machine, tc, 1, 1);
+                },
+                hegel::Settings{.verbosity = hegel::Verbosity::Quiet,
+                                .database = hegel::Database::disabled()});
+        } catch (const std::invalid_argument& error) {
+            message = error.what();
+            throw;
+        },
+        std::invalid_argument);
+    EXPECT_NE(message.find("a rule must belong to at least one group, but "
+                           "rule 0 (homeless) has none"),
+              std::string::npos)
+        << message;
+}
+
+TEST(ConcurrentStateful, RuleRepeatingAGroupIsRejectedByTheEngine) {
+    std::string message;
+    EXPECT_THROW(
+        try {
+            hegel::test(
+                [](hegel::TestCase& tc) {
+                    RepeatedGroup machine;
+                    hs::run_concurrent(machine, tc, 1, 1);
+                },
+                hegel::Settings{.verbosity = hegel::Verbosity::Quiet,
+                                .database = hegel::Database::disabled()});
+        } catch (const std::invalid_argument& error) {
+            message = error.what();
+            throw;
+        },
+        std::invalid_argument);
+    EXPECT_NE(message.find("a rule's groups must be distinct, but rule 0 "
+                           "(twice) lists group 0 twice"),
+              std::string::npos)
+        << message;
 }
 
 TEST(ConcurrentStateful, InvariantsAreSampledRatherThanRunAfterEveryRound) {

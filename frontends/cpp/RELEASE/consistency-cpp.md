@@ -47,6 +47,8 @@ To reproduce this failure, add this line above HEGEL_TEST(below_50):
 
 Every blob given to `HEGEL_REPRODUCE_FAILURE` or to `hegel::test()` is now replayed, not only the first, and a nondeterministic failure's blob is replayed until it fails. A blob replay prints the same failure report as a generated failure. If no blob makes the test fail, `hegel::test()` throws `hegel::DidNotReproduce`, and an invalid blob throws `std::invalid_argument`.
 
+A program defined by `HEGEL_MAIN` reports a failure the same way, ending with `To reproduce this failure, run the program with:` and the `--failure-blob` option, then an `Exception:` line naming the test case's exception, which the program has no caller to propagate to. The program's inline settings are created after its `--profile` option applies, so they take that profile's values, and its `--failure-blob` is replayed along with the blobs `HEGEL_REPRODUCE_FAILURE` registers.
+
 ### Explicit test cases
 
 Explicit test cases run a test with values you choose, before Hegel generates any, when the `Explicit` phase is enabled. Add one to a `HEGEL_TEST` with `HEGEL_EXPLICIT_TEST_CASE(name, values...)`, or pass a list of `hegel::ExplicitTestCase` to `hegel::test()` as its new `explicit_cases` argument, after `failure_blobs`. Positional values go to the test's draws in order, and `hegel::named("d_1", value)` gives a value to the draw printed as `d_1`, the first `tc.draw("d", ...)`:

@@ -209,7 +209,7 @@ let stateful_no_rules_test () =
   | exception Hegel.Usage_error msg ->
     Alcotest.(check string)
       "engine diagnostic"
-      "cannot run a state machine with no rules"
+      "cannot start a state machine with no rules"
       msg
 ;;
 
@@ -474,13 +474,18 @@ let test_pool_created_inside_rule () =
 let concurrent_rule_accessors_test () =
   let module R = Hegel.Stateful.Concurrent_rule in
   let rule =
-    R.create ~name:"read" ~group:"io" ~weight:2.5 ~step:(fun _tc () _state -> ()) ()
+    R.create
+      ~name:"read"
+      ~groups:[ "io"; "flush" ]
+      ~weight:2.5
+      ~step:(fun _tc () _state -> ())
+      ()
   in
   Alcotest.(check string) "name" "read" (R.name rule);
-  Alcotest.(check string) "group" "io" (R.group rule);
+  Alcotest.(check (list string)) "groups" [ "io"; "flush" ] (R.groups rule);
   Alcotest.(check (float 0.)) "weight" 2.5 (R.weight rule);
   let anonymous = R.create ~name:"write" ~step:(fun _tc () _state -> ()) () in
-  Alcotest.(check string) "anonymous group" "<anonymous>" (R.group anonymous);
+  Alcotest.(check (list string)) "anonymous group" [ "<anonymous>" ] (R.groups anonymous);
   Alcotest.(check (float 0.)) "default weight" 1.0 (R.weight anonymous)
 ;;
 
@@ -558,13 +563,13 @@ let concurrent_groups_do_not_overlap_test ~concurrency () =
       (fun () -> Caml_unix.sleepf 0.001)
   in
   let alpha =
-    S.Concurrent_rule.create ~name:"alpha" ~group:"letters" ~step:(step "letters") ()
+    S.Concurrent_rule.create ~name:"alpha" ~groups:[ "letters" ] ~step:(step "letters") ()
   in
   let beta =
-    S.Concurrent_rule.create ~name:"beta" ~group:"letters" ~step:(step "letters") ()
+    S.Concurrent_rule.create ~name:"beta" ~groups:[ "letters" ] ~step:(step "letters") ()
   in
   let one =
-    S.Concurrent_rule.create ~name:"one" ~group:"numbers" ~step:(step "numbers") ()
+    S.Concurrent_rule.create ~name:"one" ~groups:[ "numbers" ] ~step:(step "numbers") ()
   in
   let anonymous =
     S.Concurrent_rule.create ~name:"anonymous" ~step:(step "<anonymous>") ()
@@ -593,6 +598,123 @@ let concurrent_groups_do_not_overlap_test ~concurrency () =
     "every group ran"
     [ "<anonymous>"; "letters"; "numbers" ]
     (Atomic.get seen_groups |> List.sort ~compare:String.compare)
+;;
+
+let with_captured_stderr f =
+  Test_helpers.with_tempdir ~prefix:"hegel-stderr" ~f:(fun dir ->
+    let path = Filename.concat dir "stderr.txt" in
+    let saved = Caml_unix.dup Caml_unix.stderr in
+    let fd = Caml_unix.openfile path [ Caml_unix.O_WRONLY; Caml_unix.O_CREAT ] 0o600 in
+    Out_channel.flush Out_channel.stderr;
+    Caml_unix.dup2 fd Caml_unix.stderr;
+    Caml_unix.close fd;
+    Fun.protect
+      ~finally:(fun () ->
+        Out_channel.flush Out_channel.stderr;
+        Caml_unix.dup2 saved Caml_unix.stderr;
+        Caml_unix.close saved)
+      f;
+    In_channel.read_all path)
+;;
+
+let multi_group_machine ~rule_groups =
+  let module S = Hegel.Stateful in
+  (module struct
+    type ctx = unit
+    type state = unit
+
+    let rules =
+      List.map rule_groups ~f:(fun (name, groups) ->
+        S.Concurrent_rule.create ~name ~groups ~step:(fun _tc () () -> ()) ())
+    ;;
+
+    let invariants = []
+  end : S.Concurrent_state_machine
+    with type ctx = unit
+     and type state = unit)
+;;
+
+let rule_in_several_groups_runs_in_the_rounds_of_each_test () =
+  let module S = Hegel.Stateful in
+  let machine =
+    multi_group_machine
+      ~rule_groups:
+        [ "write", [ "write" ]; "flush", [ "flush" ]; "read", [ "write"; "flush" ] ]
+  in
+  let output =
+    with_captured_stderr (fun () ->
+      Hegel.run_hegel_test
+        ~settings:
+          { (Hegel.Settings.create ~test_cases:20 ~seed:0 ()) with
+            database = Hegel.Settings.Disabled
+          ; verbosity = Hegel.Settings.Verbose
+          }
+        (fun tc ->
+           S.run_concurrent
+             ~concurrency:Hegel.Concurrency.threads
+             tc
+             machine
+             ~step_count:40
+             ~init:()
+             ~min_concurrency:2
+             ~max_concurrency:2))
+  in
+  let current_group = ref None in
+  let read_under = ref [] in
+  List.iter (String.split_lines output) ~f:(fun line ->
+    if String.is_substring line ~substring:"Round "
+    then (
+      match String.split line ~on:'"' with
+      | _ :: group :: _ -> current_group := Some group
+      | _ -> Alcotest.failf "round header without a group: %s" line)
+    else if String.is_suffix line ~suffix:"Rule: read"
+    then (
+      let group = Option.value_exn !current_group in
+      if not (List.mem !read_under group ~equal:String.equal)
+      then read_under := group :: !read_under)
+    else if String.is_suffix line ~suffix:"Rule: write"
+    then Alcotest.(check (option string)) line (Some "write") !current_group
+    else if String.is_suffix line ~suffix:"Rule: flush"
+    then Alcotest.(check (option string)) line (Some "flush") !current_group);
+  Alcotest.(check (list string))
+    "the read rule runs under both of its groups"
+    [ "flush"; "write" ]
+    (List.sort !read_under ~compare:String.compare)
+;;
+
+let run_multi_group_machine_expecting_usage_error ~rule_groups ~expected =
+  let module S = Hegel.Stateful in
+  let machine = multi_group_machine ~rule_groups in
+  match
+    Hegel.run_hegel_test
+      ~settings:
+        { (Hegel.Settings.create ~test_cases:1 ~seed:0 ()) with
+          database = Hegel.Settings.Disabled
+        ; verbosity = Hegel.Settings.Quiet
+        }
+      (fun tc ->
+         S.run_concurrent
+           ~concurrency:Hegel.Concurrency.threads
+           tc
+           machine
+           ~init:()
+           ~max_concurrency:2)
+  with
+  | () -> Alcotest.fail "expected Usage_error"
+  | exception Hegel.Usage_error msg ->
+    Alcotest.(check string) "engine diagnostic" expected msg
+;;
+
+let rule_without_groups_is_a_usage_error_test () =
+  run_multi_group_machine_expecting_usage_error
+    ~rule_groups:[ "homeless", [] ]
+    ~expected:"a rule must belong to at least one group, but rule 0 (homeless) has none"
+;;
+
+let rule_repeating_a_group_is_a_usage_error_test () =
+  run_multi_group_machine_expecting_usage_error
+    ~rule_groups:[ "twice", [ "g"; "g" ] ]
+    ~expected:"a rule's groups must be distinct, but rule 0 (twice) lists group 0 twice"
 ;;
 
 let pool_add_reuse_consume_test () =
@@ -1260,7 +1382,7 @@ let concurrent_no_rules_test () =
   | exception Hegel.Usage_error msg ->
     Alcotest.(check string)
       "engine diagnostic"
-      "cannot run a state machine with no rules"
+      "cannot start a state machine with no rules"
       msg
 ;;
 
@@ -1387,6 +1509,18 @@ let tests =
       `Quick
       (concurrent_groups_do_not_overlap_test
          ~concurrency:Test_helpers.parallel_concurrency)
+  ; Alcotest.test_case
+      "stateful: a rule in several groups runs in the rounds of each"
+      `Quick
+      rule_in_several_groups_runs_in_the_rounds_of_each_test
+  ; Alcotest.test_case
+      "stateful: a rule without groups is a usage error"
+      `Quick
+      rule_without_groups_is_a_usage_error_test
+  ; Alcotest.test_case
+      "stateful: a rule repeating a group is a usage error"
+      `Quick
+      rule_repeating_a_group_is_a_usage_error_test
   ; Alcotest.test_case
       "stateful: pool add/reuse/consume"
       `Quick

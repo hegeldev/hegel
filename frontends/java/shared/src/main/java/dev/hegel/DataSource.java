@@ -94,23 +94,27 @@ interface DataSource {
     // Stateful testing. The root source registers the machine, advances rounds and samples
     // invariants; at concurrency > 1 each worker pulls its rules through its own clone.
 
-    /** What registering a state machine yields: its handle and the concurrency level the engine drew. */
-    record StateMachine(long id, int concurrency) {}
+    /**
+     * An empty state machine with its concurrency bounds and step count: its handle. Declare the
+     * rules and invariants with {@link #stateMachineAddRule} and {@link #stateMachineAddInvariant},
+     * then seal them with {@link #stateMachineStart}.
+     */
+    long newStateMachine(long minConcurrency, long maxConcurrency, int stepCount);
 
     /**
-     * {@code ruleGroups} and {@code ruleWeights} are parallel to {@code ruleNames} ({@code null}
-     * weights = all equal); {@code invariantAlwaysCheck} is parallel to {@code invariantNames}.
-     * The engine draws the concurrency level in {@code [minConcurrency, maxConcurrency]}.
+     * Declare the next rule (index = the number of rules declared before it): its selection weight
+     * (finite and positive) and the ids of the concurrency groups it belongs to (at least one).
      */
-    StateMachine newStateMachine(
-            List<String> ruleNames,
-            long[] ruleGroups,
-            double[] ruleWeights,
-            List<String> invariantNames,
-            boolean[] invariantAlwaysCheck,
-            long minConcurrency,
-            long maxConcurrency,
-            int stepCount);
+    void stateMachineAddRule(long stateMachineId, String name, double weight, long[] groups);
+
+    /** Declare the next invariant (index = the number declared before it); always checked, or sampled. */
+    void stateMachineAddInvariant(long stateMachineId, String name, boolean alwaysCheck);
+
+    /**
+     * Seal the declared rules and invariants: the concurrency level the engine drew in {@code
+     * [minConcurrency, maxConcurrency]}.
+     */
+    int stateMachineStart(long stateMachineId);
 
     /** Start the next round: its group id, or {@link Abi#STATE_MACHINE_DONE} when the machine is done. */
     long stateMachineNextGroup(long stateMachineId);

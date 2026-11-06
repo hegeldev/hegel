@@ -77,8 +77,14 @@ namespace hegel::stateful {
     /**
      * @brief An action that a worker can apply to a concurrent state machine.
      *
-     * Rules in the same group can run concurrently. Rules in different groups
-     * cannot. A rule that does not specify a group uses @ref anonymous_group.
+     * A rule belongs to one or more concurrency groups. Rules that share a
+     * group can run concurrently in the rounds of that group. Rules that
+     * share no group never overlap. A rule that belongs to several groups
+     * runs in the rounds of each of them. A rule that does not specify a
+     * group uses @ref anonymous_group.
+     *
+     * The engine rejects a rule with an empty group list or a repeated group
+     * when the machine starts, with @c std::invalid_argument.
      *
      * @tparam M The state-machine type that the rule acts on
      */
@@ -97,22 +103,23 @@ namespace hegel::stateful {
          * value with @c std::invalid_argument
          */
         ConcurrentRule(std::string name, Function function, double weight = 1.0)
-            : ConcurrentRule(std::move(name), anonymous_group,
+            : ConcurrentRule(std::move(name),
+                             std::vector<std::string>{anonymous_group},
                              std::move(function), weight) {}
 
         /**
-         * @brief Creates a rule in the specified group.
+         * @brief Creates a rule in the specified groups.
          *
          * @param name The name of the rule
-         * @param group The concurrency group of the rule
+         * @param groups The concurrency groups of the rule
          * @param function The function that applies the rule
          * @param weight How often the engine offers the rule relative to the
          * others, a finite positive number; the engine rejects any other
          * value with @c std::invalid_argument
          */
-        ConcurrentRule(std::string name, std::string group, Function function,
-                       double weight = 1.0)
-            : name_(std::move(name)), group_(std::move(group)),
+        ConcurrentRule(std::string name, std::vector<std::string> groups,
+                       Function function, double weight = 1.0)
+            : name_(std::move(name)), groups_(std::move(groups)),
               function_(std::move(function)), weight_(weight) {}
 
         /**
@@ -123,11 +130,11 @@ namespace hegel::stateful {
         const std::string& name() const { return name_; }
 
         /**
-         * @brief Returns the concurrency group of the rule.
+         * @brief Returns the concurrency groups of the rule.
          *
-         * @return The concurrency group of the rule
+         * @return The concurrency groups of the rule
          */
-        const std::string& group() const { return group_; }
+        const std::vector<std::string>& groups() const { return groups_; }
 
         /**
          * @brief Returns the function that applies the rule.
@@ -145,7 +152,7 @@ namespace hegel::stateful {
 
       private:
         std::string name_;
-        std::string group_;
+        std::vector<std::string> groups_;
         Function function_;
         double weight_;
     };
@@ -163,9 +170,12 @@ namespace hegel::stateful {
      * update. The invariant compares the stored total with the number of
      * completed increments.
      *
-     * The @c operations group contains the register, increment, and read
-     * rules. These rules can run concurrently. The @c snapshot group does not
-     * overlap with the @c operations group.
+     * Each rule lists the concurrency groups it belongs to. The
+     * @c operations group contains the register, increment, and read rules,
+     * which can run concurrently. The @c snapshot group contains the snapshot
+     * and read rules, so a snapshot never overlaps with a register or an
+     * increment, but a read can overlap with either: the read rule is in both
+     * groups and runs in the rounds of each of them.
      *
      * @code{.cpp}
         class ConcurrentKVStore {
@@ -216,7 +226,7 @@ namespace hegel::stateful {
             std::vector<hegel::stateful::ConcurrentRule<ConcurrentKV>>
             rules() {
                 return {
-                    {"register", "operations",
+                    {"register", {"operations"},
                      [](hegel::TestCase& tc, ConcurrentKV& m) {
                          int key = tc.draw(hegel::generators::integers<int>(
                              {.min_value = 0, .max_value = 3}));
@@ -224,14 +234,14 @@ namespace hegel::stateful {
                              m.keys.add(tc, key);
                          }
                      }},
-                    {"increment", "operations",
+                    {"increment", {"operations"},
                      [](hegel::TestCase& tc, ConcurrentKV& m) {
                          int key = tc.draw(
                              hegel::stateful::values_reusable(m.keys));
                          m.store.increment(key);
                          m.increments.fetch_add(1);
                      }},
-                    {"read", "operations",
+                    {"read", {"operations", "snapshot"},
                      [](hegel::TestCase& tc, ConcurrentKV& m) {
                          int key = tc.draw(
                              hegel::stateful::values_reusable(m.keys));
@@ -239,7 +249,7 @@ namespace hegel::stateful {
                          tc.note("read " + std::to_string(key) + " -> " +
                                  std::to_string(value));
                      }},
-                    {"snapshot", "snapshot",
+                    {"snapshot", {"snapshot"},
                      [](hegel::TestCase& tc, ConcurrentKV& m) {
                          tc.note("snapshot holds " +
                                  std::to_string(m.store.snapshot().size()) +
@@ -993,9 +1003,10 @@ namespace hegel::stateful {
      * The runner selects a concurrency level from @p min_concurrency through
      * @p max_concurrency. Execution proceeds in rounds. For each round,
      * libhegel picks a random concurrency group. Every worker thread then runs
-     * a short (possibly empty) random sequence of rules from only that group
-     * concurrently with the other workers. The runner waits for all workers to
-     * finish before it starts the next round.
+     * a short (possibly empty) random sequence of rules that belong to that
+     * group concurrently with the other workers. A rule that belongs to
+     * several groups is available in the rounds of each of them. The runner
+     * waits for all workers to finish before it starts the next round.
      *
      * All invariants run before the first round and after the final round.
      * Between rounds, the runner samples each invariant independently.
@@ -1041,21 +1052,25 @@ namespace hegel::stateful {
         std::vector<double> rule_weights;
         std::vector<std::string> group_names;     // maps group ID to name
         std::map<std::string, int64_t> group_ids; // maps group name to ID
-        std::vector<int64_t>
-            rule_groups; // ID of group that rule_names[i] belongs to is the ID
-                         // at rule_groups[i].
+        std::vector<std::vector<int64_t>>
+            rule_groups; // IDs of the groups that rule_names[i] belongs to.
         rule_names.reserve(rules.size());
         rule_weights.reserve(rules.size());
         rule_groups.reserve(rules.size());
         for (const ConcurrentRule<M>& rule : rules) {
             rule_names.push_back(rule.name());
             rule_weights.push_back(rule.weight());
-            auto [group, inserted] = group_ids.emplace(
-                rule.group(), static_cast<int64_t>(group_ids.size()));
-            if (inserted) {
-                group_names.push_back(rule.group());
+            std::vector<int64_t> ids;
+            ids.reserve(rule.groups().size());
+            for (const std::string& group_name : rule.groups()) {
+                auto [group, inserted] = group_ids.emplace(
+                    group_name, static_cast<int64_t>(group_ids.size()));
+                if (inserted) {
+                    group_names.push_back(group_name);
+                }
+                ids.push_back(group->second);
             }
-            rule_groups.push_back(group->second);
+            rule_groups.push_back(std::move(ids));
         }
 
         internal::StateMachineHandle machine_handle(
@@ -1351,7 +1366,8 @@ namespace hegel::stateful {
             rule_weights.push_back(rule.weight());
         }
 
-        std::vector<int64_t> rule_groups(rule_names.size(), 0);
+        std::vector<std::vector<int64_t>> rule_groups(rule_names.size(),
+                                                      std::vector<int64_t>{0});
         internal::StateMachineHandle machine_handle(
             tc, rule_names, rule_groups, rule_weights,
             invariant_names(invariants), invariant_always_check(invariants), 1,

@@ -33,6 +33,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <typeinfo>
 #include <utility>
 #include <vector>
@@ -154,9 +155,15 @@ namespace hegel {
         };
 
         // How a report tells the user to replay a failure: through the
-        // hegel::test() overload the run came from, or, for a test the
-        // HEGEL_TEST macro defined, with HEGEL_REPRODUCE_FAILURE.
-        enum class RerunForm { Call, Location, Annotation };
+        // hegel::test() overload the run came from, for a test the
+        // HEGEL_TEST macro defined, with HEGEL_REPRODUCE_FAILURE, or, for a
+        // program HEGEL_MAIN defined, with its command-line option.
+        enum class RerunForm { Call, Location, Annotation, Option };
+
+        // Set when a run throws because the property failed, after the
+        // failure was reported. Any other exception from a run is an error
+        // that nothing has reported yet.
+        thread_local bool failure_reported = false;
 
         // The installed test framework integration
         internal::FrameworkHooks& framework_hooks() {
@@ -385,6 +392,13 @@ namespace hegel {
                              "HEGEL_TEST(%s):\n"
                              "    HEGEL_REPRODUCE_FAILURE(%s, \"%s\")\n",
                              location->name.c_str(), location->name.c_str(),
+                             blob.c_str());
+                return;
+            }
+            if (rerun_form == RerunForm::Option) {
+                std::fprintf(stderr,
+                             "\nTo reproduce this failure, run the program "
+                             "with:\n    --failure-blob %s\n",
                              blob.c_str());
                 return;
             }
@@ -717,6 +731,7 @@ namespace hegel {
         // Re-raises the test's own exception for a single failure, and a
         // MultipleFailures holding each one's exception for several.
         [[noreturn]] void raise_failures(std::vector<BodyOutcome> outcomes) {
+            failure_reported = true;
             if (outcomes.size() == 1) {
                 std::rethrow_exception(outcomes.front().exception);
             }
@@ -999,6 +1014,32 @@ namespace hegel {
     } // namespace internal
 
     namespace {
+        // Runs the test with the settings handle `s`.
+        void run_with_handle(
+            const std::function<void(TestCase&)>& test_fn, hegel_context_t* ctx,
+            hegel_settings_t* s, const std::optional<TestLocation>& location,
+            RerunForm rerun_form, const std::vector<std::string>& failure_blobs,
+            const std::vector<ExplicitTestCase>& explicit_cases) {
+            RunConfig config{
+                from_engine(impl::settings_get_verbosity(ctx, s)),
+                impl::settings_get_print_blob(ctx, s),
+                impl::settings_get_report_multiple_failures(ctx, s)};
+
+            if (failure_blobs.empty()) {
+                std::vector<CapturedFailure> explicit_failures;
+                if ((impl::settings_get_phases(ctx, s) &
+                     HEGEL_PHASE_EXPLICIT) != 0) {
+                    explicit_failures =
+                        run_explicit_cases(test_fn, config, explicit_cases);
+                }
+                run_from_engine(test_fn, ctx, s, config, location, rerun_form,
+                                std::move(explicit_failures));
+            } else {
+                run_from_blobs(test_fn, ctx, s, config, location, rerun_form,
+                               failure_blobs);
+            }
+        }
+
         // Runs the test under `settings`, scoping the example database to
         // `default_key` unless the settings name a key.
         void run_test(const std::function<void(TestCase&)>& test_fn,
@@ -1019,24 +1060,8 @@ namespace hegel {
             if (location.has_value()) {
                 apply_test_location(ctx, s, *location);
             }
-            RunConfig config{
-                from_engine(impl::settings_get_verbosity(ctx, s)),
-                impl::settings_get_print_blob(ctx, s),
-                impl::settings_get_report_multiple_failures(ctx, s)};
-
-            if (failure_blobs.empty()) {
-                std::vector<CapturedFailure> explicit_failures;
-                if ((impl::settings_get_phases(ctx, s) &
-                     HEGEL_PHASE_EXPLICIT) != 0) {
-                    explicit_failures =
-                        run_explicit_cases(test_fn, config, explicit_cases);
-                }
-                run_from_engine(test_fn, ctx, s, config, location, rerun_form,
-                                std::move(explicit_failures));
-            } else {
-                run_from_blobs(test_fn, ctx, s, config, location, rerun_form,
-                               failure_blobs);
-            }
+            run_with_handle(test_fn, ctx, s, location, rerun_form,
+                            failure_blobs, explicit_cases);
         }
 
         // The database key of a test: its file and its name.
@@ -1128,7 +1153,265 @@ namespace hegel {
         }
     } // namespace detail
 
+    namespace {
+        // One `--SETTING` option of a HEGEL_MAIN program.
+        struct SettingOption {
+            std::string flag;
+            std::string key;
+            std::optional<std::string> value;
+        };
+
+        struct MainArgs {
+            bool help = false;
+            std::optional<std::string> profile;
+            std::optional<std::string> failure_blob;
+            std::vector<SettingOption> settings;
+        };
+
+        bool starts_with(std::string_view text, std::string_view prefix) {
+            return text.substr(0, prefix.size()) == prefix;
+        }
+
+        std::string main_usage(const char* program) {
+            return std::string("Usage: ") + program + R"( [options]
+
+Hegel property-based testing binary. Runs exactly one test case.
+
+Options:
+  --profile <NAME>                       Set the default settings profile, like
+                                         the HEGEL_DEFAULT_PROFILE environment
+                                         variable; other flags apply on top
+  --failure-blob <BLOB>                  Replay the failure that BLOB encodes
+  --seed <N|none>                        Seed for randomisation ('none' for unset)
+  --derandomize <BOOL>                   Use a deterministic derived seed
+  --database <PATH|disabled|default>     Database path for failing-example storage
+  --database-key <KEY>                   Key the failing examples are stored under
+  --verbosity <LEVEL>                    quiet | normal | verbose | debug
+  --phases <NAMES>                       Comma-separated phases to run: explicit,
+                                         reuse, generate, target, shrink
+  --suppress-health-check <NAMES>        Comma-separated health check names
+                                         (filter_too_much, too_slow,
+                                         test_cases_too_large,
+                                         large_initial_test_case), or 'all'
+  --report-multiple-failures <BOOL>      Report every distinct failure found
+  --stop-on-first-failure <BOOL>         End generation once a failure is found
+  --show-statistics <BOOL>               Print the run's statistics
+  --print-blob <BOOL>                    Print the failure's reproduce blob
+  --backend <default|urandom>            Randomness source (urandom: the Antithesis
+                                         fuzzer, else /dev/urandom)
+  --nondeterminism-strictness <LEVEL>    quiet | warn | error
+  --unbounded-choices <BOOL>             Remove the limit on choices per test case
+  -h, --help                             Show this help and exit
+
+Every flag also takes the form --flag=VALUE. A BOOL is true, false, 1, 0,
+yes or no. Values use the vocabulary of the matching hegel.toml key.
+)";
+        }
+
+        // Reads the command line into `args`. Returns the problem with it,
+        // if there is one.
+        std::optional<std::string> parse_main_args(int argc, char** argv,
+                                                   MainArgs& args) {
+            for (int i = 1; i < argc; i++) {
+                std::string_view arg = argv[i];
+                if (arg == "-h" || arg == "--help") {
+                    args.help = true;
+                    return std::nullopt;
+                }
+                if (!starts_with(arg, "--") || arg == "--") {
+                    return "unknown argument: " + std::string(arg);
+                }
+                std::string_view option = arg.substr(2);
+                std::string name;
+                std::optional<std::string> value;
+                size_t equals = option.find('=');
+                if (equals != std::string_view::npos) {
+                    name = option.substr(0, equals);
+                    value = option.substr(equals + 1);
+                } else {
+                    name = option;
+                    if (i + 1 < argc && !starts_with(argv[i + 1], "--")) {
+                        value = argv[++i];
+                    }
+                }
+                std::string flag = "--" + name;
+                if (name.find('_') != std::string::npos) {
+                    return "unknown argument: " + flag;
+                }
+                if (name == "test-cases") {
+                    return "--test-cases cannot be set: a HEGEL_MAIN program "
+                           "runs one test case";
+                }
+                if (name == "profile" || name == "failure-blob") {
+                    std::optional<std::string>& target =
+                        name == "profile" ? args.profile : args.failure_blob;
+                    if (!value.has_value() || value->empty()) {
+                        return flag + " requires a value";
+                    }
+                    if (target.has_value()) {
+                        return flag + " can be given only once";
+                    }
+                    target = std::move(value);
+                    continue;
+                }
+                std::string key = name;
+                std::replace(key.begin(), key.end(), '-', '_');
+                args.settings.push_back({flag, key, std::move(value)});
+            }
+            return std::nullopt;
+        }
+
+        // The engine's diagnostic without the ABI function name it puts
+        // first, for a message that names the option instead.
+        std::string without_function_name(std::string message) {
+            if (starts_with(message, "hegel_")) {
+                size_t colon = message.find(": ");
+                if (colon != std::string::npos) {
+                    message.erase(0, colon + 2);
+                }
+            }
+            return message;
+        }
+
+        // Sets one `--SETTING` option on `s`. Returns the problem with it,
+        // if there is one.
+        std::optional<std::string>
+        apply_setting_option(hegel_context_t* ctx, hegel_settings_t* s,
+                             const SettingOption& option) {
+            std::optional<std::string> error = impl::settings_set_from_string(
+                ctx, s, option.key, option.value.value_or(""));
+            if (error.has_value()) {
+                error = without_function_name(*error);
+            }
+            if (error.has_value() && starts_with(*error, "unknown setting")) {
+                return "unknown argument: " + option.flag;
+            }
+            if (!option.value.has_value()) {
+                return option.flag + " requires a value";
+            }
+            if (option.key == "database_key" && option.value->empty()) {
+                return "--database-key expects a non-empty key";
+            }
+            if (!error.has_value()) {
+                return std::nullopt;
+            }
+            // The engine's message starts with the key in backticks.
+            std::string message = *error;
+            std::string key_prefix = "`" + option.key + "` ";
+            if (starts_with(message, key_prefix)) {
+                message.erase(0, key_prefix.size());
+            }
+            return option.flag + " " + message;
+        }
+
+        // A program has no caller to propagate its test case's exception
+        // to, so it prints the exception after the failure report.
+        void print_exception(const std::string& type,
+                             const std::string& message) {
+            std::fprintf(stderr, "Exception: %s%s\n", type.c_str(),
+                         message.empty() ? "" : (": " + message).c_str());
+        }
+    } // namespace
+
     namespace internal {
+        int
+        main_from_macro(int argc, char** argv,
+                        const std::function<void(TestCase&)>& test_fn,
+                        const TestLocation& location,
+                        const std::function<Settings()>& make_settings,
+                        const std::vector<std::string>& failure_blobs,
+                        const std::vector<ExplicitTestCase>& explicit_cases) {
+            const char* program =
+                argc > 0 && argv[0] != nullptr ? argv[0] : "program";
+            auto usage_error = [&](const std::string& message) {
+                std::fprintf(stderr, "error: %s\n\n%s", message.c_str(),
+                             main_usage(program).c_str());
+                return 2;
+            };
+
+            MainArgs args;
+            if (std::optional<std::string> error =
+                    parse_main_args(argc, argv, args)) {
+                return usage_error(*error);
+            }
+            if (args.help) {
+                std::fputs(main_usage(program).c_str(), stdout);
+                return 0;
+            }
+
+            hegel_context_t* ctx = impl::thread_context();
+            if (args.profile.has_value()) {
+                try {
+                    impl::set_default_profile(ctx, *args.profile);
+                    SettingsGuard probe{ctx};
+                    probe.s = impl::settings_new(ctx);
+                } catch (const std::exception& e) {
+                    return usage_error("--profile: " +
+                                       without_function_name(e.what()));
+                }
+            }
+
+            SettingsGuard settings_guard{ctx};
+            Verbosity verbosity = Verbosity::Normal;
+            try {
+                Settings settings = make_settings();
+                resolve_settings(ctx, settings_guard, settings);
+                hegel_settings_t* s = settings_guard.s;
+                impl::settings_set_database_key(
+                    ctx, s,
+                    settings.database_key.value_or(
+                        database_key_for(location.file, location.name)));
+                apply_test_location(ctx, s, location);
+                for (const SettingOption& option : args.settings) {
+                    if (std::optional<std::string> error =
+                            apply_setting_option(ctx, s, option)) {
+                        return usage_error(*error);
+                    }
+                }
+                // Each run of the program is one test case. Both health
+                // checks judge how a run accumulates test cases.
+                impl::settings_set_test_cases(ctx, s, 1);
+                impl::settings_set_suppress_health_check(
+                    ctx, s,
+                    impl::settings_get_suppress_health_check(ctx, s) |
+                        HEGEL_HC_TOO_SLOW | HEGEL_HC_TEST_CASES_TOO_LARGE);
+                verbosity = from_engine(impl::settings_get_verbosity(ctx, s));
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "error: %s\n", e.what());
+                return 1;
+            }
+            std::vector<std::string> blobs = failure_blobs;
+            if (args.failure_blob.has_value()) {
+                blobs.push_back(*args.failure_blob);
+            }
+
+            failure_reported = false;
+            try {
+                run_with_handle(test_fn, ctx, settings_guard.s, location,
+                                RerunForm::Option, blobs, explicit_cases);
+            } catch (const std::exception& e) {
+                if (!failure_reported) {
+                    std::fprintf(stderr, "error: %s\n", e.what());
+                } else if (verbosity != Verbosity::Quiet) {
+                    print_exception(demangle(typeid(e).name()), e.what());
+                }
+                return 1;
+            } catch (...) {
+                // Only a test case throws an exception of another type, and
+                // its failure is already reported.
+                if (verbosity != Verbosity::Quiet) {
+                    std::string type = "unknown_exception";
+                    if (const std::type_info* info =
+                            abi::__cxa_current_exception_type()) {
+                        type = demangle(info->name());
+                    }
+                    print_exception(type, "");
+                }
+                return 1;
+            }
+            return 0;
+        }
+
         void
         test_from_macro(const std::function<void(TestCase&)>& test_fn,
                         const TestLocation& location, const Settings& settings,

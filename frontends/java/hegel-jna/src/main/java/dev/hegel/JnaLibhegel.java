@@ -207,23 +207,28 @@ final class JnaLibhegel implements Libhegel {
 
         int hegel_pool_generate(Pointer ctx, Pointer tc, long poolId, byte consume, LongByReference out);
 
-        // State-machine handles cross as raw addresses (long), like every other opaque handle; the
-        // name lists are contiguous hegel_string_t arrays (see strArray).
+        // State-machine handles cross as raw addresses (long), like every other opaque handle.
         int hegel_new_state_machine(
                 Pointer ctx,
                 Pointer tc,
-                Pointer ruleNames,
-                Pointer ruleGroups,
-                Pointer ruleWeights,
-                long ruleNamesLen,
-                Pointer invariantNames,
-                Pointer invariantAlwaysCheck,
-                long invariantNamesLen,
                 long minConcurrency,
                 long maxConcurrency,
                 long stepCount,
-                LongByReference outStateMachine,
-                LongByReference outConcurrency);
+                LongByReference outStateMachine);
+
+        int hegel_state_machine_add_rule(
+                Pointer ctx,
+                Pointer tc,
+                long stateMachineId,
+                HegelString.ByValue name,
+                double weight,
+                Pointer groups,
+                long numGroups);
+
+        int hegel_state_machine_add_invariant(
+                Pointer ctx, Pointer tc, long stateMachineId, HegelString.ByValue name, byte alwaysCheck);
+
+        int hegel_state_machine_start(Pointer ctx, Pointer tc, long stateMachineId, LongByReference outConcurrency);
 
         int hegel_state_machine_next_group(Pointer ctx, Pointer tc, long stateMachineId, LongByReference out);
 
@@ -964,53 +969,34 @@ final class JnaLibhegel implements Libhegel {
     }
 
     @Override
-    public int newStateMachine(
-            long tc,
-            List<String> ruleNames,
-            long[] ruleGroups,
-            double[] ruleWeights,
-            List<String> invariantNames,
-            boolean[] invariantAlwaysCheck,
-            long minConcurrency,
-            long maxConcurrency,
-            long stepCount,
-            long[] outId,
-            long[] outConcurrency) {
-        Memory groups = new Memory(8L * Math.max(ruleGroups.length, 1));
-        groups.write(0, ruleGroups, 0, ruleGroups.length);
-        // NULL keeps every rule at the same weight.
-        Pointer weights = Pointer.NULL;
-        if (ruleWeights != null) {
-            Memory m = new Memory(8L * Math.max(ruleWeights.length, 1));
-            m.write(0, ruleWeights, 0, ruleWeights.length);
-            weights = m;
-        }
-        byte[] flags = new byte[invariantAlwaysCheck.length];
-        for (int i = 0; i < flags.length; i++) {
-            flags[i] = cbool(invariantAlwaysCheck[i]);
-        }
-        Memory alwaysCheck = new Memory(Math.max(flags.length, 1));
-        alwaysCheck.write(0, flags, 0, flags.length);
+    public int newStateMachine(long tc, long minConcurrency, long maxConcurrency, long stepCount, long[] outId) {
         LongByReference id = new LongByReference();
-        LongByReference concurrency = new LongByReference();
-        int code = lib.hegel_new_state_machine(
-                ctx(),
-                pointer(tc),
-                strArray(ruleNames),
-                groups,
-                weights,
-                ruleNames.size(),
-                strArray(invariantNames),
-                alwaysCheck,
-                invariantNames.size(),
-                minConcurrency,
-                maxConcurrency,
-                stepCount,
-                id,
-                concurrency);
+        int code = lib.hegel_new_state_machine(ctx(), pointer(tc), minConcurrency, maxConcurrency, stepCount, id);
         if (code == Abi.OK) {
             outId[0] = id.getValue();
-            outConcurrency[0] = concurrency.getValue();
+        }
+        return code;
+    }
+
+    @Override
+    public int stateMachineAddRule(long tc, long stateMachineId, String name, double weight, long[] groups) {
+        Memory ids = new Memory(8L * Math.max(groups.length, 1));
+        ids.write(0, groups, 0, groups.length);
+        return lib.hegel_state_machine_add_rule(
+                ctx(), pointer(tc), stateMachineId, str(name), weight, ids, groups.length);
+    }
+
+    @Override
+    public int stateMachineAddInvariant(long tc, long stateMachineId, String name, boolean alwaysCheck) {
+        return lib.hegel_state_machine_add_invariant(ctx(), pointer(tc), stateMachineId, str(name), cbool(alwaysCheck));
+    }
+
+    @Override
+    public int stateMachineStart(long tc, long stateMachineId, long[] outConcurrency) {
+        LongByReference ref = new LongByReference();
+        int code = lib.hegel_state_machine_start(ctx(), pointer(tc), stateMachineId, ref);
+        if (code == Abi.OK) {
+            outConcurrency[0] = ref.getValue();
         }
         return code;
     }

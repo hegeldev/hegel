@@ -1,0 +1,64 @@
+# Virtual environment
+.venv/
+
+# Test databases (created by hegel/hypothesis during test runs)
+.hegel/
+.hypothesis/
+
+# Python bytecode (from coverage scripts and conformance tests)
+__pycache__/
+*.pyc
+
+# Claude Code transient files
+CLAUDE.local.md
+
+# whitelist .claude files, rather than blacklist. Some local claude files
+# (skills, agents) have to live in .claude - as opposed to eg CLAUDE.local.md,
+# which we gitignore at the top level.
+.claude/*
+!.claude/CLAUDE.md
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/align-libhegel/
+!.claude/skills/changelog/
+!.claude/skills/coverage/
+!.claude/skills/go-concurrency/
+!.claude/skills/self-review/
+
+# Hegelator metadata
+.hegelator/
+
+# Build artifacts
+coverage.out
+cover_test.out
+coverage.sanitized.out
+mutation-report.json
+.gomutants-cache.json
+*.test
+*.out
+
+# Go build cache and binaries
+/bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# ...but the vendored, git-lfs-tracked libhegel binaries are checked in.
+!internal/libhegel/libs/
+!internal/libhegel/libs/*.so
+!internal/libhegel/libs/*.dll
+!internal/libhegel/libs/*.dylib
+
+# Go workspace
+go.work
+vendor/
+
+# Editor/IDE directories
+.idea/
+.vscode/
+*.iml
+.DS_Store
+
+.claude-reliability/

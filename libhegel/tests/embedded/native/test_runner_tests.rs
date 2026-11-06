@@ -65,19 +65,14 @@ fn boom(msg: &str) -> TestCaseResult {
 /// concurrency bound is above 1. This does not by itself flip the run:
 /// only observed nondeterminism does.
 fn concurrent_machine(ds: &dyn DataSource) -> Result<(), TestCaseResult> {
-    match ds.new_state_machine(
-        vec!["rule".to_string()],
-        vec![0],
-        vec![1.0],
-        alloc::vec::Vec::new(),
-        alloc::vec::Vec::new(),
-        2,
-        2,
-        50,
-    ) {
-        Ok(_) => Ok(()),
-        Err(_) => Err(TestCaseResult::Overrun),
-    }
+    let mut machine = ds
+        .new_state_machine(2, 2, 50)
+        .map_err(|_| TestCaseResult::Overrun)?;
+    ds.state_machine_add_rule(&mut machine, "rule", 1.0, vec![0])
+        .map_err(|_| TestCaseResult::Overrun)?;
+    ds.state_machine_start(&mut machine)
+        .map(|_| ())
+        .map_err(|_| TestCaseResult::Overrun)
 }
 
 #[test]
