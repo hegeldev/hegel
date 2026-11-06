@@ -284,8 +284,6 @@ let run_machine
   (* Can't use Fun.protect because its body must be a global closure *)
   let free () = Internal.state_machine_free tc ~state_machine in
   let run_test () =
-    if num_workers > 1
-    then Internal.note tc (Printf.sprintf "Concurrency level: %d" num_workers);
     print_state ();
     check_invariants ~where:"in the initial state" ~sample:false;
     run_steps ~state_machine ~num_workers ~print_state ~check_invariants;
@@ -304,7 +302,7 @@ let run_internal ~init ~rules ~invariants ?sexp_of_state ?(step_count = 50) tc =
       Internal.start_span ~label:Generators.Private.Labels.stateful_rule tc;
       match Internal.state_machine_next_group tc ~state_machine with
       | None -> Internal.stop_span tc
-      | Some _group ->
+      | Some _ ->
         let step = steps_attempted + 1 in
         let rejected =
           match
@@ -388,10 +386,12 @@ let run_concurrent_core
   let group_names = unique_groups rules in
   let run_steps ~state_machine ~num_workers ~print_state ~check_invariants:LOCAL(check_invariants) =
     (* Local closures are passed down rather than captured. *)
-    let rec loop LOCAL(run_round) LOCAL(check_invariants) round =
+    let rec loop LOCAL(run_round) LOCAL(check_invariants) round noted_level =
       match Internal.state_machine_next_group tc ~state_machine with
       | None -> ()
-      | Some group ->
+      | Some (group, level) ->
+        if noted_level <> Some level
+        then Internal.note tc (Printf.sprintf "Concurrency level: %d" level);
         Internal.note
           tc
           (Printf.sprintf
@@ -401,9 +401,9 @@ let run_concurrent_core
         reraise_worker_failure (run_round ~state_machine ~num_workers);
         print_state ();
         check_invariants ~where:(Printf.sprintf "after round %d" round) ~sample:true;
-        loop run_round check_invariants (round + 1)
+        loop run_round check_invariants (round + 1) (Some level)
     in
-    loop run_round check_invariants 1
+    loop run_round check_invariants 1 None
   in
   run_machine
     tc

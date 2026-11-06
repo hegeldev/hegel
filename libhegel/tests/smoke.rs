@@ -162,7 +162,8 @@ type FnStateMachineAddRule = unsafe extern "C" fn(
 type FnStateMachineAddInvariant =
     unsafe extern "C" fn(*mut u8, *mut u8, *mut u8, hegel_string_t, bool) -> c_int;
 type FnStateMachineStart = unsafe extern "C" fn(*mut u8, *mut u8, *mut u8, *mut i64) -> c_int;
-type FnStateMachineNextGroup = unsafe extern "C" fn(*mut u8, *mut u8, *mut u8, *mut i64) -> c_int;
+type FnStateMachineNextGroup =
+    unsafe extern "C" fn(*mut u8, *mut u8, *mut u8, *mut i64, *mut i64) -> c_int;
 type FnStateMachineNextRule =
     unsafe extern "C" fn(*mut u8, *mut u8, *mut u8, i64, *mut i64) -> c_int;
 type FnStateMachineRuleRejected = unsafe extern "C" fn(*mut u8, *mut u8, *mut u8, i64) -> c_int;
@@ -721,7 +722,7 @@ fn caller_usage_errors_return_error_not_abort() {
         );
         let mut group: i64 = 0;
         assert_eq!(
-            (a.state_machine_next_group)(ctx, tc, ptr::null_mut(), &mut group),
+            (a.state_machine_next_group)(ctx, tc, ptr::null_mut(), &mut group, &mut 0i64),
             HEGEL_E_INVALID_HANDLE
         );
         assert_eq!(
@@ -1167,7 +1168,8 @@ fn libhegel_state_machine_selects_registered_rules_with_swarm() {
             let mut previous: Option<i64> = None;
             'case: for _ in 0..60 {
                 let mut group: i64 = i64::MAX;
-                let rc = (a.state_machine_next_group)(ctx, tc, machine, &mut group);
+                let mut level: i64 = 0;
+                let rc = (a.state_machine_next_group)(ctx, tc, machine, &mut group, &mut level);
                 if rc == HEGEL_E_STOP_TEST {
                     overran = true;
                     break;
@@ -1177,6 +1179,7 @@ fn libhegel_state_machine_selects_registered_rules_with_swarm() {
                     break;
                 }
                 assert_eq!(group, 0, "a single-group machine is always in group 0");
+                assert_eq!(level, 1);
                 loop {
                     let mut index: i64 = i64::MAX;
                     let rc = (a.state_machine_next_rule)(ctx, tc, machine, 0, &mut index);

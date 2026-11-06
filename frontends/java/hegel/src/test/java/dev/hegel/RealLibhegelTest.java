@@ -166,8 +166,9 @@ class RealLibhegelTest {
         assertEquals(Abi.E_INVALID_HANDLE, lib.stateMachineAddInvariant(0, 0, "i", true));
         assertEquals(Abi.E_INVALID_HANDLE, lib.stateMachineStart(0, 0, concurrency));
         assertEquals(9, concurrency[0]);
-        assertEquals(Abi.E_INVALID_HANDLE, lib.stateMachineNextGroup(0, 0, out));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.stateMachineNextGroup(0, 0, out, concurrency));
         assertEquals(7, out[0]);
+        assertEquals(9, concurrency[0]);
         assertEquals(Abi.E_INVALID_HANDLE, lib.stateMachineNextRule(0, 0, 0, out));
         assertEquals(7, out[0]);
         assertEquals(Abi.E_INVALID_HANDLE, lib.stateMachineRuleRejected(0, 0, 0));

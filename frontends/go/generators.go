@@ -89,10 +89,10 @@ type TestCase interface {
 	stateMachineNew(ruleNames []string, ruleGroups [][]int64, invariantNames []string, invariantAlwaysCheck []bool, maxConcurrency, stepCount int) (*libhegel.StateMachine, int64, error)
 
 	// stateMachineNextGroup starts the machine's next round, returning the
-	// current concurrency group's index, or [libhegel.StateMachineDone] when
-	// the whole state machine is done. Called at every join point, including
-	// before the first rule is requested.
-	stateMachineNextGroup(machine *libhegel.StateMachine) (libhegel.StateMachineGroup, error)
+	// current concurrency group's index and the round's concurrency level, or
+	// [libhegel.StateMachineDone] when the whole state machine is done. Called
+	// at every join point, including before the first rule is requested.
+	stateMachineNextGroup(machine *libhegel.StateMachine) (libhegel.StateMachineGroup, int64, error)
 
 	// stateMachineNextRule draws the index of the next rule to run, in
 	// [0, len(rules)), or [libhegel.StateMachineDone] when the round's rule

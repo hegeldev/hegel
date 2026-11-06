@@ -118,7 +118,7 @@ namespace hegel::internal {
 
     // Owns a started engine state machine: the constructor creates it with
     // the concurrency bounds, declares each rule and invariant, then starts
-    // it, which draws the concurrency level.
+    // it. concurrency() is max_concurrency, the number of workers to run.
     class StateMachineHandle {
       public:
         StateMachineHandle(const TestCase& tc,
@@ -131,7 +131,8 @@ namespace hegel::internal {
 
         // Starts the next round and returns its concurrency group, or
         // state_machine_done once the engine's step budget for this test case
-        // is used up.
+        // is used up. Sets round_concurrency() to the round's concurrency
+        // level.
         int64_t next_group(const TestCase& tc);
         // Returns the index of the next rule to run this round, or
         // state_machine_done once the round's rule stream is exhausted.
@@ -143,10 +144,12 @@ namespace hegel::internal {
                                     int64_t invariant_index);
 
         int64_t concurrency() const { return concurrency_; }
+        int64_t round_concurrency() const { return round_concurrency_; }
 
       private:
         hegel_state_machine_t* handle_ = nullptr;
         int64_t concurrency_ = 0;
+        int64_t round_concurrency_ = 0;
     };
 
     void set_concurrent_worker(TestCase& tc, std::size_t worker_index);

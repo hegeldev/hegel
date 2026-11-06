@@ -212,7 +212,7 @@ func (s *testCase) stateMachineNew(ruleNames []string, ruleGroups [][]int64, inv
 	return machine, concurrency, nil
 }
 
-func (s *testCase) stateMachineNextGroup(machine *libhegel.StateMachine) (libhegel.StateMachineGroup, error) {
+func (s *testCase) stateMachineNextGroup(machine *libhegel.StateMachine) (libhegel.StateMachineGroup, int64, error) {
 	return s.tc.StateMachineNextGroup(s.ctx, machine)
 }
 

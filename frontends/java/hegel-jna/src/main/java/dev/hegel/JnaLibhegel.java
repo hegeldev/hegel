@@ -230,7 +230,8 @@ final class JnaLibhegel implements Libhegel {
 
         int hegel_state_machine_start(Pointer ctx, Pointer tc, long stateMachineId, LongByReference outConcurrency);
 
-        int hegel_state_machine_next_group(Pointer ctx, Pointer tc, long stateMachineId, LongByReference out);
+        int hegel_state_machine_next_group(
+                Pointer ctx, Pointer tc, long stateMachineId, LongByReference out, LongByReference outConcurrency);
 
         int hegel_state_machine_next_rule(
                 Pointer ctx, Pointer tc, long stateMachineId, long workerIndex, LongByReference out);
@@ -1002,11 +1003,13 @@ final class JnaLibhegel implements Libhegel {
     }
 
     @Override
-    public int stateMachineNextGroup(long tc, long stateMachineId, long[] outGroupId) {
+    public int stateMachineNextGroup(long tc, long stateMachineId, long[] outGroupId, long[] outConcurrency) {
         LongByReference ref = new LongByReference();
-        int code = lib.hegel_state_machine_next_group(ctx(), pointer(tc), stateMachineId, ref);
+        LongByReference concurrency = new LongByReference();
+        int code = lib.hegel_state_machine_next_group(ctx(), pointer(tc), stateMachineId, ref, concurrency);
         if (code == Abi.OK) {
             outGroupId[0] = ref.getValue();
+            outConcurrency[0] = concurrency.getValue();
         }
         return code;
     }

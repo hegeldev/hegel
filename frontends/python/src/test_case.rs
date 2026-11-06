@@ -835,7 +835,7 @@ impl StateMachine {
     }
 
     /// Seal the declared rules and invariants and draw the concurrency
-    /// level, returning it.
+    /// level, returning `max_concurrency`: the number of workers to run.
     fn start(&self, tc: &TestCase) -> PyResult<i64> {
         let mut out = 0i64;
         with_ctx(|ctx| {
@@ -844,13 +844,23 @@ impl StateMachine {
         Ok(out)
     }
 
-    /// The next round's group id, or `None` once the machine is done.
-    fn next_group(&self, tc: &TestCase) -> PyResult<Option<i64>> {
+    /// The next round's group id and concurrency level, or `None` once the
+    /// machine is done.
+    fn next_group(&self, tc: &TestCase) -> PyResult<Option<(i64, i64)>> {
         let mut out = 0i64;
+        let mut concurrency = 0i64;
         with_ctx(|ctx| {
-            check(unsafe { c::hegel_state_machine_next_group(ctx, tc.tc(), self.raw.0, &mut out) })
+            check(unsafe {
+                c::hegel_state_machine_next_group(
+                    ctx,
+                    tc.tc(),
+                    self.raw.0,
+                    &mut out,
+                    &mut concurrency,
+                )
+            })
         })?;
-        Ok((out != c::HEGEL_STATE_MACHINE_DONE).then_some(out))
+        Ok((out != c::HEGEL_STATE_MACHINE_DONE).then_some((out, concurrency)))
     }
 
     /// The next rule index for `worker_index`, or `None` at the join point.

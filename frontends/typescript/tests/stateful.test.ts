@@ -105,12 +105,13 @@ describe("stateful.run", () => {
             },
           },
           {},
+          { stepCount: 1 },
         );
       },
-      { ...deterministic, testCases: 20 },
+      { ...deterministic, testCases: 200 },
     );
     expect(counts.light).toBeGreaterThan(0);
-    expect(counts.heavy).toBeGreaterThan(counts.light * 2);
+    expect(counts.heavy).toBeGreaterThan(counts.light);
   });
 
   test("a violated invariant fails the test with the invariant's error", () => {

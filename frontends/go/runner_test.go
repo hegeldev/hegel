@@ -1642,7 +1642,7 @@ func TestStatefulNextGroupError(t *testing.T) {
 		uintptr(1), libhegel.OK, // new_state_machine
 		libhegel.OK,           // state_machine_add_rule
 		int64(1), libhegel.OK, // state_machine_start
-		int64(0), libhegel.E_BACKEND, "boom", // next_group fails
+		int64(0), int64(0), libhegel.E_BACKEND, "boom", // next_group fails
 	)
 	sm := &stateMachine{rules: []stateMachineRule{{name: "Rule", fn: func(TestCase) {}}}, ruleGroups: [][]int64{{0}}}
 	defer func() {
@@ -1680,7 +1680,7 @@ func TestStatefulFinalInvariantError(t *testing.T) {
 		uintptr(1), libhegel.OK, // new_state_machine
 		libhegel.OK,           // state_machine_add_invariant
 		int64(1), libhegel.OK, // state_machine_start
-		libhegel.StateMachineDone, libhegel.OK, // state_machine_next_group
+		libhegel.StateMachineDone, int64(0), libhegel.OK, // state_machine_next_group
 	)
 	calls := 0
 	sm := &stateMachine{invariants: []stateMachineRule{{name: "Inv", fn: func(tc TestCase) {
