@@ -149,7 +149,7 @@ def test_the_zoneinfo_source_follows_zoneinfo_search_path(tzpath, monkeypatch):
     )
     in_london = gs.temporal.zones(source=source, no_cache=True)
     june = gs.temporal.zoned_datetimes(
-        dt.datetime(2020, 6, 15), dt.datetime(2020, 6, 16), zones=in_london
+        dt.datetime(2020, 6, 15, 11, 30), dt.datetime(2020, 6, 15, 12, 30), zones=in_london
     )
     gap = find_example(june, _is_imaginary)
     assert (gap.date(), gap.hour) == (dt.date(2020, 6, 15), 12)
@@ -162,7 +162,7 @@ def test_the_zoneinfo_source_follows_zoneinfo_search_path(tzpath, monkeypatch):
         test_cases=100,
     )
     september = gs.temporal.zoned_datetimes(
-        dt.datetime(2020, 9, 1), dt.datetime(2020, 9, 2), zones=in_london
+        dt.datetime(2020, 9, 1, 10, 30), dt.datetime(2020, 9, 1, 11, 30), zones=in_london
     )
     assert find_example(september, lambda value: value.fold == 1).hour == 11
     check_all(
@@ -310,7 +310,7 @@ def test_setting_the_default_source(default_source):
 
 def test_a_zoneinfo_zone_from_another_generator_uses_the_default_source(default_source):
     london = zoneinfo.ZoneInfo("Europe/London")
-    lo, hi = dt.datetime(2020, 6, 15), dt.datetime(2020, 6, 16)
+    lo, hi = dt.datetime(2020, 6, 15, 11, 30), dt.datetime(2020, 6, 15, 12, 30)
     custom = ZoneSource()
     custom.add_tzif("Europe/London", FAKE_LONDON)
     gs.temporal.set_default_zone_source(custom)
