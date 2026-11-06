@@ -39,12 +39,15 @@ const MIN_ATTEMPTS_WITHOUT_SUCCESS: i64 = 1000;
 const MAX_ROUND_RULES: i64 = 5;
 
 /// Probability that [`NativeStateMachine::next_group`] redraws the swarm
-/// settings at the start of each round after the first: the concurrency
-/// level and active workers, every worker's [`FeatureFlags`], and the value
-/// weights ([`NativeTestCase::redraw_generation_parameters`]). Without this
-/// a long run, such as a `#[hegel::main]` binary, keeps the settings drawn
-/// at its start. The simplest value of the draw keeps the settings, so the
-/// shrinker can remove a re-randomization.
+/// settings at the start of each round: the concurrency level and active
+/// workers, every worker's [`FeatureFlags`], and the value weights
+/// ([`NativeTestCase::redraw_generation_parameters`]). Without this a long
+/// run, such as a `#[hegel::main]` binary, keeps the settings drawn at its
+/// start. The simplest value of the draw keeps the settings, so the shrinker
+/// can remove a re-randomization. The first round draws it too, although
+/// `start` has only just drawn the settings, so that every round has the
+/// same shape and deleting the first round's choices leaves the next round
+/// aligned.
 const P_RERANDOMIZE: f64 = 1.0 / 50.0;
 
 /// Probability that [`draw_concurrency`] draws `max_value` outright rather
@@ -475,8 +478,7 @@ impl NativeStateMachine {
     /// [`ATTEMPT_MULTIPLIER`] times the step count, or
     /// [`MIN_ATTEMPTS_WITHOUT_SUCCESS`] while no rule has succeeded.
     ///
-    /// Each round after the first then re-randomizes with probability
-    /// [`P_RERANDOMIZE`].
+    /// Each round then re-randomizes with probability [`P_RERANDOMIZE`].
     ///
     /// Must be called from the root handle at each join point, including
     /// before the first `next_rule` call. Errors with `InvalidArgument`
@@ -502,14 +504,12 @@ impl NativeStateMachine {
         if !ntc.weighted_precise(P_CONTINUE, forced)? {
             return Ok(None);
         }
-        if self.rounds_started > 0 {
-            draws::spanned(ntc, draws::LABEL_RERANDOMIZE, |ntc| {
-                if ntc.weighted(P_RERANDOMIZE, None)? {
-                    self.rerandomize(ntc)?;
-                }
-                Ok(())
-            })?;
-        }
+        draws::spanned(ntc, draws::LABEL_RERANDOMIZE, |ntc| {
+            if ntc.weighted(P_RERANDOMIZE, None)? {
+                self.rerandomize(ntc)?;
+            }
+            Ok(())
+        })?;
         let group = if self.groups.len() == 1 {
             0
         } else {

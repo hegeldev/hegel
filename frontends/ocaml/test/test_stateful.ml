@@ -1131,7 +1131,10 @@ let concurrent_worker_exception_is_rethrown_test () =
 let failure_report_notes_the_rounds_concurrency_level_test () =
   let module S = Hegel.Stateful in
   let boom =
-    S.Concurrent_rule.create ~name:"boom" ~step:(fun _tc () () -> raise (Concurrent_boom 0)) ()
+    S.Concurrent_rule.create
+      ~name:"boom"
+      ~step:(fun _tc () () -> raise (Concurrent_boom 0))
+      ()
   in
   let output =
     with_captured_stderr (fun () ->

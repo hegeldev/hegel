@@ -4589,8 +4589,8 @@ pub const HEGEL_STATE_MACHINE_DONE: i64 = i64::MIN;
 /// When a new round has begun, also writes the round's concurrency level
 /// into `*out_concurrency`: that many workers, chosen by the engine, are
 /// handed rules this round, and the rest get `HEGEL_STATE_MACHINE_DONE`
-/// from `hegel_state_machine_next_rule`. Each round after the first
-/// redraws, with probability 1/50, the level, the active workers, every
+/// from `hegel_state_machine_next_rule`. Each round redraws, with
+/// probability 1/50, the level, the active workers, every
 /// worker's swarm parameters, and the test case's value distribution.
 ///
 /// Call this on the root test-case handle (the handle used for

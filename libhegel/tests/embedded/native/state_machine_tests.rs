@@ -148,11 +148,8 @@ fn rerandomize() -> ChoiceValue {
 /// machine stops at the next free round decision.
 fn sequential_rounds(rounds: usize, max_size: usize) -> NativeTestCase {
     let mut prefix = vec![int(0)];
-    for round in 0..rounds {
-        prefix.push(go());
-        if round > 0 {
-            prefix.push(keep());
-        }
+    for _ in 0..rounds {
+        prefix.extend([go(), keep()]);
         prefix.extend([int(0), ChoiceValue::Boolean(false)]);
     }
     simplest_after(&prefix, max_size)
@@ -178,7 +175,7 @@ fn count_draws_with_max(ntc: &NativeTestCase, max_value: i64) -> usize {
 
 #[test]
 fn first_round_decision_is_a_forced_keep_going_boolean() {
-    let mut ntc = replay(&[int(0), stop(), int(2)], 8);
+    let mut ntc = replay(&[int(0), stop(), keep(), int(2)], 8);
     let mut sm = machine(&mut ntc, 3);
     assert!(sm.next_group(&mut ntc).unwrap().is_some());
     assert!(ntc.nodes[1].was_forced);
@@ -187,20 +184,20 @@ fn first_round_decision_is_a_forced_keep_going_boolean() {
 
 #[test]
 fn zero_p_disabled_enables_every_rule() {
-    let mut ntc = replay(&[int(0), go(), int(2)], 8);
+    let mut ntc = replay(&[int(0), go(), keep(), int(2)], 8);
     let mut sm = machine(&mut ntc, 3);
     assert!(sm.next_group(&mut ntc).unwrap().is_some());
     let rule = sm.next_rule(&mut ntc, 0).unwrap();
     assert_eq!(rule, Some(2));
-    assert_eq!(ntc.nodes.len(), 4);
-    assert!(ntc.nodes[3].was_forced);
-    assert_eq!(ntc.nodes[3].value(), ChoiceValue::Boolean(false));
-    assert_eq!(ntc.spans.len(), 1);
+    assert_eq!(ntc.nodes.len(), 5);
+    assert!(ntc.nodes[4].was_forced);
+    assert_eq!(ntc.nodes[4].value(), ChoiceValue::Boolean(false));
+    assert_eq!(ntc.spans.len(), 2);
     assert_eq!(
-        ntc.spans[0usize].label,
+        ntc.spans[1usize].label,
         crate::native::draws::LABEL_FEATURE_FLAG
     );
-    assert!(!ntc.spans[0usize].discarded);
+    assert!(!ntc.spans[1usize].discarded);
 }
 
 #[test]
@@ -236,7 +233,7 @@ fn simplest_template_runs_exactly_one_round() {
         ntc.nodes.last().unwrap().value(),
         ChoiceValue::Boolean(false)
     );
-    assert_eq!(ntc.nodes.len(), 5);
+    assert_eq!(ntc.nodes.len(), 6);
 }
 
 #[test]
@@ -251,7 +248,14 @@ fn bounded_case_runs_at_least_one_round_even_with_step_count_one() {
 
 #[test]
 fn free_stop_decision_can_halt_before_the_step_count() {
-    let prefix = [int(254), go(), int(0), ChoiceValue::Boolean(false), stop()];
+    let prefix = [
+        int(254),
+        go(),
+        keep(),
+        int(0),
+        ChoiceValue::Boolean(false),
+        stop(),
+    ];
     let mut ntc = replay(&prefix, 16);
     let mut sm = machine(&mut ntc, 2);
     assert!(sm.next_group(&mut ntc).unwrap().is_some());
@@ -287,15 +291,22 @@ fn p_disabled_is_not_redrawn_while_the_settings_are_kept() {
 
 #[test]
 fn last_undecided_rule_is_forced_enabled() {
-    let prefix = [int(254), go(), int(0), ChoiceValue::Boolean(true), int(1)];
+    let prefix = [
+        int(254),
+        go(),
+        keep(),
+        int(0),
+        ChoiceValue::Boolean(true),
+        int(1),
+    ];
     let mut ntc = replay(&prefix, 8);
     let mut sm = machine(&mut ntc, 2);
     assert!(sm.next_group(&mut ntc).unwrap().is_some());
     let rule = sm.next_rule(&mut ntc, 0).unwrap().unwrap();
     assert_eq!(rule, 1);
-    assert_eq!(ntc.nodes.len(), 6);
-    assert!(ntc.nodes[5].was_forced);
-    assert_eq!(ntc.nodes[5].value(), ChoiceValue::Boolean(false));
+    assert_eq!(ntc.nodes.len(), 7);
+    assert!(ntc.nodes[6].was_forced);
+    assert_eq!(ntc.nodes[6].value(), ChoiceValue::Boolean(false));
 }
 
 #[test]
@@ -303,21 +314,22 @@ fn decided_flag_is_rewritten_as_forced_draw_on_later_queries() {
     let prefix = [
         int(254),
         go(),
+        keep(),
         int(0),
         ChoiceValue::Boolean(false),
         go(),
         keep(),
         int(0),
     ];
-    let mut ntc = replay(&prefix, 8);
+    let mut ntc = replay(&prefix, 16);
     let mut sm = machine(&mut ntc, 2);
     assert!(sm.next_group(&mut ntc).unwrap().is_some());
     assert_eq!(sm.next_rule(&mut ntc, 0).unwrap().unwrap(), 0);
     assert!(sm.next_group(&mut ntc).unwrap().is_some());
     assert_eq!(sm.next_rule(&mut ntc, 0).unwrap().unwrap(), 0);
-    assert_eq!(ntc.nodes.len(), 8);
-    assert!(ntc.nodes[7].was_forced);
-    assert_eq!(ntc.nodes[7].value(), ChoiceValue::Boolean(false));
+    assert_eq!(ntc.nodes.len(), 9);
+    assert!(ntc.nodes[8].was_forced);
+    assert_eq!(ntc.nodes[8].value(), ChoiceValue::Boolean(false));
 }
 
 #[test]
@@ -325,6 +337,7 @@ fn known_disabled_rule_is_skipped_without_redrawing_its_flag() {
     let prefix = [
         int(254),
         go(),
+        keep(),
         int(1),
         ChoiceValue::Boolean(true),
         int(1),
@@ -336,7 +349,7 @@ fn known_disabled_rule_is_skipped_without_redrawing_its_flag() {
     assert!(sm.next_group(&mut ntc).unwrap().is_some());
     let rule = sm.next_rule(&mut ntc, 0).unwrap().unwrap();
     assert_eq!(rule, 2);
-    assert_eq!(ntc.nodes.len(), 7);
+    assert_eq!(ntc.nodes.len(), 8);
 }
 
 /// Two tries land on disabled rules, leaving a single candidate: the third
@@ -347,6 +360,7 @@ fn a_single_remaining_candidate_is_drawn_forced() {
     let prefix = [
         int(254),
         go(),
+        keep(),
         int(0),
         ChoiceValue::Boolean(true),
         int(1),
@@ -357,10 +371,10 @@ fn a_single_remaining_candidate_is_drawn_forced() {
     assert!(sm.next_group(&mut ntc).unwrap().is_some());
     let rule = sm.next_rule(&mut ntc, 0).unwrap().unwrap();
     assert_eq!(rule, 2);
-    assert_eq!(ntc.nodes.len(), 8);
-    assert_forced_index_node(&ntc, 6, 3, 2);
-    assert!(ntc.nodes[7].was_forced);
-    assert_eq!(ntc.nodes[7].value(), ChoiceValue::Boolean(false));
+    assert_eq!(ntc.nodes.len(), 9);
+    assert_forced_index_node(&ntc, 7, 3, 2);
+    assert!(ntc.nodes[8].was_forced);
+    assert_eq!(ntc.nodes[8].value(), ChoiceValue::Boolean(false));
 }
 
 /// A four-rule machine whose first two tries disable rules 0 and 1 and
@@ -368,10 +382,11 @@ fn a_single_remaining_candidate_is_drawn_forced() {
 /// the fallback then decides the flags of rules 2 and 3 (both enabled),
 /// draws among them in `[0, 1]`, and records the chosen index as a forced
 /// draw in the tries' `[0, n)` domain.
-fn fallback_prefix() -> [ChoiceValue; 10] {
+fn fallback_prefix() -> [ChoiceValue; 11] {
     [
         int(254),
         go(),
+        keep(),
         int(0),
         ChoiceValue::Boolean(true),
         int(1),
@@ -390,13 +405,13 @@ fn fallback_draws_among_every_enabled_remaining_candidate() {
     assert!(sm.next_group(&mut ntc).unwrap().is_some());
     let rule = sm.next_rule(&mut ntc, 0).unwrap().unwrap();
     assert_eq!(rule, 3);
-    assert_eq!(ntc.nodes.len(), 11);
-    assert!(!ntc.nodes[7].was_forced);
+    assert_eq!(ntc.nodes.len(), 12);
     assert!(!ntc.nodes[8].was_forced);
+    assert!(!ntc.nodes[9].was_forced);
     assert!(
-        matches!(&ntc.nodes[9].kind(), ChoiceKind::Integer(k) if k.max_value() == BigInt::from(1))
+        matches!(&ntc.nodes[10].kind(), ChoiceKind::Integer(k) if k.max_value() == BigInt::from(1))
     );
-    assert_forced_index_node(&ntc, 10, 4, 3);
+    assert_forced_index_node(&ntc, 11, 4, 3);
 }
 
 /// Count the rules worker 0 runs until the machine finishes or re-randomizes.
@@ -434,7 +449,7 @@ fn selection_follows_the_rule_weights_among_enabled_rules() {
 fn weights_are_conditioned_on_the_enabled_rules() {
     let mut counts = [0usize; 3];
     for seed in 0..40 {
-        let prefix = [int(1), go(), int(0), ChoiceValue::Boolean(true)]; // disable 100 weight rule
+        let prefix = [int(1), go(), keep(), int(0), ChoiceValue::Boolean(true)]; // disable 100 weight rule
         let mut ntc = NativeTestCase::for_probe(&prefix, EngineRng::seeded(seed), 4096).unwrap();
         let mut sm = build(
             &mut ntc,
@@ -462,20 +477,20 @@ fn weights_are_conditioned_on_the_enabled_rules() {
 
 #[test]
 fn next_group_draws_and_returns_the_current_group_when_there_are_several() {
-    let prefix = [int(254), go(), int(1), int(0)];
+    let prefix = [int(254), go(), keep(), int(1), int(0)];
     let mut ntc = replay(&prefix, 8);
     let mut sm = grouped_machine(&mut ntc, &[0, 0, 1]);
     assert_eq!(sm.next_group(&mut ntc).unwrap(), Some(1));
     let rule = sm.next_rule(&mut ntc, 0).unwrap().unwrap();
     assert_eq!(rule, 2);
-    assert_eq!(ntc.nodes.len(), 5);
-    assert!(ntc.nodes[4].was_forced);
-    assert_eq!(ntc.nodes[4].value(), ChoiceValue::Boolean(false));
+    assert_eq!(ntc.nodes.len(), 6);
+    assert!(ntc.nodes[5].was_forced);
+    assert_eq!(ntc.nodes[5].value(), ChoiceValue::Boolean(false));
 }
 
 #[test]
 fn group_ids_are_arbitrary_and_deduplicated_by_first_appearance() {
-    let prefix = [int(254), go(), int(1), int(0)];
+    let prefix = [int(254), go(), keep(), int(1), int(0)];
     let mut ntc = replay(&prefix, 8);
     let mut sm = grouped_machine(&mut ntc, &[7, 7, -3]);
     assert_eq!(sm.next_group(&mut ntc).unwrap(), Some(-3));
@@ -506,6 +521,7 @@ fn at_least_one_rule_per_group_is_forced_enabled() {
     let prefix = [
         int(254),
         go(),
+        keep(),
         int(0),
         int(0),
         ChoiceValue::Boolean(true),
@@ -516,9 +532,9 @@ fn at_least_one_rule_per_group_is_forced_enabled() {
     assert_eq!(sm.next_group(&mut ntc).unwrap(), Some(0));
     let rule = sm.next_rule(&mut ntc, 0).unwrap().unwrap();
     assert_eq!(rule, 1);
-    assert_eq!(ntc.nodes.len(), 7);
-    assert!(ntc.nodes[6].was_forced);
-    assert_eq!(ntc.nodes[6].value(), ChoiceValue::Boolean(false));
+    assert_eq!(ntc.nodes.len(), 8);
+    assert!(ntc.nodes[7].was_forced);
+    assert_eq!(ntc.nodes[7].value(), ChoiceValue::Boolean(false));
 }
 
 #[test]
@@ -527,6 +543,7 @@ fn concurrent_workers_have_their_own_flags_and_round_budgets() {
         int(0),
         int(0),
         go(),
+        keep(),
         ChoiceValue::Boolean(true),
         int(0),
         ChoiceValue::Boolean(false),
@@ -560,7 +577,18 @@ fn concurrent_workers_have_their_own_flags_and_round_budgets() {
 #[test]
 fn simplest_template_runs_no_rules() {
     let mut ntc = simplest_after(
-        &[int(0), int(0), int(0), go(), stop(), stop(), stop(), go()],
+        &[
+            int(0),
+            int(0),
+            int(0),
+            go(),
+            keep(),
+            stop(),
+            stop(),
+            stop(),
+            go(),
+            keep(),
+        ],
         4096,
     );
     let mut sm = machine_concurrent_steps(&mut ntc, 2, 3, 2);
@@ -579,6 +607,7 @@ fn concurrent_worker_continue_decision_is_a_recorded_hazard_boolean() {
         int(0),
         int(0),
         go(),
+        keep(),
         ChoiceValue::Boolean(true),
         int(0),
         ChoiceValue::Boolean(false),
@@ -594,17 +623,17 @@ fn concurrent_worker_continue_decision_is_a_recorded_hazard_boolean() {
     assert_eq!(sm.next_rule(&mut ntc, 0).unwrap(), Some(0));
     assert_eq!(sm.next_rule(&mut ntc, 0).unwrap(), None);
     assert!(
-        !ntc.nodes[3].was_forced,
+        !ntc.nodes[4].was_forced,
         "the first continue is a free draw: a worker can run zero rules"
     );
-    assert_eq!(ntc.nodes[3].value(), ChoiceValue::Boolean(true));
+    assert_eq!(ntc.nodes[4].value(), ChoiceValue::Boolean(true));
     assert!(
-        !ntc.nodes[6].was_forced,
+        !ntc.nodes[7].was_forced,
         "mid-round continues are free draws"
     );
-    assert_eq!(ntc.nodes[6].value(), ChoiceValue::Boolean(true));
-    assert!(!ntc.nodes[9].was_forced, "the stop is the simplest value");
-    assert_eq!(ntc.nodes[9].value(), ChoiceValue::Boolean(false));
+    assert_eq!(ntc.nodes[7].value(), ChoiceValue::Boolean(true));
+    assert!(!ntc.nodes[10].was_forced, "the stop is the simplest value");
+    assert_eq!(ntc.nodes[10].value(), ChoiceValue::Boolean(false));
 }
 
 #[test]
@@ -615,6 +644,7 @@ fn concurrent_rounds_stop_at_the_step_count() {
             int(0),
             int(0),
             go(),
+            keep(),
             go(),
             keep(),
             go(),
@@ -633,7 +663,10 @@ fn concurrent_rounds_stop_at_the_step_count() {
 
 #[test]
 fn concurrent_rejections_refund_the_worker_round_budget() {
-    let mut ntc = simplest_after(&[int(0), int(0), go(), ChoiceValue::Boolean(true)], 4096);
+    let mut ntc = simplest_after(
+        &[int(0), int(0), go(), keep(), ChoiceValue::Boolean(true)],
+        4096,
+    );
     let mut sm = machine_concurrent(&mut ntc, 2, 2);
     assert!(sm.next_group(&mut ntc).unwrap().is_some());
     for _ in 0..10 {
@@ -646,7 +679,10 @@ fn concurrent_rejections_refund_the_worker_round_budget() {
 
 #[test]
 fn concurrent_worker_attempts_are_capped_per_round() {
-    let mut ntc = simplest_after(&[int(0), int(0), go(), ChoiceValue::Boolean(true)], 4096);
+    let mut ntc = simplest_after(
+        &[int(0), int(0), go(), keep(), ChoiceValue::Boolean(true)],
+        4096,
+    );
     let mut sm = machine_concurrent(&mut ntc, 2, 2);
     assert!(sm.next_group(&mut ntc).unwrap().is_some());
     for _ in 0..(MAX_ROUND_RULES * ATTEMPT_MULTIPLIER) {
@@ -721,7 +757,10 @@ fn rule_rejected_without_an_outstanding_rule_is_an_error() {
 
 #[test]
 fn rule_rejected_for_an_out_of_range_worker_is_an_error() {
-    let mut ntc = simplest_after(&[int(0), int(0), go(), ChoiceValue::Boolean(true)], 64);
+    let mut ntc = simplest_after(
+        &[int(0), int(0), go(), keep(), ChoiceValue::Boolean(true)],
+        64,
+    );
     let mut sm = machine_concurrent(&mut ntc, 2, 2);
     assert!(sm.next_group(&mut ntc).unwrap().is_some());
     assert_eq!(sm.next_rule(&mut ntc, 0).unwrap(), Some(0));
@@ -906,6 +945,7 @@ fn a_rules_last_candidate_status_in_any_of_its_groups_forces_it_enabled() {
     let prefix = [
         int(254),
         go(),
+        keep(),
         int(2),
         int(0),
         ChoiceValue::Boolean(true),
@@ -930,14 +970,14 @@ fn a_rules_last_candidate_status_in_any_of_its_groups_forces_it_enabled() {
     .unwrap();
     assert_eq!(sm.next_group(&mut ntc).unwrap(), Some(2));
     assert_eq!(sm.next_rule(&mut ntc, 0).unwrap(), Some(2));
-    assert_eq!(ntc.nodes.len(), 7);
-    assert!(ntc.nodes[6].was_forced);
-    assert_eq!(ntc.nodes[6].value(), ChoiceValue::Boolean(false));
+    assert_eq!(ntc.nodes.len(), 8);
+    assert!(ntc.nodes[7].was_forced);
+    assert_eq!(ntc.nodes[7].value(), ChoiceValue::Boolean(false));
     assert_eq!(sm.next_group(&mut ntc).unwrap(), Some(1));
     assert_eq!(sm.next_rule(&mut ntc, 0).unwrap(), Some(0));
-    assert_eq!(ntc.nodes.len(), 12);
-    assert!(ntc.nodes[11].was_forced);
-    assert_eq!(ntc.nodes[11].value(), ChoiceValue::Boolean(false));
+    assert_eq!(ntc.nodes.len(), 13);
+    assert!(ntc.nodes[12].was_forced);
+    assert_eq!(ntc.nodes[12].value(), ChoiceValue::Boolean(false));
 }
 
 /// Enabling a rule satisfies the guarantee of every group it belongs to:
@@ -948,6 +988,7 @@ fn an_enabled_rule_releases_every_group_it_belongs_to() {
     let prefix = [
         int(254),
         go(),
+        keep(),
         int(1),
         int(0),
         ChoiceValue::Boolean(false),
@@ -973,9 +1014,9 @@ fn an_enabled_rule_releases_every_group_it_belongs_to() {
     assert_eq!(sm.next_rule(&mut ntc, 0).unwrap(), Some(1));
     assert_eq!(sm.next_group(&mut ntc).unwrap(), Some(0));
     assert_eq!(sm.next_rule(&mut ntc, 0).unwrap(), Some(1));
-    assert_eq!(ntc.nodes.len(), 12);
-    assert!(!ntc.nodes[9].was_forced, "rule 0 was free to be disabled");
-    assert!(ntc.nodes[11].was_forced, "rule 1 is already decided");
+    assert_eq!(ntc.nodes.len(), 13);
+    assert!(!ntc.nodes[10].was_forced, "rule 0 was free to be disabled");
+    assert!(ntc.nodes[12].was_forced, "rule 1 is already decided");
 }
 
 #[test]
@@ -1036,7 +1077,7 @@ fn overrun_while_drawing_the_round_decision_propagates() {
 
 #[test]
 fn overrun_while_drawing_a_try_index_propagates() {
-    let mut ntc = replay(&[int(0), go()], 2);
+    let mut ntc = replay(&[int(0), go(), keep()], 2);
     let mut sm = machine(&mut ntc, 2);
     assert!(sm.next_group(&mut ntc).unwrap().is_some());
     assert!(matches!(
@@ -1047,7 +1088,7 @@ fn overrun_while_drawing_a_try_index_propagates() {
 
 #[test]
 fn overrun_while_drawing_a_group_index_propagates() {
-    let prefix = [int(254), go()];
+    let prefix = [int(254), go(), keep()];
     let mut ntc = replay(&prefix, 2);
     let mut sm = grouped_machine(&mut ntc, &[0, 1]);
     assert!(matches!(sm.next_group(&mut ntc), Err(EngineError::Overrun)));
@@ -1077,7 +1118,7 @@ fn overrun_while_recording_the_fallback_forced_index_propagates() {
 
 #[test]
 fn overrun_inside_is_enabled_leaves_the_span_open_until_freeze() {
-    let mut ntc = replay(&[int(254), go(), int(0)], 3);
+    let mut ntc = replay(&[int(254), go(), keep(), int(0)], 4);
     let mut sm = machine(&mut ntc, 2);
     assert!(sm.next_group(&mut ntc).unwrap().is_some());
     assert!(matches!(
@@ -1086,13 +1127,13 @@ fn overrun_inside_is_enabled_leaves_the_span_open_until_freeze() {
     ));
     assert_eq!(ntc.status(), Some(Status::EarlyStop));
     ntc.freeze();
-    assert_eq!(ntc.spans.len(), 1);
+    assert_eq!(ntc.spans.len(), 2);
     assert_eq!(
-        ntc.spans[0usize].label,
+        ntc.spans[1usize].label,
         crate::native::draws::LABEL_FEATURE_FLAG
     );
-    assert_eq!(ntc.spans[0usize].start, 3);
-    assert_eq!(ntc.spans[0usize].end, 3);
+    assert_eq!(ntc.spans[1usize].start, 4);
+    assert_eq!(ntc.spans[1usize].end, 4);
 }
 
 #[test]
@@ -1248,6 +1289,7 @@ fn rerandomizing_prefix() -> Vec<ChoiceValue> {
         int(0),
         int(0),
         go(),
+        keep(),
         go(),
         rerandomize(),
         ChoiceValue::Boolean(true),
@@ -1269,11 +1311,11 @@ fn a_round_can_rerandomize_the_concurrency_level_and_every_workers_flags() {
     assert!(sm.next_group(&mut ntc).unwrap().is_some());
     assert_eq!(
         ntc.nodes.len(),
-        8,
-        "the first round makes no re-randomize decision"
+        9,
+        "the first round makes a re-randomize decision too"
     );
     assert!(sm.next_group(&mut ntc).unwrap().is_some());
-    assert_eq!(ntc.nodes.len(), 14);
+    assert_eq!(ntc.nodes.len(), 15);
     assert_eq!(sm.concurrency(), 3);
     for worker in &sm.workers {
         assert_eq!(worker.flags.p_disabled, 254.0 / 255.0);
@@ -1282,7 +1324,7 @@ fn a_round_can_rerandomize_the_concurrency_level_and_every_workers_flags() {
     assert!(
         ntc.spans
             .iter()
-            .any(|span| span.label == crate::native::draws::LABEL_RERANDOMIZE && span.start == 9)
+            .any(|span| span.label == crate::native::draws::LABEL_RERANDOMIZE && span.start == 10)
     );
     assert_eq!(
         ntc.family().generation_parameters(),

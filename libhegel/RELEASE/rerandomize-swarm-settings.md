@@ -1,6 +1,6 @@
 RELEASE_TYPE: minor
 
-This release lets a long state-machine run explore more than one configuration. Until now a test case drew its value distribution, each worker's set of enabled rules, and its concurrency level once, at the start. A `#[hegel::main]` binary, which runs a single test case, kept that configuration for its whole life. At the start of each round after the first, a state machine now redraws all three with probability 1/50.
+This release lets a long state-machine run explore more than one configuration. Until now a test case drew its value distribution, each worker's set of enabled rules, and its concurrency level once, at the start. A `#[hegel::main]` binary, which runs a single test case, kept that configuration for its whole life. At the start of each round, a state machine now redraws all three with probability 1/50.
 
 To let the concurrency level change between rounds without starting or stopping threads, the meaning of the concurrency values in the C ABI changes:
 
