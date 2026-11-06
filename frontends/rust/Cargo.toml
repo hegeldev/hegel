@@ -104,10 +104,8 @@ parking_lot = "0.12"
 hegeltest-macros = { version = "=0.52.0", path = "macros" }
 # The native engine + C ABI ("libhegel"). hegeltest drives it through the
 # C ABI (the hegel_* extern "C" functions), exactly like other language
-# bindings. Optional: by default build.rs builds it as a shared library the
-# frontend loads at runtime, and only the `static-engine` feature links this
-# crate (lib name `hegel_c`) into the dependency graph.
-hegeltest-c = { version = "=0.50.0", path = "../../libhegel", default-features = false, optional = true }
+# bindings, linked in as an ordinary Rust dependency (lib name `hegel_c`).
+hegeltest-c = { version = "=0.50.0", path = "../../libhegel", default-features = false, features = ["std"] }
 # optional feature dependencies
 serde_json = { version = "1.0.61", optional = true }
 rand = { version = "0.10", optional = true }
@@ -147,10 +145,8 @@ jiff = ["dep:jiff"]
 serde_json = ["dep:serde_json"]
 # Enables the serde_json/raw_value feature. Enables generators for serde_json::value::RawValue.
 serde_json_raw_value = ["serde_json", "serde_json/raw_value"]
-# Links the engine into the binary as a normal Rust dependency instead of
-# loading the libhegel shared library at runtime. Self-contained binaries, at
-# the cost of exposing the engine's entire dependency tree to your build.
-static-engine = ["dep:hegeltest-c", "hegeltest-c/std"]
+# Deprecated no-op: the engine is always linked in as a Rust dependency now.
+static-engine = []
 
 
 [package.metadata.docs.rs]

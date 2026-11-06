@@ -60,9 +60,6 @@ check-format-nix:
 
 check-clippy:
     cargo clippy --workspace --all-features --all-targets -- -D warnings
-    # Without --all-features so the default mode's engine loader (compiled
-    # out under `static-engine`, which --all-features enables) is linted too.
-    cargo clippy --workspace --all-targets -- -D warnings
 
 check-nocov-style:
     scripts/check-nocov-style.py

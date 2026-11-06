@@ -38,9 +38,8 @@ struct Context {
 
 impl Context {
     fn new() -> Self {
-        // SAFETY: hegel_context_new never returns null.
         let context = Context {
-            raw: unsafe { hegel_c::hegel_context_new() },
+            raw: hegel_c::hegel_context_new(),
         };
         UNICODE_VERSION_SET.call_once(|| {
             let version = unicode_version();

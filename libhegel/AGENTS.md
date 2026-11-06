@@ -8,7 +8,7 @@ The native engine behind every Hegel frontend: generation, shrinking, the exampl
 just libhegel::check          # lint + tests
 just libhegel::test           # cargo test -p hegeltest-c
 just libhegel::c-test         # smoke tests (dlopen) + example C programs
-just libhegel::header         # regenerate include/hegel.h and the Rust frontend's src/ffi/sys/fns.rs
+just libhegel::header         # regenerate include/hegel.h
 just libhegel::miri           # C-ABI lifecycle tests under Miri (nightly + miri component)
 just libhegel::check-lark     # parse engine-generated strings with Lark itself (needs uv)
 just libhegel::check-parse    # compare the engine's grammar parser with Lark's (needs uv)
@@ -19,7 +19,7 @@ cargo test -p hegeltest-c test_name
 
 ## Gotchas
 
-- `include/hegel.h` and `frontends/rust/src/ffi/sys/fns.rs` are generated from `src/lib.rs`; never edit them by hand, run `just libhegel::header` after changing an exported `hegel_*` function.
+- `include/hegel.h` is generated from `src/lib.rs`; never edit it by hand, run `just libhegel::header` after changing an exported `hegel_*` function.
 - Every frontend talks to the engine only through the `hegel_*` functions; a C ABI change is a libhegel release (a `RELEASE/<slug>.md` here) and usually needs matching changes in `frontends/`.
 - Never panic across the FFI boundary: `hegel_internal_assert!` returns an `InternalError`, `invalid_argument!` / `EngineError::InvalidArgument` rejects bad arguments. `src/control.rs` must not contain a `panic!`.
 - Nondeterministic-test handling is documented in `docs/nondeterminism.md`; read it before touching `counterexample.rs`, `graph*.rs`, `nd/`, or `core/replay.rs`.

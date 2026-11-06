@@ -448,12 +448,9 @@ def _ensure_smoke_cdylib(target_dir: Path) -> None:
 
     Build it into cargo's target dir (separate from its `llvm-cov-target`
     subtree, so no instrumentation-flag thrash) and export
-    `HEGEL_C_LIB_DIR` so the smoke test loads it. The default-features
-    hegeltest phase rides on the same export: hegeltest's build.rs honours
-    `HEGEL_C_LIB_DIR` instead of nested-building the engine, and its loader
-    dlopens this cdylib. A non-instrumented cdylib is fine in both cases: the
-    engine's line coverage comes from the in-process tests (hegeltest driving
-    the C ABI under `static-engine` plus libhegel's embedded/`c_abi_inprocess`
+    `HEGEL_C_LIB_DIR` so the smoke test loads it. A non-instrumented cdylib
+    is fine: the engine's line coverage comes from the in-process tests
+    (hegeltest driving the C ABI plus libhegel's embedded/`c_abi_inprocess`
     tests), not from dlopening the library — the dlopen-based tests only
     exercise the FFI boundary behaviourally.
     """
@@ -530,14 +527,6 @@ def run_coverage() -> Path:
     collisions. Mangled functions are unaffected either way (their record
     names are unique per compilation).
 
-    A third pass runs hegeltest with default features, where the engine is
-    the dlopened shared library rather than a linked rlib. The workspace pass
-    enables `static-engine` (a public feature, so `public_features()` picks
-    it up), which compiles out the runtime loader in `frontends/rust/src/ffi/sys/`; this
-    pass is what covers it. The dlopened cdylib is the non-instrumented one
-    `_ensure_smoke_cdylib` built, so this pass adds only frontend lines to
-    the union merge; the engine's lines come from the other two passes.
-
     hegel-macros is excluded from the report. It's a proc-macro crate whose
     code runs at the *compile* time of the test crates, which `cargo llvm-cov`
     does not measure as runtime coverage — a workspace pass only adds its lines
@@ -553,7 +542,6 @@ def run_coverage() -> Path:
     lcov_path = Path("lcov.info")
     raw_lcov = Path("lcov-all.info")
     hegel_c_lib_lcov = Path("lcov-libhegel-lib.info")
-    ffi_lcov = Path("lcov-hegeltest-ffi.info")
     target_dir = cargo_target_dir()
 
     subprocess.run(["cargo", "llvm-cov", "clean"], check=True)
@@ -585,15 +573,8 @@ def run_coverage() -> Path:
         target_dir=target_dir,
     )
 
-    _run_lcov_phase(
-        cargo_args=["-p", "hegeltest", "--lib"],
-        output=ffi_lcov,
-        label="hegeltest default features, shared-library engine",
-        target_dir=target_dir,
-    )
-
     print("  Merging LCOV output...")
-    _merge_lcov([raw_lcov, hegel_c_lib_lcov, ffi_lcov], lcov_path)
+    _merge_lcov([raw_lcov, hegel_c_lib_lcov], lcov_path)
     if not lcov_path.exists():
         print("ERROR: lcov.info was not generated", file=sys.stderr)
         sys.exit(1)
