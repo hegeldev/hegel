@@ -10,6 +10,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -17,6 +19,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
@@ -26,6 +29,8 @@ class ConcurrentStatefulTest {
             Pattern.compile(" *\\[worker [0-9]+ \\+[0-9]+\\.[0-9]{3}ms\\] Rule: boom \\{");
     private static final Pattern WORKER_DRAW_LINE =
             Pattern.compile(" *\\[worker [0-9]+ \\+[0-9]+\\.[0-9]{3}ms\\] *var x(_[0-9]+)? = -?[0-9]+;");
+    private static final Pattern ROUND_HEADER =
+            Pattern.compile("---------------- Round [0-9]+: group \"([^\"]+)\" ----------------");
 
     private static Settings settings() {
         return new Settings().database(Database.disabled());
@@ -70,17 +75,17 @@ class ConcurrentStatefulTest {
         private final AtomicInteger letters = new AtomicInteger();
         private final AtomicInteger numbers = new AtomicInteger();
 
-        @Rule(group = "letters")
+        @Rule(groups = "letters")
         void a(TestCase tc) {
             letters.incrementAndGet();
         }
 
-        @Rule(group = "letters", weight = 2)
+        @Rule(groups = "letters", weight = 2)
         void b(TestCase tc) {
             letters.incrementAndGet();
         }
 
-        @Rule(group = "numbers")
+        @Rule(groups = "numbers")
         void one(TestCase tc) {
             tc.assume(numbers.get() != 3);
             numbers.incrementAndGet();
@@ -182,17 +187,17 @@ class ConcurrentStatefulTest {
             active[group].decrementAndGet();
         }
 
-        @Rule(group = "a")
+        @Rule(groups = "a")
         void a1(TestCase tc) {
             run(0);
         }
 
-        @Rule(group = "a")
+        @Rule(groups = "a")
         void a2(TestCase tc) {
             run(0);
         }
 
-        @Rule(group = "b")
+        @Rule(groups = "b")
         void b(TestCase tc) {
             run(1);
         }
@@ -219,6 +224,70 @@ class ConcurrentStatefulTest {
                 .throwIfFailed();
         assertFalse(overlap[0], "rules from two groups ran at the same time");
         assertEquals(Set.of(0, 1, 2), groupsSeen);
+    }
+
+    /** A two-tier store: writes and flushes have a group each, and a read belongs to both. */
+    static final class TieredStore {
+        private final AtomicInteger writes = new AtomicInteger();
+        private final AtomicInteger flushes = new AtomicInteger();
+
+        @Rule(groups = "write")
+        void write(TestCase tc) {
+            writes.incrementAndGet();
+        }
+
+        @Rule(groups = "flush")
+        void flush(TestCase tc) {
+            flushes.incrementAndGet();
+        }
+
+        @Rule(groups = {"write", "flush"})
+        void read(TestCase tc) {
+            assertTrue(writes.get() >= 0 && flushes.get() >= 0);
+        }
+    }
+
+    @Test
+    void aRuleInSeveralGroupsRunsInTheRoundsOfEach() {
+        List<String> notes = new ArrayList<>();
+        Reporter collecting = new Reporter() {
+            @Override
+            public void caseOutput(String line, boolean finalReplay) {
+                notes.add(line);
+            }
+        };
+        Hegel.run(
+                        tc -> Stateful.run(new TieredStore(), tc, exactly(2).stepCount(40)),
+                        settings().testCases(20).verbosity(Verbosity.VERBOSE),
+                        collecting)
+                .throwIfFailed();
+        String group = null;
+        Set<String> readUnder = new HashSet<>();
+        for (String line : notes) {
+            Matcher header = ROUND_HEADER.matcher(line);
+            if (header.matches()) {
+                group = header.group(1);
+            } else if (line.endsWith("Rule: read {")) {
+                readUnder.add(group);
+            } else if (line.endsWith("Rule: write {")) {
+                assertEquals("write", group, line);
+            } else if (line.endsWith("Rule: flush {")) {
+                assertEquals("flush", group, line);
+            }
+        }
+        assertEquals(Set.of("write", "flush"), readUnder, notes.toString());
+    }
+
+    static final class RepeatedGroup {
+        @Rule(groups = {"g", "g"})
+        void twice(TestCase tc) {}
+    }
+
+    @HegelTest(database = Database.DISABLED, testCases = 1)
+    void aRuleRepeatingAGroupIsRejectedByTheEngine(TestCase tc) {
+        IllegalArgumentException e =
+                assertThrows(IllegalArgumentException.class, () -> Stateful.run(new RepeatedGroup(), tc, exactly(2)));
+        assertEquals("a rule's groups must be distinct, but rule 0 (twice) lists group 0 twice", e.getMessage());
     }
 
     /** A rule that always fails, after a labelled draw so the report has a worker-stamped draw line. */
@@ -298,7 +367,7 @@ class ConcurrentStatefulTest {
             keys = new ConcurrentPool<>(tc);
         }
 
-        @Rule(group = "ops")
+        @Rule(groups = "ops")
         void register(TestCase tc) {
             int key = tc.draw(integers().min(0).max(3));
             if (store.putIfAbsent(key, 0) == null) {
@@ -306,7 +375,7 @@ class ConcurrentStatefulTest {
             }
         }
 
-        @Rule(group = "ops", weight = 3)
+        @Rule(groups = "ops", weight = 3)
         void increment(TestCase tc) {
             int key = tc.draw(keys.reusable());
             int value = store.get(key);
@@ -315,7 +384,7 @@ class ConcurrentStatefulTest {
             increments.incrementAndGet();
         }
 
-        @Rule(group = "audit")
+        @Rule(groups = "audit")
         void audit(TestCase tc) {
             tc.note("store holds " + store.size() + " keys");
         }

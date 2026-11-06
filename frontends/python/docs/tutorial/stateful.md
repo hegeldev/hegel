@@ -161,6 +161,7 @@ def test_stack(tc):
 Setting the class attribute `max_concurrency` above 1 runs the machine's rules
 from several threads at once, against the same instance, to find bugs that
 only appear under concurrent use. Hegel chooses how many threads to use, and
-runs the rules in rounds; a rule's `group` controls which rules may run in the
-same round. Share values between threads with a {class}`hegel.ConcurrentPool`
+runs the rules in rounds; a rule's `groups` control which rules may run in the
+same round, and a rule in several groups runs in the rounds of each of them.
+Share values between threads with a {class}`hegel.ConcurrentPool`
 rather than a `Pool`. {doc}`../reference/stateful` has the details.

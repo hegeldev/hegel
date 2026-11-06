@@ -1,0 +1,272 @@
+package hegel
+
+import (
+	"hegel.dev/go/hegel/internal/libhegel"
+)
+
+// --- Generator interface ---
+
+// Generator is the core abstraction for value generation in Hegel.
+//
+// It is a sealed interface — only types within this package can implement it.
+type Generator[T any] interface {
+	// draw produces a value from the Hegel engine using the given test case.
+	// Unexported to seal the interface to this package.
+	draw(tc TestCase) (T, error)
+}
+
+// TestCase is the test context for a Hegel property test.
+//
+// It is passed to [Run] bodies and [Composite] callbacks directly, and is
+// embedded in the *[T] passed to [Test] bodies, so generator code written
+// against TestCase works under either entry point.
+type TestCase interface {
+	// Assume rejects the current test case if condition is false.
+	Assume(condition bool)
+
+	// Note prints message during the final (replay) test case. Output is routed
+	// to t.Log for [Test], or stdout for [Run].
+	Note(message string)
+
+	// Event records an occurrence under label for optional end-of-run statistics.
+	Event(label string)
+
+	// EventValue records a finite numeric observation under label for optional end-of-run statistics.
+	EventValue(label string, value float64)
+
+	// Target sends a target value to guide test generation.
+	Target(value float64, label string)
+
+	// Errorf logs the formatted message via Note and  aborts the test case.
+	//
+	// This is different than [testing.T.Errorf] which continues running the test.
+	Errorf(format string, args ...any)
+
+	// Fail behaves like [FailNow].
+	//
+	// This is different than [testing.T.Fail] which continues running the test.
+	Fail()
+
+	// FailNow marks the test case as failed and stops the test body.
+	FailNow()
+
+	// Log routes the message through Note (only emitted on final replay).
+	Log(args ...any)
+
+	// log writes framework-generated output without user call-site attribution.
+	log(format string, args ...any)
+
+	// setWorker attributes output to a concurrent worker.
+	setWorker(int64) error
+
+	// Abort the current test case and update status.
+	//
+	abort(err error)
+
+	// engine returns the libhegel context and test-case handle backing this
+	// test case, so generators can drive the typed primitive draws directly.
+	engine() (*libhegel.Context, *libhegel.TestCase)
+
+	// clone returns a test case with an independent engine stream and the same
+	// execution policy as this one. Concurrent state-machine workers use one
+	// clone apiece rather than sharing a native handle between goroutines.
+	clone() (TestCase, error)
+	free()
+
+	startSpan(spanLabel libhegel.Label) error
+
+	// stopSpan ends the current generation span. discard=true tells the
+	// engine the entire span's choices should be reverted.
+	stopSpan(discard bool) error
+
+	// newCollectionCmd allocates a collection on the engine, returning its id.
+	// maxSize=nil means unbounded.
+	newCollection(minSize int, maxSize *int) (*collection, error)
+
+	// stateMachineNew registers an engine-owned state machine with the named
+	// rules, their parallel group IDs, and the invariants, returning its id.
+	// The engine owns rule selection (including swarm testing).
+	stateMachineNew(ruleNames []string, ruleGroups []int64, invariantNames []string, invariantAlwaysCheck []bool, maxConcurrency, stepCount int) (*libhegel.StateMachine, int64, error)
+
+	// stateMachineNextGroup starts the machine's next round, returning the
+	// current concurrency group's index, or [libhegel.StateMachineDone] when
+	// the whole state machine is done. Called at every join point, including
+	// before the first rule is requested.
+	stateMachineNextGroup(machine *libhegel.StateMachine) (libhegel.StateMachineGroup, error)
+
+	// stateMachineNextRule draws the index of the next rule to run, in
+	// [0, len(rules)), or [libhegel.StateMachineDone] when the round's rule
+	// stream is exhausted. Returns an [libhegel.E_STOP_TEST] error when the
+	// engine's choice budget is exhausted.
+	stateMachineNextRule(machine *libhegel.StateMachine, worker int64) (int64, error)
+
+	// stateMachineRuleRejected reports that the worker's outstanding rule was
+	// rejected by Assume and should not consume its rule budget.
+	stateMachineRuleRejected(machine *libhegel.StateMachine, worker int64) error
+
+	// stateMachineShouldCheckInvariant reports whether the indexed invariant
+	// should run at the current join point.
+	stateMachineShouldCheckInvariant(machine *libhegel.StateMachine, invariant int64) (bool, error)
+
+	// reportDraw emits one draw-report line for value through the
+	// implementation's note channel, or no-ops when notes are suppressed.
+	// skip is the number of stack frames to skip when resolving the source
+	// position of the originating [Draw] call.
+	reportDraw(skip int, value any)
+
+	// inSpan reports whether the test case is inside one or more
+	// generation spans.
+	inSpan() bool
+
+	// invoke executes a callback with an independent abort boundary while
+	// retaining this test case's underlying engine stream.
+	invoke(testBody) error
+}
+
+// Draw produces a value from a Generator using the given TestCase context.
+func Draw[T any](tc TestCase, g Generator[T]) T {
+	// Mark this frame as a helper so t.Log file:line decoration walks past
+	// it to the user's call site. testCase has no-op Helper; *T inherits
+	// from *testing.T.
+	if h, ok := tc.(interface{ Helper() }); ok {
+		h.Helper()
+	}
+	v, err := draw(tc, g)
+	if err != nil {
+		tc.abort(err)
+	}
+	// Nested draws are reported as part of the parent's value.
+	if !tc.inSpan() {
+		tc.reportDraw(1, v)
+	}
+	return v
+}
+
+func draw[T any](tc TestCase, g Generator[T]) (T, error) {
+	return withSpan(tc, labelFor(g), func() (T, error) {
+		return g.draw(tc)
+	})
+}
+
+// --- mappedGenerator ---
+
+// mappedGenerator wraps a Generator[T] and transforms its output to U.
+type mappedGenerator[T, U any] struct {
+	inner Generator[T]
+	fn    func(T) U
+}
+
+//lint:ignore U1000 satisfies Generator interface; staticcheck misses generic dispatch
+func (g *mappedGenerator[T, U]) draw(tc TestCase) (U, error) {
+	var zero U
+	v, err := draw(tc, g.inner)
+	if err != nil {
+		return zero, err
+	}
+	return g.fn(v), nil
+}
+
+// --- filteredGenerator ---
+
+// filteredGenerator wraps a source generator and a predicate, retrying up to
+// maxFilterAttempts times before rejecting the test case.
+type filteredGenerator[T any] struct {
+	source    Generator[T]
+	predicate func(T) bool
+}
+
+//lint:ignore U1000 used by filteredGenerator.draw, which is reached via Generator interface
+const maxFilterAttempts = 3
+
+// draw tries up to maxFilterAttempts times to produce a value satisfying predicate.
+//
+//lint:ignore U1000 satisfies Generator interface; staticcheck misses generic dispatch
+func (g *filteredGenerator[T]) draw(tc TestCase) (T, error) {
+	var zero T
+	for range maxFilterAttempts {
+		if err := tc.startSpan(labelFromName("filter")); err != nil {
+			return zero, err
+		}
+		value, err := draw(tc, g.source)
+		if err != nil {
+			return zero, err
+		}
+		if g.predicate(value) {
+			if err := tc.stopSpan(false); err != nil { // coverage-ignore
+				return zero, err
+			}
+			return value, nil
+		}
+		if err := tc.stopSpan(true); err != nil { // coverage-ignore
+			return zero, err
+		}
+	}
+	return zero, libhegel.E_ASSUME
+}
+
+// --- flatMappedGenerator ---
+
+// flatMappedGenerator generates a value from source, passes it to f, and then
+// generates from the generator returned by f.
+type flatMappedGenerator[T, U any] struct {
+	source Generator[T]
+	f      func(T) Generator[U]
+}
+
+//lint:ignore U1000 satisfies Generator interface; staticcheck misses generic dispatch
+func (g *flatMappedGenerator[T, U]) draw(tc TestCase) (U, error) {
+	var zero U
+	first, err := draw(tc, g.source)
+	if err != nil {
+		return zero, err
+	}
+	return draw(tc, g.f(first))
+}
+
+// --- Free function combinators ---
+
+// Map returns a new Generator that applies fn to each value from g.
+func Map[T, U any](g Generator[T], fn func(T) U) Generator[U] {
+	return &mappedGenerator[T, U]{inner: g, fn: fn}
+}
+
+// FlatMap returns a Generator that generates a value from g, passes it to f,
+// and generates from the returned Generator.
+func FlatMap[T, U any](g Generator[T], f func(T) Generator[U]) Generator[U] {
+	return &flatMappedGenerator[T, U]{source: g, f: f}
+}
+
+// Filter returns a Generator that only produces values from g that satisfy pred.
+//
+// It tries up to 3 times per test case; if all fail, the test case is rejected.
+func Filter[T any](g Generator[T], pred func(T) bool) Generator[T] {
+	return &filteredGenerator[T]{source: g, predicate: pred}
+}
+
+// --- Span helpers ---
+
+// withSpan brackets body in a span that always commits (discard=false).
+//
+// On body error the span is left open: every error path here is a sentinel
+// that aborts the test case, and the runner
+// tears down engine state regardless.
+//
+// Use the inline (*testCase).startSpan/stopSpan pair when the discard
+// decision depends on the body's outcome (see filteredGenerator.draw).
+func withSpan[T any](tc TestCase, spanLabel libhegel.Label, body func() (T, error)) (T, error) {
+	if h, ok := tc.(interface{ Helper() }); ok {
+		h.Helper()
+	}
+	var zero T
+	if err := tc.startSpan(spanLabel); err != nil {
+		return zero, err
+	}
+	v, err := body()
+	if err != nil {
+		return zero, err
+	}
+	if err := tc.stopSpan(false); err != nil { // coverage-ignore
+		return zero, err
+	}
+	return v, nil
+}

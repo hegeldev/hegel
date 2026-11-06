@@ -26,11 +26,11 @@ Run `git diff origin/main...HEAD` and read through it. Look for:
 - **Network calls in tests**: can any test that hits the network use `file://` URLs or local fixtures instead? Keep at most one integration test that verifies the real network path works.
 - **Hardcoded paths**: `/tmp/foo` in tests should be `tempfile::tempdir()` for isolation and cleanup.
 - **Missing error context**: error messages should help the user fix the problem (e.g., include "Install X manually: <url>").
-- **New `// nocov` annotations**: each one needs explicit human permission. Your first instinct should be to write a test or refactor for testability instead.
+- **New `// nocov` annotations** (`// coverage-ignore` in the Go frontend): each one needs explicit human permission. Your first instinct should be to write a test or refactor for testability instead.
 
 ## Coverage check
 
-If `cargo-llvm-cov` is available, run `just check-coverage` and review the output. If new code is uncovered, address it before the PR — don't rely on CI to catch it. See the `coverage` skill for how to approach coverage gaps.
+If `cargo-llvm-cov` and `cargo-nextest` are available, run `just check-coverage` and review the output; for the Go frontend, `just go::check-test`. If new code is uncovered, address it before the PR — don't rely on CI to catch it. See the `coverage` skill (`go-coverage` for Go) for how to approach coverage gaps.
 
 ## Final gut check
 

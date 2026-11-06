@@ -195,6 +195,73 @@ namespace hegel::impl {
 
     // GCOVR_EXCL_STOP
 
+    void settings_set_print_blob(hegel_context_t* ctx, hegel_settings_t* s,
+                                 bool yes) {
+        check_rc(ctx, hegel_settings_set_print_blob(ctx, s, yes));
+    }
+
+    hegel_verbosity_t settings_get_verbosity(hegel_context_t* ctx,
+                                             const hegel_settings_t* s) {
+        hegel_verbosity_t verbosity = HEGEL_VERBOSITY_NORMAL;
+        check_rc(ctx, hegel_settings_get_verbosity(ctx, s, &verbosity));
+        return verbosity;
+    }
+
+    bool settings_get_print_blob(hegel_context_t* ctx,
+                                 const hegel_settings_t* s) {
+        bool yes = true;
+        check_rc(ctx, hegel_settings_get_print_blob(ctx, s, &yes));
+        return yes;
+    }
+
+    uint32_t settings_get_suppress_health_check(hegel_context_t* ctx,
+                                                const hegel_settings_t* s) {
+        uint32_t mask = 0;
+        check_rc(ctx, hegel_settings_get_suppress_health_check(ctx, s, &mask));
+        return mask;
+    }
+
+    namespace {
+        // The diagnostic for a failed call, without the ABI function name
+        // that the engine puts first.
+        std::string user_error(hegel_context_t* ctx) {
+            std::string message = last_error(ctx);
+            if (message.rfind("hegel_", 0) == 0) {
+                size_t colon = message.find(": ");
+                if (colon != std::string::npos) {
+                    message.erase(0, colon + 2);
+                }
+            }
+            return message;
+        }
+    } // namespace
+
+    std::optional<std::string>
+    settings_set_from_string(hegel_context_t* ctx, hegel_settings_t* s,
+                             std::string_view key, std::string_view value) {
+        if (hegel_settings_set_from_string(ctx, s, borrow(key),
+                                           borrow(value)) != HEGEL_OK) {
+            return user_error(ctx);
+        }
+        return std::nullopt;
+    }
+
+    std::optional<std::string> set_default_profile(hegel_context_t* ctx,
+                                                   std::string_view name) {
+        if (hegel_set_default_profile(ctx, borrow(name)) != HEGEL_OK) {
+            return user_error(ctx);
+        }
+        hegel_settings_t* s = nullptr;
+        if (hegel_settings_new_for_profile(ctx, borrow("default"), &s) !=
+            HEGEL_OK) {
+            std::string message = user_error(ctx);
+            check_rc(ctx, hegel_set_default_profile(ctx, borrow("")));
+            return message;
+        }
+        hegel_settings_free(ctx, s);
+        return std::nullopt;
+    }
+
     void settings_set_stop_on_first_failure(hegel_context_t* ctx,
                                             hegel_settings_t* s, bool yes) {
         check_rc(ctx, hegel_settings_set_stop_on_first_failure(ctx, s, yes));
@@ -745,37 +812,46 @@ namespace hegel::internal {
 
     StateMachineHandle::StateMachineHandle(
         const TestCase& tc, const std::vector<std::string>& rule_names,
-        const std::vector<int64_t>& rule_groups,
+        const std::vector<std::vector<int64_t>>& rule_groups,
         const std::vector<std::string>& invariant_names,
         int64_t min_concurrency, int64_t max_concurrency) {
         impl::DrawScope scope(tc);
 
-        auto to_strings = [](const std::vector<std::string>& names) {
-            std::vector<hegel_string_t> strings;
-            strings.reserve(names.size());
-            for (const std::string& name : names) {
-                strings.push_back(hegel_string_t{name.data(), name.size()});
+        // The step budget is Settings::stateful_step_count, carried on the
+        // test case.
+        scope.raise_for_rc(
+            hegel_new_state_machine(scope.ctx, scope.tc, min_concurrency,
+                                    max_concurrency,
+                                    tc.data()->stateful_step_count, &handle_),
+            "hegel_new_state_machine");
+        try {
+            // Every rule has the same weight, and every invariant is
+            // sampled at the engine's default probability; the public API
+            // exposes neither knob. The engine validates each rule's group
+            // list.
+            for (std::size_t i = 0; i < rule_names.size(); ++i) {
+                const std::string& name = rule_names[i];
+                const std::vector<int64_t>& groups = rule_groups[i];
+                scope.raise_for_rc(hegel_state_machine_add_rule(
+                                       scope.ctx, scope.tc, handle_,
+                                       hegel_string_t{name.data(), name.size()},
+                                       1.0, groups.data(), groups.size()),
+                                   "hegel_state_machine_add_rule");
             }
-            return strings;
-        };
-
-        std::vector<hegel_string_t> rule_name_strings = to_strings(rule_names);
-        std::vector<hegel_string_t> invariant_name_strings =
-            to_strings(invariant_names);
-
-        // A NULL `rule_weights` array gives every rule the same weight and a
-        // NULL `invariant_always_check` array leaves every invariant sampled
-        // at its default probability; the public API exposes neither. The
-        // step budget is Settings::stateful_step_count, carried on the test
-        // case.
-        scope.raise_for_rc(hegel_new_state_machine(
-                               scope.ctx, scope.tc, rule_name_strings.data(),
-                               rule_groups.data(), nullptr, rule_names.size(),
-                               invariant_name_strings.data(), nullptr,
-                               invariant_names.size(), min_concurrency,
-                               max_concurrency, tc.data()->stateful_step_count,
-                               &handle_, &concurrency_),
-                           "hegel_new_state_machine");
+            for (const std::string& name : invariant_names) {
+                scope.raise_for_rc(hegel_state_machine_add_invariant(
+                                       scope.ctx, scope.tc, handle_,
+                                       hegel_string_t{name.data(), name.size()},
+                                       false),
+                                   "hegel_state_machine_add_invariant");
+            }
+            scope.raise_for_rc(hegel_state_machine_start(
+                                   scope.ctx, scope.tc, handle_, &concurrency_),
+                               "hegel_state_machine_start");
+        } catch (...) {
+            hegel_state_machine_free(scope.ctx, handle_);
+            throw;
+        }
     }
 
     StateMachineHandle::~StateMachineHandle() {

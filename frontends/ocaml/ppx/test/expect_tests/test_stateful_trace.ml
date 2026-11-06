@@ -204,7 +204,7 @@ module%hegel_concurrent_state_machine Concurrent_counter = struct
   type state = int Atomic.t
 
   let sexp_of_state state = Sexplib0.Sexp.Atom (Int.to_string (Atomic.get state))
-  let increment _tc () state = Atomic.incr state [@@rule { group = "writes" }]
+  let increment _tc () state = Atomic.incr state [@@rule { groups = [ "writes" ] }]
 
   let stays_zero _tc state = if Atomic.get state <> 0 then failwith "invariant boom"
   [@@invariant { always_check = true }]
