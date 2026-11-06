@@ -69,8 +69,9 @@ TEST(GTestMacros, FailedExpectFailsTheProperty) {
             EXPECT_LE(x, 50) << "x was " << x;
         },
         hegel::Settings{.test_cases = 200});
-    EXPECT_TRUE(contains(out.report, "Falsified after")) << out.report;
-    EXPECT_TRUE(contains(out.report, "auto x = 51;")) << out.report;
+    EXPECT_TRUE(contains(out.report, "To reproduce this failure"))
+        << out.report;
+    EXPECT_TRUE(contains(out.report, "auto x_1 = 51;")) << out.report;
     EXPECT_TRUE(contains(out.rethrown, "test_gtest_macros.cpp:"))
         << out.rethrown;
     EXPECT_TRUE(contains(out.rethrown, "x was 51")) << out.rethrown;
@@ -88,7 +89,7 @@ TEST(GTestMacros, FailedAssertEndsTheBodyAndFailsTheCase) {
         },
         hegel::Settings{.test_cases = 50});
     EXPECT_FALSE(reached_end);
-    EXPECT_TRUE(contains(out.report, "auto x = 0;")) << out.report;
+    EXPECT_TRUE(contains(out.report, "auto x_1 = 0;")) << out.report;
 }
 
 // A case that fails several EXPECT_* raises all of them together, since
@@ -133,9 +134,11 @@ TEST(GTestMacros, AssertionsOnDifferentLinesAreDistinctBugs) {
             ASSERT_EQ(x % 5, 0) << "not a multiple of five";
         },
         hegel::Settings{.test_cases = 300, .report_multiple_failures = true});
-    EXPECT_TRUE(contains(out.report, "Failure 1 of 2")) << out.report;
-    EXPECT_TRUE(contains(out.report, "odd")) << out.report;
-    EXPECT_TRUE(contains(out.report, "not a multiple of five")) << out.report;
+    EXPECT_TRUE(contains(out.report, "failed with 2 distinct failures"))
+        << out.report;
+    EXPECT_TRUE(contains(out.rethrown, "odd")) << out.rethrown;
+    EXPECT_TRUE(contains(out.rethrown, "not a multiple of five"))
+        << out.rethrown;
 }
 
 // An origin holds where an assertion is, so one assertion that fails on many
@@ -147,7 +150,7 @@ TEST(GTestMacros, OneAssertionIsOneBugAcrossValues) {
             ASSERT_LT(x, 60) << "too big: " << x;
         },
         hegel::Settings{.test_cases = 300, .report_multiple_failures = true});
-    EXPECT_FALSE(contains(out.report, "Failure 1 of")) << out.report;
+    EXPECT_FALSE(contains(out.report, "distinct failures")) << out.report;
 }
 
 // GoogleTest reports a failure with no source file as one with an empty file
@@ -178,7 +181,8 @@ TEST(GTestMacros, FailingBothAssertionsIsAThirdBug) {
             EXPECT_LT(x, 50) << "too big";
         },
         hegel::Settings{.test_cases = 300, .report_multiple_failures = true});
-    EXPECT_TRUE(contains(out.report, "Failure 1 of 3")) << out.report;
+    EXPECT_TRUE(contains(out.report, "failed with 3 distinct failures"))
+        << out.report;
 }
 
 // A body that throws keeps its own exception, which the report names. It
@@ -192,7 +196,7 @@ TEST(GTestMacros, AThrownExceptionWinsOverALaterAssertion) {
         },
         hegel::Settings{.test_cases = 5});
     EXPECT_EQ(out.rethrown, "thrown first");
-    EXPECT_TRUE(contains(out.report, "std::runtime_error")) << out.report;
+    EXPECT_TRUE(contains(out.report, "auto x_1 = 0;")) << out.report;
 }
 
 // A property that holds raises nothing. SUCCEED() records a result too, and
@@ -208,7 +212,7 @@ TEST(GTestMacros, PassingAssertionsRaiseNothing) {
         hegel::Settings{.test_cases = 50});
     EXPECT_EQ(out.failures, 0);
     EXPECT_EQ(out.rethrown, "<no exception>");
-    EXPECT_FALSE(contains(out.report, "Falsified")) << out.report;
+    EXPECT_EQ(out.report, "");
 }
 
 namespace {
