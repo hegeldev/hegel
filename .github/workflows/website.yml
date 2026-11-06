@@ -1,10 +1,29 @@
 # CI for hegel.dev (the Astro/Starlight site in website/). Called from ci.yml
-# when the site or the shared workspace changed. Vercel deploys the site
-# itself; this only checks that it builds.
+# when the site or the shared workspace changed. `build` checks that the site
+# builds, on every event and without secrets. `deploy` ships it to Vercel
+# through the Vercel CLI: to production on a push to main that changed
+# website/, and as a preview for a pull request from this repository.
+#
+# Vercel's GitHub app is deliberately not connected to the repository. With
+# it connected, a pull request from a fork got a failed "Authorization
+# required to deploy" status that no setting could turn into a skip, and
+# turning off its fork protection would have exposed any secret the project
+# gained later to fork builds. Deploying from here instead means a fork PR
+# (to which GitHub gives no secrets) just skips the deploy job, and the only
+# way to reach production is a commit on main.
 name: website
 
 on:
   workflow_call:
+    inputs:
+      production:
+        description: Deploy the site to production (a push to main that changed website/).
+        type: boolean
+        default: false
+    secrets:
+      VERCEL_TOKEN:
+        description: A Vercel token for the hegeldev team. Absent on a pull request from a fork.
+        required: false
 
 permissions: {}
 
@@ -29,3 +48,44 @@ jobs:
         run: just website::setup
       - name: Build the site
         run: just website::build
+
+  # `vercel build` runs the same build as `build` above, but from the repo
+  # root through the Vercel project's settings (root directory website/, Node
+  # 24), so that vercel.json's cleanUrls, trailingSlash and the redirects in
+  # astro.config.mjs end up in the build output exactly as the GitHub app
+  # produced them. `vercel deploy --prebuilt` then uploads that output;
+  # nothing is built on Vercel.
+  deploy:
+    name: deploy
+    needs: build
+    if: ${{ github.repository == 'hegeldev/hegel' && (inputs.production || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      VERCEL_ORG_ID: team_roowSpGG7VTwCPwu4lRJCz40
+      VERCEL_PROJECT_ID: prj_hTKEaqO46Wuit4ihVHcOpfb7a6at
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      ENVIRONMENT: ${{ inputs.production && 'production' || 'preview' }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          lfs: true
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "24"
+      - name: Install the Vercel CLI
+        run: npm install --global vercel@65.12.1
+      - name: Pull the Vercel project settings
+        run: vercel pull --yes --environment="$ENVIRONMENT" --token="$VERCEL_TOKEN"
+      - name: Build and deploy the site
+        run: |
+          flags=(--yes --token="$VERCEL_TOKEN")
+          if [ "$ENVIRONMENT" = production ]; then
+            flags+=(--prod)
+          fi
+          vercel build "${flags[@]}"
+          url="$(vercel deploy --prebuilt "${flags[@]}")"
+          echo "Deployed to $url"
+          echo "Deployed the site ($ENVIRONMENT) to $url" >> "$GITHUB_STEP_SUMMARY"

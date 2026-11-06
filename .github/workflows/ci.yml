@@ -49,6 +49,7 @@ jobs:
       java: ${{ (github.event_name == 'push' && steps.code.outputs.code == 'true') || steps.filter.outputs.java == 'true' }}
       ocaml: ${{ (github.event_name == 'push' && steps.code.outputs.code == 'true') || steps.filter.outputs.ocaml == 'true' }}
       website: ${{ github.event_name == 'push' || steps.filter.outputs.website == 'true' }}
+      site: ${{ steps.scope.outputs.site == 'true' }}
       code: ${{ steps.code.outputs.code == 'true' }}
     steps:
       # Outside a pull request the filter diffs with git, so it needs a
@@ -253,6 +254,8 @@ jobs:
       contents: read
     uses: ./.github/workflows/frontend-ocaml.yml
 
+  # Builds the site, and deploys it: to production when a push to main
+  # changed website/, as a preview for a pull request from this repository.
   website:
     name: website
     needs: changes
@@ -260,6 +263,10 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/website.yml
+    with:
+      production: ${{ github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.changes.outputs.site == 'true' }}
+    secrets:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
 
   # Test with the minimal versions of every dependency in the workspace.
   test-minimal-versions:

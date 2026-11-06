@@ -42,3 +42,6 @@ resources
 !.agents/skills/typescript-ffi/
 
 docs/superpowers
+
+# The Vercel CLI writes the project link and its build output here.
+/.vercel/
