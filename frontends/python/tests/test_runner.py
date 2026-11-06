@@ -188,9 +188,15 @@ def test_stacked_reproduce_failures_raise_what_still_fails(output):
     def fixed(tc):
         tc.draw(gs.integers(0, 100))
 
-    with pytest.raises(hegel.DidNotReproduce, match="none of the 2 supplied failure blobs"):
+    with pytest.raises(
+        hegel.DidNotReproduce,
+        match="^reproduce_failure: none of the 2 supplied failure blobs .*remove the decorators",
+    ):
         hegel.run(fixed, reproduce_blob=(key_blob, value_blob))
-    with pytest.raises(hegel.DidNotReproduce, match="the supplied failure blob did not"):
+    with pytest.raises(
+        hegel.DidNotReproduce,
+        match="^reproduce_failure: the supplied failure blob did not .*remove the decorator once",
+    ):
         hegel.run(fixed, reproduce_blob=value_blob)
     with pytest.raises(hegel.InvalidArgument, match="reproduce_failure takes the blob"):
         hegel.run(fixed, reproduce_blob=[value_blob, ""])
