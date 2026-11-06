@@ -13,6 +13,7 @@ endif()
 
 option(HEGEL_BUILD_TESTS "Build unit tests" ${_hegel_default_tests})
 option(HEGEL_BUILD_DOCS "Build documentation" OFF)
+option(HEGEL_SQLITE_EXAMPLES "Build the examples that link SQLite" OFF)
 option(HEGEL_COVERAGE "Build with coverage instrumentation" OFF)
 
 # Sanitizers to build with, as a -fsanitize argument (e.g. "address,undefined"
@@ -128,6 +129,10 @@ if(NOT HEGEL_THROW_SITE)
     # src/hegel.cpp compiles the __cxa_throw wrapper out. PRIVATE: no public
     # header reads the macro.
     target_compile_definitions(hegel PRIVATE HEGEL_HAS_THROW_SITE=0)
+endif()
+
+if(HEGEL_SQLITE_EXAMPLES)
+    add_subdirectory(examples/sqlite_bank)
 endif()
 
 if(HEGEL_BUILD_TESTS)
