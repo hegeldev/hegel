@@ -257,12 +257,12 @@ func TestNanosecondDrawRoundTrip(t *testing.T) {
 		t.Fatalf("case = %v, %v", tc, err)
 	}
 	bound := Time{Hour: 23, Minute: 59, Second: 59, Nanosecond: 987654321}
-	got, err := tc.GenerateTime(ctx, bound, bound)
+	got, err := tc.GenerateTime(ctx, bound, bound, PRECISION_NANOSECONDS)
 	if err != nil || got != bound {
 		t.Fatalf("time = %#v, %v", got, err)
 	}
 	dateBound := Datetime{Date: Date{Year: 2026, Month: 9, Day: 14}, Time: bound}
-	dt, err := tc.GenerateDatetime(ctx, dateBound, dateBound)
+	dt, err := tc.GenerateDatetime(ctx, dateBound, dateBound, PRECISION_NANOSECONDS)
 	if err != nil || dt != dateBound || dt.ToTime().Nanosecond() != 987654321 {
 		t.Fatalf("datetime = %#v, %v", dt, err)
 	}

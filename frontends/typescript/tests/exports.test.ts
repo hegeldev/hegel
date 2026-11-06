@@ -31,6 +31,33 @@ describe("public export shape", () => {
     );
   });
 
+  test("date and time values and generators live in generators.temporal", () => {
+    expect(Object.keys(gs.temporal).sort()).toEqual([
+      "DURATION_UNITS",
+      "Duration",
+      "Instant",
+      "PlainDate",
+      "PlainDateTime",
+      "PlainTime",
+      "ZoneSource",
+      "ZonedDateTime",
+      "dates",
+      "datetimes",
+      "instants",
+      "jsDates",
+      "offsets",
+      "spans",
+      "times",
+      "tzdbVersion",
+      "zonedDateTimes",
+      "zones",
+    ]);
+    for (const old of ["PlainDate", "Duration", "temporal"]) expect(hegel).not.toHaveProperty(old);
+    for (const old of ["durations", "timeZones", "utcOffsets"]) {
+      expect(gs).not.toHaveProperty(old);
+    }
+  });
+
   test("a property test runs via hegel.generators.* without the subpath import", () =>
     // This is the path the namespace re-export unlocks: users only need to
     // import `@hegeldev/hegel` and can reach generators through `hegel.generators`.

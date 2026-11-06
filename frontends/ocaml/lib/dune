@@ -24,7 +24,8 @@
   generators_primitives
   generators_collections
   generators_combinators
-  generators_functions)
+  generators_functions
+  generators_temporal)
  (preprocess
   (pps ppx_js_style hegel.template))
  (instrumentation
@@ -209,6 +210,16 @@
    -o
    %{target}
    %{dep:generators_functions.ml.in})))
+
+(rule
+ (target generators_temporal.ml)
+ (action
+  (run
+   %{bin:cppo}
+   %{read-strings:cppo-flags}
+   -o
+   %{target}
+   %{dep:generators_temporal.ml.in})))
 
 (rule
  (target stateful.ml)

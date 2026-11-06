@@ -95,3 +95,8 @@ regex = "1.0"
 serde_json = "1.0.61"
 insta = "1.47.2"
 ctor = "0.2"
+# The oracle the bundled time zone table is tested against: the same IANA
+# release as `scripts/generate_tzdata.py` pins, so the two must be bumped
+# together (`tests/embedded/tzdata_tests.rs` checks they agree).
+jiff = { version = "0.2.24", default-features = false, features = ["std", "tzdb-bundle-always"] }
+jiff-tzdb = "=0.1.9"

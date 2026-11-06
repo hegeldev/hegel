@@ -36,9 +36,10 @@ just java::check            # lint + docs + test — what CI runs, less the JNA 
   `maven.compiler.release` is 22 for `hegel` and 17 for `hegel-lowlevel`,
   `hegel-jna` and the shared tree, so keep shared and lowlevel code
   Java-17-clean. palantir-java-format needs the javac internals
-  `.mvn/jvm.config` exports, and does not run on a JDK newer than the one
-  CI lints with (25): point `JAVA_HOME` at a JDK 25 for `just java::check-lint`
-  if your default is newer.
+  `.mvn/jvm.config` exports, and does not run on JDK 26 or later, so
+  `just java::format` / `check-format` go through `scripts/spotless.py`,
+  which runs Spotless on the default JDK when it is 17–25 and otherwise on
+  the newest installed one that is (`HEGEL_FORMAT_JAVA_HOME` picks one).
 - `scripts/engine.py` is the one place that knows where the engine is
   (`target/release/libhegel_c.{dylib,so}` or `hegel_c.dll` under the
   workspace's `target/` or `CARGO_TARGET_DIR`; `HEGEL_LIBHEGEL_PATH` overrides
@@ -113,15 +114,27 @@ unsupported); the Maven CLI is authoritative.
 Data crosses the FFI boundary through libhegel's **typed draw functions**
 (`hegel_generate_integer`, `hegel_generate_float`, `hegel_generate_string`
 through opaque `hegel_string_generator_t` handles, structured
-date/time/datetime/uuid/ip draws, …). Every fallible call takes a per-thread
-`hegel_context_t*` first argument and returns a `hegel_result_t`; results come
-back through out-parameters, and every handle is caller-owned and explicitly
-freed.
+date/time/datetime/timestamp/offset/duration/uuid/ip draws, time zone names,
+zoned datetimes and calendar spans through opaque `hegel_date_options_t`,
+`hegel_timezone_spec_t`, `hegel_zoned_spec_t` and `hegel_span_spec_t`
+handles, …). Every fallible call takes a per-thread `hegel_context_t*` first
+argument and returns a `hegel_result_t`; results come back through
+out-parameters, and every handle is caller-owned and explicitly freed.
 
 Layers live in `dev.hegel`; the concrete generator implementations are in the
 `dev.hegel.generators` subpackage (one class per generator: `IntegerGenerator`,
 `TextGenerator`, `ListGenerator`, `RegexGenerator`, `EmailGenerator`,
-`DateTimeGenerator`, `Derive`/`RecordGenerator`, etc.). The public
+`Derive`/`RecordGenerator`, etc.), with the date and time generators and
+their enums in `dev.hegel.generators.temporal` (`DateGenerator`,
+`DateTimeGenerator`, `ZonedDateTimeGenerator`, `ZoneGenerator`,
+`OffsetGenerator`, `SpanGenerator`, `OffsetGranularity`, `Ambiguous`, ...),
+named after the factories of the static nested class `Generators.Temporal`
+(`dates`, `times`, `datetimes`, `zonedDateTimes`, `instants`, `offsets`,
+`zones`, `durations`, `spans`, `tzdbVersion`), the vocabulary every frontend
+shares. The deprecated top-level `Generators.dates()`, `times()`,
+`datetimes()`, `zoneOffsets()`, `zoneIds()` and `durations()` and
+`DateTimeGenerator.timezones(...)` are released names kept as delegating
+aliases. The public
 `Generator`/`TestCase`/`Generators`/`Hegel`/`Stateful` surface stays in
 `dev.hegel`.
 
@@ -136,7 +149,12 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   process-wide lazy holder of the loaded shared object (with a test hook) — it
   caches only the immutable, thread-safe library, never per-test state. Both
   bindings keep one libhegel error context per thread (read back by
-  `lastErrorMessage()`), pass date/time/datetime structs by value, pass every
+  `lastErrorMessage()`), pass date/time/datetime/timestamp/duration structs by
+  value (a `Duration`'s floored seconds and `[0, 1e9)` nanoseconds are
+  converted to and from the engine's same-sign pair) and read the
+  `hegel_zoned_datetime_t`, `hegel_timezone_info_t`, `hegel_timezone_offset_t`
+  and `hegel_timezone_resolution_t` structs into the `Libhegel` records of
+  those names, write `Libhegel.ZoneData` into `hegel_zone_data_t`, pass every
   string as the engine's `hegel_string_t` (`{const char *data; size_t len}`:
   by value for a required string, by nullable pointer where absent is
   meaningful, as a contiguous struct array for name lists; a Java `null`
@@ -235,7 +253,40 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   `hegel_string_generator_t` handle once per configuration and cache it
   (`HandleCache`, rebuilt if a test swaps the `Engine` binding);
   `StringGeneratorHandle` frees the engine allocation via a `Cleaner` when
-  unreachable. `Generators` is the factory facade.
+  unreachable. The date and time generators do the same with the engine's
+  configuration handles (`SpecHandle` + `SpecCache`: date options for
+  `weekdays`/`months`, a time zone spec for `Temporal.zones()` — the
+  `ZoneId.getAvailableZoneIds()` names its source knows (through
+  `hegel_timezone_info_in`), with the source attached by
+  `hegel_timezone_spec_set_source`, cached per source and links/legacy
+  combination — a zoned spec and a span spec); `LiveDataSource` frees a
+  handle whose setter the engine rejected before throwing, and sets the link
+  and legacy flags permissively before attaching a source, since the engine
+  checks the source's names against them. `ZonedDateTimeGenerator` builds the
+  value from the engine's civil fields and offset (or its instant, for a
+  skipped wall time) with the JVM's own rules and `assume`s the two instants
+  agree, which only a source other than `java.time`'s can break; a
+  `ZoneOffset` or a region the default source lacks falls back to a plain
+  datetime draw attached to the zone. `Generators` is the factory facade.
+- **Zone sources** — `ZoneSource` (in `generators.temporal`) wraps a
+  `hegel_zone_source_t`: `bundled()` (the engine's pinned IANA release),
+  `javaTime()` (the default: every `ZoneRulesProvider` name declared, each
+  zone's `ZoneRules` uploaded by the loader the first time a draw needs it)
+  or a `builder()` of TZif bytes, `ZoneRules`, oracles, links and declared
+  names. `Engine` installs `ZoneSource.getDefault()` with
+  `hegel_set_default_zone_source` when it loads the library; a source builds
+  its handle lazily per binding and rebuilds it if a test swaps the binding.
+  `JavaTimeZones` maps `ZoneRules` onto `hegel_zone_data_t`: the explicit
+  transitions, then the two yearly `ZoneOffsetTransitionRule`s as the
+  engine's RFC 9636 footer (a day-of-week rule as a month-week-day date
+  shifted by whole days, a fixed day as a Julian day, the time moved into
+  the offset in force before the transition and kept within ±167 hours);
+  rules no footer can express are expanded into explicit transitions until
+  2400 and inferred after. The loader and oracle callbacks are FFM upcall
+  stubs or JNA `Callback`s that point the binding's per-thread context at
+  the callback's `hegel_context_t*` while they run, so binding calls inside
+  report there, and turn a thrown exception into `hegel_context_set_error`
+  (`ZoneCallbacks.guard`).
 - **Public API** — `Hegel.test`/`Hegel.run`, `TestCase`
   (`draw`/`assume`/`note`/`target`/`isFinal`/`span`), `Label` (span labels;
   `Label.of(name)` mints FNV-1a labels), `Reporter`, `RunReport`,

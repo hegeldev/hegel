@@ -6,7 +6,7 @@ The native engine behind every Hegel frontend: generation, shrinking, the exampl
 
 ```bash
 just libhegel::check          # lint + tests
-just libhegel::test           # cargo test -p hegeltest-c
+just libhegel::test           # build the cdylib, then cargo test -p hegeltest-c
 just libhegel::c-test         # smoke tests (dlopen) + example C programs
 just libhegel::header         # regenerate include/hegel.h and the Rust frontend's src/ffi/sys/fns.rs
 just libhegel::miri           # C-ABI lifecycle tests under Miri (nightly + miri component)
@@ -14,11 +14,14 @@ just libhegel::check-lark     # parse engine-generated strings with Lark itself 
 just libhegel::check-parse    # compare the engine's grammar parser with Lark's (needs uv)
 just libhegel::lark-fixtures  # regenerate the Lark fixtures' .expected files (needs uv)
 just libhegel::unicodedata    # regenerate the Unicode tables and per-version deltas (downloads older UCD files; needs uv)
+just libhegel::tzdata         # regenerate the bundled time zone table in src/tzdata/ from the pinned tzdata release (needs uv)
+just libhegel::check-tzdata   # check that the bundled time zone table is what `just libhegel::tzdata` would write (needs uv)
 cargo test -p hegeltest-c test_name
 ```
 
 ## Gotchas
 
+- The smoke tests (`tests/smoke.rs`) dlopen `target/debug/libhegel_c.*`, which `cargo test` neither builds nor refreshes; `just libhegel::test` builds it first, so prefer it (or `cargo build -p hegeltest-c` beforehand) over a bare `cargo test`.
 - `include/hegel.h` and `frontends/rust/src/ffi/sys/fns.rs` are generated from `src/lib.rs`; never edit them by hand, run `just libhegel::header` after changing an exported `hegel_*` function.
 - Every frontend talks to the engine only through the `hegel_*` functions; a C ABI change is a libhegel release (a `RELEASE/<slug>.md` here) and usually needs matching changes in `frontends/`.
 - Never panic across the FFI boundary: `hegel_internal_assert!` returns an `InternalError`, `invalid_argument!` / `EngineError::InvalidArgument` rejects bad arguments. `src/control.rs` must not contain a `panic!`.

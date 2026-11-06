@@ -85,22 +85,25 @@
  * {@code integers}, {@code longs}, {@code floats} (32-bit) and {@code doubles} (64-bit),
  * {@code booleans}, {@code text}, and {@code binary}; collections include {@code lists},
  * {@code sets}, and {@code maps}; and there are {@code tuples}, {@code oneOf}, {@code optional},
- * {@code sampledFrom}, {@code just}, {@code durations} ({@code java.time.Duration}), and the temporal
- * generators {@code dates}, {@code times}, and {@code datetimes} (which produce
- * {@code java.time.LocalDate}/{@code LocalTime}/{@code LocalDateTime}), plus format generators
- * ({@code emails}, {@code urls}, {@code ipAddresses}, {@code uuids}, {@code fromRegex}, …).
+ * {@code sampledFrom} and {@code just}, plus format generators ({@code emails}, {@code urls},
+ * {@code ipAddresses}, {@code uuids}, {@code fromRegex}, …).
  *
- * <p>For zone-aware datetimes, attach a timezone to a {@code datetimes()} generator:
+ * <p>The date and time generators live in {@link dev.hegel.Generators.Temporal}, with their
+ * classes in {@link dev.hegel.generators.temporal}: {@code Temporal.dates()}, {@code times()},
+ * {@code datetimes()}, {@code zonedDateTimes()}, {@code instants()}, {@code offsets()}
+ * ({@code java.time.ZoneOffset}), {@code zones()} ({@code java.time.ZoneId}), {@code durations()}
+ * ({@code java.time.Duration}) and {@code spans()} ({@code java.time.Period}). For zone-aware
+ * datetimes, attach a zone to a {@code datetimes()} generator:
  *
  * <ul>
- *   <li>{@link dev.hegel.generators.DateTimeGenerator#timezones timezones}:
- *       {@code datetimes().timezones(zoneIds())} produces DST-aware {@code java.time.ZonedDateTime}
- *       values over the full range of zones the JVM supports (see
- *       {@link dev.hegel.Generators#zoneIds()}); pin one with
- *       {@code datetimes().timezones(just(ZoneId.of("Europe/London")))}.
- *   <li>{@link dev.hegel.generators.DateTimeGenerator#offsets offsets}:
- *       {@code datetimes().offsets(zoneOffsets())} produces fixed-offset
- *       {@code java.time.OffsetDateTime} values (see {@link dev.hegel.Generators#zoneOffsets()}).
+ *   <li>{@link dev.hegel.generators.temporal.DateTimeGenerator#zones zones}:
+ *       {@code Temporal.datetimes().zones(Temporal.zones())} produces DST-aware
+ *       {@code java.time.ZonedDateTime} values over every zone both the engine and the JVM know
+ *       (see {@link dev.hegel.Generators.Temporal#zonedDateTimes()}); pin one with
+ *       {@code Temporal.datetimes().zones(just(ZoneId.of("Europe/London")))}.
+ *   <li>{@link dev.hegel.generators.temporal.DateTimeGenerator#offsets offsets}:
+ *       {@code Temporal.datetimes().offsets(Temporal.offsets())} produces fixed-offset
+ *       {@code java.time.OffsetDateTime} values (see {@link dev.hegel.Generators.Temporal#offsets()}).
  * </ul>
  *
  * <p>The bound- and size-bearing generators are fluent builders that <em>are</em> the generator:

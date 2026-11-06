@@ -6,14 +6,14 @@ Hegel for Python: the `hegeltest` package on PyPI, imported as `hegel`. The engi
 
 ```bash
 just python::setup                  # create .venv (uv) and build the extension (maturin develop)
-just python::build                  # rebuild the extension after changing src/ or libhegel
+just python::build                  # rebuild the extension (every test recipe does this first)
 just python::test tests/test_x.py   # run some tests (pytest arguments pass through)
 just python::format                 # ruff format + fix (cargo fmt runs from the root justfile)
 just python::docs                   # build the documentation site (Sphinx, warnings are errors)
 just python::check                  # everything CI checks for this frontend
 ```
 
-`just python::check` runs `check-lint` (ruff, mypy), `check-coverage` and `check-hypothesis-port`. `cargo fmt`, `cargo clippy` and `just check-release-script` cover the Rust half from the root. Plain cargo commands run from this directory use the interpreter in `.venv` (see `.cargo/config.toml`), so run `just python::setup` first.
+`just python::check` runs `check-lint` (ruff, mypy), `check-coverage` and `check-hypothesis-port`. Every recipe that imports `hegel` (`test`, `check-tests`, `check-coverage`, `check-hypothesis-port`, `docs`) first runs `build` (`maturin develop --uv`, incremental), so it never tests an extension built from older `src/` or libhegel; a bare `uv run pytest` does not. `cargo fmt`, `cargo clippy` and `just check-release-script` cover the Rust half from the root. Plain cargo commands run from this directory use the interpreter in `.venv` (see `.cargo/config.toml`), so run `just python::setup` first.
 
 ## Rules
 

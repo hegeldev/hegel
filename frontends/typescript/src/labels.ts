@@ -49,6 +49,7 @@ export const LabelNames = {
   COMPOSITE: "hegel.composite",
   GENERATOR: "hegel.generator",
   STATEFUL_RULE: "hegel.stateful.rule",
+  ZONED_DATETIME: "hegel.zoned_datetime",
 } as const;
 
 /** The spec of one attempt of a filter: the source's draw, discarded when rejected. */

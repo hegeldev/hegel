@@ -13,7 +13,9 @@ permissions: {}
 
 jobs:
   # The test suite (with and without the throw-site hook) on every supported
-  # compiler and standard library.
+  # compiler and standard library. The main build turns on
+  # HEGEL_BOOST_DATE_TIME, so it also fetches Boost's headers and runs the
+  # Boost.DateTime adapter's tests; the coverage job does the same.
   test:
     name: test (${{ matrix.compiler }}${{ matrix.stdlib && format(' with {0}', matrix.stdlib) || '' }})
     runs-on: ${{ matrix.os || 'ubuntu-24.04' }}

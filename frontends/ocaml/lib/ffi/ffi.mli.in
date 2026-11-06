@@ -82,19 +82,46 @@ type state_machine
   : value mod portable contended
 #endif
 
-(** A proleptic Gregorian calendar date ([hegel_date_t]). *)
-type date =
-  { year : int
-  ; month : int
-  ; day : int
-  }
+module T := Temporal_types
 
-(** A time of day at nanosecond resolution ([hegel_time_t]). *)
-type time =
-  { hour : int
-  ; minute : int
-  ; second : int
-  ; nanosecond : int
+(** Opaque time zone source handle ([hegel_zone_source_t]). Never freed: the
+    engine shares a source with every spec built from it, and a loader's
+    closure stays rooted for the life of the process. *)
+type zone_source
+#ifdef OXCAML
+  : value mod portable contended
+#endif
+
+(** The names a time zone draw may yield, as a [hegel_timezone_spec_t] built
+    for each draw. [source] [None] is the bundled database. *)
+type zone_query
+#ifdef OXCAML
+  : value mod portable contended
+#endif
+  =
+  { names : string list option
+  ; links : bool
+  ; legacy : bool
+  ; unknown : bool
+  ; opaque : bool
+  ; source : zone_source option
+  }
+#ifdef OXCAML
+[@@unsafe_allow_any_mode_crossing]
+#endif
+
+(** The bounds of a zoned datetime draw: on the wall clock or on the instant. *)
+type zoned_bounds =
+  | Civil_bounds of T.datetime * T.datetime
+  | Instant_bounds of T.instant * T.instant
+
+(** The bounds and policies of a zoned datetime draw, as a
+    [hegel_zoned_spec_t] built for each draw. *)
+type zoned_query =
+  { bounds : zoned_bounds
+  ; precision : T.precision
+  ; allow_imaginary : bool
+  ; ambiguous : T.ambiguous
   }
 
 (** Randomness backend ([hegel_backend_t]), selected via {!settings_backend}.
@@ -464,23 +491,187 @@ val string_generator_free : context -> string_generator -> unit
     rejects itself (e.g. an over-length email). *)
 val generate_string : context -> test_case -> string_generator -> string
 
-(** [generate_date ctx tc ~min_value ~max_value] draws a Gregorian date in the
-    inclusive range. Raises {!Stop_test} on budget exhaustion. *)
-val generate_date : context -> test_case -> min_value:date -> max_value:date -> date
+(** A built engine configuration handle: date options, or a time zone,
+    zoned or span spec. Validated when built; freed by {!spec_free}. *)
+type spec
+#ifdef OXCAML
+  : value mod portable contended
+#endif
 
-(** [generate_time ctx tc ~min_value ~max_value] draws a time of day in the
-    inclusive range. Raises {!Stop_test} on budget exhaustion. *)
-val generate_time : context -> test_case -> min_value:time -> max_value:time -> time
+(** [spec_free spec] frees [spec] (with a NULL context). *)
+val spec_free : spec -> unit
 
-(** [generate_datetime ctx tc ~min_value ~max_value] draws a naive datetime in
-    the inclusive range as a [(date, time)] pair. Raises {!Stop_test} on budget
-    exhaustion. *)
+(** [free_when_unreachable free value] runs [free value] once [value] is
+    unreachable ([Gc.finalise]). A caller reading a handle out of [value]
+    keeps [value] alive across the engine call with [Sys.opaque_identity]. *)
+val free_when_unreachable : ('a -> unit) -> 'a -> unit
+
+(** [zone_source_id source] is the address of [source]'s handle, an
+    identity for keying caches by source. *)
+val zone_source_id : zone_source -> nativeint
+
+(** [date_options_new ctx ~weekdays ~months] builds date options allowing
+    the weekdays of the [weekdays] mask (bit 0 Monday) and the months of the
+    [months] mask (bit 0 January). *)
+val date_options_new : context -> weekdays:int -> months:int -> spec
+
+(** [generate_date ctx tc ~min_value ~max_value options] draws a date in the
+    inclusive range allowed by [options]. *)
+val generate_date
+  :  context
+  -> test_case
+  -> min_value:T.date
+  -> max_value:T.date
+  -> spec
+  -> T.date
+
+(** [generate_time ctx tc ~min_value ~max_value ~precision] draws a time of day. *)
+val generate_time
+  :  context
+  -> test_case
+  -> min_value:T.time
+  -> max_value:T.time
+  -> precision:T.precision
+  -> T.time
+
+(** [generate_datetime ctx tc ~min_value ~max_value ~precision] draws a naive
+    datetime. *)
 val generate_datetime
   :  context
   -> test_case
-  -> min_value:date * time
-  -> max_value:date * time
-  -> date * time
+  -> min_value:T.datetime
+  -> max_value:T.datetime
+  -> precision:T.precision
+  -> T.datetime
+
+(** [generate_instant ctx tc ~min_value ~max_value ~precision] draws an instant
+    ([hegel_generate_timestamp]). *)
+val generate_instant
+  :  context
+  -> test_case
+  -> min_value:T.instant
+  -> max_value:T.instant
+  -> precision:T.precision
+  -> T.instant
+
+(** [generate_offset ctx tc ~min_value ~max_value ~granularity ~unknown] draws
+    a UTC offset between the bounds in seconds. *)
+val generate_offset
+  :  context
+  -> test_case
+  -> min_value:int
+  -> max_value:int
+  -> granularity:T.granularity
+  -> unknown:bool
+  -> T.utc_offset
+
+(** [generate_duration ctx tc ~min_value ~max_value ~precision] draws a signed
+    duration. *)
+val generate_duration
+  :  context
+  -> test_case
+  -> min_value:T.signed_duration
+  -> max_value:T.signed_duration
+  -> precision:T.precision
+  -> T.signed_duration
+
+(** [span_spec_new ctx ~bounds ~sign] builds a span spec with each listed
+    unit enabled within its inclusive bounds. *)
+val span_spec_new
+  :  context
+  -> bounds:(T.span_unit * int * int) list
+  -> sign:T.span_sign
+  -> spec
+
+(** [generate_span ctx tc spec] draws a calendar span. *)
+val generate_span : context -> test_case -> spec -> T.span
+
+(** [timezone_spec_new ctx query] builds a time zone spec for [query]. *)
+val timezone_spec_new : context -> zone_query -> spec
+
+(** [zoned_spec_new ctx query] builds a zoned spec for [query]. *)
+val zoned_spec_new : context -> zoned_query -> spec
+
+(** [generate_timezone ctx tc spec] draws a time zone name. *)
+val generate_timezone : context -> test_case -> spec -> string
+
+(** [generate_zoned_datetime ctx tc zones spec] draws a zoned datetime in a
+    zone the time zone spec [zones] allows. The result's zone has the drawn
+    name as both its name and its primary name. *)
+val generate_zoned_datetime : context -> test_case -> spec -> spec -> T.zoned_datetime
+
+(** [tzdb_version ctx] is the IANA release of the bundled time zone database. *)
+val tzdb_version : context -> string
+
+(** [timezone_resolve ctx source name civil] resolves a wall time in a zone of
+    [source], or of the process's default source for [None]. The result's zone
+    has [name] as both its name and its primary name, and [fold] false. *)
+val timezone_resolve
+  :  context
+  -> zone_source option
+  -> string
+  -> T.datetime
+  -> T.zoned_datetime
+
+(** [timezone_offset_at ctx source name instant] is the offset a zone of
+    [source] (the default for [None]) has in force at [instant]. *)
+val timezone_offset_at
+  :  context
+  -> zone_source option
+  -> string
+  -> T.instant
+  -> T.zone_offset
+
+(** [timezone_info ctx source name] is what [source] (the default for [None])
+    knows about [name], or [None] when it does not know it. *)
+val timezone_info : context -> zone_source option -> string -> T.zone_info option
+
+(** [zone_source_bundled ()] is a handle on the bundled database, made once. *)
+val zone_source_bundled : unit -> zone_source
+
+(** [zone_source_new ctx] is a new, empty source. *)
+val zone_source_new : context -> zone_source
+
+(** [zone_source_add_tzif ctx source name bytes] adds a zone from a TZif file. *)
+val zone_source_add_tzif : context -> zone_source -> string -> string -> unit
+
+(** [zone_source_add_zone ctx source name data] adds a zone from its fields. *)
+val zone_source_add_zone : context -> zone_source -> string -> T.zone_data -> unit
+
+(** [zone_source_add_oracle ctx source name ~offset_at ~next_transition
+    ~first_year ~last_year ~infer] adds a zone by probing the callbacks, which
+    run during the call. An exception a callback raises fails the call with
+    {!Usage_error} carrying its message. *)
+val zone_source_add_oracle
+  :  context
+  -> zone_source
+  -> string
+  -> offset_at:(int -> T.zone_type)
+  -> next_transition:(int -> int option) option
+  -> first_year:int
+  -> last_year:int
+  -> infer:bool
+  -> unit
+
+(** [zone_source_add_link ctx source name target] makes [name] a link. *)
+val zone_source_add_link : context -> zone_source -> string -> string -> unit
+
+(** [zone_source_declare ctx source names] declares names whose data comes later. *)
+val zone_source_declare : context -> zone_source -> string list -> unit
+
+(** [zone_source_set_loader ctx source load] sets the loader the engine asks
+    for a name's data, rooting [load] for the life of the process. An exception
+    [load] raises fails the draw or query with its message. *)
+val zone_source_set_loader : context -> zone_source -> (string -> unit) -> unit
+
+(** [zone_source_set_version ctx source version] records the source's release. *)
+val zone_source_set_version : context -> zone_source -> string -> unit
+
+(** [zone_source_version ctx source] is the source's release, or [""]. *)
+val zone_source_version : context -> zone_source -> string
+
+(** [set_default_zone_source ctx source] sets the process's default source. *)
+val set_default_zone_source : context -> zone_source -> unit
 
 (** [generate_ipv4 ctx tc] draws an IPv4 address as its 4 network-order bytes. *)
 val generate_ipv4 : context -> test_case -> string

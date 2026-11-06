@@ -5,65 +5,13 @@
  */
 
 import { describe, it, expect } from "vitest";
-import {
-  formatDate,
-  formatTime,
-  formatDatetime,
-  formatUuid,
-  formatIpv4,
-  formatIpv6,
-  valueKey,
-  generateValue,
-} from "../src/generate.js";
+import { formatUuid, formatIpv4, formatIpv6, valueKey, generateValue } from "../src/generate.js";
 import type { Engine, ContextHandle, TestCaseHandle } from "../src/engine.js";
 
 // The schema-validation paths below throw before touching the library.
 const unusedLib = null as unknown as Engine;
 const unusedContext = {} as ContextHandle;
 const unusedCase = {} as TestCaseHandle;
-
-describe("formatDate", () => {
-  it("zero-pads all components", () => {
-    expect(formatDate({ year: 1, month: 2, day: 3 })).toBe("0001-02-03");
-    expect(formatDate({ year: 9999, month: 12, day: 31 })).toBe("9999-12-31");
-  });
-});
-
-describe("formatTime", () => {
-  it("omits the fraction when zero", () => {
-    expect(formatTime({ hour: 0, minute: 0, second: 0, nanosecond: 0 })).toBe("00:00:00");
-    expect(formatTime({ hour: 23, minute: 59, second: 59, nanosecond: 0 })).toBe("23:59:59");
-  });
-
-  it("prints six digits for a whole number of microseconds", () => {
-    expect(formatTime({ hour: 1, minute: 2, second: 3, nanosecond: 42_000 })).toBe(
-      "01:02:03.000042",
-    );
-    expect(formatTime({ hour: 1, minute: 2, second: 3, nanosecond: 999_999_000 })).toBe(
-      "01:02:03.999999",
-    );
-  });
-
-  it("prints all nine digits when the nanoseconds are not whole microseconds", () => {
-    expect(formatTime({ hour: 1, minute: 2, second: 3, nanosecond: 42 })).toBe(
-      "01:02:03.000000042",
-    );
-    expect(formatTime({ hour: 1, minute: 2, second: 3, nanosecond: 999_999_999 })).toBe(
-      "01:02:03.999999999",
-    );
-  });
-});
-
-describe("formatDatetime", () => {
-  it("joins the date and time with a T", () => {
-    expect(
-      formatDatetime({
-        date: { year: 2024, month: 6, day: 7 },
-        time: { hour: 8, minute: 9, second: 10, nanosecond: 0 },
-      }),
-    ).toBe("2024-06-07T08:09:10");
-  });
-});
 
 describe("formatUuid", () => {
   it("renders canonical lowercase groups", () => {
@@ -135,8 +83,19 @@ describe("valueKey", () => {
       valueKey(true),
       valueKey(Uint8Array.from([1])),
       valueKey([1]),
+      valueKey({ year: 1 }),
     ];
     expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it("keys records by their fields regardless of order", () => {
+    expect(valueKey({ second: 1n, nanosecond: 2 })).toBe(valueKey({ nanosecond: 2, second: 1 }));
+    expect(valueKey({ second: 1n, nanosecond: 2 })).not.toBe(
+      valueKey({ second: 1n, nanosecond: 3 }),
+    );
+    expect(valueKey({ value: { civil: { year: 1 } }, zone: "UTC" })).toBe(
+      valueKey({ zone: "UTC", value: { civil: { year: 1 } } }),
+    );
   });
 
   it("keys byte strings by content", () => {

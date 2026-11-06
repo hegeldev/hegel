@@ -35,6 +35,11 @@ option(HEGEL_REFLECTION "Enable reflect-cpp powered default_generator (requires 
 # the exception type without the throw site.
 option(HEGEL_THROW_SITE "Name throw sites in failure reports (requires a shared C++ runtime)" ON)
 
+# The Boost.DateTime adapter (hegel/extras/boost_date_time.h) as the target
+# hegel::boost_date_time, and its tests. OFF keeps Boost out of the build;
+# see cmake/boost_date_time.cmake.
+option(HEGEL_BOOST_DATE_TIME "Build the Boost.DateTime zone source adapter target and its tests" OFF)
+
 # The library builds at C++20; with HEGEL_REFLECTION=OFF the public headers are
 # also C++17-consumable (verified by a standalone C++17 consumer in CI), and the
 # hegel target advertises cxx_std_17 so C++17 consumers are accepted.
@@ -90,6 +95,9 @@ add_library(hegel
   STATIC
     src/hegel.cpp
     src/generators.cpp
+    src/generators_temporal.cpp
+    src/temporal.cpp
+    src/zone_source.cpp
     src/test_case.cpp
     src/engine.cpp
 )
@@ -129,6 +137,10 @@ if(NOT HEGEL_THROW_SITE)
     # src/hegel.cpp compiles the __cxa_throw wrapper out. PRIVATE: no public
     # header reads the macro.
     target_compile_definitions(hegel PRIVATE HEGEL_HAS_THROW_SITE=0)
+endif()
+
+if(HEGEL_BOOST_DATE_TIME)
+    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/boost_date_time.cmake)
 endif()
 
 if(HEGEL_SQLITE_EXAMPLES)

@@ -157,11 +157,11 @@ let stateful_usage_error_test () =
         ignore
           (Hegel.draw
              tc
-             (Hegel.dates
-                ~min_date:{ year = 2024; month = 1; day = 2 }
-                ~max_date:{ year = 2024; month = 1; day = 1 }
+             (Hegel.Temporal.dates
+                ~min_value:{ year = 2024; month = 1; day = 2 }
+                ~max_value:{ year = 2024; month = 1; day = 1 }
                 ())
-           : string))
+           : Hegel.Temporal.date))
       ()
   in
   let module M = struct
@@ -1137,9 +1137,9 @@ let concurrent_worker_usage_error_test () =
         ignore
           (Hegel.draw_silent
              tc
-             (Hegel.dates
-                ~min_date:{ year = 2024; month = 1; day = 2 }
-                ~max_date:{ year = 2024; month = 1; day = 1 }
+             (Hegel.Temporal.dates
+                ~min_value:{ year = 2024; month = 1; day = 2 }
+                ~max_value:{ year = 2024; month = 1; day = 1 }
                 ())))
       ()
   in

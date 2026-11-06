@@ -316,7 +316,21 @@ let test_render_sexp_atoms () =
   Alcotest.(check string)
     "newline never literal"
     "\"a\\nb\""
-    (render_to_string ~max_width:79 (Sexp.Atom "a\nb"))
+    (render_to_string ~max_width:79 (Sexp.Atom "a\nb"));
+  Alcotest.(check string)
+    "raw text verbatim"
+    "needs no quoting"
+    (render_to_string ~max_width:79 (Internal.raw_text "needs no quoting"));
+  Alcotest.(check string)
+    "raw text inside a list"
+    "(\"a b\" 1y 9\xc2\xb5s)"
+    (render_to_string
+       ~max_width:79
+       (Sexp.List [ Sexp.Atom "a b"; Internal.raw_text "1y 9\xc2\xb5s" ]));
+  Alcotest.(check string)
+    "an equal atom is not raw"
+    "\"1y 9\\194\\181s\""
+    (render_to_string ~max_width:79 (Sexp.Atom "1y 9\xc2\xb5s"))
 ;;
 
 let test_render_sexp_fits_matches_to_string_hum () =

@@ -1,9 +1,11 @@
 """Generators: recipes for the values a test draws.
 
 Import as ``from hegel import generators as gs`` and draw with
-``tc.draw(gs.integers())``.
+``tc.draw(gs.integers())``. The date and time generators are in the
+:mod:`~hegel.generators.temporal` namespace: ``tc.draw(gs.temporal.dates())``.
 """
 
+from hegel.generators import _deprecated, temporal
 from hegel.generators.base import Generator
 from hegel.generators.collections import (
     dicts,
@@ -41,7 +43,12 @@ from hegel.generators.strings import (
     urls,
     uuids,
 )
-from hegel.generators.time import dates, datetimes, timedeltas, times, timezones
+
+dates = _deprecated.dates
+datetimes = _deprecated.datetimes
+timedeltas = _deprecated.timedeltas
+times = _deprecated.times
+timezones = _deprecated.timezones
 
 __all__ = [
     "Generator",
@@ -50,8 +57,6 @@ __all__ = [
     "builds",
     "characters",
     "composite",
-    "dates",
-    "datetimes",
     "deferred",
     "dicts",
     "domains",
@@ -78,10 +83,8 @@ __all__ = [
     "sampled_from",
     "sets",
     "subsequences",
+    "temporal",
     "text",
-    "timedeltas",
-    "times",
-    "timezones",
     "tuples",
     "urls",
     "uuids",

@@ -2,6 +2,7 @@
 // which needs reflection — to confirm the public headers compile and run under
 // C++17 (HEGEL_REFLECTION=OFF). Instantiating tuples/collections/combinators
 // matters: C++20-only constructs in those templates only surface when used.
+#include <chrono>
 #include <hegel/hegel.h>
 #include <iostream>
 #include <string>
@@ -27,6 +28,20 @@ int main() {
                             .map([](int x) { return x * x; }));
             auto named = tc.draw("named", gs::integers<int>());
             auto flag = tc.draw("flag", gs::booleans());
+            auto date = tc.draw(gs::temporal::dates());
+            auto zoned = tc.draw(gs::temporal::zoned_datetimes(
+                {.zones = gs::temporal::zones(
+                     {.names = std::vector<std::string>{"Europe/London"}})}));
+            auto duration =
+                tc.draw(gs::temporal::durations<std::chrono::milliseconds>());
+            auto back =
+                hegel::generators::temporal::SignedDuration::from_chrono(
+                    duration);
+            auto exact = tc.draw(gs::temporal::durations());
+            (void)date;
+            (void)zoned;
+            (void)back;
+            (void)exact;
             (void)named;
             (void)flag;
             (void)f;

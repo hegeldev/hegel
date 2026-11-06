@@ -251,13 +251,13 @@ func TestStubTypedPrimitives(t *testing.T) {
 	if v, err := tc.GenerateBytes(lib, 0, 8); err != nil || string(v) != "xy" {
 		t.Fatalf("GenerateBytes: v=%q err=%v", v, err)
 	}
-	if v, err := tc.GenerateDate(lib, Date{}, Date{}); err != nil || v.Day != 2 {
+	if v, err := tc.GenerateDate(lib, Date{}, Date{}, 0); err != nil || v.Day != 2 {
 		t.Fatalf("GenerateDate: v=%+v err=%v", v, err)
 	}
-	if v, err := tc.GenerateTime(lib, Time{}, Time{}); err != nil || v.Second != 3 {
+	if v, err := tc.GenerateTime(lib, Time{}, Time{}, PRECISION_NANOSECONDS); err != nil || v.Second != 3 {
 		t.Fatalf("GenerateTime: v=%+v err=%v", v, err)
 	}
-	if v, err := tc.GenerateDatetime(lib, Datetime{}, Datetime{}); err != nil || v.Date.Year != 2000 {
+	if v, err := tc.GenerateDatetime(lib, Datetime{}, Datetime{}, PRECISION_NANOSECONDS); err != nil || v.Date.Year != 2000 {
 		t.Fatalf("GenerateDatetime: v=%+v err=%v", v, err)
 	}
 	if v, err := tc.GenerateIPv4(lib); err != nil || v != [4]byte{1, 2, 3, 4} {

@@ -42,7 +42,7 @@ import (
 	"unsafe"
 )
 
-//go:generate go tool stringer -type=Error,Status,Backend,Verbosity,RunStatus,RunErrorKind,HealthCheck,Phase,NondeterminismStrictness -linecomment -output=libhegel_string.go
+//go:generate go tool stringer -type=Error,Status,Backend,Verbosity,RunStatus,RunErrorKind,HealthCheck,Phase,NondeterminismStrictness,Precision -linecomment -output=libhegel_string.go
 
 // LibraryPathEnv names the env var that pins libhegel to an explicit path.
 // When set, that path is loaded directly with no fallback; when unset, the
@@ -110,6 +110,17 @@ const (
 	VERBOSITY_QUIET
 	VERBOSITY_VERBOSE
 	VERBOSITY_DEBUG
+)
+
+type Precision uint32 // Equivalent of hegel_precision_t (passed as a uint32_t param)
+
+const (
+	PRECISION_NANOSECONDS Precision = iota
+	PRECISION_MICROSECONDS
+	PRECISION_MILLISECONDS
+	PRECISION_SECONDS
+	PRECISION_MINUTES
+	PRECISION_HOURS
 )
 
 type NondeterminismStrictness uint32 // Equivalent of hegel_nondeterminism_strictness_t (passed as a uint32_t param)
@@ -223,6 +234,7 @@ type testCaseT uintptr       // Equivalent of hegel_test_case_t
 type resultT uintptr         // Equivalent of hegel_run_result_t
 type failureT uintptr        // Equivalent of hegel_failure_t
 type stringGenT uintptr      // Equivalent of hegel_string_generator_t
+type dateOptionsT uintptr    // Equivalent of hegel_date_options_t
 type collectionT uintptr     // Equivalent of hegel_collection_t
 type recursionT uintptr      // Equivalent of hegel_recursion_t
 type repeatT uintptr         // Equivalent of hegel_repeat_t
@@ -384,9 +396,9 @@ type symbols struct {
 	GenerateBytes      func(ctxT, testCaseT, uint64, uint64, out[bytesResult]) Error
 	GenerateBytesFree  func(ctxT, *bytesResult) Error
 	GenerateString     func(ctxT, testCaseT, stringGenT, out[ownedStringT]) Error
-	GenerateDate       func(ctxT, testCaseT, Date, Date, out[Date]) Error
-	GenerateTime       func(ctxT, testCaseT, Time, Time, out[Time]) Error
-	GenerateDatetime   func(ctxT, testCaseT, Datetime, Datetime, out[Datetime]) Error
+	GenerateDate       func(ctxT, testCaseT, Date, Date, dateOptionsT, out[Date]) Error
+	GenerateTime       func(ctxT, testCaseT, Time, Time, Precision, out[Time]) Error
+	GenerateDatetime   func(ctxT, testCaseT, Datetime, Datetime, Precision, out[Datetime]) Error
 	GenerateUUID       func(ctxT, testCaseT, uint8, bool, out[byte]) Error
 	GenerateIPv4       func(ctxT, testCaseT, out[byte]) Error
 	GenerateIPv6       func(ctxT, testCaseT, out[byte]) Error
@@ -1529,29 +1541,33 @@ func (tc *TestCase) GenerateString(ctx *Context, gen *StringGenerator) (string, 
 }
 
 // GenerateDate draws a Gregorian calendar date in [minValue, maxValue].
-func (tc *TestCase) GenerateDate(ctx *Context, minValue, maxValue Date) (Date, error) {
+// options is a hegel_date_options_t handle restricting the weekdays and
+// months, or 0 for every weekday and month.
+func (tc *TestCase) GenerateDate(ctx *Context, minValue, maxValue Date, options dateOptionsT) (Date, error) {
 	err := ctx.invoke("hegel_generate_date", func(ctx ctxT) Error {
-		e := tc.syms.GenerateDate(ctx, tc.raw, minValue, maxValue, &tc.outDate)
+		e := tc.syms.GenerateDate(ctx, tc.raw, minValue, maxValue, options, &tc.outDate)
 		runtime.KeepAlive(tc)
 		return e
 	})
 	return tc.outDate, err
 }
 
-// GenerateTime draws a time of day in [minValue, maxValue].
-func (tc *TestCase) GenerateTime(ctx *Context, minValue, maxValue Time) (Time, error) {
+// GenerateTime draws a time of day in [minValue, maxValue] that is a whole
+// number of precision units.
+func (tc *TestCase) GenerateTime(ctx *Context, minValue, maxValue Time, precision Precision) (Time, error) {
 	err := ctx.invoke("hegel_generate_time", func(ctx ctxT) Error {
-		e := tc.syms.GenerateTime(ctx, tc.raw, minValue, maxValue, &tc.outTime)
+		e := tc.syms.GenerateTime(ctx, tc.raw, minValue, maxValue, precision, &tc.outTime)
 		runtime.KeepAlive(tc)
 		return e
 	})
 	return tc.outTime, err
 }
 
-// GenerateDatetime draws a naive datetime in [minValue, maxValue].
-func (tc *TestCase) GenerateDatetime(ctx *Context, minValue, maxValue Datetime) (Datetime, error) {
+// GenerateDatetime draws a naive datetime in [minValue, maxValue] whose time
+// of day is a whole number of precision units.
+func (tc *TestCase) GenerateDatetime(ctx *Context, minValue, maxValue Datetime, precision Precision) (Datetime, error) {
 	err := ctx.invoke("hegel_generate_datetime", func(ctx ctxT) Error {
-		e := tc.syms.GenerateDatetime(ctx, tc.raw, minValue, maxValue, &tc.outDatetime)
+		e := tc.syms.GenerateDatetime(ctx, tc.raw, minValue, maxValue, precision, &tc.outDatetime)
 		runtime.KeepAlive(tc)
 		return e
 	})

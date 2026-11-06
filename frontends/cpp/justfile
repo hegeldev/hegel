@@ -12,8 +12,10 @@ clang_tidy := env("CLANG_TIDY", if path_exists("/opt/homebrew/opt/llvm@18/bin/cl
 build-libhegel:
     cargo build --release -p hegeltest-c --manifest-path ../../Cargo.toml
 
+# The main build and the coverage build include the Boost.DateTime adapter
+# and its tests (HEGEL_BOOST_DATE_TIME, off for consumers of the library).
 build:
-    cmake -B build ${CMAKE_FLAGS:-}
+    cmake -B build -DHEGEL_BOOST_DATE_TIME=ON ${CMAKE_FLAGS:-}
     cmake --build build -j{{ jobs }}
 
 check-tests: build
@@ -167,7 +169,7 @@ check-nix:
 check-coverage:
     #!/usr/bin/env bash
     set -euo pipefail
-    cmake -B build/coverage -DHEGEL_COVERAGE=ON ${CMAKE_FLAGS:-}
+    cmake -B build/coverage -DHEGEL_COVERAGE=ON -DHEGEL_BOOST_DATE_TIME=ON ${CMAKE_FLAGS:-}
     cmake --build build/coverage -j{{ jobs }}
 
     # LLVM source-based coverage needs llvm-profdata/llvm-cov matching the

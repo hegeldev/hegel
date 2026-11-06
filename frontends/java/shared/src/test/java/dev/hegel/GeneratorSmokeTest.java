@@ -2,11 +2,8 @@ package dev.hegel;
 
 import static dev.hegel.Generators.binary;
 import static dev.hegel.Generators.composite;
-import static dev.hegel.Generators.dates;
-import static dev.hegel.Generators.datetimes;
 import static dev.hegel.Generators.domains;
 import static dev.hegel.Generators.doubles;
-import static dev.hegel.Generators.durations;
 import static dev.hegel.Generators.emails;
 import static dev.hegel.Generators.floats;
 import static dev.hegel.Generators.fromRegex;
@@ -22,11 +19,11 @@ import static dev.hegel.Generators.optionalLongs;
 import static dev.hegel.Generators.sampledFrom;
 import static dev.hegel.Generators.sets;
 import static dev.hegel.Generators.text;
-import static dev.hegel.Generators.times;
 import static dev.hegel.Generators.tuples;
 import static dev.hegel.Generators.urls;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.hegel.Generators.Temporal;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -135,10 +132,10 @@ class GeneratorSmokeTest {
         assertTrue(tc.draw(ipAddresses().v6()).contains(":"));
         String ip = tc.draw(ipAddresses());
         assertTrue(ip.contains(".") || ip.contains(":"));
-        assertTrue(tc.draw(dates()).getYear() >= 1);
-        assertTrue(tc.draw(times()).getHour() >= 0);
-        assertTrue(tc.draw(datetimes()).getYear() >= 1);
-        assertTrue(!tc.draw(durations()).isNegative());
+        assertTrue(tc.draw(Temporal.dates()).getYear() >= 1);
+        assertTrue(tc.draw(Temporal.times()).getHour() >= 0);
+        assertTrue(tc.draw(Temporal.datetimes()).getYear() >= 1);
+        assertTrue(tc.draw(Temporal.durations()) != null);
         assertTrue(tc.draw(fromRegex("[a-z]{3}")).length() >= 0);
     }
 

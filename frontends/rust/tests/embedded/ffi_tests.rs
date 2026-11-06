@@ -115,11 +115,19 @@ fn ffi_drives_a_passing_run_exercising_every_primitive() {
         assert!(drawn.chars().all(|c| c == 'a' || c == 'b'));
 
         use crate::test_case::full_ranges;
-        let d = tc.generate_date(full_ranges::MIN_DATE, full_ranges::MAX_DATE)?;
+        let d = tc.generate_date(full_ranges::MIN_DATE, full_ranges::MAX_DATE, None)?;
         assert!((1..=9999).contains(&d.year));
-        let t = tc.generate_time(full_ranges::MIDNIGHT, full_ranges::LAST_NANOSECOND)?;
+        let t = tc.generate_time(
+            full_ranges::MIDNIGHT,
+            full_ranges::LAST_NANOSECOND,
+            NANOSECONDS,
+        )?;
         assert!(t.hour <= 23);
-        let dt = tc.generate_datetime(full_ranges::MIN_DATETIME, full_ranges::MAX_DATETIME)?;
+        let dt = tc.generate_datetime(
+            full_ranges::MIN_DATETIME,
+            full_ranges::MAX_DATETIME,
+            NANOSECONDS,
+        )?;
         assert!((1..=12).contains(&dt.date.month));
         let uuid = tc.generate_uuid(Some(4))?;
         assert_eq!(uuid[6] >> 4, 4);
@@ -183,6 +191,14 @@ fn ffi_object_constructors_error_on_a_completed_case() {
             Err(ALREADY_COMPLETE)
         ));
     }
+}
+
+#[test]
+fn ffi_spec_handles_debug_is_opaque() {
+    assert_eq!(format!("{:?}", DateOptions::new()), "DateOptions { .. }");
+    assert_eq!(format!("{:?}", SpanSpec::new()), "SpanSpec { .. }");
+    assert_eq!(format!("{:?}", TimeZoneSpec::new()), "TimeZoneSpec { .. }");
+    assert_eq!(format!("{:?}", ZonedSpec::new()), "ZonedSpec { .. }");
 }
 
 #[test]
@@ -588,4 +604,10 @@ fn run_error_kind_reports_an_unknown_health_check_as_a_run_error() {
         run_error_kind(k::HEGEL_RUN_ERROR_HEALTH_CHECK, 1 << 31),
         RunErrorKind::Other
     );
+}
+
+#[test]
+fn static_string_copies_an_empty_engine_string() {
+    assert_eq!(static_string(hegel_c::hegel_string_t::default()), "");
+    assert_eq!(static_string(view(b"UTC")), "UTC");
 }

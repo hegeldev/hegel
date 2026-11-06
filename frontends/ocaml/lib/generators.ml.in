@@ -4,6 +4,8 @@ module Public = struct
   include Generators_collections
   include Generators_combinators
   include Generators_functions
+  module Temporal = Generators_temporal
+  include Generators_temporal.Legacy
 end
 
 include Public

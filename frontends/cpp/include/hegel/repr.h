@@ -9,8 +9,10 @@
 // their stream operator, then to an "<unprintable Type>" placeholder.
 
 #include "config.h"
+#include "generators/temporal_types.h"
 
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
@@ -118,6 +120,27 @@ namespace hegel::internal {
             using element_type = E;
             static constexpr std::size_t size = N;
         };
+
+        // The date and time values print in the engine's RFC 9557 form
+        // rather than as a C++ expression, so a counterexample reads the
+        // same from every frontend.
+        template <typename T>
+        struct is_temporal_value
+            : std::disjunction<
+                  std::is_same<T, hegel::generators::temporal::Date>,
+                  std::is_same<T, hegel::generators::temporal::Time>,
+                  std::is_same<T, hegel::generators::temporal::DateTime>,
+                  std::is_same<T, hegel::generators::temporal::Instant>,
+                  std::is_same<T, hegel::generators::temporal::UtcOffset>,
+                  std::is_same<T, hegel::generators::temporal::TimeZone>,
+                  std::is_same<T, hegel::generators::temporal::ZonedDateTime>,
+                  std::is_same<T, hegel::generators::temporal::SignedDuration>,
+                  std::is_same<T, hegel::generators::temporal::Span>> {};
+
+        template <typename T> struct is_chrono_duration : std::false_type {};
+        template <typename Rep, typename Period>
+        struct is_chrono_duration<std::chrono::duration<Rep, Period>>
+            : std::true_type {};
 
         template <typename T, typename = void>
         struct has_ostream_operator : std::false_type {};
@@ -271,6 +294,23 @@ namespace hegel::internal {
             return "std::array<" +
                    cpp_type_name<typename traits::element_type>() + ", " +
                    std::to_string(traits::size) + ">";
+        } else if constexpr (std::is_same_v<T, std::chrono::nanoseconds>) {
+            return "std::chrono::nanoseconds";
+        } else if constexpr (std::is_same_v<T, std::chrono::microseconds>) {
+            return "std::chrono::microseconds";
+        } else if constexpr (std::is_same_v<T, std::chrono::milliseconds>) {
+            return "std::chrono::milliseconds";
+        } else if constexpr (std::is_same_v<T, std::chrono::seconds>) {
+            return "std::chrono::seconds";
+        } else if constexpr (std::is_same_v<T, std::chrono::minutes>) {
+            return "std::chrono::minutes";
+        } else if constexpr (std::is_same_v<T, std::chrono::hours>) {
+            return "std::chrono::hours";
+        } else if constexpr (repr_detail::is_chrono_duration<T>::value) {
+            using period = typename T::period;
+            return "std::chrono::duration<" + cpp_type_name<typename T::rep>() +
+                   ", std::ratio<" + std::to_string(period::num) + ", " +
+                   std::to_string(period::den) + ">>";
         } else {
             return std::string(compiler_type_name<T>());
         }
@@ -413,6 +453,12 @@ namespace hegel::internal {
             }
             out += "}";
             return out;
+        } else if constexpr (repr_detail::is_temporal_value<T>::value) {
+            std::ostringstream os;
+            os << value;
+            return os.str();
+        } else if constexpr (repr_detail::is_chrono_duration<T>::value) {
+            return cpp_type_name<T>() + "{" + repr(value.count()) + "}";
         }
 #if HEGEL_HAS_REFLECTION
         else if constexpr (repr_detail::is_reflectable<T>::value) {

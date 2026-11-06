@@ -109,11 +109,13 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
         with:
-          # `uv` is needed for the `check-lark.py` script's
-          # `#!/usr/bin/env -S uv run --script` shebang.
+          # `uv` is needed for the `check-lark.py` and `generate_tzdata.py`
+          # scripts' `#!/usr/bin/env -S uv run --script` shebang.
           tools: just uv
       - name: Check generated strings parse with Lark
         run: just libhegel::check-lark
+      - name: Check the bundled time zone table is reproducible
+        run: just libhegel::check-tzdata
 
   # Run the C-ABI lifecycle tests under Miri to catch undefined behaviour in
   # the native engine. See the `check-miri` recipe in libhegel/justfile.
