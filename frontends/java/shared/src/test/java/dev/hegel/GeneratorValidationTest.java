@@ -20,6 +20,7 @@ import static dev.hegel.Generators.text;
 import static dev.hegel.Generators.times;
 import static dev.hegel.Generators.weightedBooleans;
 import static dev.hegel.Generators.zoneOffsets;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -131,6 +132,9 @@ class GeneratorValidationTest {
     void textConstraints() {
         assertThrows(IllegalArgumentException.class, () -> text().minSize(-1));
         assertThrows(IllegalArgumentException.class, () -> text().minSize(5).maxSize(2));
+        assertThrows(IllegalArgumentException.class, () -> text().maxSize(-1));
+        assertThrows(IllegalArgumentException.class, () -> text().codec("nonsense"));
+        text().codec("ascii").codec("latin-1").codec("iso-8859-1").codec("utf-8");
         assertThrows(IllegalArgumentException.class, () -> text().codepoints(10, 1));
         TextGenerator surrogates = text().categories("Cs").minSize(1);
         assertThrows(
@@ -203,6 +207,15 @@ class GeneratorValidationTest {
         assertThrows(
                 IllegalArgumentException.class,
                 () -> maps(integers(), integers()).minSize(5).maxSize(3));
+        IllegalArgumentException negative = assertThrows(IllegalArgumentException.class, () -> binary().maxSize(-1));
+        assertEquals("binary: maxSize must be >= 0, got -1", negative.getMessage());
+        assertThrows(IllegalArgumentException.class, () -> lists(integers()).maxSize(-1));
+        assertThrows(IllegalArgumentException.class, () -> sets(integers()).maxSize(-1));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> maps(integers(), integers()).maxSize(-1));
+        assertThrows(IllegalArgumentException.class, () -> subsequences(1, 2).maxSize(-1));
+        assertThrows(IllegalArgumentException.class, () -> samples(1, 2).maxSize(-1));
     }
 
     @Test

@@ -130,10 +130,18 @@ class SettingsResolutionTest {
     }
 
     @Test
-    void stringSettingsAreSentAfterTheTypedOnesInOrder() {
-        assertEquals(List.of(), run(new Settings()).stringSettings);
-        FakeLibhegel fake = run(new Settings().set("test_cases", "7").set("phases", "generate"));
-        assertEquals(List.of("test_cases=7", "phases=generate"), fake.stringSettings);
+    void stringSettingsApplyWhenSet() {
+        Settings settings = new Settings().testCases(3).set("test_cases", "7").set("phases", "generate");
+        assertEquals(7L, settings.testCases);
+        assertEquals(Abi.PHASE_GENERATE, settings.phasesMask);
+        assertEquals(3L, settings.testCases(3).testCases);
+        assertEquals(Abi.PHASE_GENERATE, settings.testCases(3).phasesMask);
+        Settings keyed = new Settings().set("database_key", "com.example.T.prop");
+        assertEquals("com.example.T.prop", keyed.name);
+        FakeLibhegel fake = run(settings);
+        assertEquals(List.of(), fake.stringSettings);
+        assertEquals(Long.valueOf(7), fake.testCases);
+        assertEquals("base", fake.profileRequested);
     }
 
     @Test
@@ -182,8 +190,8 @@ class SettingsResolutionTest {
         };
         FakeLibhegel fake = new FakeLibhegel();
         Runner.run(fake, new Settings().verbosity(Verbosity.QUIET).set("verbosity", "debug"), tc -> {}, recording);
-        assertEquals(Verbosity.QUIET, seen[0].verbosity);
-        Runner.run(fake, new Settings().verbosity(Verbosity.QUIET), tc -> {}, recording);
+        assertEquals(Verbosity.DEBUG, seen[0].verbosity);
+        Runner.run(fake, new Settings().set("verbosity", "debug").verbosity(Verbosity.QUIET), tc -> {}, recording);
         assertEquals(Verbosity.QUIET, seen[0].verbosity);
 
         FakeLibhegel unknown = new FakeLibhegel();
@@ -200,8 +208,38 @@ class SettingsResolutionTest {
         assertEquals("ci", fake.profileRequested);
         assertEquals(9L, settings.testCases);
         FakeLibhegel run = run(settings.testCases(5));
-        assertNull(run.profileRequested);
+        assertEquals("base", run.profileRequested);
         assertEquals(Long.valueOf(5), run.testCases);
+    }
+
+    @Test
+    void noSeedUndoesASeed() {
+        Settings seeded = new Settings().seed(42);
+        assertTrue(seeded.hasSeed);
+        Settings unseeded = seeded.noSeed();
+        assertFalse(unseeded.hasSeed);
+        FakeLibhegel fake = run(unseeded);
+        assertTrue(fake.seedSent);
+        assertNull(fake.seed);
+    }
+
+    @Test
+    void theDefaultDatabaseLocationOverridesAProfileThatDisablesIt() {
+        Settings ci = Settings.fromProfile("ci");
+        assertEquals(Database.Kind.DISABLED, ci.database.kind);
+        FakeLibhegel fake = run(ci.database(Database.defaultLocation()));
+        assertTrue(fake.databaseSent);
+        assertNull(fake.databasePath);
+    }
+
+    @Test
+    void suppressingNoHealthCheckRunsThemAll() {
+        FakeLibhegel fake = new FakeLibhegel();
+        fake.resolvedSuppressMask = Abi.HC_TOO_SLOW;
+        Settings settings = Settings.resolved(fake, null);
+        assertEquals(Abi.HC_TOO_SLOW, settings.suppressMask);
+        assertEquals(0, settings.suppressHealthCheck(HealthCheck.NONE).suppressMask);
+        assertEquals(0, settings.suppressHealthCheck().suppressMask);
     }
 
     @Test

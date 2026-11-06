@@ -24,7 +24,7 @@ import java.util.function.Supplier;
  *
  * <p>On an execution the engine stamped for capture ({@link #isFinal()}) — the final replay of a
  * minimal failing example among them — and on every execution of a {@linkplain Verbosity#VERBOSE
- * verbose} run, each top-level {@code draw} is printed as {@code var x = 42;} and each note as its
+ * verbose} run, each top-level {@code draw} is printed as {@code var x_1 = 42;} and each note as its
  * text into the engine's document for the case, which lays out long values over several lines and
  * attributes concurrent workers' lines. The generator prints the value as it draws it (see {@link
  * PrintableGenerator}), so {@code draw} needs a printable generator; {@link #drawSilent} draws from
@@ -45,8 +45,8 @@ public final class TestCase {
     /** The example an explicit test case draws from; {@code null} for a generated one. */
     private final ExplicitDraws explicit;
     /** This handle's printer onto its own print region, fetched on its first printed draw. */
-    private Printer printer;
-    /** The naming scope of this handle's draws; {@link #repeat} swaps in a fresh one per repetition. */
+    private PrettyPrinter printer;
+    /** The naming scope of this handle's draws, shared with its clones and {@link #repeat}'s repetitions. */
     private Names names;
     /** Whether this is a {@link #block} handle, freed by {@link #endBlock()} unless {@link #pin pinned}. */
     private final boolean scoped;
@@ -58,8 +58,8 @@ public final class TestCase {
     /**
      * A scope draw names are numbered in: each use of a label is numbered in turn ({@code x_1},
      * {@code x_2}, ...), and an unlabelled draw is {@code draw_N}, counting unlabelled draws only.
-     * A test body and its clones share one; each {@link #block} and each repetition of {@link
-     * #repeat} opens a fresh one.
+     * A test body, its clones and the repetitions of {@link #repeat} share one; each {@link #block}
+     * opens a fresh one.
      */
     private static final class Names {
         private final Map<String, Integer> uses = new HashMap<>();
@@ -81,11 +81,11 @@ public final class TestCase {
         /** Every clone and pinned block handle opened in the case, kept alive until the case is over. */
         private final List<TestCase> blocks = new ArrayList<>();
         /** The deferred printer regions opened in the case, kept alive until the case is over. */
-        final Printer.Regions regions = new Printer.Regions();
+        final PrettyPrinter.Regions regions = new PrettyPrinter.Regions();
 
-        Shared(boolean captured, boolean verbose) {
+        Shared(boolean captured, boolean emits) {
             this.captured = captured;
-            this.emits = captured || verbose;
+            this.emits = emits;
         }
 
         /**
@@ -118,11 +118,11 @@ public final class TestCase {
     }
 
     TestCase(DataSource source, boolean captured) {
-        this(source, captured, false);
+        this(source, captured, captured);
     }
 
-    TestCase(DataSource source, boolean captured, boolean verbose) {
-        this(source, new Shared(captured, verbose), null, new Names(), false);
+    TestCase(DataSource source, boolean captured, boolean emits) {
+        this(source, new Shared(captured, emits), null, new Names(), false);
     }
 
     private TestCase(DataSource source, Shared shared, ExplicitDraws explicit, Names names, boolean scoped) {
@@ -214,7 +214,7 @@ public final class TestCase {
 
     private void closePrinter() {
         if (printer != null) {
-            Printer p = printer;
+            PrettyPrinter p = printer;
             printer = null;
             p.free();
         }
@@ -231,7 +231,7 @@ public final class TestCase {
         if (!shared.emits) {
             return List.of();
         }
-        Printer root = source.printer(shared.regions);
+        PrettyPrinter root = source.printer(shared.regions);
         try {
             return root.read().lines().toList();
         } finally {
@@ -281,24 +281,28 @@ public final class TestCase {
      */
     public <T> T draw(Generator<T> generator, String label) {
         if (label != null && label.indexOf('\n') >= 0) {
-            throw new InvalidArgument("draw label " + Printer.quote(label, '"') + " must not contain a newline");
+            throw new InvalidArgument("draw label " + PrettyPrinter.quote(label, '"') + " must not contain a newline");
         }
         requirePrintable(generator);
         if (explicit != null) {
             return explicitDraw(label);
         }
-        if (drawDepth > 0 || !shared.emits) {
-            return drawAndPrint(generator, Printer.noop());
+        if (drawDepth > 0) {
+            return drawAndPrint(generator, PrettyPrinter.noop());
         }
-        Printer p = printer();
         String name = names.next(label);
         T value;
-        try (Printer.Speculation speculation = p.speculate()) {
-            p.text("var " + name + " = ");
-            value = drawAndPrint(generator, p);
-            p.text(";");
-            p.hardBreak();
-            speculation.commit();
+        if (!shared.emits) {
+            value = drawAndPrint(generator, PrettyPrinter.noop());
+        } else {
+            PrettyPrinter p = printer();
+            try (PrettyPrinter.Speculation speculation = p.speculate()) {
+                p.text("var " + name + " = ");
+                value = drawAndPrint(generator, p);
+                p.text(";");
+                p.hardBreak();
+                speculation.commit();
+            }
         }
         shared.record(name, value);
         return value;
@@ -324,13 +328,11 @@ public final class TestCase {
         if (explicit != null) {
             throw new InvalidExample("drawSilent is not supported in explicit test cases");
         }
-        drawDepth++;
         startSpan(generator.label());
         try {
             return generator.doDraw(this);
         } finally {
             stopSpan(false);
-            drawDepth--;
         }
     }
 
@@ -344,17 +346,19 @@ public final class TestCase {
      * @param printer the printer to describe the value to
      * @param <T> the value type
      * @return the generated value
-     * @throws IllegalArgumentException if {@code generator} is not a {@link PrintableGenerator}
+     * @throws IllegalArgumentException if {@code generator} is not a {@link PrintableGenerator}, or
+     *     in an explicit example
      */
-    public <T> T drawAndPrint(Generator<T> generator, Printer printer) {
+    public <T> T drawAndPrint(Generator<T> generator, PrettyPrinter printer) {
         PrintableGenerator<T> printable = requirePrintable(generator);
-        drawDepth++;
+        if (explicit != null) {
+            throw new InvalidExample("drawAndPrint is not supported in explicit test cases");
+        }
         startSpan(generator.label());
         try {
             return printable.doDrawAndPrint(this, printer);
         } finally {
             stopSpan(false);
-            drawDepth--;
         }
     }
 
@@ -362,7 +366,12 @@ public final class TestCase {
         if (generator instanceof PrintableGenerator<T> printable) {
             return printable;
         }
-        throw new InvalidArgument(generator.getClass().getName()
+        throw unprintable(generator);
+    }
+
+    /** @hidden */
+    public static IllegalArgumentException unprintable(Generator<?> generator) {
+        return new InvalidArgument(generator.getClass().getName()
                 + " cannot print the values it draws: implement PrintableGenerator, or make it printable"
                 + " with .printWith((value, printer) -> ...) or .printAsRepr(); a map whose input is"
                 + " printable can print the call with .printAsCall(\"Type.factory\"); or draw it with"
@@ -377,7 +386,7 @@ public final class TestCase {
         return value;
     }
 
-    private Printer printer() {
+    private PrettyPrinter printer() {
         if (printer == null) {
             printer = source.printer(shared.regions);
         }
@@ -504,10 +513,18 @@ public final class TestCase {
      * @param worker the worker index to attribute this handle's output to
      */
     public void setWorker(int worker) {
+        if (worker < 0) {
+            throw new InvalidArgument("setWorker: worker must be >= 0, got " + worker);
+        }
         if (explicit != null) {
             return;
         }
         source.setWorker(worker);
+    }
+
+    /** @hidden */
+    public static IllegalArgumentException invalidArgument(String message) {
+        return new InvalidArgument(message);
     }
 
     /**
@@ -734,7 +751,8 @@ public final class TestCase {
      * whether or not the body completes. Every draw already runs its generator in a span of its
      * own, so a generator needs this only for a group of draws that is not a generator of its own;
      * {@link Label} lists the engine's structural labels and {@link Label#of(String)} mints custom
-     * ones.
+     * ones. A span is part of a draw in progress: a {@link #draw} made inside one prints nothing
+     * and is not recorded, as a draw made inside a generator's draw is not.
      *
      * @param label the span's label
      * @param body the draws making up the value
@@ -759,6 +777,7 @@ public final class TestCase {
      */
     public void startSpan(long label) {
         source.startSpan(label);
+        drawDepth++;
     }
 
     /**
@@ -770,6 +789,7 @@ public final class TestCase {
      * @param discard whether the span's draws were rejected
      */
     public void stopSpan(boolean discard) {
+        drawDepth = Math.max(0, drawDepth - 1);
         source.stopSpan(discard);
     }
 

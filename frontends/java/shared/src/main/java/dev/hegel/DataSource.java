@@ -240,7 +240,7 @@ interface DataSource {
      * A caller-owned printer onto this source's print region ({@code hegel_test_case_printer}),
      * whose deferred regions are registered in {@code regions}.
      */
-    Printer printer(Printer.Regions regions);
+    PrettyPrinter printer(PrettyPrinter.Regions regions);
 
     /** The engine's sampling decision for invariant {@code invariantIndex} at this join point. */
     boolean stateMachineShouldCheckInvariant(long stateMachineId, long invariantIndex);

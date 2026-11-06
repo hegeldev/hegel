@@ -2,8 +2,8 @@ package dev.hegel.generators;
 
 import dev.hegel.Generator;
 import dev.hegel.Label;
+import dev.hegel.PrettyPrinter;
 import dev.hegel.PrintableGenerator;
-import dev.hegel.Printer;
 import dev.hegel.TestCase;
 import java.util.LinkedHashSet;
 import java.util.Set;
@@ -44,6 +44,7 @@ public final class SetGenerator<T> implements PrintableGenerator<Set<T>> {
      * @return a copy with the maximum size set
      */
     public SetGenerator<T> maxSize(int maxSize) {
+        Sizes.checkMax(maxSize, "sets");
         return new SetGenerator<>(element, minSize, maxSize);
     }
 
@@ -61,18 +62,18 @@ public final class SetGenerator<T> implements PrintableGenerator<Set<T>> {
 
     /** @hidden */
     @Override
-    public Set<T> doDrawAndPrint(TestCase tc, Printer printer) {
+    public Set<T> doDrawAndPrint(TestCase tc, PrettyPrinter printer) {
         return draw(tc, printer);
     }
 
-    private Set<T> draw(TestCase tc, Printer printer) {
-        Printer p = Components.out(printer);
+    private Set<T> draw(TestCase tc, PrettyPrinter printer) {
+        PrettyPrinter p = Components.out(printer);
         long id = tc.newCollection(minSize, maxSize);
         try {
             Set<T> out = new LinkedHashSet<>();
             p.beginGroup("Set.of(");
             while (tc.collectionMore(id)) {
-                try (Printer.Speculation speculation = p.speculate()) {
+                try (PrettyPrinter.Speculation speculation = p.speculate()) {
                     if (!out.isEmpty()) {
                         p.separator();
                     }

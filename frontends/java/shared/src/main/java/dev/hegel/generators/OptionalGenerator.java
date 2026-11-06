@@ -2,8 +2,8 @@ package dev.hegel.generators;
 
 import dev.hegel.Generator;
 import dev.hegel.Label;
+import dev.hegel.PrettyPrinter;
 import dev.hegel.PrintableGenerator;
-import dev.hegel.Printer;
 import dev.hegel.TestCase;
 import java.util.function.Function;
 
@@ -50,12 +50,12 @@ public final class OptionalGenerator<T, R> implements PrintableGenerator<R> {
 
     /** @hidden */
     @Override
-    public R doDrawAndPrint(TestCase tc, Printer printer) {
+    public R doDrawAndPrint(TestCase tc, PrettyPrinter printer) {
         return draw(tc, printer);
     }
 
-    private R draw(TestCase tc, Printer printer) {
-        Printer p = Components.out(printer);
+    private R draw(TestCase tc, PrettyPrinter printer) {
+        PrettyPrinter p = Components.out(printer);
         if (tc.generateBoolean(0.5)) {
             p.beginGroup(name + ".of(");
             R value = present.apply(Components.draw(tc, inner, printer));

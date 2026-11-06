@@ -5,6 +5,7 @@ import dev.hegel.lowlevel.Libhegel;
 import java.lang.reflect.Array;
 import java.lang.reflect.Method;
 import java.lang.reflect.RecordComponent;
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -47,8 +48,8 @@ import java.util.function.Supplier;
  * IllegalArgumentException} for an invalid argument, such as an {@link #endGroup} with no group
  * open, and a {@link HegelException} otherwise.
  */
-public final class Printer {
-    private static final Printer NOOP = new Printer(null, 0, null);
+public final class PrettyPrinter {
+    private static final PrettyPrinter NOOP = new PrettyPrinter(null, 0, null);
 
     private final Libhegel lib;
     private final long handle;
@@ -60,25 +61,25 @@ public final class Printer {
      * been read (by the test case or {@link Document} that owns them).
      */
     static final class Regions {
-        private final List<Printer> open = new ArrayList<>();
+        private final List<PrettyPrinter> open = new ArrayList<>();
 
-        synchronized void add(Printer printer) {
+        synchronized void add(PrettyPrinter printer) {
             open.add(printer);
         }
 
         void freeAll() {
-            List<Printer> taken;
+            List<PrettyPrinter> taken;
             synchronized (this) {
                 taken = new ArrayList<>(open);
                 open.clear();
             }
-            for (Printer printer : taken) {
+            for (PrettyPrinter printer : taken) {
                 printer.free();
             }
         }
     }
 
-    Printer(Libhegel lib, long handle, Regions regions) {
+    PrettyPrinter(Libhegel lib, long handle, Regions regions) {
         this.lib = lib;
         this.handle = handle;
         this.regions = regions;
@@ -90,7 +91,7 @@ public final class Printer {
      *
      * @return the discarding printer
      */
-    public static Printer noop() {
+    public static PrettyPrinter noop() {
         return NOOP;
     }
 
@@ -372,7 +373,7 @@ public final class Printer {
      *
      * @return a printer onto the new region
      */
-    public synchronized Printer deferred() {
+    public synchronized PrettyPrinter deferred() {
         if (inactive()) {
             return NOOP;
         }
@@ -382,7 +383,7 @@ public final class Printer {
         if (rc != Abi.OK) {
             return NOOP;
         }
-        Printer printer = new Printer(lib, child[0], regions);
+        PrettyPrinter printer = new PrettyPrinter(lib, child[0], regions);
         regions.add(printer);
         return printer;
     }
@@ -409,6 +410,9 @@ public final class Printer {
 
     /** Release the handle; later writes through this printer are discarded. */
     synchronized void free() {
+        if (freed) {
+            return;
+        }
         freed = true;
         lib.printerFree(handle);
     }
@@ -431,14 +435,33 @@ public final class Printer {
             text(quote(s.toString(), '"'));
         } else if (value instanceof Character c) {
             text(quote(c.toString(), '\''));
+        } else if (value instanceof Long l) {
+            text(l + "L");
+        } else if (value instanceof Float f) {
+            text(floatLiteral(f));
+        } else if (value instanceof Double d) {
+            text(doubleLiteral(d));
+        } else if (value instanceof Short s) {
+            text("(short) " + s);
+        } else if (value instanceof Byte b) {
+            text("(byte) " + b);
+        } else if (value instanceof BigInteger n) {
+            text("new BigInteger(" + quote(n.toString(), '"') + ")");
+        } else if (value instanceof Enum<?> e) {
+            text(e.getDeclaringClass().getSimpleName() + "." + e.name());
         } else if (value.getClass().isArray()) {
+            Class<?> component = value.getClass().getComponentType();
             int length = Array.getLength(value);
             Object[] elements = new Object[length];
             for (int i = 0; i < length; i++) {
                 elements[i] = Array.get(value, i);
             }
-            String component = value.getClass().getComponentType().getSimpleName();
-            sequence("new " + component + "[] {", Arrays.asList(elements).iterator(), "}");
+            boolean narrow = component == byte.class || component == short.class;
+            sequence(
+                    "new " + component.getSimpleName() + "[] {",
+                    Arrays.asList(elements).iterator(),
+                    "}",
+                    narrow);
         } else if (value instanceof Set<?> set) {
             sequence("Set.of(", set.iterator(), ")");
         } else if (value instanceof Collection<?> collection) {
@@ -506,7 +529,31 @@ public final class Printer {
         }
     }
 
+    private static String floatLiteral(float f) {
+        if (Float.isNaN(f)) {
+            return "Float.NaN";
+        }
+        if (Float.isInfinite(f)) {
+            return f > 0 ? "Float.POSITIVE_INFINITY" : "Float.NEGATIVE_INFINITY";
+        }
+        return f + "f";
+    }
+
+    private static String doubleLiteral(double d) {
+        if (Double.isNaN(d)) {
+            return "Double.NaN";
+        }
+        if (Double.isInfinite(d)) {
+            return d > 0 ? "Double.POSITIVE_INFINITY" : "Double.NEGATIVE_INFINITY";
+        }
+        return Double.toString(d);
+    }
+
     private void sequence(String open, Iterator<?> elements, String close) {
+        sequence(open, elements, close, false);
+    }
+
+    private void sequence(String open, Iterator<?> elements, String close, boolean narrow) {
         beginGroup(open);
         boolean first = true;
         while (elements.hasNext()) {
@@ -514,7 +561,12 @@ public final class Printer {
                 separator();
             }
             first = false;
-            render(elements.next());
+            Object element = elements.next();
+            if (narrow) {
+                text(element.toString());
+            } else {
+                render(element);
+            }
         }
         endGroup(close);
     }
@@ -547,26 +599,32 @@ public final class Printer {
     }
 
     /**
-     * An open speculative region of a {@link Printer}; see {@link Printer#speculate()}. Close it
-     * exactly once, with {@link #commit()} or {@link #abort()}; {@link #close()} aborts it unless
-     * it was already closed.
+     * An open speculative region of a {@link PrettyPrinter}; see {@link PrettyPrinter#speculate()}. Close it
+     * with {@link #commit()} or {@link #abort()}; {@link #close()} aborts it unless it was already
+     * closed, and closing a closed region does nothing.
      */
     public static final class Speculation implements AutoCloseable {
-        private final Printer printer;
+        private final PrettyPrinter printer;
         private boolean open = true;
 
-        private Speculation(Printer printer) {
+        private Speculation(PrettyPrinter printer) {
             this.printer = printer;
         }
 
         /** Close the region, keeping what was printed in it. */
         public void commit() {
+            if (!open) {
+                return;
+            }
             open = false;
             printer.endSpeculation(true);
         }
 
         /** Close the region, discarding what was printed in it. */
         public void abort() {
+            if (!open) {
+                return;
+            }
             open = false;
             printer.endSpeculation(false);
         }

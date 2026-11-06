@@ -112,19 +112,32 @@ public final class ConcurrentPool<T> {
 
         @Override
         public PrintableGenerator<T> filter(Predicate<? super T> predicate) {
-            return new PoolGenerator<T>() {
-                @Override
-                public long label() {
-                    return Label.combine(Label.FILTER, Label.POOL_VALUES_CONSUMED);
-                }
+            return new FilteredConsumingGenerator(predicate);
+        }
+    }
 
-                @Override
-                public T doDraw(TestCase tc) {
-                    synchronized (ConcurrentPool.this) {
-                        return PoolDraws.drawFiltered(tc, poolId, values, predicate);
-                    }
-                }
-            };
+    private final class FilteredConsumingGenerator extends PoolGenerator<T> {
+        private final Predicate<? super T> predicate;
+
+        FilteredConsumingGenerator(Predicate<? super T> predicate) {
+            this.predicate = predicate;
+        }
+
+        @Override
+        public long label() {
+            return Label.combine(Label.FILTER, Label.POOL_VALUES_CONSUMED);
+        }
+
+        @Override
+        public T doDraw(TestCase tc) {
+            synchronized (ConcurrentPool.this) {
+                return PoolDraws.drawFiltered(tc, poolId, values, predicate);
+            }
+        }
+
+        @Override
+        public PrintableGenerator<T> filter(Predicate<? super T> next) {
+            return new FilteredConsumingGenerator(value -> predicate.test(value) && next.test(value));
         }
     }
 }

@@ -2,15 +2,15 @@ package dev.hegel.generators;
 
 import dev.hegel.Generator;
 import dev.hegel.Label;
+import dev.hegel.PrettyPrinter;
 import dev.hegel.PrintableGenerator;
-import dev.hegel.Printer;
 import dev.hegel.TestCase;
 import java.util.function.Function;
 
 /**
  * Result of {@link Generator#map}. Draws from the source and applies {@code f}. It prints the
  * mapped value with
- * {@link Printer#repr}, so the source need not be printable; {@link #printAsCall} prints the call
+ * {@link PrettyPrinter#repr}, so the source need not be printable; {@link #printAsCall} prints the call
  * that made the value instead.
  *
  * @param <T> the source value type
@@ -75,7 +75,7 @@ public final class MappedGenerator<T, U> extends ValueGenerator<U> {
             }
 
             @Override
-            public U doDrawAndPrint(TestCase tc, Printer printer) {
+            public U doDrawAndPrint(TestCase tc, PrettyPrinter printer) {
                 printer.beginGroup(open);
                 T input = tc.drawAndPrint(source, printer);
                 printer.endGroup(")");

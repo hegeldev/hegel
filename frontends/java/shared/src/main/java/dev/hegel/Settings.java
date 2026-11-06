@@ -1,9 +1,7 @@
 package dev.hegel;
 
 import dev.hegel.lowlevel.Libhegel;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.OptionalLong;
 import java.util.function.Consumer;
 
@@ -32,8 +30,9 @@ import java.util.function.Consumer;
  * The values are fixed when the {@code Settings} is created: a profile that {@link
  * #registerProfile} or {@link #setDefaultProfile} changes afterwards does not change it, and a
  * malformed {@code hegel.toml} or {@code HEGEL_*} variable throws an {@link
- * IllegalArgumentException} from the creation. {@link #set(String, String)} is the exception: the
- * engine parses a string setting when the run starts, so it applies over the typed settings.
+ * IllegalArgumentException} from the creation. {@link #set(String, String)} has the engine parse a
+ * setting's string form when it is called, so it replaces the resolved value as a fluent method
+ * does.
  */
 public final class Settings {
     final long testCases;
@@ -57,7 +56,6 @@ public final class Settings {
     final TestLocation testLocation; // null = locate the test where it is run from
     final List<String> infrastructurePackages;
     final List<Example> examples;
-    final List<Map.Entry<String, String>> stringSettings;
 
     /**
      * Create settings resolved from the engine's default profile and the environment (100 test
@@ -92,7 +90,6 @@ public final class Settings {
         this.testLocation = b.testLocation;
         this.infrastructurePackages = b.infrastructurePackages;
         this.examples = b.examples;
-        this.stringSettings = b.stringSettings;
     }
 
     /** Settings resolved by {@code lib} from {@code profile} ({@code null} for the default one). */
@@ -107,31 +104,42 @@ public final class Settings {
     private static Builder resolve(Libhegel lib, String profile) {
         long s = Runner.newSettings(lib, profile);
         try {
-            Builder b = new Builder();
-            b.testCases = lib.settingsGetTestCases(s);
-            OptionalLong seed = lib.settingsGetSeed(s);
-            b.hasSeed = seed.isPresent();
-            b.seed = seed.orElse(0L);
-            b.derandomize = lib.settingsGetDerandomize(s);
-            b.database = Database.fromEngine(lib.settingsGetDatabase(s));
-            b.suppressMask = lib.settingsGetSuppressHealthCheck(s);
-            b.phasesMask = lib.settingsGetPhases(s);
-            b.verbosity = Verbosity.fromCode(lib.settingsGetVerbosity(s));
-            b.backend = Backend.fromCode(lib.settingsGetBackend(s));
-            b.reportMultipleFailures = lib.settingsGetReportMultipleFailures(s);
-            b.stopOnFirstFailure = lib.settingsGetStopOnFirstFailure(s);
-            b.showStatistics = lib.settingsGetShowStatistics(s);
-            b.unboundedChoices = lib.settingsGetUnboundedChoices(s);
-            b.printBlob = lib.settingsGetPrintBlob(s);
-            b.nondeterminismStrictness = NondeterminismStrictness.fromCode(lib.settingsGetNondeterminismStrictness(s));
-            return b;
+            return readEngine(lib, s, new Builder());
         } finally {
             lib.settingsFree(s);
         }
     }
 
+    /** Fill {@code b}'s engine settings with the values the handle {@code s} holds. */
+    private static Builder readEngine(Libhegel lib, long s, Builder b) {
+        b.testCases = lib.settingsGetTestCases(s);
+        OptionalLong seed = lib.settingsGetSeed(s);
+        b.hasSeed = seed.isPresent();
+        b.seed = seed.orElse(0L);
+        b.derandomize = lib.settingsGetDerandomize(s);
+        b.database = Database.fromEngine(lib.settingsGetDatabase(s));
+        b.suppressMask = lib.settingsGetSuppressHealthCheck(s);
+        b.phasesMask = lib.settingsGetPhases(s);
+        b.verbosity = Verbosity.fromCode(lib.settingsGetVerbosity(s));
+        b.backend = Backend.fromCode(lib.settingsGetBackend(s));
+        b.reportMultipleFailures = lib.settingsGetReportMultipleFailures(s);
+        b.stopOnFirstFailure = lib.settingsGetStopOnFirstFailure(s);
+        b.showStatistics = lib.settingsGetShowStatistics(s);
+        b.unboundedChoices = lib.settingsGetUnboundedChoices(s);
+        b.printBlob = lib.settingsGetPrintBlob(s);
+        b.nondeterminismStrictness = NondeterminismStrictness.fromCode(lib.settingsGetNondeterminismStrictness(s));
+        return b;
+    }
+
     /** Return a copy of these settings with {@code mutator} applied to the changed fields. */
     private Settings with(Consumer<Builder> mutator) {
+        Builder b = copy();
+        mutator.accept(b);
+        return new Settings(b);
+    }
+
+    /** A builder holding every field of these settings. */
+    private Builder copy() {
         Builder b = new Builder();
         b.testCases = testCases;
         b.hasSeed = hasSeed;
@@ -154,9 +162,7 @@ public final class Settings {
         b.testLocation = testLocation;
         b.infrastructurePackages = infrastructurePackages;
         b.examples = examples;
-        b.stringSettings = stringSettings;
-        mutator.accept(b);
-        return new Settings(b);
+        return b;
     }
 
     /**
@@ -185,7 +191,6 @@ public final class Settings {
         TestLocation testLocation = null;
         List<String> infrastructurePackages = List.of();
         List<Example> examples = List.of();
-        List<Map.Entry<String, String>> stringSettings = List.of();
     }
 
     /**
@@ -270,6 +275,19 @@ public final class Settings {
         return with(b -> {
             b.hasSeed = true;
             b.seed = seed;
+        });
+    }
+
+    /**
+     * Leave the seed to the engine, which picks one at random, or derives one when {@link
+     * #derandomize} is on: undoes {@link #seed} and a seed the profile or {@code HEGEL_SEED} gave.
+     *
+     * @return a new settings instance
+     */
+    public Settings noSeed() {
+        return with(b -> {
+            b.hasSeed = false;
+            b.seed = 0;
         });
     }
 
@@ -524,8 +542,8 @@ public final class Settings {
      * or {@code database_key}, and {@code value} is in that key's vocabulary ({@code "500"}, {@code
      * "true"}, {@code "generate,shrink"}, ...). The engine parses it, so every engine setting is
      * reachable this way, which suits settings read from a command line or a configuration file.
-     * String settings apply when the run starts, after the typed ones, in the order given, so a
-     * later one wins.
+     * It applies when called, so it and the typed methods replace each other in call order, and
+     * the resolved value it sets is read back from the engine at once.
      *
      * <pre>{@code
      * new Settings().set("test_cases", "500").set("suppress_health_check", "too_slow")
@@ -537,11 +555,19 @@ public final class Settings {
      * @throws IllegalArgumentException for an unknown key or a value outside its vocabulary
      */
     public Settings set(String key, String value) {
-        Runner.checkStringSetting(Engine.get(), key, value);
-        List<Map.Entry<String, String>> copy = new ArrayList<>(stringSettings);
-        copy.add(Map.entry(key, value));
-        List<Map.Entry<String, String>> settings = List.copyOf(copy);
-        return with(b -> b.stringSettings = settings);
+        Libhegel lib = Engine.get();
+        long s = Runner.newSettings(lib, "base");
+        try {
+            Runner.applySettings(lib, s, this);
+            Runner.setFromString(lib, s, key, value);
+            Builder b = readEngine(lib, s, copy());
+            if (key.equals("database_key")) {
+                b.name = value;
+            }
+            return new Settings(b);
+        } finally {
+            lib.settingsFree(s);
+        }
     }
 
     /**
@@ -556,18 +582,5 @@ public final class Settings {
     public Settings examples(Example... examples) {
         List<Example> copy = List.of(examples);
         return with(b -> b.examples = copy);
-    }
-
-    /**
-     * These settings with the values the engine holds once the string settings are applied, so a
-     * run and its reporters see the effective configuration.
-     */
-    Settings effective(long testCases, boolean printBlob, NondeterminismStrictness strictness, Verbosity verbosity) {
-        return with(b -> {
-            b.testCases = testCases;
-            b.verbosity = verbosity;
-            b.printBlob = printBlob;
-            b.nondeterminismStrictness = strictness;
-        });
     }
 }

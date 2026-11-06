@@ -1,5 +1,7 @@
 package dev.hegel;
 
+import java.util.concurrent.ConcurrentHashMap;
+
 /**
  * Span labels for {@link TestCase#span(long, java.util.function.Supplier)} and {@link
  * TestCase#startSpan(long)}.
@@ -24,6 +26,8 @@ package dev.hegel;
  * and throw a {@link dev.hegel.lowlevel.LibhegelException} if it cannot be loaded.
  */
 public final class Label {
+    private static final ConcurrentHashMap<String, Long> NAMED = new ConcurrentHashMap<>();
+
     private Label() {}
 
     /** A variable-length list: {@code of("hegel.lists")}. */
@@ -107,7 +111,12 @@ public final class Label {
      * @return the label
      */
     public static long of(String name) {
-        return Engine.real().labelFromName(name);
+        Long label = NAMED.get(name);
+        if (label == null) {
+            label = Engine.real().labelFromName(name);
+            NAMED.put(name, label);
+        }
+        return label;
     }
 
     /**

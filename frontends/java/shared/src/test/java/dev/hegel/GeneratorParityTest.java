@@ -255,9 +255,7 @@ class GeneratorParityTest {
                     tc.draw(text().codec("utf-8"));
                 },
                 SETTINGS);
-        TextGenerator ebcdic = text().codec("ebcdic");
-        IllegalArgumentException invalid = assertThrows(
-                IllegalArgumentException.class, () -> Hegel.test(tc -> tc.draw(ebcdic), SETTINGS.testCases(1)));
+        IllegalArgumentException invalid = assertThrows(IllegalArgumentException.class, () -> text().codec("ebcdic"));
         assertTrue(invalid.getMessage().contains("ebcdic"), invalid.getMessage());
     }
 

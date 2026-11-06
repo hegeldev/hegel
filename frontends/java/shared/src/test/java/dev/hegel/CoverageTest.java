@@ -3,7 +3,6 @@ package dev.hegel;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -137,7 +136,7 @@ class CoverageTest {
         assertTrue(noSeed.annotated);
         assertEquals("dev.hegel.CoverageTest$Holder.unseeded", noSeed.name);
         assertEquals(
-                new TestLocation("dev/hegel/CoverageTest.java", 57, "dev.hegel.CoverageTest$Holder", "unseeded"),
+                new TestLocation("dev/hegel/CoverageTest.java", 56, "dev.hegel.CoverageTest$Holder", "unseeded"),
                 noSeed.testLocation);
 
         // Fully-configured: derandomize forced on, a single explicit phase, a suppressed check,
@@ -195,7 +194,7 @@ class CoverageTest {
                 HegelTestExtension.settingsFrom(unseeded.getAnnotation(HegelTest.class), unseeded, SubHolder.class);
         assertEquals("dev.hegel.CoverageTest$SubHolder.unseeded", inherited.name);
         assertEquals(
-                new TestLocation("dev/hegel/CoverageTest.java", 57, "dev.hegel.CoverageTest$SubHolder", "unseeded"),
+                new TestLocation("dev/hegel/CoverageTest.java", 56, "dev.hegel.CoverageTest$SubHolder", "unseeded"),
                 inherited.testLocation);
     }
 

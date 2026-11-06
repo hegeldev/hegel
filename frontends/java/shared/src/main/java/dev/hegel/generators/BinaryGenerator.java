@@ -32,6 +32,7 @@ public final class BinaryGenerator extends ValueGenerator<byte[]> {
      * @return a copy with the maximum size set
      */
     public BinaryGenerator maxSize(int maxSize) {
+        Sizes.checkMax(maxSize, "binary");
         return new BinaryGenerator(minSize, maxSize);
     }
 

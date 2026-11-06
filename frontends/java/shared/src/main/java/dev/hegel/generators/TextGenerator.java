@@ -20,6 +20,8 @@ import java.util.List;
  * codepoints}, {@link #categories(String...) categories} and so on); the two cannot be combined.
  */
 public final class TextGenerator extends ValueGenerator<String> {
+    private static final List<String> CODECS = List.of("ascii", "latin-1", "iso-8859-1", "utf-8");
+
     private final long minSize;
     private final long maxSize;
     private final String codec;
@@ -135,6 +137,7 @@ public final class TextGenerator extends ValueGenerator<String> {
      * @return a copy with the maximum size set
      */
     public TextGenerator maxSize(int maxSize) {
+        Sizes.checkMax(maxSize, "text");
         return with(
                 minSize,
                 maxSize,
@@ -175,13 +178,14 @@ public final class TextGenerator extends ValueGenerator<String> {
      * {@code "utf-8"} (no restriction). The codec's range intersects with any {@link
      * #codepoints(int, int) codepoint range}.
      *
-     * <p>The engine checks the name: drawing from a generator with any other codec throws an {@link
-     * IllegalArgumentException}.
-     *
      * @param codec the codec's name
      * @return a copy with the codec set
+     * @throws IllegalArgumentException for any other name
      */
     public TextGenerator codec(String codec) {
+        if (!CODECS.contains(codec)) {
+            throw new IllegalArgumentException("text: invalid codec: " + codec);
+        }
         return with(
                 minSize,
                 maxSize,

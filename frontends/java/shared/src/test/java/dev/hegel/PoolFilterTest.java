@@ -23,8 +23,9 @@ class PoolFilterTest {
                     for (int i = 0; i < 10; i++) {
                         pool.add(i);
                     }
-                    int even = tc.draw(pool.consuming().filter(x -> x % 2 == 0));
+                    int even = tc.draw(pool.consuming().filter(x -> x % 2 == 0).filter(x -> x >= 4));
                     assertEquals(0, even % 2);
+                    assertTrue(even >= 4);
                     assertEquals(9, pool.size());
                     Set<Integer> rest = new HashSet<>();
                     for (int i = 0; i < 9; i++) {
@@ -45,8 +46,8 @@ class PoolFilterTest {
                     for (int i = 0; i < 10; i++) {
                         pool.add(tc, i);
                     }
-                    int big = tc.draw(pool.consuming().filter(x -> x >= 5));
-                    assertTrue(big >= 5);
+                    int big = tc.draw(pool.consuming().filter(x -> x >= 5).filter(x -> x % 2 == 1));
+                    assertTrue(big >= 5 && big % 2 == 1);
                     assertEquals(9, pool.size());
                     Set<Integer> rest = new HashSet<>();
                     for (int i = 0; i < 9; i++) {

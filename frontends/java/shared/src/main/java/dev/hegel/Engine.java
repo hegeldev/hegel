@@ -29,8 +29,6 @@ final class Engine {
     /** The real binding, loaded on first use. */
     static synchronized Libhegel real() {
         if (loaded == null) {
-            // Each frontend jar bundles exactly one binding, registered as a LibhegelBackend
-            // service provider; Libhegel.load finds it.
             Path path = LibraryLoader.fromEnvironment().resolve();
             Libhegel lib = Libhegel.load(path);
             LibraryLoader.warnOnVersionMismatch(lib.version(), LibraryLoader.targetEngineVersion(), System.err);

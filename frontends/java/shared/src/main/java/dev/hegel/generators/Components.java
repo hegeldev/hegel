@@ -1,7 +1,7 @@
 package dev.hegel.generators;
 
 import dev.hegel.Generator;
-import dev.hegel.Printer;
+import dev.hegel.PrettyPrinter;
 import dev.hegel.TestCase;
 
 /**
@@ -12,11 +12,11 @@ import dev.hegel.TestCase;
 final class Components {
     private Components() {}
 
-    static <X> X draw(TestCase tc, Generator<X> component, Printer printer) {
+    static <X> X draw(TestCase tc, Generator<X> component, PrettyPrinter printer) {
         return printer == null ? tc.drawSilent(component) : tc.drawAndPrint(component, printer);
     }
 
-    static Printer out(Printer printer) {
-        return printer == null ? Printer.noop() : printer;
+    static PrettyPrinter out(PrettyPrinter printer) {
+        return printer == null ? PrettyPrinter.noop() : printer;
     }
 }

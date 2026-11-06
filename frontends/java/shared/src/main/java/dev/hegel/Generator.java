@@ -59,7 +59,7 @@ public interface Generator<T> {
 
     /**
      * Transform each generated value with {@code f}. The result prints the transformed value with
-     * {@link Printer#repr}; {@link MappedGenerator#printAsCall} prints the call that made it
+     * {@link PrettyPrinter#repr}; {@link MappedGenerator#printAsCall} prints the call that made it
      * instead.
      *
      * @param f the mapping function
@@ -98,7 +98,7 @@ public interface Generator<T> {
      * Print each drawn value with {@code print}, which receives the value and the printer to
      * describe it to: for a custom representation, to mask a secret, or to make a hand-written
      * generator printable. The value is drawn as this generator draws it, silently, and {@code
-     * print} is only called when the printer {@linkplain Printer#shouldPrint() prints}.
+     * print} is only called when the printer {@linkplain PrettyPrinter#shouldPrint() prints}.
      *
      * <pre>{@code
      * tc.draw(integers().map(Key::new).printWith((key, p) -> p.text("Key.of(" + key.id() + ")")));
@@ -107,12 +107,12 @@ public interface Generator<T> {
      * @param print describes a drawn value to a printer
      * @return a printable generator of the same values
      */
-    default PrintableGenerator<T> printWith(BiConsumer<? super T, Printer> print) {
+    default PrintableGenerator<T> printWith(BiConsumer<? super T, PrettyPrinter> print) {
         return new PrintedGenerator<>(this, print);
     }
 
     /**
-     * Print each drawn value with {@link Printer#repr}: the usual way to make a hand-written
+     * Print each drawn value with {@link PrettyPrinter#repr}: the usual way to make a hand-written
      * generator printable.
      *
      * @return a printable generator of the same values

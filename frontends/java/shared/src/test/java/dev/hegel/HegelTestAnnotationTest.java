@@ -98,6 +98,13 @@ class HegelTestAnnotationTest {
 
         @HegelTest(examples = "notAnExample")
         void namesAWrongMethod(TestCase tc) {}
+
+        static List<Object> mixed() {
+            return List.of(Example.of(1), "not an example");
+        }
+
+        @HegelTest(examples = "mixed")
+        void namesAMixedMethod(TestCase tc) {}
     }
 
     @Test
@@ -112,5 +119,11 @@ class HegelTestAnnotationTest {
                 IllegalArgumentException.class,
                 () -> HegelTestExtension.examplesFrom(
                         wrong.getAnnotation(HegelTest.class), ExampleProperties.class, new ExampleProperties()));
+        Method mixed = BadExampleMethods.class.getDeclaredMethod("namesAMixedMethod", TestCase.class);
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class,
+                () -> HegelTestExtension.examplesFrom(
+                        mixed.getAnnotation(HegelTest.class), BadExampleMethods.class, new BadExampleMethods()));
+        assertTrue(e.getMessage().contains("not an example"), e.getMessage());
     }
 }

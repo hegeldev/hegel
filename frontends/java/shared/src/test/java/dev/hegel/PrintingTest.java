@@ -73,7 +73,7 @@ class PrintingTest {
     private static final PrintableGenerator<IntSupplier> COUNTERS = (tc, p) -> {
         int start = tc.drawSilent(integers().min(0).max(0));
         p.beginGroup("Counter[calls=[");
-        Printer slot = p.deferred();
+        PrettyPrinter slot = p.deferred();
         p.endGroup("]]");
         int[] next = {start};
         boolean[] first = {true};
@@ -233,8 +233,8 @@ class PrintingTest {
     }
 
     @Test
-    void aPrintingCompositePrintsWhatItsBodyPrints() {
-        PrintableGenerator<Point> points = composite((tc, p) -> {
+    void aPrintableGeneratorPrintsWhatItsBodyPrints() {
+        PrintableGenerator<Point> points = (tc, p) -> {
             p.beginGroup("Point.of(");
             int x = tc.drawAndPrint(integers().min(1).max(1), p);
             p.separator();
@@ -242,7 +242,7 @@ class PrintingTest {
             int y = tc.drawAndPrint(integers().min(2).max(2), p);
             p.endGroup(")");
             return new Point(x, y + ignored - 5);
-        });
+        };
         RunReport report = Hegel.run(
                 tc -> {
                     tc.draw(points, "pt");
@@ -253,7 +253,31 @@ class PrintingTest {
         Failure failure = report.failures().get(0);
         assertEquals(List.of("var pt_1 = Point.of(1, 2);"), failure.output());
         assertEquals(Map.of("pt_1", new Point(1, 2)), failure.draws());
-        assertEquals(Label.COMPOSITE, points.label());
+        assertEquals(Label.GENERATOR, points.label());
+    }
+
+    @Test
+    void aDrawInsideASpanPrintsNothing() {
+        assertEquals(List.of("var y_1 = 0;"), failingOutput(tc -> {
+            tc.span(Label.of("group"), () -> tc.draw(integers().min(1).max(1), "x"));
+            tc.draw(integers().min(0).max(0), "y");
+        }));
+    }
+
+    @Test
+    void aQuietRunRecordsDrawsButPrintsNoCaseOutput() {
+        RunReport report = Hegel.run(
+                tc -> {
+                    tc.draw(integers().min(3).max(3), "x");
+                    tc.note("hidden");
+                    throw new AssertionError("boom");
+                },
+                SETTINGS.verbosity(Verbosity.QUIET),
+                Reporter.silent());
+        assertEquals(RunStatus.FAILED, report.status());
+        Failure failure = report.failures().get(0);
+        assertEquals(List.of(), failure.output());
+        assertEquals(Map.of("x_1", 3), failure.draws());
     }
 
     @Test
@@ -323,6 +347,24 @@ class PrintingTest {
                 lists(tree).minSize(1).maxSize(1).map(Node::new)));
         List<String> out = failingOutput(tc -> tc.draw(tree, "t"));
         assertEquals(List.of("var t_1 = new Leaf(1);"), out);
+    }
+
+    @Test
+    void aForwardReferenceToAnUnprintableGeneratorCannotBeDrawnPrinted() {
+        Deferred<Integer> silent = deferred();
+        silent.set(tc -> 1);
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class,
+                () -> Hegel.run(tc -> tc.draw(silent, "x"), SETTINGS, Reporter.silent()));
+        assertTrue(e.getMessage().contains("cannot print the values it draws"), e.getMessage());
+    }
+
+    @Test
+    void aFilterOfAFilterMakesOneRoundOfAttempts() {
+        assertEquals(
+                List.of("var x_1 = 2;"),
+                failingOutput(tc ->
+                        tc.draw(integers().min(0).max(3).filter(x -> x % 2 == 0).filter(x -> x > 0), "x")));
     }
 
     @Test

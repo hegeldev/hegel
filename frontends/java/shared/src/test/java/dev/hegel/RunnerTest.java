@@ -564,7 +564,7 @@ class RunnerTest {
         // The engine applies the HEGEL_* variables and hegel.toml while constructing the handle: a
         // malformed one is the caller's mistake, anything else is an engine error.
         FakeLibhegel malformed = new FakeLibhegel();
-        malformed.settingsNewRc = Abi.E_INVALID_ARG;
+        malformed.settingsNewForProfileRc = Abi.E_INVALID_ARG;
         malformed.lastError = "HEGEL_TEST_CASES must be a positive integer, got \"lots\"";
         IllegalArgumentException e =
                 assertThrows(IllegalArgumentException.class, () -> run(malformed, new Settings(), tc -> {}));
@@ -572,9 +572,9 @@ class RunnerTest {
         assertTrue(!malformed.settingsFreed);
 
         FakeLibhegel broken = new FakeLibhegel();
-        broken.settingsNewRc = Abi.E_INTERNAL;
+        broken.settingsNewForProfileRc = Abi.E_INTERNAL;
         HegelException h = assertThrows(HegelException.class, () -> run(broken, new Settings(), tc -> {}));
-        assertTrue(h.getMessage().contains("hegel_settings_new"), h.getMessage());
+        assertTrue(h.getMessage().contains("hegel_settings_new_for_profile"), h.getMessage());
     }
 
     @Test

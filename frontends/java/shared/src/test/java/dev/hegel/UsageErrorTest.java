@@ -1,7 +1,7 @@
 package dev.hegel;
 
+import static dev.hegel.Generators.fromLark;
 import static dev.hegel.Generators.integers;
-import static dev.hegel.Generators.text;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -28,11 +28,11 @@ class UsageErrorTest {
                 () -> Hegel.run(
                         tc -> {
                             calls.incrementAndGet();
-                            tc.draw(text().codec("nonsense"));
+                            tc.draw(fromLark("start: ("));
                         },
                         SETTINGS,
                         Reporter.silent()));
-        assertTrue(e.getMessage().contains("nonsense"), e.getMessage());
+        assertTrue(e.getMessage().contains("start: ("), e.getMessage());
         assertEquals(1, calls.get());
     }
 

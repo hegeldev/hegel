@@ -7,10 +7,10 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
-import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -35,7 +35,7 @@ final class FakeLibhegel implements Libhegel {
     static final long CLONE_BASE = 0x1000;
     /** Block handles are {@code BLOCK_BASE + n} for the n-th block opened. */
     static final long BLOCK_BASE = 0x8000;
-    /** Printer handles are {@code PRINTER_BASE + n} for the n-th printer fetched. */
+    /** PrettyPrinter handles are {@code PRINTER_BASE + n} for the n-th printer fetched. */
     static final long PRINTER_BASE = 0x20000;
     /** A deferred printer's region is keyed {@code DEFERRED_BASE + n} for the n-th one opened. */
     static final long DEFERRED_BASE = 0x40000;
@@ -53,7 +53,7 @@ final class FakeLibhegel implements Libhegel {
     final Map<Long, Long> blockParents = new HashMap<>();
     /** The test-case handle each printer was fetched for. */
     final Map<Long, Long> printerOwners = new LinkedHashMap<>();
-    /** Printer handles released through printerFree, in order. */
+    /** PrettyPrinter handles released through printerFree, in order. */
     final List<Long> freedPrinters = new ArrayList<>();
     /** Block handles released through testCaseFree, in order. */
     final List<Long> freedBlocks = new ArrayList<>();

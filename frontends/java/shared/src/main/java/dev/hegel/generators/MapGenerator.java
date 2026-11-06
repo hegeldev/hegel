@@ -2,8 +2,8 @@ package dev.hegel.generators;
 
 import dev.hegel.Generator;
 import dev.hegel.Label;
+import dev.hegel.PrettyPrinter;
 import dev.hegel.PrintableGenerator;
-import dev.hegel.Printer;
 import dev.hegel.TestCase;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -46,6 +46,7 @@ public final class MapGenerator<K, V> implements PrintableGenerator<Map<K, V>> {
      * @return a copy with the maximum size set
      */
     public MapGenerator<K, V> maxSize(int maxSize) {
+        Sizes.checkMax(maxSize, "maps");
         return new MapGenerator<>(keys, values, minSize, maxSize);
     }
 
@@ -63,18 +64,18 @@ public final class MapGenerator<K, V> implements PrintableGenerator<Map<K, V>> {
 
     /** @hidden */
     @Override
-    public Map<K, V> doDrawAndPrint(TestCase tc, Printer printer) {
+    public Map<K, V> doDrawAndPrint(TestCase tc, PrettyPrinter printer) {
         return draw(tc, printer);
     }
 
-    private Map<K, V> draw(TestCase tc, Printer printer) {
-        Printer p = Components.out(printer);
+    private Map<K, V> draw(TestCase tc, PrettyPrinter printer) {
+        PrettyPrinter p = Components.out(printer);
         long id = tc.newCollection(minSize, maxSize);
         try {
             Map<K, V> out = new LinkedHashMap<>();
             p.beginGroup("Map.of(");
             while (tc.collectionMore(id)) {
-                try (Printer.Speculation speculation = p.speculate()) {
+                try (PrettyPrinter.Speculation speculation = p.speculate()) {
                     if (!out.isEmpty()) {
                         p.separator();
                     }

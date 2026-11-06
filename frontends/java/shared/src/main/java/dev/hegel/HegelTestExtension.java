@@ -92,7 +92,6 @@ public final class HegelTestExtension implements TestTemplateInvocationContextPr
         String name = ann.name().isEmpty() ? className + "." + method.getName() : ann.name();
         Settings s = ann.profile().isEmpty() ? new Settings() : Settings.fromProfile(ann.profile());
         s = s.name(name).testLocation(MethodLocation.of(method, testClass)).annotated();
-        // Each attribute's default leaves the value the settings resolved in place.
         if (ann.verbosity() != Verbosity.DEFAULT) {
             s = s.verbosity(ann.verbosity());
         }
@@ -160,7 +159,11 @@ public final class HegelTestExtension implements TestTemplateInvocationContextPr
                 examples.add(example);
             } else if (supplied instanceof Iterable<?> iterable) {
                 for (Object item : iterable) {
-                    examples.add((Example) item);
+                    if (!(item instanceof Example example)) {
+                        throw new IllegalArgumentException("@HegelTest(examples): " + testClass.getName() + "." + name
+                                + "() must return an Example or an Iterable of them, not " + item);
+                    }
+                    examples.add(example);
                 }
             } else {
                 throw new IllegalArgumentException("@HegelTest(examples): " + testClass.getName() + "." + name

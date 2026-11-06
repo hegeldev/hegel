@@ -2,8 +2,8 @@ package dev.hegel.generators;
 
 import dev.hegel.Generator;
 import dev.hegel.Label;
+import dev.hegel.PrettyPrinter;
 import dev.hegel.PrintableGenerator;
-import dev.hegel.Printer;
 import dev.hegel.TestCase;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -57,6 +57,7 @@ public final class ListGenerator<T> implements PrintableGenerator<List<T>> {
      * @return a copy with the maximum size set
      */
     public ListGenerator<T> maxSize(int maxSize) {
+        Sizes.checkMax(maxSize, "lists");
         return new ListGenerator<>(element, minSize, maxSize, uniqueKey);
     }
 
@@ -95,19 +96,19 @@ public final class ListGenerator<T> implements PrintableGenerator<List<T>> {
 
     /** @hidden */
     @Override
-    public List<T> doDrawAndPrint(TestCase tc, Printer printer) {
+    public List<T> doDrawAndPrint(TestCase tc, PrettyPrinter printer) {
         return draw(tc, printer);
     }
 
-    private List<T> draw(TestCase tc, Printer printer) {
-        Printer p = Components.out(printer);
+    private List<T> draw(TestCase tc, PrettyPrinter printer) {
+        PrettyPrinter p = Components.out(printer);
         long id = tc.newCollection(minSize, maxSize);
         try {
             List<T> out = new ArrayList<>();
             Set<Object> keys = new HashSet<>();
             p.beginGroup("List.of(");
             while (tc.collectionMore(id)) {
-                try (Printer.Speculation speculation = p.speculate()) {
+                try (PrettyPrinter.Speculation speculation = p.speculate()) {
                     if (!out.isEmpty()) {
                         p.separator();
                     }

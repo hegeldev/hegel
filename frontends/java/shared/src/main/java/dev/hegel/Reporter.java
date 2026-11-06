@@ -8,7 +8,7 @@ import java.io.PrintStream;
  *
  * <p>Hegel itself never writes to {@code System.out} or {@code System.err}; all output goes through
  * the run's reporter. The default, {@link #printing(PrintStream) Reporter.printing(System.err)},
- * prints the classic report (each top-level draw as {@code var x = 42;}, notes, and reproduce blobs).
+ * prints the classic report (each top-level draw as {@code var x_1 = 42;}, notes, and reproduce blobs).
  * A frontend built on top of Hegel — another JVM language, a custom test runner — supplies its own
  * implementation to route output through its logging, or {@link #silent()} to consume the {@link
  * RunReport} returned by {@link Hegel#run} instead.
@@ -52,7 +52,7 @@ public interface Reporter {
 
     /**
      * One line of a case's rendered output: its top-level {@link TestCase#draw(Generator, String)
-     * draws} as {@code label = value;} (labels numbered from their second use in a case: {@code x},
+     * draws} as {@code var label_N = value;} (each use of a label numbered in turn: {@code x_1},
      * {@code x_2}, ...; {@code draw_N} for the N-th unlabelled draw), its {@link
      * TestCase#note(String) notes}, and a stateful machine's steps, laid out by the engine — long
      * values broken over several lines, a concurrent worker's lines stamped {@code [worker N
@@ -98,7 +98,7 @@ public interface Reporter {
     default void runFinished(RunReport report) {}
 
     /**
-     * The classic printed report: engine output, each reported draw as {@code label = value;},
+     * The classic printed report: engine output, each reported draw as {@code var label_N = value;},
      * notes, a header when several distinct failures are reported, a {@code note:} line with the
      * engine's caveat for a nondeterministic failure, and a copy-pasteable reproducer when {@link
      * Settings#printBlob(boolean)} is on and the failure has a blob. Honours {@link

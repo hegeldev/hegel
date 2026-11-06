@@ -6,9 +6,8 @@ import java.util.function.Function;
 
 /**
  * A generator built from imperative code that draws from other generators, backing {@link
- * dev.hegel.Generators#composite(Function)}. It brackets the body in a single {@code composite}
- * span, and prints the value the body returns with {@link dev.hegel.Printer#repr}: the body's own
- * draws are not printed.
+ * dev.hegel.Generators#composite(Function)}. It prints the value the body returns with {@link
+ * dev.hegel.PrettyPrinter#repr}: the body's own draws are not printed.
  *
  * @param <T> the value type
  */

@@ -233,7 +233,7 @@ final class JnaLibhegel implements Libhegel {
 
         int hegel_printer_is_live(Pointer ctx, Pointer printer, ByteByReference out);
 
-        int hegel_generate_boolean(Pointer ctx, Pointer tc, double p, byte hasForced, byte forced, ByteByReference out);
+        int hegel_generate_boolean(Pointer ctx, Pointer tc, double p, byte forced, byte hasForced, ByteByReference out);
 
         int hegel_generate_integer(Pointer ctx, Pointer tc, long min, long max, LongByReference out);
 

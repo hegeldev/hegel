@@ -122,7 +122,7 @@ for it, or else the example's next positional value:
 
 ```java
 static List<Example> edgeCases() {
-  return List.of(Example.of(List.of()), Example.of().with("xs", List.of(0, 0)));
+  return List.of(Example.of(List.of()), Example.of().with("xs_1", List.of(0, 0)));
 }
 
 @HegelTest(examples = "edgeCases")
@@ -206,9 +206,11 @@ for (Failure f : report.failures()) {   // one per distinct counterexample
 ```
 
 `TestCase.isFinal()` identifies the executions the engine stamped for the failure report (the
-final replay of a counterexample among them), `TestCase.span` and `Label` let custom composite
-generators tell the engine about their structure, and `Settings.infrastructurePackages` keeps a
-frontend's own stack frames out of failure origins.
+final replay of a counterexample among them); a custom composite generator draws its parts through
+`TestCase.drawSilent` or `TestCase.drawAndPrint`, each in a span labelled by its generator's
+`Label`, which is how the engine learns its structure (`TestCase.span` is only for a group of draws
+that is not a generator of its own); and `Settings.infrastructurePackages` keeps a frontend's own
+stack frames out of failure origins.
 
 ## Binding Hegel yourself
 

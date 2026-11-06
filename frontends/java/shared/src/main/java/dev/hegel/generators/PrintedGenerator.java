@@ -1,8 +1,8 @@
 package dev.hegel.generators;
 
 import dev.hegel.Generator;
+import dev.hegel.PrettyPrinter;
 import dev.hegel.PrintableGenerator;
-import dev.hegel.Printer;
 import dev.hegel.TestCase;
 import java.util.function.BiConsumer;
 
@@ -14,9 +14,9 @@ import java.util.function.BiConsumer;
  */
 public final class PrintedGenerator<T> implements PrintableGenerator<T> {
     private final Generator<T> source;
-    private final BiConsumer<? super T, Printer> print;
+    private final BiConsumer<? super T, PrettyPrinter> print;
 
-    public PrintedGenerator(Generator<T> source, BiConsumer<? super T, Printer> print) {
+    public PrintedGenerator(Generator<T> source, BiConsumer<? super T, PrettyPrinter> print) {
         this.source = source;
         this.print = print;
     }
@@ -35,7 +35,7 @@ public final class PrintedGenerator<T> implements PrintableGenerator<T> {
 
     /** @hidden */
     @Override
-    public T doDrawAndPrint(TestCase tc, Printer printer) {
+    public T doDrawAndPrint(TestCase tc, PrettyPrinter printer) {
         T value = source.doDraw(tc);
         if (printer.shouldPrint()) {
             print.accept(value, printer);

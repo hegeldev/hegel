@@ -10,6 +10,7 @@ import dev.hegel.lowlevel.Abi;
 import dev.hegel.lowlevel.Libhegel;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -24,7 +25,7 @@ import java.util.UUID;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
 
-class PrinterTest {
+class PrettyPrinterTest {
     private static String render(Object value) {
         try (Document doc = new Document()) {
             doc.printer().repr(value);
@@ -32,7 +33,7 @@ class PrinterTest {
         }
     }
 
-    private static String render(int maxWidth, Consumer<Printer> print) {
+    private static String render(int maxWidth, Consumer<PrettyPrinter> print) {
         try (Document doc = new Document().maxWidth(maxWidth)) {
             print.accept(doc.printer());
             return doc.finish();
@@ -40,6 +41,10 @@ class PrinterTest {
     }
 
     record Point(int x, int y) {}
+
+    enum Suit {
+        HEARTS
+    }
 
     record Named(String name, List<String> tags) {}
 
@@ -82,8 +87,32 @@ class PrinterTest {
     }
 
     @Test
+    void boxedNumbersAndEnumsRenderAsTypedJavaLiterals() {
+        assertEquals("42L", render(42L));
+        assertEquals("1.5f", render(1.5f));
+        assertEquals("Float.NaN", render(Float.NaN));
+        assertEquals("Float.POSITIVE_INFINITY", render(Float.POSITIVE_INFINITY));
+        assertEquals("Float.NEGATIVE_INFINITY", render(Float.NEGATIVE_INFINITY));
+        assertEquals("-0.0", render(-0.0));
+        assertEquals("1.0E10", render(1.0e10));
+        assertEquals("Double.NaN", render(Double.NaN));
+        assertEquals("Double.POSITIVE_INFINITY", render(Double.POSITIVE_INFINITY));
+        assertEquals("Double.NEGATIVE_INFINITY", render(Double.NEGATIVE_INFINITY));
+        assertEquals("(short) -7", render((short) -7));
+        assertEquals("(byte) 1", render((byte) 1));
+        assertEquals(
+                "new BigInteger(\"123456789012345678901234567890\")",
+                render(new BigInteger("123456789012345678901234567890")));
+        assertEquals("Suit.HEARTS", render(Suit.HEARTS));
+        assertEquals("OptionalLong.of(3L)", render(OptionalLong.of(3)));
+        assertEquals("List.of(1L, (short) 2)", render(List.of(1L, (short) 2)));
+    }
+
+    @Test
     void containersRenderStructurally() {
         assertEquals("new byte[] {1, 2}", render(new byte[] {1, 2}));
+        assertEquals("new short[] {-1}", render(new short[] {-1}));
+        assertEquals("new long[] {1L}", render(new long[] {1}));
         assertEquals("new int[] {1, 2, 3}", render(new int[] {1, 2, 3}));
         assertEquals("new String[] {\"a\", null}", render(new String[] {"a", null}));
         assertEquals("new int[][] {new int[] {1}, new int[] {}}", render(new int[][] {{1}, {}}));
@@ -129,7 +158,7 @@ class PrinterTest {
         assertEquals("Optional.empty()", render(Optional.empty()));
         assertEquals("OptionalInt.of(3)", render(OptionalInt.of(3)));
         assertEquals("OptionalInt.empty()", render(OptionalInt.empty()));
-        assertEquals("OptionalLong.of(4)", render(OptionalLong.of(4)));
+        assertEquals("OptionalLong.of(4L)", render(OptionalLong.of(4L)));
         assertEquals("OptionalLong.empty()", render(OptionalLong.empty()));
         assertEquals("OptionalDouble.of(0.5)", render(OptionalDouble.of(0.5)));
         assertEquals("OptionalDouble.empty()", render(OptionalDouble.empty()));
@@ -145,10 +174,10 @@ class PrinterTest {
     @Test
     void writesToADeadRegionAreIgnored() {
         Libhegel lib = Engine.get();
-        Printer printer = new Printer(lib, lib.printerNew(), new Printer.Regions());
+        PrettyPrinter printer = new PrettyPrinter(lib, lib.printerNew(), new PrettyPrinter.Regions());
         try {
             printer.text("x");
-            Printer slot = printer.deferred();
+            PrettyPrinter slot = printer.deferred();
             assertEquals("x", printer.read());
             assertFalse(slot.shouldPrint());
             slot.text("late");
@@ -167,17 +196,13 @@ class PrinterTest {
     @Test
     void invalidWritesAreRaised() {
         try (Document doc = new Document()) {
-            Printer printer = doc.printer();
+            PrettyPrinter printer = doc.printer();
             IllegalArgumentException newline =
                     assertThrows(IllegalArgumentException.class, () -> printer.ifBreak("a\nb"));
             assertTrue(newline.getMessage().contains("hegel_printer_if_break"), newline.getMessage());
             assertThrows(IllegalArgumentException.class, () -> printer.comment("a\nb"));
             assertThrows(IllegalArgumentException.class, () -> printer.breakable("a\nb"));
             assertThrows(IllegalArgumentException.class, () -> printer.beginGroup(1, "a\nb"));
-            Printer.Speculation speculation = printer.speculate();
-            speculation.commit();
-            assertThrows(IllegalArgumentException.class, speculation::commit);
-            assertThrows(IllegalArgumentException.class, speculation::abort);
         }
     }
 
@@ -195,7 +220,7 @@ class PrinterTest {
                         throw e.getCause();
                     }
                 });
-        Printer printer = new Printer(failing, failing.printerNew(), new Printer.Regions());
+        PrettyPrinter printer = new PrettyPrinter(failing, failing.printerNew(), new PrettyPrinter.Regions());
         try {
             HegelException e = assertThrows(HegelException.class, () -> printer.repr(List.of(1, 2)));
             assertTrue(e.getMessage().contains("hegel_printer_breakable failed (rc=-8)"), e.getMessage());
@@ -238,7 +263,7 @@ class PrinterTest {
     @Test
     void readingAStandaloneDocumentTwiceGivesTheSameText() {
         Libhegel lib = Engine.get();
-        Printer printer = new Printer(lib, lib.printerNew(), new Printer.Regions());
+        PrettyPrinter printer = new PrettyPrinter(lib, lib.printerNew(), new PrettyPrinter.Regions());
         try {
             printer.text("x");
             printer.hardBreak();
@@ -251,7 +276,7 @@ class PrinterTest {
 
     @Test
     void aNullDocumentCannotBeRead() {
-        Printer printer = new Printer(Engine.get(), 0, new Printer.Regions());
+        PrettyPrinter printer = new PrettyPrinter(Engine.get(), 0, new PrettyPrinter.Regions());
         assertThrows(HegelException.class, printer::read);
     }
 
@@ -263,7 +288,7 @@ class PrinterTest {
 
     @Test
     void ifBreakPrintsOnlyWhenItsGroupBreaks() {
-        Consumer<Printer> print = p -> p.group(1, "[", "]", () -> {
+        Consumer<PrettyPrinter> print = p -> p.group(1, "[", "]", () -> {
             p.text("1000,");
             p.breakable(" ");
             p.text("2000");
@@ -289,7 +314,7 @@ class PrinterTest {
 
     @Test
     void aDocumentLaysItsGroupsOutToItsWidth() {
-        Consumer<Printer> print = p -> {
+        Consumer<PrettyPrinter> print = p -> {
             p.beginGroup(1, "[");
             p.text("first");
             p.separator();
@@ -303,7 +328,7 @@ class PrinterTest {
     @Test
     void theSupplierFormOfGroupReturnsItsBodysResult() {
         try (Document doc = new Document().maxWidth(4)) {
-            Printer p = doc.printer();
+            PrettyPrinter p = doc.printer();
             int result = p.group(1, "(", ")", () -> {
                 p.text("ab,");
                 p.breakable(" ");
@@ -354,14 +379,16 @@ class PrinterTest {
     @Test
     void aSpeculationKeepsOnlyWhatIsCommitted() {
         assertEquals("kept", render(79, p -> {
-            Printer.Speculation dropped = p.speculate();
+            PrettyPrinter.Speculation dropped = p.speculate();
             p.text("dropped");
             dropped.abort();
-            Printer.Speculation kept = p.speculate();
+            PrettyPrinter.Speculation kept = p.speculate();
             p.text("kept");
             kept.commit();
+            kept.commit();
+            kept.abort();
             kept.close();
-            try (Printer.Speculation closed = p.speculate()) {
+            try (PrettyPrinter.Speculation closed = p.speculate()) {
                 p.text("closed");
             }
         }));
@@ -370,9 +397,9 @@ class PrinterTest {
     @Test
     void aSpeculationIsAbortedWhenItsBlockThrows() {
         try (Document doc = new Document()) {
-            Printer p = doc.printer();
+            PrettyPrinter p = doc.printer();
             assertThrows(IllegalStateException.class, () -> {
-                try (Printer.Speculation speculation = p.speculate()) {
+                try (PrettyPrinter.Speculation speculation = p.speculate()) {
                     p.text("partial");
                     throw new IllegalStateException("rejected");
                 }
@@ -385,11 +412,11 @@ class PrinterTest {
     @Test
     void aDeferredRegionIsFilledInWhereItWasOpened() {
         try (Document doc = new Document()) {
-            Printer p = doc.printer();
+            PrettyPrinter p = doc.printer();
             p.text("[");
-            Printer slot = p.deferred();
+            PrettyPrinter slot = p.deferred();
             p.text("]");
-            Printer inner = slot.deferred();
+            PrettyPrinter inner = slot.deferred();
             slot.text(" second");
             inner.text("first");
             assertTrue(slot.shouldPrint());
@@ -402,14 +429,14 @@ class PrinterTest {
     @Test
     void aDeferredRegionOpenedInAnAbortedSpeculationIsDead() {
         try (Document doc = new Document()) {
-            Printer p = doc.printer();
-            Printer.Speculation speculation = p.speculate();
-            Printer slot = p.deferred();
+            PrettyPrinter p = doc.printer();
+            PrettyPrinter.Speculation speculation = p.speculate();
+            PrettyPrinter slot = p.deferred();
             speculation.abort();
             assertFalse(slot.shouldPrint());
             slot.text("ignored");
             slot.repr(List.of(1));
-            Printer orphan = slot.deferred();
+            PrettyPrinter orphan = slot.deferred();
             assertFalse(orphan.shouldPrint());
             orphan.text("ignored");
             p.text("kept");
@@ -419,7 +446,7 @@ class PrinterTest {
 
     @Test
     void theNoopPrinterIgnoresEverything() {
-        Printer p = Printer.noop();
+        PrettyPrinter p = PrettyPrinter.noop();
         assertFalse(p.shouldPrint());
         p.text("a\nb");
         p.repr(List.of(1));
@@ -437,12 +464,27 @@ class PrinterTest {
         p.comment("c");
         p.speculate().commit();
         p.speculate().abort();
-        assertSame(Printer.noop(), p.deferred());
+        assertSame(PrettyPrinter.noop(), p.deferred());
+    }
+
+    @Test
+    void aPrinterIsFreedOnce() {
+        FakeLibhegel fake = new FakeLibhegel();
+        PrettyPrinter p = new PrettyPrinter(fake, 7L, new PrettyPrinter.Regions());
+        p.free();
+        p.free();
+        assertEquals(List.of(7L), fake.freedPrinters);
+        fake = new FakeLibhegel();
+        TestCase tc = new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), true);
+        tc.draw(Generators.integers(), "x");
+        tc.releaseAll();
+        tc.releaseAll();
+        assertEquals(List.copyOf(fake.printerOwners.keySet()), fake.freedPrinters);
     }
 
     @Test
     void aPrinterOfAClosedDocumentIgnoresEverything() {
-        Printer p;
+        PrettyPrinter p;
         try (Document doc = new Document()) {
             p = doc.printer();
             p.text("x");
@@ -450,7 +492,7 @@ class PrinterTest {
         assertFalse(p.shouldPrint());
         p.text("late");
         p.repr("late");
-        assertSame(Printer.noop(), p.deferred());
+        assertSame(PrettyPrinter.noop(), p.deferred());
     }
 
     @Test

@@ -4,10 +4,14 @@ import static dev.hegel.Generators.integers;
 import static dev.hegel.Generators.lists;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -162,6 +166,21 @@ class ExplicitExampleTest {
         assertTrue(report.errorKind().isPresent());
         AssertionError thrown = assertThrows(AssertionError.class, report::throwIfFailed);
         assertSame(report.failures().get(0).exception(), thrown);
+        assertEquals(1, thrown.getSuppressed().length);
+        assertInstanceOf(HegelRunException.class, thrown.getSuppressed()[0]);
+        assertEquals(report.error().orElseThrow(), thrown.getSuppressed()[0].getMessage());
+        ByteArrayOutputStream printed = new ByteArrayOutputStream();
+        Hegel.run(
+                tc -> {
+                    int x = tc.draw(integers().min(0).max(100));
+                    assertTrue(x != 101);
+                    tc.assume(false);
+                },
+                SETTINGS.reportMultipleFailures(true).examples(Example.of(101)),
+                Reporter.printing(new PrintStream(printed, true, StandardCharsets.UTF_8)));
+        assertTrue(
+                printed.toString(StandardCharsets.UTF_8).contains(report.error().orElseThrow()),
+                printed.toString(StandardCharsets.UTF_8));
     }
 
     @Test
@@ -212,6 +231,13 @@ class ExplicitExampleTest {
                 IllegalArgumentException.class,
                 () -> Hegel.run(tc -> tc.drawSilent(integers()), SETTINGS.examples(Example.of(1)), Reporter.silent()));
         assertEquals("drawSilent is not supported in explicit test cases", silent.getMessage());
+        IllegalArgumentException printing = assertThrows(
+                IllegalArgumentException.class,
+                () -> Hegel.run(
+                        tc -> tc.drawAndPrint(integers(), PrettyPrinter.noop()),
+                        SETTINGS.examples(Example.of(1)),
+                        Reporter.silent()));
+        assertEquals("drawAndPrint is not supported in explicit test cases", printing.getMessage());
         IllegalArgumentException span = assertThrows(
                 IllegalArgumentException.class,
                 () -> Hegel.run(

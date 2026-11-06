@@ -226,6 +226,13 @@ class TestCaseTest {
     }
 
     @Test
+    void aNegativeWorkerIndexIsAUsageError() {
+        TestCase tc = newCase(new FakeLibhegel(), false);
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> tc.setWorker(-1));
+        assertEquals("setWorker: worker must be >= 0, got -1", e.getMessage());
+    }
+
+    @Test
     void spanOpensAndClosesAroundTheBody() {
         FakeLibhegel fake = new FakeLibhegel();
         TestCase tc = newCase(fake, false);

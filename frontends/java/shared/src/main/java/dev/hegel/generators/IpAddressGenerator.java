@@ -31,7 +31,10 @@ public final class IpAddressGenerator extends ValueGenerator<String> {
     /** @hidden */
     @Override
     public long label() {
-        return Label.of("hegel.ip_addresses");
+        if (version == null) {
+            return Label.of("hegel.ip_addresses");
+        }
+        return Label.of(version == 4 ? "hegel.ip_addresses.v4" : "hegel.ip_addresses.v6");
     }
 
     /** @hidden */

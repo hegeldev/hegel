@@ -5,6 +5,7 @@ import static dev.hegel.Generators.bigIntegers;
 import static dev.hegel.Generators.binary;
 import static dev.hegel.Generators.booleans;
 import static dev.hegel.Generators.composite;
+import static dev.hegel.Generators.deferred;
 import static dev.hegel.Generators.domains;
 import static dev.hegel.Generators.doubles;
 import static dev.hegel.Generators.emails;
@@ -34,6 +35,7 @@ import static dev.hegel.Generators.weightedBooleans;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 
+import dev.hegel.generators.Deferred;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
@@ -74,6 +76,8 @@ class GeneratorLabelTest {
         assertEquals(of("hegel.urls"), urls().label());
         assertEquals(of("hegel.domains"), domains().label());
         assertEquals(of("hegel.ip_addresses"), ipAddresses().label());
+        assertEquals(of("hegel.ip_addresses.v4"), ipAddresses().v4().label());
+        assertEquals(of("hegel.ip_addresses.v6"), ipAddresses().v6().label());
         assertEquals(of("hegel.uuids"), uuids().label());
         assertEquals(of("hegel.just"), just(1).label());
         assertEquals(Label.SAMPLED_FROM, sampledFrom(1, 2).label());
@@ -83,7 +87,19 @@ class GeneratorLabelTest {
         assertEquals(of("hegel.booleans"), weightedBooleans(0.9).label());
         assertEquals(Label.COMPOSITE, composite(tc -> 1).label());
         assertEquals(Label.DEFERRED, Generators.<Integer>deferred().label());
-        assertEquals(Label.FROM_LARK, fromLark("start: \"a\"").label());
+        Deferred<Integer> set = deferred();
+        set.set(integers());
+        assertEquals(integers().label(), set.label());
+        Deferred<Object> self = deferred();
+        self.set(lists(self).map(xs -> (Object) xs));
+        assertEquals(Label.combine(Label.MAPPED, Label.combine(Label.LIST, Label.DEFERRED)), self.label());
+        assertEquals(self.label(), self.label());
+        assertEquals(
+                Label.combine(Label.FROM_LARK, of("start: \"a\""), of("start")),
+                fromLark("start: \"a\"").label());
+        assertEquals(
+                Label.combine(Label.FROM_LARK, of("start: a\na: A"), of("a"), of("A"), text().label()),
+                fromLark("start: a\na: A").start("a").explicit("A", text()).label());
         Generator<Integer> custom = tc -> 1;
         assertEquals(Label.GENERATOR, custom.label());
         assertEquals(Label.of(Evens.class.getName()), new Evens().label());
@@ -113,14 +129,23 @@ class GeneratorLabelTest {
         assertEquals(
                 Label.combine(Label.FILTER, ints), integers().filter(x -> true).label());
         assertEquals(
+                Label.combine(Label.FILTER, ints),
+                integers().filter(x -> true).filter(x -> true).label());
+        assertEquals(
                 Label.combine(Label.TUPLE, ints, strings),
                 tuples(integers(), text()).label());
         assertEquals(
                 Label.combine(Label.ONE_OF, ints, ints),
                 oneOf(integers(), integers()).label());
         assertEquals(
-                Label.combine(Label.FIXED_DICT, of(Point.class.getName())),
+                Label.combine(Label.FIXED_DICT, of(Point.class.getName()), ints, ints),
                 records(Point.class).label());
+        assertEquals(
+                Label.combine(Label.FIXED_DICT, of(Point.class.getName()), ints, strings),
+                records(Point.class).with("y", text()).label());
+        assertNotEquals(
+                records(Point.class).label(),
+                records(Point.class).with("y", text()).label());
         assertEquals(
                 Label.combine(Label.RECURSIVE, Label.combine(Label.MAPPED, ints)),
                 recursive(integers().map(x -> (Object) x), sub -> lists(sub).map(xs -> (Object) xs))

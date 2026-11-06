@@ -3,9 +3,11 @@ package dev.hegel.generators;
 import dev.hegel.Generator;
 import dev.hegel.Generators;
 import dev.hegel.Label;
+import dev.hegel.PrettyPrinter;
 import dev.hegel.PrintableGenerator;
-import dev.hegel.Printer;
 import dev.hegel.TestCase;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -15,7 +17,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * <p>A {@code Deferred<T>} is itself a {@link Generator}: pass it into other generators while
  * building a recursive structure, then call {@link #set} once to supply the real implementation.
  * Drawing before {@code set} has been called fails. It prints what the generator it delegates to
- * prints.
+ * prints, and once set it is labelled as that generator is (a reference that reaches itself while
+ * its label is computed is labelled {@link Label#DEFERRED} there, so the label is finite).
  *
  * <pre>{@code
  * // A binary tree of integers: a leaf, or a branch of two subtrees.
@@ -31,7 +34,10 @@ import java.util.concurrent.atomic.AtomicReference;
  * @param <T> the type of value produced
  */
 public final class Deferred<T> implements PrintableGenerator<T> {
+    private static final ThreadLocal<List<Deferred<?>>> LABELLING = ThreadLocal.withInitial(ArrayList::new);
+
     private final AtomicReference<Generator<T>> delegate = new AtomicReference<>();
+    private volatile Long label;
 
     public Deferred() {}
 
@@ -50,19 +56,42 @@ public final class Deferred<T> implements PrintableGenerator<T> {
     /** @hidden */
     @Override
     public long label() {
-        return Label.DEFERRED;
+        Long known = label;
+        if (known != null) {
+            return known;
+        }
+        Generator<T> g = delegate.get();
+        if (g == null) {
+            return Label.DEFERRED;
+        }
+        List<Deferred<?>> labelling = LABELLING.get();
+        if (labelling.contains(this)) {
+            return Label.DEFERRED;
+        }
+        labelling.add(this);
+        try {
+            long computed = g.label();
+            label = computed;
+            return computed;
+        } finally {
+            labelling.remove(labelling.size() - 1);
+        }
     }
 
     /** @hidden */
     @Override
     public T doDraw(TestCase tc) {
-        return Components.draw(tc, delegate(), null);
+        return delegate().doDraw(tc);
     }
 
     /** @hidden */
     @Override
-    public T doDrawAndPrint(TestCase tc, Printer printer) {
-        return Components.draw(tc, delegate(), printer);
+    public T doDrawAndPrint(TestCase tc, PrettyPrinter printer) {
+        Generator<T> g = delegate();
+        if (g instanceof PrintableGenerator<T> printable) {
+            return printable.doDrawAndPrint(tc, printer);
+        }
+        throw TestCase.unprintable(g);
     }
 
     private Generator<T> delegate() {

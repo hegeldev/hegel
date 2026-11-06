@@ -2,8 +2,8 @@ package dev.hegel.generators;
 
 import dev.hegel.Generator;
 import dev.hegel.Label;
+import dev.hegel.PrettyPrinter;
 import dev.hegel.PrintableGenerator;
-import dev.hegel.Printer;
 import dev.hegel.TestCase;
 import java.util.function.Function;
 
@@ -95,16 +95,16 @@ public final class RecursiveGenerator<T> implements PrintableGenerator<T> {
 
     /** @hidden */
     @Override
-    public T doDrawAndPrint(TestCase tc, Printer printer) {
+    public T doDrawAndPrint(TestCase tc, PrettyPrinter printer) {
         return draw(tc, printer);
     }
 
-    private T draw(TestCase tc, Printer printer) {
-        Printer p = Components.out(printer);
+    private T draw(TestCase tc, PrettyPrinter printer) {
+        PrettyPrinter p = Components.out(printer);
         long recursion = tc.newRecursion(maxDepth, maxLeaves);
         try {
             while (true) {
-                Printer.Speculation speculation = p.speculate();
+                PrettyPrinter.Speculation speculation = p.speculate();
                 try {
                     T value;
                     try {
@@ -126,7 +126,7 @@ public final class RecursiveGenerator<T> implements PrintableGenerator<T> {
         }
     }
 
-    private T drawSubtree(TestCase tc, long recursion, long depth, Printer printer) {
+    private T drawSubtree(TestCase tc, long recursion, long depth, PrettyPrinter printer) {
         if (tc.recursionBranch(recursion, depth)) {
             PrintableGenerator<T> subtrees = new PrintableGenerator<>() {
                 @Override
@@ -140,7 +140,7 @@ public final class RecursiveGenerator<T> implements PrintableGenerator<T> {
                 }
 
                 @Override
-                public T doDrawAndPrint(TestCase inner, Printer innerPrinter) {
+                public T doDrawAndPrint(TestCase inner, PrettyPrinter innerPrinter) {
                     return drawSubtree(inner, recursion, depth + 1, innerPrinter);
                 }
             };

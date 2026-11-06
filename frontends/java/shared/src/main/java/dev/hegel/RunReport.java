@@ -124,7 +124,8 @@ public final class RunReport {
      * subtype its {@link #errorKind()} names ({@link HealthCheckFailure}, {@link FlakyTestException},
      * {@link UnsatisfiableException}); for a failed run, the single failure's own exception rethrown
      * as-is, or an {@link AssertionError} aggregating several distinct failures (carrying the
-     * originals as suppressed exceptions).
+     * originals as suppressed exceptions). When a failed run also carries an {@link #error()}, the
+     * run error it would have raised is attached to the thrown exception as a suppressed one.
      */
     public void throwIfFailed() {
         if (status == RunStatus.PASSED) {
@@ -134,7 +135,7 @@ public final class RunReport {
             throw runError();
         }
         if (failures.size() == 1) {
-            throw unchecked(failures.get(0).exception());
+            throw unchecked(withRunError(failures.get(0).exception()));
         }
         StringBuilder sb = new StringBuilder();
         sb.append("Property-based test failed with ").append(failures.size()).append(" distinct failures.");
@@ -145,7 +146,14 @@ public final class RunReport {
         for (Failure failure : failures) {
             aggregate.addSuppressed(failure.exception());
         }
-        throw aggregate;
+        throw withRunError(aggregate);
+    }
+
+    private <E extends Throwable> E withRunError(E thrown) {
+        if (error != null) {
+            thrown.addSuppressed(runError());
+        }
+        return thrown;
     }
 
     /** The exception for an errored run, typed by its {@link #errorKind()}. */

@@ -24,7 +24,6 @@ import dev.hegel.generators.MapGenerator;
 import dev.hegel.generators.OneOfGenerator;
 import dev.hegel.generators.OptionalGenerator;
 import dev.hegel.generators.PermutationGenerator;
-import dev.hegel.generators.PrintingCompositeGenerator;
 import dev.hegel.generators.RecordGenerator;
 import dev.hegel.generators.RecursiveGenerator;
 import dev.hegel.generators.RegexGenerator;
@@ -52,7 +51,6 @@ import java.util.OptionalDouble;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
 import java.util.UUID;
-import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.IntFunction;
 
@@ -622,7 +620,7 @@ public final class Generators {
 
     /**
      * Builds a value imperatively from multiple draws on the test case. It prints the value {@code
-     * body} returns with {@link Printer#repr}; the draws inside it are not printed.
+     * body} returns with {@link PrettyPrinter#repr}; the draws inside it are not printed.
      *
      * @param body draws from the test case and returns a value
      * @param <T> the value type
@@ -630,30 +628,6 @@ public final class Generators {
      */
     public static <T> PrintableGenerator<T> composite(Function<TestCase, T> body) {
         return new CompositeGenerator<>(body);
-    }
-
-    /**
-     * Builds a value imperatively from multiple draws on the test case, printing it as {@code body}
-     * prints it to the printer it is given. Draw each part with {@link TestCase#drawAndPrint} to
-     * print it in place, or with {@link TestCase#drawSilent} to leave it out:
-     *
-     * <pre>{@code
-     * Generator<Point> points = composite((tc, p) -> {
-     *     p.beginGroup("Point.of(");
-     *     int x = tc.drawAndPrint(integers(), p);
-     *     p.separator();
-     *     int y = tc.drawAndPrint(integers(), p);
-     *     p.endGroup(")");
-     *     return Point.of(x, y);
-     * });
-     * }</pre>
-     *
-     * @param body draws from the test case, printing to the printer, and returns a value
-     * @param <T> the value type
-     * @return a composite generator
-     */
-    public static <T> PrintableGenerator<T> composite(BiFunction<TestCase, Printer, T> body) {
-        return new PrintingCompositeGenerator<>(body);
     }
 
     /**
@@ -701,9 +675,12 @@ public final class Generators {
      * Derive a generator for {@code type} by reflection.
      *
      * <p>Supports scalar types ({@code int}, {@code long}, {@code boolean}, {@code float}, {@code
-     * double}, {@code String}, {@code byte[]}, {@link UUID}, and their wrappers), {@link
-     * OptionalInt}, {@link OptionalLong}, {@link OptionalDouble}, enums, records (recursively), and
-     * {@code List}, {@code Set}, {@code Optional} and {@code Map} of supported element types.
+     * double}, {@code String}, {@code byte[]}, {@link UUID}, {@link java.math.BigInteger}, and
+     * their wrappers), {@link OptionalInt}, {@link OptionalLong}, {@link OptionalDouble}, the
+     * {@code java.time} types {@code Duration}, {@code LocalDate}, {@code LocalTime}, {@code
+     * LocalDateTime}, {@code OffsetDateTime}, {@code ZonedDateTime}, {@code ZoneOffset} and {@code
+     * ZoneId}, enums, records (recursively), and {@code List}, {@code Set}, {@code Optional} and
+     * {@code Map} of supported element types.
      *
      * @param type the type to derive a generator for
      * @param <T> the type

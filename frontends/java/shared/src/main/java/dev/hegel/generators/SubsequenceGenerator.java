@@ -50,6 +50,7 @@ public final class SubsequenceGenerator<T> extends ValueGenerator<List<T>> {
      * @return a copy with the maximum size set
      */
     public SubsequenceGenerator<T> maxSize(int maxSize) {
+        Sizes.checkMax(maxSize, "subsequences");
         return new SubsequenceGenerator<>(elements, minSize, maxSize);
     }
 

@@ -16,13 +16,13 @@ final class ExplicitDraws implements AutoCloseable {
     private static final Set<String> IGNORED = Set.of("target", "event", "eventValue");
 
     private final Example example;
-    private final Printer printer;
+    private final PrettyPrinter printer;
     private final Set<String> used = new HashSet<>();
     private int consumed;
 
     ExplicitDraws(Libhegel lib, Example example) {
         this.example = example;
-        this.printer = new Printer(lib, lib.printerNew(), new Printer.Regions());
+        this.printer = new PrettyPrinter(lib, lib.printerNew(), new PrettyPrinter.Regions());
     }
 
     /**

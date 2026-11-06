@@ -2,8 +2,8 @@ package dev.hegel.generators;
 
 import dev.hegel.Generator;
 import dev.hegel.Label;
+import dev.hegel.PrettyPrinter;
 import dev.hegel.PrintableGenerator;
-import dev.hegel.Printer;
 import dev.hegel.TestCase;
 import java.util.List;
 
@@ -37,11 +37,11 @@ public final class OneOfGenerator<T> implements PrintableGenerator<T> {
 
     /** @hidden */
     @Override
-    public T doDrawAndPrint(TestCase tc, Printer printer) {
+    public T doDrawAndPrint(TestCase tc, PrettyPrinter printer) {
         return draw(tc, printer);
     }
 
-    private T draw(TestCase tc, Printer printer) {
+    private T draw(TestCase tc, PrettyPrinter printer) {
         int index = (int) tc.generateInteger(0, options.size() - 1);
         return Components.draw(tc, options.get(index), printer);
     }

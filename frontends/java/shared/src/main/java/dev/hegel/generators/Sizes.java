@@ -6,6 +6,14 @@ import dev.hegel.lowlevel.Abi;
 final class Sizes {
     private Sizes() {}
 
+    /** {@code maxSize} as given, which must not be negative. */
+    static int checkMax(int maxSize, String what) {
+        if (maxSize < 0) {
+            throw new IllegalArgumentException(what + ": maxSize must be >= 0, got " + maxSize);
+        }
+        return maxSize;
+    }
+
     static void validate(long minSize, long maxSize, String what) {
         if (minSize < 0) {
             throw new IllegalArgumentException(what + ": minSize must be >= 0, got " + minSize);

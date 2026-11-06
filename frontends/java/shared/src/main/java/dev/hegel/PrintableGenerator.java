@@ -23,7 +23,7 @@ package dev.hegel;
  * }</pre>
  *
  * <p>The silent {@link #doDraw} draws through {@link #doDrawAndPrint} with the {@link
- * Printer#noop()} printer, so both draw the same values from the same choices. A generator whose
+ * PrettyPrinter#noop()} printer, so both draw the same values from the same choices. A generator whose
  * silent draw is cheaper, or whose parts need not be printable when it is drawn silently, overrides
  * it.
  *
@@ -40,10 +40,10 @@ public interface PrintableGenerator<T> extends Generator<T> {
      * @param printer the printer to describe the value to
      * @return the generated value
      */
-    T doDrawAndPrint(TestCase tc, Printer printer);
+    T doDrawAndPrint(TestCase tc, PrettyPrinter printer);
 
     /**
-     * Draw a value without printing it: {@link #doDrawAndPrint} into the {@link Printer#noop()}
+     * Draw a value without printing it: {@link #doDrawAndPrint} into the {@link PrettyPrinter#noop()}
      * printer.
      *
      * @param tc the current test case
@@ -51,6 +51,6 @@ public interface PrintableGenerator<T> extends Generator<T> {
      */
     @Override
     default T doDraw(TestCase tc) {
-        return doDrawAndPrint(tc, Printer.noop());
+        return doDrawAndPrint(tc, PrettyPrinter.noop());
     }
 }

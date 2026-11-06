@@ -28,6 +28,7 @@ public final class LarkGenerator extends ValueGenerator<String> {
     private final int maxSize;
     private final int maxDepth;
     private final Path importPath;
+    private final CachedLabel label = new CachedLabel();
     private volatile GrammarHandle handle;
 
     /** A terminal whose values come from a generator of the user's rather than from the grammar. */
@@ -153,7 +154,17 @@ public final class LarkGenerator extends ValueGenerator<String> {
     /** @hidden */
     @Override
     public long label() {
-        return Label.FROM_LARK;
+        return label.get(() -> {
+            long[] labels = new long[3 + 2 * explicit.size()];
+            labels[0] = Label.FROM_LARK;
+            labels[1] = Label.of(grammar);
+            labels[2] = Label.of(start == null ? "start" : start);
+            for (int i = 0; i < explicit.size(); i++) {
+                labels[3 + 2 * i] = Label.of(explicit.get(i).name());
+                labels[4 + 2 * i] = explicit.get(i).generator().label();
+            }
+            return Label.combine(labels);
+        });
     }
 
     /** @hidden */
@@ -191,7 +202,7 @@ public final class LarkGenerator extends ValueGenerator<String> {
         try {
             return Files.readString(file);
         } catch (IOException e) {
-            throw new IllegalArgumentException("fromLark: could not read grammar " + file + ": " + e, e);
+            throw TestCase.invalidArgument("fromLark: could not read grammar " + file + ": " + e);
         }
     }
 }

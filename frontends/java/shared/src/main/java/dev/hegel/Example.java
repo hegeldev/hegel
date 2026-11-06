@@ -15,15 +15,15 @@ import java.util.Map;
  * <p>The test body's draws take the example's values instead of drawing from their generators:
  * a draw takes the value given for its name ({@link #with}), and otherwise the next positional
  * value ({@link #of}), in order. A draw's name is the one the counterexample output shows: its
- * label ({@code x}, numbered {@code x_2}, {@code x_3} when the label is drawn again) or {@code
- * draw_N} for the N-th unlabelled draw. The generators are not consulted, so a value need not be
+ * label with each use numbered in turn ({@code x_1}, {@code x_2}, {@code x_3}) or {@code draw_N}
+ * for the N-th unlabelled draw. The generators are not consulted, so a value need not be
  * one they could produce, but it must have the type the body expects.
  *
  * <pre>{@code
  * Hegel.test(tc -> {
  *     List<Integer> xs = tc.draw(lists(integers()), "xs");
  *     assertEquals(xs, reverse(reverse(xs)));
- * }, new Settings().examples(Example.of(List.of()), Example.of().with("xs", List.of(1, 1))));
+ * }, new Settings().examples(Example.of(List.of()), Example.of().with("xs_1", List.of(1, 1))));
  * }</pre>
  *
  * <p>An example whose body fails is reported like any other failure, before the engine's own, and
@@ -92,6 +92,6 @@ public final class Example {
     }
 
     private static String render(Object value) {
-        return value instanceof CharSequence s ? Printer.quote(s.toString(), '"') : String.valueOf(value);
+        return value instanceof CharSequence s ? PrettyPrinter.quote(s.toString(), '"') : String.valueOf(value);
     }
 }

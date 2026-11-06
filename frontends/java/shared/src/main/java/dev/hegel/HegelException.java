@@ -5,8 +5,9 @@ import dev.hegel.lowlevel.LibhegelException;
 /**
  * Thrown for engine, configuration, and binding errors — anything that is not a property failure.
  *
- * <p>A failing property is reported as an {@link AssertionError} carrying the minimal falsifying
- * example, so it integrates with test frameworks; this exception signals that something went wrong
+ * <p>A failing property is reported by rethrowing the test body's own exception (or an {@link
+ * AssertionError} aggregating several distinct failures), so it integrates with test frameworks;
+ * this exception signals that something went wrong
  * with Hegel itself (a malformed generator, a missing engine library, an internal backend error).
  * {@link HegelRunException} and its subtypes are raised when the engine aborts a run (a failed
  * {@link HealthCheck}, a flaky or unsatisfiable test).

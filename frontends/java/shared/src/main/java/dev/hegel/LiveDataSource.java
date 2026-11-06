@@ -633,11 +633,11 @@ final class LiveDataSource implements DataSource {
     }
 
     @Override
-    public Printer printer(Printer.Regions regions) {
+    public PrettyPrinter printer(PrettyPrinter.Regions regions) {
         checkNotReleased();
         long[] printer = new long[1];
         translate(lib.testCasePrinter(tc, printer), "test_case_printer");
-        return new Printer(lib, printer[0], regions);
+        return new PrettyPrinter(lib, printer[0], regions);
     }
 
     @Override

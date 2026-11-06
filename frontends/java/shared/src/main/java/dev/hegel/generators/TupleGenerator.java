@@ -2,8 +2,8 @@ package dev.hegel.generators;
 
 import dev.hegel.Generator;
 import dev.hegel.Label;
+import dev.hegel.PrettyPrinter;
 import dev.hegel.PrintableGenerator;
-import dev.hegel.Printer;
 import dev.hegel.TestCase;
 import java.util.ArrayList;
 import java.util.List;
@@ -62,12 +62,12 @@ public final class TupleGenerator<T> implements PrintableGenerator<T> {
 
     /** @hidden */
     @Override
-    public T doDrawAndPrint(TestCase tc, Printer printer) {
+    public T doDrawAndPrint(TestCase tc, PrettyPrinter printer) {
         return draw(tc, printer);
     }
 
-    private T draw(TestCase tc, Printer printer) {
-        Printer p = Components.out(printer);
+    private T draw(TestCase tc, PrettyPrinter printer) {
+        PrettyPrinter p = Components.out(printer);
         List<Object> out = new ArrayList<>(elements.size());
         p.beginGroup(record == null ? "List.of(" : "new " + record + "(");
         for (Generator<?> g : elements) {

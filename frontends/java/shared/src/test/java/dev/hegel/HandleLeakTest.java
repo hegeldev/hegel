@@ -238,9 +238,9 @@ class HandleLeakTest {
     @Test
     void deferredPrinterRegionsAreFreed() {
         Tracker tracker = new Tracker(Engine.get());
-        PrintableGenerator<Printer> slots = (tc, p) -> {
+        PrintableGenerator<PrettyPrinter> slots = (tc, p) -> {
             p.text("slot(");
-            Printer slot = p.deferred();
+            PrettyPrinter slot = p.deferred();
             p.text(")");
             return slot;
         };

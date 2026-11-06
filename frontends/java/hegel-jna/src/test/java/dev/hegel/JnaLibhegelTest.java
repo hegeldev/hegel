@@ -270,6 +270,10 @@ class JnaLibhegelTest {
         long s = out[0];
         lib.settingsVerbosity(s, Abi.VERBOSITY_DEBUG);
         assertEquals(Abi.VERBOSITY_DEBUG, lib.settingsGetVerbosity(s));
+        lib.settingsReportMultipleFailures(s, true);
+        assertTrue(lib.settingsGetReportMultipleFailures(s));
+        lib.settingsReportMultipleFailures(s, false);
+        assertFalse(lib.settingsGetReportMultipleFailures(s));
         lib.settingsStopOnFirstFailure(s, false);
         lib.settingsShowStatistics(s, true);
         lib.settingsUnboundedChoices(s, true);

@@ -85,7 +85,7 @@
  * toString()}, and the useful description of a stateful object is what it does after it is drawn.
  * The generator that made a value can always describe it, so printing is a capability of the
  * generator, not the value: a {@link dev.hegel.PrintableGenerator} draws and prints in one step,
- * writing to the engine's {@link dev.hegel.Printer} as it draws. {@link
+ * writing to the engine's {@link dev.hegel.PrettyPrinter} as it draws. {@link
  * dev.hegel.TestCase#draw(dev.hegel.Generator) draw} needs a printable generator, so that the
  * report can say what was drawn; {@link dev.hegel.TestCase#drawSilent(dev.hegel.Generator)
  * drawSilent} draws from any generator and prints nothing.
@@ -103,7 +103,7 @@
  *       {@link dev.hegel.Generator#printWith printWith} callback, a deferred description) therefore
  *       appears inside its container.
  *   <li>The value-producing generators print the value they produce with {@link
- *       dev.hegel.Printer#repr}, in Java syntax: {@code map}, {@code just}, {@code sampledFrom}
+ *       dev.hegel.PrettyPrinter#repr}, in Java syntax: {@code map}, {@code just}, {@code sampledFrom}
  *       and {@code composite}. A composite's own draws are not printed, only what it returns.
  * </ul>
  *
@@ -115,13 +115,13 @@
  *       ")"))}. It is also the way to mask a secret, or to print a type whose {@code toString()} is
  *       unhelpful.
  *   <li>{@link dev.hegel.Generator#printAsRepr() printAsRepr} prints each value with {@link
- *       dev.hegel.Printer#repr}.
+ *       dev.hegel.PrettyPrinter#repr}.
  *   <li>{@link dev.hegel.generators.MappedGenerator#printAsCall printAsCall}, on a {@code map}
  *       whose source is printable, prints the call that made the value instead of the value:
  *       {@code integers().map(Key::of).printAsCall("Key.of")} reports {@code Key.of(3)}.
- *   <li>Implement {@link dev.hegel.PrintableGenerator}, drawing each part with {@link
- *       dev.hegel.TestCase#drawAndPrint} so that it prints itself in place, or build one with
- *       {@link dev.hegel.Generators#composite(java.util.function.BiFunction)}.
+ *   <li>Implement {@link dev.hegel.PrintableGenerator} (it is a functional interface, so a lambda
+ *       {@code (tc, p) -> ...} is one), drawing each part with {@link
+ *       dev.hegel.TestCase#drawAndPrint} so that it prints itself in place.
  * </ul>
  *
  * <p>Drawing a generator that cannot print with {@code draw}, or a structural generator with a
@@ -129,17 +129,17 @@
  * Printability belongs to the generator object, so declaring it as a {@code Generator<T>} does not
  * lose it.
  *
- * <p>The {@link dev.hegel.Printer} is the engine's layout engine: text, break points that become
+ * <p>The {@link dev.hegel.PrettyPrinter} is the engine's layout engine: text, break points that become
  * newlines only when their group does not fit, and groups. A generator that may reject an attempt
- * prints it inside a {@linkplain dev.hegel.Printer#speculate() speculation} and commits only the
- * accepted one, and {@link dev.hegel.Printer#deferred()} opens a hole that is filled in after the
+ * prints it inside a {@linkplain dev.hegel.PrettyPrinter#speculate() speculation} and commits only the
+ * accepted one, and {@link dev.hegel.PrettyPrinter#deferred()} opens a hole that is filled in after the
  * draw, for a value whose description is only known once it is used:
  *
  * <pre>{@code
  * PrintableGenerator<IntSupplier> counters = (tc, p) -> {
  *     int start = tc.drawSilent(integers().min(0).max(9));
  *     p.beginGroup("Counter[calls=[");
- *     Printer calls = p.deferred();
+ *     PrettyPrinter calls = p.deferred();
  *     p.endGroup("]]");
  *     int[] next = {start};
  *     return () -> {
@@ -354,7 +354,7 @@
  * RunReport report = Hegel.run(body, new Settings().testCases(200), Reporter.silent());
  * if (report.status() == RunStatus.FAILED) {
  *   Failure f = report.failures().get(0);
- *   f.draws();       // {"xs": [0, 0]}
+ *   f.draws();       // {"xs_1": List.of(0, 0)}
  *   f.exception();   // the body's own throwable
  *   f.reproduceBlob();
  * }
@@ -365,9 +365,12 @@
  * anything fails it, and nothing is JUnit-specific. Hegel distinguishes bugs by the exception's
  * type and the first stack frame outside Hegel, the JDK, and JUnit; a frontend lists its own
  * packages in {@link dev.hegel.Settings#infrastructurePackages(String...)} so they are skipped
- * too. Custom composite generators implement {@link dev.hegel.Generator} and enclose their draws
- * in {@link dev.hegel.TestCase#span(long, java.util.function.Supplier) tc.span} with a
- * {@link dev.hegel.Label} so the engine shrinks the structure as a unit.
+ * too. A custom composite generator implements {@link dev.hegel.Generator} (or {@link
+ * dev.hegel.PrintableGenerator}) and draws its parts through {@link dev.hegel.TestCase#drawSilent}
+ * or {@link dev.hegel.TestCase#drawAndPrint}, each of which runs in a span labelled by its
+ * generator's {@link dev.hegel.Label label}, so the engine shrinks the structure as a unit;
+ * {@link dev.hegel.TestCase#span(long, java.util.function.Supplier) tc.span} is only for a group
+ * of draws that is not a generator of its own.
  *
  * <h2>Deriving generators from types</h2>
  *

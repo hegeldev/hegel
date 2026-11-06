@@ -84,28 +84,21 @@ final class Runner {
 
     static RunReport run(Libhegel lib, Settings settings, Consumer<TestCase> body, Reporter reporter) {
         RunReport report = withSettings(lib, settings, s -> {
-            // The engine parses the string settings as they are applied, so the run and its
-            // reporters read the effective configuration back.
-            Settings effective = settings.effective(
-                    lib.settingsGetTestCases(s),
-                    lib.settingsGetPrintBlob(s),
-                    NondeterminismStrictness.fromCode(lib.settingsGetNondeterminismStrictness(s)),
-                    Verbosity.fromCode(lib.settingsGetVerbosity(s)));
-            reporter.runStarted(effective);
+            reporter.runStarted(settings);
             RunStatistics.Counter counts = new RunStatistics.Counter();
-            if (!effective.reproduceFailure.isEmpty()) {
-                return replay(lib, s, effective, body, reporter, counts);
+            if (!settings.reproduceFailure.isEmpty()) {
+                return replay(lib, s, settings, body, reporter, counts);
             }
             List<Failure> explicitFailures = List.of();
-            if (!effective.examples.isEmpty() && (lib.settingsGetPhases(s) & Abi.PHASE_EXPLICIT) != 0) {
-                boolean reportMultiple = lib.settingsGetReportMultipleFailures(s);
-                explicitFailures = runExamples(lib, effective, body, reporter, reportMultiple);
+            if (!settings.examples.isEmpty() && (settings.phasesMask & Abi.PHASE_EXPLICIT) != 0) {
+                boolean reportMultiple = settings.reportMultipleFailures;
+                explicitFailures = runExamples(lib, settings, body, reporter, reportMultiple);
                 if (!explicitFailures.isEmpty() && !reportMultiple) {
                     return reportFailures(reporter, counts, explicitFailures, null);
                 }
             }
             Verdict verdict = drive(
-                    lib, lib.runStart(s, reporter::engineOutput), effective, body, reporter, counts, explicitFailures);
+                    lib, lib.runStart(s, reporter::engineOutput), settings, body, reporter, counts, explicitFailures);
             List<Failure> failures = new ArrayList<>(explicitFailures);
             failures.addAll(verdict.failures());
             if (failures.isEmpty()) {
@@ -224,7 +217,7 @@ final class Runner {
      * handle is freed when {@code body} returns.
      */
     private static <T> T withSettings(Libhegel lib, Settings settings, LongFunction<T> body) {
-        long s = newSettings(lib, null);
+        long s = newSettings(lib, "base");
         try {
             applySettings(lib, s, settings);
             return body.apply(s);
@@ -249,17 +242,7 @@ final class Runner {
         return out[0];
     }
 
-    /** Fail with the engine's diagnostic unless the engine accepts {@code value} for {@code key}. */
-    static void checkStringSetting(Libhegel lib, String key, String value) {
-        long s = newSettings(lib, null);
-        try {
-            setFromString(lib, s, key, value);
-        } finally {
-            lib.settingsFree(s);
-        }
-    }
-
-    private static void setFromString(Libhegel lib, long s, String key, String value) {
+    static void setFromString(Libhegel lib, long s, String key, String value) {
         checkUserCall(lib, lib.settingsSetFromString(s, key, value), "hegel_settings_set_from_string");
     }
 
@@ -430,8 +413,10 @@ final class Runner {
             RunStatistics.Counter counts) {
         LiveDataSource source = new LiveDataSource(lib, tc);
         try {
-            TestCase testCase = new TestCase(
-                    source, lib.testCaseShouldCapture(tc), settings.verbosity.code >= Verbosity.VERBOSE.code);
+            boolean captured = lib.testCaseShouldCapture(tc);
+            boolean verbose = settings.verbosity.code >= Verbosity.VERBOSE.code;
+            boolean quiet = settings.verbosity == Verbosity.QUIET;
+            TestCase testCase = new TestCase(source, captured, (captured && !quiet) || verbose);
             try {
                 return runBody(lib, tc, testCase, body, settings, reporter, counts);
             } finally {
@@ -539,18 +524,12 @@ final class Runner {
                 lib.settingsDatabase(s, null);
                 break;
         }
-        // The key is sent whenever there is one, even with the database off: the engine also derives
-        // the derandomized seed from it, so gating this on dbEnabled would make every named test in
-        // CI (where the database is disabled) derandomize off the same fallback key.
         if (st.name != null) {
             lib.settingsDatabaseKey(s, st.name);
         }
         if (st.testLocation != null) {
             TestLocation l = st.testLocation;
             lib.settingsTestLocation(s, l.file(), l.beginLine(), l.className(), l.function());
-        }
-        for (Map.Entry<String, String> setting : st.stringSettings) {
-            setFromString(lib, s, setting.getKey(), setting.getValue());
         }
     }
 

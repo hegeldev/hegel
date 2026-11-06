@@ -2,8 +2,8 @@ package dev.hegel.generators;
 
 import dev.hegel.Generator;
 import dev.hegel.Label;
+import dev.hegel.PrettyPrinter;
 import dev.hegel.PrintableGenerator;
-import dev.hegel.Printer;
 import dev.hegel.TestCase;
 import java.util.function.Function;
 
@@ -39,11 +39,11 @@ public final class FlatMappedGenerator<T, U> implements PrintableGenerator<U> {
 
     /** @hidden */
     @Override
-    public U doDrawAndPrint(TestCase tc, Printer printer) {
+    public U doDrawAndPrint(TestCase tc, PrettyPrinter printer) {
         return draw(tc, printer);
     }
 
-    private U draw(TestCase tc, Printer printer) {
+    private U draw(TestCase tc, PrettyPrinter printer) {
         T value = tc.drawSilent(source);
         return Components.draw(tc, f.apply(value), printer);
     }

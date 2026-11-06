@@ -61,6 +61,7 @@ public final class SampleGenerator<T> extends ValueGenerator<List<T>> {
      * @return a copy with the maximum size set
      */
     public SampleGenerator<T> maxSize(int maxSize) {
+        Sizes.checkMax(maxSize, "samples");
         return new SampleGenerator<>(elements, minSize, maxSize, replacement);
     }
 

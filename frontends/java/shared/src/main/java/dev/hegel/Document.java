@@ -9,7 +9,7 @@ import dev.hegel.lowlevel.Libhegel;
  *
  * <pre>{@code
  * try (Document doc = new Document().maxWidth(8)) {
- *     Printer p = doc.printer();
+ *     PrettyPrinter p = doc.printer();
  *     p.seq("{", "}", List.of(1, 2, 3), p::repr);
  *     assert doc.finish().equals("{1,\n 2,\n 3}");
  * }
@@ -22,9 +22,9 @@ public final class Document implements AutoCloseable {
     /** The line width a document is laid out to unless {@link #maxWidth} says otherwise. */
     public static final int DEFAULT_MAX_WIDTH = 79;
 
-    private final Printer.Regions regions = new Printer.Regions();
+    private final PrettyPrinter.Regions regions = new PrettyPrinter.Regions();
     private int maxWidth = DEFAULT_MAX_WIDTH;
-    private Printer printer;
+    private PrettyPrinter printer;
     private boolean closed;
 
     /** An empty document laid out to {@value #DEFAULT_MAX_WIDTH} columns. */
@@ -56,7 +56,7 @@ public final class Document implements AutoCloseable {
      * @return the document's printer
      * @throws IllegalStateException if the document has been finished or closed
      */
-    public Printer printer() {
+    public PrettyPrinter printer() {
         if (closed) {
             throw new IllegalStateException("the document has been finished or closed");
         }
@@ -64,8 +64,8 @@ public final class Document implements AutoCloseable {
             Libhegel lib = Engine.real();
             long options = lib.printerOptionsNew();
             try {
-                Printer.check(lib, lib.printerOptionsSetMaxWidth(options, maxWidth), "options_set_max_width");
-                printer = new Printer(lib, lib.printerNew(options), regions);
+                PrettyPrinter.check(lib, lib.printerOptionsSetMaxWidth(options, maxWidth), "options_set_max_width");
+                printer = new PrettyPrinter(lib, lib.printerNew(options), regions);
             } finally {
                 lib.printerOptionsFree(options);
             }
