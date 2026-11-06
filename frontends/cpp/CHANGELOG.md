@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.14.1 - 2026-11-06
+
+This patch adds `HEGEL_MAIN` for running a Hegel test as a standalone binary. 
+Each setting except `test_cases` is a command-line option named after its `hegel.toml` 
+key (`--seed`, `--phases`, `--backend` and so on).
+
+```cpp
+HEGEL_MAIN(workload)(hegel::TestCase& tc) {
+    auto n = tc.draw("n", gs::integers<int>());
+    if (n + 0 != n) {
+        throw std::runtime_error("n + 0 != n");
+    }
+}
+```
+
 ## 0.14.0 - 2026-11-03
 
 This release lets a rule of a concurrent state machine belong to several concurrency groups. `hegel::stateful::ConcurrentRule` now takes a list of group names in place of one name, and `group()` becomes `groups()`, returning that list. A rule constructed without groups still belongs to `anonymous_group`.
