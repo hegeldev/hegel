@@ -1863,7 +1863,13 @@ pub struct FamilyCore {
     /// root stream's RNG is attached (see [`NativeTestCase::with_random`]),
     /// possibly redrawn by a state machine between rounds, and shared by
     /// every clone-stream. Unset for replay-only families, which never sample.
+    /// Draws read a per-stream copy (see [`NativeTestCase::generation_parameters`])
+    /// rather than take this lock.
     generation_parameters: Mutex<Option<GenerationParameters>>,
+    /// Bumped under the `generation_parameters` lock on every write, so a
+    /// stream can tell with one atomic load whether its copy is current.
+    /// 0 means never set.
+    generation_parameters_version: AtomicUsize,
 }
 
 impl FamilyCore {
@@ -1877,18 +1883,26 @@ impl FamilyCore {
             events: Mutex::new(Vec::new()),
             fresh_ids: Mutex::new(FreshIds::default()),
             generation_parameters: Mutex::new(None),
+            generation_parameters_version: AtomicUsize::new(0),
         }
     }
 
     /// Record this test case's swarm parameters, replacing any earlier ones.
     fn set_generation_parameters(&self, params: GenerationParameters) {
-        *self.generation_parameters.lock() = Some(params);
+        let mut guard = self.generation_parameters.lock();
+        *guard = Some(params);
+        self.generation_parameters_version
+            .fetch_add(1, Ordering::Release);
     }
 
     /// This test case's swarm parameters, or [`GenerationParameters::default`]
-    /// if none were drawn (a replay-only family, which never samples).
-    pub(crate) fn generation_parameters(&self) -> GenerationParameters {
-        self.generation_parameters.lock().unwrap_or_default()
+    /// if none were drawn (a replay-only family, which never samples),
+    /// together with the version they were read at, taken under the lock so
+    /// the pair is consistent.
+    fn generation_parameters_snapshot(&self) -> (usize, GenerationParameters) {
+        let guard = self.generation_parameters.lock();
+        let version = self.generation_parameters_version.load(Ordering::Relaxed);
+        (version, guard.unwrap_or_default())
     }
 
     /// The family's concluded status, or `None` while still running.
@@ -2008,6 +2022,11 @@ pub struct NativeTestCase {
     /// Set by [`Self::for_choices`] and called by each draw method and
     /// by [`Self::freeze`].
     observer: Option<Box<dyn DataObserver>>,
+    /// This stream's copy of the family's [`GenerationParameters`] and the
+    /// [`FamilyCore::generation_parameters_version`] it was taken at, so a
+    /// draw reads them without taking the family lock (see
+    /// [`Self::generation_parameters`]).
+    generation_parameters: (usize, GenerationParameters),
     /// Optional template applied to every draw past the explicit `prefix`.
     /// `count` is mutated in-place as draws consume the template; when
     /// `count` reaches zero the next draw is overrun
@@ -2243,6 +2262,7 @@ impl NativeTestCase {
             top_child_nodes: 0,
             has_discards: false,
             observer,
+            generation_parameters: (0, GenerationParameters::default()),
             trailing_template,
             narrow_ranges: NarrowRanges::default(),
         }
@@ -2306,6 +2326,22 @@ impl NativeTestCase {
         self.rng = Some(rng);
         self.family.set_budget(self.max_size);
         self
+    }
+
+    /// The family's swarm [`GenerationParameters`] as of this draw: the
+    /// stream's copy, refreshed under the family lock only when the family's
+    /// version has moved since the copy was taken. The parameters change
+    /// only at a state machine's join points, so every worker's draws read
+    /// them lock-free, as a single atomic load.
+    pub(crate) fn generation_parameters(&mut self) -> GenerationParameters {
+        let version = self
+            .family
+            .generation_parameters_version
+            .load(Ordering::Acquire);
+        if version != self.generation_parameters.0 {
+            self.generation_parameters = self.family.generation_parameters_snapshot();
+        }
+        self.generation_parameters.1
     }
 
     /// Redraw the family's [`GenerationParameters`] from this stream's RNG.
@@ -2656,7 +2692,7 @@ impl NativeTestCase {
 
         let kind = IntegerChoice::new(min_value, max_value, BigInt::zero());
 
-        let params = self.family.generation_parameters().integer;
+        let params = self.generation_parameters().integer;
         let v =
             self.draw_integer_from(kind, |kind, rng| biased_integer_sample(kind, rng, params))?;
 
@@ -2679,7 +2715,7 @@ impl NativeTestCase {
 
         let kind = IntegerChoice::small(min_value, max_value, 0);
 
-        let params = self.family.generation_parameters().integer;
+        let params = self.generation_parameters().integer;
         let narrow = if is_narrow(i128::from(min_value), i128::from(max_value)) {
             Some(
                 self.narrow_ranges
@@ -3015,7 +3051,7 @@ impl NativeTestCase {
             smallest_nonzero_magnitude,
         };
 
-        let params = self.family.generation_parameters().float;
+        let params = self.generation_parameters().float;
         let (v, was_forced) = self.resolve_choice(
             || kind.simplest(),
             || kind.unit(),
@@ -3135,7 +3171,7 @@ impl NativeTestCase {
         let (v, was_forced) = match replayed {
             Some(decided) => decided,
             None => {
-                let params = self.family.generation_parameters().integer;
+                let params = self.generation_parameters().integer;
                 let rng = hegel_internal_unwrap!(
                     self.rng.as_mut(),
                     "draw_string_from: no RNG available for random generation"

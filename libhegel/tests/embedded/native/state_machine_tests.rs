@@ -1327,7 +1327,7 @@ fn a_round_can_rerandomize_the_concurrency_level_and_every_workers_flags() {
             .any(|span| span.label == crate::native::draws::LABEL_RERANDOMIZE && span.start == 10)
     );
     assert_eq!(
-        ntc.family().generation_parameters(),
+        ntc.generation_parameters(),
         crate::native::core::GenerationParameters::default(),
         "a replay without an RNG has no value weights to redraw"
     );
@@ -1339,9 +1339,9 @@ fn rerandomizing_redraws_the_value_weights() {
         NativeTestCase::for_probe(&rerandomizing_prefix(), EngineRng::seeded(0), 64).unwrap();
     let mut sm = rerandomizing_machine(&mut ntc);
     assert!(sm.next_group(&mut ntc).unwrap().is_some());
-    let before = ntc.family().generation_parameters();
+    let before = ntc.generation_parameters();
     assert!(sm.next_group(&mut ntc).unwrap().is_some());
-    assert_ne!(ntc.family().generation_parameters(), before);
+    assert_ne!(ntc.generation_parameters(), before);
 }
 
 #[test]
