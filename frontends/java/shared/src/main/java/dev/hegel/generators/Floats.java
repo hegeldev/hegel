@@ -51,21 +51,14 @@ final class Floats {
             }
             if (min.doubleValue() == max.doubleValue() && (excludeMin || excludeMax)) {
                 throw new IllegalArgumentException(
-                        what + ": excludeMin/excludeMax leave no values in [" + min + ", " + max + "]");
+                        what + ": minValueExclusive/maxValueExclusive leave no values in [" + min + ", " + max + "]");
             }
         }
-        if (excludeMin && !hasMin) {
-            throw new IllegalArgumentException(what + ": cannot excludeMin without a min bound");
-        }
-        if (excludeMax && !hasMax) {
-            throw new IllegalArgumentException(what + ": cannot excludeMax without a max bound");
-        }
-        // The exclude-without-bound checks above guarantee a bound exists past this point.
         if (excludeMin && min == Double.POSITIVE_INFINITY) {
-            throw new IllegalArgumentException(what + ": excludeMin with min=+Infinity leaves no values");
+            throw new IllegalArgumentException(what + ": minValueExclusive(+Infinity) leaves no values");
         }
         if (excludeMax && max == Double.NEGATIVE_INFINITY) {
-            throw new IllegalArgumentException(what + ": excludeMax with max=-Infinity leaves no values");
+            throw new IllegalArgumentException(what + ": maxValueExclusive(-Infinity) leaves no values");
         }
 
         boolean an = allowNan != null ? allowNan : (!hasMin && !hasMax);

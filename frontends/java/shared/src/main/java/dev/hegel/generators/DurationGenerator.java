@@ -1,6 +1,5 @@
 package dev.hegel.generators;
 
-import dev.hegel.Generator;
 import dev.hegel.TestCase;
 import java.time.Duration;
 
@@ -11,7 +10,7 @@ import java.time.Duration;
  * Long.MAX_VALUE]} nanoseconds (about 292 years). The default is that whole range; narrow it with
  * the fluent {@link #min(Duration)} / {@link #max(Duration)} methods.
  */
-public final class DurationGenerator implements Generator<Duration> {
+public final class DurationGenerator extends ValueGenerator<Duration> {
     private final long minNanos;
     private final long maxNanos;
 

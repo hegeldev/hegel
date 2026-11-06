@@ -1,6 +1,5 @@
 package dev.hegel.generators;
 
-import dev.hegel.Generator;
 import dev.hegel.Label;
 import dev.hegel.TestCase;
 
@@ -8,7 +7,7 @@ import dev.hegel.TestCase;
  * Generates IP address strings. By default produces a mix of IPv4 and IPv6; restrict to one family
  * with the fluent {@link #v4()} / {@link #v6()} methods.
  */
-public final class IpAddressGenerator implements Generator<String> {
+public final class IpAddressGenerator extends ValueGenerator<String> {
     private final Integer version; // null = a mix of IPv4 and IPv6
 
     public IpAddressGenerator(Integer version) {
@@ -31,16 +30,20 @@ public final class IpAddressGenerator implements Generator<String> {
 
     /** @hidden */
     @Override
+    public long label() {
+        if (version == null) {
+            return Label.of("hegel.ip_addresses");
+        }
+        return Label.of(version == 4 ? "hegel.ip_addresses.v4" : "hegel.ip_addresses.v6");
+    }
+
+    /** @hidden */
+    @Override
     public String doDraw(TestCase tc) {
         if (version != null) {
             return version == 4 ? formatV4(tc.generateIpv4()) : formatV6(tc.generateIpv6());
         }
-        tc.startSpan(Label.ONE_OF);
-        try {
-            return tc.generateInteger(0, 1) == 0 ? formatV4(tc.generateIpv4()) : formatV6(tc.generateIpv6());
-        } finally {
-            tc.stopSpan(false);
-        }
+        return tc.generateInteger(0, 1) == 0 ? formatV4(tc.generateIpv4()) : formatV6(tc.generateIpv6());
     }
 
     private static String formatV4(byte[] b) {

@@ -3,9 +3,14 @@ package dev.hegel.generators;
 import dev.hegel.Generator;
 import dev.hegel.Generators;
 import dev.hegel.HegelException;
+import dev.hegel.PrintableGenerator;
 import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.RecordComponent;
 import java.lang.reflect.Type;
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * Reflection-based generator derivation. Maps a Java type to a default generator: scalar wrappers
@@ -13,17 +18,23 @@ import java.util.List;
  * optionals over them, enums to a choice over their constants, records to a generator over their
  * components, and {@code List}/{@code Set}/{@code Optional}/{@code Map} to the matching collection
  * generators (using the declared element types).
+ *
+ * <p>A record whose components refer back to it, directly or through other records and
+ * collections, has no derived generator: deriving one would recurse without bound. Such a type is
+ * rejected with a {@link HegelException} naming it; build its generator with {@link
+ * Generators#recursive} or {@link Generators#deferred()}, or override the recursive component with
+ * {@link RecordGenerator#with}.
  */
 public final class Derive {
     private Derive() {}
 
     /** Erase a generator's element type; the derived value is consumed as {@code Object}. */
     @SuppressWarnings("unchecked")
-    private static Generator<Object> erase(Generator<?> g) {
-        return (Generator<Object>) g;
+    private static PrintableGenerator<Object> erase(Generator<?> g) {
+        return (PrintableGenerator<Object>) g;
     }
 
-    public static Generator<Object> fromType(Type type) {
+    public static PrintableGenerator<Object> fromType(Type type) {
         if (type instanceof ParameterizedType pt) {
             return parameterized(pt);
         }
@@ -33,7 +44,7 @@ public final class Derive {
         throw new HegelException("Cannot derive a generator for type: " + type);
     }
 
-    private static Generator<Object> fromClass(Class<?> cls) {
+    private static PrintableGenerator<Object> fromClass(Class<?> cls) {
         Generator<?> g = scalar(cls);
         if (g != null) {
             return erase(g);
@@ -42,11 +53,42 @@ public final class Derive {
             return erase(Generators.sampledFrom(List.of(cls.getEnumConstants())));
         }
         if (cls.isRecord()) {
+            checkAcyclic(cls, new ArrayDeque<>());
             return erase(new RecordGenerator<>(cls, java.util.Map.of()));
         }
         throw new HegelException("No default generator for "
                 + cls.getName()
                 + "; supply one explicitly (e.g. a Generator parameter or a record override).");
+    }
+
+    /**
+     * Walks the component types of {@code record}, and of the records and collections they hold,
+     * and throws when a record on {@code path} comes up again.
+     */
+    private static void checkAcyclic(Class<?> record, Deque<Class<?>> path) {
+        if (path.contains(record)) {
+            String cycle = path.stream().map(Class::getSimpleName).collect(Collectors.joining(" -> "));
+            throw new HegelException("Cannot derive a generator for " + record.getName()
+                    + ": it refers to itself through its components (" + cycle + " -> "
+                    + record.getSimpleName() + "), so deriving one would recurse without bound. Build its"
+                    + " generator with Generators.recursive or Generators.deferred, or give the recursive"
+                    + " component a generator with records(" + record.getSimpleName() + ".class).with(...)");
+        }
+        path.addLast(record);
+        for (RecordComponent rc : record.getRecordComponents()) {
+            checkAcyclic(rc.getGenericType(), path);
+        }
+        path.removeLast();
+    }
+
+    private static void checkAcyclic(Type type, Deque<Class<?>> path) {
+        if (type instanceof ParameterizedType pt) {
+            for (Type arg : pt.getActualTypeArguments()) {
+                checkAcyclic(arg, path);
+            }
+        } else if (type instanceof Class<?> cls && cls.isRecord()) {
+            checkAcyclic(cls, path);
+        }
     }
 
     private static Generator<?> scalar(Class<?> cls) {
@@ -73,6 +115,9 @@ public final class Derive {
         }
         if (cls == java.util.OptionalDouble.class) {
             return Generators.optionalDoubles(Generators.doubles());
+        }
+        if (cls == java.math.BigInteger.class) {
+            return Generators.bigIntegers();
         }
         if (cls == String.class) {
             return Generators.text();
@@ -110,7 +155,7 @@ public final class Derive {
         return null;
     }
 
-    private static Generator<Object> parameterized(ParameterizedType pt) {
+    private static PrintableGenerator<Object> parameterized(ParameterizedType pt) {
         Class<?> raw = (Class<?>) pt.getRawType();
         Type[] args = pt.getActualTypeArguments();
         if (raw == List.class) {

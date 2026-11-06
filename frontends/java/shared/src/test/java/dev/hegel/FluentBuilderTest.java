@@ -20,7 +20,7 @@ class FluentBuilderTest {
 
     private TestCase testCase() {
         fake = new FakeLibhegel();
-        return new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), false, Reporter.silent());
+        return new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), false);
     }
 
     @Test
@@ -53,14 +53,10 @@ class FluentBuilderTest {
 
     @Test
     void binarySizeDefaults() {
-        // With no explicit maxSize the length is capped at the default (100), shifted up when the
-        // minimum exceeds it.
+        // With no explicit maxSize the engine applies its default.
         testCase().draw(binary().minSize(2));
         assertEquals(2, fake.bytesMinSize);
-        assertEquals(100, fake.bytesMaxSize);
-        testCase().draw(binary().minSize(150));
-        assertEquals(150, fake.bytesMinSize);
-        assertEquals(250, fake.bytesMaxSize);
+        assertEquals(Abi.MAX_SIZE_DEFAULT, fake.bytesMaxSize);
         testCase().draw(binary().maxSize(7));
         assertEquals(0, fake.bytesMinSize);
         assertEquals(7, fake.bytesMaxSize);
@@ -70,14 +66,9 @@ class FluentBuilderTest {
     void textSizeDefaultsAndCharacterConfig() {
         testCase().draw(text().minSize(3));
         assertEquals(3, fake.textMinSize);
-        assertEquals(100, fake.textMaxSize);
-        // Surrogates are excluded by default.
-        assertEquals(java.util.List.of("Cs"), fake.textExcludeCategories);
+        assertEquals(Abi.MAX_SIZE_DEFAULT, fake.textMaxSize);
+        assertEquals(null, fake.textExcludeCategories);
         assertEquals(null, fake.textCategories);
-
-        testCase().draw(text().minSize(200));
-        assertEquals(200, fake.textMinSize);
-        assertEquals(300, fake.textMaxSize);
 
         testCase()
                 .draw(text().codepoints('a', 'z')
@@ -91,11 +82,8 @@ class FluentBuilderTest {
         assertEquals("x", fake.textIncludeCharacters);
         assertEquals("y", fake.textExcludeCharacters);
 
-        // An explicit exclusion keeps Cs appended exactly once.
         testCase().draw(text().excludeCategories("Cc"));
-        assertEquals(java.util.List.of("Cc", "Cs"), fake.textExcludeCategories);
-        testCase().draw(text().excludeCategories("Cs"));
-        assertEquals(java.util.List.of("Cs"), fake.textExcludeCategories);
+        assertEquals(java.util.List.of("Cc"), fake.textExcludeCategories);
     }
 
     @Test

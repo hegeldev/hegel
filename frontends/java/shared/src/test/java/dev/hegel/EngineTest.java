@@ -12,13 +12,16 @@ class EngineTest {
         try {
             FakeLibhegel fake = new FakeLibhegel();
             Engine.setForTesting(fake);
-            assertSame(fake, Engine.get()); // cached (non-null) branch
             assertSame(fake, Engine.get());
+            Libhegel real = Engine.real();
+            assertNotSame(fake, real);
+            assertSame(real, Engine.real());
 
             Engine.reset();
-            Libhegel real = Engine.get(); // null branch: resolves the real engine
-            assertNotSame(fake, real);
-            assertSame(real, Engine.get());
+            Libhegel reloaded = Engine.get();
+            assertNotSame(real, reloaded);
+            assertSame(reloaded, Engine.get());
+            assertSame(reloaded, Engine.real());
         } finally {
             Engine.reset();
         }

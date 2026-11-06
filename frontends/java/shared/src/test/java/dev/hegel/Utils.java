@@ -14,7 +14,7 @@ final class Utils {
                 tc -> {
                     T value = tc.draw(gen);
                     if (!predicate.test(value)) {
-                        throw new AssertionError("predicate failed for: " + TestCase.repr(value));
+                        throw new AssertionError("predicate failed for: " + String.valueOf(value));
                     }
                 },
                 new Settings().database(Database.disabled()));
@@ -26,7 +26,7 @@ final class Utils {
                 tc -> {
                     T value = tc.draw(gen);
                     if (condition.test(value)) {
-                        throw new AssertionError("unexpected example: " + TestCase.repr(value));
+                        throw new AssertionError("unexpected example: " + String.valueOf(value));
                     }
                 },
                 new Settings().database(Database.disabled()));

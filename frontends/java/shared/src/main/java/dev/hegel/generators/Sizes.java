@@ -6,6 +6,14 @@ import dev.hegel.lowlevel.Abi;
 final class Sizes {
     private Sizes() {}
 
+    /** {@code maxSize} as given, which must not be negative. */
+    static int checkMax(int maxSize, String what) {
+        if (maxSize < 0) {
+            throw new IllegalArgumentException(what + ": maxSize must be >= 0, got " + maxSize);
+        }
+        return maxSize;
+    }
+
     static void validate(long minSize, long maxSize, String what) {
         if (minSize < 0) {
             throw new IllegalArgumentException(what + ": minSize must be >= 0, got " + minSize);
@@ -17,13 +25,10 @@ final class Sizes {
     }
 
     /**
-     * The effective maximum for a length-bounded draw: the explicit {@code maxSize} when one was
-     * set, otherwise {@code defaultMax} (shifted up when {@code minSize} exceeds it).
+     * The {@code max_size} to send for a text or bytes draw: the explicit {@code maxSize} when one
+     * was set, otherwise {@link Abi#MAX_SIZE_DEFAULT}, for the engine to apply its default.
      */
-    static long resolveMax(long minSize, long maxSize, long defaultMax) {
-        if (maxSize != Abi.UNBOUNDED) {
-            return maxSize;
-        }
-        return minSize > defaultMax ? minSize + defaultMax : defaultMax;
+    static long engineMax(long maxSize) {
+        return maxSize == Abi.UNBOUNDED ? Abi.MAX_SIZE_DEFAULT : maxSize;
     }
 }

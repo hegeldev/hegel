@@ -6,10 +6,10 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import org.junit.jupiter.api.Test;
 
 /**
- * {@link Label#of} and {@link Label#combine} must agree with libhegel's {@code
- * hegel_label_from_name} / {@code hegel_label_combine}: the 64-bit FNV-1a hash of the name's UTF-8
- * bytes, and FNV-1a over the little-endian bytes of each label in turn. The expected values were
- * computed independently from that definition.
+ * {@link Label#of} and {@link Label#combine} are libhegel's {@code hegel_label_from_name} / {@code
+ * hegel_label_combine}: the 64-bit FNV-1a hash of the name's UTF-8 bytes, and FNV-1a over the
+ * little-endian bytes of each label in turn. The expected values were computed independently from
+ * that definition.
  */
 class LabelTest {
     private static final long LIST = 0x588C222984E69C23L;
@@ -19,7 +19,34 @@ class LabelTest {
     void ofIsTheFnv1aHashOfTheName() {
         assertEquals(LIST, Label.of("dev.hegel.list"));
         assertEquals(INTEGER, Label.of("dev.hegel.integer"));
-        assertEquals(LIST, Label.LIST);
+    }
+
+    @Test
+    void standardLabelsAreTheLabelsOfTheOtherFrontendsNames() {
+        assertEquals(Label.of("hegel.lists"), Label.LIST);
+        assertEquals(Label.of("hegel.sets"), Label.SET);
+        assertEquals(Label.of("hegel.dicts"), Label.MAP);
+        assertEquals(Label.of("hegel.tuples"), Label.TUPLE);
+        assertEquals(Label.of("hegel.one_of"), Label.ONE_OF);
+        assertEquals(Label.of("hegel.optional"), Label.OPTIONAL);
+        assertEquals(Label.of("hegel.fixed_dicts"), Label.FIXED_DICT);
+        assertEquals(Label.of("hegel.flat_map"), Label.FLAT_MAP);
+        assertEquals(Label.of("hegel.filter"), Label.FILTER);
+        assertEquals(Label.of("hegel.filter.attempt"), Label.FILTER_ATTEMPT);
+        assertEquals(Label.of("hegel.map"), Label.MAPPED);
+        assertEquals(Label.of("hegel.sampled_from"), Label.SAMPLED_FROM);
+        assertEquals(Label.of("hegel.stateful.rule"), Label.STATEFUL_RULE);
+        assertEquals(Label.of("hegel.recursive"), Label.RECURSIVE);
+        assertEquals(Label.of("hegel.permutation"), Label.PERMUTATION);
+        assertEquals(Label.of("hegel.subsequence"), Label.SUBSEQUENCE);
+        assertEquals(Label.of("hegel.sample"), Label.SAMPLE);
+        assertEquals(Label.of("hegel.array"), Label.ARRAY);
+        assertEquals(Label.of("hegel.composite"), Label.COMPOSITE);
+        assertEquals(Label.of("hegel.deferred"), Label.DEFERRED);
+        assertEquals(Label.of("hegel.from_lark"), Label.FROM_LARK);
+        assertEquals(Label.of("hegel.pool.values_reusable"), Label.POOL_VALUES_REUSABLE);
+        assertEquals(Label.of("hegel.pool.values_consumed"), Label.POOL_VALUES_CONSUMED);
+        assertEquals(Label.of("hegel.generator"), Label.GENERATOR);
     }
 
     @Test
@@ -35,9 +62,28 @@ class LabelTest {
     @Test
     void frontendConstantsAreDistinct() {
         long[] all = {
-            Label.LIST, Label.LIST_ELEMENT, Label.SET, Label.SET_ELEMENT, Label.MAP, Label.MAP_ENTRY,
-            Label.TUPLE, Label.ONE_OF, Label.OPTIONAL, Label.FIXED_DICT, Label.FLAT_MAP, Label.FILTER,
-            Label.MAPPED, Label.SAMPLED_FROM, Label.ENUM_VARIANT, Label.STATEFUL_RULE, Label.COMPOSITE,
+            Label.LIST,
+            Label.SET,
+            Label.MAP,
+            Label.TUPLE,
+            Label.ONE_OF,
+            Label.OPTIONAL,
+            Label.FIXED_DICT,
+            Label.FLAT_MAP,
+            Label.FILTER,
+            Label.FILTER_ATTEMPT,
+            Label.MAPPED,
+            Label.SAMPLED_FROM,
+            Label.STATEFUL_RULE,
+            Label.RECURSIVE,
+            Label.PERMUTATION,
+            Label.ARRAY,
+            Label.COMPOSITE,
+            Label.DEFERRED,
+            Label.FROM_LARK,
+            Label.POOL_VALUES_REUSABLE,
+            Label.POOL_VALUES_CONSUMED,
+            Label.GENERATOR,
         };
         for (int i = 0; i < all.length; i++) {
             for (int j = i + 1; j < all.length; j++) {

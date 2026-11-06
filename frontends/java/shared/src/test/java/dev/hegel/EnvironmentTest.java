@@ -80,8 +80,17 @@ class EnvironmentTest {
     void hegelPrintBlobDecidesWhetherReproducersArePrinted() throws Exception {
         // The shipped profiles print a reproducer for each failure; the variable turns that off.
         String printed = fixture("fail", Map.of());
-        assertTrue(printed.contains("done") && printed.contains("reproduceFailure = \""), printed);
+        assertTrue(printed.contains("done") && printed.contains(".reproduceFailure(\""), printed);
         String quiet = fixture("fail", Map.of("HEGEL_PRINT_BLOB", "false"));
-        assertTrue(quiet.contains("done") && !quiet.contains("reproduceFailure = \""), quiet);
+        assertTrue(quiet.contains("done") && !quiet.contains(".reproduceFailure(\""), quiet);
+    }
+
+    @Test
+    void aMissingEngineFailsTheRunRatherThanLabelsOrGenerators() throws Exception {
+        String output = fixture(
+                "no-engine",
+                Map.of("HEGEL_LIBHEGEL_PATH", tmp.resolve("missing").toString()));
+        assertTrue(output.contains("labels=" + Long.toHexString(Label.LIST) + " generator=true"), output);
+        assertTrue(output.contains("run=dev.hegel.lowlevel.LibhegelException: HEGEL_LIBHEGEL_PATH is set to"), output);
     }
 }

@@ -3,6 +3,7 @@ package dev.hegel;
 import static dev.hegel.Generators.integers;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -40,13 +41,8 @@ class RunReportTest {
         }
 
         @Override
-        public void draw(String label, Object value, boolean finalReplay) {
-            events.add("draw:" + label + "=" + value + ":" + finalReplay);
-        }
-
-        @Override
-        public void note(String message, boolean finalReplay) {
-            events.add("note:" + message + ":" + finalReplay);
+        public void caseOutput(String line, boolean finalReplay) {
+            events.add("output:" + line + ":" + finalReplay);
         }
 
         @Override
@@ -147,12 +143,12 @@ class RunReportTest {
         assertSame(err, f.exception());
         assertFalse(f.nondeterministic());
         assertEquals(Optional.empty(), f.caveat());
-        // The fake stamps the case for capture, so its draws and notes are the report.
-        assertEquals(List.of("x", "draw_1"), List.copyOf(f.draws().keySet()));
-        assertEquals(7, f.draws().get("x"));
-        assertEquals(List.of("saw 7"), f.notes());
+        // The fake stamps the case for capture, so its draws and output are the report.
+        assertEquals(List.of("x_1", "draw_1"), List.copyOf(f.draws().keySet()));
+        assertEquals(7, f.draws().get("x_1"));
+        assertEquals(List.of("var x_1 = 7;", "var draw_1 = 7;", "saw 7"), f.output());
         assertThrows(UnsupportedOperationException.class, () -> f.draws().put("y", 1));
-        assertThrows(UnsupportedOperationException.class, () -> f.notes().add("more"));
+        assertThrows(UnsupportedOperationException.class, () -> f.output().add("more"));
         assertThrows(UnsupportedOperationException.class, () -> r.failures().clear());
         // The engine ran the one case; nothing is replayed client-side.
         assertEquals(1, r.statistics().total());
@@ -203,6 +199,7 @@ class RunReportTest {
         assertEquals(Optional.empty(), f.reproduceBlob());
         assertSame(err, f.exception());
         assertTrue(f.draws().isEmpty());
+        assertTrue(f.output().isEmpty());
         assertSame(err, assertThrows(AssertionError.class, r::throwIfFailed));
     }
 
@@ -221,7 +218,7 @@ class RunReportTest {
             tc.note("case " + n);
             throw new AssertionError("always");
         });
-        assertEquals(List.of("case 3"), r.failures().get(0).notes());
+        assertEquals(List.of("case 3"), r.failures().get(0).output());
     }
 
     @Test
@@ -246,24 +243,58 @@ class RunReportTest {
     void erroredRunCarriesTheEngineMessage() {
         FakeLibhegel fake = new FakeLibhegel();
         fake.runStatus = Abi.RUN_STATUS_ERROR;
-        fake.runError = "FailedHealthCheck: FilterTooMuch";
+        fake.runError = "Health check failed: filter_too_much";
+        fake.runErrorKind = Abi.RUN_ERROR_HEALTH_CHECK;
+        fake.runErrorHealthCheck = Abi.HC_FILTER_TOO_MUCH;
         RunReport health = report(fake, new Settings().database(Database.disabled()), tc -> tc.assume(false));
         assertEquals(RunStatus.ERROR, health.status());
         assertFalse(health.passed());
-        assertEquals(Optional.of("FailedHealthCheck: FilterTooMuch"), health.error());
+        assertEquals(Optional.of("Health check failed: filter_too_much"), health.error());
         assertTrue(health.healthCheckFailed());
+        assertEquals(Optional.of(RunErrorKind.HEALTH_CHECK), health.errorKind());
+        assertEquals(Optional.of(HealthCheck.FILTER_TOO_MUCH), health.failedHealthCheck());
         assertTrue(health.failures().isEmpty());
         assertEquals(1, health.statistics().invalid());
-        assertThrows(HealthCheckFailure.class, health::throwIfFailed);
+        HealthCheckFailure failure = assertThrows(HealthCheckFailure.class, health::throwIfFailed);
+        assertEquals(Optional.of(HealthCheck.FILTER_TOO_MUCH), failure.healthCheck());
 
         FakeLibhegel other = new FakeLibhegel();
         other.runStatus = Abi.RUN_STATUS_ERROR;
         other.runError = "engine exploded";
+        other.runErrorKind = Abi.RUN_ERROR_INTERNAL;
         RunReport engine = report(other, new Settings().database(Database.disabled()), tc -> {});
         assertFalse(engine.healthCheckFailed());
+        assertEquals(Optional.empty(), engine.failedHealthCheck());
+        HegelRunException e = assertThrows(HegelRunException.class, engine::throwIfFailed);
+        assertEquals(HegelRunException.class, e.getClass());
+        assertEquals("engine exploded", e.getMessage());
+    }
+
+    private static Throwable errorFor(int kind, int healthCheck) {
+        FakeLibhegel fake = new FakeLibhegel();
+        fake.runStatus = Abi.RUN_STATUS_ERROR;
+        fake.runError = "aborted";
+        fake.runErrorKind = kind;
+        fake.runErrorHealthCheck = healthCheck;
+        RunReport report = report(fake, new Settings().database(Database.disabled()), tc -> {});
+        return assertThrows(HegelRunException.class, report::throwIfFailed);
+    }
+
+    @Test
+    void runErrorsAreTypedByTheEngineKind() {
+        assertEquals(FlakyTestException.class, errorFor(Abi.RUN_ERROR_FLAKY, 0).getClass());
         assertEquals(
-                "engine exploded",
-                assertThrows(HegelException.class, engine::throwIfFailed).getMessage());
+                FlakyTestException.class,
+                errorFor(Abi.RUN_ERROR_NONDETERMINISTIC, 0).getClass());
+        assertEquals(
+                UnsatisfiableException.class,
+                errorFor(Abi.RUN_ERROR_UNSATISFIABLE, 0).getClass());
+        assertEquals(HegelRunException.class, errorFor(Abi.RUN_ERROR_USAGE, 0).getClass());
+        // A kind or a health check this version does not know still raises a run error.
+        assertEquals(HegelRunException.class, errorFor(99, 0).getClass());
+        HealthCheckFailure unknownCheck =
+                assertInstanceOf(HealthCheckFailure.class, errorFor(Abi.RUN_ERROR_HEALTH_CHECK, 1 << 20));
+        assertEquals(Optional.empty(), unknownCheck.healthCheck());
     }
 
     @Test
@@ -283,7 +314,7 @@ class RunReportTest {
                 reporter);
         // Engine output goes through the run's callback to the reporter, whenever it arrives.
         fake.output.accept("engine says hi");
-        // The stamped case's draws and notes are not reported live; they are replayed, flagged as
+        // The stamped case's output is not reported live; it is replayed, flagged as
         // such, once the engine reports the failure.
         assertEquals(
                 List.of(
@@ -292,8 +323,8 @@ class RunReportTest {
                         "caseFinished:INTERESTING:false",
                         "failuresFound:1",
                         "caseStarted:true",
-                        "draw:x=3:true",
-                        "note:hi:true",
+                        "output:var x_1 = 3;:true",
+                        "output:hi:true",
                         "caseFinished:INTERESTING:true",
                         "failure:" + r.failures().get(0).origin(),
                         "runFinished:FAILED",
@@ -316,13 +347,16 @@ class RunReportTest {
                     throw new AssertionError("boom");
                 },
                 reporter);
-        // The case's draws and notes are reported live (flagged as such) ...
-        assertTrue(reporter.events.contains("draw:x=3:false"), reporter.events.toString());
-        assertTrue(reporter.events.contains("note:hi:false"), reporter.events.toString());
+        // The case's output is reported once its body has finished (flagged as live), before the
+        // case is reported finished ...
+        int finished = reporter.events.indexOf("caseFinished:INTERESTING:false");
+        assertEquals(
+                List.of("output:var x_1 = 3;:false", "output:hi:false"),
+                reporter.events.subList(finished - 2, finished));
         // ... and replayed with the failure report.
-        assertTrue(reporter.events.contains("draw:x=3:true"), reporter.events.toString());
-        assertEquals(Map.of("x", 3), r.failures().get(0).draws());
-        assertEquals(List.of("hi"), r.failures().get(0).notes());
+        assertTrue(reporter.events.contains("output:var x_1 = 3;:true"), reporter.events.toString());
+        assertEquals(Map.of("x_1", 3), r.failures().get(0).draws());
+        assertEquals(List.of("var x_1 = 3;", "hi"), r.failures().get(0).output());
     }
 
     @Test
@@ -376,7 +410,7 @@ class RunReportTest {
         // The test suite itself lives in dev.hegel, which counts as infrastructure, so the origin
         // names the exception and whatever frame sits below the suite.
         assertTrue(f.origin().startsWith("IllegalStateException at "), f.origin());
-        assertEquals(Map.of("x", 1), f.draws());
+        assertEquals(Map.of("x_1", 1), f.draws());
         assertEquals(1, r.statistics().total());
         assertEquals(1, r.statistics().interesting());
         // The blob run is pumped like any other, then its failure is reported from the capture.
@@ -387,7 +421,7 @@ class RunReportTest {
                         "caseFinished:INTERESTING:false",
                         "failuresFound:1",
                         "caseStarted:true",
-                        "draw:x=1:true",
+                        "output:var x_1 = 1;:true",
                         "caseFinished:INTERESTING:true"),
                 reporter.events.subList(0, 7));
         assertEquals("runFinished:FAILED", reporter.events.get(reporter.events.size() - 1));

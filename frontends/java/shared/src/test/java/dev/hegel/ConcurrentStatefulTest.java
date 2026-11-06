@@ -26,9 +26,9 @@ import org.junit.jupiter.api.Test;
 /** Concurrent stateful testing against the real engine. */
 class ConcurrentStatefulTest {
     private static final Pattern WORKER_RULE_LINE =
-            Pattern.compile("\\[worker [0-9]+ \\+[0-9]+\\.[0-9]{3}ms\\] Rule: boom");
+            Pattern.compile(" *\\[worker [0-9]+ \\+[0-9]+\\.[0-9]{3}ms\\] Rule: boom \\{");
     private static final Pattern WORKER_DRAW_LINE =
-            Pattern.compile("\\[worker [0-9]+ \\+[0-9]+\\.[0-9]{3}ms\\] x(_[0-9]+)? = -?[0-9]+;");
+            Pattern.compile(" *\\[worker [0-9]+ \\+[0-9]+\\.[0-9]{3}ms\\] *var x(_[0-9]+)? = -?[0-9]+;");
     private static final Pattern ROUND_HEADER =
             Pattern.compile("---------------- Round [0-9]+: group \"([^\"]+)\" ----------------");
 
@@ -252,8 +252,8 @@ class ConcurrentStatefulTest {
         List<String> notes = new ArrayList<>();
         Reporter collecting = new Reporter() {
             @Override
-            public void note(String message, boolean finalReplay) {
-                notes.add(message);
+            public void caseOutput(String line, boolean finalReplay) {
+                notes.add(line);
             }
         };
         Hegel.run(
@@ -267,11 +267,11 @@ class ConcurrentStatefulTest {
             Matcher header = ROUND_HEADER.matcher(line);
             if (header.matches()) {
                 group = header.group(1);
-            } else if (line.endsWith("Rule: read")) {
+            } else if (line.endsWith("Rule: read {")) {
                 readUnder.add(group);
-            } else if (line.endsWith("Rule: write")) {
+            } else if (line.endsWith("Rule: write {")) {
                 assertEquals("write", group, line);
-            } else if (line.endsWith("Rule: flush")) {
+            } else if (line.endsWith("Rule: flush {")) {
                 assertEquals("flush", group, line);
             }
         }
@@ -318,13 +318,13 @@ class ConcurrentStatefulTest {
         Failure failure = report.failures().get(0);
         IllegalStateException e = assertInstanceOf(IllegalStateException.class, failure.exception());
         assertTrue(e.getMessage().startsWith("concurrent boom"), e.getMessage());
-        List<String> notes = failure.notes();
+        List<String> notes = failure.output();
         assertTrue(notes.contains("Concurrency level: 2"), notes.toString());
         assertTrue(
                 notes.contains("---------------- Round 1: group \"" + Stateful.ANONYMOUS_GROUP + "\" ----------------"),
                 notes.toString());
         assertTrue(anyMatches(notes, WORKER_RULE_LINE), notes.toString());
-        // Draws are recorded under their plain names; the stamp is only on the printed line.
+        // Draws are recorded under their plain names; the engine stamps only the printed line.
         for (String name : failure.draws().keySet()) {
             assertTrue(name.matches("x(_[0-9]+)?"), name);
         }

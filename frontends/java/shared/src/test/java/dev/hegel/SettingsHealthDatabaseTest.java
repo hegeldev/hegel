@@ -2,7 +2,6 @@ package dev.hegel;
 
 import static dev.hegel.Generators.integers;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -33,7 +32,7 @@ class SettingsHealthDatabaseTest {
         tc.draw(integers());
     }
 
-    @HegelTest(reportMultipleFailures = true, database = Database.DISABLED)
+    @HegelTest(reportMultipleFailures = OptBoolean.TRUE, database = Database.DISABLED)
     void reportMultipleFailuresSettingApplies(TestCase tc) {
         tc.draw(integers());
     }
@@ -50,19 +49,19 @@ class SettingsHealthDatabaseTest {
                         new Settings().database(Database.disabled())));
         String msg = err.getMessage().toLowerCase();
         assertTrue(msg.contains("filter") || msg.contains("health"), err.getMessage());
+        assertEquals(java.util.Optional.of(HealthCheck.FILTER_TOO_MUCH), err.healthCheck());
 
         // Suppressing the check lets the run spend its invalid budget without a health-check
         // failure; since libhegel 0.45.2 a run that never generates a valid case then ends in the
-        // engine's Unsatisfiable error (a plain HegelException) rather than passing vacuously.
-        HegelException unsatisfiable = assertThrows(
-                HegelException.class,
+        // engine's Unsatisfiable error rather than passing vacuously.
+        UnsatisfiableException unsatisfiable = assertThrows(
+                UnsatisfiableException.class,
                 () -> Hegel.test(
                         tc -> {
                             tc.draw(integers());
                             tc.assume(false);
                         },
                         new Settings().database(Database.disabled()).suppressHealthCheck(HealthCheck.FILTER_TOO_MUCH)));
-        assertFalse(unsatisfiable instanceof HealthCheckFailure, unsatisfiable.getMessage());
         assertTrue(unsatisfiable.getMessage().startsWith("Unsatisfiable"), unsatisfiable.getMessage());
     }
 

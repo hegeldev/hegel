@@ -1,6 +1,5 @@
 package dev.hegel.generators;
 
-import dev.hegel.Generator;
 import dev.hegel.TestCase;
 import java.time.LocalTime;
 
@@ -11,7 +10,7 @@ import java.time.LocalTime;
  * <p>The default range is the whole day; narrow it with the fluent {@link #min(LocalTime)} /
  * {@link #max(LocalTime)} methods. Values shrink toward the lower bound.
  */
-public final class TimeGenerator implements Generator<LocalTime> {
+public final class TimeGenerator extends ValueGenerator<LocalTime> {
     private final LocalTime min;
     private final LocalTime max;
 
