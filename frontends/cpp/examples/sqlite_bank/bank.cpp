@@ -280,6 +280,7 @@ namespace {
             return {
                 {"transfer_rule",
                  {"bank"},
+                 6.0,
                  [](hegel::TestCase& tc, Bank& bank) {
                      int64_t n = bank.config_.accounts;
                      auto account = gs::integers<int64_t>(

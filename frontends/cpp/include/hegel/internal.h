@@ -104,16 +104,26 @@ namespace hegel::internal {
     };
 
     inline constexpr int64_t state_machine_done = INT64_MIN;
+
+    struct RuleSpec {
+        std::string name;
+        std::vector<int64_t> groups;
+        double weight;
+    };
+
+    struct InvariantSpec {
+        std::string name;
+        bool always_check;
+    };
+
     // Owns a started engine state machine: the constructor creates it with
-    // the concurrency bounds, declares rule_names[i] in the groups
-    // rule_groups[i] and each invariant, then starts it, which draws the
-    // concurrency level.
+    // the concurrency bounds, declares each rule and invariant, then starts
+    // it, which draws the concurrency level.
     class StateMachineHandle {
       public:
         StateMachineHandle(const TestCase& tc,
-                           const std::vector<std::string>& rule_names,
-                           const std::vector<std::vector<int64_t>>& rule_groups,
-                           const std::vector<std::string>& invariant_names,
+                           const std::vector<RuleSpec>& rules,
+                           const std::vector<InvariantSpec>& invariants,
                            int64_t min_concurrency, int64_t max_concurrency);
         ~StateMachineHandle();
         StateMachineHandle(const StateMachineHandle&) = delete;
