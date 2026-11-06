@@ -641,7 +641,7 @@ jobs:
           # macos-13 (x86_64) runners are scarce and routinely leave the
           # release job stuck for hours waiting for a runner, and we do not
           # support Intel Macs. Apple-silicon macOS is covered below.
-          - { platform: darwin-arm64,  runner: macos-latest,         target: aarch64-apple-darwin,        goos: darwin,  goarch: arm64, shared_ext: dylib, static_ext: a }
+          - { platform: darwin-arm64,  runner: macos-latest,     target: aarch64-apple-darwin,        goos: darwin,  goarch: arm64, shared_ext: dylib, static_ext: a }
           - { platform: windows-amd64, runner: windows-latest,   target: x86_64-pc-windows-msvc,      goos: windows, goarch: amd64, shared_ext: dll,   static_ext: lib }
           # aarch64-pc-windows-msvc is cross-compiled from the x86_64 runner.
           # MSVC has had built-in arm64 cross since VS 2017+ and
