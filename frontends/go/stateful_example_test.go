@@ -116,7 +116,7 @@ func ExampleRunStateful_concurrent() {
 			machine,
 			hegel.WithBoundedConcurrency(4),
 			hegel.WithRuleGroup("operations", "RuleRegister", "RuleIncrement", "RuleRead"),
-			hegel.WithRuleGroup("snapshot", "RuleSnapshot"),
+			hegel.WithRuleGroup("snapshot", "RuleRead", "RuleSnapshot"),
 		)
 	})
 }
