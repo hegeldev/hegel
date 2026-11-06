@@ -10,14 +10,18 @@ permissions: {}
 
 jobs:
   test:
-    name: test (${{ matrix.rust }}${{ matrix.os == 'windows-latest' && ', windows' || '' }})
+    name: test (${{ matrix.rust }}${{ startsWith(matrix.os, 'windows') && ', windows' || '' }})
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        # `windows-8-core` is an org larger runner (Settings → Actions →
+        # Runners) running the windows-latest image: the Windows test jobs
+        # are the longest in a run after coverage, and larger runners don't
+        # count against the plan's cap on concurrent standard-runner jobs.
+        os: [ubuntu-latest, windows-8-core]
         # The first entry is the MSRV; bumping it means bumping
         # frontends/rust/Cargo.toml, frontends/rust/macros/Cargo.toml and
         # libhegel/Cargo.toml together.
@@ -33,14 +37,14 @@ jobs:
         run: just rust::check-tests
 
   test-all-features:
-    name: test-all-features (${{ matrix.rust }}${{ matrix.os == 'windows-latest' && ', windows' || '' }})
+    name: test-all-features (${{ matrix.rust }}${{ startsWith(matrix.os, 'windows') && ', windows' || '' }})
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-8-core]
         rust: ["1.86", stable]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
