@@ -38,6 +38,15 @@ const MIN_ATTEMPTS_WITHOUT_SUCCESS: i64 = 1000;
 /// at a time (see [`NativeStateMachine::next_rule`]).
 const MAX_ROUND_RULES: i64 = 5;
 
+/// Probability that [`NativeStateMachine::next_group`] redraws the swarm
+/// settings at the start of each round after the first: the concurrency
+/// level and active workers, every worker's [`FeatureFlags`], and the value
+/// weights ([`NativeTestCase::redraw_generation_parameters`]). Without this
+/// a long run, such as a `#[hegel::main]` binary, keeps the settings drawn
+/// at its start. The simplest value of the draw keeps the settings, so the
+/// shrinker can remove a re-randomization.
+const P_RERANDOMIZE: f64 = 1.0 / 50.0;
+
 /// Probability that [`draw_concurrency`] draws `max_value` outright rather
 /// than a uniform level in `[min_value, max_value]`.
 const P_MAX_CONCURRENCY: f64 = 0.75;
@@ -66,6 +75,28 @@ fn draw_concurrency(
     })
 }
 
+/// Choose which `level` of the `max_concurrency` workers are active. Each
+/// pick indexes the workers not yet picked, so the simplest picks are
+/// workers `0 .. level`. A full level draws nothing.
+fn draw_active_workers(
+    ntc: &mut NativeTestCase,
+    level: i64,
+    max_concurrency: i64,
+) -> Result<Vec<bool>, EngineError> {
+    if level == max_concurrency {
+        return Ok(vec![true; max_concurrency as usize]);
+    }
+    draws::spanned(ntc, draws::LABEL_ACTIVE_WORKERS, |ntc| {
+        let mut active = vec![false; max_concurrency as usize];
+        let mut remaining: Vec<usize> = (0..max_concurrency as usize).collect();
+        for _ in 0..level {
+            let pick = draw_index(ntc, remaining.len())?;
+            active[remaining.remove(pick)] = true;
+        }
+        Ok(active)
+    })
+}
+
 /// Draw a uniform index in `[0, n)`.
 fn draw_index(ntc: &mut NativeTestCase, n: usize) -> Result<usize, EngineError> {
     let i = ntc.draw_integer(BigInt::from(0), BigInt::from(n as i64 - 1))?;
@@ -73,7 +104,8 @@ fn draw_index(ntc: &mut NativeTestCase, n: usize) -> Result<usize, EngineError> 
 }
 
 /// Per-worker feature flags over rule indices, deciding which rules are
-/// enabled for the calling worker over the whole test case.
+/// enabled for the calling worker until the machine re-randomizes (see
+/// [`P_RERANDOMIZE`]).
 ///
 /// The disabling probability is decided up front so that any subset from
 /// all-enabled down to a single surviving rule per group is reachable
@@ -154,8 +186,11 @@ impl FeatureFlags {
 /// the per-round continue/stop decisions stay lazy and are drawn from the
 /// querying worker's own stream.
 struct WorkerState {
-    /// Swarm feature flags, persisting for the whole test case.
+    /// Swarm feature flags, kept until the machine re-randomizes.
     flags: FeatureFlags,
+    /// Whether this worker is handed rules; redrawn with the concurrency
+    /// level.
+    active: bool,
     /// Rules handed to this worker so far this round, including rejected
     /// ones; reset by `next_group`.
     steps_drawn: i64,
@@ -223,7 +258,8 @@ pub struct NativeStateMachine {
     /// Whether [`Self::start`] has run: the rule set is sealed and the
     /// per-worker state below exists.
     started: bool,
-    /// The concurrency level drawn by `start`; 0 until then.
+    /// The concurrency level: how many workers are active. Drawn by `start`
+    /// and redrawn when `next_group` re-randomizes; 0 until `start`.
     concurrency: i64,
     /// The group whose rules are handed out this round, written by every
     /// `next_group` call. Meaningful only once `rounds_started > 0`;
@@ -348,9 +384,10 @@ impl NativeStateMachine {
     /// Seal the declared rules and invariants and make the machine's
     /// creation-time draws, from the calling handle's stream: the
     /// concurrency level (in `[min_concurrency, max_concurrency]`, weighted
-    /// toward the maximum — see [`draw_concurrency`]) and every worker's
-    /// swarm disabling probability, so no per-worker state is ever
-    /// pending once rules are requested. Returns the concurrency level.
+    /// toward the maximum — see [`draw_concurrency`]), which workers are
+    /// active, and every worker's swarm disabling probability, so no
+    /// per-worker state is ever pending once rules are requested. Returns
+    /// `max_concurrency`, the number of workers the caller runs.
     ///
     /// Errors with `InvalidArgument` when called twice. At least one rule
     /// must have been declared.
@@ -365,11 +402,14 @@ impl NativeStateMachine {
             "Stateful testing: there must be at least one rule"
         );
         let concurrency = draw_concurrency(ntc, self.min_concurrency, self.max_concurrency)?;
+        let active = draw_active_workers(ntc, concurrency, self.max_concurrency)?;
         let num_rules = self.rule_weights.len();
-        let workers = (0..concurrency)
-            .map(|_| {
+        let workers = active
+            .into_iter()
+            .map(|active| {
                 Ok(WorkerState {
                     flags: FeatureFlags::new(ntc, &self.groups, num_rules)?,
+                    active,
                     steps_drawn: 0,
                     steps_rejected: 0,
                     rule_outstanding: false,
@@ -380,7 +420,26 @@ impl NativeStateMachine {
         self.workers = workers;
         self.concurrency = concurrency;
         self.started = true;
-        Ok(concurrency)
+        Ok(self.max_concurrency)
+    }
+
+    /// The concurrency level: how many workers [`Self::next_rule`] hands
+    /// rules to this round.
+    pub fn concurrency(&self) -> i64 {
+        self.concurrency
+    }
+
+    /// Redraw the swarm settings described at [`P_RERANDOMIZE`].
+    fn rerandomize(&mut self, ntc: &mut NativeTestCase) -> Result<(), EngineError> {
+        self.concurrency = draw_concurrency(ntc, self.min_concurrency, self.max_concurrency)?;
+        let active = draw_active_workers(ntc, self.concurrency, self.max_concurrency)?;
+        let num_rules = self.rule_weights.len();
+        for (worker, active) in self.workers.iter_mut().zip(active) {
+            worker.flags = FeatureFlags::new(ntc, &self.groups, num_rules)?;
+            worker.active = active;
+        }
+        ntc.redraw_generation_parameters()?;
+        Ok(())
     }
 
     /// The number of rules declared so far.
@@ -416,6 +475,9 @@ impl NativeStateMachine {
     /// [`ATTEMPT_MULTIPLIER`] times the step count, or
     /// [`MIN_ATTEMPTS_WITHOUT_SUCCESS`] while no rule has succeeded.
     ///
+    /// Each round after the first then re-randomizes with probability
+    /// [`P_RERANDOMIZE`].
+    ///
     /// Must be called from the root handle at each join point, including
     /// before the first `next_rule` call. Errors with `InvalidArgument`
     /// before [`Self::start`].
@@ -439,6 +501,14 @@ impl NativeStateMachine {
         };
         if !ntc.weighted_precise(P_CONTINUE, forced)? {
             return Ok(None);
+        }
+        if self.rounds_started > 0 {
+            draws::spanned(ntc, draws::LABEL_RERANDOMIZE, |ntc| {
+                if ntc.weighted(P_RERANDOMIZE, None)? {
+                    self.rerandomize(ntc)?;
+                }
+                Ok(())
+            })?;
         }
         let group = if self.groups.len() == 1 {
             0
@@ -476,6 +546,8 @@ impl NativeStateMachine {
     /// hand-outs per worker per round are bounded by
     /// [`ATTEMPT_MULTIPLIER`] times [`MAX_ROUND_RULES`].
     ///
+    /// An inactive worker gets `None` without drawing anything.
+    ///
     /// Consults only per-worker state (plus the machine's current group), so
     /// draws on one worker never affect draws on another.
     pub fn next_rule(
@@ -489,6 +561,9 @@ impl NativeStateMachine {
             return Err(EngineError::InvalidArgument(
                 "state machine rule requested before the first next_group call".to_string(),
             ));
+        }
+        if !self.workers[worker_idx].active {
+            return Ok(None);
         }
 
         if self.concurrency == 1 {
@@ -579,8 +654,8 @@ impl NativeStateMachine {
         ntc.weighted_precise(p, None)
     }
 
-    /// Validate a caller-supplied worker index against the drawn
-    /// concurrency level.
+    /// Validate a caller-supplied worker index against the number of
+    /// workers.
     fn checked_worker(&self, worker_index: i64) -> Result<usize, EngineError> {
         usize::try_from(worker_index)
             .ok()
@@ -588,7 +663,7 @@ impl NativeStateMachine {
             .ok_or_else(|| {
                 EngineError::InvalidArgument(format!(
                     "worker_index must be in [0, {}), got {worker_index}",
-                    self.concurrency
+                    self.workers.len()
                 ))
             })
     }

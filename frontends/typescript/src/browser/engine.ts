@@ -1108,7 +1108,7 @@ export class WasmEngine implements Engine {
     ctx: ContextHandle,
     tc: TestCaseHandle,
     machine: StateMachineHandle,
-    op: "state_machine_next_group" | "state_machine_next_rule",
+    op: "state_machine_next_rule",
     extra: Argument[],
   ): number | null {
     const c = this.ptr(ctx);
@@ -1126,8 +1126,22 @@ export class WasmEngine implements Engine {
     ctx: ContextHandle,
     tc: TestCaseHandle,
     machine: StateMachineHandle,
-  ): number | null {
-    return this.stateMachineIndex(ctx, tc, machine, "state_machine_next_group", []);
+  ): { group: number; concurrency: number } | null {
+    return WasmArena.scoped(this.abi, (a) => {
+      const c = this.ptr(ctx);
+      const out = a.alloc(8, 8);
+      const outConcurrency = a.alloc(8, 8);
+      this.check(
+        c,
+        "state_machine_next_group",
+        [c, this.ptr(tc), this.ptr(machine), out, outConcurrency],
+        true,
+      );
+      const group = doneOrIndex(a.view(out, 8).getBigInt64(0, true));
+      return group === null
+        ? null
+        : { group, concurrency: Number(a.view(outConcurrency, 8).getBigInt64(0, true)) };
+    });
   }
   stateMachineNextRule(
     ctx: ContextHandle,

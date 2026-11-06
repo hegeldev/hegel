@@ -6,11 +6,11 @@ Step 1: step
   auto amount = 7;
 state = 7
 Step 2: step
-  auto amount = 9;
-state = 16
+  auto amount = 8;
+state = 15
 Step 3: step
   auto amount = 1;
-state = 17
+state = 16
 Final invariant check.
 Ending phase: Generate
 

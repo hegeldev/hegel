@@ -47,6 +47,8 @@ pub(crate) const LABEL_FRESH_ID: u64 = label_from_name("hegel.fresh_id");
 pub(crate) const LABEL_SET_CHOICE: u64 = label_from_name("hegel.set_choice");
 pub(crate) const LABEL_CONCURRENCY: u64 = label_from_name("hegel.concurrency");
 pub(crate) const LABEL_FEATURE_FLAG: u64 = label_from_name("hegel.feature_flag");
+pub(crate) const LABEL_ACTIVE_WORKERS: u64 = label_from_name("hegel.active_workers");
+pub(crate) const LABEL_RERANDOMIZE: u64 = label_from_name("hegel.rerandomize");
 
 /// Parameters of a float draw as accepted at the `hegel_generate_float` API
 /// surface. Width-32 handling (bound clamping, result rounding) and the

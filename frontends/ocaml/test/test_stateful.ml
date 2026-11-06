@@ -1128,6 +1128,44 @@ let concurrent_worker_exception_is_rethrown_test () =
   | exception exn -> raise exn
 ;;
 
+let failure_report_notes_the_rounds_concurrency_level_test () =
+  let module S = Hegel.Stateful in
+  let boom =
+    S.Concurrent_rule.create ~name:"boom" ~step:(fun _tc () () -> raise (Concurrent_boom 0)) ()
+  in
+  let output =
+    with_captured_stderr (fun () ->
+      match
+        Hegel.run_hegel_test
+          ~settings:
+            { (Hegel.Settings.create ~test_cases:20 ~seed:0 ()) with
+              database = Hegel.Settings.Disabled
+            }
+          (fun tc ->
+             S.run_concurrent
+               ~concurrency:Hegel.Concurrency.threads
+               tc
+               (module struct
+                 type ctx = unit
+                 type state = unit
+
+                 let rules = [ boom ]
+                 let invariants = []
+               end)
+               ~init:()
+               ~min_concurrency:1
+               ~max_concurrency:3)
+      with
+      | () -> Alcotest.fail "expected Concurrent_boom"
+      | exception Concurrent_boom _ -> ())
+  in
+  Alcotest.(check (pair bool bool))
+    output
+    (true, false)
+    ( String.is_substring output ~substring:"Concurrency level: 1"
+    , String.is_substring output ~substring:"Concurrency level: 3" )
+;;
+
 let concurrent_worker_usage_error_test () =
   let module S = Hegel.Stateful in
   let bad =
@@ -1579,6 +1617,10 @@ let tests =
       "stateful: concurrent worker exception is rethrown"
       `Quick
       concurrent_worker_exception_is_rethrown_test
+  ; Alcotest.test_case
+      "stateful: failure report notes the round's concurrency level"
+      `Quick
+      failure_report_notes_the_rounds_concurrency_level_test
   ; Alcotest.test_case
       "stateful: concurrent worker usage error"
       `Quick

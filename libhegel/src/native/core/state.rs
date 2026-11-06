@@ -8,8 +8,6 @@ use alloc::vec::Vec;
 use core::fmt::Debug;
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
-use once_cell::race::OnceBox;
-
 use rand::{Rng, RngExt};
 
 use crate::native::rng::EngineRng;
@@ -1861,11 +1859,11 @@ pub struct FamilyCore {
     /// Identifiers handed out by [`NativeTestCase::draw_fresh_id`], family-wide
     /// so an identifier is unique across every stream of the test case.
     fresh_ids: Mutex<FreshIds>,
-    /// This test case's swarm [`GenerationParameters`], drawn once when the
-    /// root stream's RNG is attached (see [`NativeTestCase::with_random`]) and
-    /// shared by every clone-stream so the whole case has one consistent
-    /// distribution. Unset for replay-only families, which never sample.
-    generation_parameters: OnceBox<GenerationParameters>,
+    /// This test case's swarm [`GenerationParameters`], drawn when the
+    /// root stream's RNG is attached (see [`NativeTestCase::with_random`]),
+    /// possibly redrawn by a state machine between rounds, and shared by
+    /// every clone-stream. Unset for replay-only families, which never sample.
+    generation_parameters: Mutex<Option<GenerationParameters>>,
 }
 
 impl FamilyCore {
@@ -1878,24 +1876,19 @@ impl FamilyCore {
             target_observations: Mutex::new(HashMap::default()),
             events: Mutex::new(Vec::new()),
             fresh_ids: Mutex::new(FreshIds::default()),
-            generation_parameters: OnceBox::new(),
+            generation_parameters: Mutex::new(None),
         }
     }
 
-    /// Record this test case's swarm parameters. Called once when the root
-    /// stream's RNG is attached; later calls (there are none in practice) are
-    /// ignored by the `OnceBox`.
+    /// Record this test case's swarm parameters, replacing any earlier ones.
     fn set_generation_parameters(&self, params: GenerationParameters) {
-        let _ = self.generation_parameters.set(Box::new(params));
+        *self.generation_parameters.lock() = Some(params);
     }
 
     /// This test case's swarm parameters, or [`GenerationParameters::default`]
     /// if none were drawn (a replay-only family, which never samples).
     pub(crate) fn generation_parameters(&self) -> GenerationParameters {
-        self.generation_parameters
-            .get()
-            .copied()
-            .unwrap_or_default()
+        self.generation_parameters.lock().unwrap_or_default()
     }
 
     /// The family's concluded status, or `None` while still running.
@@ -2313,6 +2306,16 @@ impl NativeTestCase {
         self.rng = Some(rng);
         self.family.set_budget(self.max_size);
         self
+    }
+
+    /// Redraw the family's [`GenerationParameters`] from this stream's RNG.
+    /// A no-op without an RNG (a bare replay), which never samples.
+    pub(crate) fn redraw_generation_parameters(&mut self) -> Result<(), InternalError> {
+        if let Some(rng) = self.rng.as_mut() {
+            let params = GenerationParameters::draw(rng)?;
+            self.family.set_generation_parameters(params);
+        }
+        Ok(())
     }
 
     /// The family state shared by every stream of this test case.

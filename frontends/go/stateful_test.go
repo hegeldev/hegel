@@ -183,6 +183,7 @@ type concurrentTestCaseShared struct {
 	cloneErr                error
 	workerErr               error
 	selectedRounds          int
+	roundLevels             []int64
 	ranGroups               int
 	spanStarts              atomic.Int64
 	spanStops               atomic.Int64
@@ -293,7 +294,7 @@ func (tc *concurrentTestCase) stateMachineNew(_ []string, ruleGroups []int64, _ 
 	return new(libhegel.StateMachine), tc.shared.selectedConcurrency, nil
 }
 
-func (tc *concurrentTestCase) stateMachineNextGroup(*libhegel.StateMachine) (libhegel.StateMachineGroup, error) {
+func (tc *concurrentTestCase) stateMachineNextGroup(*libhegel.StateMachine) (libhegel.StateMachineGroup, int64, error) {
 	rounds := tc.shared.selectedRounds
 	if rounds == 0 {
 		rounds = 1
@@ -303,9 +304,13 @@ func (tc *concurrentTestCase) stateMachineNextGroup(*libhegel.StateMachine) (lib
 		if tc.shared.reverseWorkerOrder {
 			tc.shared.workerOrderGate = make(chan struct{})
 		}
-		return tc.shared.selectedGroup, nil
+		level := tc.shared.selectedConcurrency
+		if tc.shared.roundLevels != nil {
+			level = tc.shared.roundLevels[tc.shared.ranGroups-1]
+		}
+		return tc.shared.selectedGroup, level, nil
 	}
-	return libhegel.StateMachineDone, nil
+	return libhegel.StateMachineDone, 0, nil
 }
 
 func (tc *concurrentTestCase) stateMachineNextRule(_ *libhegel.StateMachine, worker int64) (int64, error) {
@@ -777,6 +782,44 @@ func TestStateMachineOmitsWorkerMetadataAtConcurrencyOne(t *testing.T) {
 	}
 }
 
+func TestStateMachineNotesConcurrencyLevelWhenItChanges(t *testing.T) {
+	t.Parallel()
+
+	sm, err := newStateMachine(&outputRuleMachine{}, WithBoundedConcurrency(2))
+	if err != nil {
+		t.Fatalf("newStateMachine: %v", err)
+	}
+	var out strings.Builder
+	shared := &concurrentTestCaseShared{selectedConcurrency: 2, selectedRounds: 3, roundLevels: []int64{2, 2, 1}}
+	sm.Run(&concurrentTestCase{shared: shared, out: &out})
+	output := out.String()
+	positions := []int{
+		strings.Index(output, "Concurrency level: 2"),
+		strings.Index(output, "Round 1:"),
+		strings.Index(output, "Round 2:"),
+		strings.Index(output, "Concurrency level: 1"),
+		strings.Index(output, "Round 3:"),
+	}
+	if slices.Contains(positions, -1) || !slices.IsSorted(positions) || strings.Count(output, "Concurrency level:") != 2 {
+		t.Fatalf("want one level note before round 1 and one before round 3:\n%s", output)
+	}
+}
+
+func TestConcurrentFailureNotesShrunkConcurrencyLevel(t *testing.T) {
+	t.Parallel()
+
+	var out strings.Builder
+	err := run(1, func(tc TestCase) {
+		RunStateful(tc, &ruleFailer{}, WithBoundedConcurrency(3))
+	}, WithDatabase(""), withOutput(&out))
+	if err == nil {
+		t.Fatal("expected failure")
+	}
+	if output := out.String(); !strings.Contains(output, "Concurrency level: 1") || strings.Contains(output, "Concurrency level: 3") {
+		t.Fatalf("the shrunk failure runs a single worker of three:\n%s", output)
+	}
+}
+
 func TestWorkgroupWaitReturnsAllErrorsInPriorityOrder(t *testing.T) {
 	t.Parallel()
 
@@ -932,7 +975,7 @@ func TestRunStatefulNextRuleErrorAborts(t *testing.T) {
 		uintptr(2), libhegel.OK, // new_state_machine
 		libhegel.OK,           // state_machine_add_rule
 		int64(1), libhegel.OK, // state_machine_start
-		libhegel.StateMachineGroup(0), libhegel.OK, // state_machine_next_group
+		libhegel.StateMachineGroup(0), int64(1), libhegel.OK, // state_machine_next_group
 		uintptr(3), libhegel.OK, // test_case_clone
 		uintptr(4),                                // context_new for the cloned test case
 		int64(0), libhegel.E_STOP_TEST, "overrun", // state_machine_next_rule + last-error message

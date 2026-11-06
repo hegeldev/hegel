@@ -38,8 +38,9 @@ type stateMachineRuleGroup struct {
 type StateMachineOption func(*stateMachine)
 
 // WithConcurrency allows state machine rules to run concurrently. The engine
-// chooses a worker count between 1 and [runtime.GOMAXPROCS] for each test case,
-// so concurrent execution is not guaranteed for every test case.
+// chooses a worker count between 1 and [runtime.GOMAXPROCS] for each test case
+// and may change it between rounds, so concurrent execution is not guaranteed
+// for every round.
 //
 // Workers invoke rule methods concurrently on the same machine value. Any
 // state read or mutated by rules must therefore be safe for concurrent access,
@@ -250,9 +251,6 @@ func (sm *stateMachine) Run(tc TestCase) {
 		tc.abort(err)
 	}
 
-	if sm.maxConcurrency != 1 {
-		tc.log("Concurrency level: %d", concurrency)
-	}
 	tc.log("Initial invariant check.")
 
 	for _, inv := range sm.invariants {
@@ -269,8 +267,9 @@ func (sm *stateMachine) Run(tc TestCase) {
 	// stateMachineNextRule until the engine signals the join point. With a
 	// single group and concurrency 1 this runs the familiar sequential loop;
 	// the engine owns the overall step budget.
+	notedLevel := int64(0)
 	for round := 1; ; round++ {
-		group, err := tc.stateMachineNextGroup(machine)
+		group, level, err := tc.stateMachineNextGroup(machine)
 		if err != nil {
 			tc.abort(err)
 		}
@@ -280,6 +279,10 @@ func (sm *stateMachine) Run(tc TestCase) {
 		groupName := "<anonymous>"
 		if group != 0 {
 			groupName = sm.configuredRuleGroups[int(group)-1].name
+		}
+		if sm.maxConcurrency != 1 && level != notedLevel {
+			tc.log("Concurrency level: %d", level)
+			notedLevel = level
 		}
 		tc.log("---------------- Round %d: group %q ----------------", round, groupName)
 
