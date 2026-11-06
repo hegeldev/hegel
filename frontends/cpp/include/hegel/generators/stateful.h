@@ -120,7 +120,7 @@ namespace hegel::stateful {
          * @brief Creates a rule in the specified groups with a weight.
          *
          * The weight is a hint for how often to choose the rule, relative to
-         * the other rules of the current group. The engine rejects a weight 
+         * the other rules of the current group. The engine rejects a weight
          * that is not finite and positive.
          *
          * @param name The name of the rule
@@ -673,7 +673,7 @@ namespace hegel::stateful {
          * @brief Declares a new Rule with a weight.
          *
          * The weight is a hint for how often to choose the rule, relative to
-         * the other rules. The engine rejects a weight that is not finite and 
+         * the other rules. The engine rejects a weight that is not finite and
          * positive.
          *
          * @param name name of the rule
