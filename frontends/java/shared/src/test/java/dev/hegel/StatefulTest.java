@@ -106,6 +106,32 @@ class StatefulTest {
         assertEquals(expected, machine.seen);
     }
 
+    /** A counter whose fault-pausing invariant is checked like any other. */
+    static final class PausedCounter {
+        private int n = 0;
+        int checks;
+
+        @Rule
+        void increment(TestCase tc) {
+            n++;
+        }
+
+        @Invariant(pauseFaults = true, alwaysRun = true)
+        void nonNegative(TestCase tc) {
+            checks++;
+            assertTrue(n >= 0);
+        }
+    }
+
+    @HegelTest(database = Database.DISABLED)
+    void pauseFaultsInvariantsRunAgainstTheEngine(TestCase tc) {
+        // Pausing is a no-op in the engine today, but the live handle must accept the pair
+        // around every check: initial state, after every rule, final state.
+        PausedCounter machine = new PausedCounter();
+        Stateful.run(machine, tc);
+        assertEquals(machine.n + 2, machine.checks);
+    }
+
     /** Two rules whose only job is to count, per test case, how often the engine picks each. */
     static final class WeightedMachine {
         final int[] counts;

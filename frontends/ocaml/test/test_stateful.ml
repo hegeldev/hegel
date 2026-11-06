@@ -345,6 +345,95 @@ let test_always_check_invariant () =
     true
 ;;
 
+(* [pause_faults] brackets every run of the invariant (initial state, sampled
+   steps, final state) with the engine's pause/unpause pair, a no-op today, so
+   the invariant runs exactly as often as it would without the flag. *)
+let test_pause_faults_invariant () =
+  let module S = Hegel.Stateful in
+  let step_count = 10 in
+  let paused_count = ref 0 in
+  let plain_count = ref 0 in
+  let noop = S.Rule.create ~name:"noop" ~step:(fun _tc _state -> ()) () in
+  let paused =
+    S.Invariant.create
+      ~name:"paused"
+      ~inv:(fun _tc () -> incr paused_count)
+      ~always_check:true
+      ~pause_faults:true
+      ()
+  in
+  let plain = S.Invariant.create ~name:"plain" ~inv:(fun _tc () -> incr plain_count) () in
+  Alcotest.(check (list bool))
+    "pause_faults accessor"
+    [ true; false ]
+    (List.map [ paused; plain ] ~f:S.Invariant.pause_faults);
+  Alcotest.(check (list bool))
+    "always_check accessor"
+    [ true; false ]
+    (List.map [ paused; plain ] ~f:S.Invariant.always_check);
+  let module M = struct
+    type state = unit
+
+    let rules = [ noop ]
+    let invariants = [ paused; plain ]
+  end
+  in
+  Hegel.run_hegel_test
+    ~settings:(Hegel.Settings.create ~test_cases:1 ~seed:1 ())
+    (fun tc -> S.run tc (module M) ~init:() ~step_count);
+  Alcotest.(check int)
+    "paused invariant runs every step plus endpoint checks"
+    (step_count + 2)
+    !paused_count;
+  Alcotest.(check bool) "plain invariant ran" true (!plain_count >= 2)
+;;
+
+(* A raising invariant still unpauses: the failure propagates as usual, and
+   the final-state check of the shrunk replay still runs under the pause. *)
+let test_pause_faults_invariant_raises () =
+  let module S = Hegel.Stateful in
+  let checks = ref 0 in
+  let bump =
+    S.Rule.create
+      ~name:"bump"
+      ~step:(fun tc n ->
+        n := !n + Hegel.draw tc (Hegel.integers ~min_value:1 ~max_value:3 ()))
+      ()
+  in
+  let small =
+    S.Invariant.create
+      ~name:"small"
+      ~inv:(fun _tc n ->
+        incr checks;
+        if !n > 2 then failwith (sprintf "too big: %d" !n))
+      ~always_check:true
+      ~pause_faults:true
+      ()
+  in
+  let module M = struct
+    type state = int ref
+
+    let rules = [ bump ]
+    let invariants = [ small ]
+  end
+  in
+  (match
+     Hegel.run_hegel_test
+       ~settings:
+         { (Hegel.Settings.create ~seed:0 ()) with database = Hegel.Settings.Disabled }
+       (fun tc -> S.run tc (module M) ~init:(ref 0) ~step_count:5)
+   with
+   | () -> Alcotest.fail "expected the invariant to fail"
+   | exception Failure message -> Alcotest.(check string) "message" "too big: 3" message);
+  Alcotest.(check bool) "invariant ran" true (!checks > 0)
+;;
+
+let test_pause_unpause_faults_direct () =
+  Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:1 ()) (fun tc ->
+    Hegel.Internal.pause_faults tc;
+    Hegel.Internal.unpause_faults tc)
+;;
+
 let test_swarm_long_single_rule_run () =
   let module S = Hegel.Stateful in
   (* Per-test-case state: the longest run of one identical rule choice in the
@@ -1276,6 +1365,96 @@ let concurrent_always_check_invariant_test () =
          !invariants_checked)
 ;;
 
+let concurrent_pause_faults_invariant_test () =
+  let module S = Hegel.Stateful in
+  let step_count = 10 in
+  Hegel.run_hegel_test
+    ~settings:
+      { (Hegel.Settings.create ~test_cases:1 ~seed:0 ()) with
+        database = Hegel.Settings.Disabled
+      }
+    (fun tc ->
+       let paused_checked = ref 0 in
+       let plain_checked = ref 0 in
+       let step = S.Concurrent_rule.create ~name:"step" ~step:(fun _tc () () -> ()) () in
+       let paused =
+         S.Invariant.create
+           ~name:"paused"
+           ~always_check:true
+           ~pause_faults:true
+           ~inv:(fun _tc () -> incr paused_checked)
+           ()
+       in
+       let plain =
+         S.Invariant.create ~name:"plain" ~inv:(fun _tc () -> incr plain_checked) ()
+       in
+       S.run_concurrent
+         ~concurrency:Hegel.Concurrency.threads
+         tc
+         (module struct
+           type ctx = unit
+           type state = unit
+
+           let rules = [ step ]
+           let invariants = [ paused; plain ]
+         end)
+         ~step_count
+         ~init:()
+         ~min_concurrency:2
+         ~max_concurrency:2;
+       Alcotest.(check int)
+         "paused invariant runs every round plus initial/final states"
+         (step_count + 2)
+         !paused_checked;
+       Alcotest.(check bool) "plain invariant ran" true (!plain_checked >= 2))
+;;
+
+let concurrent_pause_faults_invariant_raises_test () =
+  let module S = Hegel.Stateful in
+  let module M = struct
+    type ctx = unit
+    type state = int Atomic.t
+
+    let rules =
+      [ S.Concurrent_rule.create
+          ~name:"incr"
+          ~step:(fun _tc () (n : int Atomic.t) -> Atomic.incr n)
+          ()
+      ]
+    ;;
+
+    let invariants =
+      [ S.Invariant.create
+          ~name:"stays_zero"
+          ~always_check:true
+          ~pause_faults:true
+          ~inv:(fun _tc (n : int Atomic.t) ->
+            if Atomic.get n <> 0 then failwith "invariant boom")
+          ()
+      ]
+    ;;
+  end
+  in
+  match
+    Hegel.run_hegel_test
+      ~settings:
+        { (Hegel.Settings.create ~test_cases:1 ~seed:0 ()) with
+          database = Hegel.Settings.Disabled
+        }
+      (fun tc ->
+         S.run_concurrent
+           ~concurrency:Hegel.Concurrency.threads
+           tc
+           (module M)
+           ~init:(Atomic.make 0)
+           ~min_concurrency:1
+           ~max_concurrency:2)
+  with
+  | () -> Alcotest.fail "expected the invariant to fail"
+  | exception Failure message ->
+    Alcotest.(check string) "message" "invariant boom" message
+;;
+
 let concurrent_invariant_waits_for_workers_test ~concurrency () =
   let module S = Hegel.Stateful in
   let module M = struct
@@ -1436,6 +1615,14 @@ let tests =
       `Quick
       concurrent_always_check_invariant_test
   ; Alcotest.test_case
+      "stateful: concurrent pause_faults invariants"
+      `Quick
+      concurrent_pause_faults_invariant_test
+  ; Alcotest.test_case
+      "stateful: concurrent pause_faults invariant raising"
+      `Quick
+      concurrent_pause_faults_invariant_raises_test
+  ; Alcotest.test_case
       "stateful: concurrent invariants wait for workers (threads)"
       `Quick
       (concurrent_invariant_waits_for_workers_test ~concurrency:Hegel.Concurrency.threads)
@@ -1487,6 +1674,18 @@ let tests =
       "stateful: always-check invariant runs after every step"
       `Quick
       test_always_check_invariant
+  ; Alcotest.test_case
+      "stateful: pause_faults invariants"
+      `Quick
+      test_pause_faults_invariant
+  ; Alcotest.test_case
+      "stateful: pause_faults invariant raising"
+      `Quick
+      test_pause_faults_invariant_raises
+  ; Alcotest.test_case
+      "stateful: pause/unpause faults directly"
+      `Quick
+      test_pause_unpause_faults_direct
   ; Alcotest.test_case
       "stateful: swarm yields a long single-rule chain"
       `Quick

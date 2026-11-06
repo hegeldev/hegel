@@ -30,6 +30,7 @@ struct MethodInfo {
     name: syn::Ident,
     attrs: Vec<Attribute>,
     always_run: bool,
+    pause_faults: bool,
     weight: Option<f64>,
 }
 
@@ -60,6 +61,7 @@ fn method_entries(methods: &[MethodInfo], invariants: bool) -> Vec<TokenStream> 
                 let weight = m.weight.unwrap_or(1.0);
                 quote! { #weight, }
             };
+            let pause_faults = pause_faults_builder(m.pause_faults);
             // Register through a non-capturing closure rather than
             // `Self::#name` directly: `Rule.apply` is `fn(&mut M, TestCase)`,
             // and the method-call syntax inside the closure lets methods take
@@ -74,9 +76,21 @@ fn method_entries(methods: &[MethodInfo], invariants: bool) -> Vec<TokenStream> 
                         __hegel_machine.#name(__hegel_tc)
                     },
                 )
+                #pause_faults
             }
         })
         .collect()
+}
+
+/// The `.pause_faults(true)` builder call appended to an invariant's
+/// constructor when its attribute asked for it; nothing otherwise, so the
+/// expansion of an invariant without the argument is unchanged.
+fn pause_faults_builder(pause_faults: bool) -> TokenStream {
+    if pause_faults {
+        quote! { .pause_faults(true) }
+    } else {
+        TokenStream::new()
+    }
 }
 
 /// The concurrency groups of one `#[rule]` in a concurrent state machine:
@@ -166,28 +180,43 @@ fn rule_args(attr: &Attribute, concurrent: bool) -> syn::Result<RuleArgs> {
     Ok(args)
 }
 
-/// Extract the `always_run` argument of an `#[invariant]` attribute, if any.
-fn invariant_always_run(attr: &Attribute) -> syn::Result<bool> {
+/// The arguments of one `#[invariant]` attribute.
+#[derive(Default)]
+struct InvariantArgs {
+    always_run: bool,
+    pause_faults: bool,
+}
+
+/// Extract the arguments of an `#[invariant]` attribute: a bare `always_run`
+/// and `pause_faults = <bool>`, in any order. A bare `#[invariant]` carries
+/// neither; a parenthesized one must name at least one.
+fn invariant_args(attr: &Attribute) -> syn::Result<InvariantArgs> {
+    let mut args = InvariantArgs::default();
     if matches!(attr.meta, syn::Meta::Path(_)) {
-        return Ok(false);
+        return Ok(args);
     }
-    let mut always_run = false;
+    let mut any = false;
     attr.parse_nested_meta(|meta| {
+        any = true;
         if meta.path.is_ident("always_run") {
-            always_run = true;
+            args.always_run = true;
+            Ok(())
+        } else if meta.path.is_ident("pause_faults") {
+            args.pause_faults = meta.value()?.parse::<syn::LitBool>()?.value;
             Ok(())
         } else {
-            Err(meta.error("unsupported #[invariant] argument; expected `always_run`"))
+            Err(meta.error(
+                "unsupported #[invariant] argument; expected `always_run` or `pause_faults = true`",
+            ))
         }
     })?;
-    if always_run {
-        Ok(true)
-    } else {
-        Err(syn::Error::new_spanned(
+    if !any {
+        return Err(syn::Error::new_spanned(
             attr,
-            "#[invariant(...)] requires `always_run`",
-        ))
+            "#[invariant(...)] requires `always_run` or `pause_faults = true`",
+        ));
     }
+    Ok(args)
 }
 
 struct ConcurrentMethodInfo {
@@ -196,6 +225,7 @@ struct ConcurrentMethodInfo {
     weight: Option<f64>,
     attrs: Vec<Attribute>,
     always_run: bool,
+    pause_faults: bool,
 }
 
 fn concurrent_method_entries(methods: &[ConcurrentMethodInfo]) -> Vec<TokenStream> {
@@ -236,6 +266,7 @@ fn concurrent_method_entries(methods: &[ConcurrentMethodInfo]) -> Vec<TokenStrea
                     } else {
                         quote! { ::hegel::stateful::ConcurrentInvariant::new }
                     };
+                    let pause_faults = pause_faults_builder(m.pause_faults);
                     quote! {
                         #(#attrs)*
                         #constructor(
@@ -244,6 +275,7 @@ fn concurrent_method_entries(methods: &[ConcurrentMethodInfo]) -> Vec<TokenStrea
                                 __hegel_machine.#name(__hegel_tc)
                             },
                         )
+                        #pause_faults
                     }
                 }
             }
@@ -291,11 +323,12 @@ pub fn expand_concurrent_state_machine(mut block: ItemImpl) -> TokenStream {
                     weight: args.weight,
                     attrs: method.attrs.clone(),
                     always_run: false,
+                    pause_faults: false,
                 });
             }
             if let Some(attr) = invariant_attr {
-                let always_run = match invariant_always_run(&attr) {
-                    Ok(always_run) => always_run,
+                let args = match invariant_args(&attr) {
+                    Ok(args) => args,
                     Err(e) => return e.to_compile_error(),
                 };
                 invariants.push(ConcurrentMethodInfo {
@@ -303,7 +336,8 @@ pub fn expand_concurrent_state_machine(mut block: ItemImpl) -> TokenStream {
                     group: None,
                     weight: None,
                     attrs: method.attrs.clone(),
-                    always_run,
+                    always_run: args.always_run,
+                    pause_faults: args.pause_faults,
                 });
             }
         }
@@ -362,10 +396,11 @@ pub fn expand_state_machine(mut block: ItemImpl) -> TokenStream {
                 rewrite_method_draws(method);
             }
 
-            let info = |always_run, weight| MethodInfo {
+            let info = |always_run, pause_faults, weight| MethodInfo {
                 name: method.sig.ident.clone(),
                 attrs: method.attrs.clone(),
                 always_run,
+                pause_faults,
                 weight,
             };
             if let Some(attr) = rule_attr {
@@ -373,14 +408,14 @@ pub fn expand_state_machine(mut block: ItemImpl) -> TokenStream {
                     Ok(args) => args,
                     Err(e) => return e.to_compile_error(),
                 };
-                rules.push(info(false, args.weight));
+                rules.push(info(false, false, args.weight));
             }
             if let Some(attr) = invariant_attr {
-                let always_run = match invariant_always_run(&attr) {
-                    Ok(always_run) => always_run,
+                let args = match invariant_args(&attr) {
+                    Ok(args) => args,
                     Err(e) => return e.to_compile_error(),
                 };
-                invariants.push(info(always_run, None));
+                invariants.push(info(args.always_run, args.pause_faults, None));
             }
         }
     }

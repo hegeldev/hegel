@@ -269,7 +269,12 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   at each join point `hegel_state_machine_should_check_invariant` (root
   handle) decides which invariants run — always for
   `@Invariant(alwaysRun = true)`, sampled otherwise; the initial and final
-  checks run every invariant unconditionally:
+  checks run every invariant unconditionally. An invariant with
+  `@Invariant(pauseFaults = true)` is bracketed by `hegel_pause_faults` /
+  `hegel_unpause_faults` on the driving handle every time it runs (the
+  unpause in a `finally`, and a no-op once the case is aborted, like
+  `stopSpan`); both are engine no-ops today, reserved for pausing
+  Antithesis fault injection:
   - `maxConcurrency == 1` → the **sequential** driver: everything on the
     calling thread and the root handle as worker 0, one `STATEFUL_RULE` span
     per round (discarded on rejection), `Step N: rule` notes.

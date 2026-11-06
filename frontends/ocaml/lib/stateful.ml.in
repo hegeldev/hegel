@@ -87,10 +87,16 @@ module Invariant = struct
     { name : string
     ; inv : Internal.test_case -> 'state -> unit
     ; always_check : bool
+    ; pause_faults : bool
     }
 
-  let create ~name ~inv ?(always_check = false) () = { name; inv; always_check }
+  let create ~name ~inv ?(always_check = false) ?(pause_faults = false) () =
+    { name; inv; always_check; pause_faults }
+  ;;
+
   let name invariant = invariant.name
+  let always_check invariant = invariant.always_check
+  let pause_faults invariant = invariant.pause_faults
 end
 
 let run_rules tc ~state_machine ~worker_index LOCAL_CTX ~heading ~rule =
@@ -123,6 +129,7 @@ type rule_info =
 type invariant_info = Internal.invariant_info =
   { name : string
   ; always_check : bool
+  ; pause_faults : bool
   }
 
 let unique_groups rules =
@@ -149,7 +156,10 @@ let to_engine_rules rules names =
 let to_inv_record invariants =
   List.map
     (fun (inv : _ Invariant.t) : invariant_info ->
-       { name = inv.name; always_check = inv.always_check })
+       { name = inv.name
+       ; always_check = inv.always_check
+       ; pause_faults = inv.pause_faults
+       })
     invariants
 ;;
 
@@ -259,6 +269,18 @@ let run_machine
       (fun sexp_of -> Internal.print_line tc [ Text "state = "; Value (sexp_of init) ])
       sexp_of_state
   in
+  (* Not Fun.protect: [check_invariant] is a local closure. *)
+  let with_faults_paused ~pause_faults LOCAL(f) =
+    if pause_faults
+    then (
+      Internal.pause_faults tc;
+      match f () with
+      | () -> Internal.unpause_faults tc
+      | exception e ->
+        Internal.unpause_faults tc;
+        raise e)
+    else f ()
+  in
   let check_invariants ~where ~sample =
     iteri_local
       (fun i (invariant : invariant_info) ->
@@ -270,9 +292,10 @@ let run_machine
                 ~invariant_index:i
          then (
            match
-             if Internal.should_print tc
-             then Internal.with_block tc ~indent:2 (fun tc -> check_invariant i tc)
-             else check_invariant i tc
+             with_faults_paused ~pause_faults:invariant.pause_faults (fun () ->
+               if Internal.should_print tc
+               then Internal.with_block tc ~indent:2 (fun tc -> check_invariant i tc)
+               else check_invariant i tc)
            with
            | () -> ()
            | exception e ->

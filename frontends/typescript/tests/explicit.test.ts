@@ -40,6 +40,8 @@ describe.each([
       ["A state machine", () => ds.stateMachineNextRule()],
       ["A state machine", () => ds.stateMachineRuleRejected()],
       ["A state machine", () => ds.stateMachineShouldCheckInvariant()],
+      ["A state machine", () => ds.pauseFaults()],
+      ["A state machine", () => ds.unpauseFaults()],
       ["A grammar", () => ds.drawGrammar()],
     ];
     for (const [operation, call] of refused) {

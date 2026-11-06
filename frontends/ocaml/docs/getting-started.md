@@ -262,8 +262,12 @@ rules with `[@@rule]` and invariants with `[@@invariant]`. A rule takes the
 test case and the state and updates the state in place. Rules may be weighted
 with `[@@rule { weight = <weight> }]`. Every invariant is checked on the initial
 and final states and sampled after intermediate steps, or after every step when
-marked `[@@invariant { always_check = true }]`. Pass `?sexp_of_state` to 
-`Stateful.run` to trace the model state. Draws are also printed with their 
+marked `[@@invariant { always_check = true }]`. An invariant marked
+`[@@invariant { pause_faults = true }]` runs with fault injection paused, so
+that inside [Antithesis](https://antithesis.com/) no fault lands in the middle
+of the check (the two options combine, in either order; pausing is currently a
+no-op in the engine). Pass `?sexp_of_state` to
+`Stateful.run` to trace the model state. Draws are also printed with their
 `let`-bound name.
 
 ```ocaml
@@ -278,7 +282,7 @@ module%hegel_state_machine Stack = struct
   [@@rule]
 
   let stack_stays_small _tc stack = assert (List.length !stack <= 2)
-  [@@invariant { always_check = true }]
+  [@@invariant { always_check = true; pause_faults = true }]
 end
 
 let%hegel_test stack_model tc = Stack.run tc ~init:(ref [])
@@ -322,6 +326,7 @@ module Stack = struct
         ~name:"stack_stays_small"
         ~inv:stack_stays_small
         ~always_check:true
+        ~pause_faults:true
         ()
     ]
 end

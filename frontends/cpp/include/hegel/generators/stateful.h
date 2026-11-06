@@ -668,6 +668,20 @@ namespace hegel::stateful {
      * and sampled at intermediate join points. The invariant function should
      * throw when the invariant is violated.
      *
+     * An invariant declared with @c pause_faults asks the engine to pause
+     * fault injection for the duration of each of its checks, so that inside
+     * [Antithesis](https://antithesis.com/) no fault lands in the middle of
+     * the check. Fault injection resumes when the check returns or throws.
+     * Outside Antithesis the flag has no effect.
+     *
+     * @code{.cpp}
+        std::vector<hegel::stateful::Invariant<Bank>> invariants() const {
+            return {hegel::stateful::Invariant<Bank>(
+                "balances_sum_to_total",
+                [](const Bank& m) { m.verify_total(); }, true)};
+        }
+     * @endcode
+     *
      * @tparam T The state-machine type the invariant checks
      */
     template <typename T> class Invariant {
@@ -675,12 +689,17 @@ namespace hegel::stateful {
         /**
          * @brief Declare a new invariant.
          *
-         * @param name
-         * @param invariant
+         * @param name The name of the invariant
+         * @param invariant The predicate. It throws when the invariant is
+         * violated.
+         * @param pause_faults If true, fault injection is paused for the
+         * duration of each check of this invariant. Defaults to false.
          */
         explicit Invariant(std::string name,
-                           std::function<void(const T&)> invariant)
-            : name_(std::move(name)), invariant_(std::move(invariant)) {}
+                           std::function<void(const T&)> invariant,
+                           bool pause_faults = false)
+            : name_(std::move(name)), invariant_(std::move(invariant)),
+              pause_faults_(pause_faults) {}
 
         /**
          * @brief Returns the name of the invariant.
@@ -697,10 +716,18 @@ namespace hegel::stateful {
         const std::function<void(const T&)>& invariant() const {
             return invariant_;
         }
+        /**
+         * @brief Returns true if fault injection is paused while this
+         * invariant is checked.
+         *
+         * @return bool
+         */
+        bool pause_faults() const { return pause_faults_; }
 
       private:
         std::string name_;
         std::function<void(const T&)> invariant_;
+        bool pause_faults_;
     };
 
     /**
@@ -825,6 +852,7 @@ namespace hegel::stateful {
             }
             const Invariant<T>& inv = invariants[index];
             try {
+                internal::PauseFaultsScope pause(tc, inv.pause_faults());
                 inv.invariant()(state);
             } catch (...) {
                 tc.note("Invariant " + inv.name() + " violated " + origin);

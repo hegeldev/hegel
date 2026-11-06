@@ -63,6 +63,19 @@ some of the time in between. Pass
 `always_run=True` to {func}`@hegel.invariant <hegel.invariant>` for an
 invariant that should be checked after every step.
 
+Pass `pause_faults=True` for an invariant that should run with fault
+injection paused: inside [Antithesis](https://antithesis.com/) the fault
+injector stops for the duration of each check, so the invariant observes the
+system under test without a fault landing in the middle of it. Outside
+Antithesis the flag has no effect, and it is currently a no-op everywhere;
+a later engine release will act on it.
+
+```python
+@hegel.invariant(pause_faults=True)
+def replicas_agree(self, tc):
+    assert len({node.state() for node in self.nodes}) == 1
+```
+
 Rules and invariants are methods taking the test case, and draw any values
 they need from it. A rule that doesn't apply in the current state calls
 {meth}`~hegel.TestCase.assume`, as `pop` does when the queue is empty: Hegel

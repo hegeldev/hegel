@@ -167,6 +167,7 @@ type FnStateMachineNextRule =
     unsafe extern "C" fn(*mut u8, *mut u8, *mut u8, i64, *mut i64) -> c_int;
 type FnStateMachineRuleRejected = unsafe extern "C" fn(*mut u8, *mut u8, *mut u8, i64) -> c_int;
 type FnStateMachineFree = unsafe extern "C" fn(*mut u8, *mut u8) -> c_int;
+type FnPauseFaults = unsafe extern "C" fn(*mut u8, *mut u8) -> c_int;
 type FnPrimitiveBoolean =
     unsafe extern "C" fn(*mut u8, *mut u8, f64, bool, bool, *mut bool) -> c_int;
 type FnStringGeneratorText = unsafe extern "C" fn(
@@ -243,6 +244,8 @@ struct Api<'a> {
     state_machine_next_rule: Symbol<'a, FnStateMachineNextRule>,
     state_machine_rule_rejected: Symbol<'a, FnStateMachineRuleRejected>,
     state_machine_free: Symbol<'a, FnStateMachineFree>,
+    pause_faults: Symbol<'a, FnPauseFaults>,
+    unpause_faults: Symbol<'a, FnPauseFaults>,
     primitive_boolean: Symbol<'a, FnPrimitiveBoolean>,
     string_generator_text: Symbol<'a, FnStringGeneratorText>,
     target: Symbol<'a, FnTarget>,
@@ -299,6 +302,8 @@ unsafe fn bind(lib: &Library) -> Api<'_> {
             state_machine_next_rule: lib.get(b"hegel_state_machine_next_rule\0").unwrap(),
             state_machine_rule_rejected: lib.get(b"hegel_state_machine_rule_rejected\0").unwrap(),
             state_machine_free: lib.get(b"hegel_state_machine_free\0").unwrap(),
+            pause_faults: lib.get(b"hegel_pause_faults\0").unwrap(),
+            unpause_faults: lib.get(b"hegel_unpause_faults\0").unwrap(),
             primitive_boolean: lib.get(b"hegel_generate_boolean\0").unwrap(),
             string_generator_text: lib.get(b"hegel_string_generator_text\0").unwrap(),
             target: lib.get(b"hegel_target\0").unwrap(),
@@ -1200,6 +1205,8 @@ fn libhegel_state_machine_selects_registered_rules_with_swarm() {
                 }
             }
 
+            assert_eq!((a.pause_faults)(ctx, tc), HEGEL_OK);
+            assert_eq!((a.unpause_faults)(ctx, tc), HEGEL_OK);
             assert_eq!((a.state_machine_free)(ctx, machine), HEGEL_OK);
             if overran {
                 a.complete_and_free(ctx, tc, CStatus::Overrun, ptr::null());

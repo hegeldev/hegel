@@ -320,11 +320,13 @@ type rule_info =
   ; weight : float
   }
 
-(** An invariant as the engine sees it: its name and whether it is checked
-    after every round rather than sampled. *)
+(** An invariant as the engine sees it: its name, whether it is checked
+    after every round rather than sampled, and whether fault injection is
+    paused while it runs. *)
 type invariant_info =
   { name : string
   ; always_check : bool
+  ; pause_faults : bool
   }
 
 (** Builds and starts a sequential or concurrent engine-owned state machine
@@ -376,6 +378,16 @@ val state_machine_should_check_invariant
 (** [state_machine_free tc ~state_machine] releases [state_machine]. Safe after
     the test case has aborted, and safe in any order relative to freeing it. *)
 val state_machine_free : test_case -> state_machine:state_machine -> unit
+
+(** [pause_faults tc] asks the fault injector to stop injecting faults on [tc]
+    until the matching {!unpause_faults}: inside Antithesis, the runners
+    bracket an invariant declared with [pause_faults] with this pair.
+    Currently a no-op in the engine. *)
+val pause_faults : test_case -> unit
+
+(** [unpause_faults tc] resumes the fault injection {!pause_faults} paused on
+    [tc]. Currently a no-op in the engine. *)
+val unpause_faults : test_case -> unit
 
 (**/**)
 

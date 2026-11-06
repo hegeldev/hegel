@@ -573,6 +573,19 @@ impl TestCase {
         with_ctx(|ctx| check(unsafe { c::hegel_stop_span(ctx, self.tc(), discard) }))
     }
 
+    /// Pause fault injection on this test case until `unpause_faults`:
+    /// inside Antithesis, a stateful invariant declared with
+    /// `pause_faults` runs between the pair. Currently a no-op in the
+    /// engine.
+    fn pause_faults(&self) -> PyResult<()> {
+        with_ctx(|ctx| check(unsafe { c::hegel_pause_faults(ctx, self.tc()) }))
+    }
+
+    /// Resume fault injection paused by `pause_faults`.
+    fn unpause_faults(&self) -> PyResult<()> {
+        with_ctx(|ctx| check(unsafe { c::hegel_unpause_faults(ctx, self.tc()) }))
+    }
+
     /// Append whole lines of text to this handle's print region. A dead
     /// region (the document was already read) is a silent no-op.
     fn note(&self, text: &str) -> PyResult<()> {

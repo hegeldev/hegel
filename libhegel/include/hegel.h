@@ -2458,6 +2458,28 @@ hegel_result_t hegel_state_machine_should_check_invariant(hegel_context_t *ctx,
                                                           bool *out_should_check);
 
 /*
+ Pause fault injection for the duration of a check on this test case:
+ inside [Antithesis](https://antithesis.com/), ask the fuzzer to stop
+ injecting faults until the matching `hegel_unpause_faults` on the same
+ handle. Frontends bracket each stateful invariant declared with
+ `pause_faults` with this pair, so the invariant observes the system under
+ test without a fault landing in the middle of the check. Pausing is
+ currently a no-op everywhere, inside Antithesis and out: the pair fixes
+ the interface so frontends can adopt it before the engine acts on it.
+
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_HANDLE` for a NULL `tc`.
+ */
+hegel_result_t hegel_pause_faults(hegel_context_t *ctx, hegel_test_case_t *tc);
+
+/*
+ Resume fault injection paused by `hegel_pause_faults` on this test case.
+ Like pausing, currently a no-op.
+
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_HANDLE` for a NULL `tc`.
+ */
+hegel_result_t hegel_unpause_faults(hegel_context_t *ctx, hegel_test_case_t *tc);
+
+/*
  Release a state-machine handle from `hegel_new_state_machine`. Safe to
  call with NULL (a no-op that returns `HEGEL_OK`), and safe at any point
  in any order relative to freeing the test case or the run. Each handle

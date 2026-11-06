@@ -362,10 +362,16 @@ collects the bindings marked `[@@rule]` or `[@@invariant]` into appended
 ~step:<binding> ()` and the same for `Invariant.create`) plus a
 `run ?step_count ?sexp_of_state tc ~init`. A marker's options are a *record*
 payload and nothing else — `[@@rule { weight = 2.5 }]`,
-`[@@invariant { always_check = true }]`, bare `[@@rule]` for the defaults.
-`rule_attribute` spells out one `Ast_pattern` alternative per field
-combination, so the fields take either order and either may be omitted, and a
-repeated or unknown field is a compile error. A weight is carried
+`[@@invariant { always_check = true; pause_faults = true }]`, bare `[@@rule]`
+for the defaults. `rule_attribute` and `invariant_attribute` spell out one
+`Ast_pattern` alternative per field combination, so the fields take either
+order and either may be omitted, and a repeated or unknown field is a compile
+error. An invariant's `pause_faults` (`Invariant.create ?pause_faults`) makes
+`Stateful.run_machine` bracket every run of it with `Internal.pause_faults` /
+`Internal.unpause_faults` (`hegel_pause_faults` / `hegel_unpause_faults`, a
+hand-written match rather than `Fun.protect` because the invariant callback
+is a local closure, so a raising invariant still unpauses); the engine
+currently no-ops both. A weight is carried
 as the text of a float literal (an int payload gains a `.`) and defaults to
 `1.0`. `module%hegel_concurrent_state_machine` does the same with
 `Concurrent_rule.create ?groups ~weight ~name ~step ()`, whose `[@@rule]` record

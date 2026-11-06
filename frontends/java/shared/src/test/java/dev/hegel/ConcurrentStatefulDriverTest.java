@@ -446,6 +446,60 @@ class ConcurrentStatefulDriverTest {
         assertArrayEquals(new long[][] {{0}, {1, 0}, {1}}, fake.stateMachineRuleGroups);
     }
 
+    /** A machine whose fault-pausing invariant marks the fake's event log, and can be made to fail. */
+    static final class Pausing {
+        private final FakeLibhegel fake;
+        boolean explode;
+
+        Pausing(FakeLibhegel fake) {
+            this.fake = fake;
+        }
+
+        @Rule
+        void step(TestCase t) {}
+
+        @Invariant(pauseFaults = true)
+        void protectedCheck(TestCase t) {
+            fake.faultEvents.add("protected");
+            if (explode) {
+                throw new AssertionError("protected invariant failed");
+            }
+        }
+    }
+
+    @Test
+    void concurrentDriverBracketsPauseFaultsInvariants() {
+        // Initial state, the join point of the one round, final state: each on the driving thread,
+        // paused immediately before and unpaused immediately after.
+        FakeLibhegel fake = concurrentFake(2, new long[][] {{0}, {0}});
+        Stateful.run(new Pausing(fake), exploringCase(fake), twoWorkers());
+        assertEquals(
+                List.of(
+                        "pause",
+                        "protected",
+                        "unpause",
+                        "pause",
+                        "protected",
+                        "unpause",
+                        "pause",
+                        "protected",
+                        "unpause"),
+                fake.faultEvents);
+        assertEquals(List.of(0L), fake.invariantChecksAsked);
+    }
+
+    @Test
+    void concurrentDriverUnpausesAroundAThrowingInvariant() {
+        FakeLibhegel fake = concurrentFake(2, new long[][] {{0}, {0}});
+        Pausing machine = new Pausing(fake);
+        machine.explode = true;
+        AssertionError e =
+                assertThrows(AssertionError.class, () -> Stateful.run(machine, exploringCase(fake), twoWorkers()));
+        assertEquals("protected invariant failed", e.getMessage());
+        assertEquals(List.of("pause", "protected", "unpause"), fake.faultEvents);
+        assertEquals(1, fake.freedStateMachines);
+    }
+
     @Test
     void concurrentPoolTracksValuesUnderItsLock() {
         FakeLibhegel fake = new FakeLibhegel();

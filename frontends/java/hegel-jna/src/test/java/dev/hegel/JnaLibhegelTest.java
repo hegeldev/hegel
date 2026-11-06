@@ -170,6 +170,8 @@ class JnaLibhegelTest {
         assertEquals(Abi.E_INVALID_HANDLE, lib.stateMachineRuleRejected(0, 0, 0));
         assertEquals(Abi.E_INVALID_HANDLE, lib.stateMachineShouldCheckInvariant(0, 0, 0, check));
         assertTrue(check[0]);
+        assertEquals(Abi.E_INVALID_HANDLE, lib.pauseFaults(0));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.unpauseFaults(0));
         // Freeing NULL is a documented no-op.
         lib.stateMachineFree(0);
     }

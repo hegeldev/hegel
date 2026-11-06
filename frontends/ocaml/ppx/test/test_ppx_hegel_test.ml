@@ -200,6 +200,17 @@ module%hegel_state_machine Counter = struct
   [@@invariant { always_check = true }]
   ;;
 
+  let sampled _tc n = assert (!n >= 0) [@@invariant]
+  let paused _tc n = assert (!n >= 0) [@@invariant { pause_faults = true }]
+
+  let paused_always _tc n = assert (!n >= 0)
+  [@@invariant { always_check = true; pause_faults = true }]
+  ;;
+
+  let always_paused _tc n = assert (!n >= 0)
+  [@@invariant { pause_faults = true; always_check = true }]
+  ;;
+
   let helper = 42
 end
 
@@ -221,8 +232,16 @@ let test_state_machine_collects_marked_bindings () =
     (List.map Counter.rules ~f:Hegel.Stateful.Rule.weight);
   Alcotest.(check (list string))
     "invariant names"
-    [ "positive" ]
+    [ "positive"; "sampled"; "paused"; "paused_always"; "always_paused" ]
     (List.map Counter.invariants ~f:Hegel.Stateful.Invariant.name);
+  Alcotest.(check (list bool))
+    "invariant always_check"
+    [ true; false; false; true; true ]
+    (List.map Counter.invariants ~f:Hegel.Stateful.Invariant.always_check);
+  Alcotest.(check (list bool))
+    "invariant pause_faults"
+    [ false; false; true; true; true ]
+    (List.map Counter.invariants ~f:Hegel.Stateful.Invariant.pause_faults);
   Alcotest.(check int) "unmarked items are kept" 42 Counter.helper;
   with_tempdir ~f:(fun dir -> with_env_dir dir ~f:runs_machine)
 ;;
@@ -244,6 +263,7 @@ module%hegel_concurrent_state_machine Ledger = struct
   ;;
 
   let nonnegative _tc (_n : int Atomic.t) = () [@@invariant]
+  let balanced _tc (_n : int Atomic.t) = () [@@invariant { pause_faults = true }]
 end
 
 let%hegel_test runs_ledger (tc : Hegel.test_case) =
@@ -270,6 +290,10 @@ let test_concurrent_state_machine_collects_groups_and_weights () =
     "rule weights"
     [ 1.0; 1.0; 2.5; 3.0; 4.0 ]
     (List.map Ledger.rules ~f:R.weight);
+  Alcotest.(check (list bool))
+    "invariant pause_faults"
+    [ false; true ]
+    (List.map Ledger.invariants ~f:Hegel.Stateful.Invariant.pause_faults);
   with_tempdir ~f:(fun dir -> with_env_dir dir ~f:runs_ledger)
 ;;
 

@@ -729,6 +729,12 @@ let c_state_machine_free =
   foreign "hegel_state_machine_free" (handle_t @-> handle_t @-> returning int)
 ;;
 
+let c_pause_faults = foreign "hegel_pause_faults" (handle_t @-> handle_t @-> returning int)
+
+let c_unpause_faults =
+  foreign "hegel_unpause_faults" (handle_t @-> handle_t @-> returning int)
+;;
+
 let c_target =
   foreign "hegel_target" (handle_t @-> handle_t @-> double @-> str @-> returning int)
 ;;
@@ -1694,6 +1700,8 @@ let state_machine_should_check_invariant ctx tc ~state_machine ~invariant_index 
   !@out
 ;;
 
+let pause_faults ctx tc = check_rc ctx (c_pause_faults ctx tc)
+let unpause_faults ctx tc = check_rc ctx (c_unpause_faults ctx tc)
 let state_machine_free ctx state_machine =
   check_rc ctx (c_state_machine_free ctx state_machine)
 ;;
@@ -1943,6 +1951,8 @@ let state_machine_next_rule = Obj.magic_portable state_machine_next_rule
 let state_machine_rule_rejected = Obj.magic_portable state_machine_rule_rejected
 let state_machine_should_check_invariant = Obj.magic_portable state_machine_should_check_invariant
 let state_machine_free = Obj.magic_portable state_machine_free
+let pause_faults = Obj.magic_portable pause_faults
+let unpause_faults = Obj.magic_portable unpause_faults
 let target = Obj.magic_portable target
 let event = Obj.magic_portable event
 let event_value = Obj.magic_portable event_value

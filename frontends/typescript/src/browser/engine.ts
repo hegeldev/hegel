@@ -1170,6 +1170,14 @@ export class WasmEngine implements Engine {
       true,
     );
   }
+  pauseFaults(ctx: ContextHandle, tc: TestCaseHandle): void {
+    const c = this.ptr(ctx);
+    this.check(c, "pause_faults", [c, this.ptr(tc)], true);
+  }
+  unpauseFaults(ctx: ContextHandle, tc: TestCaseHandle): void {
+    const c = this.ptr(ctx);
+    this.check(c, "unpause_faults", [c, this.ptr(tc)], true);
+  }
   freeStateMachine(machine: StateMachineHandle): void {
     this.free("state_machine_free", machine);
   }

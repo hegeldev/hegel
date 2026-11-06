@@ -255,6 +255,62 @@ func TestNativeBlockSharesChoiceSequence(t *testing.T) {
 	}
 }
 
+func TestPauseFaults(t *testing.T) {
+	ctx := NewContext()
+	settings, err := ctx.SettingsNew()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := settings.Database(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	run, err := settings.RunStart(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tc, err := run.NextTestCase(ctx)
+	if err != nil || tc == nil {
+		t.Fatalf("case = %v, %v", tc, err)
+	}
+	if err := tc.PauseFaults(ctx); err != nil {
+		t.Fatalf("pause = %v", err)
+	}
+	if got, err := tc.GenerateInteger(ctx, 7, 7); got != 7 || err != nil {
+		t.Fatalf("draw while paused = %v, %v", got, err)
+	}
+	if err := tc.UnpauseFaults(ctx); err != nil {
+		t.Fatalf("unpause = %v", err)
+	}
+	if err := tc.MarkComplete(ctx, STATUS_VALID, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	null := &TestCase{pointer: &pointer[testCaseT]{syms: ctx.syms, raw: 0}}
+	if err := null.PauseFaults(ctx); !errors.Is(err, E_INVALID_HANDLE) {
+		t.Fatalf("pause on a null handle = %v", err)
+	}
+	if err := null.UnpauseFaults(ctx); !errors.Is(err, E_INVALID_HANDLE) {
+		t.Fatalf("unpause on a null handle = %v", err)
+	}
+}
+
+func TestStubPauseFaults(t *testing.T) {
+	ctx := Stub(t, OK, OK, E_INVALID_HANDLE, "paused on a dead case", E_INVALID_HANDLE, "unpaused on a dead case")
+	tc := &TestCase{pointer: &pointer[testCaseT]{syms: ctx.syms, raw: 2}}
+	if err := tc.PauseFaults(ctx); err != nil {
+		t.Fatalf("pause = %v", err)
+	}
+	if err := tc.UnpauseFaults(ctx); err != nil {
+		t.Fatalf("unpause = %v", err)
+	}
+	if err := tc.PauseFaults(ctx); !errors.Is(err, E_INVALID_HANDLE) || !strings.Contains(err.Error(), "paused on a dead case") {
+		t.Fatalf("pause = %v", err)
+	}
+	if err := tc.UnpauseFaults(ctx); !errors.Is(err, E_INVALID_HANDLE) || !strings.Contains(err.Error(), "unpaused on a dead case") {
+		t.Fatalf("unpause = %v", err)
+	}
+}
+
 func TestDerivedLabels(t *testing.T) {
 	ctx := NewContext()
 	list, err := ctx.LabelFromName("hegel.go.list")

@@ -50,9 +50,13 @@ module Make (B : S) = struct
         { name : string
         ; inv : Internal.test_case -> 'state -> unit B.t
         ; always_check : bool
+        ; pause_faults : bool
         }
 
-      let create ~name ~inv ?(always_check = false) () = { name; inv; always_check }
+      let create ~name ~inv ?(always_check = false) ?(pause_faults = false) () =
+        { name; inv; always_check; pause_faults }
+      ;;
+
       let name t = t.name
     end
 
@@ -77,11 +81,12 @@ module Make (B : S) = struct
         in
         let invariants =
           List.map
-            (fun { Invariant.name; inv; always_check } ->
+            (fun { Invariant.name; inv; always_check; pause_faults } ->
                Base_stateful.Invariant.create
                  ~name
                  ~inv:(fun tc state -> wait (fun () -> inv tc state))
                  ~always_check
+                 ~pause_faults
                  ())
             invariants
         in

@@ -333,6 +333,14 @@ export interface Engine {
   blockTestCase(ctx: ContextHandle, tc: TestCaseHandle, indent: number): TestCaseHandle;
   /** Attribute `tc`'s output lines to concurrent worker `index`. */
   setWorker(ctx: ContextHandle, tc: TestCaseHandle, index: number): void;
+  /**
+   * Pause fault injection on `tc` until the matching {@link unpauseFaults}:
+   * inside Antithesis, the fuzzer stops injecting faults for the duration
+   * of a stateful invariant declared with `pauseFaults`. Currently a no-op.
+   */
+  pauseFaults(ctx: ContextHandle, tc: TestCaseHandle): void;
+  /** Resume fault injection paused by {@link pauseFaults} on `tc`. */
+  unpauseFaults(ctx: ContextHandle, tc: TestCaseHandle): void;
   note(ctx: ContextHandle, tc: TestCaseHandle, text: string): void;
   target(ctx: ContextHandle, tc: TestCaseHandle, value: number, label: string): void;
   event(ctx: ContextHandle, tc: TestCaseHandle, label: string): void;

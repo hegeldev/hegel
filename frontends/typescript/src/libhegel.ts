@@ -391,6 +391,8 @@ export interface Bindings {
     invariantIndex: number,
     out: boolean[],
   ) => number;
+  pauseFaults: (ctx: Ptr, tc: Ptr) => number;
+  unpauseFaults: (ctx: Ptr, tc: Ptr) => number;
   stateMachineFree: (machine: Ptr) => void;
 
   runResultStatus: (r: Ptr) => number;
@@ -839,6 +841,8 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
   const stateMachineShouldCheckInvariant = f(
     "int hegel_state_machine_should_check_invariant(void* ctx, void* tc, void* state_machine, int64_t invariant_index, _Out_ bool* out_should_check)",
   );
+  const pauseFaults = f("int hegel_pause_faults(void* ctx, void* tc)");
+  const unpauseFaults = f("int hegel_unpause_faults(void* ctx, void* tc)");
   const stateMachineFree = f("int hegel_state_machine_free(void* ctx, void* state_machine)");
 
   const runResultStatus = f("int hegel_run_result_status(void* ctx, void* r, _Out_ int* out)");
@@ -1183,6 +1187,8 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
       stateMachineRuleRejected(ctx, tc, machine, workerIndex),
     stateMachineShouldCheckInvariant: (ctx, tc, machine, invariantIndex, out) =>
       stateMachineShouldCheckInvariant(ctx, tc, machine, invariantIndex, out),
+    pauseFaults: (ctx, tc) => pauseFaults(ctx, tc),
+    unpauseFaults: (ctx, tc) => unpauseFaults(ctx, tc),
     stateMachineFree: (machine) => checked(stateMachineFree(null, machine), "stateMachineFree"),
     runResultStatus: (r) => {
       const out: number[] = [0];
@@ -2465,6 +2471,16 @@ export class Libhegel implements Engine {
       "hegel_state_machine_should_check_invariant",
     );
     return out[0];
+  }
+
+  /** Pause fault injection on `tc` until the matching {@link unpauseFaults}. */
+  pauseFaults(ctx: Ptr, tc: Ptr): void {
+    this.check(ctx, this.fns.pauseFaults(this.ptr(ctx), this.ptr(tc)), "hegel_pause_faults");
+  }
+
+  /** Resume fault injection paused by {@link pauseFaults} on `tc`. */
+  unpauseFaults(ctx: Ptr, tc: Ptr): void {
+    this.check(ctx, this.fns.unpauseFaults(this.ptr(ctx), this.ptr(tc)), "hegel_unpause_faults");
   }
 
   freeStateMachine(machine: Ptr): void {

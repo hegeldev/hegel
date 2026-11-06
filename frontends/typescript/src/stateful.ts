@@ -73,6 +73,14 @@
  * invariants that must observe every intermediate state, or that mutate the
  * state when checked.
  *
+ * An invariant marked `{ check, pauseFaults: true }` asks the engine to pause
+ * fault injection while it runs: inside [Antithesis](https://antithesis.com/),
+ * no fault lands in the middle of the check, so the invariant observes the
+ * system under test as it is rather than as a fault left it. Faults resume
+ * as soon as the check returns or throws. The option is accepted on every
+ * host and currently does nothing; a later engine release acts on it inside
+ * Antithesis.
+ *
  * # Assumptions in rules
  *
  * A rule may reject the current step with {@link TestCase.assume}: the step
@@ -144,6 +152,12 @@ export interface InvariantOptions<S> {
    * module documentation for when to use this.
    */
   alwaysCheck?: boolean;
+  /**
+   * Pause fault injection for the duration of each check (default `false`):
+   * inside Antithesis, no fault lands while this invariant runs. See the
+   * module documentation.
+   */
+  pauseFaults?: boolean;
 }
 
 /**
@@ -383,6 +397,7 @@ interface NamedInvariant<S> {
   name: string;
   check: InvariantCheck<S>;
   alwaysCheck: boolean;
+  pauseFaults: boolean;
 }
 
 function namedRules<S>(rules: Record<string, Rule<S>>): NamedRule<S>[] {
@@ -402,8 +417,13 @@ function namedInvariants<S>(
 ): NamedInvariant<S>[] {
   return Object.entries(invariants ?? {}).map(([name, invariant]) =>
     typeof invariant === "function"
-      ? { name, check: invariant, alwaysCheck: false }
-      : { name, check: invariant.check, alwaysCheck: invariant.alwaysCheck ?? false },
+      ? { name, check: invariant, alwaysCheck: false, pauseFaults: false }
+      : {
+          name,
+          check: invariant.check,
+          alwaysCheck: invariant.alwaysCheck ?? false,
+          pauseFaults: invariant.pauseFaults ?? false,
+        },
   );
 }
 
@@ -446,9 +466,15 @@ function* machineSteps<S>(
       if (sample && !dataSource.stateMachineShouldCheckInvariant(machineId, i)) {
         continue;
       }
-      const { name, check } = invariants[i];
+      const { name, check, pauseFaults } = invariants[i];
       const invariantTc = tc.child(2);
-      const outcome = yield () => check(invariantTc, state);
+      let outcome: Outcome;
+      if (pauseFaults) dataSource.pauseFaults();
+      try {
+        outcome = yield () => check(invariantTc, state);
+      } finally {
+        if (pauseFaults) dataSource.unpauseFaults();
+      }
       if (!outcome.ok) {
         noteFailure(outcome.error, `Invariant ${name} failed:`);
         throw outcome.error;

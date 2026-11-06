@@ -25,7 +25,10 @@
     and pass that to {!run}.
 
     Every invariant is checked on the initial and final states. Between steps,
-    invariants are sampled unless marked [always_check].
+    invariants are sampled unless marked [always_check]. An invariant marked
+    [pause_faults] runs with fault injection paused, so that inside
+    {{:https://antithesis.com/}Antithesis} no fault lands in the middle of
+    the check.
 
     Examples in this documentation assume [open Hegel].
 
@@ -428,11 +431,18 @@ module Invariant : sig PORTABLE
         notes through [tc] prints indented under the line before it.
       - [always_check] defaults to [false]. When [true], the invariant is
         checked after every step. Otherwise, it is sampled.
+      - [pause_faults] defaults to [false]. When [true], every run of the
+        invariant is bracketed with [Internal.pause_faults] and
+        [Internal.unpause_faults] on the test case (the unpause runs even
+        when the invariant raises), so that inside
+        {{:https://antithesis.com/}Antithesis} fault injection is paused for
+        the duration of the check. Pausing is currently a no-op in the engine.
 
       Every invariant is checked on the initial and final states.
 
-      With the PPX, an invariant takes the following option:
-      [[@@invariant { always_check = true | false }]].
+      With the PPX, an invariant takes the following options, in any order and
+      each optional:
+      [[@@invariant { always_check = true | false; pause_faults = true | false }]].
 
       {[
       let short =
@@ -446,11 +456,18 @@ module Invariant : sig PORTABLE
     :  name:string
     -> inv:(Internal.test_case -> 'state -> unit)
     -> ?always_check:bool
+    -> ?pause_faults:bool
     -> unit
     -> 'state t
 
   (** Returns the name of the invariant. *)
   val name : _ t -> string
+
+  (** Returns whether the invariant is checked after every step. *)
+  val always_check : _ t -> bool
+
+  (** Returns whether fault injection is paused while the invariant runs. *)
+  val pause_faults : _ t -> bool
 end
 
 module Concurrent_rule : sig PORTABLE
@@ -648,11 +665,13 @@ type rule_info =
   ; weight : float
   }
 
-(** An invariant as plain data for {!run_concurrent_core}: its name and
-    whether it is checked after every round rather than sampled. *)
+(** An invariant as plain data for {!run_concurrent_core}: its name, whether
+    it is checked after every round rather than sampled, and whether fault
+    injection is paused while it runs. *)
 type invariant_info = Internal.invariant_info =
   { name : string
   ; always_check : bool
+  ; pause_faults : bool
   }
 
 (** [run_concurrent_core] is the concurrent runner with the rules and

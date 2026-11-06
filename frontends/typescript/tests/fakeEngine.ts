@@ -222,6 +222,8 @@ export function fakeEngine() {
       .mockReturnValue(null),
     stateMachineRuleRejected: vi.fn<Engine["stateMachineRuleRejected"]>(),
     stateMachineShouldCheckInvariant: vi.fn<Engine["stateMachineShouldCheckInvariant"]>(() => true),
+    pauseFaults: vi.fn<Engine["pauseFaults"]>(),
+    unpauseFaults: vi.fn<Engine["unpauseFaults"]>(),
     freeStateMachine: vi.fn<Engine["freeStateMachine"]>(),
     runStatus: vi.fn<Engine["runStatus"]>(() => RunStatus.PASSED),
     runError: vi.fn<Engine["runError"]>(() => "backend error"),

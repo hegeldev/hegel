@@ -224,6 +224,66 @@ namespace {
         }
     };
 
+    // Declares one invariant that pauses faults and one that does not; the
+    // flag is stored on the invariant, so both run through the same checks.
+    struct PausingMachine : hs::StateMachine<PausingMachine, int> {
+        std::shared_ptr<std::atomic<int64_t>> paused_runs;
+        std::shared_ptr<std::atomic<int64_t>> unpaused_runs;
+
+        PausingMachine(std::shared_ptr<std::atomic<int64_t>> paused_runs,
+                       std::shared_ptr<std::atomic<int64_t>> unpaused_runs)
+            : StateMachine({.initial_state = 0}),
+              paused_runs(std::move(paused_runs)),
+              unpaused_runs(std::move(unpaused_runs)) {}
+
+        std::vector<hs::Rule<PausingMachine>> rules() {
+            return {hs::Rule<PausingMachine>(
+                "inc", [](hegel::TestCase&, PausingMachine& m) { m.state++; })};
+        }
+
+        std::vector<hs::Invariant<PausingMachine>> invariants() {
+            return {
+                hs::Invariant<PausingMachine>(
+                    "paused",
+                    [](const PausingMachine& m) {
+                        m.paused_runs->fetch_add(1, std::memory_order_relaxed);
+                    },
+                    true),
+                hs::Invariant<PausingMachine>(
+                    "unpaused",
+                    [](const PausingMachine& m) {
+                        m.unpaused_runs->fetch_add(1,
+                                                   std::memory_order_relaxed);
+                    }),
+            };
+        }
+    };
+
+    // Its pausing invariant throws once a rule has run, so the unpause runs
+    // while the violation unwinds.
+    struct PausingBreakOnceMachine
+        : hs::StateMachine<PausingBreakOnceMachine, bool> {
+        PausingBreakOnceMachine() : StateMachine({.initial_state = false}) {}
+
+        std::vector<hs::Rule<PausingBreakOnceMachine>> rules() {
+            return {hs::Rule<PausingBreakOnceMachine>(
+                "break_it", [](hegel::TestCase&, PausingBreakOnceMachine& m) {
+                    m.state = true;
+                })};
+        }
+
+        std::vector<hs::Invariant<PausingBreakOnceMachine>> invariants() {
+            return {hs::Invariant<PausingBreakOnceMachine>(
+                "not_broken",
+                [](const PausingBreakOnceMachine& m) {
+                    if (m.state) {
+                        throw std::runtime_error("machine is broken");
+                    }
+                },
+                true)};
+        }
+    };
+
     // Overflows at 12, so a failing sequence is short enough to read whole.
     struct Counter : hegel::stateful::StateMachine<Counter, int> {
         Counter() : StateMachine({.initial_state = 0}) {}
@@ -341,6 +401,45 @@ TEST(Stateful, PersistentViolationsAreAlwaysCaughtDespiteSampling) {
                      },
                      hegel::Settings{.database = hegel::Database::disabled()}),
                  std::runtime_error);
+}
+
+TEST(Stateful, InvariantPauseFaultsDefaultsToOff) {
+    hs::Invariant<PausingMachine> plain("plain", [](const PausingMachine&) {});
+    hs::Invariant<PausingMachine> pausing(
+        "pausing", [](const PausingMachine&) {}, true);
+    EXPECT_FALSE(plain.pause_faults());
+    EXPECT_TRUE(pausing.pause_faults());
+}
+
+TEST(Stateful, PausingInvariantsRunLikeOtherInvariants) {
+    auto paused_runs = std::make_shared<std::atomic<int64_t>>(0);
+    auto unpaused_runs = std::make_shared<std::atomic<int64_t>>(0);
+    hegel::test(
+        [paused_runs, unpaused_runs](hegel::TestCase& tc) {
+            PausingMachine machine(paused_runs, unpaused_runs);
+            hs::run(machine, tc);
+        },
+        hegel::Settings{.test_cases = 20,
+                        .database = hegel::Database::disabled(),
+                        .stateful_step_count = 20});
+
+    EXPECT_GE(paused_runs->load(std::memory_order_relaxed), 2);
+    EXPECT_GE(unpaused_runs->load(std::memory_order_relaxed), 2);
+}
+
+TEST(Stateful, ThrowingPausingInvariantIsReported) {
+    testing::internal::CaptureStderr();
+    EXPECT_THROW(hegel::test(
+                     [](hegel::TestCase& tc) {
+                         PausingBreakOnceMachine machine;
+                         hs::run(machine, tc);
+                     },
+                     hegel::Settings{.database = hegel::Database::disabled()}),
+                 std::runtime_error);
+    std::string output = testing::internal::GetCapturedStderr();
+    EXPECT_NE(output.find("Invariant not_broken violated"), std::string::npos)
+        << output;
+    EXPECT_NE(output.find("machine is broken"), std::string::npos) << output;
 }
 
 TEST(Stateful, VerboseNestsDrawsAndHidesStopDecision) {
@@ -509,6 +608,70 @@ namespace {
                 [](const ConcurrentSampledInvariantMachine& m) {
                     m.invariants_run->fetch_add(1, std::memory_order_relaxed);
                 })};
+        }
+    };
+
+    struct ConcurrentPausingMachine
+        : hs::ConcurrentStateMachine<ConcurrentPausingMachine> {
+        std::shared_ptr<std::atomic<int64_t>> paused_runs;
+        std::shared_ptr<std::atomic<int64_t>> unpaused_runs;
+        std::atomic<int64_t> value{0};
+
+        ConcurrentPausingMachine(
+            std::shared_ptr<std::atomic<int64_t>> paused_runs,
+            std::shared_ptr<std::atomic<int64_t>> unpaused_runs)
+            : paused_runs(std::move(paused_runs)),
+              unpaused_runs(std::move(unpaused_runs)) {}
+
+        std::vector<hs::ConcurrentRule<ConcurrentPausingMachine>> rules() {
+            return {hs::ConcurrentRule<ConcurrentPausingMachine>(
+                "inc", [](hegel::TestCase&, ConcurrentPausingMachine& m) {
+                    m.value.fetch_add(1, std::memory_order_relaxed);
+                })};
+        }
+
+        std::vector<hs::Invariant<ConcurrentPausingMachine>>
+        invariants() const {
+            return {
+                hs::Invariant<ConcurrentPausingMachine>(
+                    "paused",
+                    [](const ConcurrentPausingMachine& m) {
+                        m.paused_runs->fetch_add(1, std::memory_order_relaxed);
+                    },
+                    true),
+                hs::Invariant<ConcurrentPausingMachine>(
+                    "unpaused",
+                    [](const ConcurrentPausingMachine& m) {
+                        m.unpaused_runs->fetch_add(1,
+                                                   std::memory_order_relaxed);
+                    }),
+            };
+        }
+    };
+
+    struct ConcurrentPausingBreakOnceMachine
+        : hs::ConcurrentStateMachine<ConcurrentPausingBreakOnceMachine> {
+        std::atomic<bool> broken{false};
+
+        std::vector<hs::ConcurrentRule<ConcurrentPausingBreakOnceMachine>>
+        rules() {
+            return {hs::ConcurrentRule<ConcurrentPausingBreakOnceMachine>(
+                "break_it",
+                [](hegel::TestCase&, ConcurrentPausingBreakOnceMachine& m) {
+                    m.broken.store(true, std::memory_order_relaxed);
+                })};
+        }
+
+        std::vector<hs::Invariant<ConcurrentPausingBreakOnceMachine>>
+        invariants() const {
+            return {hs::Invariant<ConcurrentPausingBreakOnceMachine>(
+                "not_broken",
+                [](const ConcurrentPausingBreakOnceMachine& m) {
+                    if (m.broken.load(std::memory_order_relaxed)) {
+                        throw std::runtime_error("machine is broken");
+                    }
+                },
+                true)};
         }
     };
 
@@ -738,6 +901,37 @@ TEST(ConcurrentStateful, InvariantsAreSampledRatherThanRunAfterEveryRound) {
     EXPECT_LT(invariant_count, rule_count / 4)
         << "expected sampled invariant runs (" << invariant_count
         << ") to stay far below rule runs (" << rule_count << ")";
+}
+
+TEST(ConcurrentStateful, PausingInvariantsRunLikeOtherInvariants) {
+    auto paused_runs = std::make_shared<std::atomic<int64_t>>(0);
+    auto unpaused_runs = std::make_shared<std::atomic<int64_t>>(0);
+    hegel::test(
+        [paused_runs, unpaused_runs](hegel::TestCase& tc) {
+            ConcurrentPausingMachine machine(paused_runs, unpaused_runs);
+            hs::run_concurrent(machine, tc, 1, 3);
+        },
+        hegel::Settings{.test_cases = 20,
+                        .database = hegel::Database::disabled(),
+                        .stateful_step_count = 20});
+
+    EXPECT_GE(paused_runs->load(std::memory_order_relaxed), 2);
+    EXPECT_GE(unpaused_runs->load(std::memory_order_relaxed), 2);
+}
+
+TEST(ConcurrentStateful, ThrowingPausingInvariantIsReported) {
+    testing::internal::CaptureStderr();
+    EXPECT_THROW(hegel::test(
+                     [](hegel::TestCase& tc) {
+                         ConcurrentPausingBreakOnceMachine machine;
+                         hs::run_concurrent(machine, tc, 1, 3);
+                     },
+                     hegel::Settings{.database = hegel::Database::disabled()}),
+                 std::runtime_error);
+    std::string output = testing::internal::GetCapturedStderr();
+    EXPECT_NE(output.find("Invariant not_broken violated"), std::string::npos)
+        << output;
+    EXPECT_NE(output.find("machine is broken"), std::string::npos) << output;
 }
 
 TEST(ConcurrentPools, AddReuseAndConsume) {

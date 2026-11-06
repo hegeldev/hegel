@@ -143,6 +143,14 @@ export interface DataSource {
   stateMachineRuleRejected(machineId: number): void;
   /** Whether invariant `invariantIndex` should run at the current join point. */
   stateMachineShouldCheckInvariant(machineId: number, invariantIndex: number): boolean;
+  /**
+   * Pause fault injection until the matching {@link unpauseFaults}: inside
+   * Antithesis, no fault lands while an invariant declared with
+   * `pauseFaults` runs.
+   */
+  pauseFaults(): void;
+  /** Resume fault injection paused by {@link pauseFaults}. */
+  unpauseFaults(): void;
 
   /** Append a note to this data source's region of the output. */
   note(message: string): void;
