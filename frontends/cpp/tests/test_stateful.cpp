@@ -938,8 +938,10 @@ namespace {
         std::vector<hs::Rule<Weighted>> rules() {
             return {
                 hs::Rule<Weighted>(
-                    "heavy", weight,
-                    [](hegel::TestCase&, Weighted& m) { m.counts.heavy++; }),
+                    {.name = "heavy",
+                     .weight = weight,
+                     .step = [](hegel::TestCase&,
+                                Weighted& m) { m.counts.heavy++; }}),
                 hs::Rule<Weighted>(
                     "light",
                     [](hegel::TestCase&, Weighted& m) { m.counts.light++; }),
@@ -955,17 +957,17 @@ namespace {
 
         std::vector<hs::ConcurrentRule<ConcurrentWeighted>> rules() {
             return {
-                {"heavy",
-                 {"only"},
-                 weight,
-                 [](hegel::TestCase&, ConcurrentWeighted& m) {
-                     m.counts.heavy++;
-                 }},
-                {"light",
-                 {"only"},
-                 [](hegel::TestCase&, ConcurrentWeighted& m) {
-                     m.counts.light++;
-                 }},
+                hs::ConcurrentRule<ConcurrentWeighted>(
+                    {.name = "heavy",
+                     .groups = {"only"},
+                     .weight = weight,
+                     .step = [](hegel::TestCase&,
+                                ConcurrentWeighted& m) { m.counts.heavy++; }}),
+                hs::ConcurrentRule<ConcurrentWeighted>(
+                    "light", {"only"},
+                    [](hegel::TestCase&, ConcurrentWeighted& m) {
+                        m.counts.light++;
+                    }),
             };
         }
     };
@@ -982,6 +984,16 @@ namespace {
                counts.heavy.load() >= 10 * counts.light.load();
     }
 } // namespace
+
+TEST(StatefulWeights, PositionalArgumentsSetTheWeightAndFlag) {
+    auto step = [](hegel::TestCase&, Weighted&) {};
+    EXPECT_EQ(hs::Rule<Weighted>("rule", 2.5, step).weight(), 2.5);
+    EXPECT_EQ(
+        hs::ConcurrentRule<Weighted>("rule", {"only"}, 2.5, step).weight(),
+        2.5);
+    EXPECT_TRUE(hs::Invariant<Weighted>("check", true, [](const Weighted&) {
+                }).always_check());
+}
 
 TEST(StatefulWeights, HeavierRuleRunsMoreOften) {
     bool heavy_dominated = false;
@@ -1047,8 +1059,11 @@ namespace {
 
         std::vector<hs::Invariant<AlwaysChecked>> invariants() const {
             return {hs::Invariant<AlwaysChecked>(
-                "check", [](const AlwaysChecked& m) { m.counts.checks++; },
-                true)};
+                {.name = "check",
+                 .always_check = true,
+                 .invariant = [](const AlwaysChecked& m) {
+                     m.counts.checks++;
+                 }})};
         }
     };
 
@@ -1066,9 +1081,11 @@ namespace {
 
         std::vector<hs::Invariant<ConcurrentAlwaysChecked>> invariants() const {
             return {hs::Invariant<ConcurrentAlwaysChecked>(
-                "check",
-                [](const ConcurrentAlwaysChecked& m) { m.counts.checks++; },
-                true)};
+                {.name = "check",
+                 .always_check = true,
+                 .invariant = [](const ConcurrentAlwaysChecked& m) {
+                     m.counts.checks++;
+                 }})};
         }
     };
 } // namespace
