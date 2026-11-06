@@ -13,6 +13,7 @@ endif()
 
 option(HEGEL_BUILD_TESTS "Build unit tests" ${_hegel_default_tests})
 option(HEGEL_BUILD_DOCS "Build documentation" OFF)
+option(HEGEL_SQLITE_EXAMPLES "Build the examples that link SQLite" OFF)
 option(HEGEL_COVERAGE "Build with coverage instrumentation" OFF)
 
 # Sanitizers to build with, as a -fsanitize argument (e.g. "address,undefined"
@@ -140,6 +141,10 @@ endif()
 
 if(HEGEL_BOOST_DATE_TIME)
     include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/boost_date_time.cmake)
+endif()
+
+if(HEGEL_SQLITE_EXAMPLES)
+    add_subdirectory(examples/sqlite_bank)
 endif()
 
 if(HEGEL_BUILD_TESTS)

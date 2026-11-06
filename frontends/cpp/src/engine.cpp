@@ -212,6 +212,73 @@ namespace hegel::impl {
 
     // GCOVR_EXCL_STOP
 
+    void settings_set_print_blob(hegel_context_t* ctx, hegel_settings_t* s,
+                                 bool yes) {
+        check_rc(ctx, hegel_settings_set_print_blob(ctx, s, yes));
+    }
+
+    hegel_verbosity_t settings_get_verbosity(hegel_context_t* ctx,
+                                             const hegel_settings_t* s) {
+        hegel_verbosity_t verbosity = HEGEL_VERBOSITY_NORMAL;
+        check_rc(ctx, hegel_settings_get_verbosity(ctx, s, &verbosity));
+        return verbosity;
+    }
+
+    bool settings_get_print_blob(hegel_context_t* ctx,
+                                 const hegel_settings_t* s) {
+        bool yes = true;
+        check_rc(ctx, hegel_settings_get_print_blob(ctx, s, &yes));
+        return yes;
+    }
+
+    uint32_t settings_get_suppress_health_check(hegel_context_t* ctx,
+                                                const hegel_settings_t* s) {
+        uint32_t mask = 0;
+        check_rc(ctx, hegel_settings_get_suppress_health_check(ctx, s, &mask));
+        return mask;
+    }
+
+    namespace {
+        // The diagnostic for a failed call, without the ABI function name
+        // that the engine puts first.
+        std::string user_error(hegel_context_t* ctx) {
+            std::string message = last_error(ctx);
+            if (message.rfind("hegel_", 0) == 0) {
+                size_t colon = message.find(": ");
+                if (colon != std::string::npos) {
+                    message.erase(0, colon + 2);
+                }
+            }
+            return message;
+        }
+    } // namespace
+
+    std::optional<std::string>
+    settings_set_from_string(hegel_context_t* ctx, hegel_settings_t* s,
+                             std::string_view key, std::string_view value) {
+        if (hegel_settings_set_from_string(ctx, s, borrow(key),
+                                           borrow(value)) != HEGEL_OK) {
+            return user_error(ctx);
+        }
+        return std::nullopt;
+    }
+
+    std::optional<std::string> set_default_profile(hegel_context_t* ctx,
+                                                   std::string_view name) {
+        if (hegel_set_default_profile(ctx, borrow(name)) != HEGEL_OK) {
+            return user_error(ctx);
+        }
+        hegel_settings_t* s = nullptr;
+        if (hegel_settings_new_for_profile(ctx, borrow("default"), &s) !=
+            HEGEL_OK) {
+            std::string message = user_error(ctx);
+            check_rc(ctx, hegel_set_default_profile(ctx, borrow("")));
+            return message;
+        }
+        hegel_settings_free(ctx, s);
+        return std::nullopt;
+    }
+
     void settings_set_stop_on_first_failure(hegel_context_t* ctx,
                                             hegel_settings_t* s, bool yes) {
         check_rc(ctx, hegel_settings_set_stop_on_first_failure(ctx, s, yes));

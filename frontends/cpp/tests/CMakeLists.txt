@@ -201,3 +201,18 @@ add_test(NAME test_gtest COMMAND test_gtest)
 set_tests_properties(test_gtest PROPERTIES
     PASS_REGULAR_EXPRESSION "actual:"
 )
+
+add_executable(main_subject main_subject.cpp)
+target_link_libraries(main_subject PRIVATE hegel)
+add_executable(main_reproduce_subject main_subject.cpp)
+target_link_libraries(main_reproduce_subject PRIVATE hegel)
+target_compile_definitions(main_reproduce_subject
+    PRIVATE HEGEL_MAIN_SUBJECT_REPRODUCE)
+add_executable(test_main test_main.cpp)
+target_link_libraries(test_main PRIVATE hegel_tests_common GTest::gtest_main)
+add_dependencies(test_main main_subject main_reproduce_subject)
+target_compile_definitions(test_main
+    PRIVATE
+        HEGEL_MAIN_SUBJECT_BIN="$<TARGET_FILE:main_subject>"
+        HEGEL_MAIN_REPRODUCE_SUBJECT_BIN="$<TARGET_FILE:main_reproduce_subject>")
+gtest_discover_tests(test_main)

@@ -91,8 +91,27 @@ namespace hegel::impl {
                                     std::string_view file, uint32_t begin_line,
                                     std::string_view class_name,
                                     std::string_view function);
+    void settings_set_print_blob(hegel_context_t* ctx, hegel_settings_t* s,
+                                 bool yes);
     /// A handle initialized from the engine's default settings profile.
     hegel_settings_t* settings_new(hegel_context_t* ctx);
+
+    hegel_verbosity_t settings_get_verbosity(hegel_context_t* ctx,
+                                             const hegel_settings_t* s);
+    bool settings_get_print_blob(hegel_context_t* ctx,
+                                 const hegel_settings_t* s);
+    uint32_t settings_get_suppress_health_check(hegel_context_t* ctx,
+                                                const hegel_settings_t* s);
+
+    /// Sets the `hegel.toml` key `key` from its text form.
+    std::optional<std::string> settings_set_from_string(hegel_context_t* ctx,
+                                                        hegel_settings_t* s,
+                                                        std::string_view key,
+                                                        std::string_view value);
+    /// Sets the process's default settings profile, and checks that it
+    /// resolves. On failure the default profile is cleared again.
+    std::optional<std::string> set_default_profile(hegel_context_t* ctx,
+                                                   std::string_view name);
 
     /// The span label for a generator kind: a stable hash of `name`.
     uint64_t label_from_name(hegel_context_t* ctx, std::string_view name);
