@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import contextlib
 import functools
 import inspect
@@ -9,7 +10,7 @@ import os
 import sys
 import threading
 import traceback
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any, NoReturn, TypeVar
 
@@ -28,12 +29,21 @@ from hegel.errors import (
     Unsatisfiable,
 )
 from hegel.explicit import NO_HANDLE, ExplicitCase, ExplicitTestCase
-from hegel.settings import HealthCheck, Phase, Settings, TestLocation, Verbosity
+from hegel.settings import (
+    _FIELDS,
+    HealthCheck,
+    Phase,
+    Settings,
+    TestLocation,
+    Verbosity,
+    _without_function_name,
+)
 from hegel.test_case import OutputSink, TestCase
 
 __all__ = [
     "default_reproducer",
     "explicit_test_case",
+    "main",
     "reproduce_failure",
     "run",
     "test",
@@ -340,6 +350,7 @@ def _drive_blob_replay(
     test_location: TestLocation | None,
     reproducer: Reproducer,
     blobs: list[str],
+    suggestion: str | None = None,
 ) -> NoReturn:
     """Replay every reproduce blob, each in a run of its own: the engine
     replays a blob until a replay fails, under a bounded budget. Every
@@ -353,17 +364,20 @@ def _drive_blob_replay(
         run = _native.Run.start_blob(native_settings, blob)
         failures += _drive_run(run, test_fn, native_settings, output, reproducer)
     if not failures:
+        prefix = "reproduce_failure: " if suggestion is None else ""
+        if suggestion is None:
+            suggestion = "remove the decorator" if len(blobs) == 1 else "remove the decorators"
         raise DidNotReproduce(
-            "reproduce_failure: the supplied failure blob did not reproduce a failure. "
+            f"{prefix}the supplied failure blob did not reproduce a failure. "
             "The failure may have been fixed, or, for a nondeterministic blob, it may not "
             "have recurred within the replay budget (a bug failing 10% of the time escapes "
-            "it about 5% of the time). Re-run to retry, or remove the decorator once the "
-            "failure is fixed."
+            f"it about 5% of the time). Re-run to retry, or {suggestion} once the failure is "
+            "fixed."
             if len(blobs) == 1
-            else f"reproduce_failure: none of the {len(blobs)} supplied failure blobs "
+            else f"{prefix}none of the {len(blobs)} supplied failure blobs "
             "reproduced a failure. The failures may have been fixed, or, for "
             "nondeterministic blobs, they may not have recurred within the replay budget. "
-            "Re-run to retry, or remove the decorators once the failures are fixed."
+            f"Re-run to retry, or {suggestion} once the failures are fixed."
         )
     _raise_failures(failures, None)
 
@@ -595,11 +609,37 @@ def run(
     resolved = (
         Settings(settings, **overrides) if (settings is not None or overrides) else Settings()
     )
-    blobs = _blobs(reproduce_blob)
+    _run(
+        test_fn,
+        resolved,
+        database_key=database_key,
+        test_location=test_location,
+        explicit_cases=explicit_cases,
+        blobs=_blobs(reproduce_blob),
+        reproducer=reproducer,
+    )
+
+
+def _run(
+    test_fn: Callable[[TestCase], Any],
+    resolved: Settings,
+    *,
+    database_key: str | None,
+    test_location: TestLocation | None,
+    explicit_cases: Iterable[ExplicitCase],
+    blobs: list[str],
+    reproducer: Reproducer,
+    suggestion: str | None = None,
+) -> None:
+    """The body of :func:`run`, with its settings resolved and its blobs
+    checked. ``suggestion`` is as for :func:`_drive_blob_replay`."""
+    __tracebackhide__ = True
     _running.depth = getattr(_running, "depth", 0) + 1
     try:
         if blobs:
-            _drive_blob_replay(test_fn, resolved, database_key, test_location, reproducer, blobs)
+            _drive_blob_replay(
+                test_fn, resolved, database_key, test_location, reproducer, blobs, suggestion
+            )
         # Explicit failures, by origin: the first explicit case failing ends
         # the run, unless every distinct failure is to be reported.
         failures: dict[str, BaseException] = {}
@@ -770,6 +810,169 @@ def test(
             raise InvalidArgument("@hegel.test takes either a function or keyword settings")
         return decorate(fn)
     return decorate
+
+
+def main(
+    fn: Callable[[TestCase], Any] | None = None,
+    /,
+    *,
+    settings: Settings | None = None,
+    **overrides: Any,
+) -> Any:
+    """Make a function that takes a :class:`TestCase` the entry point of a
+    program, such as an Antithesis workload. Calling the decorated function
+    reads the command line and runs one test case.
+
+    ::
+
+        @hegel.main
+        def workload(tc):
+            n = tc.draw(gs.integers())
+            assert n + 0 == n
+
+        if __name__ == "__main__":
+            workload()
+
+    A failure is raised as from :func:`test`, and its report ends with a
+    ``rerun with: --failure-blob BLOB`` line. The ``too_slow`` and
+    ``test_cases_too_large`` health checks are always suppressed.
+
+    Each setting except ``test_cases`` is a command-line option named after
+    its ``hegel.toml`` key, with ``-`` in place of ``_``. Values use the same
+    format as in ``hegel.toml``, and options override the decorator's settings.
+    ``test_cases`` cannot be set.
+
+    ``--profile NAME`` uses the named settings profile in place of the
+    default one, and the decorator's keyword settings apply on top of it.
+    It does not change a ``settings=`` object. ``--failure-blob BLOB``
+    replays a failure. ``--help`` lists the options.
+
+    An invalid command line argument prints a usage message and exits with
+    status 2.
+    """
+    _check_settings(settings)
+    if "test_cases" in overrides:
+        raise InvalidArgument("@hegel.main only runs one test case, so test_cases cannot be set")
+
+    def decorate(inner: Callable[[TestCase], Any]) -> Callable[..., None]:
+        if not callable(inner) or inspect.isclass(inner):
+            raise InvalidArgument("@hegel.main must decorate a function")
+        if inspect.iscoroutinefunction(inner) or inspect.isasyncgenfunction(inner):
+            raise InvalidArgument(
+                f"{inner.__name__} is async, and Hegel does not run async tests. Make it "
+                "synchronous, running the async code under test with asyncio.run()."
+            )
+        parameters = list(inspect.signature(inner).parameters.values())
+        if not parameters:
+            raise InvalidArgument(f"{inner.__name__} must take the test case as its argument")
+        if "POSITIONAL" not in parameters[0].kind.name:
+            raise InvalidArgument(
+                f"{inner.__name__} must take the test case as a positional parameter, but "
+                f"{parameters[0].name!r} cannot be passed positionally"
+            )
+        unsupplied = [
+            parameter.name
+            for parameter in parameters[1:]
+            if parameter.default is parameter.empty
+            and parameter.kind not in (parameter.VAR_POSITIONAL, parameter.VAR_KEYWORD)
+        ]
+        if unsupplied:
+            raise InvalidArgument(
+                f"{inner.__name__} must take only the test case, but it also takes "
+                f"{unsupplied[0]!r}"
+            )
+        location = _location_of(inner)
+        database_key = _database_key_of(inner)
+        if location is not None and database_key.startswith("__main__."):
+            database_key = (
+                f"{os.path.abspath(location.file)}:{database_key.removeprefix('__main__.')}"
+            )
+
+        @functools.wraps(inner)
+        def wrapper(argv: Sequence[str] | None = None) -> None:
+            __tracebackhide__ = True
+            if _inside_a_run():
+                raise InvalidArgument(
+                    f"{inner.__name__} cannot be called from inside a Hegel test. Move its "
+                    "body into a function that takes the test case, and call that instead."
+                )
+            parser = _main_parser()
+            args = parser.parse_args(argv)
+            base = settings
+            if args.profile is not None:
+                try:
+                    profile = Settings.from_profile(args.profile)
+                except InvalidArgument as e:
+                    parser.error(f"--profile: {_without_function_name(e)}")
+                if base is None:
+                    base = profile
+            resolved = Settings(base, **overrides)
+            for key in _MAIN_OPTIONS:
+                value = getattr(args, key)
+                if value is None:
+                    continue
+                try:
+                    resolved = resolved._with_string(key, value)
+                except InvalidArgument as e:
+                    parser.error(f"--{key.replace('_', '-')}: {e}")
+            decorator_blobs: list[str] = wrapper.hegel_reproduce_blobs  # type: ignore[attr-defined]
+            suggestions = []
+            if decorator_blobs:
+                suggestions.append(
+                    "remove the decorator" if len(decorator_blobs) == 1 else "remove the decorators"
+                )
+            if args.failure_blob:
+                suggestions.append("stop passing --failure-blob")
+            _run(
+                inner,
+                resolved.replace(
+                    test_cases=1,
+                    suppress_health_check=resolved.suppress_health_check
+                    | {HealthCheck.too_slow, HealthCheck.test_cases_too_large},
+                ),
+                database_key=database_key,
+                test_location=location,
+                explicit_cases=list(wrapper.hegel_explicit_cases),  # type: ignore[attr-defined]
+                blobs=[*decorator_blobs, *([args.failure_blob] if args.failure_blob else [])],
+                reproducer=_rerun_with,
+                suggestion=" and ".join(suggestions),
+            )
+
+        wrapper.__signature__ = inspect.signature(wrapper, follow_wrapped=False)  # type: ignore[attr-defined]
+        wrapper.hegel_explicit_cases = list(getattr(inner, "hegel_explicit_cases", []))  # type: ignore[attr-defined]
+        wrapper.hegel_reproduce_blobs = list(getattr(inner, "hegel_reproduce_blobs", []))  # type: ignore[attr-defined]
+        return wrapper
+
+    if fn is not None:
+        if settings is not None or overrides:
+            raise InvalidArgument("@hegel.main takes either a function or keyword settings")
+        return decorate(fn)
+    return decorate
+
+
+_MAIN_OPTIONS = [key for key in _FIELDS if key != "test_cases"]
+
+
+def _main_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Run one Hegel test case.", allow_abbrev=False)
+    parser.add_argument("--profile", metavar="NAME", help="the settings profile to use")
+    for key in _MAIN_OPTIONS:
+        parser.add_argument(
+            f"--{key.replace('_', '-')}",
+            dest=key,
+            metavar="VALUE",
+            help=f"the {key} setting",
+        )
+    parser.add_argument(
+        "--failure-blob",
+        metavar="BLOB",
+        help="replay the failure that BLOB encodes",
+    )
+    return parser
+
+
+def _rerun_with(blob: str) -> str:
+    return f"rerun with: --failure-blob {blob}"
 
 
 def explicit_test_case(*args: Any, **kwargs: Any) -> Callable[[T], T]:

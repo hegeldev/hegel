@@ -1292,34 +1292,30 @@ namespace hegel::internal {
     }
 
     StateMachineHandle::StateMachineHandle(
-        const TestCase& tc, const std::vector<std::string>& rule_names,
-        const std::vector<std::vector<int64_t>>& rule_groups,
-        const std::vector<double>& rule_weights,
-        const std::vector<std::string>& invariant_names,
-        const std::vector<bool>& invariant_always_check,
-        int64_t min_concurrency, int64_t max_concurrency, int64_t step_count) {
+        const TestCase& tc, const std::vector<RuleSpec>& rules,
+        const std::vector<InvariantSpec>& invariants, int64_t min_concurrency,
+        int64_t max_concurrency, int64_t step_count) {
         impl::DrawScope scope(tc);
         scope.raise_for_rc(
             hegel_new_state_machine(scope.ctx, scope.tc, min_concurrency,
                                     max_concurrency, step_count, &handle_),
             "hegel_new_state_machine");
         try {
-            for (std::size_t i = 0; i < rule_names.size(); ++i) {
-                const std::string& name = rule_names[i];
-                const std::vector<int64_t>& groups = rule_groups[i];
-                scope.raise_for_rc(hegel_state_machine_add_rule(
-                                       scope.ctx, scope.tc, handle_,
-                                       hegel_string_t{name.data(), name.size()},
-                                       rule_weights[i], groups.data(),
-                                       groups.size()),
-                                   "hegel_state_machine_add_rule");
+            // The engine validates each rule's weight and group list.
+            for (const RuleSpec& rule : rules) {
+                scope.raise_for_rc(
+                    hegel_state_machine_add_rule(
+                        scope.ctx, scope.tc, handle_,
+                        hegel_string_t{rule.name.data(), rule.name.size()},
+                        rule.weight, rule.groups.data(), rule.groups.size()),
+                    "hegel_state_machine_add_rule");
             }
-            for (std::size_t i = 0; i < invariant_names.size(); ++i) {
-                const std::string& name = invariant_names[i];
+            for (const InvariantSpec& invariant : invariants) {
                 scope.raise_for_rc(hegel_state_machine_add_invariant(
                                        scope.ctx, scope.tc, handle_,
-                                       hegel_string_t{name.data(), name.size()},
-                                       invariant_always_check[i]),
+                                       hegel_string_t{invariant.name.data(),
+                                                      invariant.name.size()},
+                                       invariant.always_check),
                                    "hegel_state_machine_add_invariant");
             }
             scope.raise_for_rc(hegel_state_machine_start(

@@ -14,6 +14,8 @@ Defining tests
 
 .. autofunction:: hegel.run
 
+.. autofunction:: hegel.main
+
 .. autofunction:: hegel.composite
 
 The test case
