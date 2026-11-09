@@ -2178,7 +2178,7 @@ fn primitives_after_overrun_all_report_stop_test() {
             HEGEL_E_STOP_TEST
         );
         assert_eq!(
-            hegel_state_machine_next_group(ctx, tc, machine, &mut id),
+            hegel_state_machine_next_group(ctx, tc, machine, &mut id, &mut 0i64),
             HEGEL_E_STOP_TEST
         );
         assert_eq!(
@@ -2274,7 +2274,13 @@ fn state_machine_and_primitive_boolean_paths() {
         );
         let mut group_idx = 0i64;
         assert_eq!(
-            hegel_state_machine_next_group(ctx, null_tc, ptr::null_mut(), &mut group_idx),
+            hegel_state_machine_next_group(
+                ctx,
+                null_tc,
+                ptr::null_mut(),
+                &mut group_idx,
+                &mut 0i64
+            ),
             HEGEL_E_INVALID_HANDLE
         );
         assert_eq!(
@@ -2480,7 +2486,7 @@ fn state_machine_and_primitive_boolean_paths() {
             HEGEL_OK
         );
         assert_eq!(
-            hegel_state_machine_next_group(ctx, tc, machine, &mut group_idx),
+            hegel_state_machine_next_group(ctx, tc, machine, &mut group_idx, &mut 0i64),
             HEGEL_E_INVALID_ARG
         );
         assert!(last_error(ctx).contains("before it was started"));
@@ -2530,7 +2536,11 @@ fn state_machine_and_primitive_boolean_paths() {
             HEGEL_E_INVALID_ARG
         );
         assert_eq!(
-            hegel_state_machine_next_group(ctx, tc, machine, ptr::null_mut()),
+            hegel_state_machine_next_group(ctx, tc, machine, ptr::null_mut(), &mut 0i64),
+            HEGEL_E_INVALID_ARG
+        );
+        assert_eq!(
+            hegel_state_machine_next_group(ctx, tc, machine, &mut group_idx, ptr::null_mut()),
             HEGEL_E_INVALID_ARG
         );
         assert_eq!(
@@ -2539,7 +2549,7 @@ fn state_machine_and_primitive_boolean_paths() {
         );
         assert!(last_error(ctx).contains("state machine handle is null"));
         assert_eq!(
-            hegel_state_machine_next_group(ctx, tc, ptr::null_mut(), &mut group_idx),
+            hegel_state_machine_next_group(ctx, tc, ptr::null_mut(), &mut group_idx, &mut 0i64),
             HEGEL_E_INVALID_HANDLE
         );
         assert!(last_error(ctx).contains("state machine handle is null"));
@@ -2560,15 +2570,17 @@ fn state_machine_and_primitive_boolean_paths() {
         );
         assert!(last_error(ctx).contains("before the first next_group"));
         let mut rounds = 0;
+        let mut level = 0i64;
         let mut rejected_once = false;
         loop {
             assert_eq!(
-                hegel_state_machine_next_group(ctx, tc, machine, &mut group_idx),
+                hegel_state_machine_next_group(ctx, tc, machine, &mut group_idx, &mut level),
                 HEGEL_OK
             );
             if group_idx == HEGEL_STATE_MACHINE_DONE {
                 break;
             }
+            assert_eq!(level, 1, "fixed bounds keep the level fixed");
             assert_eq!(group_idx, 0, "a single-group machine is always in group 0");
             rounds += 1;
             assert!(

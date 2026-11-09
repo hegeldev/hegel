@@ -146,9 +146,10 @@ final class FakeLibhegel implements Libhegel {
     // (next_group) hands out exactly one rule from `ruleSequence` (next_rule), then the join
     // point; once the sequence is exhausted next_group reports DONE. Concurrently, set
     // `concurrentRounds`: round r hands worker w the rules `concurrentRounds[r][w]` (a missing or
-    // empty worker entry means that worker's round is over at once), and `stateMachineConcurrency`
-    // says how many workers state_machine_start reports. The protocol methods are synchronized
-    // because concurrent workers call them at the same time.
+    // empty worker entry means that worker's round is over at once), `stateMachineConcurrency`
+    // says how many workers state_machine_start reports, and `roundConcurrency` (if set) is the
+    // level next_group reports for each round, defaulting to `stateMachineConcurrency`. The
+    // protocol methods are synchronized because concurrent workers call them at the same time.
     int newStateMachineRc = Abi.OK;
     long stateMachineId = 5;
     int stateMachineAddRuleRc = Abi.OK;
@@ -165,6 +166,7 @@ final class FakeLibhegel implements Libhegel {
     long stateMachineMaxConcurrency = -1;
     long stateMachineStepCount = -1;
     long stateMachineConcurrency = 1; // what state_machine_start writes to out_concurrency
+    long[] roundConcurrency; // null = every round reports stateMachineConcurrency
     int startedStateMachines;
     int stateMachineNextGroupRc = Abi.OK;
     long stateMachineGroupId = 0;
@@ -634,8 +636,10 @@ final class FakeLibhegel implements Libhegel {
     }
 
     @Override
-    public synchronized int stateMachineNextGroup(long tc, long stateMachineId, long[] outGroupId) {
+    public synchronized int stateMachineNextGroup(
+            long tc, long stateMachineId, long[] outGroupId, long[] outConcurrency) {
         if (stateMachineNextGroupRc == Abi.OK) {
+            int round = roundsServed;
             if (concurrentRounds != null) {
                 currentRound = roundsServed < concurrentRounds.length ? concurrentRounds[roundsServed++] : null;
             } else {
@@ -643,7 +647,12 @@ final class FakeLibhegel implements Libhegel {
                 currentRound = ruleIndex < ruleSequence.length ? new long[][] {{ruleSequence[ruleIndex++]}} : null;
             }
             positions = new int[(int) stateMachineConcurrency];
-            outGroupId[0] = currentRound != null ? stateMachineGroupId : Abi.STATE_MACHINE_DONE;
+            if (currentRound != null) {
+                outGroupId[0] = stateMachineGroupId;
+                outConcurrency[0] = roundConcurrency != null ? roundConcurrency[round] : stateMachineConcurrency;
+            } else {
+                outGroupId[0] = Abi.STATE_MACHINE_DONE;
+            }
         }
         return stateMachineNextGroupRc;
     }

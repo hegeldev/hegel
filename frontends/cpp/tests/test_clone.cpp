@@ -32,6 +32,26 @@ namespace {
     }
 } // namespace
 
+// A clone of a test case the engine has stopped ends the test case, as a
+// draw does, instead of failing it. The blob holds no choices, so the first
+// draw of its replay exhausts it.
+TEST(Clone, CloneOfAStoppedTestCaseEndsTheCase) {
+    bool cloned = false;
+    EXPECT_THROW(hegel::test(
+                     [&](hegel::TestCase& tc) {
+                         try {
+                             tc.draw_silent(gs::integers<int>());
+                         } catch (const hegel::internal::HegelStopTest&) {
+                         }
+                         tc.clone();
+                         cloned = true;
+                     },
+                     hegel::Settings{.database = hegel::Database::disabled()},
+                     {"AAAAAAA="}),
+                 hegel::DidNotReproduce);
+    EXPECT_FALSE(cloned);
+}
+
 // ---------------------------------------------------------------------------
 // Behavioral tests (value assertions), mirroring test_clone.ml
 // ---------------------------------------------------------------------------

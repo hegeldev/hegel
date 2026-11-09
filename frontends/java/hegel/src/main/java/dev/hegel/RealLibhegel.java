@@ -461,7 +461,7 @@ final class RealLibhegel implements Libhegel {
                 linker,
                 lookup,
                 "hegel_state_machine_next_group",
-                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, ADDRESS));
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, ADDRESS, ADDRESS));
         this.stateMachineNextRule = h(
                 linker,
                 lookup,
@@ -1217,11 +1217,13 @@ final class RealLibhegel implements Libhegel {
     }
 
     @Override
-    public int stateMachineNextGroup(long tc, long stateMachineId, long[] outGroupId) {
+    public int stateMachineNextGroup(long tc, long stateMachineId, long[] outGroupId, long[] outConcurrency) {
         MemorySegment seg = Arena.ofAuto().allocate(JAVA_LONG);
-        int code = rc(stateMachineNextGroup, segment(tc), stateMachineId, seg);
+        MemorySegment concurrency = Arena.ofAuto().allocate(JAVA_LONG);
+        int code = rc(stateMachineNextGroup, segment(tc), stateMachineId, seg, concurrency);
         if (code == Abi.OK) {
             outGroupId[0] = seg.get(JAVA_LONG, 0);
+            outConcurrency[0] = concurrency.get(JAVA_LONG, 0);
         }
         return code;
     }

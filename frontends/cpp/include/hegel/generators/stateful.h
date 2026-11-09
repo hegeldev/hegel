@@ -1103,8 +1103,10 @@ namespace hegel::stateful {
     /**
      * @brief Executes a concurrent stateful test with rules from @p machine.
      *
-     * The runner selects a concurrency level from @p min_concurrency through
-     * @p max_concurrency. Execution proceeds in rounds. For each round,
+     * The runner starts @p max_concurrency worker threads. Libhegel selects
+     * a concurrency level, how many of them run rules, from
+     * @p min_concurrency through @p max_concurrency, and may change it
+     * between rounds. Execution proceeds in rounds. For each round,
      * libhegel picks a random concurrency group. Every worker thread then runs
      * a short (possibly empty) random sequence of rules that belong to that
      * group concurrently with the other workers. A rule that belongs to
@@ -1117,12 +1119,12 @@ namespace hegel::stateful {
      * Raises @c std::invalid_argument if the machine declares no rules or if
      * the concurrency bounds are invalid.
      *
-     * On a failing replay, the output shows the concurrency level, each round,
-     * the active group, and the rules that each worker applies, but the
-     * falsifying test case is not shrunk since the failure may be dependent on
-     * thread scheduling. Under each round header, the lines of each worker
-     * appear together, each prefixed with `[worker N +T ms]`, the time since
-     * the test case started.
+     * On a failing replay, the output shows each round, the concurrency level
+     * whenever it changes, the active group, and the rules that each worker
+     * applies, but the falsifying test case is not shrunk since the failure
+     * may be dependent on thread scheduling. Under each round header, the
+     * lines of each worker appear together, each prefixed with
+     * `[worker N +T ms]`, the time since the test case started.
      *
      * @tparam M The state-machine type, deriving from
      * @ref ConcurrentStateMachine
@@ -1178,8 +1180,6 @@ namespace hegel::stateful {
         internal::StateMachineHandle machine_handle(
             tc, rule_specs, invariant_specs, min_concurrency, max_concurrency,
             params.step_count);
-        tc.note("Concurrency level: " +
-                std::to_string(machine_handle.concurrency()));
         if (!invariants.empty()) {
             tc.note("Checking invariants on the initial state.");
         }
@@ -1320,6 +1320,7 @@ namespace hegel::stateful {
         };
 
         try {
+            std::optional<int64_t> noted_concurrency;
             while (true) {
                 int64_t group = machine_handle.next_group(tc);
                 if (group == internal::state_machine_done) {
@@ -1332,6 +1333,11 @@ namespace hegel::stateful {
                         "state_machine_next_group returned an unknown group "
                         "index. Please report this as a bug.");
                     // GCOVR_EXCL_STOP
+                }
+                if (noted_concurrency != machine_handle.round_concurrency()) {
+                    noted_concurrency = machine_handle.round_concurrency();
+                    tc.note("Concurrency level: " +
+                            std::to_string(*noted_concurrency));
                 }
                 {
                     std::lock_guard<std::mutex> lock(state.mutex);

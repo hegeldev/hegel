@@ -167,13 +167,6 @@ namespace hegel::impl {
         return tc;
     }
 
-    hegel_test_case_t* test_case_clone(hegel_context_t* ctx,
-                                       const hegel_test_case_t* tc) {
-        hegel_test_case_t* clone = nullptr;
-        check_rc(ctx, hegel_test_case_clone(ctx, tc, &clone));
-        return clone;
-    }
-
     hegel_run_result_t* run_result(hegel_context_t* ctx, hegel_run_t* run) {
         hegel_run_result_t* result = nullptr;
         check_rc(ctx, hegel_run_result(ctx, run, &result));
@@ -203,6 +196,17 @@ namespace hegel::impl {
     }
 
     // GCOVR_EXCL_STOP
+
+    hegel_test_case_t* test_case_clone(hegel_context_t* ctx,
+                                       const hegel_test_case_t* tc) {
+        hegel_test_case_t* clone = nullptr;
+        hegel_result_t rc = hegel_test_case_clone(ctx, tc, &clone);
+        if (rc == HEGEL_E_STOP_TEST) {
+            throw internal::HegelStopTest();
+        }
+        check_rc(ctx, rc);
+        return clone;
+    }
 
     namespace {
 
@@ -1336,7 +1340,8 @@ namespace hegel::internal {
         int64_t group_id;
 
         scope.raise_for_rc(hegel_state_machine_next_group(scope.ctx, scope.tc,
-                                                          handle_, &group_id),
+                                                          handle_, &group_id,
+                                                          &round_concurrency_),
                            "hegel_state_machine_next_group");
         return group_id;
     }

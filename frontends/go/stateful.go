@@ -25,7 +25,7 @@ type stateMachine struct {
 	stepCount            int
 	configuredRuleGroups []stateMachineRuleGroup
 	alwaysCheckNames     []string
-	ruleGroups           []int64
+	ruleGroups           [][]int64
 	invariantAlwaysCheck []bool
 }
 
@@ -38,8 +38,9 @@ type stateMachineRuleGroup struct {
 type StateMachineOption func(*stateMachine)
 
 // WithConcurrency allows state machine rules to run concurrently. The engine
-// chooses a worker count between 1 and [runtime.GOMAXPROCS] for each test case,
-// so concurrent execution is not guaranteed for every test case.
+// chooses a worker count between 1 and [runtime.GOMAXPROCS] for each test case
+// and may change it between rounds, so concurrent execution is not guaranteed
+// for every round.
 //
 // Workers invoke rule methods concurrently on the same machine value. Any
 // state read or mutated by rules must therefore be safe for concurrent access,
@@ -91,16 +92,19 @@ func WithAlwaysCheckInvariants(invariants ...string) StateMachineOption {
 }
 
 // WithRuleGroup assigns rules to a named concurrency group. Rules in the same
-// group may run concurrently with each other; rules in different groups never
+// group may run concurrently with each other; rules that share no group never
 // overlap. Pass the full method names, including the Rule prefix. Calls using
 // the same group name add rules to that group.
 //
-// Each call creates a distinct group. Rules not mentioned by any call share
-// one implicit default group, so they may overlap with each other but not with
-// rules in an explicit group. A rule may belong to only one group.
+// Each round, the engine picks one group and hands out only that group's
+// rules. Rules not mentioned by any call share one implicit default group, so
+// they may overlap with each other but not with rules in an explicit group. A
+// rule named by several calls belongs to every group named, and runs in the
+// rounds of each of them, so it may overlap the rules of every group it
+// belongs to while those groups' other rules never overlap each other.
 //
-// RunStateful panics if a group is empty, names an unknown rule or invariant,
-// or names a rule already assigned by another WithRuleGroup option.
+// RunStateful panics if a group is empty or names an unknown rule or
+// invariant.
 func WithRuleGroup(name string, rules ...string) StateMachineOption {
 	ruleNames := slices.Clone(rules)
 	return func(sm *stateMachine) {
@@ -198,9 +202,8 @@ func newStateMachine[M any, T interface{ *M }](machine T, opts ...StateMachineOp
 		sm.invariantAlwaysCheck[index] = true
 	}
 
-	// Group 0 is the "catch all".
-	sm.ruleGroups = make([]int64, len(sm.rules))
-	assigned := make(map[string]int)
+	// Group 0 is the "catch all" for rules no option names.
+	sm.ruleGroups = make([][]int64, len(sm.rules))
 	for groupIndex, group := range sm.configuredRuleGroups {
 		if len(group.rules) == 0 {
 			return nil, fmt.Errorf("state machine rule group %d is empty", groupIndex+1)
@@ -213,11 +216,14 @@ func newStateMachine[M any, T interface{ *M }](machine T, opts ...StateMachineOp
 				}
 				return nil, fmt.Errorf("state machine rule group references unknown rule %q; available rules: %s", name, strings.Join(names(sm.rules), ", "))
 			}
-			if previousGroup, ok := assigned[name]; ok {
-				return nil, fmt.Errorf("state machine rule %q belongs to both group %d and group %d", name, previousGroup, groupIndex+1)
+			if !slices.Contains(sm.ruleGroups[ruleIndex], int64(groupIndex+1)) {
+				sm.ruleGroups[ruleIndex] = append(sm.ruleGroups[ruleIndex], int64(groupIndex+1))
 			}
-			assigned[name] = groupIndex + 1
-			sm.ruleGroups[ruleIndex] = int64(groupIndex + 1)
+		}
+	}
+	for i, groups := range sm.ruleGroups {
+		if len(groups) == 0 {
+			sm.ruleGroups[i] = []int64{0}
 		}
 	}
 
@@ -250,9 +256,6 @@ func (sm *stateMachine) Run(tc TestCase) {
 		tc.abort(err)
 	}
 
-	if sm.maxConcurrency != 1 {
-		tc.log("Concurrency level: %d", concurrency)
-	}
 	tc.log("Initial invariant check.")
 
 	for _, inv := range sm.invariants {
@@ -269,8 +272,9 @@ func (sm *stateMachine) Run(tc TestCase) {
 	// stateMachineNextRule until the engine signals the join point. With a
 	// single group and concurrency 1 this runs the familiar sequential loop;
 	// the engine owns the overall step budget.
+	notedLevel := int64(0)
 	for round := 1; ; round++ {
-		group, err := tc.stateMachineNextGroup(machine)
+		group, level, err := tc.stateMachineNextGroup(machine)
 		if err != nil {
 			tc.abort(err)
 		}
@@ -280,6 +284,10 @@ func (sm *stateMachine) Run(tc TestCase) {
 		groupName := "<anonymous>"
 		if group != 0 {
 			groupName = sm.configuredRuleGroups[int(group)-1].name
+		}
+		if sm.maxConcurrency != 1 && level != notedLevel {
+			tc.log("Concurrency level: %d", level)
+			notedLevel = level
 		}
 		tc.log("---------------- Round %d: group %q ----------------", round, groupName)
 
