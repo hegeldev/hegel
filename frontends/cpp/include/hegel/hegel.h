@@ -21,7 +21,7 @@
  * FetchContent_Declare(
  *     hegel
  *     GIT_REPOSITORY https://github.com/hegeldev/hegel.git
- *     GIT_TAG frontends/cpp/0.15.1
+ *     GIT_TAG frontends/cpp/0.16.0
  *     SOURCE_SUBDIR frontends/cpp
  *     GIT_CONFIG lfs.fetchexclude=website
  * )

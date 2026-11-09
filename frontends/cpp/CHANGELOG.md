@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.16.0 - 2026-11-09
+
+This release fixes `hegel::Settings` overriding the engine's settings profile. A field you do not set now takes its value from the profile: `HEGEL_DEFAULT_PROFILE`, a `hegel.toml` profile, `HEGEL_MAIN`'s `--profile`, or a settings environment variable such as `HEGEL_SEED`, `HEGEL_PHASES`, `HEGEL_VERBOSITY` or `HEGEL_PRINT_BLOB`.
+
+`verbosity`, `derandomize`, `report_multiple_failures`, `stop_on_first_failure`, `nondeterminism_strictness` and `print_blob` are now `std::optional`. `phases` is now the new `hegel::Phases` type, which is unset by default.
+
 ## 0.15.1 - 2026-11-09
 
 This patch lets a long state-machine run explore more than one configuration. Between rounds, a state machine now occasionally redraws its value distribution, the rules each worker has enabled, and the concurrency level. Previously these were fixed for the whole test case, so a `HEGEL_MAIN` binary kept one configuration for its whole run.
