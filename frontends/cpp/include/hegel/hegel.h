@@ -552,7 +552,8 @@ namespace hegel {
         // status.
         int main_from_macro(int argc, char** argv,
                             const std::function<void(TestCase&)>& test_fn,
-                            const TestLocation& location, Settings settings,
+                            const TestLocation& location,
+                            const Settings& settings,
                             const std::vector<std::string>& failure_blobs);
     } // namespace internal
     /// @endcond

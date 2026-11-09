@@ -386,7 +386,8 @@ namespace hegel {
             // TU stays clean under a C++17 (HEGEL_REFLECTION=OFF) build.
             TestCase tc_obj(std::unique_ptr<impl::test_case::TestCaseData>(
                 new impl::test_case::TestCaseData{
-                    handle, /*is_final=*/true, settings.verbosity,
+                    handle, /*is_final=*/true,
+                    settings.verbosity.value_or(Verbosity::Normal),
                     /*note_indent=*/in_report ? 1 : 0, in_report}));
             tc_obj.data()->stateful_step_count = settings.stateful_step_count;
             BodyOutcome outcome = run_body(fn, tc_obj);
@@ -441,7 +442,7 @@ namespace hegel {
             if (caveat.has_value()) {
                 std::fprintf(stderr, "note: %s\n", caveat->c_str());
             }
-            if (!settings.print_blob || !blob.has_value()) {
+            if (!settings.print_blob.value_or(true) || !blob.has_value()) {
                 return;
             }
             if (rerun_form == RerunForm::Annotation && location.has_value()) {
@@ -474,6 +475,71 @@ namespace hegel {
             }
         }
 
+        hegel_verbosity_t verbosity_to_engine(Verbosity verbosity) {
+            switch (verbosity) {
+            case Verbosity::Quiet:
+                return HEGEL_VERBOSITY_QUIET;
+            case Verbosity::Verbose:
+                return HEGEL_VERBOSITY_VERBOSE;
+            case Verbosity::Debug:
+                return HEGEL_VERBOSITY_DEBUG;
+            case Verbosity::Normal:
+            default:
+                return HEGEL_VERBOSITY_NORMAL;
+            }
+        }
+
+        Verbosity verbosity_from_engine(hegel_verbosity_t verbosity) {
+            switch (verbosity) {
+            case HEGEL_VERBOSITY_QUIET:
+                return Verbosity::Quiet;
+            case HEGEL_VERBOSITY_VERBOSE:
+                return Verbosity::Verbose;
+            case HEGEL_VERBOSITY_DEBUG:
+                return Verbosity::Debug;
+            case HEGEL_VERBOSITY_NORMAL:
+            default:
+                return Verbosity::Normal;
+            }
+        }
+
+        hegel_nondeterminism_strictness_t
+        strictness_to_engine(NondeterminismStrictness strictness) {
+            switch (strictness) {
+            case NondeterminismStrictness::Warn:
+                return HEGEL_NONDETERMINISM_WARN;
+            case NondeterminismStrictness::Error:
+                return HEGEL_NONDETERMINISM_ERROR;
+            case NondeterminismStrictness::Quiet:
+            default:
+                return HEGEL_NONDETERMINISM_QUIET;
+            }
+        }
+
+        uint32_t phases_to_engine(const std::vector<Phase>& phases) {
+            uint32_t bits = 0;
+            for (Phase p : phases) {
+                switch (p) {
+                case Phase::Explicit:
+                    bits |= HEGEL_PHASE_EXPLICIT;
+                    break;
+                case Phase::Reuse:
+                    bits |= HEGEL_PHASE_REUSE;
+                    break;
+                case Phase::Generate:
+                    bits |= HEGEL_PHASE_GENERATE;
+                    break;
+                case Phase::Target:
+                    bits |= HEGEL_PHASE_TARGET;
+                    break;
+                case Phase::Shrink:
+                    bits |= HEGEL_PHASE_SHRINK;
+                    break;
+                }
+            }
+            return bits;
+        }
+
         // Translate hegel::Settings onto a fresh hegel_settings_t handle. A
         // field left unset keeps the value the engine's settings profile
         // gave the handle.
@@ -487,45 +553,33 @@ namespace hegel {
                 impl::settings_set_test_cases(ctx, s, *settings.test_cases);
             }
 
-            hegel_verbosity_t v = HEGEL_VERBOSITY_NORMAL;
-            switch (settings.verbosity) {
-            case Verbosity::Quiet:
-                v = HEGEL_VERBOSITY_QUIET;
-                break;
-            case Verbosity::Normal:
-                v = HEGEL_VERBOSITY_NORMAL;
-                break;
-            case Verbosity::Verbose:
-                v = HEGEL_VERBOSITY_VERBOSE;
-                break;
-            case Verbosity::Debug:
-                v = HEGEL_VERBOSITY_DEBUG;
-                break;
+            if (settings.verbosity.has_value()) {
+                impl::settings_set_verbosity(
+                    ctx, s, verbosity_to_engine(*settings.verbosity));
             }
-            impl::settings_set_verbosity(ctx, s, v);
 
-            impl::settings_set_seed(ctx, s, settings.seed.value_or(0),
-                                    settings.seed.has_value());
-            impl::settings_set_derandomize(ctx, s, settings.derandomize);
-            impl::settings_set_report_multiple_failures(
-                ctx, s, settings.report_multiple_failures);
-            impl::settings_set_stop_on_first_failure(
-                ctx, s, settings.stop_on_first_failure);
-
-            hegel_nondeterminism_strictness_t strictness =
-                HEGEL_NONDETERMINISM_QUIET;
-            switch (settings.nondeterminism_strictness) {
-            case NondeterminismStrictness::Quiet:
-                strictness = HEGEL_NONDETERMINISM_QUIET;
-                break;
-            case NondeterminismStrictness::Warn:
-                strictness = HEGEL_NONDETERMINISM_WARN;
-                break;
-            case NondeterminismStrictness::Error:
-                strictness = HEGEL_NONDETERMINISM_ERROR;
-                break;
+            if (settings.seed.has_value()) {
+                impl::settings_set_seed(ctx, s, *settings.seed, true);
             }
-            impl::settings_set_nondeterminism_strictness(ctx, s, strictness);
+            if (settings.derandomize.has_value()) {
+                impl::settings_set_derandomize(ctx, s, *settings.derandomize);
+            }
+            if (settings.report_multiple_failures.has_value()) {
+                impl::settings_set_report_multiple_failures(
+                    ctx, s, *settings.report_multiple_failures);
+            }
+            if (settings.stop_on_first_failure.has_value()) {
+                impl::settings_set_stop_on_first_failure(
+                    ctx, s, *settings.stop_on_first_failure);
+            }
+            if (settings.nondeterminism_strictness.has_value()) {
+                impl::settings_set_nondeterminism_strictness(
+                    ctx, s,
+                    strictness_to_engine(*settings.nondeterminism_strictness));
+            }
+            if (settings.print_blob.has_value()) {
+                impl::settings_set_print_blob(ctx, s, *settings.print_blob);
+            }
 
             switch (settings.database.kind()) {
             case Database::Kind::Unset:
@@ -563,27 +617,10 @@ namespace hegel {
                 impl::settings_set_suppress_health_check(ctx, s, suppress);
             }
 
-            uint32_t phases = 0;
-            for (Phase p : settings.phases) {
-                switch (p) {
-                case Phase::Explicit:
-                    phases |= HEGEL_PHASE_EXPLICIT;
-                    break;
-                case Phase::Reuse:
-                    phases |= HEGEL_PHASE_REUSE;
-                    break;
-                case Phase::Generate:
-                    phases |= HEGEL_PHASE_GENERATE;
-                    break;
-                case Phase::Target:
-                    phases |= HEGEL_PHASE_TARGET;
-                    break;
-                case Phase::Shrink:
-                    phases |= HEGEL_PHASE_SHRINK;
-                    break;
-                }
+            if (settings.phases.is_set()) {
+                impl::settings_set_phases(
+                    ctx, s, phases_to_engine(settings.phases.phases()));
             }
-            impl::settings_set_phases(ctx, s, phases);
 
             switch (settings.backend) {
             case Backend::Auto:
@@ -719,7 +756,8 @@ namespace hegel {
                 }
                 auto data = std::unique_ptr<impl::test_case::TestCaseData>(
                     new impl::test_case::TestCaseData{
-                        handle, /*is_final=*/false, settings.verbosity});
+                        handle, /*is_final=*/false,
+                        settings.verbosity.value_or(Verbosity::Normal)});
                 bool stamped = impl::test_case_should_capture(ctx, handle);
                 data->buffer_output = stamped;
                 data->stateful_step_count = settings.stateful_step_count;
@@ -862,11 +900,15 @@ namespace hegel {
                              const std::optional<TestLocation>& location,
                              RerunForm rerun_form,
                              const std::vector<std::string>& failure_blobs) {
+            Settings resolved = settings;
+            resolved.verbosity =
+                verbosity_from_engine(impl::settings_get_verbosity(ctx, s));
+            resolved.print_blob = impl::settings_get_print_blob(ctx, s);
             if (failure_blobs.empty()) {
-                run_from_engine(test_fn, ctx, s, settings, location,
+                run_from_engine(test_fn, ctx, s, resolved, location,
                                 rerun_form);
             } else {
-                run_from_blob(test_fn, ctx, s, settings, rerun_form,
+                run_from_blob(test_fn, ctx, s, resolved, rerun_form,
                               failure_blobs);
             }
         }
@@ -1053,26 +1095,13 @@ yes or no. Values use the vocabulary of the matching hegel.toml key.
             }
             return option.flag + " " + message;
         }
-
-        Verbosity verbosity_from_engine(hegel_verbosity_t verbosity) {
-            switch (verbosity) {
-            case HEGEL_VERBOSITY_QUIET:
-                return Verbosity::Quiet;
-            case HEGEL_VERBOSITY_VERBOSE:
-                return Verbosity::Verbose;
-            case HEGEL_VERBOSITY_DEBUG:
-                return Verbosity::Debug;
-            case HEGEL_VERBOSITY_NORMAL:
-            default:
-                return Verbosity::Normal;
-            }
-        }
     } // namespace
 
     namespace internal {
         int main_from_macro(int argc, char** argv,
                             const std::function<void(TestCase&)>& test_fn,
-                            const TestLocation& location, Settings settings,
+                            const TestLocation& location,
+                            const Settings& settings,
                             const std::vector<std::string>& failure_blobs) {
             const char* program =
                 argc > 0 && argv[0] != nullptr ? argv[0] : "program";
@@ -1106,7 +1135,6 @@ yes or no. Values use the vocabulary of the matching hegel.toml key.
                 settings_guard.s = impl::settings_new(ctx);
                 hegel_settings_t* s = settings_guard.s;
                 apply_settings(ctx, s, settings);
-                impl::settings_set_print_blob(ctx, s, settings.print_blob);
                 apply_test_location(ctx, s, location);
                 for (const SettingOption& option : args.settings) {
                     if (std::optional<std::string> error =
@@ -1121,9 +1149,6 @@ yes or no. Values use the vocabulary of the matching hegel.toml key.
                     ctx, s,
                     impl::settings_get_suppress_health_check(ctx, s) |
                         HEGEL_HC_TOO_SLOW | HEGEL_HC_TEST_CASES_TOO_LARGE);
-                settings.verbosity =
-                    verbosity_from_engine(impl::settings_get_verbosity(ctx, s));
-                settings.print_blob = impl::settings_get_print_blob(ctx, s);
             } catch (const std::exception& e) {
                 std::fprintf(stderr, "error: %s\n", e.what());
                 return 1;
