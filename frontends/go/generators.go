@@ -84,9 +84,9 @@ type TestCase interface {
 	newCollection(minSize int, maxSize *int) (*collection, error)
 
 	// stateMachineNew registers an engine-owned state machine with the named
-	// rules, their parallel group IDs, and the invariants, returning its id.
+	// rules, the group IDs of each, and the invariants, returning its id.
 	// The engine owns rule selection (including swarm testing).
-	stateMachineNew(ruleNames []string, ruleGroups []int64, invariantNames []string, invariantAlwaysCheck []bool, maxConcurrency, stepCount int) (*libhegel.StateMachine, int64, error)
+	stateMachineNew(ruleNames []string, ruleGroups [][]int64, invariantNames []string, invariantAlwaysCheck []bool, maxConcurrency, stepCount int) (*libhegel.StateMachine, int64, error)
 
 	// stateMachineNextGroup starts the machine's next round, returning the
 	// current concurrency group's index and the round's concurrency level, or

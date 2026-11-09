@@ -111,6 +111,14 @@ func (*groupedMachine) RuleDelta(TestCase)   {}
 func (*groupedMachine) RuleGamma(TestCase)   {}
 func (*groupedMachine) InvariantOK(TestCase) {}
 
+type sharedRuleMachine struct {
+	shared atomic.Int64
+	only   atomic.Int64
+}
+
+func (m *sharedRuleMachine) RuleShared(TestCase) { m.shared.Add(1) }
+func (m *sharedRuleMachine) RuleOnly(TestCase)   { m.only.Add(1) }
+
 type invariantSelectionMachine struct {
 	alwaysCalls  int
 	sampledCalls int
@@ -174,7 +182,7 @@ type concurrentTestCaseShared struct {
 	selectedGroup           libhegel.StateMachineGroup
 	requestedMaxConcurrency int
 	requestedStepCount      int
-	ruleGroups              []int64
+	ruleGroups              [][]int64
 	invariantAlwaysCheck    []bool
 	invariantChecks         []int64
 	shouldCheckInvariant    func(int64) (bool, error)
@@ -286,7 +294,7 @@ func (tc *concurrentTestCase) free() {
 	}
 }
 
-func (tc *concurrentTestCase) stateMachineNew(_ []string, ruleGroups []int64, _ []string, invariantAlwaysCheck []bool, maxConcurrency, stepCount int) (*libhegel.StateMachine, int64, error) {
+func (tc *concurrentTestCase) stateMachineNew(_ []string, ruleGroups [][]int64, _ []string, invariantAlwaysCheck []bool, maxConcurrency, stepCount int) (*libhegel.StateMachine, int64, error) {
 	tc.shared.requestedMaxConcurrency = maxConcurrency
 	tc.shared.requestedStepCount = stepCount
 	tc.shared.ruleGroups = slices.Clone(ruleGroups)
@@ -470,16 +478,36 @@ func TestNewStateMachineRuleGroups(t *testing.T) {
 		&groupedMachine{},
 		WithRuleGroup("alpha", "RuleAlpha"),
 		WithRuleGroup("alpha", "RuleGamma"),
-		WithRuleGroup("beta", "RuleBeta"),
+		WithRuleGroup("beta", "RuleBeta", "RuleGamma"),
+		WithRuleGroup("alpha", "RuleGamma"),
 	)
 	if err != nil {
 		t.Fatalf("newStateMachine: %v", err)
 	}
 
 	// Reflection discovers methods alphabetically. Explicit groups are numbered
-	// in option order; the unmentioned RuleDelta remains in default group zero.
-	if want := []int64{1, 2, 0, 1}; !slices.Equal(sm.ruleGroups, want) {
+	// in option order; the unmentioned RuleDelta remains in default group zero,
+	// and RuleGamma, named by both groups (and by alpha twice), is in each once.
+	if want := [][]int64{{1}, {2}, {0}, {1, 2}}; !slices.EqualFunc(sm.ruleGroups, want, slices.Equal) {
 		t.Errorf("rule groups = %v, want %v", sm.ruleGroups, want)
+	}
+}
+
+func TestRunStatefulRuleInSeveralGroups(t *testing.T) {
+	t.Parallel()
+	machine := &sharedRuleMachine{}
+	err := Run(func(tc TestCase) {
+		RunStateful(tc, machine,
+			WithBoundedConcurrency(2),
+			WithRuleGroup("left", "RuleShared"),
+			WithRuleGroup("right", "RuleShared", "RuleOnly"),
+		)
+	}, WithTestCases(20), WithDatabase(""))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if machine.shared.Load() == 0 || machine.only.Load() == 0 {
+		t.Errorf("rule calls: shared=%d only=%d, want both to run", machine.shared.Load(), machine.only.Load())
 	}
 }
 
@@ -494,7 +522,6 @@ func TestNewStateMachineRuleGroupValidation(t *testing.T) {
 		{name: "Empty", opts: []StateMachineOption{WithRuleGroup("empty")}, want: "group 1 is empty"},
 		{name: "Unknown", opts: []StateMachineOption{WithRuleGroup("missing", "RuleMissing")}, want: `unknown rule "RuleMissing"`},
 		{name: "Invariant", opts: []StateMachineOption{WithRuleGroup("invariant", "InvariantOK")}, want: `names invariant "InvariantOK"`},
-		{name: "Duplicate", opts: []StateMachineOption{WithRuleGroup("alpha", "RuleAlpha"), WithRuleGroup("beta", "RuleAlpha")}, want: `belongs to both group 1 and group 2`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -674,7 +701,7 @@ func TestStateMachineRunsEngineSelectedWorkersConcurrently(t *testing.T) {
 	if shared.requestedMaxConcurrency != 4 {
 		t.Errorf("requested maximum concurrency = %d, want 4", shared.requestedMaxConcurrency)
 	}
-	if want := []int64{1}; !slices.Equal(shared.ruleGroups, want) {
+	if want := [][]int64{{1}}; !slices.EqualFunc(shared.ruleGroups, want, slices.Equal) {
 		t.Errorf("rule groups passed to engine = %v, want %v", shared.ruleGroups, want)
 	}
 	if shared.cloneCount != selectedConcurrency {
