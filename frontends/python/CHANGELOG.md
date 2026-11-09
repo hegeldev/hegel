@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.2 - 2026-11-09
+
+This patch lets a long state-machine run explore more than one configuration. Between rounds, a state machine now occasionally redraws its value distribution, the rules each worker has enabled, and the concurrency level. Previously these were fixed for the whole test case, so a single long-running test case kept one configuration for its whole run.
+
+A concurrent machine now always starts `max_concurrency` worker threads, and only the current concurrency level's worth of them run rules in a round. A failure report notes `Concurrency level: n` at the first round and whenever the level changes.
+
 ## 0.4.1 - 2026-11-06
 
 This patch adds `@hegel.main`, which turns a function that takes a test case into the entry point of a program. Calling the decorated function reads the command line and runs one test case. Each setting except `test_cases` is a command-line option named after its `hegel.toml` key (`--seed`, `--phases`, `--backend` and so on), and `--profile` selects a settings profile.

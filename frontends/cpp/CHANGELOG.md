@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.15.1 - 2026-11-09
+
+This patch lets a long state-machine run explore more than one configuration. Between rounds, a state machine now occasionally redraws its value distribution, the rules each worker has enabled, and the concurrency level. Previously these were fixed for the whole test case, so a `HEGEL_MAIN` binary kept one configuration for its whole run.
+
+`hegel::stateful::run_concurrent` now always starts `max_concurrency` worker threads, and only the current concurrency level's worth of them run rules in a round. A failure report notes `Concurrency level: n` at the first round and whenever the level changes.
+
 ## 0.15.0 - 2026-11-06
 
 This release adds weights, a hint for how often to choose the rule relative to the others, to stateful rules. `hegel::stateful::Rule` and `hegel::stateful::ConcurrentRule` each take an optional `weight`, and `weight()` returns it. A rule without a weight has weight 1.0.
