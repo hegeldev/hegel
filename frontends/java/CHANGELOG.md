@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.1 - 2026-11-09
+
+This patch lets a long state-machine run explore more than one configuration. Between rounds, a state machine now occasionally redraws its value distribution, the rules each worker has enabled, and the concurrency level. Previously these were fixed for the whole test case, so a single long-running test case kept one configuration for its whole run.
+
+A concurrent machine now always starts `maxConcurrency` worker threads, and only the current concurrency level's worth of them run rules in a round. A failure report notes `Concurrency level: n` at the first round and whenever the level changes.
+
 ## 0.11.0 - 2026-11-03
 
 This release lets a rule of a concurrent state machine belong to several concurrency groups, and renames `@Rule(group = ...)` to `@Rule(groups = ...)`. A rule in several groups runs in the rounds of each of them, so it can overlap the rules of every group it names. A bare `@Rule` still indicates the anonymous group. The groups of one rule must be distinct; the engine rejects a repeated group with an `IllegalArgumentException`.

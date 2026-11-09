@@ -8,6 +8,7 @@
 #include <hegel/hegel.h>
 #include <hegel/internal.h>
 #include <map>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -645,6 +646,31 @@ namespace {
         return settings;
     }
 
+    // Sets an environment variable for one scope. The engine reads the
+    // settings variables each time a Settings is created.
+    class ScopedEnv {
+      public:
+        ScopedEnv(const char* name, const char* value) : name_(name) {
+            if (const char* old = std::getenv(name)) {
+                saved_ = old;
+            }
+            setenv(name, value, 1);
+        }
+        ScopedEnv(const ScopedEnv&) = delete;
+        ScopedEnv& operator=(const ScopedEnv&) = delete;
+        ~ScopedEnv() {
+            if (saved_.has_value()) {
+                setenv(name_, saved_->c_str(), 1);
+            } else {
+                unsetenv(name_);
+            }
+        }
+
+      private:
+        const char* name_;
+        std::optional<std::string> saved_;
+    };
+
     int count_cases(const Settings& settings) {
         int count = 0;
         hegel::test(
@@ -654,6 +680,45 @@ namespace {
             },
             settings);
         return count;
+    }
+
+    std::vector<int64_t> draws(const Settings& settings) {
+        std::vector<int64_t> values;
+        hegel::test(
+            [&values](hegel::TestCase& tc) {
+                values.push_back(tc.draw(gs::integers<int64_t>()));
+            },
+            settings);
+        return values;
+    }
+
+    int calls_until_failure(const Settings& settings) {
+        int calls = 0;
+        try {
+            hegel::test(
+                [&calls](hegel::TestCase& tc) {
+                    tc.draw(gs::integers<int>());
+                    calls++;
+                    throw std::runtime_error("always fails");
+                },
+                settings);
+        } catch (const std::runtime_error&) { // NOLINT(bugprone-empty-catch)
+        }
+        return calls;
+    }
+
+    std::string failure_report(const Settings& settings) {
+        testing::internal::CaptureStderr();
+        try {
+            hegel::test(
+                [](hegel::TestCase& tc) {
+                    tc.draw(gs::integers<int>());
+                    throw std::runtime_error("always fails");
+                },
+                settings);
+        } catch (const std::runtime_error&) { // NOLINT(bugprone-empty-catch)
+        }
+        return testing::internal::GetCapturedStderr();
     }
 } // namespace
 
@@ -775,9 +840,90 @@ TEST(Profiles, DefaultProfileChangeIsNotRetroactive) {
 }
 
 TEST(Settings, MalformedVariableFailsWhenSettingsAreCreated) {
-    setenv("HEGEL_TEST_CASES", "lots", 1);
+    ScopedEnv env("HEGEL_TEST_CASES", "lots");
     EXPECT_THROW(Settings{}, std::invalid_argument);
-    unsetenv("HEGEL_TEST_CASES");
+}
+
+// The HEGEL_* variables apply over the profile when the Settings is
+// created, and a field that is set replaces their value.
+TEST(Profiles, VariablePhasesAreKept) {
+    ScopedEnv env("HEGEL_PHASES", "explicit");
+    EXPECT_EQ(Settings{}.phases,
+              std::vector<hegel::Phase>{hegel::Phase::Explicit});
+    EXPECT_EQ(count_cases({.database = Database::disabled()}), 0);
+    EXPECT_EQ(count_cases({.database = Database::disabled(),
+                           .phases = {hegel::Phase::Generate}}),
+              100);
+}
+
+TEST(Profiles, EmptyPhasesRunNothing) {
+    ScopedEnv env("HEGEL_PHASES", "generate");
+    EXPECT_EQ(count_cases({.database = Database::disabled(), .phases = {}}), 0);
+}
+
+TEST(Profiles, VariableSeedIsKept) {
+    ScopedEnv env("HEGEL_SEED", "12345");
+    Settings settings{.test_cases = 20, .database = Database::disabled()};
+    EXPECT_EQ(settings.seed, 12345u);
+    EXPECT_EQ(draws(settings), draws(settings));
+}
+
+TEST(Profiles, VariableStopOnFirstFailureIsKept) {
+    ScopedEnv env("HEGEL_STOP_ON_FIRST_FAILURE", "false");
+    EXPECT_GE(calls_until_failure({.test_cases = 10,
+                                   .database = Database::disabled(),
+                                   .phases = {hegel::Phase::Generate}}),
+              10);
+    EXPECT_LT(calls_until_failure({.test_cases = 10,
+                                   .stop_on_first_failure = true,
+                                   .database = Database::disabled(),
+                                   .phases = {hegel::Phase::Generate}}),
+              10);
+}
+
+TEST(Profiles, VariableVerbosityIsKept) {
+    ScopedEnv env("HEGEL_VERBOSITY", "verbose");
+    testing::internal::CaptureStderr();
+    hegel::test([](hegel::TestCase& tc) { tc.note("PROFILE_NOTE"); },
+                {.test_cases = 1, .database = Database::disabled()});
+    std::string verbose = testing::internal::GetCapturedStderr();
+    EXPECT_NE(verbose.find("PROFILE_NOTE"), std::string::npos) << verbose;
+
+    testing::internal::CaptureStderr();
+    hegel::test([](hegel::TestCase& tc) { tc.note("PROFILE_NOTE"); },
+                {.test_cases = 1,
+                 .verbosity = hegel::Verbosity::Normal,
+                 .database = Database::disabled()});
+    std::string normal = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(normal.find("PROFILE_NOTE"), std::string::npos) << normal;
+}
+
+TEST(Profiles, VariableNondeterminismStrictnessIsKept) {
+    ScopedEnv env("HEGEL_NONDETERMINISM_STRICTNESS", "error");
+    EXPECT_EQ(Settings{}.nondeterminism_strictness,
+              NondeterminismStrictness::Error);
+    global_counter = 0;
+    EXPECT_NO_THROW(hegel::test(
+        [&](hegel::TestCase& tc) {
+            tc.draw(gs::integers<int>({.min_value = global_counter,
+                                       .max_value = global_counter + 1}));
+            global_counter++;
+        },
+        {.test_cases = 10,
+         .nondeterminism_strictness = NondeterminismStrictness::Quiet,
+         .database = Database::disabled(),
+         .suppress_health_check = {HealthCheck::LargeInitialTestCase}}));
+}
+
+TEST(Profiles, VariablePrintBlobIsKept) {
+    ScopedEnv env("HEGEL_PRINT_BLOB", "false");
+    std::string silent = failure_report({.database = Database::disabled()});
+    EXPECT_NE(silent.find("auto draw_1 = 0;"), std::string::npos) << silent;
+    EXPECT_EQ(silent.find("To reproduce"), std::string::npos) << silent;
+
+    std::string with_blob =
+        failure_report({.print_blob = true, .database = Database::disabled()});
+    EXPECT_NE(with_blob.find("To reproduce"), std::string::npos) << with_blob;
 }
 
 TEST(Profiles, ProfilePhasesAreKept) {
