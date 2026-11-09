@@ -80,8 +80,8 @@ int main(void) {
         bool overran = false;
         bool bad = false;
         while (true) {
-            int64_t group;
-            hegel_result_t rc = hegel_state_machine_next_group(ctx, tc, machine, &group);
+            int64_t group, concurrency;
+            hegel_result_t rc = hegel_state_machine_next_group(ctx, tc, machine, &group, &concurrency);
             if (rc != HEGEL_OK) { overran = true; break; }
             if (group == HEGEL_STATE_MACHINE_DONE) break;
             if (group != 0) { bad = true; break; }

@@ -191,6 +191,7 @@ let%expect_test "one concurrent worker remains deterministic" =
     {|
     --- Failure --------------------------------------------------------------------
 
+    Concurrency level: 1
     ---------------- Round 1: group "<anonymous>" ----------------
     [worker 0 +time] Rule: boom
     [worker 0 +time]   draw_1 = 0
@@ -230,6 +231,7 @@ let%expect_test "concurrent invariant failures retain their names" =
     --- Failure --------------------------------------------------------------------
 
     state = 0
+    Concurrency level: 1
     ---------------- Round 1: group "writes" ----------------
     [worker 0 +time] Rule: increment
     state = 1

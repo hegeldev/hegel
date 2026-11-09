@@ -311,10 +311,10 @@ public interface Libhegel {
      * {@code hegel_new_state_machine}: an empty machine with its concurrency bounds and step count.
      * Declare its rules and invariants with {@link #stateMachineAddRule} and {@link
      * #stateMachineAddInvariant}, then seal them with {@link #stateMachineStart}. The engine draws
-     * the concurrency level in {@code [minConcurrency, maxConcurrency]} when the machine starts;
-     * pass {@code 1, 1} for a sequential machine. {@code stepCount} is the target number of
-     * counted rounds per test case (at least 1; the engine has no default, and 50 is the
-     * conventional choice).
+     * the concurrency level in {@code [minConcurrency, maxConcurrency]} when the machine starts and
+     * may redraw it between rounds; pass {@code 1, 1} for a sequential machine. {@code stepCount}
+     * is the target number of counted rounds per test case (at least 1; the engine has no default,
+     * and 50 is the conventional choice).
      */
     int newStateMachine(long tc, long minConcurrency, long maxConcurrency, long stepCount, long[] outId);
 
@@ -335,13 +335,18 @@ public interface Libhegel {
     int stateMachineAddInvariant(long tc, long stateMachineId, String name, boolean alwaysCheck);
 
     /**
-     * {@code hegel_state_machine_start}: seals the declared rules and invariants and draws the
-     * concurrency level into {@code outConcurrency}.
+     * {@code hegel_state_machine_start}: seals the declared rules and invariants and writes {@code
+     * maxConcurrency}, the number of workers to run for the whole test case, into {@code
+     * outConcurrency}.
      */
     int stateMachineStart(long tc, long stateMachineId, long[] outConcurrency);
 
-    /** The id of the group current for the new round, or {@link Abi#STATE_MACHINE_DONE}. */
-    int stateMachineNextGroup(long tc, long stateMachineId, long[] outGroupId);
+    /**
+     * The id of the group current for the new round, or {@link Abi#STATE_MACHINE_DONE}. On a new
+     * round {@code outConcurrency[0]} receives the round's concurrency level: how many workers the
+     * engine hands rules to.
+     */
+    int stateMachineNextGroup(long tc, long stateMachineId, long[] outGroupId, long[] outConcurrency);
 
     /** {@code outRuleIndex[0]} receives the rule index, or {@link Abi#STATE_MACHINE_DONE}. */
     int stateMachineNextRule(long tc, long stateMachineId, long workerIndex, long[] outRuleIndex);

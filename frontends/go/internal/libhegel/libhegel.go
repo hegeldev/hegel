@@ -368,7 +368,7 @@ type symbols struct {
 	StateMachineAddRule      func(ctxT, testCaseT, stateMachineT, stringT, float64, *int64, uint64) Error
 	StateMachineAddInvariant func(ctxT, testCaseT, stateMachineT, stringT, bool) Error
 	StateMachineStart        func(ctxT, testCaseT, stateMachineT, out[int64]) Error
-	StateMachineNextGroup    func(ctxT, testCaseT, stateMachineT, out[StateMachineGroup]) Error
+	StateMachineNextGroup    func(ctxT, testCaseT, stateMachineT, out[StateMachineGroup], out[int64]) Error
 	StateMachineNextRule     func(ctxT, testCaseT, stateMachineT, int64, out[int64]) Error
 	StateMachineRuleRejected func(ctxT, testCaseT, stateMachineT, int64) Error
 	StateMachineFree         func(ctxT, stateMachineT) Error
@@ -1832,11 +1832,11 @@ type StateMachine pointer[stateMachineT]
 // The machine is built in three steps: this call, then one
 // [TestCase.StateMachineAddRule] per rule and one
 // [TestCase.StateMachineAddInvariant] per invariant, then
-// [TestCase.StateMachineStart], which draws the concurrency level in
-// [minConcurrency, maxConcurrency]. minConcurrency == maxConcurrency fixes the
-// level without consuming entropy (1, 1 for a sequential machine). stepCount
-// bounds the number of completed rounds and must be positive; the frontend
-// supplies its default.
+// [TestCase.StateMachineStart]. The engine draws the concurrency level in
+// [minConcurrency, maxConcurrency] and may redraw it between rounds.
+// minConcurrency == maxConcurrency fixes the level without consuming entropy
+// (1, 1 for a sequential machine). stepCount bounds the number of completed
+// rounds and must be positive; the frontend supplies its default.
 //
 // The returned handle is owned by the caller and freed automatically via the
 // GC.
@@ -1898,10 +1898,10 @@ func (tc *TestCase) StateMachineAddInvariant(ctx *Context, machine *StateMachine
 // No rule or invariant may be added afterwards, and no round may be driven
 // before.
 //
-// It returns the concurrency level: the caller must run exactly that many
-// workers, indexed from 0. It returns an error wrapping [E_INVALID_ARG] when
-// no rule was declared or the machine has already started, and one wrapping
-// [E_STOP_TEST] once the choice budget is exhausted.
+// It returns maxConcurrency: the caller must run exactly that many workers,
+// indexed from 0, for the whole test case. It returns an error wrapping
+// [E_INVALID_ARG] when no rule was declared or the machine has already
+// started, and one wrapping [E_STOP_TEST] once the choice budget is exhausted.
 func (tc *TestCase) StateMachineStart(ctx *Context, machine *StateMachine) (int64, error) {
 	err := ctx.invoke("hegel_state_machine_start", func(ctx ctxT) Error {
 		e := tc.syms.StateMachineStart(ctx, tc.raw, machine.raw, &tc.outInt)
@@ -1913,17 +1913,19 @@ func (tc *TestCase) StateMachineStart(ctx *Context, machine *StateMachine) (int6
 }
 
 // StateMachineNextGroup starts the machine's next round: it returns the round's
-// concurrency group id, or [StateMachineDone] when the whole state machine
-// is done. Call it on the root test-case handle at every join point, including
-// before the first rule is requested.
-func (tc *TestCase) StateMachineNextGroup(ctx *Context, machine *StateMachine) (StateMachineGroup, error) {
+// concurrency group id and concurrency level, or [StateMachineDone] when the
+// whole state machine is done. Workers the engine leaves out of the round get
+// [StateMachineDone] from their first [TestCase.StateMachineNextRule]. Call it
+// on the root test-case handle at every join point, including before the first
+// rule is requested.
+func (tc *TestCase) StateMachineNextGroup(ctx *Context, machine *StateMachine) (StateMachineGroup, int64, error) {
 	err := ctx.invoke("hegel_state_machine_next_group", func(ctx ctxT) Error {
-		e := tc.syms.StateMachineNextGroup(ctx, tc.raw, machine.raw, &tc.outGroup)
+		e := tc.syms.StateMachineNextGroup(ctx, tc.raw, machine.raw, &tc.outGroup, &tc.outInt)
 		runtime.KeepAlive(tc)
 		runtime.KeepAlive(machine)
 		return e
 	})
-	return tc.outGroup, err
+	return tc.outGroup, tc.outInt, err
 }
 
 // StateMachineNextRule draws the index of the next rule for worker workerIndex

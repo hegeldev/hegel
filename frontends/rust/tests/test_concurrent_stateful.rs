@@ -335,6 +335,21 @@ fn a_worker_panic_is_reported_with_its_real_origin_and_buffered_output() {
 }
 
 #[test]
+fn the_failure_report_notes_the_rounds_concurrency_level() {
+    let (lines, result) = capture_hegel_output(|| {
+        Hegel::new(|tc| machine(Boom).max_concurrency(3).run_concurrent(tc))
+            .settings(Settings::new().database(None))
+            .run();
+    });
+    result.expect_err("the failing machine must fail the run");
+    let text = lines.join("\n");
+    assert!(
+        text.contains("Concurrency level: 1") && !text.contains("Concurrency level: 3"),
+        "the shrunk failure runs a single worker of three:\n{text}"
+    );
+}
+
+#[test]
 fn quiet_nondeterministic_runs_stay_quiet_but_still_fail() {
     let (lines, result) = capture_hegel_output(|| {
         Hegel::new(|tc| {

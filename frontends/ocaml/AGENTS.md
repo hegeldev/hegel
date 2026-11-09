@@ -270,7 +270,8 @@ collections, pools, state machines (`new_state_machine` takes the per-machine
 `~step_count` since libhegel 0.38.0; there is no settings-level step count;
 rules and invariants are declared one call at a time with
 `state_machine_add_rule` / `state_machine_add_invariant` and sealed with
-`state_machine_start`, which returns the drawn concurrency),
+`state_machine_start`, which returns `max_concurrency`, the worker count;
+`state_machine_next_group` returns each round's group and concurrency level),
 `target`, `event`/`event_value`, derived handles (`test_case_clone`,
 `test_case_block`), the pretty-printer document (`printer_*`,
 `test_case_printer`, `note` — see Pretty printing below), `mark_complete`. Strings cross the ABI as `hegel_string_t`
@@ -828,8 +829,9 @@ round inline on `tc` inside a `stateful_rule` span (`stop_span
 headings and no worker stamps; its rule bodies are ordinary functions, so on
 OxCaml they see the state uncontended and plain refs work. The concurrent
 `run_concurrent` (`Concurrent_rule` with `?groups`, `?min_concurrency` default
-1, `?max_concurrency` default `min_concurrency`; the engine draws the worker
-count when it creates the machine) never runs a rule inline, even at one
+1, `?max_concurrency` default `min_concurrency`; it runs `max_concurrency`
+workers, and the engine draws how many are active, possibly redrawing it
+between rounds) never runs a rule inline, even at one
 worker: each round notes a `Round N: group` header, clones the test case once
 per worker, tags the clone with `set_worker_index`, and makes one call to
 `concurrency.spawn_join_n ~n ~f`, where `f i` runs `run_rules` for worker

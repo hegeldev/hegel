@@ -1269,9 +1269,8 @@ impl CTestCase {
         rc_to_unit(rc)
     }
 
-    /// Seal the machine's rules and invariants and draw its concurrency
-    /// level in `[min_concurrency, max_concurrency]` — weighted toward the
-    /// maximum (the engine owns the distribution) — returning it.
+    /// Seal the machine's rules and invariants, returning `max_concurrency`:
+    /// the number of workers to run.
     pub(crate) fn state_machine_start(
         &self,
         state_machine: &StateMachineHandle,
@@ -1285,23 +1284,31 @@ impl CTestCase {
 
     /// Start the machine's next round, yielding the id of the round's
     /// current concurrency group (as passed to
-    /// [`Self::state_machine_add_rule`]); `None` once the engine has run enough rounds
+    /// [`Self::state_machine_add_rule`]) and the round's concurrency level;
+    /// `None` once the engine has run enough rounds
     /// (`HEGEL_STATE_MACHINE_DONE`). Call on the root test-case handle at
     /// every join point, including before the first rule is requested.
     pub(crate) fn state_machine_next_group(
         &self,
         state_machine: &StateMachineHandle,
-    ) -> Result<Option<i64>, hegel_result_t> {
+    ) -> Result<Option<(i64, i64)>, hegel_result_t> {
         let mut out: i64 = 0;
+        let mut concurrency: i64 = 0;
         let rc = with_context(|ctx| unsafe {
-            hegel_c::hegel_state_machine_next_group(ctx, self.raw, state_machine.raw, &mut out)
+            hegel_c::hegel_state_machine_next_group(
+                ctx,
+                self.raw,
+                state_machine.raw,
+                &mut out,
+                &mut concurrency,
+            )
         });
-        let group = if out == hegel_c::HEGEL_STATE_MACHINE_DONE {
+        let round = if out == hegel_c::HEGEL_STATE_MACHINE_DONE {
             None
         } else {
-            Some(out)
+            Some((out, concurrency))
         };
-        rc_to_value(rc, group)
+        rc_to_value(rc, round)
     }
 
     /// Ask the engine for the next rule for worker `worker_index` to run

@@ -3,14 +3,14 @@ Running test case
 Initial invariant check.
 state = 0
 Step 1: step
-  auto amount = 7;
-state = 7
+  auto amount = 4;
+state = 4
 Step 2: step
   auto amount = 9;
-state = 16
+state = 13
 Step 3: step
-  auto amount = 1;
-state = 17
+  auto amount = 2;
+state = 15
 Final invariant check.
 Ending phase: Generate
 

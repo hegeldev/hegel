@@ -866,6 +866,20 @@ TEST(ConcurrentStateful, FixedSingleWorkerFailureRemainsDeterministic) {
     Approvals::verify(output, scrub_concurrent_report());
 }
 
+TEST(ConcurrentStateful, FailureReportNotesTheRoundsConcurrencyLevel) {
+    testing::internal::CaptureStderr();
+    EXPECT_THROW(hegel::test(
+                     [](hegel::TestCase& tc) {
+                         Boom machine;
+                         hs::run_concurrent(machine, tc, 1, 3);
+                     },
+                     hegel::Settings{.database = hegel::Database::disabled()}),
+                 std::runtime_error);
+    std::string output = testing::internal::GetCapturedStderr();
+    EXPECT_NE(output.find("Concurrency level: 1"), std::string::npos) << output;
+    EXPECT_EQ(output.find("Concurrency level: 3"), std::string::npos) << output;
+}
+
 TEST(ConcurrentStateful, AllRejectedRulesAreDiscarded) {
     hegel::test(
         [](hegel::TestCase& tc) {

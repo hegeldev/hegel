@@ -859,7 +859,8 @@ namespace hegel::internal {
         int64_t group_id;
 
         scope.raise_for_rc(hegel_state_machine_next_group(scope.ctx, scope.tc,
-                                                          handle_, &group_id),
+                                                          handle_, &group_id,
+                                                          &round_concurrency_),
                            "hegel_state_machine_next_group");
         return group_id;
     }
