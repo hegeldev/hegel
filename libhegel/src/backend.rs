@@ -320,9 +320,10 @@ pub trait DataSource: Send + Sync {
     /// Seal the machine's rules and invariants and draw its concurrency
     /// level in `[min_concurrency, max_concurrency]` from this stream,
     /// weighted toward the maximum (concurrency bugs need concurrency);
-    /// `min == max` fixes the level without consuming entropy. Returns the
-    /// level. Errors with `InvalidArgument` if no rule was declared or the
-    /// machine was already started.
+    /// `min == max` fixes the level without consuming entropy. Returns
+    /// `max_concurrency`, the number of workers to run; the level is
+    /// [`NativeStateMachine::concurrency`]. Errors with `InvalidArgument`
+    /// if no rule was declared or the machine was already started.
     fn state_machine_start(&self, machine: &mut NativeStateMachine)
     -> Result<i64, DataSourceError>;
 

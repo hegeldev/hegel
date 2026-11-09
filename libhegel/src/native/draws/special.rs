@@ -316,7 +316,7 @@ pub(crate) fn draw_targeted(
     } else {
         ntc.datetime_parameters()?.targeted_probability
     };
-    let integer = ntc.family().generation_parameters().integer;
+    let integer = ntc.generation_parameters().integer;
     let v = ntc.draw_integer_from(IntegerChoice::new(min, max, towards), move |kind, rng| {
         if !groups.is_empty() && weighted_boolean_sample_precise(targeted, rng) {
             let group = &groups[uniform_u64_inclusive(0, groups.len() as u64 - 1, rng) as usize];

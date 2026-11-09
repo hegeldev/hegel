@@ -167,13 +167,15 @@ interface DataSource {
     void stateMachineAddInvariant(long stateMachineId, String name, boolean alwaysCheck);
 
     /**
-     * Seal the declared rules and invariants: the concurrency level the engine drew in {@code
-     * [minConcurrency, maxConcurrency]}.
+     * Seal the declared rules and invariants: the number of workers to run, {@code maxConcurrency}.
      */
     int stateMachineStart(long stateMachineId);
 
-    /** Start the next round: its group id, or {@link Abi#STATE_MACHINE_DONE} when the machine is done. */
-    long stateMachineNextGroup(long stateMachineId);
+    /**
+     * Start the next round: its group id, or {@link Abi#STATE_MACHINE_DONE} when the machine is done.
+     * On a new round {@code outConcurrency[0]} receives the round's concurrency level.
+     */
+    long stateMachineNextGroup(long stateMachineId, long[] outConcurrency);
 
     /**
      * The next rule index for worker {@code workerIndex} this round, or {@link

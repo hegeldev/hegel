@@ -291,7 +291,7 @@ export function fakeEngine() {
     stateMachineStart: vi.fn<Engine["stateMachineStart"]>(() => 1),
     stateMachineNextGroup: vi
       .fn<Engine["stateMachineNextGroup"]>()
-      .mockReturnValueOnce(0)
+      .mockReturnValueOnce({ group: 0, concurrency: 1 })
       .mockReturnValue(null),
     stateMachineNextRule: vi
       .fn<Engine["stateMachineNextRule"]>()

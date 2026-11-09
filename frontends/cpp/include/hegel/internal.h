@@ -105,16 +105,26 @@ namespace hegel::internal {
     };
 
     inline constexpr int64_t state_machine_done = INT64_MIN;
+
+    struct RuleSpec {
+        std::string name;
+        std::vector<int64_t> groups;
+        double weight;
+    };
+
+    struct InvariantSpec {
+        std::string name;
+        bool always_check;
+    };
+
     // Owns a started engine state machine: the constructor creates it with
-    // the concurrency bounds, declares rule_names[i] in the groups
-    // rule_groups[i] and each invariant, then starts it, which draws the
-    // concurrency level.
+    // the concurrency bounds, declares each rule and invariant, then starts
+    // it. concurrency() is max_concurrency, the number of workers to run.
     class StateMachineHandle {
       public:
         StateMachineHandle(const TestCase& tc,
-                           const std::vector<std::string>& rule_names,
-                           const std::vector<std::vector<int64_t>>& rule_groups,
-                           const std::vector<std::string>& invariant_names,
+                           const std::vector<RuleSpec>& rules,
+                           const std::vector<InvariantSpec>& invariants,
                            int64_t min_concurrency, int64_t max_concurrency);
         ~StateMachineHandle();
         StateMachineHandle(const StateMachineHandle&) = delete;
@@ -122,7 +132,8 @@ namespace hegel::internal {
 
         // Starts the next round and returns its concurrency group, or
         // state_machine_done once the engine's step budget for this test case
-        // is used up.
+        // is used up. Sets round_concurrency() to the round's concurrency
+        // level.
         int64_t next_group(const TestCase& tc);
         // Returns the index of the next rule to run this round, or
         // state_machine_done once the round's rule stream is exhausted.
@@ -134,10 +145,12 @@ namespace hegel::internal {
                                     int64_t invariant_index);
 
         int64_t concurrency() const { return concurrency_; }
+        int64_t round_concurrency() const { return round_concurrency_; }
 
       private:
         hegel_state_machine_t* handle_ = nullptr;
         int64_t concurrency_ = 0;
+        int64_t round_concurrency_ = 0;
     };
 
     void set_concurrent_worker(TestCase& tc, std::size_t worker_index);

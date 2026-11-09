@@ -300,8 +300,9 @@ aliases. The public
   concurrency bounds and `step_count`, then one `hegel_state_machine_add_rule`
   per rule in name order (so the engine's rule indices are positions in the
   sorted list) and one `hegel_state_machine_add_invariant` per invariant, and
-  `hegel_state_machine_start` seals the declaration and draws the concurrency
-  level. `@Rule(groups = {"g", "h"})` names become group ids (0.. in
+  `hegel_state_machine_start` seals the declaration and reports
+  `max_concurrency`, the number of workers to run. `@Rule(groups = {"g", "h"})`
+  names become group ids (0.. in
   first-appearance order, one array per rule; a rule with an empty list gets
   `Stateful.ANONYMOUS_GROUP`, so a plain machine is all-zeros; a repeated
   group is left for the engine to reject), `@Rule(weight = w)` becomes the rule's
@@ -310,11 +311,12 @@ aliases. The public
   hints, and tests check them per case, not in aggregate), and
   `Stateful.Options` carries the per-machine `step_count`
   (`Stateful.DEFAULT_STEP_COUNT` = 50; the engine has no default) and the
-  concurrency bounds (default `1, 1`). The driver runs exactly as many workers
-  as the engine drew. Two drivers share the
+  concurrency bounds (default `1, 1`). Two drivers share the
   registration and the round protocol — `hegel_state_machine_next_group` opens
   each round on the root handle (or reports `HEGEL_STATE_MACHINE_DONE`, which
-  is `INT64_MIN`), `hegel_state_machine_next_rule(worker)` hands out the
+  is `INT64_MIN`) and reports the round's concurrency level, which the engine
+  occasionally redraws between rounds; `hegel_state_machine_next_rule(worker)`
+  hands out the
   round's rules until the worker's join point, a rule that fails its own
   assumption is reported with `hegel_state_machine_rule_rejected(worker)`, and
   at each join point `hegel_state_machine_should_check_invariant` (root
@@ -326,9 +328,12 @@ aliases. The public
     per round (discarded on rejection), `Step N: rule` notes.
   - `maxConcurrency > 1` → the **concurrent** driver, modelled on the Rust
     frontend's `run_concurrent_machine` (even when the drawn level is 1, so a
-    run's output format is uniform). Persistent daemon worker threads
-    (`hegel-worker-N`) live for the test case; per round the root thread notes
-    the header (`---------------- Round k: group "name" ----------------`),
+    run's output format is uniform). `maxConcurrency` persistent daemon worker
+    threads (`hegel-worker-N`) live for the test case, and the engine hands
+    `DONE` at once to the workers a round leaves inactive; per round the root
+    thread notes `Concurrency level: n` when the level differs from the last
+    one noted, then the header
+    (`---------------- Round k: group "name" ----------------`),
     makes a **fresh clone per worker** (`hegel_test_case_clone` +
     `hegel_test_case_set_worker`; cloning is a draw and can return
     `E_STOP_TEST` on a replay, hence the raw-rc convention for

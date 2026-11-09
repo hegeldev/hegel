@@ -509,7 +509,7 @@ fn draw_in(
     if matches!(sampling, Sampling::Biased) && reject.is_none() {
         return ntc.draw_integer_i64(min, max);
     }
-    let params = ntc.family().generation_parameters().integer;
+    let params = ntc.generation_parameters().integer;
     let uniformly = move |rng: &mut EngineRng| {
         min.wrapping_add_unsigned(uniform_u64_inclusive(0, max.abs_diff(min), rng))
     };
@@ -856,7 +856,7 @@ fn draw_from_instant(
     } else {
         ntc.datetime_parameters()?.targeted_probability
     };
-    let integer = ntc.family().generation_parameters().integer;
+    let integer = ntc.generation_parameters().integer;
     let index =
         ntc.draw_integer_from(IntegerChoice::small(0, last, towards), move |kind, rng| {
             if !targets.is_empty() && weighted_boolean_sample_precise(targeted, rng) {

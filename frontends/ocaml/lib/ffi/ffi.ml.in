@@ -1140,7 +1140,7 @@ let c_state_machine_start =
 let c_state_machine_next_group =
   foreign
     "hegel_state_machine_next_group"
-    (handle_t @-> handle_t @-> handle_t @-> ptr int64_t @-> returning int)
+    (handle_t @-> handle_t @-> handle_t @-> ptr int64_t @-> ptr int64_t @-> returning int)
 ;;
 
 let c_state_machine_next_rule =
@@ -2746,8 +2746,9 @@ let read_index out =
 
 let state_machine_next_group ctx tc ~state_machine =
   let out = allocate int64_t 0L in
-  check_rc ctx (c_state_machine_next_group ctx tc state_machine out);
-  read_index out
+  let concurrency = allocate int64_t 0L in
+  check_rc ctx (c_state_machine_next_group ctx tc state_machine out concurrency);
+  Option.map (fun group -> group, Int64.to_int !@concurrency) (read_index out)
 ;;
 
 let state_machine_next_rule ctx tc ~state_machine ~worker_index =

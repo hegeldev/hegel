@@ -487,10 +487,10 @@ final class LiveDataSource implements DataSource {
     }
 
     @Override
-    public long stateMachineNextGroup(long stateMachineId) {
+    public long stateMachineNextGroup(long stateMachineId, long[] outConcurrency) {
         checkLive();
         long[] group = new long[1];
-        translate(lib.stateMachineNextGroup(tc, stateMachineId, group), "state_machine_next_group");
+        translate(lib.stateMachineNextGroup(tc, stateMachineId, group, outConcurrency), "state_machine_next_group");
         return group[0];
     }
 

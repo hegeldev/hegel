@@ -296,8 +296,9 @@ export class EngineDataSource implements DataSource {
   }
 
   stateMachineNextRound(machineId: number): boolean {
-    // With a single group the id it reports carries no information; only
-    // whether the machine has another round to run matters.
+    // With a single group and a fixed concurrency level of 1, what it reports
+    // carries no information; only whether the machine has another round to
+    // run matters.
     return this.call(
       () =>
         this.lib.stateMachineNextGroup(this.ctx, this.tc, this.family.machines[machineId]) !== null,

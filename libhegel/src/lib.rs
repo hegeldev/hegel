@@ -4333,11 +4333,12 @@ unsafe fn state_machine_ref<'a>(
 /// `hegel_state_machine_start`, which seals the declaration and draws the
 /// concurrency level. Only then may rounds be driven.
 ///
-/// The engine draws the machine's concurrency level — the number of workers
-/// (typically worker threads) that will pull rules — in `[min_concurrency,
-/// max_concurrency]` when the machine starts, and `hegel_state_machine_start`
-/// reports it; the caller must run exactly that many workers. The engine
-/// owns the distribution, which is weighted toward `max_concurrency`
+/// The caller runs `max_concurrency` workers (typically worker threads),
+/// as reported by `hegel_state_machine_start`. The engine draws the
+/// machine's concurrency level — how many of those workers pull rules —
+/// in `[min_concurrency, max_concurrency]` when the machine starts and may
+/// redraw it between rounds; `hegel_state_machine_next_group` reports it.
+/// The engine owns the distribution, which is weighted toward `max_concurrency`
 /// (concurrency bugs need concurrency) rather than shrink-biased toward the
 /// minimum. Pass `min_concurrency == max_concurrency` to fix the level
 /// without consuming entropy — `1, 1` for a sequential machine.
@@ -4527,8 +4528,10 @@ pub unsafe extern "C" fn hegel_state_machine_add_invariant(
 }
 
 /// Seal a state machine's declared rules and invariants and draw its
-/// concurrency level, writing the level into `*out_concurrency`: the caller
-/// must run exactly that many workers, indexed `0 .. concurrency`. No rule
+/// concurrency level, writing `max_concurrency` into `*out_concurrency`: the
+/// caller must run exactly that many workers, indexed `0 .. concurrency`,
+/// for the whole test case. `hegel_state_machine_next_group` reports how
+/// many of them are active each round. No rule
 /// or invariant may be added afterwards, and no round may be driven
 /// before. Starting draws from the calling handle's stream: the
 /// concurrency level and each worker's swarm parameters are decided here,
@@ -4590,6 +4593,13 @@ pub const HEGEL_STATE_MACHINE_DONE: i64 = i64::MIN;
 /// rejects `HEGEL_STATE_MACHINE_DONE` as a group id so it stays
 /// unambiguous here.)
 ///
+/// When a new round has begun, also writes the round's concurrency level
+/// into `*out_concurrency`: that many workers, chosen by the engine, are
+/// handed rules this round, and the rest get `HEGEL_STATE_MACHINE_DONE`
+/// from `hegel_state_machine_next_rule`. Each round redraws, with
+/// probability 1/50, the level, the active workers, every
+/// worker's swarm parameters, and the test case's value distribution.
+///
 /// Call this on the root test-case handle (the handle used for
 /// hegel_new_state_machine) at every join point — after each worker's
 /// `hegel_state_machine_next_rule` stream is exhausted — including before the
@@ -4608,6 +4618,7 @@ pub unsafe extern "C" fn hegel_state_machine_next_group(
     tc: *mut HegelTestCase,
     state_machine: *mut HegelStateMachine,
     out_group_id: *mut i64,
+    out_concurrency: *mut i64,
 ) -> hegel_result_t {
     clear_last_error(ctx);
     let (tc, _guard) = match unsafe { tc_guard(ctx, "hegel_state_machine_next_group", tc) } {
@@ -4619,14 +4630,17 @@ pub unsafe extern "C" fn hegel_state_machine_next_group(
             Ok(m) => m,
             Err(rc) => return rc,
         };
-    if out_group_id.is_null() {
+    if out_group_id.is_null() || out_concurrency.is_null() {
         set_last_error(ctx, "hegel_state_machine_next_group: out parameter is null");
         return HEGEL_E_INVALID_ARG;
     }
     let mut machine = state_machine.machine.lock();
     match tc.stream.state_machine_next_group(&mut machine) {
         Ok(Some(group)) => {
-            unsafe { *out_group_id = group };
+            unsafe {
+                *out_group_id = group;
+                *out_concurrency = machine.concurrency();
+            }
             HEGEL_OK
         }
         Ok(None) => {
@@ -4642,8 +4656,8 @@ pub unsafe extern "C" fn hegel_state_machine_next_group(
 /// is always a rule belonging to the current concurrency group (see
 /// `hegel_state_machine_next_group`). Swarm testing is applied per worker:
 /// a random subset of rules is enabled (at least one per group) on the
-/// worker's first selection and selection is restricted to that subset for
-/// the rest of the test case.
+/// worker's first selection and selection is restricted to that subset
+/// until the machine re-randomizes (see `hegel_state_machine_next_group`).
 ///
 /// `tc` may be any handle of the machine's test-case family: the machine's
 /// state is family-wide, and the handle only determines which choice
@@ -4655,8 +4669,9 @@ pub unsafe extern "C" fn hegel_state_machine_next_group(
 /// stays with whoever drives `hegel_state_machine_next_group`.
 ///
 /// `worker_index` identifies the calling worker and must satisfy
-/// `0 <= worker_index < concurrency` (the level `hegel_state_machine_start`
-/// drew and wrote to `*out_concurrency`);
+/// `0 <= worker_index < concurrency` (the value `hegel_state_machine_start`
+/// wrote to `*out_concurrency`). A worker left out of the round's active
+/// set gets `HEGEL_STATE_MACHINE_DONE` without drawing anything;
 /// an index rather than the handle identifies the worker because a single
 /// OS thread could hold multiple test-case clones. Draws consult only
 /// per-worker and per-clone state, so draws on one worker don't affect

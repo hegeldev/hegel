@@ -137,8 +137,8 @@ class ConcurrentStatefulDriverTest {
         // Output: each round's worker lines follow its header, grouped by worker index.
         assertEquals(
                 List.of(
-                        "Concurrency level: 2",
                         "Checking invariants on the initial state.",
+                        "Concurrency level: 2",
                         "---------------- Round 1: group \"<anonymous>\" ----------------",
                         "[worker 0] Rule: alpha",
                         "[worker 0] Rule: gamma",
@@ -406,6 +406,30 @@ class ConcurrentStatefulDriverTest {
         assertTrue(e.getMessage().contains("must not exceed"), e.getMessage());
         // Rejected before anything reached the engine.
         assertEquals(-1, fake.stateMachineStepCount);
+    }
+
+    @Test
+    void theConcurrencyLevelIsNotedWheneverARoundChangesIt() {
+        FakeLibhegel fake = concurrentFake(2, new long[][] {{0}}, new long[][] {{0}}, new long[][] {{0}, {0}});
+        fake.roundConcurrency = new long[] {1, 1, 2};
+        Recording machine = new Recording();
+        TestCase tc = capturedCase(fake);
+        Stateful.run(machine, tc, Stateful.options().maxConcurrency(2));
+        assertEquals(Set.of(0, 1), machine.workers);
+        assertEquals(
+                List.of(
+                        "Checking invariants on the initial state.",
+                        "Concurrency level: 1",
+                        "---------------- Round 1: group \"<anonymous>\" ----------------",
+                        "[worker 0] Rule: alpha",
+                        "---------------- Round 2: group \"<anonymous>\" ----------------",
+                        "[worker 0] Rule: alpha",
+                        "Concurrency level: 2",
+                        "---------------- Round 3: group \"<anonymous>\" ----------------",
+                        "[worker 0] Rule: alpha",
+                        "[worker 1] Rule: alpha",
+                        "Checking invariants on the final state."),
+                unstamped(tc.notes()));
     }
 
     @Test

@@ -868,18 +868,19 @@ export interface Engine {
   ): void;
   /**
    * Seal the declared rules and invariants and draw the concurrency level,
-   * returning it. No rule may be added, and no round driven, across this call.
+   * returning `maxConcurrency`: the number of workers to run. No rule may be
+   * added, and no round driven, across this call.
    */
   stateMachineStart(ctx: ContextHandle, tc: TestCaseHandle, machine: StateMachineHandle): number;
   /**
-   * Start the machine's next round, returning the round's group id, or `null`
-   * once the machine is finished.
+   * Start the machine's next round, returning the round's group id and
+   * concurrency level, or `null` once the machine is finished.
    */
   stateMachineNextGroup(
     ctx: ContextHandle,
     tc: TestCaseHandle,
     machine: StateMachineHandle,
-  ): number | null;
+  ): { group: number; concurrency: number } | null;
   /**
    * Draw the next rule index for `workerIndex` this round, or `null` at the
    * round's join point.

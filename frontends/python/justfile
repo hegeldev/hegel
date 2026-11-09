@@ -43,14 +43,14 @@ docs: build
     uv run --group docs sphinx-build -W --keep-going -b html docs docs/_build/html
 
 format:
-    uv run ruff format python tests scripts
-    uv run ruff check --fix python tests scripts
+    uv run ruff format python tests scripts examples
+    uv run ruff check --fix python tests scripts examples
 
 check-format:
-    uv run ruff format --check python tests scripts
+    uv run ruff format --check python tests scripts examples
 
 check-ruff:
-    uv run ruff check python tests scripts
+    uv run ruff check python tests scripts examples
 
 check-types:
     uv run mypy python/hegel

@@ -63,7 +63,8 @@
 (** {2 Concurrent stateful testing}
 
     {!run_concurrent} with [max_concurrency > 1] runs rules on several workers concurrently.
-    libhegel draws the number of workers in [[min_concurrency, max_concurrency]].
+    It runs [max_concurrency] workers, and libhegel draws how many of them run rules
+    in [[min_concurrency, max_concurrency]], occasionally redrawing it between rounds.
     Rules belong to one or more groups, and only rules in the same group may run
     concurrently. Rules without groups all belong to the [<anonymous>] group.
 
@@ -594,7 +595,8 @@ module type Concurrent_state_machine = sig
 end
 
 (** [run_concurrent ~concurrency tc (module M) ~init ?min_concurrency ?max_concurrency]
-    executes a state machine with N workers, where N is in [[min_concurrency, max_concurrency]].
+    executes a state machine with [max_concurrency] workers, of which N run rules each
+    round, where N is in [[min_concurrency, max_concurrency]].
     [min_concurrency] defaults to 1 and [max_concurrency] to [min_concurrency].
 
     [concurrency] runs each round's workers and gives each rule its context.

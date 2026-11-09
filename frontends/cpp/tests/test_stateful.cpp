@@ -866,6 +866,20 @@ TEST(ConcurrentStateful, FixedSingleWorkerFailureRemainsDeterministic) {
     Approvals::verify(output, scrub_concurrent_report());
 }
 
+TEST(ConcurrentStateful, FailureReportNotesTheRoundsConcurrencyLevel) {
+    testing::internal::CaptureStderr();
+    EXPECT_THROW(hegel::test(
+                     [](hegel::TestCase& tc) {
+                         Boom machine;
+                         hs::run_concurrent(machine, tc, 1, 3);
+                     },
+                     hegel::Settings{.database = hegel::Database::disabled()}),
+                 std::runtime_error);
+    std::string output = testing::internal::GetCapturedStderr();
+    EXPECT_NE(output.find("Concurrency level: 1"), std::string::npos) << output;
+    EXPECT_EQ(output.find("Concurrency level: 3"), std::string::npos) << output;
+}
+
 TEST(ConcurrentStateful, AllRejectedRulesAreDiscarded) {
     hegel::test(
         [](hegel::TestCase& tc) {
@@ -920,4 +934,196 @@ TEST(ConcurrentStateful, MachineWithoutRulesIsRejected) {
                      },
                      hegel::Settings{.database = hegel::Database::disabled()}),
                  std::invalid_argument);
+}
+
+namespace {
+    struct RuleCounts {
+        std::atomic<int> heavy{0};
+        std::atomic<int> light{0};
+    };
+
+    struct Weighted : hs::StateMachine<Weighted, int> {
+        RuleCounts& counts;
+        double weight;
+
+        Weighted(RuleCounts& c, double w)
+            : StateMachine({.initial_state = 0}), counts(c), weight(w) {}
+
+        std::vector<hs::Rule<Weighted>> rules() {
+            return {
+                hs::Rule<Weighted>(
+                    {.name = "heavy",
+                     .weight = weight,
+                     .step = [](hegel::TestCase&,
+                                Weighted& m) { m.counts.heavy++; }}),
+                hs::Rule<Weighted>(
+                    "light",
+                    [](hegel::TestCase&, Weighted& m) { m.counts.light++; }),
+            };
+        }
+    };
+
+    struct ConcurrentWeighted : hs::ConcurrentStateMachine<ConcurrentWeighted> {
+        RuleCounts& counts;
+        double weight;
+
+        ConcurrentWeighted(RuleCounts& c, double w) : counts(c), weight(w) {}
+
+        std::vector<hs::ConcurrentRule<ConcurrentWeighted>> rules() {
+            return {
+                hs::ConcurrentRule<ConcurrentWeighted>(
+                    {.name = "heavy",
+                     .groups = {"only"},
+                     .weight = weight,
+                     .step = [](hegel::TestCase&,
+                                ConcurrentWeighted& m) { m.counts.heavy++; }}),
+                hs::ConcurrentRule<ConcurrentWeighted>(
+                    "light", {"only"},
+                    [](hegel::TestCase&, ConcurrentWeighted& m) {
+                        m.counts.light++;
+                    }),
+            };
+        }
+    };
+
+    hegel::Settings weight_settings() {
+        return hegel::Settings{.test_cases = 50,
+                               .verbosity = hegel::Verbosity::Quiet,
+                               .derandomize = true,
+                               .database = hegel::Database::disabled()};
+    }
+
+    bool dominated(const RuleCounts& counts) {
+        return counts.light.load() > 0 &&
+               counts.heavy.load() >= 10 * counts.light.load();
+    }
+} // namespace
+
+TEST(StatefulWeights, PositionalArgumentsSetTheWeightAndFlag) {
+    auto step = [](hegel::TestCase&, Weighted&) {};
+    EXPECT_EQ(hs::Rule<Weighted>("rule", 2.5, step).weight(), 2.5);
+    EXPECT_EQ(
+        hs::ConcurrentRule<Weighted>("rule", {"only"}, 2.5, step).weight(),
+        2.5);
+    EXPECT_TRUE(hs::Invariant<Weighted>("check", true, [](const Weighted&) {
+                }).always_check());
+}
+
+TEST(StatefulWeights, HeavierRuleRunsMoreOften) {
+    bool heavy_dominated = false;
+    hegel::test(
+        [&](hegel::TestCase& tc) {
+            RuleCounts counts;
+            Weighted machine(counts, 50.0);
+            hs::run(machine, tc);
+            heavy_dominated |= dominated(counts);
+        },
+        weight_settings());
+    EXPECT_TRUE(heavy_dominated);
+}
+
+TEST(StatefulWeights, HeavierConcurrentRuleRunsMoreOften) {
+    bool heavy_dominated = false;
+    hegel::test(
+        [&](hegel::TestCase& tc) {
+            RuleCounts counts;
+            ConcurrentWeighted machine(counts, 50.0);
+            hs::run_concurrent(machine, tc, 1, 1);
+            heavy_dominated |= dominated(counts);
+        },
+        weight_settings());
+    EXPECT_TRUE(heavy_dominated);
+}
+
+TEST(StatefulWeights, InvalidWeightIsRejectedByTheEngine) {
+    std::string message;
+    RuleCounts counts;
+    try {
+        hegel::test(
+            [&](hegel::TestCase& tc) {
+                Weighted machine(counts, 0.0);
+                hs::run(machine, tc);
+            },
+            weight_settings());
+    } catch (const std::invalid_argument& error) {
+        message = error.what();
+    }
+    EXPECT_NE(message.find("rule weights must be finite and positive"),
+              std::string::npos)
+        << message;
+}
+
+namespace {
+    struct CheckCounts {
+        std::atomic<int64_t> rules{0};
+        std::atomic<int64_t> checks{0};
+    };
+
+    struct AlwaysChecked : hs::StateMachine<AlwaysChecked, int> {
+        CheckCounts& counts;
+
+        explicit AlwaysChecked(CheckCounts& c)
+            : StateMachine({.initial_state = 0}), counts(c) {}
+
+        std::vector<hs::Rule<AlwaysChecked>> rules() {
+            return {hs::Rule<AlwaysChecked>(
+                "rule",
+                [](hegel::TestCase&, AlwaysChecked& m) { m.counts.rules++; })};
+        }
+
+        std::vector<hs::Invariant<AlwaysChecked>> invariants() const {
+            return {hs::Invariant<AlwaysChecked>(
+                {.name = "check",
+                 .always_check = true,
+                 .invariant = [](const AlwaysChecked& m) {
+                     m.counts.checks++;
+                 }})};
+        }
+    };
+
+    struct ConcurrentAlwaysChecked
+        : hs::ConcurrentStateMachine<ConcurrentAlwaysChecked> {
+        CheckCounts& counts;
+
+        explicit ConcurrentAlwaysChecked(CheckCounts& c) : counts(c) {}
+
+        std::vector<hs::ConcurrentRule<ConcurrentAlwaysChecked>> rules() {
+            return {{"rule", [](hegel::TestCase&, ConcurrentAlwaysChecked& m) {
+                         m.counts.rules++;
+                     }}};
+        }
+
+        std::vector<hs::Invariant<ConcurrentAlwaysChecked>> invariants() const {
+            return {hs::Invariant<ConcurrentAlwaysChecked>(
+                {.name = "check",
+                 .always_check = true,
+                 .invariant = [](const ConcurrentAlwaysChecked& m) {
+                     m.counts.checks++;
+                 }})};
+        }
+    };
+} // namespace
+
+TEST(StatefulInvariants, AlwaysCheckedInvariantRunsAfterEveryStep) {
+    CheckCounts counts;
+    hegel::test(
+        [&](hegel::TestCase& tc) {
+            AlwaysChecked machine(counts);
+            hs::run(machine, tc);
+        },
+        hegel::Settings{.test_cases = 20,
+                        .database = hegel::Database::disabled()});
+    EXPECT_GE(counts.checks.load(), counts.rules.load());
+}
+
+TEST(StatefulInvariants, AlwaysCheckedInvariantRunsAfterEveryRound) {
+    CheckCounts counts;
+    hegel::test(
+        [&](hegel::TestCase& tc) {
+            ConcurrentAlwaysChecked machine(counts);
+            hs::run_concurrent(machine, tc, 1, 1);
+        },
+        hegel::Settings{.test_cases = 20,
+                        .database = hegel::Database::disabled()});
+    EXPECT_GE(counts.checks.load(), counts.rules.load() / 4);
 }

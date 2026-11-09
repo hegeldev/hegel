@@ -308,6 +308,17 @@ class ConcurrentStatefulTest {
     }
 
     @Test
+    void theFailureReportNotesTheRoundsConcurrencyLevel() {
+        RunReport report = Hegel.run(
+                tc -> Stateful.run(new Boom(true), tc, Stateful.options().maxConcurrency(3)),
+                settings(),
+                Reporter.silent());
+        assertEquals(RunStatus.FAILED, report.status());
+        List<String> notes = report.failures().get(0).notes();
+        assertTrue(notes.contains("Concurrency level: 1") && !notes.contains("Concurrency level: 3"), notes.toString());
+    }
+
+    @Test
     void aWorkerFailureIsReportedWithItsRoundAndWorkerLines() {
         ByteArrayOutputStream buf = new ByteArrayOutputStream();
         RunReport report = Hegel.run(

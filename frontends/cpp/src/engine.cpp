@@ -1113,10 +1113,9 @@ namespace hegel::internal {
     }
 
     StateMachineHandle::StateMachineHandle(
-        const TestCase& tc, const std::vector<std::string>& rule_names,
-        const std::vector<std::vector<int64_t>>& rule_groups,
-        const std::vector<std::string>& invariant_names,
-        int64_t min_concurrency, int64_t max_concurrency) {
+        const TestCase& tc, const std::vector<RuleSpec>& rules,
+        const std::vector<InvariantSpec>& invariants, int64_t min_concurrency,
+        int64_t max_concurrency) {
         impl::DrawScope scope(tc);
 
         // The step budget is Settings::stateful_step_count, carried on the
@@ -1127,24 +1126,21 @@ namespace hegel::internal {
                                     tc.data()->stateful_step_count, &handle_),
             "hegel_new_state_machine");
         try {
-            // Every rule has the same weight, and every invariant is
-            // sampled at the engine's default probability; the public API
-            // exposes neither knob. The engine validates each rule's group
-            // list.
-            for (std::size_t i = 0; i < rule_names.size(); ++i) {
-                const std::string& name = rule_names[i];
-                const std::vector<int64_t>& groups = rule_groups[i];
-                scope.raise_for_rc(hegel_state_machine_add_rule(
-                                       scope.ctx, scope.tc, handle_,
-                                       hegel_string_t{name.data(), name.size()},
-                                       1.0, groups.data(), groups.size()),
-                                   "hegel_state_machine_add_rule");
+            // The engine validates each rule's weight and group list.
+            for (const RuleSpec& rule : rules) {
+                scope.raise_for_rc(
+                    hegel_state_machine_add_rule(
+                        scope.ctx, scope.tc, handle_,
+                        hegel_string_t{rule.name.data(), rule.name.size()},
+                        rule.weight, rule.groups.data(), rule.groups.size()),
+                    "hegel_state_machine_add_rule");
             }
-            for (const std::string& name : invariant_names) {
+            for (const InvariantSpec& invariant : invariants) {
                 scope.raise_for_rc(hegel_state_machine_add_invariant(
                                        scope.ctx, scope.tc, handle_,
-                                       hegel_string_t{name.data(), name.size()},
-                                       false),
+                                       hegel_string_t{invariant.name.data(),
+                                                      invariant.name.size()},
+                                       invariant.always_check),
                                    "hegel_state_machine_add_invariant");
             }
             scope.raise_for_rc(hegel_state_machine_start(
@@ -1165,7 +1161,8 @@ namespace hegel::internal {
         int64_t group_id;
 
         scope.raise_for_rc(hegel_state_machine_next_group(scope.ctx, scope.tc,
-                                                          handle_, &group_id),
+                                                          handle_, &group_id,
+                                                          &round_concurrency_),
                            "hegel_state_machine_next_group");
         return group_id;
     }

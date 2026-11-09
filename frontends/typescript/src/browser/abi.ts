@@ -171,7 +171,7 @@ export const signatures = {
   state_machine_add_rule: "IIIIDII",
   state_machine_add_invariant: "IIIII",
   state_machine_start: "IIII",
-  state_machine_next_group: "IIII",
+  state_machine_next_group: "IIIII",
   state_machine_next_rule: "IIILI",
   state_machine_rule_rejected: "IIIL",
   state_machine_should_check_invariant: "IIILI",

@@ -2877,11 +2877,12 @@ hegel_result_t hegel_pool_free(hegel_context_t *ctx, hegel_pool_t *pool);
  `hegel_state_machine_start`, which seals the declaration and draws the
  concurrency level. Only then may rounds be driven.
 
- The engine draws the machine's concurrency level — the number of workers
- (typically worker threads) that will pull rules — in `[min_concurrency,
- max_concurrency]` when the machine starts, and `hegel_state_machine_start`
- reports it; the caller must run exactly that many workers. The engine
- owns the distribution, which is weighted toward `max_concurrency`
+ The caller runs `max_concurrency` workers (typically worker threads),
+ as reported by `hegel_state_machine_start`. The engine draws the
+ machine's concurrency level — how many of those workers pull rules —
+ in `[min_concurrency, max_concurrency]` when the machine starts and may
+ redraw it between rounds; `hegel_state_machine_next_group` reports it.
+ The engine owns the distribution, which is weighted toward `max_concurrency`
  (concurrency bugs need concurrency) rather than shrink-biased toward the
  minimum. Pass `min_concurrency == max_concurrency` to fix the level
  without consuming entropy — `1, 1` for a sequential machine.
@@ -2977,8 +2978,10 @@ hegel_result_t hegel_state_machine_add_invariant(hegel_context_t *ctx,
 
 /*
  Seal a state machine's declared rules and invariants and draw its
- concurrency level, writing the level into `*out_concurrency`: the caller
- must run exactly that many workers, indexed `0 .. concurrency`. No rule
+ concurrency level, writing `max_concurrency` into `*out_concurrency`: the
+ caller must run exactly that many workers, indexed `0 .. concurrency`,
+ for the whole test case. `hegel_state_machine_next_group` reports how
+ many of them are active each round. No rule
  or invariant may be added afterwards, and no round may be driven
  before. Starting draws from the calling handle's stream: the
  concurrency level and each worker's swarm parameters are decided here,
@@ -3009,6 +3012,13 @@ hegel_result_t hegel_state_machine_start(hegel_context_t *ctx,
  rejects `HEGEL_STATE_MACHINE_DONE` as a group id so it stays
  unambiguous here.)
 
+ When a new round has begun, also writes the round's concurrency level
+ into `*out_concurrency`: that many workers, chosen by the engine, are
+ handed rules this round, and the rest get `HEGEL_STATE_MACHINE_DONE`
+ from `hegel_state_machine_next_rule`. Each round redraws, with
+ probability 1/50, the level, the active workers, every
+ worker's swarm parameters, and the test case's value distribution.
+
  Call this on the root test-case handle (the handle used for
  hegel_new_state_machine) at every join point — after each worker's
  `hegel_state_machine_next_rule` stream is exhausted — including before the
@@ -3025,7 +3035,8 @@ hegel_result_t hegel_state_machine_start(hegel_context_t *ctx,
 hegel_result_t hegel_state_machine_next_group(hegel_context_t *ctx,
                                               hegel_test_case_t *tc,
                                               hegel_state_machine_t *state_machine,
-                                              int64_t *out_group_id);
+                                              int64_t *out_group_id,
+                                              int64_t *out_concurrency);
 
 /*
  Draw the index of the next rule for worker `worker_index` to run this
@@ -3033,8 +3044,8 @@ hegel_result_t hegel_state_machine_next_group(hegel_context_t *ctx,
  is always a rule belonging to the current concurrency group (see
  `hegel_state_machine_next_group`). Swarm testing is applied per worker:
  a random subset of rules is enabled (at least one per group) on the
- worker's first selection and selection is restricted to that subset for
- the rest of the test case.
+ worker's first selection and selection is restricted to that subset
+ until the machine re-randomizes (see `hegel_state_machine_next_group`).
 
  `tc` may be any handle of the machine's test-case family: the machine's
  state is family-wide, and the handle only determines which choice
@@ -3046,8 +3057,9 @@ hegel_result_t hegel_state_machine_next_group(hegel_context_t *ctx,
  stays with whoever drives `hegel_state_machine_next_group`.
 
  `worker_index` identifies the calling worker and must satisfy
- `0 <= worker_index < concurrency` (the level `hegel_state_machine_start`
- drew and wrote to `*out_concurrency`);
+ `0 <= worker_index < concurrency` (the value `hegel_state_machine_start`
+ wrote to `*out_concurrency`). A worker left out of the round's active
+ set gets `HEGEL_STATE_MACHINE_DONE` without drawing anything;
  an index rather than the handle identifies the worker because a single
  OS thread could hold multiple test-case clones. Draws consult only
  per-worker and per-clone state, so draws on one worker don't affect

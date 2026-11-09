@@ -785,8 +785,8 @@ val state_machine_add_invariant
   -> unit
 
 (** [state_machine_start ctx tc ~state_machine] seals the declared rules and
-    invariants and returns the concurrency level the engine drew in
-    [[min_concurrency, max_concurrency]]. The engine owns rule selection.
+    invariants and returns [max_concurrency], the number of workers to run.
+    The engine owns rule selection.
     Raises {!Usage_error} if no rule was declared or the machine was already
     started, and {!Stop_test} when the engine's choice budget is exhausted. *)
 val state_machine_start
@@ -796,15 +796,15 @@ val state_machine_start
   -> int
 
 (** [state_machine_next_group ctx tc ~state_machine] starts the machine's next
-    round on the root handle, returning the round's concurrency group id, or
-    [None] ([HEGEL_STATE_MACHINE_DONE]) when the machine has terminated. Call it
-    before the first rule and after every round. Raises {!Stop_test} when the
-    engine's choice budget is exhausted. *)
+    round on the root handle, returning the round's concurrency group id and
+    concurrency level, or [None] ([HEGEL_STATE_MACHINE_DONE]) when the machine
+    has terminated. Call it before the first rule and after every round. Raises
+    {!Stop_test} when the engine's choice budget is exhausted. *)
 val state_machine_next_group
   :  context
   -> test_case
   -> state_machine:state_machine
-  -> int option
+  -> (int * int) option
 
 (** [state_machine_next_rule ctx tc ~state_machine ~worker_index] draws the
     index of the next rule for [worker_index] to run this round, in
