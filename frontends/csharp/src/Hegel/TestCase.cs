@@ -302,7 +302,7 @@ public sealed class TestCase
         StartSpan(generator.Label);
         try
         {
-            return generator.DoDraw(this);
+            return UserCode.Draw(generator, this);
         }
         finally
         {
@@ -321,7 +321,7 @@ public sealed class TestCase
         StartSpan(generator.Label);
         try
         {
-            return printable.DoDrawAndPrint(this, printer);
+            return UserCode.DrawAndPrint(printable, this, printer);
         }
         finally
         {
@@ -424,7 +424,7 @@ public sealed class TestCase
         if (_explicit != null)
         {
             Note("// Repetition #1");
-            body();
+            UserCode.Call(body);
             throw new LoopDone();
         }
         var id = _source.NewRepeat();
@@ -453,7 +453,7 @@ public sealed class TestCase
         SwapSource(block);
         try
         {
-            body();
+            UserCode.Call(body);
             return;
         }
         catch (Exception e)
@@ -579,7 +579,7 @@ public sealed class TestCase
         StartSpan(label);
         try
         {
-            return body();
+            return UserCode.Call(body);
         }
         finally
         {

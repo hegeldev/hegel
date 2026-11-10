@@ -20,7 +20,7 @@ public abstract class ValueGenerator<T> : PrintableGenerator<T>
     /// <inheritdoc />
     protected internal sealed override T DoDrawAndPrint(TestCase tc, Printer printer)
     {
-        var value = DoDraw(tc);
+        var value = UserCode.Draw(this, tc);
         printer.Repr(value, typeof(T));
         return value;
     }

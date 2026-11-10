@@ -61,7 +61,7 @@ internal static class PoolDraws
                 {
                     var variableId = Draw(tc, poolId);
                     rejected.Add(variableId);
-                    if (predicate(values[variableId]))
+                    if (UserCode.Call(predicate, values[variableId]))
                     {
                         discard = false;
                         rejected.Remove(variableId);

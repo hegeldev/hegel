@@ -73,7 +73,8 @@ type ListGen<'T> internal (element: Generator<'T>, minSize: int, maxSize: uint64
 
     /// No two elements with equal keys.
     member _.UniqueBy(key: 'T -> 'Key) =
-        ListGen<'T>(element, int minSize, maxSize, Some(fun value -> box (key value)))
+        let key = UserFunction.toFunc key
+        ListGen<'T>(element, int minSize, maxSize, Some(fun value -> box (UserCode.Call(key, value))))
 
     override _.Label = label.Get(fun () -> Label.Combine(Label.List, element.Label))
 
@@ -104,7 +105,8 @@ type ArrayGen<'T> internal (element: Generator<'T>, minSize: int, maxSize: uint6
 
     /// No two elements with equal keys.
     member _.UniqueBy(key: 'T -> 'Key) =
-        ArrayGen<'T>(element, int minSize, maxSize, Some(fun value -> box (key value)))
+        let key = UserFunction.toFunc key
+        ArrayGen<'T>(element, int minSize, maxSize, Some(fun value -> box (UserCode.Call(key, value))))
 
     override _.Label = label.Get(fun () -> Label.Combine(Label.Array, element.Label))
 

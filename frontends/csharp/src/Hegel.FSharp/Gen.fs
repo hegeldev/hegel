@@ -21,15 +21,15 @@ module Gen =
         Generators.OneOf(Array.ofSeq generators)
 
     /// The values of <paramref name="generator"/> transformed by <paramref name="f"/>.
-    let map (f: 'T -> 'U) (generator: Generator<'T>) : Generator<'U> = generator.Map(Func<'T, 'U> f)
+    let map (f: 'T -> 'U) (generator: Generator<'T>) : Generator<'U> = generator.Map(UserFunction.toFunc f)
 
     /// The values of <paramref name="generator"/> that <paramref name="predicate"/> accepts.
     let filter (predicate: 'T -> bool) (generator: Generator<'T>) : Generator<'T> =
-        generator.Filter(Func<'T, bool> predicate)
+        generator.Filter(UserFunction.toFunc predicate)
 
     /// A value of <paramref name="generator"/>, then one of the generator <paramref name="f"/> gives for it.
     let bind (f: 'T -> Generator<'U>) (generator: Generator<'T>) : Generator<'U> =
-        generator.FlatMap(Func<'T, Generator<'U>> f)
+        generator.FlatMap(UserFunction.toFunc f)
 
     /// Options: <c>None</c> or <c>Some</c> of a value of <paramref name="generator"/>.
     let option (generator: Generator<'T>) : OptionGen<'T> = OptionGen<'T>(generator)
@@ -90,20 +90,22 @@ module Gen =
 
     /// <paramref name="f"/> applied to a value from each generator.
     let map2 (f: 'A -> 'B -> 'T) (a: Generator<'A>) (b: Generator<'B>) : Generator<'T> =
-        tuple2 a b |> map (fun (x, y) -> f x y)
+        let f = UserFunction.toFunc2 f
+        tuple2 a b |> map (fun (x, y) -> UserCode.Call(f, x, y))
 
     /// <paramref name="f"/> applied to a value from each generator.
     let map3 (f: 'A -> 'B -> 'C -> 'T) (a: Generator<'A>) (b: Generator<'B>) (c: Generator<'C>) : Generator<'T> =
-        tuple3 a b c |> map (fun (x, y, z) -> f x y z)
+        let f = UserFunction.toFunc3 f
+        tuple3 a b c |> map (fun (x, y, z) -> UserCode.Call(f, x, y, z))
 
     /// A generator written as a function of the test case, drawing what it needs; its value is printed.
     let composite (body: TestCase -> 'T) : Generator<'T> =
-        Generators.Composite(Func<TestCase, 'T> body)
+        Generators.Composite(UserFunction.toFunc body)
 
     /// Recursive values: <paramref name="baseCase"/>, extended by <paramref name="extend"/> a bounded
     /// number of times; <c>.MaxDepth</c> and <c>.MaxLeaves</c> set the bounds.
     let recursive (baseCase: Generator<'T>) (extend: Generator<'T> -> Generator<'T>) : RecursiveGenerator<'T> =
-        Generators.Recursive(baseCase, Func<Generator<'T>, Generator<'T>> extend)
+        Generators.Recursive(baseCase, UserFunction.toFunc extend)
 
     /// A generator set later with <c>.Set</c>, for one that refers to itself.
     let deferred () : Deferred<'T> = Generators.Deferred<'T>()

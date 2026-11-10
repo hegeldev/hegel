@@ -111,7 +111,7 @@ internal static class Runner
         Exception? failure = null;
         try
         {
-            body(testCase);
+            UserCode.Call(body, testCase);
         }
         catch (HegelUsageException)
         {
@@ -339,7 +339,7 @@ internal static class Runner
         Exception? interesting = null;
         try
         {
-            body(testCase);
+            UserCode.Call(body, testCase);
             outcome = CaseOutcome.Valid;
         }
         catch (LoopDone)

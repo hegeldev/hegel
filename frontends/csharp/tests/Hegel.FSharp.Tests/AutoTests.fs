@@ -247,7 +247,9 @@ let ``recursion through a tuple inside a list`` () =
             let tagged = tc.Draw(Gen.auto<Tagged>, "t")
             tc.Assume(not tagged.Pairs.IsEmpty))
 
-    let transcript = String.concat "\n" deeper.Output
+    let transcript =
+        Text.RegularExpressions.Regex.Replace(String.concat " " deeper.Output, @"\s+", " ")
+
     Assert.StartsWith("let t_1 = { Tags = set [", transcript)
     Assert.Contains("Pairs = [(", transcript)
     Assert.Contains(", { Tags = set [", transcript)

@@ -183,10 +183,16 @@ public class TestCaseTests
             base.TestCaseFree(testCase);
         }
 
+        public override int RepeatMore(nint testCase, nint repeat, out bool more)
+        {
+            more = true;
+            return Abi.Ok;
+        }
+
         public override int RepeatFailed(nint testCase, nint repeat)
         {
             RepeatFailures++;
-            return base.RepeatFailed(testCase, repeat);
+            return Abi.Ok;
         }
 
         public override int GenerateInteger(nint testCase, long min, long max, out long value)

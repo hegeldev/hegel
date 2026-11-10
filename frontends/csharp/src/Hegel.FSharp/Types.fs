@@ -1,5 +1,27 @@
 namespace Hegel.FSharp
 
+open System
+
+/// Delegates over the functions this library is given, each bound to the function itself. Hegel
+/// calls them through <c>UserCode</c>, which the JIT never optimises, so no frame of this library
+/// lies between that call and the function: were the function inlined into one, it would vanish
+/// from the stack trace and a failure's origin would change part-way through a run.
+module internal UserFunction =
+    let toFunc (f: 'A -> 'R) : Func<'A, 'R> =
+        Delegate.CreateDelegate(typeof<Func<'A, 'R>>, f, "Invoke") :?> Func<'A, 'R>
+
+    let toFunc2 (f: 'A -> 'B -> 'R) : Func<'A, 'B, 'R> =
+        Delegate.CreateDelegate(typeof<Func<'A, 'B, 'R>>, OptimizedClosures.FSharpFunc<_, _, _>.Adapt f, "Invoke")
+        :?> Func<'A, 'B, 'R>
+
+    let toFunc3 (f: 'A -> 'B -> 'C -> 'R) : Func<'A, 'B, 'C, 'R> =
+        Delegate.CreateDelegate(
+            typeof<Func<'A, 'B, 'C, 'R>>,
+            OptimizedClosures.FSharpFunc<_, _, _, _>.Adapt f,
+            "Invoke"
+        )
+        :?> Func<'A, 'B, 'C, 'R>
+
 type Property = Hegel.Property
 type TestCase = Hegel.TestCase
 type Settings = Hegel.Settings

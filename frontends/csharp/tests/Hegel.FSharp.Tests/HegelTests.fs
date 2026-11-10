@@ -140,3 +140,17 @@ let ``explicit examples supply F# values`` () =
     let failure = Seq.exactlyOne report.Failures
     Assert.Equal("let x_1 = [1; 2]", String.concat "\n" failure.Output)
     Assert.Equal<obj>(box [ 1; 2 ], failure.Draws["x_1"])
+
+[<Fact>]
+let ``the functions it is given are called with no frame of its own between`` () =
+    let one = fun (x: int) -> x + 1
+    let two = fun (x: int) (y: int) -> x + y
+    let three = fun (x: int) (y: int) (z: int) -> x + y + z
+    let curried = fun (x: int) -> fun (y: int) -> x - y
+    Assert.Same(one, (UserFunction.toFunc one).Target)
+    Assert.Same(two, (UserFunction.toFunc2 two).Target)
+    Assert.Same(three, (UserFunction.toFunc3 three).Target)
+    Assert.Equal(2, (UserFunction.toFunc one).Invoke 1)
+    Assert.Equal(3, (UserFunction.toFunc2 two).Invoke(1, 2))
+    Assert.Equal(6, (UserFunction.toFunc3 three).Invoke(1, 2, 3))
+    Assert.Equal(1, (UserFunction.toFunc2 curried).Invoke(3, 2))

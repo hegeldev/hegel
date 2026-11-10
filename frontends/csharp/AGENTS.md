@@ -198,6 +198,16 @@ There is no engine version pin to keep in step in this directory.
 - **Never mock the engine for behaviour.** The behaviour suite runs against
   the real libhegel; fakes exist only for the result-code and error paths
   the engine cannot be driven into.
+- **Call code the library was given through `UserCode`.** A failure's
+  origin is its innermost non-infrastructure frame, and the tiering JIT
+  inlines a delegate's or virtual call's target into its caller once it is
+  hot, which drops that frame and changes the origin mid-run (the engine
+  then sees a second failure and stops shrinking the first). `UserCode`'s
+  methods are `NoOptimization | NoInlining`, so nothing is inlined into
+  them: every test body, callback (`Map`, `Filter`, `Repeat`, ...) and
+  `DoDraw` is called through one. The F# compiler ignores `NoOptimization`,
+  so `Hegel.FSharp` binds a delegate straight to each function it is given
+  (`UserFunction.toFunc`) and passes that to the C# side.
 - **Engine divergences are fixed in the engine.** When libhegel misbehaves,
   fix it in `../../libhegel` (with a `libhegel/RELEASE/<slug>.md`) in the same PR
   rather than working around it in the bindings.

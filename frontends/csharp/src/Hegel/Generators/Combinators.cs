@@ -19,7 +19,7 @@ public sealed class MappedGenerator<TSource, TResult> : ValueGenerator<TResult>
     public override ulong Label => _label.Get(() => Hegel.Label.Combine(Hegel.Label.Mapped, _source.Label));
 
     /// <inheritdoc />
-    protected internal override TResult DoDraw(TestCase tc) => _f(tc.DrawSilent(_source));
+    protected internal override TResult DoDraw(TestCase tc) => UserCode.Call(_f, tc.DrawSilent(_source));
 
     /// <summary>
     /// This generator, printing each value as a call of <paramref name="function"/> on the source's
@@ -58,7 +58,7 @@ public sealed class MappedGenerator<TSource, TResult> : ValueGenerator<TResult>
             printer.BeginGroup(_open);
             var input = tc.DrawAndPrint(_outer._source, printer);
             printer.EndGroup(")");
-            return _outer._f(input);
+            return UserCode.Call(_outer._f, input);
         }
     }
 }
@@ -100,7 +100,7 @@ public sealed class FilteredGenerator<T> : PrintableGenerator<T>
             try
             {
                 var value = Components.Draw(tc, _source, printer);
-                if (_predicate(value))
+                if (UserCode.Call(_predicate, value))
                 {
                     discard = false;
                     speculation.Commit();
@@ -146,7 +146,7 @@ public sealed class FlatMappedGenerator<TSource, TResult> : PrintableGenerator<T
     /// <inheritdoc />
     protected internal override TResult DoDrawAndPrint(TestCase tc, Printer printer) => Draw(tc, printer);
 
-    private TResult Draw(TestCase tc, Printer? printer) => Components.Draw(tc, _f(tc.DrawSilent(_source)), printer);
+    private TResult Draw(TestCase tc, Printer? printer) => Components.Draw(tc, UserCode.Call(_f, tc.DrawSilent(_source)), printer);
 }
 
 /// <summary>A generator printing another's values with a function of your own.</summary>
@@ -170,10 +170,10 @@ public sealed class PrintedGenerator<T> : PrintableGenerator<T>
     /// <inheritdoc />
     protected internal override T DoDrawAndPrint(TestCase tc, Printer printer)
     {
-        var value = _source.DoDraw(tc);
+        var value = UserCode.Draw(_source, tc);
         if (printer.ShouldPrint)
         {
-            _print(value, printer);
+            UserCode.Call(_print, value, printer);
         }
         return value;
     }
@@ -221,7 +221,7 @@ internal sealed class CompositeGenerator<T> : ValueGenerator<T>
 
     public override ulong Label => Hegel.Label.Composite;
 
-    protected internal override T DoDraw(TestCase tc) => _body(tc);
+    protected internal override T DoDraw(TestCase tc) => UserCode.Call(_body, tc);
 }
 
 internal sealed class PrintingCompositeGenerator<T> : PrintableGenerator<T>
@@ -235,7 +235,7 @@ internal sealed class PrintingCompositeGenerator<T> : PrintableGenerator<T>
 
     public override ulong Label => Hegel.Label.Composite;
 
-    protected internal override T DoDrawAndPrint(TestCase tc, Printer printer) => _body(tc, printer);
+    protected internal override T DoDrawAndPrint(TestCase tc, Printer printer) => UserCode.Call(_body, tc, printer);
 }
 
 internal sealed class ConstantGenerator<T> : ValueGenerator<T>
@@ -601,7 +601,7 @@ public sealed class ListGenerator<T> : PrintableGenerator<List<T>>
                     p.Separator();
                 }
                 var value = Components.Draw(tc, _element, printer);
-                if (_uniqueKey != null && !keys.Add(new ContentKey(_uniqueKey(value))))
+                if (_uniqueKey != null && !keys.Add(new ContentKey(UserCode.Call(_uniqueKey, value))))
                 {
                     speculation.Abort();
                     tc.CollectionReject(id, "duplicate element");
@@ -889,7 +889,7 @@ public sealed class RecursiveGenerator<T> : PrintableGenerator<T>
     {
         if (tc.RecursionBranch(recursion, depth))
         {
-            return Components.Draw(tc, _extend(new Subtrees(this, recursion, depth + 1)), printer);
+            return Components.Draw(tc, UserCode.Call(_extend, new Subtrees(this, recursion, depth + 1)), printer);
         }
         if (!tc.RecursionLeaf(recursion))
         {

@@ -772,4 +772,13 @@ public class RunnerTests
         Property.Run(tc => seen.Add(tc.Draw(Generators.Integers(), "x")), Short with { Examples = [Example.Of().With("x", 44)], Phases = Phase.Explicit }, Reporter.Silent);
         Assert.Equal([44], seen);
     }
+
+    [Fact]
+    public void CallsIntoTheCodeItIsGivenAreNeverOptimised()
+    {
+        var methods = typeof(UserCode).GetMethods(BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
+        var unoptimised = MethodImplAttributes.NoOptimization | MethodImplAttributes.NoInlining;
+        Assert.Equal(9, methods.Length);
+        Assert.All(methods, m => Assert.Equal(unoptimised, m.MethodImplementationFlags & unoptimised));
+    }
 }

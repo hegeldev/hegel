@@ -32,7 +32,8 @@ type Hegel =
             throwFailure: bool
         ) =
         use _dialect = Dialect.Use Repr.dialect
-        let body = Action<TestCase> body
+        let body = UserFunction.toFunc body
+        let body = Action<TestCase>(fun tc -> UserCode.Call(body, tc))
 
         if throwFailure then
             Property.Test(body, settings, reporter, file, line, name)
