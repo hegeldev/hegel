@@ -5,8 +5,32 @@
 #include <hegel/hegel.h>
 #include <iostream>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace gs = hegel::generators;
+
+struct Point {
+    int x;
+    int y;
+};
+
+class PointGenerator : public gs::IPrintableGenerator<Point> {
+  public:
+    Point do_draw_and_print(const hegel::TestCase& tc,
+                            hegel::Printer& p) const override {
+        p.begin_group(6, "Point(");
+        int x = tc.draw_and_print(coordinate_, p);
+        p.separator();
+        int y = tc.draw_and_print(coordinate_, p);
+        p.end_group(")");
+        return {x, y};
+    }
+
+  private:
+    gs::Generator<int> coordinate_ =
+        gs::integers<int>({.min_value = 0, .max_value = 9});
+};
 
 int main() {
     hegel::test(
@@ -27,6 +51,18 @@ int main() {
                             .map([](int x) { return x * x; }));
             auto named = tc.draw("named", gs::integers<int>());
             auto flag = tc.draw("flag", gs::booleans());
+            auto id = tc.draw(
+                gs::integers<int>().print_with([](int v, hegel::Printer& p) {
+                    p.text("Id(" + std::to_string(v) + ")");
+                }));
+            auto point = tc.draw(gs::make_generator<PointGenerator>());
+            auto quiet = tc.draw_silent(gs::integers<int>());
+            hegel::Document document(20);
+            document.printer().seq("{", "}", std::vector<int>{id, quiet},
+                                   [](hegel::Printer& p, int n) { p.repr(n); });
+            std::string printed = std::move(document).finish();
+            (void)point;
+            (void)printed;
             (void)named;
             (void)flag;
             (void)f;

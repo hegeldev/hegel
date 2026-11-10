@@ -387,6 +387,13 @@ impl<'a> Engine<'a> {
             }
         }
 
+        if self.runs_unrecorded() {
+            log_phase("Generate", "Start");
+            let result = self.run_unrecorded().await;
+            log_phase("Generate", "End");
+            return result;
+        }
+
         let mut target_schedule = crate::native::targeting::TargetingSchedule::new(max_test_cases);
         let target_phase = settings.phases.contains(&Phase::Target);
         let invalid_budget = invalid_thresholds(INVALID_TARGET_RATE, INVALID_TARGET_CONFIDENCE);
@@ -868,6 +875,65 @@ impl<'a> Engine<'a> {
         }
 
         Ok(self.build_report()?)
+    }
+
+    /// Whether the run's test case is generated unrecorded (see
+    /// [`NativeTestCase::new_unrecorded`]): a run of a single generated
+    /// test case inside Antithesis with no database to save a failure to.
+    /// That is a workload binary, whose one test case may run for hours
+    /// and draw without limit, where recording every choice costs memory
+    /// without bound. Antithesis reproduces such a failure itself, so the
+    /// run reports the failure as it happened instead of shrinking and
+    /// replaying it.
+    fn runs_unrecorded(&self) -> bool {
+        self.settings.in_antithesis
+            && self.settings.test_cases == 1
+            && self.settings.phases.contains(&Phase::Generate)
+            && (self.db().is_none() || self.database_key.is_none())
+    }
+
+    /// The whole of a run that [`Self::runs_unrecorded`]: generate the one
+    /// test case and report its outcome. A failure is reported from that
+    /// execution alone, with no reproduce blob, as there are no recorded
+    /// choices to shrink, replay or encode; the case is not stamped for
+    /// capture either, as the client would then buffer every value it
+    /// draws.
+    async fn run_unrecorded(&mut self) -> Result<TestRunResult, RunError> {
+        let mut rng = self.rng.spawn();
+        let params = crate::native::core::GenerationParameters::draw(&mut rng)?;
+        let ntc = NativeTestCase::new_unrecorded(rng, params, self.choice_bound());
+        let run = self.execute(ntc).await?;
+        if matches!(run.status, Status::Valid | Status::Interesting) {
+            self.statistics.record_case(&run.events);
+        }
+        if self.settings.show_statistics {
+            for line in self.statistics.render() {
+                self.settings.output.line(&line);
+            }
+        }
+        let (rejected, overran) = match run.status {
+            Status::Valid => {
+                return Ok(TestRunResult {
+                    failures: Vec::new(),
+                });
+            }
+            Status::Interesting => {
+                return Ok(TestRunResult {
+                    failures: Vec::from([Failure {
+                        origin: run.origin.unwrap_or_default(),
+                        reproduce_blob: None,
+                        caveat: None,
+                    }]),
+                });
+            }
+            Status::Invalid => (1, 0),
+            Status::EarlyStop => (0, 1),
+        };
+        Err(RunError::Unsatisfiable(format!(
+            "Unsatisfiable: unable to satisfy the test's assumptions. No valid \
+             input was generated: {rejected} inputs were rejected by assume() or a filter \
+             and {overran} overran the choice limit."
+        )))
     }
 
     /// The live origins with their incumbents' serialized choices: what a

@@ -1066,37 +1066,43 @@ fn grammar_mutation_leaves_what_it_cannot_grow_alone() {
 
 /// A recursive value's span and its first sub-value's span share a label
 /// and a start; whichever the probe picks as the donor, the proposal must
-/// splice without reaching outside the choice sequence.
+/// splice without reaching outside the choice sequence. Which span the probe
+/// takes first is the RNG's call, so the test runs under enough seeds for
+/// both orders (the outer span nesting the inner, and the inner span with no
+/// choices between its end and the outer's start) to come up.
 #[test]
 fn span_mutation_handles_same_label_spans_sharing_a_start() {
-    with_counting_ctx(
-        |ds| {
-            for _ in 0..3 {
-                if rbool(ds).is_err() {
-                    return TestCaseResult::Overrun;
+    for seed in 0..10u64 {
+        with_counting_ctx_under(
+            Settings::new().database(None).seed(Some(seed)),
+            |ds| {
+                for _ in 0..3 {
+                    if rbool(ds).is_err() {
+                        return TestCaseResult::Overrun;
+                    }
                 }
-            }
-            TestCaseResult::Valid
-        },
-        async |ctx, count| {
-            let nodes = vec![bool_node(false), bool_node(true), bool_node(false)];
-            let span = |start, end| Span {
-                start,
-                end,
-                label: 1,
-                depth: 0,
-                parent: None,
-                discarded: false,
-            };
-            let spans = vec![span(0, 3), span(0, 1)];
+                TestCaseResult::Valid
+            },
+            async |ctx, count| {
+                let nodes = vec![bool_node(false), bool_node(true), bool_node(false)];
+                let span = |start, end| Span {
+                    start,
+                    end,
+                    label: 1,
+                    depth: 0,
+                    parent: None,
+                    discarded: false,
+                };
+                let spans = vec![span(0, 3), span(0, 1)];
 
-            ctx.try_span_mutation(&nodes, &spans).await.unwrap();
+                ctx.try_span_mutation(&nodes, &spans).await.unwrap();
 
-            assert!(count.get() >= 1);
-            assert_eq!(ctx.calls as usize, count.get());
-            assert!(!ctx.origins.any_live());
-        },
-    );
+                assert!(count.get() >= 1, "seed {seed}");
+                assert_eq!(ctx.calls as usize, count.get(), "seed {seed}");
+                assert!(!ctx.origins.any_live(), "seed {seed}");
+            },
+        );
+    }
 }
 
 /// Two same-label spans whose first draws are of different kinds come from
@@ -1839,6 +1845,199 @@ fn run_main_with_urandom_backend_finds_counterexample() {
         "{:?}",
         result.failures
     );
+}
+
+/// The settings of a run whose one test case is generated unrecorded.
+fn unrecorded_settings() -> Settings {
+    Settings::base(true).test_cases(1).database(None)
+}
+
+/// Run `body` as the one test case of a run under `settings`, returning
+/// the run's result and how many times the body executed.
+fn single_case_run(
+    settings: &Settings,
+    key: Option<&str>,
+    mut body: impl FnMut(&dyn DataSource) -> TestCaseResult,
+) -> (
+    Result<crate::backend::TestRunResult, crate::backend::RunError>,
+    usize,
+) {
+    let mut execs = 0;
+    let result = run_main_sync(
+        settings,
+        key,
+        |ds| {
+            execs += 1;
+            let result = body(&*ds);
+            ds.mark_complete(&result);
+        },
+        Duration::from_secs(30),
+        Duration::from_secs(300),
+    );
+    (result, execs)
+}
+
+/// A single test case inside Antithesis with no database is run
+/// once and its failure reported as it happened: nothing was recorded to
+/// shrink, replay or encode as a blob.
+#[test]
+fn a_failing_unrecorded_run_reports_its_one_execution_without_a_blob() {
+    let (result, execs) = single_case_run(&unrecorded_settings(), None, |ds| {
+        for _ in 0..100 {
+            rint(ds, I32_MIN, I32_MAX).unwrap();
+        }
+        boom("unrecorded")
+    });
+    assert_eq!(execs, 1);
+    let failures = result.unwrap().failures;
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0].origin, "Panic: unrecorded");
+    assert_eq!(failures[0].reproduce_blob, None);
+    assert_eq!(failures[0].caveat, None);
+}
+
+#[test]
+fn a_passing_unrecorded_run_executes_once() {
+    let (result, execs) = single_case_run(&unrecorded_settings(), None, |ds| {
+        rbool(ds).unwrap();
+        TestCaseResult::Valid
+    });
+    assert_eq!(execs, 1);
+    assert!(result.unwrap().failures.is_empty());
+}
+
+/// A recorded run of one failing test case replays it, which is what an
+/// unrecorded run goes without: with a database to save the failure to,
+/// the same settings record.
+#[test]
+fn a_single_antithesis_case_with_a_database_is_recorded() {
+    let dir = tempfile::tempdir().unwrap();
+    let settings = unrecorded_settings().database(Some(dir.path().to_str().unwrap().to_string()));
+    let (result, execs) = single_case_run(&settings, Some("key"), |_| boom("recorded"));
+    assert!(execs > 1, "{execs}");
+    assert!(result.unwrap().failures[0].reproduce_blob.is_some());
+}
+
+/// A database with no key to save under saves nothing, so the run is
+/// unrecorded all the same.
+#[test]
+fn a_single_antithesis_case_with_a_keyless_database_is_unrecorded() {
+    let dir = tempfile::tempdir().unwrap();
+    let settings = unrecorded_settings().database(Some(dir.path().to_str().unwrap().to_string()));
+    let (result, execs) = single_case_run(&settings, None, |_| boom("keyless"));
+    assert_eq!(execs, 1);
+    assert_eq!(result.unwrap().failures[0].reproduce_blob, None);
+}
+
+#[test]
+fn a_single_case_outside_antithesis_is_recorded() {
+    let settings = Settings::base(false).test_cases(1).database(None);
+    let (result, execs) = single_case_run(&settings, None, |_| boom("outside"));
+    assert!(execs > 1, "{execs}");
+    assert!(result.unwrap().failures[0].reproduce_blob.is_some());
+}
+
+#[test]
+fn several_cases_inside_antithesis_are_recorded() {
+    let settings = Settings::base(true).test_cases(2).database(None);
+    let (result, execs) = single_case_run(&settings, None, |_| boom("several"));
+    assert!(execs > 1, "{execs}");
+    assert!(result.unwrap().failures[0].reproduce_blob.is_some());
+}
+
+#[test]
+fn an_antithesis_run_without_the_generate_phase_runs_nothing() {
+    let settings = unrecorded_settings().phases([Phase::Shrink]);
+    let (result, execs) = single_case_run(&settings, None, |_| boom("never runs"));
+    assert_eq!(execs, 0);
+    assert!(result.unwrap().failures.is_empty());
+}
+
+#[test]
+fn a_rejected_unrecorded_run_is_unsatisfiable() {
+    let (result, execs) =
+        single_case_run(&unrecorded_settings(), None, |_| TestCaseResult::Invalid);
+    assert_eq!(execs, 1);
+    match result {
+        Err(RunError::Unsatisfiable(msg)) => assert!(
+            msg.contains("1 inputs were rejected by assume() or a filter and 0 overran"),
+            "{msg}"
+        ),
+        other => panic!("expected Unsatisfiable, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_overrun_unrecorded_run_is_unsatisfiable() {
+    let (result, execs) =
+        single_case_run(&unrecorded_settings(), None, |_| TestCaseResult::Overrun);
+    assert_eq!(execs, 1);
+    match result {
+        Err(RunError::Unsatisfiable(msg)) => {
+            assert!(msg.contains("1 overran the choice limit"), "{msg}")
+        }
+        other => panic!("expected Unsatisfiable, got {other:?}"),
+    }
+}
+
+/// An unrecorded test case still stops at the choice bound, which the
+/// family's draw budget enforces without a recorded sequence to measure.
+#[test]
+fn an_unrecorded_run_past_the_choice_bound_is_unsatisfiable() {
+    let mut draws = 0usize;
+    let (result, execs) = single_case_run(&unrecorded_settings(), None, |ds| {
+        loop {
+            if rbool(ds).is_err() {
+                return TestCaseResult::Overrun;
+            }
+            draws += 1;
+        }
+    });
+    assert_eq!(execs, 1);
+    assert_eq!(draws, BUFFER_SIZE);
+    assert!(matches!(result, Err(RunError::Unsatisfiable(_))));
+}
+
+/// With the choice bound lifted, an unrecorded test case draws past it.
+#[test]
+fn an_unrecorded_run_with_unbounded_choices_draws_past_the_choice_bound() {
+    let settings = unrecorded_settings().unbounded_choices(true);
+    let (result, execs) = single_case_run(&settings, None, |ds| {
+        for _ in 0..BUFFER_SIZE + 10 {
+            rbool(ds).unwrap();
+        }
+        TestCaseResult::Valid
+    });
+    assert_eq!(execs, 1);
+    assert!(result.unwrap().failures.is_empty());
+}
+
+#[test]
+fn an_unrecorded_run_announces_its_phase_and_shows_statistics() {
+    let lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let sink = std::sync::Arc::clone(&lines);
+    let settings = unrecorded_settings()
+        .verbosity(Verbosity::Verbose)
+        .show_statistics(true)
+        .output(Output::callback(move |line| {
+            sink.lock().unwrap().push(line.to_string());
+        }));
+    let (result, _) = single_case_run(&settings, None, |ds| {
+        ds.event_observation("seen", None).unwrap();
+        TestCaseResult::Valid
+    });
+    assert!(result.unwrap().failures.is_empty());
+    let lines = lines.lock().unwrap();
+    let start = lines
+        .iter()
+        .position(|l| l == "Starting phase: Generate")
+        .unwrap();
+    assert_eq!(lines[start + 1], "Running test case", "{lines:?}");
+    assert!(
+        lines.iter().any(|l| l == "Ending phase: Generate"),
+        "{lines:?}"
+    );
+    assert!(lines.iter().any(|l| l.contains("seen")), "{lines:?}");
 }
 
 #[test]

@@ -11,6 +11,6 @@ _coverage/
 *.o
 *.a
 # Prebuilt libhegel binaries are bundled into the opam release tarball by CI
-# (the release-ocaml job in ../../.github/workflows/ci.yml); they must never
+# (the archive job in ../../.github/workflows/ocaml-release.yml); they must never
 # be committed.
 /prebuilt/

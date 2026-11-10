@@ -605,6 +605,16 @@ struct CapturedReport {
     payload: Box<dyn std::any::Any + Send>,
 }
 
+/// The diagnostic of a failure whose only capture is a bare one: the
+/// engine reported it from a case it never stamped for capture, as it does
+/// for a run it does not record (a single test case inside Antithesis with
+/// no database), whose failure is never replayed. It holds what such
+/// a case keeps, the panic's site (its origin) and its message, and no
+/// backtrace.
+fn bare_diagnostic(origin: &str, payload: &Box<dyn std::any::Any + Send>) -> String {
+    format!("{origin}:\n{}\n", panic_message(payload))
+}
+
 fn capture_rank(diagnostic: &Option<String>, lines: &[String]) -> u8 {
     match (diagnostic.is_some(), !lines.is_empty()) {
         (true, _) => 2,
@@ -798,9 +808,12 @@ fn drive_run<F: FnMut(TestCase)>(
         RunStatus::HEGEL_RUN_STATUS_FAILED => Ok((0..result.failure_count())
             .map(|index| {
                 let failure = result.failure(index);
-                let report = captured
+                let mut report = captured
                     .remove(&failure.origin)
                     .unwrap_or_else(|| hegel_internal_error!("failure {index} has no capture"));
+                if report.diagnostic.is_none() && !quiet {
+                    report.diagnostic = Some(bare_diagnostic(&failure.origin, &report.payload));
+                }
                 ReportedFailure {
                     origin: failure.origin,
                     report,
