@@ -512,7 +512,7 @@ fn span_specs_validate_their_arguments_and_draw() {
         );
         assert_eq!(
             last_error(ctx),
-            "hegel_span_spec_set_unit_bounds: min_value <= max_value is required for Years, \
+            "hegel_span_spec_set_unit_bounds: min_value <= max_value is required for years, \
              got [1, 0]"
         );
         assert_eq!(hegel_span_spec_set_sign(ctx, spec, 3), HEGEL_E_INVALID_ARG);
@@ -560,7 +560,7 @@ fn span_specs_validate_their_arguments_and_draw() {
         assert!(
             last_error(ctx).contains(
                 "hegel_span_spec_validate: a span draw under the nonnegative sign policy \
-                 requires min >= 0 for Years"
+                 requires min >= 0 for years, got -3"
             ),
             "{}",
             last_error(ctx)
@@ -1004,14 +1004,17 @@ fn validate_functions_accept_and_reject_what_their_draws_do() {
                 date(2024, 1, 2),
                 date(2024, 1, 1),
                 none,
-                Some("generate_date requires min_value <= max_value"),
+                Some("generate_date requires min_value <= max_value, got [2024-01-02, 2024-01-01]"),
             ),
             (
                 "no allowed day",
                 monday,
                 monday,
                 sundays.cast_const(),
-                Some("generate_date: no date in"),
+                Some(
+                    "generate_date: no date in [2024-01-01, 2024-01-01] falls on an allowed \
+                     weekday and month (weekdays Sun; any month)",
+                ),
             ),
         ];
         let midnight = time(0, 0, 0, 0);

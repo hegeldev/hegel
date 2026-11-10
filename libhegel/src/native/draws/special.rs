@@ -12,8 +12,10 @@
 //! shrink origin on a tie, so the masks never reject a test case.
 
 use alloc::format;
+use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
+use core::fmt;
 use core::net::{Ipv4Addr, Ipv6Addr};
 
 use crate::control::{InternalError, hegel_internal_assert, hegel_internal_unwrap};
@@ -79,6 +81,21 @@ impl Precision {
     }
 }
 
+impl fmt::Display for Precision {
+    /// The unit's name as an error message spells it: `seconds`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        const NAMES: [&str; 6] = [
+            "nanoseconds",
+            "microseconds",
+            "milliseconds",
+            "seconds",
+            "minutes",
+            "hours",
+        ];
+        f.write_str(NAMES[*self as usize])
+    }
+}
+
 /// Which weekdays and months a date draw may land on, each a bit set
 /// with bit 0 for Monday or January.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -100,6 +117,41 @@ impl Default for DateOptions {
             weekdays: ALL_WEEKDAYS,
             months: ALL_MONTHS,
         }
+    }
+}
+
+/// The names of `names` whose bits `mask` has set, bit 0 for the first,
+/// separated by commas.
+fn names_in(mask: u32, names: &[&str]) -> String {
+    let named: Vec<&str> = names
+        .iter()
+        .enumerate()
+        .filter(|(bit, _)| mask & (1 << bit) != 0)
+        .map(|(_, name)| *name)
+        .collect();
+    named.join(", ")
+}
+
+impl fmt::Display for DateOptions {
+    /// The masks as an error message spells them: `weekdays Sat, Sun;
+    /// months Mar`, with `any weekday` or `any month` for a mask that
+    /// allows them all.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        const WEEKDAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+        const MONTHS: [&str; 12] = [
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        ];
+        let weekdays = if self.weekdays == ALL_WEEKDAYS {
+            String::from("any weekday")
+        } else {
+            format!("weekdays {}", names_in(u32::from(self.weekdays), &WEEKDAYS))
+        };
+        let months = if self.months == ALL_MONTHS {
+            String::from("any month")
+        } else {
+            format!("months {}", names_in(u32::from(self.months), &MONTHS))
+        };
+        write!(f, "{weekdays}; {months}")
     }
 }
 
@@ -269,9 +321,8 @@ pub(crate) fn validate_date(what: &str, d: &Date) -> Result<(), EngineError> {
         && i64::from(d.day) <= days_in_month(d.year, d.month);
     if !valid {
         return Err(EngineError::InvalidArgument(format!(
-            "{what} is not a valid date (year in [{MIN_YEAR}, {MAX_YEAR}]): \
-             {:05}-{:02}-{:02}",
-            d.year, d.month, d.day
+            "{what} is not a valid date (year in [{MIN_YEAR}, {MAX_YEAR}]): {}",
+            super::format::date(d)
         )));
     }
     Ok(())
@@ -570,7 +621,7 @@ fn aligned_range(
     let (lo, hi) = (align_up(min, unit), align_down(max, unit));
     if lo > hi {
         return Err(EngineError::InvalidArgument(format!(
-            "{what}: no value at precision {precision:?} lies in the bounds"
+            "{what}: no value at precision {precision} lies in the bounds"
         )));
     }
     Ok((lo, hi))
@@ -591,14 +642,18 @@ pub fn date_bounds(
     let (min_days, max_days) = (days_from_civil(min), days_from_civil(max));
     if min_days > max_days {
         return Err(EngineError::InvalidArgument(format!(
-            "generate_date requires min_value <= max_value, got [{min:?}, {max:?}]"
+            "generate_date requires min_value <= max_value, got [{}, {}]",
+            super::format::date(min),
+            super::format::date(max)
         )));
     }
     let probe = max_days.min(min_days + SNAP_RANGE);
     if !options.is_unrestricted() && !(min_days..=probe).any(|d| options.allows(d)) {
         return Err(EngineError::InvalidArgument(format!(
-            "generate_date: no date in [{min:?}, {max:?}] falls on an allowed weekday and \
-             month ({options:?})"
+            "generate_date: no date in [{}, {}] falls on an allowed weekday and month \
+             ({options})",
+            super::format::date(min),
+            super::format::date(max)
         )));
     }
     Ok((min_days, max_days))
@@ -641,7 +696,9 @@ pub fn time_bounds(
     let (min_ns, max_ns) = (time_to_ns(min), time_to_ns(max));
     if min_ns > max_ns {
         return Err(EngineError::InvalidArgument(format!(
-            "generate_time requires min_value <= max_value, got [{min:?}, {max:?}]"
+            "generate_time requires min_value <= max_value, got [{}, {}]",
+            super::format::time(min),
+            super::format::time(max)
         )));
     }
     let (lo, hi) = aligned_range(
@@ -683,7 +740,9 @@ pub fn datetime_bounds(
     validate_time("max_value.time", &max.time)?;
     if wall_ns(min) > wall_ns(max) {
         return Err(EngineError::InvalidArgument(format!(
-            "generate_datetime requires min_value <= max_value, got [{min:?}, {max:?}]"
+            "generate_datetime requires min_value <= max_value, got [{}, {}]",
+            super::format::datetime(min),
+            super::format::datetime(max)
         )));
     }
     aligned_range("generate_datetime", wall_ns(min), wall_ns(max), precision)

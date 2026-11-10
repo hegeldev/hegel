@@ -2014,9 +2014,10 @@ fn settings_check_each_bound_alone_and_the_two_kinds_together() {
         .set_civil_bounds(civil(2000, 1, 1, 0, 0, 1), civil(2000, 1, 1, 0, 0, 59))
         .unwrap();
     let message = invalid_argument(settings.spec());
-    assert!(
-        message.starts_with("a zoned datetime draw has no value at precision Minutes"),
-        "{message}"
+    assert_eq!(
+        message,
+        "a zoned datetime draw has no value at precision minutes in \
+         [2000-01-01T00:00:01, 2000-01-01T00:00:59]"
     );
     settings.precision = Precision::Seconds;
     assert_eq!(
@@ -2057,6 +2058,126 @@ fn settings_check_each_bound_alone_and_the_two_kinds_together() {
             "a zoned datetime draw is bounded on the wall clock or on the instant, not both: \
              civil bounds and instant bounds were both set"
         );
+    }
+}
+
+#[test]
+fn bounds_errors_print_values_in_their_canonical_text() {
+    let mut settings = ZonedSettings::default();
+    assert_eq!(
+        invalid_argument(
+            settings.set_civil_bounds(civil(2001, 1, 1, 0, 0, 0), civil(2000, 1, 1, 0, 0, 0))
+        ),
+        "zoned datetime bounds require min_value <= max_value, got \
+         [2001-01-01T00:00:00, 2000-01-01T00:00:00]"
+    );
+    assert_eq!(
+        invalid_argument(settings.set_instant_bounds(at(1), at(0))),
+        "zoned datetime bounds require min_value <= max_value, got \
+         [1970-01-01T00:00:01Z, 1970-01-01T00:00:00Z]"
+    );
+    let minutes = ZonedSpec {
+        bounds: ZonedBounds::Instant {
+            min: at(1),
+            max: at(59),
+        },
+        precision: Precision::Minutes,
+        ..ZonedSpec::default()
+    };
+    assert_eq!(
+        invalid_argument(generate_zoned_datetime(
+            &mut fresh_ntc(0),
+            &zones(&["UTC", "Europe/London"]),
+            &minutes
+        )),
+        "a zoned datetime draw has no value at precision minutes in \
+         [1970-01-01T00:00:01Z, 1970-01-01T00:00:59Z] in any allowed zone"
+    );
+}
+
+fn nanos(nanosecond: u32) -> Timestamp {
+    Timestamp {
+        second: 0,
+        nanosecond,
+    }
+}
+
+#[test]
+fn instant_bounds_without_a_whole_unit_are_an_argument_error_up_to_seconds() {
+    let utc = zones(&["UTC"]);
+    let london = TimeZone::lookup("Europe/London").unwrap().unwrap();
+    let microseconds = |max| ZonedSpec {
+        bounds: ZonedBounds::Instant {
+            min: nanos(1),
+            max: nanos(max),
+        },
+        precision: Precision::Microseconds,
+        ..ZonedSpec::default()
+    };
+    let none = microseconds(999);
+    let message = "a zoned datetime draw has no value at precision microseconds in \
+                   [1970-01-01T00:00:00.000000001Z, 1970-01-01T00:00:00.000000999Z]";
+    assert_eq!(invalid_argument(none.validate()), message);
+    let mut ntc = fresh_ntc(0);
+    assert_eq!(
+        invalid_argument(generate_zoned_datetime(&mut ntc, &utc, &none)),
+        message
+    );
+    assert_eq!(
+        invalid_argument(generate_zoned_datetime_in(
+            &mut ntc,
+            "Europe/London",
+            london,
+            &none
+        )),
+        message
+    );
+    assert!(ntc.nodes.is_empty());
+    assert_eq!(ntc.status(), None);
+    let mut settings = ZonedSettings::default();
+    settings.set_instant_bounds(nanos(1), nanos(999)).unwrap();
+    assert!(settings.spec().is_ok());
+    settings.precision = Precision::Microseconds;
+    assert_eq!(invalid_argument(settings.spec()), message);
+
+    let one = microseconds(1000);
+    assert!(one.validate().is_ok());
+    for seed in 0..20 {
+        let z = generate_zoned_datetime(&mut fresh_ntc(seed), &utc, &one).unwrap();
+        assert_eq!(z.timestamp, nanos(1000));
+        let z = generate_zoned_datetime_in(&mut fresh_ntc(seed), "Europe/London", london, &one)
+            .unwrap();
+        assert_eq!(z.timestamp, nanos(1000));
+        assert_eq!(z.civil.time.hour, 1);
+    }
+
+    let second = |min, max, precision| ZonedSpec {
+        bounds: ZonedBounds::Instant {
+            min: nanos(min),
+            max: nanos(max),
+        },
+        precision,
+        ..ZonedSpec::default()
+    };
+    assert_eq!(
+        invalid_argument(second(1, 999_999_999, Precision::Seconds).validate()),
+        "a zoned datetime draw has no value at precision seconds in \
+         [1970-01-01T00:00:00.000000001Z, 1970-01-01T00:00:00.999999999Z]"
+    );
+    assert!(
+        second(0, 999_999_999, Precision::Seconds)
+            .validate()
+            .is_ok()
+    );
+    assert!(second(1, 1, Precision::Nanoseconds).validate().is_ok());
+    for precision in [Precision::Minutes, Precision::Hours] {
+        let coarse = second(1, 999_999_999, precision);
+        assert!(coarse.validate().is_ok());
+        let mut ntc = fresh_ntc(0);
+        let err =
+            generate_zoned_datetime_in(&mut ntc, "Europe/London", london, &coarse).unwrap_err();
+        assert!(matches!(err, EngineError::InvalidTestCase), "{err:?}");
+        assert_eq!(ntc.status(), Some(Status::Invalid));
     }
 }
 

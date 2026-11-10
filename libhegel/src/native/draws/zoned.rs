@@ -44,7 +44,11 @@
 //! the wrong side of a bound) concludes the test case invalid. A draw in a
 //! zone the caller named ([`generate_zoned_datetime_in`]) records the same
 //! nodes without the zone node, and concludes the test case invalid
-//! whenever that zone has no value.
+//! whenever that zone has no value. Bounds that hold no value in any zone
+//! whatever its rules are an argument error of the spec itself
+//! ([`ZonedSpec::validate`]): civil bounds with no wall time at the
+//! precision, and instant bounds with no instant at a precision of a
+//! second or finer.
 //!
 //! Under the `avoid` policy the time node's sampler redraws a wall time
 //! that lands in a gap, uniformly and up to [`GAP_RESAMPLES`] times, so
@@ -118,6 +122,22 @@ pub enum ZonedBounds {
     Instant { min: Timestamp, max: Timestamp },
 }
 
+impl fmt::Display for ZonedBounds {
+    /// The bounds as an error message spells them: `[min, max]`, wall
+    /// times without an offset and instants with `Z`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (min, max) = match self {
+            ZonedBounds::Civil { min, max } => {
+                (super::format::datetime(min), super::format::datetime(max))
+            }
+            ZonedBounds::Instant { min, max } => {
+                (super::format::timestamp(min), super::format::timestamp(max))
+            }
+        };
+        write!(f, "[{min}, {max}]")
+    }
+}
+
 /// The configuration of a zoned datetime draw.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ZonedSpec {
@@ -185,7 +205,9 @@ fn validate_civil_bounds(min: &DateTime, max: &DateTime) -> Result<(), EngineErr
     validate_time("max_value.time", &max.time)?;
     if wall_ns(min) > wall_ns(max) {
         return Err(EngineError::InvalidArgument(format!(
-            "zoned datetime bounds require min_value <= max_value, got [{min:?}, {max:?}]"
+            "zoned datetime bounds require min_value <= max_value, got [{}, {}]",
+            super::format::datetime(min),
+            super::format::datetime(max)
         )));
     }
     Ok(())
@@ -197,31 +219,44 @@ fn validate_instant_bounds(min: &Timestamp, max: &Timestamp) -> Result<(), Engin
     validate_timestamp("max_value", max)?;
     if min > max {
         return Err(EngineError::InvalidArgument(format!(
-            "zoned datetime bounds require min_value <= max_value, got [{min:?}, {max:?}]"
+            "zoned datetime bounds require min_value <= max_value, got [{}, {}]",
+            super::format::timestamp(min),
+            super::format::timestamp(max)
         )));
     }
     Ok(())
 }
 
 impl ZonedSpec {
-    /// Check the bounds: each valid and in order, and civil bounds holding
-    /// a value at the precision. Whether instant bounds hold one depends on
-    /// the zone's offset, so the draw settles that (see the module docs).
+    /// Check the bounds: each valid and in order, and holding a value at
+    /// the precision where that does not depend on the zone. Civil bounds
+    /// never depend on it. Instant bounds do not at a precision of a
+    /// second or finer, since every offset is a whole number of seconds
+    /// and so a wall time is a whole number of units exactly when its
+    /// instant is; at minutes and hours the zone's offset decides, and
+    /// the draw settles it (see the module docs).
     pub fn validate(&self) -> Result<(), EngineError> {
-        match &self.bounds {
+        let unit = i128::from(self.precision.unit());
+        let (lo, hi) = match &self.bounds {
             ZonedBounds::Civil { min, max } => {
                 validate_civil_bounds(min, max)?;
-                let unit = i128::from(self.precision.unit());
-                if align_up(wall_ns(min), unit) > align_down(wall_ns(max), unit) {
-                    return Err(EngineError::InvalidArgument(format!(
-                        "a zoned datetime draw has no value at precision {:?} in {:?}",
-                        self.precision, self.bounds
-                    )));
-                }
-                Ok(())
+                (wall_ns(min), wall_ns(max))
             }
-            ZonedBounds::Instant { min, max } => validate_instant_bounds(min, max),
+            ZonedBounds::Instant { min, max } => {
+                validate_instant_bounds(min, max)?;
+                if unit > NS {
+                    return Ok(());
+                }
+                (instant_ns(min), instant_ns(max))
+            }
+        };
+        if align_up(lo, unit) > align_down(hi, unit) {
+            return Err(EngineError::InvalidArgument(format!(
+                "a zoned datetime draw has no value at precision {} in {}",
+                self.precision, self.bounds
+            )));
         }
+        Ok(())
     }
 }
 
@@ -561,7 +596,7 @@ fn no_value<T>(
         }
     }
     Err(EngineError::InvalidArgument(format!(
-        "a zoned datetime draw has no value at precision {:?} in {:?} in any allowed zone",
+        "a zoned datetime draw has no value at precision {} in {} in any allowed zone",
         spec.precision, spec.bounds
     )))
 }

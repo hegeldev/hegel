@@ -1233,7 +1233,7 @@ typedef struct hegel_zone_source_t hegel_zone_source_t;
 
  The setters may be called in any order: each checks only its own
  arguments. What depends on several settings together (bounds of both
- kinds, civil bounds that hold no value at the precision) is checked by
+ kinds, bounds that hold no value at the precision) is checked by
  `hegel_zoned_spec_validate` and by every draw. A frontend calls
  `hegel_zoned_spec_validate` when it builds its generator, after the
  setters, to report a bad configuration there rather than at the first
@@ -5110,10 +5110,16 @@ hegel_result_t hegel_zoned_spec_set_civil_bounds(hegel_context_t *ctx,
 
  Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
  `HEGEL_E_INVALID_ARG` for invalid or inverted bounds, which leaves the
- spec as it was. Whether the bounds hold a value at the spec's
- precision depends on the drawn zone's offset: a draw whose zone has
- none rejects the test case, and one for which no allowed zone has any
- fails with `HEGEL_E_INVALID_ARG`.
+ spec as it was.
+
+ Whether the bounds hold a value at the spec's precision is checked
+ where it can be. At a precision of a second or finer it is the same in
+ every zone, since every UTC offset is a whole number of seconds: a
+ spec whose bounds hold no instant that is a whole number of units
+ (`{0, 1}` to `{0, 999}` at microseconds, say) fails validation. At
+ minutes and hours it depends on the drawn zone's offset: a draw whose
+ zone has no value rejects the test case, and one for which no allowed
+ zone has any fails with `HEGEL_E_INVALID_ARG`.
 
  The bounds become a wall-clock window in the drawn zone, clamped to
  the civil range; when that window holds no value at the precision, or
@@ -5140,7 +5146,9 @@ hegel_result_t hegel_zoned_spec_set_instant_bounds(hegel_context_t *ctx,
 
  Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
  `HEGEL_E_INVALID_ARG` for an unknown precision. A precision at which
- the spec's civil bounds hold no value fails validation.
+ the spec's civil bounds hold no value fails validation, and so does a
+ precision of a second or finer at which its instant bounds hold none;
+ see `hegel_zoned_spec_set_instant_bounds`.
  */
 hegel_result_t hegel_zoned_spec_set_precision(hegel_context_t *ctx,
                                               hegel_zoned_spec_t *spec,
@@ -5191,7 +5199,11 @@ hegel_result_t hegel_zoned_spec_set_ambiguous(hegel_context_t *ctx,
 
  Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
  `HEGEL_E_INVALID_ARG` when the spec was given both civil bounds and
- instant bounds, or its civil bounds hold no value at its precision.
+ instant bounds, when its civil bounds hold no value at its precision,
+ or when its instant bounds hold none at a precision of a second or
+ finer. Instant bounds at a precision of minutes or hours are not
+ checked here, since whether they hold a value depends on the zone
+ drawn; see `hegel_zoned_spec_set_instant_bounds`.
  */
 hegel_result_t hegel_zoned_spec_validate(hegel_context_t *ctx, const hegel_zoned_spec_t *spec);
 
@@ -5210,11 +5222,14 @@ hegel_result_t hegel_zoned_spec_validate(hegel_context_t *ctx, const hegel_zoned
  - `HEGEL_OK` with the value written.
  - `HEGEL_E_STOP_TEST` as any draw does.
  - `HEGEL_E_ASSUME`, rejecting the test case, when the drawn zone has
-   no value in the bounds but another allowed zone does (no wall time
-   at the precision, or under `HEGEL_IMAGINARY_AVOID` bounds that lie
-   within a gap of that zone), or when the drawn wall time's instant
-   falls outside instant bounds (a fold on the wrong side of a bound).
-   As after any `HEGEL_E_ASSUME`, the frontend abandons the test case.
+   no value in the bounds but another allowed zone does (instant
+   bounds holding no wall time of that zone at a precision of minutes
+   or hours, civil bounds whose instants in that zone all lie outside
+   the range of `hegel_timestamp_t`, or under `HEGEL_IMAGINARY_AVOID`
+   bounds that lie within a gap of that zone), or when the drawn wall
+   time's instant falls outside instant bounds (a fold on the wrong
+   side of a bound). As after any `HEGEL_E_ASSUME`, the frontend
+   abandons the test case.
  - `HEGEL_E_INVALID_ARG` for a spec `hegel_timezone_spec_validate` or
    `hegel_zoned_spec_validate` rejects, for bounds in which no allowed
    zone has a value, for a drawn name the source declared but has no
@@ -5266,11 +5281,14 @@ hegel_result_t hegel_generate_zoned_datetime(hegel_context_t *ctx,
  - `HEGEL_OK` with the value written.
  - `HEGEL_E_STOP_TEST` as any draw does.
  - `HEGEL_E_ASSUME`, rejecting the test case, when the zone has no
-   value in the bounds (no wall time at the precision, or under
-   `HEGEL_IMAGINARY_AVOID` bounds that lie within a gap of the zone),
-   or when the drawn wall time's instant falls outside instant bounds.
-   It is never an argument error for the zone to have no value, since
-   the engine cannot see what other zones the caller might have named.
+   value in the bounds (instant bounds holding no wall time of the
+   zone at a precision of minutes or hours, civil bounds whose
+   instants in the zone all lie outside the range of
+   `hegel_timestamp_t`, or under `HEGEL_IMAGINARY_AVOID` bounds that
+   lie within a gap of the zone), or when the drawn wall time's
+   instant falls outside instant bounds. It is never an argument error
+   for this zone to have no value where another might, since the
+   engine cannot see what other zones the caller might have named.
  - `HEGEL_E_INVALID_ARG` for a name the source does not know (the
    message names it; it is never drawn as an opaque zone), a name that
    is not UTF-8, a spec `hegel_zoned_spec_validate` rejects, a NULL

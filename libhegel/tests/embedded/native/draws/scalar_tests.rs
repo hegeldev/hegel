@@ -619,6 +619,90 @@ fn durations_reject_invalid_arguments() {
     assert!(ntc.nodes.is_empty());
 }
 
+fn argument_error<T: core::fmt::Debug>(result: Result<T, EngineError>) -> String {
+    match result {
+        Err(EngineError::InvalidArgument(message)) => message,
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn argument_errors_print_values_in_their_canonical_text() {
+    let nanos = |nanosecond| Timestamp {
+        second: 0,
+        nanosecond,
+    };
+    assert_eq!(
+        argument_error(timestamp_bounds(&at(1), &at(0), Precision::Seconds)),
+        "generate_timestamp requires min_value <= max_value, got \
+         [1970-01-01T00:00:01Z, 1970-01-01T00:00:00Z]"
+    );
+    assert_eq!(
+        argument_error(timestamp_bounds(
+            &nanos(1),
+            &nanos(999_999_999),
+            Precision::Seconds
+        )),
+        "generate_timestamp: no value at precision seconds lies in \
+         [1970-01-01T00:00:00.000000001Z, 1970-01-01T00:00:00.999999999Z]"
+    );
+    assert_eq!(
+        argument_error(offset_bounds(1, 899, Granularity::QuarterHours)),
+        "generate_offset: no offset at granularity quarter_hours lies in [1, 899]"
+    );
+    let granularities = [
+        Granularity::Hours,
+        Granularity::QuarterHours,
+        Granularity::Minutes,
+        Granularity::Seconds,
+    ];
+    assert_eq!(
+        granularities.map(|g| g.to_string()),
+        ["hours", "quarter_hours", "minutes", "seconds"]
+    );
+    assert_eq!(
+        argument_error(duration_bounds(
+            &duration(0, 0),
+            &duration(1, -1),
+            Precision::Seconds
+        )),
+        "max_value is not a valid duration (nanoseconds within ±999999999 and of the sign of \
+         seconds): seconds 1, nanoseconds -1"
+    );
+    assert_eq!(
+        argument_error(duration_bounds(
+            &duration(1, 0),
+            &duration(0, 0),
+            Precision::Seconds
+        )),
+        "generate_duration requires min_value <= max_value, got [PT1S, PT0S]"
+    );
+    assert_eq!(
+        argument_error(duration_bounds(
+            &duration(-5, -999_999_999),
+            &duration(-5, -1),
+            Precision::Seconds
+        )),
+        "generate_duration: no value at precision seconds lies in \
+         [-PT5.999999999S, -PT5.000000001S]"
+    );
+    assert_eq!(
+        SpanUnit::ALL.map(|unit| unit.to_string()),
+        [
+            "years",
+            "months",
+            "weeks",
+            "days",
+            "hours",
+            "minutes",
+            "seconds",
+            "milliseconds",
+            "microseconds",
+            "nanoseconds"
+        ]
+    );
+}
+
 fn span_spec(sign: SpanSign, bounds: &[(SpanUnit, i64, i64)]) -> SpanSpec {
     let mut spec = SpanSpec {
         sign,
@@ -863,16 +947,13 @@ fn spans_reject_invalid_specs() {
     }
     assert!(ntc.nodes.is_empty());
     for (spec, message) in bad.iter().zip([
-        "a span draw needs a unit enabled",
-        "requires min <= max for Years",
-        "admit none in common",
-        "requires min >= 0 for Years",
+        "a span draw needs a unit enabled; set bounds on at least one",
+        "a span draw requires min <= max for years, got [2, 1]",
+        "a span draw under the uniform sign policy needs every unit to admit one sign, but \
+         years [1, 2], months [-2, -1] admit none in common",
+        "a span draw under the nonnegative sign policy requires min >= 0 for years, got -1",
     ]) {
-        let err = spec.validate().unwrap_err();
-        assert!(
-            matches!(&err, EngineError::InvalidArgument(m) if m.contains(message)),
-            "{err}"
-        );
+        assert_eq!(argument_error(spec.validate()), message);
     }
     let mixed = span_spec(
         SpanSign::Mixed,

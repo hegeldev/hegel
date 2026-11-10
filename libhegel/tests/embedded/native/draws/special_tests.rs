@@ -843,3 +843,120 @@ fn date_masks_reject_bounds_without_an_allowed_day() {
     let d = simplest_date(date(1000, 1, 1), date(3000, 1, 1), &february);
     assert_eq!(d, date(2000, 2, 7));
 }
+
+fn argument_error<T: core::fmt::Debug>(result: Result<T, EngineError>) -> String {
+    match result {
+        Err(EngineError::InvalidArgument(message)) => message,
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn argument_errors_print_values_in_their_canonical_text() {
+    let any = DateOptions::default();
+    assert_eq!(
+        argument_error(date_bounds(&date(2024, 1, 2), &date(2024, 1, 1), &any)),
+        "generate_date requires min_value <= max_value, got [2024-01-02, 2024-01-01]"
+    );
+    assert_eq!(
+        argument_error(date_bounds(&date(2023, 2, 30), &date(2024, 1, 1), &any)),
+        "min_value is not a valid date (year in [-999999, 999999]): 2023-02-30"
+    );
+    assert_eq!(
+        argument_error(date_bounds(&date(2024, 1, 1), &date(1_000_000, 1, 1), &any)),
+        "max_value is not a valid date (year in [-999999, 999999]): +1000000-01-01"
+    );
+    assert_eq!(
+        argument_error(time_bounds(
+            &time(1, 0, 0, 0),
+            &time(0, 59, 59, 500_000_000),
+            Precision::Nanoseconds
+        )),
+        "generate_time requires min_value <= max_value, got [01:00:00, 00:59:59.5]"
+    );
+    assert_eq!(
+        argument_error(time_bounds(
+            &time(0, 0, 1, 0),
+            &time(0, 0, 59, 0),
+            Precision::Minutes
+        )),
+        "generate_time: no value at precision minutes lies in the bounds"
+    );
+    let at = |day, time| DateTime {
+        date: date(2024, 1, day),
+        time,
+    };
+    assert_eq!(
+        argument_error(datetime_bounds(
+            &at(2, time(0, 0, 0, 0)),
+            &at(1, time(23, 59, 59, 1)),
+            Precision::Nanoseconds
+        )),
+        "generate_datetime requires min_value <= max_value, got \
+         [2024-01-02T00:00:00, 2024-01-01T23:59:59.000000001]"
+    );
+    assert_eq!(
+        argument_error(datetime_bounds(
+            &at(1, time(0, 0, 1, 0)),
+            &at(1, time(0, 59, 59, 0)),
+            Precision::Hours
+        )),
+        "generate_datetime: no value at precision hours lies in the bounds"
+    );
+    let precisions = [
+        Precision::Nanoseconds,
+        Precision::Microseconds,
+        Precision::Milliseconds,
+        Precision::Seconds,
+        Precision::Minutes,
+        Precision::Hours,
+    ];
+    assert_eq!(
+        precisions.map(|p| p.to_string()),
+        [
+            "nanoseconds",
+            "microseconds",
+            "milliseconds",
+            "seconds",
+            "minutes",
+            "hours"
+        ]
+    );
+}
+
+#[test]
+fn date_mask_errors_name_the_allowed_weekdays_and_months() {
+    let monday = date(2024, 1, 1);
+    for (max, options, text) in [
+        (
+            monday,
+            DateOptions {
+                weekdays: (1 << 5) | (1 << 6),
+                months: 1 << 2,
+            },
+            "[2024-01-01, 2024-01-01] falls on an allowed weekday and month \
+             (weekdays Sat, Sun; months Mar)",
+        ),
+        (
+            date(2024, 1, 2),
+            weekdays(1 << 6),
+            "[2024-01-01, 2024-01-02] falls on an allowed weekday and month \
+             (weekdays Sun; any month)",
+        ),
+        (
+            date(2024, 1, 31),
+            DateOptions {
+                weekdays: ALL_WEEKDAYS,
+                months: (1 << 1) | (1 << 11),
+            },
+            "[2024-01-01, 2024-01-31] falls on an allowed weekday and month \
+             (any weekday; months Feb, Dec)",
+        ),
+    ] {
+        assert_eq!(
+            argument_error(date_bounds(&monday, &max, &options)),
+            format!("generate_date: no date in {text}")
+        );
+    }
+    assert_eq!(DateOptions::default().to_string(), "any weekday; any month");
+}

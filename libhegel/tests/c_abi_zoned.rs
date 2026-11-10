@@ -510,7 +510,7 @@ fn zoned_spec_setters_validate_their_arguments() {
         assert!(
             last_error(ctx).starts_with(
                 "hegel_zoned_spec_validate: a zoned datetime draw has no value at precision \
-                 Minutes"
+                 minutes in [2000-01-01T00:00:01, 2000-01-01T00:00:59]"
             ),
             "{}",
             last_error(ctx)
@@ -1001,6 +1001,127 @@ fn a_drawn_zone_without_a_value_rejects_the_test_case() {
             last_error(ctx)
         );
         complete_valid(ctx, tc);
+        drain(ctx, run);
+        ok(hegel_c::hegel_run_free(ctx, run));
+        ok(hegel_zoned_spec_free(ctx, spec));
+        ok(hegel_timezone_spec_free(ctx, tz));
+    }
+    unsafe { ok(hegel_context_free(ctx)) };
+}
+
+#[test]
+fn instant_bounds_without_a_whole_unit_fail_validation_and_every_draw() {
+    let nanos = |nanosecond| hegel_timestamp_t {
+        second: 0,
+        nanosecond,
+    };
+    let message = "a zoned datetime draw has no value at precision microseconds in \
+                   [1970-01-01T00:00:00.000000001Z, 1970-01-01T00:00:00.000000999Z]";
+    let ctx = hegel_context_new();
+    unsafe {
+        let tz = tz_spec(ctx);
+        ok(set_names(ctx, tz, &["UTC"]));
+        let spec = zoned_spec(ctx);
+        ok(hegel_zoned_spec_set_instant_bounds(
+            ctx,
+            spec,
+            nanos(1),
+            nanos(999),
+        ));
+        ok(hegel_zoned_spec_validate(ctx, spec));
+        ok(hegel_zoned_spec_set_precision(
+            ctx,
+            spec,
+            hegel_precision_t::HEGEL_PRECISION_MICROSECONDS as u32,
+        ));
+        assert_eq!(hegel_zoned_spec_validate(ctx, spec), HEGEL_E_INVALID_ARG);
+        assert_eq!(
+            last_error(ctx),
+            format!("hegel_zoned_spec_validate: {message}")
+        );
+        let mut value = zoned();
+        let mut zone = empty_result();
+        let run = run_of(ctx, 1);
+        let tc = next_case(ctx, run);
+        assert_eq!(
+            hegel_generate_zoned_datetime(ctx, tc, tz, spec, &mut value, &mut zone),
+            HEGEL_E_INVALID_ARG
+        );
+        assert_eq!(
+            last_error(ctx),
+            format!("hegel_generate_zoned_datetime: {message}")
+        );
+        assert!(zone.data.is_null());
+        assert_eq!(
+            hegel_generate_zoned_datetime_for_zone(
+                ctx,
+                tc,
+                ptr::null(),
+                s("Europe/London"),
+                spec,
+                &mut value,
+            ),
+            HEGEL_E_INVALID_ARG
+        );
+        assert_eq!(
+            last_error(ctx),
+            format!("hegel_generate_zoned_datetime_for_zone: {message}")
+        );
+
+        ok(hegel_zoned_spec_set_instant_bounds(
+            ctx,
+            spec,
+            nanos(1),
+            nanos(1000),
+        ));
+        ok(hegel_zoned_spec_validate(ctx, spec));
+        ok(hegel_generate_zoned_datetime(
+            ctx, tc, tz, spec, &mut value, &mut zone,
+        ));
+        assert_eq!(take_string(ctx, &mut zone), "UTC");
+        assert_eq!(
+            (value.timestamp.second, value.timestamp.nanosecond),
+            (0, 1000)
+        );
+        ok(hegel_generate_zoned_datetime_for_zone(
+            ctx,
+            tc,
+            ptr::null(),
+            s("Europe/London"),
+            spec,
+            &mut value,
+        ));
+        assert_eq!(
+            (value.timestamp.second, value.timestamp.nanosecond),
+            (0, 1000)
+        );
+        assert_eq!(value.offset_seconds, 3600);
+
+        ok(hegel_zoned_spec_set_instant_bounds(
+            ctx,
+            spec,
+            nanos(1),
+            nanos(999),
+        ));
+        for precision in [
+            hegel_precision_t::HEGEL_PRECISION_MINUTES,
+            hegel_precision_t::HEGEL_PRECISION_HOURS,
+        ] {
+            ok(hegel_zoned_spec_set_precision(ctx, spec, precision as u32));
+            ok(hegel_zoned_spec_validate(ctx, spec));
+        }
+        assert_eq!(
+            hegel_generate_zoned_datetime_for_zone(
+                ctx,
+                tc,
+                ptr::null(),
+                s("Europe/London"),
+                spec,
+                &mut value,
+            ),
+            HEGEL_E_ASSUME
+        );
+        complete_invalid(ctx, tc);
         drain(ctx, run);
         ok(hegel_c::hegel_run_free(ctx, run));
         ok(hegel_zoned_spec_free(ctx, spec));

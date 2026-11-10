@@ -396,6 +396,15 @@ or `avoid`) and an **ambiguous** policy (`both`, `earlier`, `later`).
 A spec holds one kind of bound. Setting both civil and instant bounds is
 an argument error, reported when the spec is validated or drawn from
 rather than by whichever setter came second, so that the setters commute.
+So are bounds that hold no value at the precision in any zone whatever
+its rules: civil bounds with no wall time that is a whole number of
+units, and instant bounds with no such instant at a precision of a second
+or finer. Every UTC offset is a whole number of seconds, so at those
+precisions a wall time is a whole number of units exactly when its
+instant is, and instant bounds of 1 ns to 999 ns at microseconds hold no
+value in any zone. At minutes and hours the zone's offset decides
+(00:30Z is 06:00 in `Asia/Kolkata`), which step 2 settles for the zone
+drawn.
 
 The node sequence is: zone (6.1) · targeted? (boolean) · [target index ·
 half-width] · date · time · [fold].
@@ -644,9 +653,11 @@ of the rest of the spec, so setters can be called in any order and a
 frontend can apply a user's options in whatever order it holds them.
 `_validate` reports everything a draw from the spec as it stands would
 reject as an argument error: for a time zone spec an explicit name its
-source lacks or nothing to draw, for a zoned spec bounds of both kinds or
-civil bounds holding no value at the precision, for a span spec no
-enabled unit or bounds its sign policy excludes. A draw makes the same checks, so calling
+source lacks or nothing to draw, for a zoned spec bounds of both kinds,
+civil bounds holding no value at the precision or instant bounds holding
+none at a precision of a second or finer (§6.2; what depends on the zone
+drawn is left to the draw), for a span spec no enabled unit or bounds its
+sign policy excludes. A draw makes the same checks, so calling
 `_validate` is optional; it exists so a frontend can report a bad
 generator where the user built it rather than at its first draw. A time
 zone spec reads the process default zone source when it is created

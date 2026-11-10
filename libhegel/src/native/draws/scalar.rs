@@ -23,8 +23,10 @@
 
 use alloc::collections::BTreeSet;
 use alloc::format;
+use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
+use core::fmt;
 
 use super::special::{Date, Precision, align_down, align_up, days_from_civil, draw_targeted};
 use super::zoned::{EPOCH_2000, TARGET_RANGE, interesting_instants};
@@ -85,7 +87,9 @@ pub fn timestamp_bounds(
     validate_timestamp("max_value", max)?;
     if min > max {
         return Err(EngineError::InvalidArgument(format!(
-            "generate_timestamp requires min_value <= max_value, got [{min:?}, {max:?}]"
+            "generate_timestamp requires min_value <= max_value, got [{}, {}]",
+            super::format::timestamp(min),
+            super::format::timestamp(max)
         )));
     }
     let unit = i128::from(precision.unit());
@@ -95,7 +99,9 @@ pub fn timestamp_bounds(
     );
     if lo > hi {
         return Err(EngineError::InvalidArgument(format!(
-            "generate_timestamp: no value at precision {precision:?} lies in [{min:?}, {max:?}]"
+            "generate_timestamp: no value at precision {precision} lies in [{}, {}]",
+            super::format::timestamp(min),
+            super::format::timestamp(max)
         )));
     }
     Ok((lo, hi))
@@ -173,6 +179,14 @@ impl Granularity {
     }
 }
 
+impl fmt::Display for Granularity {
+    /// The unit's name as an error message spells it: `quarter_hours`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        const NAMES: [&str; 4] = ["hours", "quarter_hours", "minutes", "seconds"];
+        f.write_str(NAMES[*self as usize])
+    }
+}
+
 /// A drawn UTC offset: `seconds` east of UT, 0 when not `known`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UtcOffset {
@@ -235,7 +249,7 @@ pub fn offset_bounds(
     );
     if lo > hi {
         return Err(EngineError::InvalidArgument(format!(
-            "generate_offset: no offset at granularity {granularity:?} lies in \
+            "generate_offset: no offset at granularity {granularity} lies in \
              [{min_seconds}, {max_seconds}]"
         )));
     }
@@ -307,7 +321,8 @@ fn validate_duration(what: &str, d: &Duration) -> Result<(), EngineError> {
     if d.nanoseconds.unsigned_abs() > 999_999_999 || !consistent {
         return Err(EngineError::InvalidArgument(format!(
             "{what} is not a valid duration (nanoseconds within ±999999999 and of the sign of \
-             seconds): {d:?}"
+             seconds): seconds {}, nanoseconds {}",
+            d.seconds, d.nanoseconds
         )));
     }
     Ok(())
@@ -338,14 +353,18 @@ pub fn duration_bounds(
     let (min_ns, max_ns) = (duration_ns(min), duration_ns(max));
     if min_ns > max_ns {
         return Err(EngineError::InvalidArgument(format!(
-            "generate_duration requires min_value <= max_value, got [{min:?}, {max:?}]"
+            "generate_duration requires min_value <= max_value, got [{}, {}]",
+            super::format::duration(min),
+            super::format::duration(max)
         )));
     }
     let unit = i128::from(precision.unit());
     let (lo, hi) = (align_up(min_ns, unit), align_down(max_ns, unit));
     if lo > hi {
         return Err(EngineError::InvalidArgument(format!(
-            "generate_duration: no value at precision {precision:?} lies in [{min:?}, {max:?}]"
+            "generate_duration: no value at precision {precision} lies in [{}, {}]",
+            super::format::duration(min),
+            super::format::duration(max)
         )));
     }
     Ok((lo, hi))
@@ -407,6 +426,25 @@ impl SpanUnit {
         SpanUnit::Microseconds,
         SpanUnit::Nanoseconds,
     ];
+}
+
+impl fmt::Display for SpanUnit {
+    /// The unit's name as an error message spells it: `years`.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        const NAMES: [&str; 10] = [
+            "years",
+            "months",
+            "weeks",
+            "days",
+            "hours",
+            "minutes",
+            "seconds",
+            "milliseconds",
+            "microseconds",
+            "nanoseconds",
+        ];
+        f.write_str(NAMES[*self as usize])
+    }
 }
 
 /// How the signs of a span's units are drawn.
@@ -493,22 +531,26 @@ impl SpanSpec {
         for (unit, min, max) in self.enabled() {
             if min > max {
                 return Err(EngineError::InvalidArgument(format!(
-                    "a span draw requires min <= max for {unit:?}, got [{min}, {max}]"
+                    "a span draw requires min <= max for {unit}, got [{min}, {max}]"
                 )));
             }
             if self.sign == SpanSign::NonNegative && min < 0 {
                 return Err(EngineError::InvalidArgument(format!(
                     "a span draw under the nonnegative sign policy requires min >= 0 for \
-                     {unit:?}, got {min}"
+                     {unit}, got {min}"
                 )));
             }
         }
         let (pos, neg) = self.admits();
         if self.sign == SpanSign::Uniform && !pos && !neg {
+            let bounds: Vec<String> = self
+                .enabled()
+                .map(|(unit, min, max)| format!("{unit} [{min}, {max}]"))
+                .collect();
             return Err(EngineError::InvalidArgument(format!(
                 "a span draw under the uniform sign policy needs every unit to admit one \
-                 sign, but {:?} admit none in common",
-                self.bounds
+                 sign, but {} admit none in common",
+                bounds.join(", ")
             )));
         }
         Ok(())
