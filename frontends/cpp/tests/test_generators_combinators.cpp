@@ -4,6 +4,9 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -11,6 +14,8 @@
 #include <vector>
 
 #include <hegel/hegel.h>
+
+#include "common/utils.h"
 
 namespace gs = hegel::generators;
 
@@ -142,7 +147,7 @@ namespace {
 TEST(NonSerializable, JustWorksWithOpaqueType) {
     auto gen = gs::just(OpaqueHandle{42});
     hegel::test([&gen](hegel::TestCase& tc) {
-        OpaqueHandle drawn = tc.draw(gen);
+        OpaqueHandle drawn = tc.draw_silent(gen);
         EXPECT_EQ(drawn.id(), 42);
     });
 }
@@ -154,7 +159,7 @@ TEST(NonSerializable, SampledFromWorksWithOpaqueType) {
     options.emplace_back(3);
     auto gen = gs::sampled_from(options);
     hegel::test([&gen](hegel::TestCase& tc) {
-        OpaqueHandle drawn = tc.draw(gen);
+        OpaqueHandle drawn = tc.draw_silent(gen);
         EXPECT_TRUE(drawn == OpaqueHandle{1} || drawn == OpaqueHandle{2} ||
                     drawn == OpaqueHandle{3});
     });
@@ -280,3 +285,230 @@ TEST(CompositeFallback, UnsatisfiableUniqueMapIsRejected) {
         EXPECT_NE(message.find("Unsatisfiable"), std::string::npos) << message;
     }
 }
+
+// ---------------------------------------------------------------------------
+// recursive
+// ---------------------------------------------------------------------------
+
+namespace {
+    struct Node {
+        int value;
+        std::vector<Node> children;
+    };
+
+    size_t depth_of(const Node& node) {
+        size_t deepest = 0;
+        for (const Node& child : node.children) {
+            deepest = std::max(deepest, depth_of(child) + 1);
+        }
+        return deepest;
+    }
+
+    size_t leaves_of(const Node& node) {
+        if (node.children.empty()) {
+            return 1;
+        }
+        size_t total = 0;
+        for (const Node& child : node.children) {
+            total += leaves_of(child);
+        }
+        return total;
+    }
+
+    gs::Generator<Node> nodes(gs::RecursiveParams params = {},
+                              size_t min_children = 1) {
+        return gs::recursive(
+            gs::integers<int>({.min_value = 0, .max_value = 9}).map([](int v) {
+                return Node{v, {}};
+            }),
+            [min_children](gs::Generator<Node> subtrees) {
+                return gs::vectors(subtrees,
+                                   {.min_size = min_children, .max_size = 3})
+                    .map([](std::vector<Node> children) {
+                        return Node{-1, std::move(children)};
+                    });
+            },
+            params);
+    }
+
+    hegel::Settings recursive_settings(uint64_t test_cases = 200) {
+        return hegel::Settings{
+            .test_cases = test_cases,
+            .derandomize = true,
+            .database = hegel::Database::disabled(),
+            .suppress_health_check = {hegel::HealthCheck::FilterTooMuch}};
+    }
+} // namespace
+
+TEST(Recursive, RespectsDepthAndLeafLimits) {
+    hegel::test(
+        [](hegel::TestCase& tc) {
+            Node node = tc.draw(nodes({.max_depth = 3, .max_leaves = 10}));
+            EXPECT_LE(depth_of(node), 3u);
+            EXPECT_LE(leaves_of(node), 10u);
+        },
+        recursive_settings());
+}
+
+TEST(Recursive, GeneratesNestedValues) {
+    auto found = hegel::tests::common::find_any<Node>(
+        nodes(), [](const Node& node) { return depth_of(node) >= 2; });
+    EXPECT_GE(depth_of(found), 2u);
+}
+
+TEST(Recursive, ZeroDepthGeneratesOnlyLeaves) {
+    hegel::tests::common::assert_all_examples<Node>(
+        nodes({.max_depth = 0}),
+        [](const Node& node) { return node.children.empty(); });
+}
+
+TEST(Recursive, ShrinksToALeaf) {
+    Node found = hegel::tests::common::minimal<Node>(
+        nodes(), [](const Node&) { return true; });
+    EXPECT_TRUE(found.children.empty());
+    EXPECT_EQ(found.value, 0);
+}
+
+// Branches that need more leaves than the budget allows are discarded and
+// tried again. When the engine gives up, it rejects the test case.
+TEST(Recursive, OverBudgetAttemptsAreRetried) {
+    int drawn = 0;
+    hegel::test(
+        [&drawn](hegel::TestCase& tc) {
+            Node node = tc.draw(nodes({.max_leaves = 4}, 3));
+            EXPECT_LE(leaves_of(node), 4u);
+            drawn++;
+        },
+        recursive_settings());
+    EXPECT_GT(drawn, 0);
+}
+
+TEST(Recursive, SubtreesShareTheLabelOfTheWholeValue) {
+    namespace hi = hegel::internal;
+    auto leaf = gs::integers<int>({.min_value = 0, .max_value = 100});
+    uint64_t expected =
+        hi::combine_labels({hi::label(hi::LabelName::Recursive), leaf.label()});
+    uint64_t seen = 0;
+    auto gen = gs::recursive(leaf, [&seen](gs::Generator<int> subtrees) {
+        seen = subtrees.label();
+        return subtrees.map([](int x) { return x + 1; });
+    });
+    EXPECT_EQ(gen.label(), expected);
+    hegel::test([&gen](hegel::TestCase& tc) { (void)tc.draw(gen); },
+                recursive_settings(50));
+    EXPECT_EQ(seen, expected);
+}
+
+namespace {
+    class Sealed {
+      public:
+        explicit Sealed(int v) : v_(v) {}
+        int value() const { return v_; }
+
+      private:
+        int v_;
+    };
+
+    template <typename H, typename T>
+    constexpr bool is_printable_handle = std::is_base_of_v<gs::Generator<T>, H>;
+
+    template <typename H, typename T>
+    constexpr bool is_silent_handle =
+        std::is_base_of_v<gs::AnyGenerator<T>, H> && !is_printable_handle<H, T>;
+
+    const gs::Generator<int> printable = gs::integers<int>();
+    const gs::AnyGenerator<int> silent = gs::AnyGenerator<int>(printable);
+    const auto evens = printable.map([](int v) { return v / 2 * 2; });
+    const auto sealed = printable.map([](int v) { return Sealed(v); });
+} // namespace
+
+TEST(HandleTypes, BuiltInGeneratorsArePrintable) {
+    static_assert(
+        std::is_same_v<decltype(gs::integers<int>()), gs::Generator<int>>);
+    static_assert(
+        std::is_same_v<decltype(gs::booleans()), gs::Generator<bool>>);
+    static_assert(std::is_same_v<decltype(gs::vectors(printable)),
+                                 gs::Generator<std::vector<int>>>);
+    static_assert(is_printable_handle<decltype(gs::just(1)), int>);
+    static_assert(is_printable_handle<decltype(evens), int>);
+}
+
+TEST(HandleTypes, ASilentElementGivesASilentContainer) {
+    static_assert(std::is_same_v<decltype(gs::vectors(silent)),
+                                 gs::AnyGenerator<std::vector<int>>>);
+    static_assert(std::is_same_v<decltype(gs::optional(silent)),
+                                 gs::AnyGenerator<std::optional<int>>>);
+    static_assert(std::is_same_v<decltype(gs::tuples(silent, silent)),
+                                 gs::AnyGenerator<std::tuple<int, int>>>);
+    static_assert(std::is_same_v<decltype(gs::one_of<int>({printable, silent})),
+                                 gs::AnyGenerator<int>>);
+    static_assert(std::is_same_v<decltype(gs::one_of({printable, printable})),
+                                 gs::Generator<int>>);
+}
+
+TEST(HandleTypes, AValueWithNoRepresentationIsSilent) {
+    static_assert(is_silent_handle<decltype(sealed), Sealed>);
+    static_assert(is_silent_handle<decltype(gs::just(Sealed(1))), Sealed>);
+    static_assert(
+        is_silent_handle<decltype(gs::deferred_silent<int>().generator()),
+                         int>);
+    static_assert(
+        is_printable_handle<decltype(sealed.print_with(
+                                [](const Sealed&, hegel::Printer&) {})),
+                            Sealed>);
+    static_assert(is_printable_handle<decltype(silent.print_as_repr()), int>);
+}
+
+TEST(HandleTypes, FlatMapFollowsTheHandleItsFunctionReturns) {
+    auto to_printable = printable.flat_map([](int) { return printable; });
+    auto to_mapped = printable.flat_map([](int) { return evens; });
+    auto to_silent = printable.flat_map([](int) { return silent; });
+    auto to_sealed = silent.flat_map([](int) { return sealed; });
+    static_assert(std::is_same_v<decltype(to_printable), gs::Generator<int>>);
+    static_assert(std::is_same_v<decltype(to_mapped), gs::Generator<int>>);
+    static_assert(std::is_same_v<decltype(to_silent), gs::AnyGenerator<int>>);
+    static_assert(
+        std::is_same_v<decltype(to_sealed), gs::AnyGenerator<Sealed>>);
+}
+
+TEST(HandleTypes, AMappedHandleWorksWhereverAGeneratorDoes) {
+    auto mapped_vectors = gs::vectors(evens, {.min_size = 1});
+    auto mixed = gs::one_of({printable, evens});
+    auto sealed_vectors = gs::vectors(sealed);
+    static_assert(std::is_same_v<decltype(mapped_vectors),
+                                 gs::Generator<std::vector<int>>>);
+    static_assert(std::is_same_v<decltype(mixed), gs::Generator<int>>);
+    static_assert(std::is_same_v<decltype(sealed_vectors),
+                                 gs::AnyGenerator<std::vector<Sealed>>>);
+    hegel::test(
+        [&](hegel::TestCase& tc) {
+            int n = tc.draw(evens);
+            EXPECT_EQ(n % 2, 0);
+            std::vector<int> v = tc.draw(mapped_vectors);
+            EXPECT_FALSE(v.empty());
+            (void)tc.draw(mixed);
+            (void)tc.draw_silent(sealed_vectors);
+        },
+        hegel::Settings{.test_cases = 10,
+                        .database = hegel::Database::disabled()});
+}
+
+#if HEGEL_HAS_REFLECTION
+TEST(HandleTypes, AFieldOverrideKeepsPrintabilityOnlyIfItsGeneratorHasIt) {
+    auto printed = gs::default_generator<Point>().override(
+        gs::field<&Point::x>(printable));
+    auto silenced =
+        gs::default_generator<Point>().override(gs::field<&Point::x>(silent));
+    auto still_silenced = silenced.override(gs::field<&Point::y>(printable));
+    static_assert(is_printable_handle<decltype(printed), Point>);
+    static_assert(is_silent_handle<decltype(silenced), Point>);
+    static_assert(is_silent_handle<decltype(still_silenced), Point>);
+    hegel::test(
+        [&](hegel::TestCase& tc) {
+            (void)tc.draw(printed);
+            (void)tc.draw_silent(still_silenced);
+        },
+        hegel::Settings{.test_cases = 10,
+                        .database = hegel::Database::disabled()});
+}
+#endif
