@@ -43,7 +43,9 @@ Hegel's native engine, which the build compiles with `cargo` (a Rust
 toolchain from [rustup](https://rustup.rs)) and links. To link a libhegel
 built elsewhere instead, so that no Rust toolchain is needed, pass
 `-DHEGEL_LIBHEGEL_LIBRARY=/path/to/libhegel_c.<ext>`.
-See https://hegel.dev/reference/installation for details.
+Each [libhegel release](https://github.com/hegeldev/hegel/releases) carries
+prebuilt libraries; the [libhegel README](https://github.com/hegeldev/hegel/blob/main/libhegel/README.md)
+lists the platforms.
 
 ## Quickstart
 
