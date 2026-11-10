@@ -13,7 +13,9 @@
 #include <map>
 #include <optional>
 #include <ostream>
+#include <regex>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -495,4 +497,106 @@ TEST(ReprProperty, VectorRoundTrip) {
         }
         ASSERT_EQ(parsed, v);
     });
+}
+
+// ---------------------------------------------------------------------------
+// Layout: the engine breaks a value that does not fit its width at the
+// structure the printer gives it.
+// ---------------------------------------------------------------------------
+
+using hegel::internal::render;
+
+TEST(ReprLayout, FitsOnOneLine) {
+    EXPECT_EQ(render(std::vector<int>{1, 2, 3}, 79),
+              "std::vector<int>{1, 2, 3}");
+}
+
+TEST(ReprLayout, SequenceBreaksOneItemPerLine) {
+    EXPECT_EQ(render(std::vector<int>{100000, 200000, 300000}, 24),
+              "std::vector<int>{\n"
+              "    100000,\n"
+              "    200000,\n"
+              "    300000\n"
+              "}");
+}
+
+TEST(ReprLayout, OuterGroupBreaksBeforeInner) {
+    std::map<int, std::string> m{{1, "a"}, {2, "b"}};
+    EXPECT_EQ(render(m, 30), "std::map<int, std::string>{\n"
+                             "    {1, std::string(\"a\")},\n"
+                             "    {2, std::string(\"b\")}\n"
+                             "}");
+}
+
+TEST(ReprLayout, EveryCompoundValueBreaks) {
+    EXPECT_EQ(render(std::make_pair(123456, 654321), 20),
+              "std::pair<int, int>{\n"
+              "    123456,\n"
+              "    654321\n"
+              "}");
+    EXPECT_EQ(render(std::optional<int>(123456), 20), "std::optional<int>{\n"
+                                                      "    123456\n"
+                                                      "}");
+    EXPECT_EQ(render(std::variant<int, bool>(123456), 20),
+              "std::variant<int, bool>{\n"
+              "    std::in_place_index<0>,\n"
+              "    123456\n"
+              "}");
+}
+
+TEST(ReprLayout, StreamOperatorTextIsReflowed) {
+    EXPECT_EQ(render(Wrapped(7), 79), "Wrapped(7)");
+}
+
+class Unprintable {
+  public:
+    explicit Unprintable(int v) : v_(v) {}
+    friend std::ostream& operator<<(std::ostream&, const Unprintable& u) {
+        throw std::runtime_error("cannot print " + std::to_string(u.v_));
+    }
+
+  private:
+    int v_;
+};
+
+TEST(ReprLayout, AValueThatFailsToPrintLeavesNoPartialLine) {
+    testing::internal::CaptureStderr();
+    EXPECT_THROW(hegel::test(
+                     [](hegel::TestCase& tc) {
+                         tc.note("before");
+                         (void)tc.draw(gs::just(Unprintable(1)));
+                     },
+                     hegel::Settings{.test_cases = 1,
+                                     .verbosity = hegel::Verbosity::Verbose,
+                                     .database = hegel::Database::disabled()}),
+                 std::runtime_error);
+    std::string output = testing::internal::GetCapturedStderr();
+    EXPECT_TRUE(contains(output, "before")) << output;
+    EXPECT_FALSE(contains(output, "auto draw_1")) << output;
+}
+
+TEST(ReprLayout, ARandomEnginePrintsWhatItHandedOut) {
+    testing::internal::CaptureStderr();
+    hegel::test(
+        [](hegel::TestCase& tc) {
+            auto rng = tc.draw("rng", gs::randoms());
+            (void)rng();
+            (void)rng();
+            auto seeded =
+                tc.draw("seeded", gs::randoms({.use_true_random = true}));
+            (void)seeded();
+        },
+        hegel::Settings{.test_cases = 1,
+                        .verbosity = hegel::Verbosity::Verbose,
+                        .database = hegel::Database::disabled()});
+    std::string output = testing::internal::GetCapturedStderr();
+    EXPECT_TRUE(std::regex_search(
+        output,
+        std::regex(
+            R"(auto rng_1 = HegelRandom\{\.consumed = \{[0-9]+, [0-9]+\}\};)")))
+        << output;
+    EXPECT_TRUE(std::regex_search(
+        output,
+        std::regex(R"(auto seeded_1 = HegelRandom\{\.seed = [0-9]+\};)")))
+        << output;
 }

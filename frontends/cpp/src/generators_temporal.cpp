@@ -205,7 +205,7 @@ namespace hegel::generators::temporal {
             return impl::date_options_new(weekdays, months);
         }
 
-        class DatesGenerator : public IGenerator<Date> {
+        class DatesGenerator : public generators::detail::ValuePrinted<Date> {
           public:
             explicit DatesGenerator(const DatesParams& params)
                 : bounds_(bounds(params.min_value, params.max_value,
@@ -218,12 +218,16 @@ namespace hegel::generators::temporal {
                     impl::date_to_c(bounds_.second), options_.get()));
             }
 
+            uint64_t label() const override {
+                return internal::label(internal::LabelName::Dates);
+            }
+
           private:
             std::pair<Date, Date> bounds_;
             DateOptionsHandle options_;
         };
 
-        class TimesGenerator : public IGenerator<Time> {
+        class TimesGenerator : public generators::detail::ValuePrinted<Time> {
           public:
             explicit TimesGenerator(const TimesParams& params)
                 : bounds_(bounds(params.min_value, params.max_value,
@@ -237,12 +241,17 @@ namespace hegel::generators::temporal {
                     impl::time_to_c(bounds_.second), precision_));
             }
 
+            uint64_t label() const override {
+                return internal::label(internal::LabelName::Times);
+            }
+
           private:
             std::pair<Time, Time> bounds_;
             uint32_t precision_;
         };
 
-        class DatetimesGenerator : public IGenerator<DateTime> {
+        class DatetimesGenerator
+            : public generators::detail::ValuePrinted<DateTime> {
           public:
             explicit DatetimesGenerator(const DatetimesParams& params)
                 : bounds_(bounds(params.min_value, params.max_value,
@@ -255,12 +264,17 @@ namespace hegel::generators::temporal {
                     impl::datetime_to_c(bounds_.second), precision_));
             }
 
+            uint64_t label() const override {
+                return internal::label(internal::LabelName::Datetimes);
+            }
+
           private:
             std::pair<DateTime, DateTime> bounds_;
             uint32_t precision_;
         };
 
-        class InstantsGenerator : public IGenerator<Instant> {
+        class InstantsGenerator
+            : public generators::detail::ValuePrinted<Instant> {
           public:
             explicit InstantsGenerator(const InstantsParams& params)
                 : bounds_(bounds(params.min_value, params.max_value,
@@ -271,6 +285,10 @@ namespace hegel::generators::temporal {
                 return impl::timestamp_from_c(impl::draw_timestamp(
                     tc, impl::timestamp_to_c(bounds_.first),
                     impl::timestamp_to_c(bounds_.second), precision_));
+            }
+
+            uint64_t label() const override {
+                return internal::label(internal::LabelName::Instants);
             }
 
           private:
@@ -295,7 +313,8 @@ namespace hegel::generators::temporal {
             return bound->seconds;
         }
 
-        class OffsetsGenerator : public IGenerator<UtcOffset> {
+        class OffsetsGenerator
+            : public generators::detail::ValuePrinted<UtcOffset> {
           public:
             explicit OffsetsGenerator(const OffsetsParams& params)
                 : min_(known_bound("min_value", params.min_value, -MAX_OFFSET)),
@@ -314,6 +333,10 @@ namespace hegel::generators::temporal {
                 return impl::offset_from_c(o.seconds, o.known);
             }
 
+            uint64_t label() const override {
+                return internal::label(internal::LabelName::Offsets);
+            }
+
           private:
             int32_t min_;
             int32_t max_;
@@ -321,7 +344,8 @@ namespace hegel::generators::temporal {
             bool unknown_;
         };
 
-        class ZonesGenerator : public IGenerator<TimeZone> {
+        class ZonesGenerator
+            : public generators::detail::ValuePrinted<TimeZone> {
           public:
             explicit ZonesGenerator(const ZonesParams& params)
                 : source_(params.source.has_value() ? *params.source
@@ -337,6 +361,10 @@ namespace hegel::generators::temporal {
 
             const hegel_timezone_spec_t* spec() const { return spec_.get(); }
             const ZoneSource& source() const { return source_; }
+
+            uint64_t label() const override {
+                return internal::label(internal::LabelName::Zones);
+            }
 
           private:
             ZoneSource source_;
@@ -381,12 +409,15 @@ namespace hegel::generators::temporal {
             return impl::zoned_spec_new(spec);
         }
 
-        class ZonedDatetimesGenerator : public IGenerator<ZonedDateTime> {
+        class ZonedDatetimesGenerator
+            : public generators::detail::ValuePrinted<ZonedDateTime> {
           public:
             explicit ZonedDatetimesGenerator(const ZonedDatetimesParams& params)
-                : zones_(params.zones.has_value() ? params.zones->inner()
-                                                  : zones().inner()),
-                  builtin_(dynamic_cast<const ZonesGenerator*>(zones_.get())),
+                : zones_(params.zones.has_value()
+                             ? *params.zones
+                             : AnyGenerator<TimeZone>(zones())),
+                  builtin_(dynamic_cast<const ZonesGenerator*>(
+                      zones_.inner().get())),
                   source_(builtin_ != nullptr ? builtin_->source()
                                               : default_zone_source()),
                   spec_(zoned_spec_of(params)) {}
@@ -396,12 +427,18 @@ namespace hegel::generators::temporal {
                     return from_draw(impl::draw_zoned_datetime(
                         tc, builtin_->spec(), spec_.get()));
                 }
-                internal::start_span(tc, internal::SpanLabel::ZonedDatetime);
-                TimeZone zone = zones_->do_draw(tc);
-                ZonedDateTime value = from_draw(impl::draw_zoned_datetime(
+                TimeZone zone = tc.draw_silent(zones_);
+                return from_draw(impl::draw_zoned_datetime(
                     tc, spec_for(zone.name), spec_.get()));
-                internal::stop_span(tc);
-                return value;
+            }
+
+            uint64_t label() const override {
+                uint64_t own =
+                    internal::label(internal::LabelName::ZonedDatetimes);
+                if (builtin_ != nullptr) {
+                    return own;
+                }
+                return internal::combine_labels({own, zones_.label()});
             }
 
           private:
@@ -432,7 +469,7 @@ namespace hegel::generators::temporal {
                 return found->second->get();
             }
 
-            std::shared_ptr<IGenerator<TimeZone>> zones_;
+            AnyGenerator<TimeZone> zones_;
             const ZonesGenerator* builtin_;
             ZoneSource source_;
             ZonedSpecHandle spec_;
@@ -441,7 +478,8 @@ namespace hegel::generators::temporal {
                 single_specs_;
         };
 
-        class SignedDurationsGenerator : public IGenerator<SignedDuration> {
+        class SignedDurationsGenerator
+            : public generators::detail::ValuePrinted<SignedDuration> {
           public:
             explicit SignedDurationsGenerator(
                 const DurationsParams<SignedDuration>& params)
@@ -453,6 +491,10 @@ namespace hegel::generators::temporal {
                 return impl::duration_from_c(impl::draw_duration(
                     tc, impl::duration_to_c(bounds_.first),
                     impl::duration_to_c(bounds_.second), precision_));
+            }
+
+            uint64_t label() const override {
+                return internal::label(internal::LabelName::Durations);
             }
 
           private:
@@ -489,7 +531,7 @@ namespace hegel::generators::temporal {
             return impl::span_spec_new(bounds, sign_to_c(params.sign));
         }
 
-        class SpansGenerator : public IGenerator<Span> {
+        class SpansGenerator : public generators::detail::ValuePrinted<Span> {
           public:
             explicit SpansGenerator(const SpansParams& params)
                 : spec_(span_spec_of(params)) {}
@@ -500,6 +542,10 @@ namespace hegel::generators::temporal {
                             s.days,       s.hours,        s.minutes,
                             s.seconds,    s.milliseconds, s.microseconds,
                             s.nanoseconds};
+            }
+
+            uint64_t label() const override {
+                return internal::label(internal::LabelName::Spans);
             }
 
           private:

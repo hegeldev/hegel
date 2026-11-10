@@ -2,8 +2,8 @@
 //
 // HEGEL_MAIN_SUBJECT_BODY selects what the test case does: `pass` (the
 // default), `fail`, `empty_message`, `reject` or `throw_int`. Each test case
-// prints one `subject: test case` line to stdout. HEGEL_MAIN_SUBJECT_STEPS sets
-// Settings::stateful_step_count.
+// prints one `subject: test case` line to stdout. HEGEL_MAIN_SUBJECT_PROFILE
+// names the settings profile the inline settings are created from.
 //
 // The build compiles this file twice. The second program defines
 // HEGEL_MAIN_SUBJECT_REPRODUCE: it uses the form of HEGEL_MAIN without
@@ -43,6 +43,14 @@ namespace {
             throw n;
         }
     }
+
+    hegel::Settings settings() {
+        hegel::Settings settings = hegel::Settings::from_profile(
+            env("HEGEL_MAIN_SUBJECT_PROFILE", "default"));
+        settings.test_cases = 50;
+        settings.database = hegel::Database::disabled();
+        return settings;
+    }
 } // namespace
 
 #ifdef HEGEL_MAIN_SUBJECT_REPRODUCE
@@ -52,12 +60,6 @@ HEGEL_MAIN(subject_workload)(hegel::TestCase& tc) { body(tc); }
 
 #else
 
-HEGEL_MAIN(subject_workload,
-           {.test_cases = 50,
-            .database = hegel::Database::disabled(),
-            .stateful_step_count = std::stoll(
-                env("HEGEL_MAIN_SUBJECT_STEPS", "50"))})(hegel::TestCase& tc) {
-    body(tc);
-}
+HEGEL_MAIN(subject_workload, settings())(hegel::TestCase& tc) { body(tc); }
 
 #endif

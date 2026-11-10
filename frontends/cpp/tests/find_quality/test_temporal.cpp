@@ -188,9 +188,11 @@ TEST(FindTemporal, InstantsRespectBoundsAndPrecision) {
             return t.nanosecond % 1000 == 0;
         });
     find_any<gs::temporal::Instant>(
-        gs::temporal::instants(), [](const gs::temporal::Instant& t) {
+        gs::temporal::instants(),
+        [](const gs::temporal::Instant& t) {
             return t.second == 0 && t.nanosecond == 0;
-        });
+        },
+        10'000);
 }
 
 TEST(FindTemporal, OffsetsRespectGranularityAndReachTheUnknown) {

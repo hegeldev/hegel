@@ -139,7 +139,7 @@ namespace hegel::generators::temporal {
         /// when this generator is built. A name that source lacks is then
         /// an opaque zone: its civil time is read as UTC, with an unknown
         /// offset.
-        std::optional<Generator<TimeZone>> zones;
+        std::optional<AnyGenerator<TimeZone>> zones;
         /// Minimum wall-clock time (inclusive), in whatever zone is drawn.
         std::optional<DateTime> min_value;
         /// Maximum wall-clock time (inclusive), in whatever zone is drawn.

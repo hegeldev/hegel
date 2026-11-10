@@ -175,7 +175,7 @@ def test_repeat_runs_until_the_engine_stops_it():
         tc.repeat(step)
         after += 1
 
-    run_test(body, test_cases=3)
+    run_test(body, test_cases=3, derandomize=True)
     assert repetitions > 0
     assert after == 0
 
