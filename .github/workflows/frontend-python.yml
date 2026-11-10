@@ -69,7 +69,7 @@ jobs:
   # is not writable afterwards.
   package:
     name: package (${{ matrix.platform }})
-    runs-on: ${{ fromJSON('{"linux-amd64":"ubuntu-latest","linux-arm64":"ubuntu-24.04-arm","darwin-arm64":"macos-14","windows-amd64":"windows-latest"}')[matrix.platform] }}
+    runs-on: ${{ fromJSON('{"linux-amd64":"ubuntu-latest","linux-arm64":"ubuntu-24.04-arm","darwin-arm64":"macos-latest","windows-amd64":"windows-latest"}')[matrix.platform] }}
     permissions:
       contents: read
     defaults:

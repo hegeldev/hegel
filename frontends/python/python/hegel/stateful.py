@@ -7,7 +7,7 @@ import inspect
 import math
 import queue
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -50,11 +50,13 @@ ANONYMOUS_GROUP = "<anonymous>"
 
 @dataclass(frozen=True)
 class Rule:
-    """A rule of a state machine: ``apply(tc)`` performs one step."""
+    """A rule of a state machine: ``apply(tc)`` performs one step.
+    ``groups`` names the concurrency groups it belongs to; it runs in the
+    rounds of each of them."""
 
     name: str
     apply: Callable[[TestCase], Any]
-    group: str = ANONYMOUS_GROUP
+    groups: tuple[str, ...] = (ANONYMOUS_GROUP,)
     weight: float = 1.0
 
 
@@ -68,6 +70,14 @@ class Invariant:
     name: str
     apply: Callable[[TestCase], Any]
     always_run: bool = False
+
+
+def _check_groups(name: str, groups: Iterable[str]) -> tuple[str, ...]:
+    if isinstance(groups, (str, bytes)):
+        raise InvalidArgument(
+            f"rule {name!r}: groups={groups!r} must be a list of group names, not a string"
+        )
+    return tuple(str(g) for g in groups)
 
 
 def _check_weight(name: str, weight: Any) -> float:
@@ -110,12 +120,15 @@ class Machine:
     :meth:`max_concurrency` return the machine, so calls chain.
 
     With ``max_concurrency`` above 1 the machine runs concurrently, in
-    rounds. The engine draws a number of worker threads for the test case
-    in ``[min_concurrency, max_concurrency]``, weighted toward the maximum.
-    Each round, it picks one group of rules, every worker runs a short
+    rounds, on ``max_concurrency`` worker threads. The engine draws how
+    many of them run rules in ``[min_concurrency, max_concurrency]``,
+    weighted toward the maximum, and may redraw it between rounds.
+    Each round, it picks one group of rules, every active worker runs a short
     sequence of that group's rules against the shared model, and the
     invariants then run on the main thread. Rules in the same group may
-    overlap; rules in different groups never do. A concurrent run's
+    overlap; rules in different groups never do; a rule in several groups
+    runs in the rounds of each of them, so a ``read`` rule in both a
+    ``write`` and a ``flush`` group can overlap either. A concurrent run's
     failures may not reproduce exactly, so they are confirmed by replay
     and reported with a caveat; see
     :class:`~hegel.NondeterminismStrictness`.
@@ -134,7 +147,7 @@ class Machine:
         name: str,
         apply: Callable[[TestCase], Any] | None = None,
         *,
-        group: str | None = None,
+        groups: Iterable[str] | None = None,
         weight: float = 1.0,
     ) -> Any:
         """Add a rule called ``name`` that runs ``apply(tc)`` as one step;
@@ -142,11 +155,17 @@ class Machine:
 
         A rule that rejects (with :meth:`TestCase.assume
         <hegel.TestCase.assume>`) stops early without failing; rules
-        should reject before they change the model. ``group`` is the
-        concurrency group (rules without one share a group) and
-        ``weight`` a positive hint of how often to choose the rule
-        relative to the others. A duplicate name or a weight that is not
-        finite and positive is an :class:`~hegel.InvalidArgument`.
+        should reject before they change the model. ``groups`` names the
+        rule's concurrency groups: rules in the same group may overlap,
+        rules in different groups never do, and a rule in several groups
+        runs in the rounds of each of them (rules without one share the
+        anonymous group). ``weight`` is a positive hint of how often to
+        choose the rule relative to the others. A duplicate name, a
+        weight that is not finite and positive, or a single string in
+        place of the list of ``groups`` is an
+        :class:`~hegel.InvalidArgument`; so are an empty ``groups`` and
+        one that repeats a group, which the engine reports when the
+        machine runs.
         """
 
         def add(fn: Callable[[TestCase], Any]) -> Callable[[TestCase], Any]:
@@ -156,7 +175,7 @@ class Machine:
                 Rule(
                     name,
                     fn,
-                    ANONYMOUS_GROUP if group is None else str(group),
+                    (ANONYMOUS_GROUP,) if groups is None else _check_groups(name, groups),
                     _check_weight(name, weight),
                 )
             )
@@ -268,22 +287,33 @@ def _check_invariants(
             raise
 
 
+def _register_machine(
+    tc: TestCase,
+    rules: list[tuple[Rule, list[int]]],
+    invariants: list[Invariant],
+    min_concurrency: int,
+    max_concurrency: int,
+    step_count: int,
+) -> NativeMachine:
+    """Create an engine state machine and declare every rule (with its
+    concurrency-group ids) and invariant in order, so the engine's indices
+    are positions in ``rules`` and ``invariants``. The caller starts it."""
+    machine = tc._handle.new_state_machine(min_concurrency, max_concurrency, step_count)
+    for rule, groups in rules:
+        machine.add_rule(tc._handle, rule.name, rule.weight, groups)
+    for inv in invariants:
+        machine.add_invariant(tc._handle, inv.name, inv.always_run)
+    return machine
+
+
 def _run_sequential(
     tc: TestCase,
     rules: list[Rule],
     invariants: list[Invariant],
     step_count: int,
 ) -> None:
-    machine, _ = tc._handle.new_state_machine(
-        [r.name for r in rules],
-        [0] * len(rules),
-        [r.weight for r in rules],
-        [i.name for i in invariants],
-        [i.always_run for i in invariants],
-        1,
-        1,
-        step_count,
-    )
+    machine = _register_machine(tc, [(r, [0]) for r in rules], invariants, 1, 1, step_count)
+    machine.start(tc._handle)
     if invariants:
         tc.note("Checking invariants on the initial state.")
     _check_invariants(tc, invariants, None)
@@ -447,22 +477,16 @@ def _run_concurrent(
     step_count: int,
 ) -> None:
     group_names: list[str] = []
-    rule_groups: list[int] = []
+    rule_specs: list[tuple[Rule, list[int]]] = []
     for r in rules:
-        if r.group not in group_names:
-            group_names.append(r.group)
-        rule_groups.append(group_names.index(r.group))
-    machine, concurrency = tc._handle.new_state_machine(
-        [r.name for r in rules],
-        rule_groups,
-        [r.weight for r in rules],
-        [i.name for i in invariants],
-        [i.always_run for i in invariants],
-        min_concurrency,
-        max_concurrency,
-        step_count,
+        for g in r.groups:
+            if g not in group_names:
+                group_names.append(g)
+        rule_specs.append((r, [group_names.index(g) for g in r.groups]))
+    machine = _register_machine(
+        tc, rule_specs, invariants, min_concurrency, max_concurrency, step_count
     )
-    tc.note(f"Concurrency level: {concurrency}")
+    concurrency = machine.start(tc._handle)
     if invariants:
         tc.note("Checking invariants on the initial state.")
     _check_invariants(tc, invariants, None)
@@ -485,10 +509,15 @@ def _run_concurrent(
         thread.start()
     try:
         round_number = 0
-        while (group := machine.next_group(tc._handle)) is not None:
+        noted_level = None
+        while (round_ := machine.next_group(tc._handle)) is not None:
+            group, level = round_
             if not 0 <= group < len(group_names):  # nocov
                 raise InternalError(f"state_machine_next_group returned unknown group id {group}")
             round_number += 1
+            if level != noted_level:
+                tc.note(f"Concurrency level: {level}")
+                noted_level = level
             name = group_names[group]
             tc.note(f'---------------- Round {round_number}: group "{name}" ----------------')
             for worker, rounds in enumerate(round_queues):
@@ -537,7 +566,7 @@ def _check_step_method(kind: str, method: Callable[..., Any]) -> None:
 def rule(
     fn: Callable[..., Any] | None = None,
     *,
-    group: str | None = None,
+    groups: Iterable[str] | None = None,
     weight: float = 1.0,
     name: str | None = None,
 ) -> Any:
@@ -550,17 +579,18 @@ def rule(
             self.stack.append(tc.draw(gs.integers()))
 
     Usable as ``@hegel.rule`` or ``@hegel.rule(...)``. ``name`` replaces
-    the method name in the failure report; ``group`` and ``weight`` are as
-    for :meth:`Machine.rule`. A rule's precondition is a
+    the method name in the failure report; ``groups`` and ``weight`` are
+    as for :meth:`Machine.rule`. A rule's precondition is a
     :meth:`TestCase.assume <hegel.TestCase.assume>` at its top.
     """
 
     def decorate(method: Callable[..., Any]) -> Callable[..., Any]:
         _check_step_method("rule", method)
+        rule_name = name or method.__name__
         method._hegel_rule = {  # type: ignore[attr-defined]
-            "group": group,
-            "weight": _check_weight(name or method.__name__, weight),
-            "name": name or method.__name__,
+            "groups": None if groups is None else _check_groups(rule_name, groups),
+            "weight": _check_weight(rule_name, weight),
+            "name": rule_name,
         }
         return method
 
@@ -655,7 +685,7 @@ class StateMachine:
         machine = Machine(tc)
         for attr, spec in self._rules():
             machine.rule(
-                spec["name"], getattr(self, attr), group=spec["group"], weight=spec["weight"]
+                spec["name"], getattr(self, attr), groups=spec["groups"], weight=spec["weight"]
             )
         for attr, spec in self._invariants():
             machine.invariant(spec["name"], getattr(self, attr), always_run=spec["always_run"])

@@ -127,7 +127,7 @@ lib/                         # Library source
                              #   option + the Sexplib0 sexp_of_* converters)
   stateful.ml.in             # Stateful testing: Pool (shared by both machine kinds),
                              #   Rule (sequential, plain mutating step), Concurrent_rule
-                             #   (?group, portable step taking the worker's ctx),
+                             #   (?groups, portable step taking the worker's ctx),
                              #   Invariant, State_machine + run tc (module M) ~init,
                              #   Concurrent_state_machine (type ctx) +
                              #   run_concurrent ~concurrency ?min/max_concurrency.
@@ -267,7 +267,11 @@ typed draws (`generate_integer`, `generate_boolean`, `generate_float`,
 `generate_bytes`, `generate_string` + the `string_generator_*` handle
 constructors, `generate_date`/`time`/`datetime`, `generate_ipv4`/`ipv6`), spans,
 collections, pools, state machines (`new_state_machine` takes the per-machine
-`~step_count` since libhegel 0.38.0; there is no settings-level step count),
+`~step_count` since libhegel 0.38.0; there is no settings-level step count;
+rules and invariants are declared one call at a time with
+`state_machine_add_rule` / `state_machine_add_invariant` and sealed with
+`state_machine_start`, which returns `max_concurrency`, the worker count;
+`state_machine_next_group` returns each round's group and concurrency level),
 `target`, `event`/`event_value`, derived handles (`test_case_clone`,
 `test_case_block`), the pretty-printer document (`printer_*`,
 `test_case_printer`, `note` — see Pretty printing below), `mark_complete`. Strings cross the ABI as `hegel_string_t`
@@ -365,8 +369,10 @@ combination, so the fields take either order and either may be omitted, and a
 repeated or unknown field is a compile error. A weight is carried
 as the text of a float literal (an int payload gains a `.`) and defaults to
 `1.0`. `module%hegel_concurrent_state_machine` does the same with
-`Concurrent_rule.create ?group ~weight ~name ~step ()`, whose `[@@rule]` record
-also takes `group` (which the sequential form rejects). Its rule bodies take
+`Concurrent_rule.create ?groups ~weight ~name ~step ()`, whose `[@@rule]` record
+also takes `groups = [ "a"; "b" ]` (which the sequential form rejects): the
+concurrency groups the rule belongs to, in whose rounds it all runs; the
+engine rejects an empty or repeating list as a `Usage_error`. Its rule bodies take
 the worker's context between the test case and the state (`tc ctx state`).
 If the module declares `type ctx`, the generated `run ~concurrency
 ?min_concurrency ?max_concurrency ?step_count ?sexp_of_state tc ~init` makes
@@ -822,9 +828,10 @@ round inline on `tc` inside a `stateful_rule` span (`stop_span
 ~discard:rejected`), deterministic and shrinkable, with `Step N: name`
 headings and no worker stamps; its rule bodies are ordinary functions, so on
 OxCaml they see the state uncontended and plain refs work. The concurrent
-`run_concurrent` (`Concurrent_rule` with `?group`, `?min_concurrency` default
-1, `?max_concurrency` default `min_concurrency`; the engine draws the worker
-count when it creates the machine) never runs a rule inline, even at one
+`run_concurrent` (`Concurrent_rule` with `?groups`, `?min_concurrency` default
+1, `?max_concurrency` default `min_concurrency`; it runs `max_concurrency`
+workers, and the engine draws how many are active, possibly redrawing it
+between rounds) never runs a rule inline, even at one
 worker: each round notes a `Round N: group` header, clones the test case once
 per worker, tags the clone with `set_worker_index`, and makes one call to
 `concurrency.spawn_join_n ~n ~f`, where `f i` runs `run_rules` for worker
@@ -963,10 +970,11 @@ guards the syntax upstream cannot parse (`@ m`, kind annotations).
   portable code. The only other launder is three `ipaddr` functions in
   `generators_combinators.ml.in`.
 - **Concurrent core.** `run_concurrent_core` is the concurrent runner with the
-  rules as plain data (names, groups, weights) and two local callbacks from
-  the caller: `run_round` (run one round, return one outcome per worker) and
-  `check_invariant i tc`. `run_machine` takes invariant names, always-check
-  flags, and that `check_invariant`, not invariant closures, because the
+  rules and invariants as lists of plain-data records (`Stateful.rule_info`,
+  `Stateful.invariant_info`) and two local callbacks from the caller:
+  `run_round` (run one round, return one outcome per worker) and
+  `check_invariant i tc`. `run_machine` takes those invariant records and
+  that `check_invariant`, not invariant closures, because the
   Async runner's invariants wait through the scheduler scope's local
   `Concurrent.t`. Local closures are passed down the step loops, not
   captured, and iteration uses `iteri_local` (`Stdlib.List.iteri` takes a

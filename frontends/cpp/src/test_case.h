@@ -5,80 +5,71 @@
  */
 
 #include <hegel.h>
-#include <hegel/settings.h>
+#include <hegel/explicit.h>
 
-#include <chrono>
-#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <memory>
 #include <mutex>
-#include <optional>
-#include <set>
 #include <string>
 #include <vector>
 
 namespace hegel::impl::test_case {
 
-    struct WorkerOutputLine {
-        std::optional<std::size_t> worker;
-        std::string text;
+    // The display names the draws of a test case have taken. Shared by a test
+    // case, its blocks and its clones, whose draws print into one sequence of
+    // names.
+    struct DrawNames {
+        std::mutex mutex;
+        std::map<std::string, int> counts;
+    };
+
+    // The state of an explicit test case: the values it was given, which
+    // of them the draws took, and what it printed. Shared by the test case
+    // and its clones, which may draw from other threads, hence the mutex.
+    struct ExplicitState {
+        explicit ExplicitState(const ExplicitTestCase& test_case)
+            : test_case(test_case), used(test_case.values().size(), false) {}
+
+        const ExplicitTestCase& test_case;
+        std::mutex mutex;
+        std::vector<bool> used;
+        std::vector<std::string> lines;
     };
 
     // Per-case runtime state.
     // Generators reach `tc` through TestCase::data() to drive the typed draw
-    // primitives. (The error-reporting context is per-thread.
+    // primitives. (The error-reporting context is per-thread.)
     struct TestCaseData {
-        hegel_test_case_t* tc;
-        bool is_final;
-        Verbosity verbosity;
-        int note_indent = 0;
-        // True while this case's output forms the body of a framed failure
-        // report: the body opens with a blank line and sits at note_indent.
-        bool in_report = false;
-        // Whether any note or drawn value has printed. Shared with clones,
-        // which print into the same body.
-        std::shared_ptr<bool> printed_output = std::make_shared<bool>(false);
-        std::shared_ptr<std::mutex> output_mutex =
-            std::make_shared<std::mutex>();
-        std::optional<std::size_t> worker_index;
-        std::chrono::steady_clock::time_point worker_started;
-        bool buffer_output = false;
-        std::shared_ptr<std::vector<WorkerOutputLine>> output_lines =
-            std::make_shared<std::vector<WorkerOutputLine>>();
-        int draw_depth = 0;
-        std::map<std::string, int> draw_name_counts;
-        std::set<std::string> taken_display_names;
-        // Settings::stateful_step_count for this run, read when the case
-        // creates a state machine.
-        int64_t stateful_step_count = 50;
+        TestCaseData(hegel_test_case_t* handle, bool emit)
+            : tc(handle), emit(emit) {}
 
-        // Releases the owned libhegel handle. The owning TestCase's
+        // Releases the owned libhegel handles. The owning TestCase's
         // unique_ptr runs this on scope exit.
         ~TestCaseData();
 
-        // leading whitespace for a printed note/drawn value at the current
-        // nesting depth.
-        std::string indent_prefix() const {
-            return std::string(static_cast<std::size_t>(note_indent) * 2, ' ');
-        }
+        TestCaseData(const TestCaseData&) = delete;
+        TestCaseData& operator=(const TestCaseData&) = delete;
 
-        // Whether per-case diagnostics (notes, drawn values) should print:
-        // never under Quiet, only on the final replay under Normal, and on
-        // every case under Verbose / Debug.
-        bool should_log() const {
-            switch (verbosity) {
-            case Verbosity::Quiet:
-                return false;
-            case Verbosity::Normal:
-                return is_final || buffer_output;
-            case Verbosity::Verbose:
-            case Verbosity::Debug:
-                return true;
-            }
-            return false; // GCOVR_EXCL_LINE - switch above is exhaustive
-        }
+        hegel_test_case_t* tc;
+        // Whether notes and drawn values are recorded in the engine's
+        // document for this case: when its output can be shown (the final
+        // replay, a case the engine stamped for capture, or any case at
+        // Verbosity::Verbose and above), and never under Verbosity::Quiet.
+        bool emit;
+        // Draws in progress on this handle. Only an outermost draw prints.
+        int draw_depth = 0;
+        std::shared_ptr<DrawNames> draw_names = std::make_shared<DrawNames>();
+        // This handle's printer onto its region of the case's document,
+        // fetched at the first print.
+        hegel_printer_t* printer = nullptr;
+        // Set for an explicit test case, which has no engine handle.
+        std::shared_ptr<ExplicitState> explicit_state;
     };
+
+    // Reads the document of drawn values and notes that `data`'s test case
+    // recorded, one entry per line. `data` must hold the case's root handle.
+    std::vector<std::string> rendered_output(const TestCaseData& data);
 
 } // namespace hegel::impl::test_case
 

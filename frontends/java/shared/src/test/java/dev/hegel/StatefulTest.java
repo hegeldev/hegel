@@ -155,21 +155,20 @@ class StatefulTest {
     @Test
     void engineRejectsInvalidWeightsItIsHanded() {
         // Stateful validates weights itself; going through the data source directly shows the
-        // engine receives the array (and enforces the same rule) rather than a NULL.
+        // engine receives the weight (and enforces the same rule).
         IllegalArgumentException e = assertThrows(
                 IllegalArgumentException.class,
                 () -> Runner.run(
                                 Engine.get(),
                                 new Settings().database(Database.disabled()).testCases(1),
-                                tc -> tc.newStateMachine(
-                                        List.of("r"),
-                                        new long[] {0},
-                                        new double[] {0},
-                                        List.of(),
-                                        new boolean[0],
-                                        1,
-                                        1,
-                                        50),
+                                tc -> {
+                                    long id = tc.newStateMachine(1, 1, 50);
+                                    try {
+                                        tc.stateMachineAddRule(id, "r", 0, new long[] {0});
+                                    } finally {
+                                        tc.stateMachineFree(id);
+                                    }
+                                },
                                 Reporter.silent())
                         .throwIfFailed());
         assertTrue(e.getMessage().toLowerCase().contains("weight"), e.getMessage());

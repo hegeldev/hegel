@@ -76,7 +76,7 @@ describe("WasmEngine malformed outputs and cleanup", () => {
         }
         return call(op, ...args);
       });
-      expect(() => engine.generateBytes(ctx, tc, 3, 3)).toThrow(
+      expect(() => engine.generateBytes(ctx, tc, 3, 3n)).toThrow(
         failCopy ? "copy and release failed" : "failed (-8)",
       );
       expect(free).toHaveBeenCalledWith(result, 8, 4);
@@ -130,7 +130,7 @@ describe("WasmEngine malformed outputs and cleanup", () => {
       settings = engine.newSettings(ctx),
       run = engine.runStart(ctx, settings),
       tc = engine.nextTestCase(ctx, run)!;
-    expect(engine.generateBytes(ctx, tc, 0)).toBeInstanceOf(Uint8Array);
+    expect(engine.generateBytes(ctx, tc, 0, 0xffffffffffffffffn)).toBeInstanceOf(Uint8Array);
     const collection = engine.newCollection(ctx, tc, 1);
     expect(engine.collectionMore(ctx, tc, collection)).toBe(true);
     engine.collectionReject(ctx, tc, collection, "rejected 🙂");
@@ -144,14 +144,10 @@ describe("WasmEngine malformed outputs and cleanup", () => {
     engine.freeContext(ctx);
   });
 
-  it("rejects corrupt failure origins without replay and exercises browser no-op host services", () => {
+  it("rejects corrupt failure origins without replay", () => {
     const { engine, abi } = wasmFixture(),
       call = abi.call.bind(abi);
     const runtime = browserRuntime(engine);
-    runtime.emitAntithesisAssertion(
-      { class: "test", function: "test", file: "test.ts", beginLine: 1 },
-      true,
-    );
     vi.spyOn(abi, "call").mockImplementation((op, ...args) => {
       if (op !== "failure_origin") return call(op, ...args);
       const out = Number(args.at(-1));

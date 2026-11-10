@@ -63,6 +63,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -344,22 +345,31 @@ def _run_lcov_phase(
     label: str,
     target_dir: Path,
 ) -> None:
-    """Run `cargo llvm-cov <cargo_args>`, emitting LCOV to `output`.
+    """Run `cargo llvm-cov nextest <cargo_args>`, emitting LCOV to `output`.
+
+    nextest runs each test in its own process, in parallel across test
+    binaries. The Rust frontend's tests each leak a cwd tempdir per process,
+    so every phase gets its own TMPDIR, removed afterwards.
 
     Workspace artifacts and profiles are cleaned before each phase while
     compiled dependencies remain available in the shared target directory.
     """
+    tmpdir = target_dir / "coverage-tmp"
+    shutil.rmtree(tmpdir, ignore_errors=True)
+    tmpdir.mkdir(parents=True)
     env = os.environ.copy()
     env["CARGO_TARGET_DIR"] = str(target_dir)
+    env["TMPDIR"] = str(tmpdir)
     subprocess.run(["cargo", "llvm-cov", "clean", "--workspace"], env=env, check=True)
 
     print(f"  Running tests with coverage ({label})...")
     result = subprocess.run(
-        ["cargo", "llvm-cov", *cargo_args, "--lcov", f"--output-path={output}"],
+        ["cargo", "llvm-cov", "nextest", *cargo_args, "--lcov", f"--output-path={output}"],
         capture_output=True,
         text=True,
         env=env,
     )
+    shutil.rmtree(tmpdir, ignore_errors=True)
     if result.stdout:
         print(result.stdout)
     if result.returncode != 0:
@@ -431,8 +441,8 @@ def _merge_lcov(inputs: list[Path], output: Path) -> None:
 def _ensure_smoke_cdylib(target_dir: Path) -> None:
     """Build the libhegel cdylib and point the dlopen smoke test at it.
 
-    `cargo llvm-cov` runs `cargo test`, which builds rlibs and test binaries
-    but *not* the standalone `cdylib` artifact. The libhegel smoke test
+    `cargo llvm-cov nextest` builds rlibs and test binaries but *not* the
+    standalone `cdylib` artifact. The libhegel smoke test
     (`libhegel/tests/smoke.rs`) dlopens that cdylib, so without it every smoke
     test fails to find `libhegel_c.so` and the whole coverage run errors out.
 
@@ -536,6 +546,9 @@ def run_coverage() -> Path:
     macros are exercised by the macro test suites regardless; they are simply
     not line-coverage-measurable here.
     """
+    if shutil.which("cargo-nextest") is None:
+        print("ERROR: cargo-nextest is not installed (https://nexte.st)", file=sys.stderr)
+        sys.exit(1)
     print("Running coverage analysis...")
     lcov_path = Path("lcov.info")
     raw_lcov = Path("lcov-all.info")

@@ -1,6 +1,5 @@
---- Failure: FailureReport.NoDrawsPrintsBodylessReport ([location]) ---
-Falsified after 1 test case (0 discarded):
-Exception: std::runtime_error: boom
-rerun with: hegel::test(test_fn, settings, {"[blob]"})
+
+To reproduce this failure, pass its blob to hegel::test():
+    hegel::test(test_fn, settings, {"[blob]"})
 --- rethrown: boom
 

@@ -6,6 +6,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -145,20 +146,28 @@ final class FakeLibhegel implements Libhegel {
     // (next_group) hands out exactly one rule from `ruleSequence` (next_rule), then the join
     // point; once the sequence is exhausted next_group reports DONE. Concurrently, set
     // `concurrentRounds`: round r hands worker w the rules `concurrentRounds[r][w]` (a missing or
-    // empty worker entry means that worker's round is over at once), and `stateMachineConcurrency`
-    // says how many workers new_state_machine reports. The protocol methods are synchronized
-    // because concurrent workers call them at the same time.
+    // empty worker entry means that worker's round is over at once), `stateMachineConcurrency`
+    // says how many workers state_machine_start reports, and `roundConcurrency` (if set) is the
+    // level next_group reports for each round, defaulting to `stateMachineConcurrency`. The
+    // protocol methods are synchronized because concurrent workers call them at the same time.
     int newStateMachineRc = Abi.OK;
     long stateMachineId = 5;
-    List<String> stateMachineRules;
-    long[] stateMachineRuleGroups;
-    double[] stateMachineRuleWeights = {-1}; // what new_state_machine received; null = equal weights
-    List<String> stateMachineInvariants;
-    boolean[] stateMachineAlwaysCheck;
+    int stateMachineAddRuleRc = Abi.OK;
+    int stateMachineAddInvariantRc = Abi.OK;
+    int stateMachineStartRc = Abi.OK;
+    // What the declarations received, in declaration order: names, each rule's group ids and
+    // weight, each invariant's always-check flag.
+    final List<String> stateMachineRules = new ArrayList<>();
+    long[][] stateMachineRuleGroups = {};
+    double[] stateMachineRuleWeights = {};
+    final List<String> stateMachineInvariants = new ArrayList<>();
+    boolean[] stateMachineAlwaysCheck = {};
     long stateMachineMinConcurrency = -1;
     long stateMachineMaxConcurrency = -1;
     long stateMachineStepCount = -1;
-    long stateMachineConcurrency = 1; // what new_state_machine writes to out_concurrency
+    long stateMachineConcurrency = 1; // what state_machine_start writes to out_concurrency
+    long[] roundConcurrency; // null = every round reports stateMachineConcurrency
+    int startedStateMachines;
     int stateMachineNextGroupRc = Abi.OK;
     long stateMachineGroupId = 0;
     int stateMachineNextRuleRc = Abi.OK;
@@ -585,36 +594,52 @@ final class FakeLibhegel implements Libhegel {
     }
 
     @Override
-    public int newStateMachine(
-            long tc,
-            List<String> ruleNames,
-            long[] ruleGroups,
-            double[] ruleWeights,
-            List<String> invariantNames,
-            boolean[] invariantAlwaysCheck,
-            long minConcurrency,
-            long maxConcurrency,
-            long stepCount,
-            long[] outId,
-            long[] outConcurrency) {
+    public int newStateMachine(long tc, long minConcurrency, long maxConcurrency, long stepCount, long[] outId) {
         if (newStateMachineRc == Abi.OK) {
-            stateMachineRules = ruleNames;
-            stateMachineRuleGroups = ruleGroups;
-            stateMachineRuleWeights = ruleWeights;
-            stateMachineInvariants = invariantNames;
-            stateMachineAlwaysCheck = invariantAlwaysCheck;
             stateMachineMinConcurrency = minConcurrency;
             stateMachineMaxConcurrency = maxConcurrency;
             stateMachineStepCount = stepCount;
             outId[0] = stateMachineId;
-            outConcurrency[0] = stateMachineConcurrency;
         }
         return newStateMachineRc;
     }
 
     @Override
-    public synchronized int stateMachineNextGroup(long tc, long stateMachineId, long[] outGroupId) {
+    public int stateMachineAddRule(long tc, long stateMachineId, String name, double weight, long[] groups) {
+        if (stateMachineAddRuleRc == Abi.OK) {
+            stateMachineRules.add(name);
+            stateMachineRuleGroups = Arrays.copyOf(stateMachineRuleGroups, stateMachineRuleGroups.length + 1);
+            stateMachineRuleGroups[stateMachineRuleGroups.length - 1] = groups.clone();
+            stateMachineRuleWeights = Arrays.copyOf(stateMachineRuleWeights, stateMachineRuleWeights.length + 1);
+            stateMachineRuleWeights[stateMachineRuleWeights.length - 1] = weight;
+        }
+        return stateMachineAddRuleRc;
+    }
+
+    @Override
+    public int stateMachineAddInvariant(long tc, long stateMachineId, String name, boolean alwaysCheck) {
+        if (stateMachineAddInvariantRc == Abi.OK) {
+            stateMachineInvariants.add(name);
+            stateMachineAlwaysCheck = Arrays.copyOf(stateMachineAlwaysCheck, stateMachineAlwaysCheck.length + 1);
+            stateMachineAlwaysCheck[stateMachineAlwaysCheck.length - 1] = alwaysCheck;
+        }
+        return stateMachineAddInvariantRc;
+    }
+
+    @Override
+    public int stateMachineStart(long tc, long stateMachineId, long[] outConcurrency) {
+        if (stateMachineStartRc == Abi.OK) {
+            startedStateMachines++;
+            outConcurrency[0] = stateMachineConcurrency;
+        }
+        return stateMachineStartRc;
+    }
+
+    @Override
+    public synchronized int stateMachineNextGroup(
+            long tc, long stateMachineId, long[] outGroupId, long[] outConcurrency) {
         if (stateMachineNextGroupRc == Abi.OK) {
+            int round = roundsServed;
             if (concurrentRounds != null) {
                 currentRound = roundsServed < concurrentRounds.length ? concurrentRounds[roundsServed++] : null;
             } else {
@@ -622,7 +647,12 @@ final class FakeLibhegel implements Libhegel {
                 currentRound = ruleIndex < ruleSequence.length ? new long[][] {{ruleSequence[ruleIndex++]}} : null;
             }
             positions = new int[(int) stateMachineConcurrency];
-            outGroupId[0] = currentRound != null ? stateMachineGroupId : Abi.STATE_MACHINE_DONE;
+            if (currentRound != null) {
+                outGroupId[0] = stateMachineGroupId;
+                outConcurrency[0] = roundConcurrency != null ? roundConcurrency[round] : stateMachineConcurrency;
+            } else {
+                outGroupId[0] = Abi.STATE_MACHINE_DONE;
+            }
         }
         return stateMachineNextGroupRc;
     }

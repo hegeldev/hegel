@@ -75,38 +75,95 @@ namespace hegel::stateful {
     inline constexpr const char* anonymous_group = "<anonymous>";
 
     /**
+     * @brief Arguments for the @ref ConcurrentRule constructor.
+     *
+     * @code{.cpp}
+        hegel::stateful::ConcurrentRule<Bank>(
+            {.name = "transfer",
+             .groups = {"bank"},
+             .weight = 6.0,
+             .step = [](hegel::TestCase& tc, Bank& bank) { ... }});
+     * @endcode
+     *
+     * @tparam M The state-machine type that the rule acts on
+     */
+    template <typename M> struct ConcurrentRuleParams {
+        /// The name of the rule.
+        std::string name;
+        /// The concurrency groups of the rule.
+        std::vector<std::string> groups = {anonymous_group};
+        /// A hint for how often to choose the rule, relative to the other
+        /// rules of the current group. The engine rejects a weight that is not
+        /// finite and positive.
+        double weight = 1.0;
+        /// The function the rule applies.
+        std::function<void(TestCase&, M&)> step;
+    };
+
+    /**
      * @brief An action that a worker can apply to a concurrent state machine.
      *
-     * Rules in the same group can run concurrently. Rules in different groups
-     * cannot. A rule that does not specify a group uses @ref anonymous_group.
+     * A rule belongs to one or more concurrency groups. Rules that share a
+     * group can run concurrently in the rounds of that group. Rules that
+     * share no group never overlap. A rule that belongs to several groups
+     * runs in the rounds of each of them. A rule that does not specify a
+     * group uses @ref anonymous_group.
+     *
+     * The engine rejects a rule with an empty group list or a repeated group
+     * when the machine starts, with @c std::invalid_argument.
      *
      * @tparam M The state-machine type that the rule acts on
      */
     template <typename M> class ConcurrentRule {
       public:
-        /// The type of the function that applies the rule.
-        using Function = std::function<void(TestCase&, M&)>;
+        /// The function the rule applies.
+        using Step = std::function<void(TestCase&, M&)>;
 
         /**
          * @brief Creates a rule in @ref anonymous_group.
          *
          * @param name The name of the rule
-         * @param function The function that applies the rule
+         * @param step The function the rule applies.
          */
-        ConcurrentRule(std::string name, Function function)
-            : ConcurrentRule(std::move(name), anonymous_group,
-                             std::move(function)) {}
+        ConcurrentRule(std::string name, Step step)
+            : ConcurrentRule(std::move(name),
+                             std::vector<std::string>{anonymous_group},
+                             std::move(step)) {}
 
         /**
-         * @brief Creates a rule in the specified group.
+         * @brief Creates a rule in the specified groups.
          *
          * @param name The name of the rule
-         * @param group The concurrency group of the rule
-         * @param function The function that applies the rule
+         * @param groups The concurrency groups of the rule
+         * @param step The function the rule applies
          */
-        ConcurrentRule(std::string name, std::string group, Function function)
-            : name_(std::move(name)), group_(std::move(group)),
-              function_(std::move(function)) {}
+        ConcurrentRule(std::string name, std::vector<std::string> groups,
+                       Step step)
+            : ConcurrentRule(std::move(name), std::move(groups), 1.0,
+                             std::move(step)) {}
+
+        /**
+         * @brief Creates a rule in the specified groups with a weight.
+         *
+         * @param name The name of the rule
+         * @param groups The concurrency groups of the rule
+         * @param weight The selection weight of the rule
+         * @param step The function the rule applies
+         */
+        ConcurrentRule(std::string name, std::vector<std::string> groups,
+                       double weight, Step step)
+            : ConcurrentRule(ConcurrentRuleParams<M>{std::move(name),
+                                                     std::move(groups), weight,
+                                                     std::move(step)}) {}
+
+        /**
+         * @brief Creates a rule from named arguments.
+         *
+         * @param params The name, groups, weight and step of the rule
+         */
+        explicit ConcurrentRule(ConcurrentRuleParams<M> params)
+            : name_(std::move(params.name)), groups_(std::move(params.groups)),
+              weight_(params.weight), step_(std::move(params.step)) {}
 
         /**
          * @brief Returns the name of the rule.
@@ -116,23 +173,31 @@ namespace hegel::stateful {
         const std::string& name() const { return name_; }
 
         /**
-         * @brief Returns the concurrency group of the rule.
+         * @brief Returns the concurrency groups of the rule.
          *
-         * @return The concurrency group of the rule
+         * @return The concurrency groups of the rule
          */
-        const std::string& group() const { return group_; }
+        const std::vector<std::string>& groups() const { return groups_; }
 
         /**
-         * @brief Returns the function that applies the rule.
+         * @brief Returns the weight of the rule.
          *
-         * @return The function that applies the rule
+         * @return The weight of the rule
          */
-        const Function& function() const { return function_; }
+        double weight() const { return weight_; }
+
+        /**
+         * @brief Returns the function the rule applies.
+         *
+         * @return The function the rule applies
+         */
+        const Step& step() const { return step_; }
 
       private:
         std::string name_;
-        std::string group_;
-        Function function_;
+        std::vector<std::string> groups_;
+        double weight_;
+        Step step_;
     };
 
     /**
@@ -148,9 +213,12 @@ namespace hegel::stateful {
      * update. The invariant compares the stored total with the number of
      * completed increments.
      *
-     * The @c operations group contains the register, increment, and read
-     * rules. These rules can run concurrently. The @c snapshot group does not
-     * overlap with the @c operations group.
+     * Each rule lists the concurrency groups it belongs to. The
+     * @c operations group contains the register, increment, and read rules,
+     * which can run concurrently. The @c snapshot group contains the snapshot
+     * and read rules, so a snapshot never overlaps with a register or an
+     * increment, but a read can overlap with either: the read rule is in both
+     * groups and runs in the rounds of each of them.
      *
      * @code{.cpp}
         class ConcurrentKVStore {
@@ -201,7 +269,7 @@ namespace hegel::stateful {
             std::vector<hegel::stateful::ConcurrentRule<ConcurrentKV>>
             rules() {
                 return {
-                    {"register", "operations",
+                    {"register", {"operations"},
                      [](hegel::TestCase& tc, ConcurrentKV& m) {
                          int key = tc.draw(hegel::generators::integers<int>(
                              {.min_value = 0, .max_value = 3}));
@@ -209,14 +277,14 @@ namespace hegel::stateful {
                              m.keys.add(tc, key);
                          }
                      }},
-                    {"increment", "operations",
+                    {"increment", {"operations"},
                      [](hegel::TestCase& tc, ConcurrentKV& m) {
                          int key = tc.draw(
                              hegel::stateful::values_reusable(m.keys));
                          m.store.increment(key);
                          m.increments.fetch_add(1);
                      }},
-                    {"read", "operations",
+                    {"read", {"operations", "snapshot"},
                      [](hegel::TestCase& tc, ConcurrentKV& m) {
                          int key = tc.draw(
                              hegel::stateful::values_reusable(m.keys));
@@ -224,7 +292,7 @@ namespace hegel::stateful {
                          tc.note("read " + std::to_string(key) + " -> " +
                                  std::to_string(value));
                      }},
-                    {"snapshot", "snapshot",
+                    {"snapshot", {"snapshot"},
                      [](hegel::TestCase& tc, ConcurrentKV& m) {
                          tc.note("snapshot holds " +
                                  std::to_string(m.store.snapshot().size()) +
@@ -384,8 +452,85 @@ namespace hegel::stateful {
     };
 
     /// @cond INTERNAL
+    namespace detail {
+
+        class TakenVariables {
+          public:
+            TakenVariables(const TestCase& tc,
+                           hegel::internal::PoolHandle& pool)
+                : tc_(tc), pool_(pool) {}
+            TakenVariables(const TakenVariables&) = delete;
+            TakenVariables& operator=(const TakenVariables&) = delete;
+            ~TakenVariables() {
+                for (int64_t variable : variables_) {
+                    pool_.restore_unchecked(tc_, variable);
+                }
+            }
+
+            void add(int64_t variable) { variables_.push_back(variable); }
+
+            void keep_last() { variables_.pop_back(); }
+
+            void restore() {
+                while (!variables_.empty()) {
+                    pool_.restore(tc_, variables_.back());
+                    variables_.pop_back();
+                }
+            }
+
+          private:
+            const TestCase& tc_;
+            hegel::internal::PoolHandle& pool_;
+            std::vector<int64_t> variables_;
+        };
+
+        // A filtered consuming draw from a pool whose values `values` holds
+        // by variable id. Each attempt consumes a variable the engine
+        // chooses, in a span that is discarded when `predicate` rejects its
+        // value. A rejected variable stays consumed until the attempts are
+        // over, so no later attempt draws it again, and is then put back.
+        // Only the accepted value leaves the pool.
+        template <typename T>
+        T
+        draw_filtered_consumed(const TestCase& tc,
+                               hegel::internal::PoolHandle& pool,
+                               std::map<int64_t, T>& values, uint64_t label,
+                               const std::function<bool(const T&)>& predicate) {
+            namespace hi = hegel::internal;
+            uint64_t attempt = hi::label(hi::LabelName::FilterAttempt);
+            TakenVariables taken(tc, pool);
+            std::optional<T> accepted;
+            for (int i = 0; i < hi::filter_attempts && !accepted; ++i) {
+                hi::start_span(tc, attempt);
+                hi::start_span(tc, label);
+                int64_t variable = pool.draw_variable(tc, true);
+                taken.add(variable);
+                hi::stop_span(tc);
+                T& value = values.at(variable);
+                if (predicate(value)) {
+                    hi::stop_span(tc);
+                    taken.keep_last();
+                    accepted = std::move(value);
+                    values.erase(variable);
+                } else {
+                    hi::stop_span(tc, true);
+                }
+            }
+            taken.restore();
+            if (!accepted) {
+                tc.reject();
+            }
+            return std::move(*accepted);
+        }
+
+    } // namespace detail
+    /// @endcond
+
+    /// @cond INTERNAL
     // Concrete IGenerator for variables.
-    template <typename T> class VariablesGenerator : public IGenerator<T> {
+    template <typename T>
+    class VariablesGenerator
+        : public generators::detail::value_base_t<T, is_representable_v<T>> {
       public:
         explicit VariablesGenerator(Pool<T>& p, bool consume)
             : p_(p), consume_(consume) {}
@@ -409,6 +554,22 @@ namespace hegel::stateful {
             return it->second;
         }
 
+        uint64_t label() const override {
+            return hegel::internal::label(
+                consume_ ? hegel::internal::LabelName::PoolValuesConsumed
+                         : hegel::internal::LabelName::PoolValuesReusable);
+        }
+
+        T do_draw_filtered(
+            const TestCase& tc,
+            const std::function<bool(const T&)>& predicate) const override {
+            if (!consume_) {
+                return IGenerator<T>::do_draw_filtered(tc, predicate);
+            }
+            return detail::draw_filtered_consumed(tc, p_.pool_handle_, p_.pool_,
+                                                  this->label(), predicate);
+        }
+
       private:
         Pool<T>& p_;
         bool consume_;
@@ -420,6 +581,9 @@ namespace hegel::stateful {
 
     /**
      * @brief Returns a value from the pool and removes it.
+     *
+     * A filter() on the returned generator removes only the value it
+     * returns: it puts back every value its predicate rejected.
      *
      * @code{.cpp}
         HEGEL_TEST(pool_round_trip)(hegel::TestCase& tc) {
@@ -446,8 +610,9 @@ namespace hegel::stateful {
      * @param p The pool to draw from
      * @return An element of the pool
      */
-    template <typename T> Generator<T> values_consumed(Pool<T>& p) {
-        return Generator<T>(new VariablesGenerator<T>(p, true));
+    template <typename T> auto values_consumed(Pool<T>& p) {
+        return generators::detail::handle_t<is_representable_v<T>, T>(
+            std::make_shared<VariablesGenerator<T>>(p, true));
     }
 
     /**
@@ -477,8 +642,9 @@ namespace hegel::stateful {
      * @param p The pool to draw from
      * @return An element of the pool
      */
-    template <typename T> Generator<T> values_reusable(Pool<T>& p) {
-        return Generator<T>(new VariablesGenerator<T>(p, false));
+    template <typename T> auto values_reusable(Pool<T>& p) {
+        return generators::detail::handle_t<is_representable_v<T>, T>(
+            std::make_shared<VariablesGenerator<T>>(p, false));
     }
 
     /// @cond INTERNAL
@@ -555,7 +721,8 @@ namespace hegel::stateful {
 
     /// @cond INTERNAL
     template <typename T>
-    class ConcurrentVariablesGenerator : public IGenerator<T> {
+    class ConcurrentVariablesGenerator
+        : public generators::detail::value_base_t<T, is_representable_v<T>> {
       public:
         ConcurrentVariablesGenerator(ConcurrentPool<T>& pool, bool consume)
             : pool_(pool), consume_(consume) {}
@@ -572,6 +739,24 @@ namespace hegel::stateful {
             }
         }
 
+        uint64_t label() const override {
+            return hegel::internal::label(
+                consume_ ? hegel::internal::LabelName::PoolValuesConsumed
+                         : hegel::internal::LabelName::PoolValuesReusable);
+        }
+
+        T do_draw_filtered(
+            const TestCase& tc,
+            const std::function<bool(const T&)>& predicate) const override {
+            if (!consume_) {
+                return IGenerator<T>::do_draw_filtered(tc, predicate);
+            }
+            std::lock_guard<std::mutex> lock(pool_.mutex_);
+            return detail::draw_filtered_consumed(tc, pool_.pool_handle_,
+                                                  pool_.values_, this->label(),
+                                                  predicate);
+        }
+
       private:
         ConcurrentPool<T>& pool_;
         bool consume_;
@@ -581,15 +766,17 @@ namespace hegel::stateful {
     /**
      * @brief Returns a value from a concurrent pool and removes it.
      *
-     * The draw rejects the test case if the pool is empty.
+     * The draw rejects the test case if the pool is empty. A filter() on
+     * the returned generator removes only the value it returns: it puts
+     * back every value its predicate rejected.
      *
      * @tparam T The type of the values in the pool
      * @param pool The pool to draw from
      * @return A generator that consumes values from the pool
      */
-    template <typename T>
-    Generator<T> values_consumed(ConcurrentPool<T>& pool) {
-        return Generator<T>(new ConcurrentVariablesGenerator<T>(pool, true));
+    template <typename T> auto values_consumed(ConcurrentPool<T>& pool) {
+        return generators::detail::handle_t<is_representable_v<T>, T>(
+            std::make_shared<ConcurrentVariablesGenerator<T>>(pool, true));
     }
 
     /**
@@ -602,10 +789,32 @@ namespace hegel::stateful {
      * @param pool The pool to draw from
      * @return A generator that reuses values from the pool
      */
-    template <typename T>
-    Generator<T> values_reusable(ConcurrentPool<T>& pool) {
-        return Generator<T>(new ConcurrentVariablesGenerator<T>(pool, false));
+    template <typename T> auto values_reusable(ConcurrentPool<T>& pool) {
+        return generators::detail::handle_t<is_representable_v<T>, T>(
+            std::make_shared<ConcurrentVariablesGenerator<T>>(pool, false));
     }
+
+    /**
+     * @brief Arguments for the @ref Rule constructor.
+     *
+     * @code{.cpp}
+        hegel::stateful::Rule<Stack>(
+            {.name = "push",
+             .weight = 6.0,
+             .step = [](hegel::TestCase& tc, Stack& stack) { ... }});
+     * @endcode
+     *
+     * @tparam T The state-machine type the rule acts on
+     */
+    template <typename T> struct RuleParams {
+        /// The name of the rule.
+        std::string name;
+        /// A hint for how often to choose the rule, relative to the other
+        /// rules. The engine rejects a weight that is not finite and positive.
+        double weight = 1.0;
+        /// The function the rule applies. See @ref Rule.
+        std::function<void(TestCase&, T&)> step;
+    };
 
     /**
      * @brief A rule is one possible action in a stateful test.
@@ -631,7 +840,27 @@ namespace hegel::stateful {
          * rule that rejects after mutating leaves the state partially modified.
          */
         explicit Rule(std::string name, std::function<void(TestCase&, T&)> step)
-            : name_(std::move(name)), step_(std::move(step)) {}
+            : Rule(std::move(name), 1.0, std::move(step)) {}
+
+        /**
+         * @brief Declares a new Rule with a weight.
+         *
+         * @param name name of the rule
+         * @param weight selection weight of the rule
+         * @param step The function the rule applies
+         */
+        Rule(std::string name, double weight,
+             std::function<void(TestCase&, T&)> step)
+            : Rule(RuleParams<T>{std::move(name), weight, std::move(step)}) {}
+
+        /**
+         * @brief Declares a new Rule from named arguments.
+         *
+         * @param params The name, weight and step of the rule
+         */
+        explicit Rule(RuleParams<T> params)
+            : name_(std::move(params.name)), weight_(params.weight),
+              step_(std::move(params.step)) {}
 
         /**
          * @brief Returns the name of the rule.
@@ -646,16 +875,46 @@ namespace hegel::stateful {
          */
         const std::function<void(TestCase&, T&)>& step() const { return step_; }
 
+        /**
+         * @brief Returns the weight of the rule.
+         *
+         * @return The weight of the rule
+         */
+        double weight() const { return weight_; }
+
       private:
         std::string name_;
+        double weight_;
         std::function<void(TestCase&, T&)> step_;
+    };
+
+    /**
+     * @brief Arguments for the @ref Invariant constructor.
+     *
+     * @code{.cpp}
+        hegel::stateful::Invariant<Stack>(
+            {.name = "sorted",
+             .always_check = true,
+             .invariant = [](const Stack& stack) { ... }});
+     * @endcode
+     *
+     * @tparam T The state-machine type the invariant checks
+     */
+    template <typename T> struct InvariantParams {
+        /// The name of the invariant.
+        std::string name;
+        /// If true, check the invariant after every step or round instead of
+        /// sampling it.
+        bool always_check = false;
+        /// The predicate. It throws when the invariant is violated.
+        std::function<void(const T&)> invariant;
     };
 
     /**
      * @brief An invariant is a predicate that must hold at any point in the
      * stateful test. They are evaluated in full on the initial and final state
-     * and sampled at intermediate join points. The invariant function should
-     * throw when the invariant is violated.
+     * and sampled at intermediate join points, unless declared always checked.
+     * The invariant function should throw when the invariant is violated.
      *
      * @tparam T The state-machine type the invariant checks
      */
@@ -664,12 +923,35 @@ namespace hegel::stateful {
         /**
          * @brief Declare a new invariant.
          *
-         * @param name
-         * @param invariant
+         * @param name The name of the invariant
+         * @param invariant The predicate, which throws when violated
          */
         explicit Invariant(std::string name,
                            std::function<void(const T&)> invariant)
-            : name_(std::move(name)), invariant_(std::move(invariant)) {}
+            : Invariant(std::move(name), false, std::move(invariant)) {}
+
+        /**
+         * @brief Declare a new invariant that can skip sampling.
+         *
+         * @param name
+         * @param always_check See InvariantParams::always_check
+         * @param invariant
+         */
+        Invariant(std::string name, bool always_check,
+                  std::function<void(const T&)> invariant)
+            : Invariant(InvariantParams<T>{std::move(name), always_check,
+                                           std::move(invariant)}) {}
+
+        /**
+         * @brief Declare a new invariant from named arguments.
+         *
+         * @param params The name, always_check flag and predicate of the
+         * invariant
+         */
+        explicit Invariant(InvariantParams<T> params)
+            : name_(std::move(params.name)),
+              invariant_(std::move(params.invariant)),
+              always_check_(params.always_check) {}
 
         /**
          * @brief Returns the name of the invariant.
@@ -687,9 +969,18 @@ namespace hegel::stateful {
             return invariant_;
         }
 
+        /**
+         * @brief Returns whether the invariant is checked after every step or
+         * round instead of sampled.
+         *
+         * @return true if the invariant is not sampled
+         */
+        bool always_check() const { return always_check_; }
+
       private:
         std::string name_;
         std::function<void(const T&)> invariant_;
+        bool always_check_;
     };
 
     /**
@@ -752,8 +1043,7 @@ namespace hegel::stateful {
         explicit StateMachine(StateMachineParams<State> params)
             : state(std::move(params.initial_state)) {}
 
-        /// The state the rules act on. Rules mutate it in place, and a
-        /// failing run prints it. See RunParams::print_state.
+        /// The state the rules act on. Rules mutate it in place.
         State state;
 
         /**
@@ -770,39 +1060,19 @@ namespace hegel::stateful {
     };
 
     /**
-     * @brief Options for @ref run.
+     * @brief Options for @ref run and @ref run_concurrent.
      */
     struct RunParams {
-        /// If true (the default), a failing sequence prints the machine's
-        /// state before its first step and after every step that runs to
-        /// completion.
-        ///
-        /// @code{.txt}
-        /// state = 0
-        /// Step 1: add
-        ///   auto amount = 3;
-        /// state = 3
-        /// Step 2: add
-        ///   auto amount = 9;
-        /// @endcode
-        ///
-        /// A step that throws prints no state, so the last state shown is
-        /// the one the failing step started from.
-        bool print_state = true;
+        /// The maximum number of steps a test case attempts. Each case runs
+        /// at least one step and at most this many. Must be at least 1;
+        /// @ref run rejects other values with @c std::invalid_argument.
+        int64_t step_count = 50;
     };
 
     /// @cond INTERNAL
-    // prints the machine's state.
-    template <typename M>
-    void print_state(TestCase& tc, const M& machine, const RunParams& params) {
-        if (params.print_state) {
-            tc.note("state = " + internal::repr(machine.state));
-        }
-    }
-
     template <typename T>
     void check_invariants(
-        TestCase& tc, const std::string& origin, const T& state,
+        TestCase& tc, const T& state,
         const std::vector<Invariant<T>>& invariants,
         std::optional<std::reference_wrapper<internal::StateMachineHandle>>
             machine_handle = std::nullopt) {
@@ -816,9 +1086,16 @@ namespace hegel::stateful {
             try {
                 inv.invariant()(state);
             } catch (...) {
-                tc.note("Invariant " + inv.name() + " violated " + origin);
+                tc.note("Invariant " + inv.name() + " failed:");
                 throw;
             }
+        }
+    }
+
+    inline void check_step_count(const RunParams& params) {
+        if (params.step_count < 1) {
+            throw std::invalid_argument(
+                "RunParams::step_count must be at least 1");
         }
     }
     /// @endcond
@@ -826,12 +1103,15 @@ namespace hegel::stateful {
     /**
      * @brief Executes a concurrent stateful test with rules from @p machine.
      *
-     * The runner selects a concurrency level from @p min_concurrency through
-     * @p max_concurrency. Execution proceeds in rounds. For each round,
+     * The runner starts @p max_concurrency worker threads. Libhegel selects
+     * a concurrency level, how many of them run rules, from
+     * @p min_concurrency through @p max_concurrency, and may change it
+     * between rounds. Execution proceeds in rounds. For each round,
      * libhegel picks a random concurrency group. Every worker thread then runs
-     * a short (possibly empty) random sequence of rules from only that group
-     * concurrently with the other workers. The runner waits for all workers to
-     * finish before it starts the next round.
+     * a short (possibly empty) random sequence of rules that belong to that
+     * group concurrently with the other workers. A rule that belongs to
+     * several groups is available in the rounds of each of them. The runner
+     * waits for all workers to finish before it starts the next round.
      *
      * All invariants run before the first round and after the final round.
      * Between rounds, the runner samples each invariant independently.
@@ -839,10 +1119,12 @@ namespace hegel::stateful {
      * Raises @c std::invalid_argument if the machine declares no rules or if
      * the concurrency bounds are invalid.
      *
-     * On a failing replay, the output shows the concurrency level, each round,
-     * the active group, and the rules that each worker applies, but the
-     * falsifying test case is not shrunk since the failure may be dependent on
-     * thread scheduling.
+     * On a failing replay, the output shows each round, the concurrency level
+     * whenever it changes, the active group, and the rules that each worker
+     * applies, but the falsifying test case is not shrunk since the failure
+     * may be dependent on thread scheduling. Under each round header, the
+     * lines of each worker appear together, each prefixed with
+     * `[worker N +T ms]`, the time since the test case started.
      *
      * @tparam M The state-machine type, deriving from
      * @ref ConcurrentStateMachine
@@ -850,10 +1132,11 @@ namespace hegel::stateful {
      * @param tc The test case object
      * @param min_concurrency The minimum number of workers
      * @param max_concurrency The maximum number of workers
+     * @param params Options for the run. See RunParams.
      */
     template <typename M>
     void run_concurrent(M& machine, TestCase& tc, int64_t min_concurrency,
-                        int64_t max_concurrency) {
+                        int64_t max_concurrency, const RunParams& params = {}) {
         static_assert(std::is_base_of<ConcurrentStateMachine<M>, M>::value,
                       "run_concurrent() requires a machine deriving from "
                       "ConcurrentStateMachine<M>.");
@@ -861,6 +1144,7 @@ namespace hegel::stateful {
             throw std::invalid_argument(
                 "concurrency bounds must satisfy 1 <= min <= max");
         }
+        check_step_count(params);
 
         std::vector<ConcurrentRule<M>> rules = machine.rules();
         std::vector<Invariant<M>> invariants = machine.invariants();
@@ -869,36 +1153,37 @@ namespace hegel::stateful {
                 "Cannot run a concurrent state machine with no rules.");
         }
 
-        std::vector<std::string> rule_names;
-        std::vector<std::string> invariant_names;
+        std::vector<internal::RuleSpec> rule_specs;
+        std::vector<internal::InvariantSpec> invariant_specs;
         std::vector<std::string> group_names;     // maps group ID to name
         std::map<std::string, int64_t> group_ids; // maps group name to ID
-        std::vector<int64_t>
-            rule_groups; // ID of group that rule_names[i] belongs to is the ID
-                         // at rule_groups[i].
-        rule_names.reserve(rules.size());
-        rule_groups.reserve(rules.size());
+        rule_specs.reserve(rules.size());
         for (const ConcurrentRule<M>& rule : rules) {
-            rule_names.push_back(rule.name());
-            auto [group, inserted] = group_ids.emplace(
-                rule.group(), static_cast<int64_t>(group_ids.size()));
-            if (inserted) {
-                group_names.push_back(rule.group());
+            std::vector<int64_t> ids;
+            ids.reserve(rule.groups().size());
+            for (const std::string& group_name : rule.groups()) {
+                auto [group, inserted] = group_ids.emplace(
+                    group_name, static_cast<int64_t>(group_ids.size()));
+                if (inserted) {
+                    group_names.push_back(group_name);
+                }
+                ids.push_back(group->second);
             }
-            rule_groups.push_back(group->second);
+            rule_specs.push_back({rule.name(), std::move(ids), rule.weight()});
         }
-        invariant_names.reserve(invariants.size());
+        invariant_specs.reserve(invariants.size());
         for (const Invariant<M>& invariant : invariants) {
-            invariant_names.push_back(invariant.name());
+            invariant_specs.push_back(
+                {invariant.name(), invariant.always_check()});
         }
 
         internal::StateMachineHandle machine_handle(
-            tc, rule_names, rule_groups, invariant_names, min_concurrency,
-            max_concurrency);
-        tc.note("Concurrency level: " +
-                std::to_string(machine_handle.concurrency()));
-        tc.note("Initial invariant check.");
-        check_invariants(tc, "in the initial state", machine, invariants);
+            tc, rule_specs, invariant_specs, min_concurrency, max_concurrency,
+            params.step_count);
+        if (!invariants.empty()) {
+            tc.note("Checking invariants on the initial state.");
+        }
+        check_invariants(tc, machine, invariants);
 
         enum class EventKind { RoundDone, Invalid, Overrun, Control, Panicked };
         struct Event {
@@ -913,6 +1198,8 @@ namespace hegel::stateful {
             bool stop = false;
             std::size_t num_workers_completed = 0;
             std::vector<Event> events;
+            // The test case each worker draws from in the current round.
+            std::vector<std::optional<TestCase>> cases;
         };
 
         auto classify = [] {
@@ -922,6 +1209,8 @@ namespace hegel::stateful {
                 std::rethrow_exception(event.exception->exception);
             } catch (const internal::HegelStopTest&) {
                 event.kind = EventKind::Overrun;
+            } catch (const internal::HegelLoopDone&) {
+                event.kind = EventKind::Control;
             } catch (const internal::HegelReject&) {
                 // not the same as rule rejection - entire test case is rejected
                 // requires some worker race on cloned test cases with same
@@ -954,16 +1243,25 @@ namespace hegel::stateful {
 
                     const ConcurrentRule<M>& rule =
                         rules[static_cast<std::size_t>(rule_index)];
-                    worker_tc.note("Rule: " + rule.name());
+                    worker_tc.note("Rule: " + rule.name() + " {");
                     try {
-                        internal::NoteIndentScope indent(worker_tc);
-                        rule.function()(worker_tc, machine);
+                        TestCase rule_tc = internal::block(worker_tc, 2);
+                        rule.step()(rule_tc, machine);
                     } catch (const internal::HegelReject&) {
                         machine_handle.rule_rejected(
                             worker_tc, static_cast<int64_t>(worker));
-                        worker_tc.note(
-                            "Rule stopped early due to violated assumption.");
+                        internal::block(worker_tc, 2)
+                            .note("Rule stopped early due to violated "
+                                  "assumption.");
+                    } catch (...) {
+                        worker_tc.note("}");
+                        Event event = classify();
+                        if (event.kind == EventKind::Panicked) {
+                            worker_tc.note("Rule " + rule.name() + " failed:");
+                        }
+                        return event;
                     }
+                    worker_tc.note("}");
                 }
             } catch (...) {
                 return classify();
@@ -974,44 +1272,40 @@ namespace hegel::stateful {
             static_cast<std::size_t>(machine_handle.concurrency());
         RoundState state;
         state.events.resize(worker_count);
-        std::vector<TestCase> worker_cases;
-        worker_cases.reserve(worker_count);
-        for (std::size_t worker = 0; worker < worker_count; ++worker) {
-            worker_cases.push_back(tc.clone());
-            internal::set_concurrent_worker(worker_cases.back(), worker);
-        }
+        state.cases.resize(worker_count);
         std::vector<std::thread> workers;
         workers.reserve(worker_count);
         for (std::size_t worker = 0; worker < worker_count; ++worker) {
-            workers.emplace_back(
-                [&, worker,
-                 worker_tc = std::move(worker_cases[worker])]() mutable {
-                    uint64_t observed_round_number = 0;
-                    while (true) {
-                        {
-                            std::unique_lock<std::mutex> lock(state.mutex);
-                            state.start.wait(lock, [&] {
-                                return state.stop ||
-                                       state.round_number !=
-                                           observed_round_number; // main thread
-                                                                  // started a
-                                                                  // new round
-                            });
-                            if (state.stop) {
-                                return;
-                            }
-                            observed_round_number = state.round_number;
+            workers.emplace_back([&, worker]() {
+                uint64_t observed_round_number = 0;
+                while (true) {
+                    std::optional<TestCase> worker_tc;
+                    {
+                        std::unique_lock<std::mutex> lock(state.mutex);
+                        state.start.wait(lock, [&] {
+                            return state.stop ||
+                                   state.round_number !=
+                                       observed_round_number; // main thread
+                                                              // started a
+                                                              // new round
+                        });
+                        if (state.stop) {
+                            return;
                         }
-
-                        {
-                            Event event = run_round(worker, worker_tc);
-                            std::lock_guard<std::mutex> lock(state.mutex);
-                            state.events[worker] = std::move(event);
-                            ++state.num_workers_completed;
-                        }
-                        state.done.notify_one();
+                        observed_round_number = state.round_number;
+                        worker_tc = std::move(state.cases[worker]);
+                        state.cases[worker].reset();
                     }
-                });
+
+                    {
+                        Event event = run_round(worker, *worker_tc);
+                        std::lock_guard<std::mutex> lock(state.mutex);
+                        state.events[worker] = std::move(event);
+                        ++state.num_workers_completed;
+                    }
+                    state.done.notify_one();
+                }
+            });
         }
 
         auto stop_workers = [&] {
@@ -1026,6 +1320,7 @@ namespace hegel::stateful {
         };
 
         try {
+            std::optional<int64_t> noted_concurrency;
             while (true) {
                 int64_t group = machine_handle.next_group(tc);
                 if (group == internal::state_machine_done) {
@@ -1039,14 +1334,27 @@ namespace hegel::stateful {
                         "index. Please report this as a bug.");
                     // GCOVR_EXCL_STOP
                 }
+                if (noted_concurrency != machine_handle.round_concurrency()) {
+                    noted_concurrency = machine_handle.round_concurrency();
+                    tc.note("Concurrency level: " +
+                            std::to_string(*noted_concurrency));
+                }
                 {
                     std::lock_guard<std::mutex> lock(state.mutex);
-                    state.num_workers_completed = 0;
-                    ++state.round_number;
                     tc.note("---------------- Round " +
-                            std::to_string(state.round_number) + ": group \"" +
+                            std::to_string(state.round_number + 1) +
+                            ": group \"" +
                             group_names[static_cast<std::size_t>(group)] +
                             "\" ----------------");
+                    // Each worker prints into a clone made after the round's
+                    // header, so its lines appear under that header.
+                    for (std::size_t worker = 0; worker < worker_count;
+                         ++worker) {
+                        state.cases[worker] = tc.clone();
+                        state.cases[worker]->set_worker(worker);
+                    }
+                    state.num_workers_completed = 0;
+                    ++state.round_number;
                 }
                 state.start.notify_all();
                 {
@@ -1098,13 +1406,14 @@ namespace hegel::stateful {
                 if (panic.has_value()) {
                     state.events[*panic].exception->rethrow();
                 }
-                check_invariants(
-                    tc, "after round " + std::to_string(state.round_number),
-                    machine, invariants, std::ref(machine_handle));
+                check_invariants(tc, machine, invariants,
+                                 std::ref(machine_handle));
             }
 
-            tc.note("Final invariant check.");
-            check_invariants(tc, "in the final state", machine, invariants);
+            if (!invariants.empty()) {
+                tc.note("Checking invariants on the final state.");
+            }
+            check_invariants(tc, machine, invariants);
         } catch (...) {
             stop_workers();
             throw;
@@ -1120,15 +1429,21 @@ namespace hegel::stateful {
      * @p machine in place. Raises @p std::invalid_argument if the machine
      * declares no rules.
      *
-     * On a failing replay, each applied rule prints as @c "Step N: <name>". A
-     * violated invariant identifies whether it was observed after a step or
-     * in the initial or final state.
+     * On a failing replay, each applied rule prints as @c "Step N: <name> {",
+     * with the draws and notes the step makes indented beneath it, and a
+     * failing rule or invariant is named right before its error.
      *
      * @code{.txt}
-        Step 1: add
-        Step 2: add
-        Invariant nonneg violated after step 2
+        Step 1: add {
+          auto amount = 3;
+        }
+        Step 2: add {
+          auto amount = 9;
+        }
+        Invariant nonneg failed:
      * @endcode
+     *
+     * Raises @c std::invalid_argument if RunParams::step_count is below 1.
      *
      * @tparam M The state-machine type, deriving from @ref StateMachine
      * @param machine The state machine, initialized by the caller and mutated
@@ -1142,28 +1457,32 @@ namespace hegel::stateful {
             std::is_base_of<StateMachine<M, typename M::state_type>, M>::value,
             "run() requires a machine deriving from "
             "StateMachine<M, State>.");
+        check_step_count(params);
         std::vector<Rule<M>> rules = machine.rules();
         std::vector<Invariant<M>> invariants = machine.invariants();
         if (rules.empty()) {
             throw std::invalid_argument(
                 "Cannot run a state machine with no rules.");
         }
-        std::vector<std::string> rule_names;
-        rule_names.reserve(rules.size());
-        for (const Rule<M>& rule : rules)
-            rule_names.push_back(rule.name());
+        std::vector<internal::RuleSpec> rule_specs;
+        rule_specs.reserve(rules.size());
+        for (const Rule<M>& rule : rules) {
+            rule_specs.push_back({rule.name(), {0}, rule.weight()});
+        }
 
-        std::vector<std::string> invariant_names;
-        invariant_names.reserve(invariants.size());
-        for (const Invariant<M>& invariant : invariants)
-            invariant_names.push_back(invariant.name());
+        std::vector<internal::InvariantSpec> invariant_specs;
+        invariant_specs.reserve(invariants.size());
+        for (const Invariant<M>& invariant : invariants) {
+            invariant_specs.push_back(
+                {invariant.name(), invariant.always_check()});
+        }
 
-        std::vector<int64_t> rule_groups(rule_names.size(), 0);
-        internal::StateMachineHandle machine_handle(tc, rule_names, rule_groups,
-                                                    invariant_names, 1, 1);
-        tc.note("Initial invariant check.");
-        print_state(tc, machine, params);
-        check_invariants(tc, "in the initial state", machine, invariants);
+        internal::StateMachineHandle machine_handle(
+            tc, rule_specs, invariant_specs, 1, 1, params.step_count);
+        if (!invariants.empty()) {
+            tc.note("Checking invariants on the initial state.");
+        }
+        check_invariants(tc, machine, invariants);
         int64_t steps_run = 0;
 
         // Sequential stateful testing is modeled as a concurrent stateful test
@@ -1182,35 +1501,49 @@ namespace hegel::stateful {
                         "rule index. Please report this as a bug.");
                 }
                 // GCOVR_EXCL_STOP
-                internal::start_span(tc, internal::SpanLabel::StatefulRule);
+                internal::start_span(
+                    tc, internal::label(internal::LabelName::StatefulRule));
                 steps_run++;
                 const Rule<M>& rule = rules[static_cast<size_t>(next_rule_idx)];
                 tc.note("Step " + std::to_string(steps_run) + ": " +
-                        rule.name());
+                        rule.name() + " {");
 
                 try {
                     // nest the draws the step makes under its "Step N" header.
                     {
-                        internal::NoteIndentScope indent(tc);
-                        rule.step()(tc, machine);
+                        TestCase step_tc = internal::block(tc, 2);
+                        rule.step()(step_tc, machine);
                     }
-                    print_state(tc, machine, params);
+                    tc.note("}");
                     internal::stop_span(tc);
                 } catch (const internal::HegelReject&) {
-                    tc.note("Rule stopped early due to violated assumption.");
                     machine_handle.rule_rejected(tc, 0);
+                    internal::block(tc, 2).note(
+                        "Rule stopped early due to violated assumption.");
+                    tc.note("}");
                     internal::stop_span(tc, true);
+                } catch (const internal::HegelStopTest&) {
+                    tc.note("}");
+                    internal::stop_span(tc);
+                    throw;
+                } catch (const internal::HegelLoopDone&) {
+                    tc.note("}");
+                    internal::stop_span(tc);
+                    throw;
                 } catch (...) {
+                    tc.note("}");
+                    tc.note("Rule " + rule.name() + " failed:");
                     internal::stop_span(tc);
                     throw;
                 }
             }
-            check_invariants(tc, "after step " + std::to_string(steps_run),
-                             machine, invariants, std::ref(machine_handle));
+            check_invariants(tc, machine, invariants, std::ref(machine_handle));
         }
 
-        tc.note("Final invariant check.");
-        check_invariants(tc, "in the final state", machine, invariants);
+        if (!invariants.empty()) {
+            tc.note("Checking invariants on the final state.");
+        }
+        check_invariants(tc, machine, invariants);
     }
     /// @}
 

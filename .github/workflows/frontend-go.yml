@@ -1,0 +1,125 @@
+# CI for the Go frontend (the hegel.dev/go/hegel module in frontends/go/,
+# driving libhegel in-process through purego). Called from ci.yml when the
+# frontend, libhegel (which it embeds) or the shared workspace changed. Every
+# test job builds the in-tree engine first: on main the binaries the module
+# embeds are empty, and only the commit a release tags fills them in (see
+# ci.yml's release-go jobs). Its lints run in ci.yml's lint job.
+name: go
+
+on:
+  workflow_call:
+
+permissions: {}
+
+jobs:
+  # The full suite on the oldest and newest supported Go. Go 1.27 changed
+  # coverage block positions so go-test-coverage no longer associates
+  # coverage-ignore annotations with their blocks, so the coverage gate and
+  # its ratchet run on oldstable and stable runs the suite (including the
+  # go1.27-tagged tests) without it.
+  test:
+    name: test (go ${{ matrix.go-version }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        go-version: [oldstable, stable]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache-dependency-path: frontends/go/go.sum
+      - name: Run the test suite with coverage
+        if: matrix.go-version == 'oldstable'
+        run: just go::check-test
+      - name: Run the test suite
+        if: matrix.go-version == 'stable'
+        run: just go::check-test-no-coverage -race ./...
+
+  # The suite on the other OSes with runners (macos-latest is arm64,
+  # windows-latest amd64), so the FFI loader runs end to end off Linux.
+  test-os:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: stable
+          cache-dependency-path: frontends/go/go.sum
+      - name: Run the test suite
+        run: just go::check-test-no-coverage
+
+  # Compile and vet for every target GOOS/GOARCH. The tests only run on
+  # linux/amd64, darwin/arm64 and windows/amd64, so this is the only guard for
+  # targets without a runner: the FFI loader is platform-split (purego.Dlopen
+  # on POSIX, LoadLibrary on Windows).
+  cross-build:
+    name: cross-build (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - linux/amd64
+          - linux/arm64
+          - darwin/amd64
+          - darwin/arm64
+          - windows/amd64
+          - windows/arm64
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: stable
+          cache-dependency-path: frontends/go/go.sum
+      - name: Build, link tests, and vet
+        working-directory: frontends/go
+        env:
+          TARGET: ${{ matrix.target }}
+          CGO_ENABLED: "0"
+        run: |
+          export GOOS="${TARGET%/*}" GOARCH="${TARGET#*/}"
+          go build ./...
+          # Link test binaries without executing foreign-platform code.
+          go test -exec=true ./...
+          go vet ./...
+
+  # Every exported symbol must have a doc comment.
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/install-tools
+        with:
+          tools: just
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: stable
+          cache-dependency-path: frontends/go/go.sum
+      - name: Check docs
+        run: just go::check-docs

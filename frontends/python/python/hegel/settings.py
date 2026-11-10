@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import enum
 import os
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, TypeVar
@@ -413,6 +414,16 @@ class Settings:
         """A copy of these settings with ``overrides`` applied."""
         return Settings(self, **overrides)
 
+    def _with_string(self, key: str, value: str) -> Settings:
+        """A copy of these settings with ``key`` set from ``value``, both
+        written as in ``hegel.toml``."""
+        native = self._build()
+        try:
+            _set_from_string(native, key, value)
+        except InvalidArgument as e:
+            raise InvalidArgument(_without_function_name(e)) from None
+        return _restore_settings(_read_native(native))
+
     def _build(
         self,
         database_key: str | None = None,
@@ -447,6 +458,12 @@ def _set_from_string(native: _native.Settings, key: str, value: str) -> None:
         raise InvalidArgument(
             f"{key} is set for each test, not for a whole run, so it cannot be set here"
         )
+
+
+def _without_function_name(error: Exception) -> str:
+    """The message of an engine error without the name of the function
+    that raised it."""
+    return re.sub(r"^hegel_\w+: ", "", str(error))
 
 
 def _check_test_cases(field: str, value: Any) -> int:

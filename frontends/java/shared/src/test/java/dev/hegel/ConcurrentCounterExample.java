@@ -32,21 +32,21 @@ class ConcurrentCounterExample {
             keys = new ConcurrentPool<>(tc);
         }
 
-        @Rule(group = "ops")
+        @Rule(groups = "ops")
         void register(TestCase tc) {
             String key = tc.draw(text().minSize(1).maxSize(3));
             store.putIfAbsent(key, 0);
             keys.add(tc, key);
         }
 
-        @Rule(group = "ops", weight = 3)
+        @Rule(groups = "ops", weight = 3)
         void increment(TestCase tc) {
             String key = tc.draw(keys.reusable());
             store.put(key, store.get(key) + 1); // racy: a lost update
             increments.incrementAndGet();
         }
 
-        @Rule(group = "audit")
+        @Rule(groups = "audit")
         void audit(TestCase tc) {
             tc.note("store holds " + store.size() + " keys");
         }

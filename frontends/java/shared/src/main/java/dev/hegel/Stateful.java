@@ -71,21 +71,21 @@ import java.util.concurrent.LinkedBlockingQueue;
  *     keys = new ConcurrentPool<>(tc);
  *   }
  *
- *   @Rule(group = "ops")
+ *   @Rule(groups = "ops")
  *   void register(TestCase tc) {
  *     String key = tc.draw(text().minSize(1).maxSize(3));
  *     store.putIfAbsent(key, 0);
  *     keys.add(tc, key);
  *   }
  *
- *   @Rule(group = "ops", weight = 3)
+ *   @Rule(groups = "ops", weight = 3)
  *   void increment(TestCase tc) {
  *     String key = tc.draw(keys.reusable());
  *     store.put(key, store.get(key) + 1); // racy: a lost update
  *     increments.incrementAndGet();
  *   }
  *
- *   @Rule(group = "audit")
+ *   @Rule(groups = "audit")
  *   void audit(TestCase tc) {
  *     tc.note("store holds " + store.size() + " keys");
  *   }
@@ -103,14 +103,16 @@ import java.util.concurrent.LinkedBlockingQueue;
  * }
  * }</pre>
  *
- * <p>For each test case the engine draws a concurrency level between {@link
- * Options#minConcurrency} and {@link Options#maxConcurrency} (weighted toward the maximum) and the
- * driver runs that many worker threads. Execution proceeds in <em>rounds</em>: the engine picks one
- * {@linkplain Rule#group() concurrency group} per round, every worker pulls and applies a few of
- * that group's rules concurrently, and once every worker has finished the round the sampled
- * invariants run on the driving thread. Rules in the same group may therefore overlap in time;
- * rules in different groups never do, and invariants never overlap a rule. The step count bounds
- * the number of rounds.
+ * <p>For each test case the driver runs {@link Options#maxConcurrency} worker threads, and the
+ * engine draws a concurrency level between {@link Options#minConcurrency} and {@link
+ * Options#maxConcurrency} (weighted toward the maximum): how many of them apply rules. The engine
+ * occasionally redraws the level between rounds. Execution proceeds in <em>rounds</em>: the engine
+ * picks one {@linkplain Rule#groups() concurrency group} per round, every active worker pulls and
+ * applies a few of the rules belonging to that group concurrently, and once every worker has
+ * finished the round the sampled invariants run on the driving thread. Rules sharing a group may
+ * therefore overlap in time; rules with no group in common never do, and invariants never overlap
+ * a rule. A rule listed in several groups takes part in the rounds of each of them. The step count
+ * bounds the number of rounds.
  *
  * <p>Rules run concurrently on the same machine object, so any state a rule reads or writes must
  * be safe for concurrent access (atomics, {@code synchronized}, concurrent collections). Each rule
@@ -137,7 +139,7 @@ public final class Stateful {
      */
     public static final int DEFAULT_STEP_COUNT = 50;
 
-    /** The concurrency group of every {@link Rule @Rule} that names none. */
+    /** The concurrency group of every {@link Rule @Rule} whose {@link Rule#groups() groups} are empty. */
     public static final String ANONYMOUS_GROUP = "<anonymous>";
 
     /**
@@ -175,7 +177,7 @@ public final class Stateful {
         }
 
         /**
-         * The fewest worker threads a test case runs. Defaults to 1.
+         * The fewest worker threads that apply rules in a round. Defaults to 1.
          *
          * @param minConcurrency the lower concurrency bound, at least 1
          * @return options with the bound set
@@ -191,7 +193,7 @@ public final class Stateful {
         /**
          * The most worker threads a test case runs. Defaults to 1, which runs the machine
          * sequentially on the calling thread; any higher value runs it concurrently (see {@link
-         * Stateful}), with the engine drawing each test case's level between the bounds.
+         * Stateful}), with the engine drawing the level between the bounds.
          *
          * @param maxConcurrency the upper concurrency bound, at least 1
          * @return options with the bound set
@@ -287,24 +289,27 @@ public final class Stateful {
                     machine.getClass().getName() + " has no @Rule methods; a state machine needs at least one");
         }
         List<String> groupNames = new ArrayList<>();
-        long[] groups = groups(rules, groupNames);
-        DataSource.StateMachine sm = tc.newStateMachine(
-                names(rules),
-                groups,
-                weights(rules),
-                names(invariants),
-                alwaysRun(invariants),
-                options.minConcurrency,
-                options.maxConcurrency,
-                options.stepCount);
+        long[][] groups = groups(rules, groupNames);
+        double[] weights = weights(rules);
+        long machineId = tc.newStateMachine(options.minConcurrency, options.maxConcurrency, options.stepCount);
         try {
+            for (int i = 0; i < rules.size(); i++) {
+                tc.stateMachineAddRule(machineId, rules.get(i).getName(), weights[i], groups[i]);
+            }
+            for (Method invariant : invariants) {
+                tc.stateMachineAddInvariant(
+                        machineId,
+                        invariant.getName(),
+                        invariant.getAnnotation(Invariant.class).alwaysRun());
+            }
+            int concurrency = tc.stateMachineStart(machineId);
             if (options.maxConcurrency == 1) {
-                driveSequential(machine, rules, invariants, tc, sm.id());
+                driveSequential(machine, rules, invariants, tc, machineId);
             } else {
-                driveConcurrent(machine, rules, invariants, groupNames, tc, sm.id(), sm.concurrency());
+                driveConcurrent(machine, rules, invariants, groupNames, tc, machineId, concurrency);
             }
         } finally {
-            tc.stateMachineFree(sm.id());
+            tc.stateMachineFree(machineId);
         }
     }
 
@@ -324,7 +329,7 @@ public final class Stateful {
         int step = 0;
         while (true) {
             tc.startSpan(Label.STATEFUL_RULE);
-            if (tc.stateMachineNextGroup(machineId) == Abi.STATE_MACHINE_DONE) {
+            if (tc.stateMachineNextGroup(machineId, new long[1]) == Abi.STATE_MACHINE_DONE) {
                 tc.stopSpan(false);
                 break;
             }
@@ -390,7 +395,6 @@ public final class Stateful {
             long machineId,
             int concurrency) {
         long startNanos = System.nanoTime();
-        tc.note("Concurrency level: " + concurrency);
         if (!invariants.isEmpty()) {
             tc.note("Checking invariants on the initial state.");
         }
@@ -406,12 +410,18 @@ public final class Stateful {
                 worker.thread.start();
             }
             int round = 0;
+            long notedLevel = 0;
+            long[] level = new long[1];
             while (true) {
-                long group = tc.stateMachineNextGroup(machineId);
+                long group = tc.stateMachineNextGroup(machineId, level);
                 if (group == Abi.STATE_MACHINE_DONE) {
                     break;
                 }
                 round++;
+                if (level[0] != notedLevel) {
+                    tc.note("Concurrency level: " + level[0]);
+                    notedLevel = level[0];
+                }
                 tc.note("---------------- Round " + round + ": group \"" + groupNames.get((int) group)
                         + "\" ----------------");
                 for (Worker worker : workers) {
@@ -707,39 +717,35 @@ public final class Stateful {
         return methods;
     }
 
-    private static List<String> names(List<Method> methods) {
-        return methods.stream().map(Method::getName).toList();
-    }
-
     /**
      * The rules' concurrency-group ids, parallel to {@code rules}: distinct group names numbered
-     * from 0 in first-appearance order, appended to {@code groupNames} so the id indexes it. A
-     * sequential machine's all-anonymous rules land in one group, id 0.
+     * from 0 in first-appearance order, appended to {@code groupNames} so the id indexes it. A rule
+     * with no groups gets the anonymous group, so a sequential machine's rules land in one group,
+     * id 0. A repeated name maps to the same id twice; the engine rejects that.
      */
-    private static long[] groups(List<Method> rules, List<String> groupNames) {
-        long[] ids = new long[rules.size()];
+    private static long[][] groups(List<Method> rules, List<String> groupNames) {
+        long[][] ids = new long[rules.size()][];
         for (int i = 0; i < ids.length; i++) {
-            String group = rules.get(i).getAnnotation(Rule.class).group();
-            if (group.isEmpty()) {
-                group = ANONYMOUS_GROUP;
+            String[] names = rules.get(i).getAnnotation(Rule.class).groups();
+            if (names.length == 0) {
+                names = new String[] {ANONYMOUS_GROUP};
             }
-            int id = groupNames.indexOf(group);
-            if (id < 0) {
-                id = groupNames.size();
-                groupNames.add(group);
+            ids[i] = new long[names.length];
+            for (int j = 0; j < names.length; j++) {
+                int id = groupNames.indexOf(names[j]);
+                if (id < 0) {
+                    id = groupNames.size();
+                    groupNames.add(names[j]);
+                }
+                ids[i][j] = id;
             }
-            ids[i] = id;
         }
         return ids;
     }
 
-    /**
-     * The rules' selection weights, parallel to {@code rules}, or {@code null} — the engine's
-     * all-equal default — when no rule asks for anything but weight 1.
-     */
+    /** The rules' selection weights, parallel to {@code rules}, validated before anything reaches the engine. */
     private static double[] weights(List<Method> rules) {
         double[] weights = new double[rules.size()];
-        boolean weighted = false;
         for (int i = 0; i < weights.length; i++) {
             Method rule = rules.get(i);
             double w = rule.getAnnotation(Rule.class).weight();
@@ -748,16 +754,7 @@ public final class Stateful {
                         "@Rule weight of " + rule.getName() + " must be finite and positive, got " + w);
             }
             weights[i] = w;
-            weighted |= w != 1.0;
         }
-        return weighted ? weights : null;
-    }
-
-    private static boolean[] alwaysRun(List<Method> invariants) {
-        boolean[] flags = new boolean[invariants.size()];
-        for (int i = 0; i < flags.length; i++) {
-            flags[i] = invariants.get(i).getAnnotation(Invariant.class).alwaysRun();
-        }
-        return flags;
+        return weights;
     }
 }
