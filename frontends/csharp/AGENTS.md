@@ -168,10 +168,14 @@ There is no engine version pin to keep in step in this directory.
   `OptionGen`, `ValueOptionGen`, `TupleGen`, `RecordGen`, `UnionGen`, each
   a `PrintableGenerator<T>` printing F# syntax; `Collections.draw` mirrors
   the C# `ListGenerator`'s speculation and duplicate rejection),
-  `Auto.fs` (derivation: a plan per type, recursive unions and records
-  through `Generators.Recursive` with the cases that avoid the type as
-  base cases, mutual recursion through the `Selves` of the scope, a
-  `HegelUsageException` for a type with no base case; non-F# leaves go to
+  `Auto.fs` (derivation: each record or union that can contain itself
+  gets one `Node`, tied to a base case, where every collection or option
+  that could hold a recursive type is empty, and a full form, which refers
+  to the nodes. A node drawn on its own starts an engine recursion
+  (`Recursion.Draw`, shared with the C# `RecursiveGenerator`) and a node
+  drawn inside one is another position of it, so mutually recursive types
+  share one recursion and generators are built once, not per value. A
+  type with no base case is a `HegelUsageException`; non-F# leaves go to
   the C# `Derive.FromType`), `Gen.fs` (the `Gen` module and the `gen { }`
   builder) and `Hegel.fs` (the `Hegel` static type: `test`/`run` with
   caller-info parameters, installing `Repr.dialect` around

@@ -780,5 +780,6 @@ public class RunnerTests
         var unoptimised = MethodImplAttributes.NoOptimization | MethodImplAttributes.NoInlining;
         Assert.Equal(9, methods.Length);
         Assert.All(methods, m => Assert.Equal(unoptimised, m.MethodImplementationFlags & unoptimised));
+        Assert.Equal(6, UserCode.Call((int a, int b, int c) => a + b + c, 1, 2, 3));
     }
 }

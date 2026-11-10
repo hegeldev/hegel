@@ -67,9 +67,40 @@ and Group =
     | Empty
     | Of of Item
 
+type D1 =
+    | L1
+    | N1 of D2 * D3 * D4 * D5 * D6 * D7
+
+and D2 =
+    | L2
+    | N2 of D1 * D3 * D4 * D5 * D6 * D7
+
+and D3 =
+    | L3
+    | N3 of D1 * D2 * D4 * D5 * D6 * D7
+
+and D4 =
+    | L4
+    | N4 of D1 * D2 * D3 * D5 * D6 * D7
+
+and D5 =
+    | L5
+    | N5 of D1 * D2 * D3 * D4 * D6 * D7
+
+and D6 =
+    | L6
+    | N6 of D1 * D2 * D3 * D4 * D5 * D7
+
+and D7 =
+    | L7
+    | N7 of D1 * D2 * D3 * D4 * D5 * D6
+
 type Inf = Inf of Inf
 
 type Loop = { Self: Loop }
+
+type Holder =
+    { Loops: Loop list; Spare: Loop option }
 
 type Plain() =
     member _.Nothing = 0
@@ -290,6 +321,38 @@ let ``a record and a union recursive through each other`` () =
             tc.Assume item.Sub.IsSome)
 
     Assert.Equal<string seq>([ "let i_1 = { Name = \"\"; Sub = Some(Empty) }" ], nested.Output)
+
+[<Fact>]
+let ``types that all refer to each other share one recursion`` () =
+    Assert.Equal("let x_1 = L1", printed Gen.auto<D1>)
+    Assert.Equal("let x_1 = L7", printed Gen.auto<D7>)
+    let values = ResizeArray<D1>()
+
+    let report =
+        Hegel.run (
+            quiet,
+            fun tc ->
+                values.Add(tc.Draw Gen.auto<D1>)
+                values.Add(tc.DrawSilent Gen.auto<D1>)
+        )
+
+    Assert.Equal(RunStatus.Passed, report.Status)
+    Assert.Contains(L1, values)
+
+    Assert.Contains(
+        values,
+        fun value ->
+            match value with
+            | N1(_, _, _, _, _, N7 _) -> true
+            | _ -> false
+    )
+
+[<Fact>]
+let ``a collection of a type with no base case is always empty`` () =
+    Assert.Equal("let x_1 = { Loops = []; Spare = None }", printed Gen.auto<Holder>)
+    let values = ResizeArray<Holder>()
+    Hegel.run (quiet, (fun tc -> values.Add(tc.Draw Gen.auto<Holder>))) |> ignore
+    Assert.All(values, fun value -> Assert.Equal({ Loops = []; Spare = None }, value))
 
 [<Fact>]
 let ``a type with no base case cannot be derived`` () =

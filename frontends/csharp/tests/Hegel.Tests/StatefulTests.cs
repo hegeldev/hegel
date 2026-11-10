@@ -483,8 +483,13 @@ public class StatefulTests
         [Rule]
         internal void Decrement(TestCase tc)
         {
-            tc.Assume(Volatile.Read(ref _n) > 0);
-            Interlocked.Decrement(ref _n);
+            int seen;
+            do
+            {
+                seen = Volatile.Read(ref _n);
+                tc.Assume(seen > 0);
+            }
+            while (Interlocked.CompareExchange(ref _n, seen - 1, seen) != seen);
         }
 
         [Invariant]

@@ -801,6 +801,47 @@ public sealed class MapGenerator<TKey, TValue> : PrintableGenerator<Dictionary<T
     }
 }
 
+internal sealed class RecursionOverBudget : Exception
+{
+}
+
+internal static class Recursion
+{
+    internal static T Draw<T>(TestCase tc, Printer? printer, int maxDepth, int maxLeaves, Func<nint, T> root)
+    {
+        var p = Components.Out(printer);
+        var recursion = tc.NewRecursion((ulong)maxDepth, (ulong)maxLeaves);
+        try
+        {
+            while (true)
+            {
+                using var speculation = p.Speculate();
+                using var attempt = tc.Attempt();
+                T value;
+                try
+                {
+                    value = root(recursion);
+                }
+                catch (RecursionOverBudget)
+                {
+                    tc.RecursionRetry(recursion);
+                    continue;
+                }
+                if (tc.RecursionFinish(recursion))
+                {
+                    speculation.Commit();
+                    attempt.Keep();
+                    return value;
+                }
+            }
+        }
+        finally
+        {
+            tc.RecursionFree(recursion);
+        }
+    }
+}
+
 /// <summary>Draws recursive structures: a base case, extended by a function a bounded number of times.</summary>
 public sealed class RecursiveGenerator<T> : PrintableGenerator<T>
 {
@@ -838,10 +879,6 @@ public sealed class RecursiveGenerator<T> : PrintableGenerator<T>
     /// <summary>Draw at most <paramref name="maxLeaves"/> base cases.</summary>
     public RecursiveGenerator<T> MaxLeaves(int maxLeaves) => new(_base, _extend, _maxDepth, maxLeaves);
 
-    private sealed class OverBudget : Exception
-    {
-    }
-
     /// <inheritdoc />
     public override ulong Label => _label.Get(() => Hegel.Label.Combine(Hegel.Label.Recursive, _base.Label));
 
@@ -851,39 +888,8 @@ public sealed class RecursiveGenerator<T> : PrintableGenerator<T>
     /// <inheritdoc />
     protected internal override T DoDrawAndPrint(TestCase tc, Printer printer) => Draw(tc, printer);
 
-    private T Draw(TestCase tc, Printer? printer)
-    {
-        var p = Components.Out(printer);
-        var recursion = tc.NewRecursion((ulong)_maxDepth, (ulong)_maxLeaves);
-        try
-        {
-            while (true)
-            {
-                using var speculation = p.Speculate();
-                using var attempt = tc.Attempt();
-                T value;
-                try
-                {
-                    value = DrawSubtree(tc, recursion, 0, printer);
-                }
-                catch (OverBudget)
-                {
-                    tc.RecursionRetry(recursion);
-                    continue;
-                }
-                if (tc.RecursionFinish(recursion))
-                {
-                    speculation.Commit();
-                    attempt.Keep();
-                    return value;
-                }
-            }
-        }
-        finally
-        {
-            tc.RecursionFree(recursion);
-        }
-    }
+    private T Draw(TestCase tc, Printer? printer) =>
+        Recursion.Draw(tc, printer, _maxDepth, _maxLeaves, recursion => DrawSubtree(tc, recursion, 0, printer));
 
     private T DrawSubtree(TestCase tc, nint recursion, ulong depth, Printer? printer)
     {
@@ -893,7 +899,7 @@ public sealed class RecursiveGenerator<T> : PrintableGenerator<T>
         }
         if (!tc.RecursionLeaf(recursion))
         {
-            throw new OverBudget();
+            throw new RecursionOverBudget();
         }
         return Components.Draw(tc, _base, printer);
     }
