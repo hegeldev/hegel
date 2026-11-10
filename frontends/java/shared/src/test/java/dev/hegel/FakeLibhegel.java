@@ -196,6 +196,11 @@ final class FakeLibhegel implements Libhegel {
     boolean resolvedPrintBlob = false;
     int resolvedStrictness = Abi.NONDETERMINISM_QUIET;
     Boolean printBlob; // what the setter received; null = never set
+    int verbosity = Abi.VERBOSITY_NORMAL;
+    int settingsFromStringRc = Abi.OK;
+    final List<String> settingsFromStringCalls = new ArrayList<>();
+    int setDefaultProfileRc = Abi.OK;
+    String defaultProfile; // what the setter received; null = never set
     Integer strictness; // what the setter received; null = never set
 
     @Override
@@ -214,6 +219,28 @@ final class FakeLibhegel implements Libhegel {
     @Override
     public void settingsPrintBlob(long s, boolean yes) {
         printBlob = yes;
+    }
+
+    @Override
+    public int settingsGetVerbosity(long s) {
+        return verbosity;
+    }
+
+    @Override
+    public int settingsGetSuppressHealthCheck(long s) {
+        return suppressMask == -1 ? 0 : suppressMask;
+    }
+
+    @Override
+    public int settingsFromString(long s, String key, String value) {
+        settingsFromStringCalls.add(key + "=" + value);
+        return settingsFromStringRc;
+    }
+
+    @Override
+    public int setDefaultProfile(String name) {
+        defaultProfile = name;
+        return setDefaultProfileRc;
     }
 
     @Override
@@ -247,7 +274,9 @@ final class FakeLibhegel implements Libhegel {
     }
 
     @Override
-    public void settingsVerbosity(long s, int v) {}
+    public void settingsVerbosity(long s, int v) {
+        verbosity = v;
+    }
 
     @Override
     public void settingsSeed(long s, long seed, boolean hasSeed) {}
