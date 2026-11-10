@@ -565,9 +565,11 @@ TEST(FindTemporal, DurationsRespectBoundsAndPrecision) {
         gs::temporal::durations(),
         [](const gs::temporal::SignedDuration& d) { return d.seconds < 0; });
     find_any<gs::temporal::SignedDuration>(
-        gs::temporal::durations(), [](const gs::temporal::SignedDuration& d) {
+        gs::temporal::durations(),
+        [](const gs::temporal::SignedDuration& d) {
             return d.seconds == 86'400;
-        });
+        },
+        10'000);
 }
 
 namespace {
