@@ -210,6 +210,16 @@ public sealed class Deferred<T> : PrintableGenerator<T>
     private Generator<T> Delegate() => _delegate ?? throw new HegelUsageException("deferred generator has not been set");
 }
 
+/// <summary>
+/// The label of a composite: <see cref="Label.Composite"/> combined with the method its body is,
+/// so that two composites share a label only when they run the same code.
+/// </summary>
+internal static class CompositeLabel
+{
+    internal static ulong Of(Delegate body) =>
+        Label.Combine(Label.Composite, Label.Of($"{body.Method.DeclaringType?.FullName}.{body.Method.Name}"));
+}
+
 internal sealed class CompositeGenerator<T> : ValueGenerator<T>
 {
     private readonly Func<TestCase, T> _body;
@@ -217,9 +227,10 @@ internal sealed class CompositeGenerator<T> : ValueGenerator<T>
     internal CompositeGenerator(Func<TestCase, T> body)
     {
         _body = body;
+        Label = CompositeLabel.Of(body);
     }
 
-    public override ulong Label => Hegel.Label.Composite;
+    public override ulong Label { get; }
 
     protected internal override T DoDraw(TestCase tc) => UserCode.Call(_body, tc);
 }
@@ -231,9 +242,10 @@ internal sealed class PrintingCompositeGenerator<T> : PrintableGenerator<T>
     internal PrintingCompositeGenerator(Func<TestCase, Printer, T> body)
     {
         _body = body;
+        Label = CompositeLabel.Of(body);
     }
 
-    public override ulong Label => Hegel.Label.Composite;
+    public override ulong Label { get; }
 
     protected internal override T DoDrawAndPrint(TestCase tc, Printer printer) => UserCode.Call(_body, tc, printer);
 }

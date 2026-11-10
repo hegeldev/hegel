@@ -136,11 +136,20 @@ public class CombinatorTests
     }
 
     [Fact]
+    public void CompositesShareALabelOnlyWhenTheyRunTheSameBody()
+    {
+        static PrintableGenerator<int> Offset(int by) => Generators.Composite(tc => tc.Draw(Generators.Integers().Min(0).Max(2)) + by);
+        Assert.Equal(Offset(1).Label, Offset(2).Label);
+        Assert.NotEqual(Offset(1).Label, Generators.Composite(tc => tc.Draw(Generators.Integers().Min(0).Max(2)) + 1).Label);
+        Assert.NotEqual(Offset(1).Label, Generators.Composite(tc => tc.Draw(Generators.Booleans())).Label);
+    }
+
+    [Fact]
     public void CompositeRunsTheBody()
     {
         var g = Generators.Composite(tc => tc.Draw(Generators.Integers().Min(0).Max(2)) + 10);
         Gen.All(g, v => v is >= 10 and <= 12, 50);
-        Assert.Equal(Label.Composite, g.Label);
+        Assert.NotEqual(Label.Composite, g.Label);
         Assert.Equal("var x_1 = 10;", Gen.MinimalOutput(g));
         var printing = Generators.Composite((tc, p) =>
         {
@@ -149,7 +158,7 @@ public class CombinatorTests
             return n + 10;
         });
         Gen.All(printing, v => v is >= 10 and <= 12, 20);
-        Assert.Equal(Label.Composite, printing.Label);
+        Assert.NotEqual(g.Label, printing.Label);
         Assert.Equal("var x_1 = 0 + 10;", Gen.MinimalOutput(printing));
     }
 
