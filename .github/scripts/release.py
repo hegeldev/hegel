@@ -50,6 +50,12 @@ class Component:
     `install_docs` are documents, such as a README, whose install snippets
     name the component's own version: a release rewrites every occurrence of
     the version it replaces to the new one.
+
+    A `weekly` component (the OCaml frontend, whose every release is a pull
+    request a maintainer of opam-repository reviews) is not released by a
+    push to main: its release files stay on main until the weekly run
+    (`release --weekly`) folds them into one release. A libhegel release
+    leaves it an `engine_bump_file` instead of patch-bumping it.
     """
 
     path: str
@@ -61,6 +67,7 @@ class Component:
     install_docs: tuple[str, ...] = ()
     tag_version_prefix: str = ""
     tagged_on_release_commit: bool = True
+    weekly: bool = False
 
     @property
     def release_dir(self) -> str:
@@ -94,6 +101,13 @@ class Component:
                 if path.is_file() and path.suffix == ".md"
             )
         return files
+
+    @property
+    def engine_bump_file(self) -> str:
+        """The release file a libhegel release writes for a `weekly`
+        component, holding its `engine_bump_entry`. Each libhegel release
+        overwrites it, so the weekly release names the engine it ships."""
+        return f"{self.release_dir}/libhegel.md"
 
     @property
     def changelog(self) -> str:
@@ -203,6 +217,7 @@ OCAML = Component(
         "frontends/ocaml/dune-project",
     ),
     engine_bump_entry="This release updates the bundled libhegel engine to {version}.",
+    weekly=True,
 )
 # The Go frontend (the hegel.dev/go/hegel module). A Go module ships every
 # file under its directory, so any change there needs a release file (or the
@@ -496,7 +511,9 @@ def plan_release(
     and must be republished against it; the Python frontend compiles libhegel
     into its wheels), and its changelog gets the auto-generated
     `engine_bump_entry`. That entry is only correct when there are no
-    functional frontend changes (see the changelog skill).
+    functional frontend changes (see the changelog skill). A `weekly`
+    frontend is the exception: it releases only by its release files, and
+    `defer_engine_bumps` gives it one for the engine.
 
     Returns `{component: (new_version, changelog_content)}` for the
     components that release; the others are absent.
@@ -512,7 +529,7 @@ def plan_release(
         release = releases.get(frontend)
         if release is not None:
             plan[frontend] = (bump_version(current[frontend], release[0]), release[1])
-        elif libhegel is not None:
+        elif libhegel is not None and not frontend.weekly:
             assert frontend.engine_bump_entry is not None
             plan[frontend] = (
                 bump_version(current[frontend], "patch"),
@@ -534,10 +551,28 @@ def combine_entries(entries: list[tuple[str, str]]) -> tuple[str, str]:
     return release_type, "\n\n".join(content for _, content in entries)
 
 
-def pending_release_files(root: Path) -> dict[Component, list[str]]:
-    """Every component with a release file in the tree, with its files."""
-    pending = {c: c.release_files(root) for c in COMPONENTS}
+def pending_release_files(root: Path, *, weekly: bool = False) -> dict[Component, list[str]]:
+    """Every component with a release file in the tree that this kind of run
+    releases, with its files: the `weekly` components for the weekly run,
+    the others for a push to main."""
+    pending = {c: c.release_files(root) for c in COMPONENTS if c.weekly == weekly}
     return {c: files for c, files in pending.items() if files}
+
+
+def defer_engine_bumps(root: Path, libhegel_version: str) -> list[str]:
+    """Write each `weekly` frontend's `engine_bump_file` for a libhegel
+    release, so that its next weekly release ships and names that engine.
+    Returns the files written, relative to `root`."""
+    written = []
+    for frontend in FRONTENDS:
+        if frontend.weekly:
+            assert frontend.engine_bump_entry is not None
+            path = root / frontend.engine_bump_file
+            path.parent.mkdir(parents=True, exist_ok=True)
+            entry = frontend.engine_bump_entry.format(version=libhegel_version)
+            path.write_text(f"RELEASE_TYPE: patch\n\n{entry}\n")
+            written.append(frontend.engine_bump_file)
+    return written
 
 
 def set_output(name: str, value: str) -> None:
@@ -548,8 +583,8 @@ def set_output(name: str, value: str) -> None:
             f.write(f"{name}={value}\n")
 
 
-def pending() -> None:
-    files = [f for fs in pending_release_files(ROOT).values() for f in fs]
+def pending(weekly: bool) -> None:
+    files = [f for fs in pending_release_files(ROOT, weekly=weekly).values() for f in fs]
     print("\n".join(files) if files else "No release files pending.")
     set_output("skip", "false" if files else "true")
 
@@ -645,9 +680,10 @@ def existing_remote_tags(tags: list[str]) -> list[str]:
     return [tag for tag in tags if tag in remote]
 
 
-def release() -> None:
+def release(weekly: bool) -> None:
     """Release everything pending on the commit checked out, if it is still
-    the head of main.
+    the head of main: the `weekly` components' release files on the weekly
+    run, every other component's on a push to main.
 
     The run for every push to main gets here, and two merges in quick
     succession give two runs whose trees both carry the first merge's release
@@ -657,8 +693,10 @@ def release() -> None:
     run's push is rejected and it stops having changed nothing; the winner's
     tree is a superset of its release files, so nothing is lost. A failed
     release leaves its files on main for the next push's run to pick up.
+
+    The weekly run has no later run to defer to, so a rejected push fails it.
     """
-    pending = pending_release_files(ROOT)
+    pending = pending_release_files(ROOT, weekly=weekly)
     if not pending:
         print("No release files pending.")
         set_output("released", "false")
@@ -688,10 +726,12 @@ def release() -> None:
     apply_version_bump(ROOT, versions)
 
     # regenerate the lockfile after version bump
-    subprocess.run(["cargo", "update", "--workspace"], check=True, cwd=ROOT)
+    if any(m.endswith(".toml") for component in plan for m in component.manifests):
+        subprocess.run(["cargo", "update", "--workspace"], check=True, cwd=ROOT)
 
     for component, (version, content) in plan.items():
         add_changelog(ROOT / component.changelog, version=version, content=content)
+    deferred = defer_engine_bumps(ROOT, versions[LIBHEGEL]) if LIBHEGEL in plan else []
 
     app_slug = os.environ["HEGEL_RELEASE_APP_SLUG"]
     bot_user_id = subprocess.check_output(
@@ -704,7 +744,7 @@ def release() -> None:
         f"{bot_user_id}+{app_slug}[bot]@users.noreply.github.com",
         cwd=ROOT,
     )
-    git("add", *RELEASE_PATHS, cwd=ROOT)
+    git("add", *RELEASE_PATHS, *deferred, cwd=ROOT)
     for files in pending.values():
         git("rm", "--quiet", *files, cwd=ROOT)
 
@@ -712,6 +752,11 @@ def release() -> None:
 
     pushed = subprocess.run(["git", "push", "origin", "HEAD:refs/heads/main"], cwd=ROOT)
     if pushed.returncode != 0:
+        if weekly:
+            raise ValueError(
+                "main moved on while the weekly release was being cut. Nothing was "
+                f"tagged or published for {' and '.join(tags)}: run the workflow again."
+            )
         print(
             "main has moved on since this run's commit, so the run for its new "
             f"head releases instead. Nothing was tagged or published for {' and '.join(tags)}."
@@ -784,13 +829,17 @@ if __name__ == "__main__":
 
     check_parser = subparsers.add_parser("check")
     check_parser.add_argument("base_ref", help="Git ref to diff against.")
-    subparsers.add_parser("pending")
-    subparsers.add_parser("release")
+    for command in ("pending", "release"):
+        subparsers.add_parser(command).add_argument(
+            "--weekly",
+            action="store_true",
+            help="Act on the weekly components instead of the ones a push releases.",
+        )
 
     args = parser.parse_args()
     if args.command == "check":
         check(args.base_ref)
     elif args.command == "pending":
-        pending()
+        pending(args.weekly)
     elif args.command == "release":
-        release()
+        release(args.weekly)

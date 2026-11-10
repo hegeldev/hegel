@@ -1,5 +1,5 @@
 ; Copied to `prebuilt/dune` inside the published opam release tarball of the
-; OCaml frontend by the `release-ocaml` job of ../workflows/ci.yml (alongside
+; OCaml frontend by the `archive` job of ../workflows/ocaml-release.yml (alongside
 ; the prebuilt libhegel-<os>-<arch> binaries of the engine release). It is
 ; intentionally NOT named `dune` and lives outside frontends/ocaml so dune does
 ; not process it in a dev checkout (where no prebuilt binaries exist and the
