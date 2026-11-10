@@ -19,6 +19,17 @@ public class ExplicitDrawsTests
     }
 
     [Fact]
+    public void ALabelNamesEveryDrawItLabelsUnlessOneIsNamedExactly()
+    {
+        using var draws = new ExplicitDraws(Engines.Real, Example.Of(9).With("xs", 1).With("xs_2", 2));
+        Assert.Equal(1, draws.Take("xs_1", "xs"));
+        Assert.Equal(2, draws.Take("xs_2", "xs"));
+        Assert.Equal(1, draws.Take("xs_3", "xs"));
+        Assert.Equal(9, draws.Take("ys_1", "ys"));
+        draws.CheckConsumed();
+    }
+
+    [Fact]
     public void ANamedValueCanBeTakenRepeatedly()
     {
         using var draws = new ExplicitDraws(Engines.Real, Example.Of().With("n_1", 3));

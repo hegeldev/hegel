@@ -695,4 +695,81 @@ public class RunnerTests
             return Abi.EInternal;
         }
     }
+
+    private static Settings Short => Engines.Quiet with { TestCases = 20 };
+
+    [Fact]
+    public void ATestCaseCannotBeUsedAfterItsBodyReturns()
+    {
+        TestCase? escaped = null;
+        Property.Test(tc => escaped = tc, Short);
+        Assert.Equal(LiveDataSource.ReleasedMessage, Assert.Throws<HegelUsageException>(() => escaped!.Draw(Generators.Integers())).Message);
+    }
+
+    [Fact]
+    public void AnAsyncBodyIsAUsageError()
+    {
+        var e = Assert.Throws<HegelUsageException>(() => Property.Test(async tc => await Task.Yield(), Short));
+        Assert.StartsWith("The test body is async, but Hegel runs it synchronously", e.Message);
+    }
+
+    private sealed class EndingBooleans(ILibhegel inner, int rc) : DelegatingLibhegel(inner)
+    {
+        public override int GenerateBoolean(nint testCase, double p, out bool value)
+        {
+            value = false;
+            return rc;
+        }
+    }
+
+    [Fact]
+    public void AnEngineStopWrappedInAnotherExceptionIsNotAFailure()
+    {
+        using var engine = Engines.Override(new EndingBooleans(Engines.Real, Abi.EStopTest));
+        var report = Property.Run(
+            tc =>
+            {
+                try
+                {
+                    tc.Draw(Generators.Booleans());
+                }
+                catch (Exception e)
+                {
+                    throw new InvalidOperationException("wrapped", e);
+                }
+            },
+            Short);
+        Assert.Empty(report.Failures);
+        Assert.Equal(0, report.Statistics.Interesting);
+        Assert.True(report.Statistics.Overrun >= 1);
+    }
+
+    [Fact]
+    public void AnEngineRejectionTheBodySwallowsIsStillInvalid()
+    {
+        using var engine = Engines.Override(new EndingBooleans(Engines.Real, Abi.EAssume));
+        var report = Property.Run(
+            tc =>
+            {
+                try
+                {
+                    tc.Draw(Generators.Booleans());
+                }
+                catch (Exception)
+                {
+                }
+            },
+            Short);
+        Assert.Empty(report.Failures);
+        Assert.Equal(0, report.Statistics.Valid);
+        Assert.True(report.Statistics.Invalid >= 1);
+    }
+
+    [Fact]
+    public void AnExampleCanNameADrawByItsLabel()
+    {
+        var seen = new List<int>();
+        Property.Run(tc => seen.Add(tc.Draw(Generators.Integers(), "x")), Short with { Examples = [Example.Of().With("x", 44)], Phases = Phase.Explicit }, Reporter.Silent);
+        Assert.Equal([44], seen);
+    }
 }

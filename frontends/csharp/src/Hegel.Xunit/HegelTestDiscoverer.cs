@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Xunit.Abstractions;
 using Xunit.Sdk;
 
@@ -39,6 +40,10 @@ public sealed class HegelTestDiscoverer : IXunitTestCaseDiscoverer
         if (method.ReturnType.Name != typeof(void).FullName)
         {
             return "[HegelTest] methods must return void: the engine runs the body synchronously.";
+        }
+        if (method.GetCustomAttributes(typeof(AsyncStateMachineAttribute).AssemblyQualifiedName!).Any())
+        {
+            return "[HegelTest] methods must not be async: the engine runs the body synchronously.";
         }
         if (method.IsGenericMethodDefinition)
         {

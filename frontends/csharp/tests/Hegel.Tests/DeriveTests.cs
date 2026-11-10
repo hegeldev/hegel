@@ -26,6 +26,39 @@ public record Forest(List<Forest> Groves);
 
 public record Wrapped(Dictionary<string, Loop> Inner);
 
+public record Settable
+{
+    public int X { get; init; }
+
+    public required string Name { get; set; }
+
+    public int Doubled => X * 2;
+}
+
+public record Mixed(int Id)
+{
+    public bool Flag { get; init; }
+}
+
+public record struct Empty;
+
+public abstract record Animal(int Legs);
+
+public record Dog(int Legs) : Animal(Legs);
+
+public record Zoo(Animal Star);
+
+public record Positive(int N)
+{
+    public int N { get; } = N > 0 ? N : throw new ArgumentOutOfRangeException(nameof(N));
+
+    public int Half
+    {
+        get => N / 2;
+        init => _ = value >= 0 ? value : throw new ArgumentOutOfRangeException(nameof(value));
+    }
+}
+
 public sealed class NotARecord
 {
     public int X { get; set; }
@@ -133,6 +166,36 @@ public class DeriveTests
         Assert.Equal("var x_1 = new Pair(0, \"\");", Gen.MinimalOutput(Generators.ForType<Pair>()));
         Assert.Matches(@"^var x_1 = new Shape\(new Point\(0, 0\), new List<Point> \{\}, Colour\.Red, null\);$", Gen.MinimalOutput(Generators.ForType<Shape>()));
         Assert.Equal(Label.Combine(Label.FixedDict, Label.Of(typeof(Point).FullName!)), Generators.Records<Point>().Label);
+    }
+
+    [Fact]
+    public void RecordsDrawTheirSettablePropertiesToo()
+    {
+        Assert.Equal("var x_1 = new Settable() { X = 0, Name = \"\" };", Gen.MinimalOutput(Generators.ForType<Settable>()));
+        Assert.Equal("var x_1 = new Settable() { X = 1, Name = \"\" };", Gen.MinimalOutput(Generators.ForType<Settable>(), s => s.X > 0));
+        Assert.Equal("var x_1 = new Mixed(0) { Flag = true };", Gen.MinimalOutput(Generators.ForType<Mixed>(), m => m.Flag));
+        Assert.Equal("var x_1 = new Empty();", Gen.MinimalOutput(Generators.ForType<Empty>()));
+        Gen.All(Generators.Records<Settable>().With("Name", Generators.Just("n")).With("X", Generators.Just(3)), s => s is { Name: "n", X: 3, Doubled: 6 }, 5);
+        Assert.Throws<ArgumentException>(() => Generators.Records<Settable>().With("Doubled", Generators.Just(1)));
+    }
+
+    [Fact]
+    public void AbstractRecordsAreRejected()
+    {
+        var e = Assert.Throws<ArgumentException>(() => Generators.Records<Animal>());
+        Assert.StartsWith("Hegel.Tests.Animal is an abstract record", e.Message);
+        Assert.Contains("No default generator for Hegel.Tests.Animal", Assert.Throws<HegelUsageException>(() => Generators.ForType<Animal>()).Message);
+        Assert.Throws<HegelUsageException>(() => Gen.Sample(Generators.ForType<Zoo>(), 1));
+        Gen.All(Generators.Records<Zoo>().With("Star", Generators.ForType<Dog>()), z => z.Star is Dog, 5);
+    }
+
+    [Fact]
+    public void ARecordsOwnExceptionsAreNotWrapped()
+    {
+        var constructing = Generators.Records<Positive>().With("N", Generators.Just(0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => Property.Test(tc => tc.Draw(constructing), Gen.Quiet(3), Reporter.Silent));
+        var setting = Generators.Records<Positive>().With("N", Generators.Just(1)).With("Half", Generators.Just(-1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => Property.Test(tc => tc.Draw(setting), Gen.Quiet(3), Reporter.Silent));
     }
 
     [Fact]

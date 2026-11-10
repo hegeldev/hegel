@@ -134,6 +134,38 @@ public class StatefulTests
         Assert.Contains("[Invariant] method Hegel.Tests.StatefulTests+BadInvariant.Wrong must take a single TestCase parameter", invariant.Message);
     }
 
+    private sealed class StaticRule
+    {
+        [Rule]
+        internal static void Shared(TestCase tc) { }
+    }
+
+    private sealed class AsyncRule
+    {
+        [Rule]
+        internal async void Later(TestCase tc) => await Task.Yield();
+    }
+
+    private sealed class TaskInvariant
+    {
+        [Rule]
+        internal void Fine(TestCase tc) { }
+
+        [Invariant]
+        internal Task Later(TestCase tc) => Task.CompletedTask;
+    }
+
+    [Fact]
+    public void AnnotatedMethodsMustBeSynchronousInstanceMethods()
+    {
+        var isStatic = Assert.Throws<HegelUsageException>(() => Property.Test(tc => Stateful.Run(new StaticRule(), tc), Quick));
+        Assert.Contains("[Rule] method Hegel.Tests.StatefulTests+StaticRule.Shared must not be static", isStatic.Message);
+        var isAsync = Assert.Throws<HegelUsageException>(() => Property.Test(tc => Stateful.Run(new AsyncRule(), tc), Quick));
+        Assert.StartsWith("[Rule] method Hegel.Tests.StatefulTests+AsyncRule.Later is async", isAsync.Message);
+        var returnsTask = Assert.Throws<HegelUsageException>(() => Property.Test(tc => Stateful.Run(new TaskInvariant(), tc), Quick));
+        Assert.Contains("[Invariant] method Hegel.Tests.StatefulTests+TaskInvariant.Later must return void", returnsTask.Message);
+    }
+
     private sealed class Booming
     {
         private int _calls;

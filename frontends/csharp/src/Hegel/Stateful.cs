@@ -501,8 +501,16 @@ public static class Stateful
     {
         var methods = new List<MethodInfo>();
         var seen = new HashSet<string>();
+        var attribute = typeof(TAttribute).Name.Replace("Attribute", "");
         for (var type = machine.GetType(); type != null && type != typeof(object); type = type.BaseType)
         {
+            foreach (var m in type.GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
+            {
+                if (m.IsDefined(typeof(TAttribute), false))
+                {
+                    throw new HegelUsageException($"[{attribute}] method {type.FullName}.{m.Name} must not be static: it acts on the state machine it is called on");
+                }
+            }
             foreach (var m in type.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly))
             {
                 var parameters = m.GetParameters();
@@ -517,7 +525,15 @@ public static class Stateful
                 }
                 if (!takesTestCase)
                 {
-                    throw new HegelUsageException($"[{typeof(TAttribute).Name.Replace("Attribute", "")}] method {type.FullName}.{m.Name} must take a single TestCase parameter");
+                    throw new HegelUsageException($"[{attribute}] method {type.FullName}.{m.Name} must take a single TestCase parameter");
+                }
+                if (AsyncBodies.IsAsync(m))
+                {
+                    throw new HegelUsageException(AsyncBodies.Message($"[{attribute}] method {type.FullName}.{m.Name}"));
+                }
+                if (m.ReturnType != typeof(void))
+                {
+                    throw new HegelUsageException($"[{attribute}] method {type.FullName}.{m.Name} must return void: its result, such as a Task, would be discarded");
                 }
                 if (seen.Add(m.Name))
                 {

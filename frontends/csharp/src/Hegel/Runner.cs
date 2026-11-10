@@ -311,7 +311,7 @@ internal static class Runner
             var testCase = new TestCase(source, lib.TestCaseShouldCapture(tc), settings.Verbosity >= Verbosity.Verbose);
             try
             {
-                return RunBody(lib, tc, testCase, body, settings, reporter, counts);
+                return RunBody(lib, tc, source, testCase, body, settings, reporter, counts);
             }
             finally
             {
@@ -326,12 +326,12 @@ internal static class Runner
             }
             finally
             {
-                lib.TestCaseFree(tc);
+                source.Release();
             }
         }
     }
 
-    private static CaseRun RunBody(ILibhegel lib, nint tc, TestCase testCase, Action<TestCase> body, Settings settings, Reporter reporter, RunStatistics.Counter counts)
+    private static CaseRun RunBody(ILibhegel lib, nint tc, LiveDataSource source, TestCase testCase, Action<TestCase> body, Settings settings, Reporter reporter, RunStatistics.Counter counts)
     {
         reporter.CaseStarted(false);
         CaseOutcome outcome;
@@ -363,6 +363,12 @@ internal static class Runner
             outcome = CaseOutcome.Interesting;
             origin = OriginOf(e, settings.InfrastructureNamespaces);
             interesting = e;
+        }
+        if (source.IsAborted)
+        {
+            outcome = source.IsRejected ? CaseOutcome.Invalid : CaseOutcome.Overrun;
+            origin = null;
+            interesting = null;
         }
         var output = Output(testCase, interesting);
         if (settings.Verbosity >= Verbosity.Verbose)

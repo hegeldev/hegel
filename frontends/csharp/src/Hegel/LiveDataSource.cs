@@ -8,6 +8,7 @@ internal sealed class LiveDataSource : IDataSource
     private sealed class Flag
     {
         internal bool Value;
+        internal bool Rejected;
     }
 
     private readonly ILibhegel _lib;
@@ -33,8 +34,10 @@ internal sealed class LiveDataSource : IDataSource
 
     public bool IsAborted => _aborted.Value;
 
+    internal bool IsRejected => _aborted.Rejected;
+
     internal const string ReleasedMessage =
-        "This TestCase belonged to a stateful rule that has ended and can no longer be used: draw through the TestCase the current rule was given.";
+        "This TestCase belonged to a test case or stateful rule that has ended and can no longer be used: draw through the TestCase the running test body or rule was given.";
 
     private void Translate(int rc, string op)
     {
@@ -47,6 +50,7 @@ internal sealed class LiveDataSource : IDataSource
                 throw new StopTest();
             case Abi.EAssume:
                 _aborted.Value = true;
+                _aborted.Rejected = true;
                 throw new AssumeRejected();
             case Abi.EInvalidArg:
                 throw new HegelUsageException(_lib.LastErrorMessage());
@@ -509,6 +513,7 @@ internal sealed class LiveDataSource : IDataSource
 
     public IDataSource Block(ulong indent)
     {
+        CheckNotReleased();
         Translate(_lib.TestCaseBlock(_tc, indent, out var block), "test_case_block");
         return new LiveDataSource(_lib, block, _pools, _aborted, _unwinding);
     }

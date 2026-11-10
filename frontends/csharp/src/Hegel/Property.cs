@@ -51,6 +51,10 @@ public static class Property
         [CallerMemberName] string callerMember = "")
     {
         ArgumentNullException.ThrowIfNull(body);
+        if (AsyncBodies.IsAsync(body.Method))
+        {
+            throw new HegelUsageException(AsyncBodies.Message("The test body"));
+        }
         settings ??= new Settings();
         if (settings.TestLocation == null || settings.Name == null)
         {

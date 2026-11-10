@@ -19,7 +19,11 @@ public sealed class Example
         return new(Array.AsReadOnly((object?[])values.Clone()), new Dictionary<string, object?>());
     }
 
-    /// <summary>This example with the draw labelled <paramref name="name"/> returning <paramref name="value"/>.</summary>
+    /// <summary>
+    /// This example with the draws named <paramref name="name"/> returning <paramref name="value"/>.
+    /// The name is a draw's label (<c>"xs"</c>, for every draw labelled <c>xs</c>) or the numbered
+    /// name one draw is printed with (<c>"xs_2"</c>, the second of them), which wins over the label.
+    /// </summary>
     public Example With(string name, object? value)
     {
         ArgumentNullException.ThrowIfNull(name);

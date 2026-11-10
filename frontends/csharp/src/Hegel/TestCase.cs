@@ -301,7 +301,7 @@ public sealed class TestCase
     private T ExplicitDraw<T>(string? label)
     {
         var name = _names.Next(label);
-        var value = _explicit!.Take(name);
+        var value = _explicit!.Take(name, label);
         _shared.Record(name, value);
         if (value is T typed)
         {

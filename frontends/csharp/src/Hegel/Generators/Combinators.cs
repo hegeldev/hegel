@@ -205,7 +205,7 @@ public sealed class Deferred<T> : PrintableGenerator<T>
     /// <inheritdoc />
     protected internal override T DoDrawAndPrint(TestCase tc, Printer printer) => Components.Draw(tc, Delegate(), printer);
 
-    private Generator<T> Delegate() => _delegate ?? throw new InvalidOperationException("deferred generator has not been set");
+    private Generator<T> Delegate() => _delegate ?? throw new HegelUsageException("deferred generator has not been set");
 }
 
 internal sealed class CompositeGenerator<T> : ValueGenerator<T>

@@ -144,7 +144,7 @@ var ranges = Generators.Composite(tc =>
 });
 ```
 
-`Generators.ForType<T>()` derives a generator from a type: the scalars, `Nullable<T>`, enums, arrays, `List<T>`, `HashSet<T>`, `Dictionary<K, V>`, tuples, and records, recursively through their primary constructors. `Generators.Records<T>()` does the same for one record and lets you override a component with `.With("Name", generator)`. `Generators.Recursive(base, extend)` builds trees, and `Generators.Deferred<T>()` lets a generator refer to itself.
+`Generators.ForType<T>()` derives a generator from a type: the scalars, `Nullable<T>`, enums, arrays, `List<T>`, `HashSet<T>`, `Dictionary<K, V>`, tuples, and records, recursively through their primary constructors and settable properties. `Generators.Records<T>()` does the same for one record and lets you override a component with `.With("Name", generator)`. `Generators.Recursive(base, extend)` builds trees, and `Generators.Deferred<T>()` lets a generator refer to itself.
 
 Values are printed in a failure as the C# that constructs them. Your own types print with `ToString()`; a generator you write can print its draws itself by extending `PrintableGenerator<T>`, or you can attach a printer to any generator with `PrintWith`.
 
@@ -160,7 +160,7 @@ public void ManyCases() => Property.Test(tc => { ... }, new Settings { TestCases
 (A `[HegelTest]` method takes its settings from the attribute's `Profile` and `TestCases` instead.)
 
 - `TestCases`, `Seed`, `Derandomize`, `Phases`, `Verbosity`, `Database`, `SuppressHealthCheck`, `ReportMultipleFailures`, `StopOnFirstFailure`, `ShowStatistics`, `PrintBlob`, `UnboundedChoices`, `NondeterminismStrictness` and `Backend` mirror the engine's settings.
-- `Examples` lists explicit test cases that run before the generated ones: `Example.Of(1, 2)` gives positional values to the draws in order, and `Example.With("xs", values)` names a draw.
+- `Examples` lists explicit test cases that run before the generated ones: `Example.Of(1, 2)` gives positional values to the draws in order, and `Example.Of().With("xs", values)` gives a value by the draw's label instead (or by the name one draw prints with, such as `"xs_2"`).
 - `ReproduceFailure` replays the reproduction blobs a failure printed (with `PrintBlob` on), for a failure found elsewhere, such as in CI.
 - `Settings.RegisterProfile(name, settings)` and `Settings.SetDefaultProfile(name)` register named profiles, as `hegel.toml` does; `Settings.FromProfile(name)` loads one.
 

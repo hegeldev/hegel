@@ -125,6 +125,7 @@ public class XunitTests
             (nameof(XunitSamples.TwoParameters), "[HegelTest] methods must take exactly one parameter, a TestCase."),
             (nameof(XunitSamples.WrongParameterType), "[HegelTest] methods must take exactly one parameter, a TestCase."),
             (nameof(XunitSamples.ReturnsInt), "[HegelTest] methods must return void: the engine runs the body synchronously."),
+            (nameof(XunitSamples.Async), "[HegelTest] methods must not be async: the engine runs the body synchronously."),
             (nameof(XunitSamples.Generic), "[HegelTest] methods are not allowed to be generic."),
         })
         {
@@ -295,6 +296,9 @@ public class XunitTests
 
         [HegelTest(Profile = Quiet)]
         public int ReturnsInt(TestCase tc) => 0;
+
+        [HegelTest(Profile = Quiet)]
+        public async void Async(TestCase tc) => await Task.Yield();
 
         [HegelTest(Profile = Quiet)]
         public void Generic<T>(TestCase tc)

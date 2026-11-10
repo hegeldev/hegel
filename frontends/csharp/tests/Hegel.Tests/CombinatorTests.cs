@@ -125,9 +125,9 @@ public class CombinatorTests
         var d = Generators.Deferred<int>();
         Assert.Throws<ArgumentNullException>(() => d.Set(null!));
         Assert.Equal(Label.Deferred, d.Label);
-        var unset = Assert.Throws<InvalidOperationException>(() => Property.Test(tc => tc.Draw(d), Gen.Quiet(3), Reporter.Silent));
+        var unset = Assert.Throws<HegelUsageException>(() => Property.Test(tc => tc.Draw(d), Gen.Quiet(3), Reporter.Silent));
         Assert.Equal("deferred generator has not been set", unset.Message);
-        Assert.Throws<InvalidOperationException>(() => Property.Test(tc => tc.DrawSilent(d), Gen.Quiet(3), Reporter.Silent));
+        Assert.Throws<HegelUsageException>(() => Property.Test(tc => tc.DrawSilent(d), Gen.Quiet(3), Reporter.Silent));
         d.Set(Generators.Just(7));
         var twice = Assert.Throws<InvalidOperationException>(() => d.Set(Generators.Just(8)));
         Assert.Equal("deferred generator has already been set", twice.Message);

@@ -20,7 +20,7 @@ internal sealed class ExplicitDraws : IDisposable
 
     internal Example Example => _example;
 
-    internal object? Take(string name)
+    internal object? Take(string name, string? label = null)
     {
         lock (_gate)
         {
@@ -29,6 +29,11 @@ internal sealed class ExplicitDraws : IDisposable
             {
                 _used.Add(name);
                 value = named;
+            }
+            else if (label != null && _example.Named.TryGetValue(label, out var labelled))
+            {
+                _used.Add(label);
+                value = labelled;
             }
             else if (_consumed < _example.Positional.Count)
             {

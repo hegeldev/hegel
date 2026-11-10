@@ -64,7 +64,7 @@ internal static class Derive
                 return TupleOf<T>(arguments);
             }
         }
-        if (RecordGenerator<T>.IsRecord(type))
+        if (RecordShape.IsRecord(type) && !type.IsAbstract)
         {
             CheckAcyclic(type, new Stack<Type>());
             return new RecordGenerator<T>(new Dictionary<string, IGenerator>());
@@ -127,9 +127,9 @@ internal static class Derive
             throw new HegelUsageException($"Cannot derive a generator for {record.FullName}: it refers to itself through its components ({cycle} -> {record.Name}), so deriving one would recurse without bound. Build its generator with Generators.Recursive or Generators.Deferred, or give the recursive component a generator with Generators.Records<{record.Name}>().With(...)");
         }
         path.Push(record);
-        foreach (var parameter in RecordGenerator<object>.PrimaryConstructor(record).GetParameters())
+        foreach (var component in RecordShape.Of(record).Components)
         {
-            CheckAcyclicType(parameter.ParameterType, path);
+            CheckAcyclicType(component.Type, path);
         }
         path.Pop();
     }
@@ -147,7 +147,7 @@ internal static class Derive
                 CheckAcyclicType(argument, path);
             }
         }
-        else if (RecordGenerator<object>.IsRecord(type))
+        else if (RecordShape.IsRecord(type))
         {
             CheckAcyclic(type, path);
         }
@@ -247,48 +247,78 @@ internal static class Derive
     }
 }
 
-/// <summary>Draws records by drawing each component, printed as <c>new Name(a, b)</c>.</summary>
+internal sealed class RecordShape
+{
+    internal readonly ConstructorInfo? Constructor;
+    internal readonly PropertyInfo[] Properties;
+    internal readonly (string Name, Type Type)[] Components;
+
+    private RecordShape(Type type)
+    {
+        Constructor = type.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            .Where(c => !(c.GetParameters().Length == 1 && c.GetParameters()[0].ParameterType == type))
+            .OrderByDescending(c => c.GetParameters().Length)
+            .FirstOrDefault();
+        var parameters = Constructor?.GetParameters() ?? [];
+        Properties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(property => property.SetMethod is { IsPublic: true } && property.GetIndexParameters().Length == 0 && !parameters.Any(parameter => parameter.Name == property.Name))
+            .ToArray();
+        Components = parameters.Select(parameter => (parameter.Name!, parameter.ParameterType))
+            .Concat(Properties.Select(property => (property.Name, property.PropertyType)))
+            .ToArray();
+    }
+
+    internal static RecordShape Of(Type type) => new(type);
+
+    internal static bool IsRecord(Type type) =>
+        type.GetMethod("<Clone>$", BindingFlags.Public | BindingFlags.Instance) != null || (type.IsValueType && type.GetMethod("PrintMembers", BindingFlags.NonPublic | BindingFlags.Instance) != null);
+}
+
+/// <summary>
+/// Draws records by drawing each component: the primary constructor's parameters, then the
+/// settable properties it leaves out. Printed as <c>new Name(a, b)</c>, with <c>{ X = c }</c> after
+/// it for the properties.
+/// </summary>
 public sealed class RecordGenerator<T> : PrintableGenerator<T>
 {
     private readonly IReadOnlyDictionary<string, IGenerator> _overrides;
-    private readonly ConstructorInfo _constructor;
+    private readonly RecordShape _shape;
     private readonly CachedLabel _label = new();
     private IGenerator[]? _components;
 
     internal RecordGenerator(IReadOnlyDictionary<string, IGenerator> overrides)
     {
-        if (!IsRecord(typeof(T)))
+        if (!RecordShape.IsRecord(typeof(T)))
         {
             throw new ArgumentException($"{typeof(T).FullName} is not a record");
         }
+        if (typeof(T).IsAbstract)
+        {
+            throw new ArgumentException($"{typeof(T).FullName} is an abstract record: give the generator of one of the records derived from it");
+        }
         _overrides = overrides;
-        _constructor = PrimaryConstructor(typeof(T));
+        _shape = RecordShape.Of(typeof(T));
     }
 
     private IGenerator[] Components() =>
-        _components ??= _constructor.GetParameters()
-            .Select(parameter => _overrides.TryGetValue(parameter.Name!, out var g) ? g : Derive.FromType(parameter.ParameterType))
+        _components ??= _shape.Components
+            .Select(component => _overrides.TryGetValue(component.Name, out var g) ? g : Derive.FromType(component.Type))
             .ToArray();
-
-    internal static bool IsRecord(Type type) =>
-        type.GetMethod("<Clone>$", BindingFlags.Public | BindingFlags.Instance) != null || (type.IsValueType && type.GetMethod("PrintMembers", BindingFlags.NonPublic | BindingFlags.Instance) != null);
-
-    internal static ConstructorInfo PrimaryConstructor(Type type) =>
-        type.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-            .Where(c => !(c.GetParameters().Length == 1 && c.GetParameters()[0].ParameterType == type))
-            .OrderByDescending(c => c.GetParameters().Length)
-            .First();
 
     /// <summary>Draw the component <paramref name="component"/> from <paramref name="generator"/> instead of deriving one from its type.</summary>
     public RecordGenerator<T> With<TComponent>(string component, Generator<TComponent> generator)
     {
         ArgumentNullException.ThrowIfNull(component);
         ArgumentNullException.ThrowIfNull(generator);
-        var parameter = _constructor.GetParameters().FirstOrDefault(p => p.Name == component)
-            ?? throw new ArgumentException($"{typeof(T).FullName} has no record component named '{component}'", nameof(component));
-        if (!parameter.ParameterType.IsAssignableFrom(typeof(TComponent)))
+        var index = Array.FindIndex(_shape.Components, c => c.Name == component);
+        if (index < 0)
         {
-            throw new ArgumentException($"{typeof(T).FullName}.{component} is of type {Printer.TypeName(parameter.ParameterType)}, not {Printer.TypeName(typeof(TComponent))}", nameof(generator));
+            throw new ArgumentException($"{typeof(T).FullName} has no record component named '{component}'", nameof(component));
+        }
+        var type = _shape.Components[index].Type;
+        if (!type.IsAssignableFrom(typeof(TComponent)))
+        {
+            throw new ArgumentException($"{typeof(T).FullName}.{component} is of type {Printer.TypeName(type)}, not {Printer.TypeName(typeof(TComponent))}", nameof(generator));
         }
         var next = new Dictionary<string, IGenerator>(_overrides) { [component] = generator };
         return new RecordGenerator<T>(next);
@@ -307,17 +337,53 @@ public sealed class RecordGenerator<T> : PrintableGenerator<T>
     {
         var p = Hegel.Components.Out(printer);
         var components = Components();
-        var values = new object?[components.Length];
+        var arguments = new object?[components.Length - _shape.Properties.Length];
         p.BeginGroup($"new {Printer.TypeName(typeof(T))}(");
-        for (var i = 0; i < components.Length; i++)
+        for (var i = 0; i < arguments.Length; i++)
         {
             if (i > 0)
             {
                 p.Separator();
             }
-            values[i] = components[i].Draw(tc, printer);
+            arguments[i] = components[i].Draw(tc, printer);
         }
         p.EndGroup(")");
-        return (T)_constructor.Invoke(values);
+        var record = Construct(arguments);
+        if (_shape.Properties.Length > 0)
+        {
+            p.BeginGroup(" { ");
+            for (var i = 0; i < _shape.Properties.Length; i++)
+            {
+                if (i > 0)
+                {
+                    p.Separator();
+                }
+                p.Text($"{_shape.Properties[i].Name} = ");
+                var property = _shape.Properties[i];
+                var value = components[arguments.Length + i].Draw(tc, printer);
+                Call(() => property.SetValue(record, value));
+            }
+            p.EndGroup(" }");
+        }
+        return (T)record;
+    }
+
+    private object Construct(object?[] arguments)
+    {
+        object? record = null;
+        Call(() => record = _shape.Constructor == null ? Activator.CreateInstance(typeof(T)) : _shape.Constructor.Invoke(arguments));
+        return record!;
+    }
+
+    private static void Call(Action reflective)
+    {
+        try
+        {
+            reflective();
+        }
+        catch (TargetInvocationException e) when (e.InnerException != null)
+        {
+            ExceptionDispatchInfo.Throw(e.InnerException);
+        }
     }
 }
