@@ -389,6 +389,14 @@ pub enum hegel_backend_t {
     /// platforms without it. Intended for running under Antithesis and
     /// selected by the shipped `workload` profile; you almost certainly
     /// don't want it otherwise.
+    ///
+    /// A run of a single test case on this backend, with no database to
+    /// save a failure to, keeps no record of the choices the test case
+    /// makes, so its memory does not grow with how long it runs. Its
+    /// failure is reported from that one execution: no further test case
+    /// is offered to shrink or replay it, the case is not stamped for
+    /// capture (`hegel_test_case_should_capture`), and the failure has no
+    /// reproduce blob.
     HEGEL_BACKEND_URANDOM = 2,
 }
 

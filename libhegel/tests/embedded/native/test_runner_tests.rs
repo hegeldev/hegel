@@ -1841,6 +1841,162 @@ fn run_main_with_urandom_backend_finds_counterexample() {
     );
 }
 
+/// The settings of a run whose one test case is generated unrecorded.
+fn unrecorded_settings() -> Settings {
+    Settings::new()
+        .test_cases(1)
+        .database(None)
+        .backend(crate::settings::Backend::Urandom)
+}
+
+/// Run `body` as the one test case of a run under `settings`, returning
+/// the run's result and how many times the body executed.
+fn single_case_run(
+    settings: &Settings,
+    key: Option<&str>,
+    mut body: impl FnMut(&dyn DataSource) -> TestCaseResult,
+) -> (
+    Result<crate::backend::TestRunResult, crate::backend::RunError>,
+    usize,
+) {
+    let mut execs = 0;
+    let result = run_main_sync(
+        settings,
+        key,
+        |ds| {
+            execs += 1;
+            let result = body(&*ds);
+            ds.mark_complete(&result);
+        },
+        Duration::from_secs(30),
+        Duration::from_secs(300),
+    );
+    (result, execs)
+}
+
+/// A single test case on the urandom backend with no database is run
+/// once and its failure reported as it happened: nothing was recorded to
+/// shrink, replay or encode as a blob.
+#[test]
+fn a_failing_unrecorded_run_reports_its_one_execution_without_a_blob() {
+    let (result, execs) = single_case_run(&unrecorded_settings(), None, |ds| {
+        for _ in 0..100 {
+            rint(ds, I32_MIN, I32_MAX).unwrap();
+        }
+        boom("unrecorded")
+    });
+    assert_eq!(execs, 1);
+    let failures = result.unwrap().failures;
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0].origin, "Panic: unrecorded");
+    assert_eq!(failures[0].reproduce_blob, None);
+    assert_eq!(failures[0].caveat, None);
+}
+
+#[test]
+fn a_passing_unrecorded_run_executes_once() {
+    let (result, execs) = single_case_run(&unrecorded_settings(), None, |ds| {
+        rbool(ds).unwrap();
+        TestCaseResult::Valid
+    });
+    assert_eq!(execs, 1);
+    assert!(result.unwrap().failures.is_empty());
+}
+
+/// A recorded run of one failing test case replays it, which is what an
+/// unrecorded run goes without: with a database to save the failure to,
+/// the same settings record.
+#[test]
+fn a_single_urandom_case_with_a_database_is_recorded() {
+    let dir = tempfile::tempdir().unwrap();
+    let settings = unrecorded_settings().database(Some(dir.path().to_str().unwrap().to_string()));
+    let (result, execs) = single_case_run(&settings, Some("key"), |_| boom("recorded"));
+    assert!(execs > 1, "{execs}");
+    assert!(result.unwrap().failures[0].reproduce_blob.is_some());
+}
+
+/// A database with no key to save under saves nothing, so the run is
+/// unrecorded all the same.
+#[test]
+fn a_single_urandom_case_with_a_keyless_database_is_unrecorded() {
+    let dir = tempfile::tempdir().unwrap();
+    let settings = unrecorded_settings().database(Some(dir.path().to_str().unwrap().to_string()));
+    let (result, execs) = single_case_run(&settings, None, |_| boom("keyless"));
+    assert_eq!(execs, 1);
+    assert_eq!(result.unwrap().failures[0].reproduce_blob, None);
+}
+
+#[test]
+fn a_single_case_on_the_default_backend_is_recorded() {
+    let settings = Settings::new().test_cases(1).database(None);
+    let (result, execs) = single_case_run(&settings, None, |_| boom("default backend"));
+    assert!(execs > 1, "{execs}");
+    assert!(result.unwrap().failures[0].reproduce_blob.is_some());
+}
+
+#[test]
+fn a_urandom_run_without_the_generate_phase_runs_nothing() {
+    let settings = unrecorded_settings().phases([Phase::Shrink]);
+    let (result, execs) = single_case_run(&settings, None, |_| boom("never runs"));
+    assert_eq!(execs, 0);
+    assert!(result.unwrap().failures.is_empty());
+}
+
+#[test]
+fn a_rejected_unrecorded_run_is_unsatisfiable() {
+    let (result, execs) =
+        single_case_run(&unrecorded_settings(), None, |_| TestCaseResult::Invalid);
+    assert_eq!(execs, 1);
+    match result {
+        Err(RunError::Unsatisfiable(msg)) => assert!(
+            msg.contains("1 inputs were rejected by assume() or a filter and 0 overran"),
+            "{msg}"
+        ),
+        other => panic!("expected Unsatisfiable, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_overrun_unrecorded_run_is_unsatisfiable() {
+    let (result, execs) =
+        single_case_run(&unrecorded_settings(), None, |_| TestCaseResult::Overrun);
+    assert_eq!(execs, 1);
+    match result {
+        Err(RunError::Unsatisfiable(msg)) => {
+            assert!(msg.contains("1 overran the choice limit"), "{msg}")
+        }
+        other => panic!("expected Unsatisfiable, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_unrecorded_run_announces_its_phase_and_shows_statistics() {
+    let lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let sink = std::sync::Arc::clone(&lines);
+    let settings = unrecorded_settings()
+        .verbosity(Verbosity::Verbose)
+        .show_statistics(true)
+        .output(Output::callback(move |line| {
+            sink.lock().unwrap().push(line.to_string());
+        }));
+    let (result, _) = single_case_run(&settings, None, |ds| {
+        ds.event_observation("seen", None).unwrap();
+        TestCaseResult::Valid
+    });
+    assert!(result.unwrap().failures.is_empty());
+    let lines = lines.lock().unwrap();
+    let start = lines
+        .iter()
+        .position(|l| l == "Starting phase: Generate")
+        .unwrap();
+    assert_eq!(lines[start + 1], "Running test case", "{lines:?}");
+    assert!(
+        lines.iter().any(|l| l == "Ending phase: Generate"),
+        "{lines:?}"
+    );
+    assert!(lines.iter().any(|l| l.contains("seen")), "{lines:?}");
+}
+
 #[test]
 fn slow_shrink_warning_mentions_shrinking() {
     let w = slow_shrink_warning();

@@ -96,6 +96,14 @@ pub enum Backend {
     /// source differs. On platforms without `/dev/urandom` (Windows) it falls
     /// back to an OS-seeded PRNG. You almost certainly don't want this backend
     /// unless you are running under Antithesis.
+    ///
+    /// A run of a single test case on this backend, with no database to
+    /// save a failure to, keeps no record of the choices the test case
+    /// makes, so its memory does not grow with how long it runs: a
+    /// [`#[hegel::main]`](crate::main) binary under the `workload` profile
+    /// is such a run. Its failure is reported as it happened, as the
+    /// panic's location and message: it is not shrunk or replayed, the
+    /// values it drew are not printed, and it has no reproduce blob.
     Urandom,
 }
 
