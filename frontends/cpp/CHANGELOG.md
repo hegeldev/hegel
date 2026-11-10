@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.17.1 - 2026-11-10
+
+This release updates the bundled libhegel engine to 0.51.1.
+
 ## 0.17.0 - 2026-11-10
 
 This release brings Hegel for C++ into line with the other Hegel frontends: `hegel::Settings` now combine with the engine's settings profiles instead of overriding them, run errors and failure reports match hegel-rust's, every reproduce blob is replayed, output goes through libhegel's printer, generators print the values they draw, and it adds explicit test cases, several generators and the rest of the engine's settings.

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.11.2 - 2026-11-10
+
+This patch adds a weighted generator for booleans, `booleans(double p)`.
+
+```java
+booleans(1.0) // always true
+booleans(0.7) // 70% probability of true
+booleans(0.0) // always false
+```
+
 ## 0.11.1 - 2026-11-09
 
 This patch lets a long state-machine run explore more than one configuration. Between rounds, a state machine now occasionally redraws its value distribution, the rules each worker has enabled, and the concurrency level. Previously these were fixed for the whole test case, so a single long-running test case kept one configuration for its whole run.
