@@ -52,21 +52,48 @@ interface DataSource {
 
     Duration generateDuration(Duration min, Duration max, int precision);
 
+    // Each validate method throws the IllegalArgumentException its draw would for these arguments,
+    // and draws nothing.
+
+    void validateDate(LocalDate min, LocalDate max, SpecHandle options);
+
+    void validateTime(LocalTime min, LocalTime max, int precision);
+
+    void validateDatetime(LocalDateTime min, LocalDateTime max, int precision);
+
+    void validateTimestamp(Instant min, Instant max, int precision);
+
+    void validateOffset(int minSeconds, int maxSeconds, int granularity);
+
+    void validateDuration(Duration min, Duration max, int precision);
+
     /** The drawn IANA name, from a spec built by {@link #timezoneSpec}. */
     String generateTimezone(SpecHandle spec);
 
     Libhegel.ZonedDatetime generateZonedDatetime(SpecHandle tzSpec, SpecHandle zonedSpec);
 
+    /**
+     * A zoned datetime in the zone {@code name} of the zone source {@code source} (a handle of this
+     * binding), with no choice recorded for the zone. A name the source does not know is an {@link
+     * IllegalArgumentException}; a zone with no value in the bounds rejects the test case.
+     */
+    Libhegel.ZonedDatetime generateZonedDatetimeForZone(long source, String name, SpecHandle zonedSpec);
+
     /** The ten unit values of the span, years first ({@code Abi.SPAN_UNIT_*} order). */
     long[] generateSpan(SpecHandle spec);
 
-    // Engine configuration handles. Parameters are validated eagerly: a rejected configuration
-    // throws IllegalArgumentException with the engine's diagnostic, and the handle is released.
+    // Engine configuration handles. A spec is validated as it is built, each setter checking its
+    // own argument and the engine's validate call the settings against each other: a rejected
+    // configuration throws IllegalArgumentException with the engine's diagnostic, and the handle is
+    // released.
 
     /** A weekday or month mask of 0 leaves that restriction unset. */
     SpecHandle dateOptions(int weekdayMask, int monthMask);
 
-    /** {@code source} is a zone source handle of this binding, or 0 for the process default. */
+    /**
+     * {@code source} is a zone source handle of this binding, or 0 for the process default; {@code
+     * names} is an explicit list, or {@code null} for every name of the source the flags admit.
+     */
     SpecHandle timezoneSpec(List<String> names, boolean links, boolean legacy, long source);
 
     /**

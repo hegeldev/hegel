@@ -24,8 +24,8 @@ import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalLong;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 /**
@@ -43,9 +43,13 @@ final class JnaLibhegel implements Libhegel {
     // strong reference is held per run (JNA frees the native thunk when the Callback is collected).
     private final Map<Long, LineCallback> runCallbacks = new ConcurrentHashMap<>();
 
-    // A zone source may call its loader for as long as the source lives, which no handle bounds,
-    // so every loader callback is held for the life of the binding.
-    private final Set<LoaderCallback> loaders = ConcurrentHashMap.newKeySet();
+    // hegel_zone_source_set_loader keeps the loader callback until the engine drops the loader and
+    // calls the release hook with the loader's key as user_data, so a strong reference is held per
+    // loader until then (JNA frees the native thunk when the Callback is collected). The release
+    // hook itself is one callback held for the life of the binding.
+    private final Map<Long, LoaderCallback> loaders = new ConcurrentHashMap<>();
+    private final AtomicLong loaderKeys = new AtomicLong();
+    private final LoaderRelease releaseLoader = new LoaderRelease();
 
     private final HegelNative lib;
     private final ThreadLocal<Pointer> context;
@@ -200,6 +204,19 @@ final class JnaLibhegel implements Libhegel {
                 int precision,
                 HegelDuration out);
 
+        int hegel_validate_date(Pointer ctx, HegelDate.ByValue min, HegelDate.ByValue max, Pointer options);
+
+        int hegel_validate_time(Pointer ctx, HegelTime.ByValue min, HegelTime.ByValue max, int precision);
+
+        int hegel_validate_datetime(Pointer ctx, HegelDatetime.ByValue min, HegelDatetime.ByValue max, int precision);
+
+        int hegel_validate_timestamp(
+                Pointer ctx, HegelTimestamp.ByValue min, HegelTimestamp.ByValue max, int precision);
+
+        int hegel_validate_offset(Pointer ctx, int minSeconds, int maxSeconds, int granularity, byte allowUnknown);
+
+        int hegel_validate_duration(Pointer ctx, HegelDuration.ByValue min, HegelDuration.ByValue max, int precision);
+
         int hegel_generate_timezone(Pointer ctx, Pointer tc, Pointer spec, HegelString out);
 
         int hegel_generate_zoned_datetime(
@@ -209,6 +226,14 @@ final class JnaLibhegel implements Libhegel {
                 Pointer zonedSpec,
                 HegelZonedDatetime out,
                 HegelString outZone);
+
+        int hegel_generate_zoned_datetime_for_zone(
+                Pointer ctx,
+                Pointer tc,
+                Pointer source,
+                HegelString.ByValue name,
+                Pointer zonedSpec,
+                HegelZonedDatetime out);
 
         int hegel_generate_span(Pointer ctx, Pointer tc, Pointer spec, Pointer out);
 
@@ -230,6 +255,8 @@ final class JnaLibhegel implements Libhegel {
 
         int hegel_timezone_spec_set_legacy(Pointer ctx, Pointer spec, byte legacy);
 
+        int hegel_timezone_spec_validate(Pointer ctx, Pointer spec);
+
         int hegel_zoned_spec_new(Pointer ctx, PointerByReference out);
 
         int hegel_zoned_spec_free(Pointer ctx, Pointer spec);
@@ -246,6 +273,8 @@ final class JnaLibhegel implements Libhegel {
 
         int hegel_zoned_spec_set_ambiguous(Pointer ctx, Pointer spec, int ambiguous);
 
+        int hegel_zoned_spec_validate(Pointer ctx, Pointer spec);
+
         int hegel_span_spec_new(Pointer ctx, PointerByReference out);
 
         int hegel_span_spec_free(Pointer ctx, Pointer spec);
@@ -253,6 +282,8 @@ final class JnaLibhegel implements Libhegel {
         int hegel_span_spec_set_unit_bounds(Pointer ctx, Pointer spec, int unit, long min, long max);
 
         int hegel_span_spec_set_sign(Pointer ctx, Pointer spec, int sign);
+
+        int hegel_span_spec_validate(Pointer ctx, Pointer spec);
 
         int hegel_timezone_spec_set_source(Pointer ctx, Pointer spec, Pointer source);
 
@@ -289,7 +320,12 @@ final class JnaLibhegel implements Libhegel {
 
         int hegel_zone_source_declare(Pointer ctx, Pointer source, Pointer names, long len);
 
-        int hegel_zone_source_set_loader(Pointer ctx, Pointer source, ZoneLoaderCallback loader, Pointer userData);
+        int hegel_zone_source_set_loader(
+                Pointer ctx,
+                Pointer source,
+                ZoneLoaderCallback loader,
+                Pointer userData,
+                ZoneLoaderReleaseCallback release);
 
         int hegel_zone_source_set_version(Pointer ctx, Pointer source, HegelString.ByValue version);
 
@@ -616,6 +652,11 @@ final class JnaLibhegel implements Libhegel {
         int invoke(Pointer userData, Pointer ctx, Pointer source, HegelString.ByValue name);
     }
 
+    /** {@code hegel_zone_loader_release_t}. */
+    interface ZoneLoaderReleaseCallback extends Callback {
+        void invoke(Pointer userData);
+    }
+
     /** {@code hegel_zone_offset_fn_t}. */
     interface ZoneOffsetCallback extends Callback {
         int invoke(Pointer userData, Pointer ctx, long instant, Pointer outType);
@@ -629,9 +670,11 @@ final class JnaLibhegel implements Libhegel {
     /** Bridges a zone source's loader to its {@link ZoneLoader}, on the context libhegel passes. */
     final class LoaderCallback implements ZoneLoaderCallback {
         private final ZoneLoader loader;
+        private final Runnable release;
 
-        LoaderCallback(ZoneLoader loader) {
+        LoaderCallback(ZoneLoader loader, Runnable release) {
             this.loader = loader;
+            this.release = release;
         }
 
         @Override
@@ -679,6 +722,29 @@ final class JnaLibhegel implements Libhegel {
                 outInstant.setLong(0, next.orElse(0));
             });
         }
+    }
+
+    /**
+     * {@code hegel_zone_loader_release_t}: the engine dropped the loader keyed by {@code userData},
+     * so its callback is let go and its release hook run. Nothing may unwind into the engine.
+     */
+    final class LoaderRelease implements ZoneLoaderReleaseCallback {
+        @Override
+        public void invoke(Pointer userData) {
+            try {
+                LoaderCallback callback = loaders.remove(address(userData));
+                if (callback.release != null) {
+                    callback.release.run();
+                }
+            } catch (Throwable t) {
+                // Deliberately dropped: a release hook must never unwind into the engine.
+            }
+        }
+    }
+
+    /** How many loaders the engine still holds, each with a live callback. */
+    int liveLoaders() {
+        return loaders.size();
     }
 
     /**
@@ -1228,6 +1294,36 @@ final class JnaLibhegel implements Libhegel {
     }
 
     @Override
+    public int validateDate(LocalDate min, LocalDate max, long options) {
+        return lib.hegel_validate_date(ctx(), dateValue(min), dateValue(max), pointer(options));
+    }
+
+    @Override
+    public int validateTime(LocalTime min, LocalTime max, int precision) {
+        return lib.hegel_validate_time(ctx(), timeValue(min), timeValue(max), precision);
+    }
+
+    @Override
+    public int validateDatetime(LocalDateTime min, LocalDateTime max, int precision) {
+        return lib.hegel_validate_datetime(ctx(), datetimeValue(min), datetimeValue(max), precision);
+    }
+
+    @Override
+    public int validateTimestamp(Instant min, Instant max, int precision) {
+        return lib.hegel_validate_timestamp(ctx(), timestampValue(min), timestampValue(max), precision);
+    }
+
+    @Override
+    public int validateOffset(int minSeconds, int maxSeconds, int granularity, boolean allowUnknown) {
+        return lib.hegel_validate_offset(ctx(), minSeconds, maxSeconds, granularity, cbool(allowUnknown));
+    }
+
+    @Override
+    public int validateDuration(Duration min, Duration max, int precision) {
+        return lib.hegel_validate_duration(ctx(), durationValue(min), durationValue(max), precision);
+    }
+
+    @Override
     public int generateTimezone(long tc, long spec, String[] out) {
         HegelString result = new HegelString();
         int code = lib.hegel_generate_timezone(ctx(), pointer(tc), pointer(spec), result);
@@ -1251,18 +1347,33 @@ final class JnaLibhegel implements Libhegel {
         int code =
                 lib.hegel_generate_zoned_datetime(ctx(), pointer(tc), pointer(tzSpec), pointer(zonedSpec), value, zone);
         if (code == Abi.OK) {
-            out[0] = new ZonedDatetime(
-                    takeOwnedString(zone),
-                    readDatetime(value.civil),
-                    value.offset_seconds,
-                    jbool(value.offset_known),
-                    jbool(value.fold),
-                    value.kind,
-                    value.offset_before,
-                    value.offset_after,
-                    readTimestamp(value.timestamp));
+            out[0] = readZoned(takeOwnedString(zone), value);
         }
         return code;
+    }
+
+    @Override
+    public int generateZonedDatetimeForZone(long tc, long source, String name, long zonedSpec, ZonedDatetime[] out) {
+        HegelZonedDatetime value = new HegelZonedDatetime();
+        int code = lib.hegel_generate_zoned_datetime_for_zone(
+                ctx(), pointer(tc), pointer(source), str(name), pointer(zonedSpec), value);
+        if (code == Abi.OK) {
+            out[0] = readZoned(name, value);
+        }
+        return code;
+    }
+
+    private static ZonedDatetime readZoned(String zone, HegelZonedDatetime value) {
+        return new ZonedDatetime(
+                zone,
+                readDatetime(value.civil),
+                value.offset_seconds,
+                jbool(value.offset_known),
+                jbool(value.fold),
+                value.kind,
+                value.offset_before,
+                value.offset_after,
+                readTimestamp(value.timestamp));
     }
 
     @Override
@@ -1331,6 +1442,11 @@ final class JnaLibhegel implements Libhegel {
     }
 
     @Override
+    public int timezoneSpecValidate(long spec) {
+        return lib.hegel_timezone_spec_validate(ctx(), pointer(spec));
+    }
+
+    @Override
     public int zonedSpecNew(long[] out) {
         PointerByReference ref = new PointerByReference();
         int code = lib.hegel_zoned_spec_new(ctx(), ref);
@@ -1369,6 +1485,11 @@ final class JnaLibhegel implements Libhegel {
     }
 
     @Override
+    public int zonedSpecValidate(long spec) {
+        return lib.hegel_zoned_spec_validate(ctx(), pointer(spec));
+    }
+
+    @Override
     public int spanSpecNew(long[] out) {
         PointerByReference ref = new PointerByReference();
         int code = lib.hegel_span_spec_new(ctx(), ref);
@@ -1389,6 +1510,11 @@ final class JnaLibhegel implements Libhegel {
     @Override
     public int spanSpecSetSign(long spec, int sign) {
         return lib.hegel_span_spec_set_sign(ctx(), pointer(spec), sign);
+    }
+
+    @Override
+    public int spanSpecValidate(long spec) {
+        return lib.hegel_span_spec_validate(ctx(), pointer(spec));
     }
 
     @Override
@@ -1533,13 +1659,14 @@ final class JnaLibhegel implements Libhegel {
     }
 
     @Override
-    public int zoneSourceSetLoader(long source, ZoneLoader loader) {
-        LoaderCallback callback = null;
-        if (loader != null) {
-            callback = new LoaderCallback(loader);
-            loaders.add(callback);
+    public int zoneSourceSetLoader(long source, ZoneLoader loader, Runnable release) {
+        if (loader == null) {
+            return lib.hegel_zone_source_set_loader(ctx(), pointer(source), null, null, null);
         }
-        return lib.hegel_zone_source_set_loader(ctx(), pointer(source), callback, null);
+        long key = loaderKeys.incrementAndGet();
+        LoaderCallback callback = new LoaderCallback(loader, release);
+        loaders.put(key, callback);
+        return lib.hegel_zone_source_set_loader(ctx(), pointer(source), callback, new Pointer(key), releaseLoader);
     }
 
     @Override

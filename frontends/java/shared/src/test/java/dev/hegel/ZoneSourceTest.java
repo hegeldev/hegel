@@ -5,15 +5,19 @@ import static dev.hegel.Utils.assertAllExamples;
 import static dev.hegel.Utils.findAny;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dev.hegel.Generators.Temporal;
+import dev.hegel.Generators.Temporals;
+import dev.hegel.generators.temporal.Ambiguous;
+import dev.hegel.generators.temporal.ZoneGenerator;
 import dev.hegel.generators.temporal.ZoneSource;
 import dev.hegel.generators.temporal.ZonedDateTimeGenerator;
 import dev.hegel.lowlevel.Abi;
 import dev.hegel.lowlevel.Libhegel;
+import java.lang.ref.WeakReference;
 import java.time.DayOfWeek;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -21,6 +25,8 @@ import java.time.LocalTime;
 import java.time.Month;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.time.temporal.ChronoUnit;
 import java.time.zone.ZoneOffsetTransition;
 import java.time.zone.ZoneOffsetTransitionRule;
 import java.time.zone.ZoneOffsetTransitionRule.TimeDefinition;
@@ -90,12 +96,43 @@ class ZoneSourceTest {
         }
     }
 
+    /**
+     * The engine's offsets agree with {@code rules} every {@code stride} half days through each of
+     * {@code years}, and every {@code stride} half hours (and the seconds either side) of the day
+     * and a half around each one's start.
+     */
+    private static void assertOffsetsAgree(
+            Libhegel lib, long source, String name, ZoneRules rules, int stride, int... years) {
+        for (int year : years) {
+            Instant start = LocalDateTime.of(year, 1, 1, 0, 0).toInstant(ZoneOffset.UTC);
+            List<Instant> instants = new ArrayList<>();
+            for (int halfDay = 0; halfDay < 732; halfDay += stride) {
+                instants.add(start.plusSeconds(halfDay * 43_200L));
+            }
+            for (int halfHour = -36; halfHour <= 36; halfHour += stride) {
+                for (int delta = -1; delta <= 1; delta++) {
+                    instants.add(start.plusSeconds(halfHour * 1800L + delta));
+                }
+            }
+            for (Instant at : instants) {
+                assertEquals(
+                        rules.getOffset(at).getTotalSeconds(),
+                        BindingEdges.offsetAt(lib, source, name, at).offsetSeconds(),
+                        name + " at " + at);
+            }
+        }
+    }
+
     @Test
     void everyJavaTimeZoneRoundTripsThroughTheEngine() {
         Libhegel lib = Engine.get();
         long source = ZoneSource.javaTime().handle(lib);
         for (String name : new TreeSet<>(ZoneRulesProvider.getAvailableZoneIds())) {
-            assertRoundTrips(lib, source, name, ZoneRulesProvider.getRules(name, false), Integer.MAX_VALUE);
+            ZoneRules rules = ZoneRulesProvider.getRules(name, false);
+            if (!name.equals(HostOnlyZone.ONE_RULE_ID)) {
+                assertRoundTrips(lib, source, name, rules, Integer.MAX_VALUE);
+            }
+            assertOffsetsAgree(lib, source, name, rules, name.startsWith("Hegel/") ? 1 : 6, 9999);
         }
     }
 
@@ -194,6 +231,12 @@ class ZoneSourceTest {
                                 STD)));
         exact.put(
                 "Test/Weeks", zone(start(Month.APRIL, 22, DayOfWeek.FRIDAY), end(Month.OCTOBER, 24, DayOfWeek.SUNDAY)));
+        exact.put(
+                "Test/BothDaylight",
+                zone(
+                        DST,
+                        rule(Month.MARCH, 1, null, LocalTime.of(2, 0), false, TimeDefinition.WALL, DST, HIGH),
+                        rule(Month.OCTOBER, 1, null, LocalTime.of(2, 0), false, TimeDefinition.WALL, HIGH, DST)));
         Map<String, ZoneRules> expanded = new LinkedHashMap<>();
         expanded.put(
                 "Test/LateStart",
@@ -208,43 +251,84 @@ class ZoneSourceTest {
                         start(Month.MARCH, 1, DayOfWeek.SUNDAY),
                         rule(Month.JUNE, 1, null, LocalTime.of(2, 0), false, TimeDefinition.WALL, DST, HIGH),
                         rule(Month.OCTOBER, 1, null, LocalTime.of(2, 0), false, TimeDefinition.WALL, HIGH, STD)));
-        Map<String, ZoneRules> loaded = new LinkedHashMap<>();
-        loaded.put(
-                "Test/NoHistory",
-                ZoneRules.of(
-                        STD,
-                        STD,
-                        List.of(),
-                        List.of(),
-                        List.of(start(Month.MARCH, 1, null), end(Month.OCTOBER, 1, null))));
-        loaded.put("Test/OneRule", zone(start(Month.MARCH, 1, null)));
-        loaded.put(
+        Map<String, ZoneRules> restarted = new LinkedHashMap<>();
+        restarted.put("Test/Restart", zone(DST, start(Month.MARCH, 21, null), end(Month.SEPTEMBER, 22, null)));
+        restarted.put(
+                "Test/RestartElsewhere", zone(HIGH, start(Month.MARCH, 21, null), end(Month.SEPTEMBER, 22, null)));
+        expanded.put("Test/OneRule", zone(start(Month.MARCH, 1, null)));
+        expanded.put("Test/OneRuleFromElsewhere", zone(HIGH, start(Month.MARCH, 1, null)));
+        expanded.put(
                 "Test/NotAPair",
                 zone(
                         start(Month.MARCH, 1, null),
                         rule(Month.OCTOBER, 1, null, LocalTime.of(2, 0), false, TimeDefinition.WALL, DST, BASE)));
-        loaded.put(
+        expanded.put(
                 "Test/NotAPairEither",
                 zone(
                         start(Month.MARCH, 1, null),
                         rule(Month.OCTOBER, 1, null, LocalTime.of(2, 0), false, TimeDefinition.WALL, HIGH, STD)));
-        ZoneSource.Builder builder = ZoneSource.builder();
-        for (Map<String, ZoneRules> zones : List.of(exact, expanded, loaded)) {
+        ZoneRules noHistory = ZoneRules.of(
+                STD, STD, List.of(), List.of(), List.of(start(Month.MARCH, 1, null), end(Month.OCTOBER, 1, null)));
+        ZoneSource.Builder builder = ZoneSource.builder().rules("Test/NoHistory", noHistory);
+        for (Map<String, ZoneRules> zones : List.of(exact, restarted, expanded)) {
             zones.forEach(builder::rules);
         }
         Libhegel lib = Engine.get();
-        long source = builder.build().handle(lib);
-        exact.forEach((name, rules) -> assertRoundTrips(lib, source, name, rules, Integer.MAX_VALUE));
-        expanded.forEach((name, rules) -> assertRoundTrips(lib, source, name, rules, 2399));
-        Instant mid = Instant.parse("1970-01-15T00:00:00Z");
-        loaded.forEach((name, rules) -> assertEquals(
-                rules.getOffset(mid).getTotalSeconds(),
-                BindingEdges.offsetAt(lib, source, name, mid).offsetSeconds(),
-                name));
+        ZoneSource built = builder.build();
+        long source = built.handle(lib);
+        int[] years = {1970, 1971, 2024, 2399, 2400, 9998, 9999};
+        exact.forEach((name, rules) -> {
+            assertRoundTrips(lib, source, name, rules, Integer.MAX_VALUE);
+            assertOffsetsAgree(lib, source, name, rules, 1, years);
+            assertOffsetsAgree(lib, source, name, rules, 1, 10_000, 250_000);
+        });
+        restarted.forEach((name, rules) -> {
+            assertOffsetsAgree(lib, source, name, rules, 1, years);
+            assertOffsetsAgree(lib, source, name, rules, 1, 10_000, 250_000);
+        });
+        expanded.forEach((name, rules) -> assertOffsetsAgree(lib, source, name, rules, 1, years));
+        for (String name : List.of("Test/LateStart", "Test/LateEnd", "Test/FarFromMarch", "Test/ThreeRules")) {
+            assertRoundTrips(lib, source, name, expanded.get(name), 10_000);
+        }
+        assertOffsetsAgree(lib, source, "Test/NoHistory", noHistory, 1, 1970, 2030);
+        assertEquals("", built.version());
+    }
+
+    @Test
+    void wallClockTimesJavaTimeResolvesInconsistentlyAreRejected() {
+        ZoneId zone = HostOnlyZone.oneRule();
+        ZoneRules rules = HostOnlyZone.ONE_RULE;
+        LocalDateTime newYear = LocalDateTime.of(2500, 1, 1, 0, 0);
+        assertEquals(ZoneOffset.ofHours(2), rules.getOffset(newYear.minusHours(1)));
         assertEquals(
+                ZoneOffset.ofHours(1), rules.getOffset(newYear.minusHours(1).toInstant(ZoneOffset.ofHours(2))));
+        ZonedDateTimeGenerator around = Temporals.zonedDatetimes()
+                .zones(just(zone))
+                .min(newYear.minusDays(2))
+                .max(newYear.plusDays(2));
+        assertAllExamples(
+                around,
+                z -> z.toInstant().atZone(zone).equals(z)
+                        && !z.toLocalDateTime().isBefore(newYear.minusDays(2))
+                        && !z.toLocalDateTime().isAfter(newYear.plusDays(2)));
+        assertTrue(findAny(around, z -> z.getOffset().equals(ZoneOffset.ofHours(1))) != null);
+        assertTrue(findAny(around, z -> z.getOffset().equals(ZoneOffset.ofHours(2))) != null);
+        FakeLibhegel fake = new FakeLibhegel();
+        fake.knownZones = List.of(zone.getId());
+        LocalDateTime lastHour = newYear.minusMinutes(30);
+        fake.zonedValue = new Libhegel.ZonedDatetime(
+                zone.getId(),
+                lastHour,
                 3600,
-                BindingEdges.offsetAt(lib, source, "Test/NoHistory", Instant.parse("2030-07-01T00:00:00Z"))
-                        .offsetSeconds());
+                true,
+                false,
+                Abi.TIMEZONE_KIND_UNIQUE,
+                3600,
+                3600,
+                lastHour.toInstant(ZoneOffset.ofHours(1)));
+        assertThrows(
+                AssumeRejected.class,
+                () -> new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), false, Reporter.silent()).draw(around));
     }
 
     @Test
@@ -253,7 +337,7 @@ class ZoneSourceTest {
         assertEquals(
                 ZoneRulesProvider.getVersions(first).lastKey(),
                 ZoneSource.javaTime().version());
-        assertEquals(Temporal.tzdbVersion(), ZoneSource.bundled().version());
+        assertEquals(Temporals.tzdbVersion(), ZoneSource.bundled().version());
         assertEquals("", ZoneSource.builder().build().version());
         assertEquals("lib-1.0", ZoneSource.builder().version("lib-1.0").build().version());
     }
@@ -264,15 +348,48 @@ class ZoneSourceTest {
         Libhegel lib = Engine.get();
         assertSame(ZoneSource.javaTime(), ZoneSource.getDefault());
         assertTrue(BindingEdges.info(lib, 0, host).known());
-        ZoneSource.setDefault(ZoneSource.bundled());
+        ZoneSource previous = ZoneSource.setDefault(ZoneSource.bundled());
         try {
+            assertSame(ZoneSource.javaTime(), previous);
             assertSame(ZoneSource.bundled(), ZoneSource.getDefault());
             assertFalse(BindingEdges.info(lib, 0, host).known());
-            assertAllExamples(Temporal.zones(), z -> !z.getId().equals(host));
+            assertAllExamples(Temporals.zones(), z -> !z.getId().equals(host));
         } finally {
-            ZoneSource.setDefault(ZoneSource.javaTime());
+            assertSame(ZoneSource.bundled(), ZoneSource.setDefault(previous));
         }
+        assertSame(ZoneSource.javaTime(), ZoneSource.getDefault());
         assertTrue(BindingEdges.info(lib, 0, host).known());
+    }
+
+    @Test
+    void aGeneratorKeepsTheDefaultItWasCreatedUnder() {
+        ZoneId host = HostOnlyZone.zone();
+        ZoneGenerator zones = Temporals.zones();
+        ZonedDateTimeGenerator zoned = Temporals.zonedDatetimes();
+        ZonedDateTimeGenerator wrapped = Temporals.zonedDatetimes().zones(just(host));
+        ZonedDateTimeGenerator fromDatetimes = Temporals.datetimes().zones(just(host));
+        ZoneSource previous = ZoneSource.setDefault(ZoneSource.bundled());
+        try {
+            assertAllExamples(zones.names(host.getId()), z -> z.equals(host));
+            FakeLibhegel fake = new FakeLibhegel();
+            TestCase tc = new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), false, Reporter.silent());
+            tc.draw(Temporals.zonedDatetimes());
+            assertEquals(List.of("America/New_York", "Asia/Calcutta", "Europe/London", "UTC"), fake.timezoneNames);
+            fake.timezoneNames = null;
+            tc.draw(zoned.precision(ChronoUnit.SECONDS));
+            assertNull(fake.timezoneNames);
+            assertAllExamples(wrapped.min(FOLD).max(FOLD), z -> z.getZone().equals(host));
+            assertAllExamples(
+                    fromDatetimes.min(FOLD).max(FOLD), z -> z.getZone().equals(host));
+            for (Generator<ZonedDateTime> now : List.<Generator<ZonedDateTime>>of(
+                    Temporals.zonedDatetimes().zones(just(host)),
+                    Temporals.datetimes().zones(just(host)))) {
+                assertThrows(IllegalArgumentException.class, () -> assertAllExamples(now, z -> true));
+            }
+            assertAllExamples(Temporals.zonedDatetimes(), z -> !z.getZone().equals(host));
+        } finally {
+            ZoneSource.setDefault(previous);
+        }
     }
 
     @Test
@@ -285,19 +402,34 @@ class ZoneSourceTest {
                 .version("custom-1")
                 .build();
         assertAllExamples(
-                Temporal.zones().source(custom),
+                Temporals.zones().source(custom),
                 z -> z.getId().equals(host)
                         || z.getId().equals("UTC")
                         || z.getId().equals("Etc/UTC"));
-        ZonedDateTimeGenerator fold = Temporal.zonedDateTimes()
-                .zones(Temporal.zones().source(custom).names(host))
-                .min(FOLD)
-                .max(FOLD);
-        assertTrue(findAny(fold, z -> z.getOffset().equals(ZoneOffset.ofHours(-4))) != null);
-        assertTrue(findAny(fold, z -> z.getOffset().equals(ZoneOffset.ofHours(-5))) != null);
         assertAllExamples(
-                Temporal.zonedDateTimes()
-                        .zones(Temporal.zones().source(custom).names("Etc/UTC"))
+                Temporals.zonedDatetimes().source(custom),
+                z -> z.getZone().getId().equals(host)
+                        || z.getZone().getId().equals("UTC")
+                        || z.getZone().getId().equals("Etc/UTC"));
+        for (ZonedDateTimeGenerator fold : List.of(
+                Temporals.zonedDatetimes()
+                        .zones(Temporals.zones().source(custom).names(host))
+                        .min(FOLD)
+                        .max(FOLD),
+                Temporals.zonedDatetimes()
+                        .zones(Temporals.zones()
+                                .source(custom)
+                                .filter(z -> z.getId().equals(host)))
+                        .source(custom)
+                        .min(FOLD)
+                        .max(FOLD))) {
+            assertAllExamples(fold, z -> z.getZone().getId().equals(host));
+            assertTrue(findAny(fold, z -> z.getOffset().equals(ZoneOffset.ofHours(-4))) != null);
+            assertTrue(findAny(fold, z -> z.getOffset().equals(ZoneOffset.ofHours(-5))) != null);
+        }
+        assertAllExamples(
+                Temporals.zonedDatetimes()
+                        .zones(Temporals.zones().source(custom).names("Etc/UTC"))
                         .min(FOLD)
                         .max(FOLD),
                 z -> z.getOffset().equals(ZoneOffset.UTC));
@@ -318,14 +450,23 @@ class ZoneSourceTest {
                 })
                 .build();
         assertAllExamples(
-                Temporal.zonedDateTimes()
-                        .zones(Temporal.zones().source(lazy).names(host))
+                Temporals.zonedDatetimes()
+                        .zones(Temporals.zones().source(lazy).names(host))
                         .min(FOLD)
                         .max(FOLD),
                 z -> z.getZone().getId().equals(host));
         assertTrue(loads.get() >= 1);
         assertFalse(BindingEdges.info(Engine.get(), lazy.handle(Engine.get()), "Mars/Olympus_Mons")
                 .known());
+        IllegalArgumentException undeclared = assertThrows(
+                IllegalArgumentException.class,
+                () -> assertAllExamples(
+                        Temporals.zonedDatetimes()
+                                .zones(just(ZoneId.of("Europe/Paris")))
+                                .source(lazy),
+                        z -> true));
+        assertTrue(undeclared.getMessage().contains("\"Europe/Paris\""), undeclared.getMessage());
+        assertTrue(undeclared.getMessage().contains("source(...)"), undeclared.getMessage());
 
         ZoneSource broken = ZoneSource.builder()
                 .declare(host)
@@ -335,17 +476,104 @@ class ZoneSourceTest {
                 .build();
         IllegalArgumentException failure = assertThrows(
                 IllegalArgumentException.class,
-                () -> assertAllExamples(Temporal.zones().source(broken).names(host), z -> true));
+                () -> Temporals.zones().names(host).source(broken));
         assertTrue(failure.getMessage().contains("cannot load " + host), failure.getMessage());
+        assertEquals(IllegalStateException.class, failure.getCause().getClass());
+        IllegalArgumentException byName = assertThrows(
+                IllegalArgumentException.class,
+                () -> assertAllExamples(
+                        Temporals.zonedDatetimes().zones(just(ZoneId.of(host))).source(broken), z -> true));
+        assertEquals("cannot load " + host, byName.getCause().getMessage());
     }
 
     @Test
-    void malformedDataFailsTheFirstDraw() {
-        ZoneSource malformed = ZoneSource.builder().tzif("UTC", new byte[3]).build();
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> assertAllExamples(Temporal.zones().source(malformed), z -> true));
-        assertThrows(IllegalArgumentException.class, () -> malformed.handle(Engine.get()));
+    void theSourceOfAWrappedZonesGeneratorIsGivenToTheZonedGenerator() {
+        ZoneId host = HostOnlyZone.zone();
+        AtomicInteger loads = new AtomicInteger();
+        ZoneSource.Loader loader = (name, zones) -> {
+            if (name.equals(host.getId())) {
+                loads.incrementAndGet();
+                zones.rules(name, NEW_YORK);
+            }
+        };
+        ZoneSource counting =
+                ZoneSource.builder().declare(host.getId()).loader(loader).build();
+        Generator<ZoneId> wrapped = Temporals.zones().source(counting).map(z -> z);
+        assertAllExamples(
+                Temporals.zonedDatetimes().zones(wrapped).min(FOLD).max(FOLD),
+                z -> z.getZone().equals(host));
+        int byTheZonesGenerator = loads.get();
+        assertAllExamples(
+                Temporals.zonedDatetimes().zones(just(host)).min(FOLD).max(FOLD),
+                z -> z.getZone().equals(host));
+        assertEquals(byTheZonesGenerator, loads.get());
+        ZoneSource asked =
+                ZoneSource.builder().declare(host.getId()).loader(loader).build();
+        assertAllExamples(
+                Temporals.zonedDatetimes()
+                        .zones(just(host))
+                        .source(asked)
+                        .min(FOLD)
+                        .max(FOLD),
+                z -> z.getZone().equals(host));
+        assertTrue(loads.get() > byTheZonesGenerator);
+    }
+
+    @Test
+    void aSourceThatDiffersFromThisJvmAimsTheDrawAndJavaTimeResolvesIt() {
+        ZoneId host = HostOnlyZone.zone();
+        ZoneRules london = ZoneId.of("Europe/London").getRules();
+        ZoneSource differing = ZoneSource.builder().rules(host.getId(), london).build();
+        for (ZonedDateTimeGenerator fold : List.of(
+                Temporals.zonedDatetimes()
+                        .zones(Temporals.zones().source(differing))
+                        .min(FOLD)
+                        .max(FOLD),
+                Temporals.zonedDatetimes()
+                        .zones(just(host))
+                        .source(differing)
+                        .min(FOLD)
+                        .max(FOLD))) {
+            assertAllExamples(fold, z -> z.getOffset().equals(ZoneOffset.ofHours(-4)));
+            assertAllExamples(
+                    fold.ambiguous(Ambiguous.EARLIER), z -> z.getOffset().equals(ZoneOffset.ofHours(-4)));
+            assertAllExamples(
+                    fold.ambiguous(Ambiguous.LATER), z -> z.getOffset().equals(ZoneOffset.ofHours(-5)));
+        }
+        Instant from = Instant.parse("2024-07-01T00:00:00Z");
+        Instant to = Instant.parse("2024-07-08T00:00:00Z");
+        ZonedDateTimeGenerator week =
+                Temporals.zonedDatetimes().source(differing).min(from).max(to);
+        assertAllExamples(
+                week, z -> !z.toInstant().isBefore(from) && !z.toInstant().isAfter(to));
+        assertTrue(findAny(week, z -> z.getZone().equals(host)) != null);
+    }
+
+    @Test
+    void malformedDataFailsTheBuild() {
+        ZoneSource.Builder malformed = ZoneSource.builder().tzif("UTC", new byte[3]);
+        IllegalArgumentException failure = assertThrows(IllegalArgumentException.class, malformed::build);
+        assertTrue(failure.getMessage().contains("malformed TZif"), failure.getMessage());
+    }
+
+    private static WeakReference<ZoneSource.Loader> loaderOfADroppedSource() {
+        AtomicInteger loads = new AtomicInteger();
+        ZoneSource.Loader loader = (name, zones) -> loads.incrementAndGet();
+        ZoneSource source = ZoneSource.builder().loader(loader).build();
+        assertFalse(BindingEdges.info(Engine.get(), source.handle(Engine.get()), "Test/Lazy")
+                .known());
+        assertEquals(1, loads.get());
+        return new WeakReference<>(loader);
+    }
+
+    @Test
+    void aSourceNothingRefersToReleasesItsLoader() throws InterruptedException {
+        WeakReference<ZoneSource.Loader> loader = loaderOfADroppedSource();
+        for (int i = 0; i < 500 && loader.get() != null; i++) {
+            System.gc();
+            Thread.sleep(10);
+        }
+        assertNull(loader.get());
     }
 
     @Test
@@ -378,7 +606,7 @@ class ZoneSourceTest {
             assertEquals("LON", offset.abbreviation());
         }
         assertAllExamples(
-                Temporal.zones().source(probed),
+                Temporals.zones().source(probed),
                 z -> z.getId().equals("UTC") || z.getId().equals("Europe/London"));
     }
 
@@ -391,17 +619,19 @@ class ZoneSourceTest {
         assertEquals(FakeLibhegel.ZONE_SOURCE, source.handle(fake));
         assertEquals(FakeLibhegel.ZONE_SOURCE, source.handle(fake));
         assertTrue(source.handle(Engine.get()) != 0);
-        assertEquals(1, fake.freedZoneSources);
     }
 
     @Test
     void zonesFromAnyGeneratorResolveAgainstTheDefault() {
         String host = HostOnlyZone.zone().getId();
         assertAllExamples(
-                Temporal.zonedDateTimes().zones(just(ZoneId.of(host))).min(FOLD).max(FOLD),
+                Temporals.zonedDatetimes()
+                        .zones(just(ZoneId.of(host)))
+                        .min(FOLD)
+                        .max(FOLD),
                 z -> z.getZone().getId().equals(host));
         FakeLibhegel fake = new FakeLibhegel();
-        new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), false, Reporter.silent()).draw(Temporal.zones());
+        new TestCase(new LiveDataSource(fake, FakeLibhegel.TC), false, Reporter.silent()).draw(Temporals.zones());
         assertEquals(FakeLibhegel.ZONE_SOURCE, fake.timezoneSource);
     }
 }

@@ -109,8 +109,14 @@ class RealLibhegelTest {
     }
 
     @Test
+    void drawArgumentsValidate() {
+        BindingEdges.drawArgumentsValidate(real());
+    }
+
+    @Test
     void zoneSourcesCrossTheBinding() {
-        BindingEdges.zoneSources(real());
+        RealLibhegel lib = real();
+        BindingEdges.zoneSources(lib, lib::liveLoaders);
     }
 
     @Test

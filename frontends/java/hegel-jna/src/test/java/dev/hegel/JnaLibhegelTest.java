@@ -121,8 +121,14 @@ class JnaLibhegelTest {
     }
 
     @Test
+    void drawArgumentsValidate() {
+        BindingEdges.drawArgumentsValidate(real());
+    }
+
+    @Test
     void zoneSourcesCrossTheBinding() {
-        BindingEdges.zoneSources(real());
+        JnaLibhegel lib = real();
+        BindingEdges.zoneSources(lib, lib::liveLoaders);
     }
 
     @Test

@@ -12,7 +12,9 @@ import java.time.zone.ZoneOffsetTransition;
 import java.time.zone.ZoneOffsetTransitionRule;
 import java.time.zone.ZoneRules;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
+import java.util.TreeSet;
 
 /**
  * Translates {@code java.time} zone rules into the engine's structured zone data: the explicit
@@ -24,15 +26,23 @@ import java.util.List;
  * the month's last week shifted back, and a fixed day onto a Julian day (February counted from its
  * end becomes March 1 shifted back). The shift goes into the time of day, as does the conversion
  * from the rule's UTC, standard or wall time definition to the offset in force before the
- * transition, which is what the engine's rule times are read in. Rules no such form expresses, or
- * that are not one pair alternating between two offsets, are expanded into explicit transitions
- * through {@link #EXPANDED_UNTIL} instead, after which the engine infers a yearly rule as it does
- * for an oracle.
+ * transition, which is what the engine's rule times are read in.
+ *
+ * <p>Rules no such form expresses, or that are not one pair alternating between two offsets, are
+ * expanded into explicit transitions through the year {@link #LAST_EXPANDED_YEAR} instead, which
+ * covers every generator's default range, and the engine infers a yearly rule for the years after
+ * as it does for an oracle. The expansion asks {@link ZoneRules#getOffset} rather than {@link
+ * ZoneRules#nextTransition}, because {@code java.time} evaluates such rules a year at a time: at
+ * the start of each year (on the wall clock of the last explicit transition) the offset becomes
+ * the one before that year's first rule, which is a change no transition reports unless it is the
+ * offset after the last rule of the year before. The same holds for the instant after the last
+ * explicit transition, so a pair whose rule does not carry on from it gets one more transition
+ * there.
  */
 final class JavaTimeZones {
     private JavaTimeZones() {}
 
-    static final int EXPANDED_UNTIL = 2400;
+    static final int LAST_EXPANDED_YEAR = 10_000;
 
     private static final int MAX_RULE_TIME = 167 * 3600;
     private static final int DAY = 86_400;
@@ -53,15 +63,10 @@ final class JavaTimeZones {
             return new Libhegel.ZoneData(
                     initial, transitions, Abi.ZONE_AFTER_HOLD, initial, false, initial, none, none, 0);
         }
+        ZoneOffsetTransition last = history.get(history.size() - 1);
         Libhegel.ZoneRuleDate[] dates = pair(yearly);
         if (dates == null) {
-            Instant until = LocalDateTime.of(EXPANDED_UNTIL, 1, 1, 0, 0).toInstant(ZoneOffset.UTC);
-            ZoneOffsetTransition next =
-                    rules.nextTransition(history.get(history.size() - 1).getInstant());
-            while (next.getInstant().isBefore(until)) {
-                transitions.add(transition(rules, next));
-                next = rules.nextTransition(next.getInstant());
-            }
+            expand(rules, last, yearly, transitions);
             return new Libhegel.ZoneData(
                     initial,
                     transitions,
@@ -71,20 +76,58 @@ final class JavaTimeZones {
                     initial,
                     none,
                     none,
-                    EXPANDED_UNTIL - 1);
+                    LAST_EXPANDED_YEAR);
         }
-        int s = dst(yearly.get(0)) ? 0 : 1;
+        addChanges(rules, last.getOffsetAfter(), List.of(last.toEpochSecond() + 1), transitions);
+        ZoneOffset standard = rules.getStandardOffset(last.getInstant());
+        int s = yearly.get(0).getOffsetAfter().equals(standard) ? 1 : 0;
         ZoneOffsetTransitionRule start = yearly.get(s);
         return new Libhegel.ZoneData(
                 initial,
                 transitions,
                 Abi.ZONE_AFTER_RULE,
-                ruleType(start, start.getOffsetBefore()),
+                ruleType(start.getOffsetBefore(), standard),
                 true,
-                ruleType(start, start.getOffsetAfter()),
+                ruleType(start.getOffsetAfter(), standard),
                 dates[s],
                 dates[1 - s],
                 0);
+    }
+
+    /**
+     * Add every change of offset after {@code last} through {@link #LAST_EXPANDED_YEAR}. The
+     * offset can change only a second after {@code last}, at the start of a year and at a rule's
+     * transition, so those instants are asked about in order.
+     */
+    private static void expand(
+            ZoneRules rules,
+            ZoneOffsetTransition last,
+            List<ZoneOffsetTransitionRule> yearly,
+            List<Libhegel.ZoneTransition> transitions) {
+        ZoneOffset wall = last.getOffsetAfter();
+        TreeSet<Long> instants = new TreeSet<>();
+        instants.add(last.toEpochSecond() + 1);
+        for (int year = last.getDateTimeAfter().getYear(); year <= LAST_EXPANDED_YEAR; year++) {
+            instants.add(LocalDateTime.of(year, 1, 1, 0, 0).toEpochSecond(wall));
+            for (ZoneOffsetTransitionRule rule : yearly) {
+                instants.add(rule.createTransition(year).toEpochSecond());
+            }
+        }
+        addChanges(rules, wall, instants.tailSet(last.toEpochSecond(), false), transitions);
+    }
+
+    /** Add a transition at each of {@code instants}, in order, at which the offset is not the one before it. */
+    private static void addChanges(
+            ZoneRules rules, ZoneOffset before, Collection<Long> instants, List<Libhegel.ZoneTransition> transitions) {
+        ZoneOffset current = before;
+        for (long second : instants) {
+            Instant at = Instant.ofEpochSecond(second);
+            ZoneOffset offset = rules.getOffset(at);
+            if (!offset.equals(current)) {
+                transitions.add(new Libhegel.ZoneTransition(second, type(rules, offset, at)));
+                current = offset;
+            }
+        }
     }
 
     /** The dates of a pair of rules alternating between two offsets, or null when they are not one or a date has no form. */
@@ -101,10 +144,6 @@ final class JavaTimeZones {
         Libhegel.ZoneRuleDate first = date(a);
         Libhegel.ZoneRuleDate second = date(b);
         return first == null || second == null ? null : new Libhegel.ZoneRuleDate[] {first, second};
-    }
-
-    private static boolean dst(ZoneOffsetTransitionRule rule) {
-        return !rule.getOffsetAfter().equals(rule.getStandardOffset());
     }
 
     /** The rule's date in an RFC 9636 form whose time stays within the engine's ±167 hours, or null. */
@@ -162,9 +201,8 @@ final class JavaTimeZones {
         return best == null || Math.abs(candidate.time()) < Math.abs(best.time()) ? candidate : best;
     }
 
-    private static Libhegel.ZoneType ruleType(ZoneOffsetTransitionRule rule, ZoneOffset offset) {
-        return new Libhegel.ZoneType(
-                offset.getTotalSeconds(), !offset.equals(rule.getStandardOffset()), abbreviation(offset));
+    private static Libhegel.ZoneType ruleType(ZoneOffset offset, ZoneOffset standard) {
+        return new Libhegel.ZoneType(offset.getTotalSeconds(), !offset.equals(standard), abbreviation(offset));
     }
 
     private static Libhegel.ZoneTransition transition(ZoneRules rules, ZoneOffsetTransition t) {

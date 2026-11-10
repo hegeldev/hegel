@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -302,6 +303,107 @@ class BindingErrorPathsTest {
                 () -> source(sign).spanSpec(new int[] {Abi.SPAN_UNIT_DAYS}, new long[] {-1}, new long[] {1}, 7));
         assertEquals(1, sign.freedSpanSpecs);
         assertTrue(sign.spanUnitBounds.isEmpty());
+    }
+
+    @Test
+    void specsTheEngineFindsInvalidAreReleased() {
+        FakeLibhegel zones = new FakeLibhegel();
+        zones.timezoneSpecValidateRc = Abi.E_INVALID_ARG;
+        zones.lastError = "unknown time zone";
+        IllegalArgumentException unknown = assertThrows(
+                IllegalArgumentException.class,
+                () -> source(zones).timezoneSpec(null, true, false, FakeLibhegel.ZONE_SOURCE));
+        assertEquals("unknown time zone", unknown.getMessage());
+        assertNull(zones.timezoneNames);
+        assertEquals(1, zones.freedTimezoneSpecs);
+
+        FakeLibhegel zoned = new FakeLibhegel();
+        zoned.zonedSpecValidateRc = Abi.E_INVALID_ARG;
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> source(zoned)
+                        .zonedSpec(
+                                null,
+                                null,
+                                Instant.EPOCH,
+                                Instant.EPOCH,
+                                Abi.PRECISION_NANOSECONDS,
+                                Abi.IMAGINARY_AVOID,
+                                Abi.AMBIGUOUS_BOTH));
+        assertEquals(1, zoned.freedZonedSpecs);
+
+        FakeLibhegel span = new FakeLibhegel();
+        span.spanSpecValidateRc = Abi.E_INVALID_ARG;
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> source(span)
+                        .spanSpec(
+                                new int[] {Abi.SPAN_UNIT_DAYS},
+                                new long[] {-1},
+                                new long[] {1},
+                                Abi.SPAN_SIGN_NONNEGATIVE));
+        assertEquals(1, span.freedSpanSpecs);
+    }
+
+    @Test
+    void drawsInANamedZoneReportTheEnginesResult() {
+        FakeLibhegel fake = new FakeLibhegel();
+        LiveDataSource ds = source(fake);
+        SpecHandle zoned = ds.zonedSpec(
+                null,
+                null,
+                Instant.EPOCH,
+                Instant.EPOCH,
+                Abi.PRECISION_NANOSECONDS,
+                Abi.IMAGINARY_AVOID,
+                Abi.AMBIGUOUS_BOTH);
+        assertEquals(
+                "Europe/London",
+                ds.generateZonedDatetimeForZone(7, "Europe/London", zoned).zone());
+        assertEquals(7L, fake.zonedSource);
+        fake.generateZonedDatetimeForZoneRc = Abi.E_ASSUME;
+        assertThrows(AssumeRejected.class, () -> ds.generateZonedDatetimeForZone(7, "Europe/London", zoned));
+        FakeLibhegel unknown = new FakeLibhegel();
+        unknown.generateZonedDatetimeForZoneRc = Abi.E_INVALID_ARG;
+        unknown.lastError = "unknown time zone \"Mars/Base\"";
+        LiveDataSource other = source(unknown);
+        SpecHandle spec = other.zonedSpec(
+                null,
+                null,
+                Instant.EPOCH,
+                Instant.EPOCH,
+                Abi.PRECISION_NANOSECONDS,
+                Abi.IMAGINARY_AVOID,
+                Abi.AMBIGUOUS_BOTH);
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class, () -> other.generateZonedDatetimeForZone(0, "Mars/Base", spec));
+        assertTrue(e.getMessage().contains("Mars/Base"));
+    }
+
+    @Test
+    void anArgumentErrorCarriesTheCallbackFailureItReports() {
+        FakeLibhegel fake = new FakeLibhegel();
+        fake.lastError = null;
+        IllegalArgumentException blank = EngineAccess.argumentError(fake);
+        assertEquals("", blank.getMessage());
+        assertNull(blank.getCause());
+
+        IllegalStateException thrown = new IllegalStateException("the loader broke");
+        Runnable failing = () -> {
+            throw thrown;
+        };
+        assertEquals(Abi.E_INVALID_ARG, ZoneCallbacks.guard(failing, message -> fake.lastError = "zone X: " + message));
+        assertEquals("zone X: the loader broke", fake.lastError);
+        IllegalArgumentException reported = EngineAccess.argumentError(fake);
+        assertSame(thrown, reported.getCause());
+        assertNull(EngineAccess.argumentError(fake).getCause());
+
+        assertEquals(Abi.E_INVALID_ARG, ZoneCallbacks.guard(failing, message -> {}));
+        fake.lastError = "min > max";
+        assertNull(EngineAccess.argumentError(fake).getCause());
+        fake.lastError = "zone X: the loader broke";
+        assertNull(EngineAccess.argumentError(fake).getCause());
+        assertEquals(Abi.OK, ZoneCallbacks.guard(() -> {}, message -> {}));
     }
 
     @Test

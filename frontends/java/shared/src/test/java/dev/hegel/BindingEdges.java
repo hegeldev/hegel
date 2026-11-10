@@ -15,8 +15,11 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.OptionalLong;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.IntSupplier;
 
 /** Binding-level checks shared by the FFM and JNA backends' test suites. */
 final class BindingEdges {
@@ -65,6 +68,8 @@ final class BindingEdges {
         Libhegel.ZonedDatetime[] value = new Libhegel.ZonedDatetime[1];
         assertEquals(Abi.E_INVALID_HANDLE, lib.generateZonedDatetime(0, tz[0], zoned[0], value));
         assertNull(value[0]);
+        assertEquals(Abi.E_INVALID_HANDLE, lib.generateZonedDatetimeForZone(0, 0, "UTC", zoned[0], value));
+        assertNull(value[0]);
         lib.zonedSpecFree(zoned[0]);
         lib.timezoneSpecFree(tz[0]);
 
@@ -100,6 +105,52 @@ final class BindingEdges {
         assertTrue(lib.tzdbVersion().matches("\\d{4}[a-z]"), lib.tzdbVersion());
         assertEquals(lib.tzdbVersion(), lib.zoneSourceVersion(bundled[0]));
         lib.zoneSourceFree(bundled[0]);
+    }
+
+    /** Each {@code validate} function accepts what its draw accepts and reports what its draw rejects. */
+    static void drawArgumentsValidate(Libhegel lib) {
+        LocalDate monday = LocalDate.of(2024, 1, 1);
+        LocalDate saturday = LocalDate.of(2024, 1, 6);
+        assertEquals(Abi.OK, lib.validateDate(monday, saturday, 0));
+        assertEquals(Abi.E_INVALID_ARG, lib.validateDate(saturday, monday, 0));
+        assertTrue(lib.lastErrorMessage().contains("min_value <= max_value"), lib.lastErrorMessage());
+        long[] options = new long[1];
+        assertEquals(Abi.OK, lib.dateOptionsNew(options));
+        assertEquals(Abi.OK, lib.dateOptionsSetWeekdays(options[0], 1 << 6));
+        assertEquals(Abi.E_INVALID_ARG, lib.validateDate(monday, saturday, options[0]));
+        assertTrue(lib.lastErrorMessage().contains("allowed weekday and month"), lib.lastErrorMessage());
+        assertEquals(Abi.OK, lib.validateDate(monday, saturday.plusDays(1), options[0]));
+        lib.dateOptionsFree(options[0]);
+
+        LocalTime odd = LocalTime.of(12, 0, 30);
+        assertEquals(Abi.OK, lib.validateTime(odd, odd, Abi.PRECISION_SECONDS));
+        assertEquals(Abi.E_INVALID_ARG, lib.validateTime(odd, odd, Abi.PRECISION_MINUTES));
+        assertTrue(lib.lastErrorMessage().contains("precision"), lib.lastErrorMessage());
+        assertEquals(Abi.E_INVALID_ARG, lib.validateTime(odd, odd, 99));
+        assertTrue(lib.lastErrorMessage().contains("hegel_validate_time"), lib.lastErrorMessage());
+
+        LocalDateTime oddDay = LocalDateTime.of(monday, odd);
+        assertEquals(Abi.OK, lib.validateDatetime(oddDay, oddDay.plusSeconds(30), Abi.PRECISION_MINUTES));
+        assertEquals(Abi.E_INVALID_ARG, lib.validateDatetime(oddDay, oddDay, Abi.PRECISION_MINUTES));
+        assertEquals(Abi.E_INVALID_ARG, lib.validateDatetime(oddDay, oddDay.minusNanos(1), Abi.PRECISION_NANOSECONDS));
+
+        Instant oddInstant = oddDay.toInstant(ZoneOffset.UTC);
+        assertEquals(Abi.OK, lib.validateTimestamp(oddInstant, oddInstant, Abi.PRECISION_SECONDS));
+        assertEquals(Abi.E_INVALID_ARG, lib.validateTimestamp(oddInstant, oddInstant, Abi.PRECISION_HOURS));
+        assertEquals(
+                Abi.E_INVALID_ARG,
+                lib.validateTimestamp(oddInstant, oddInstant.minusNanos(1), Abi.PRECISION_NANOSECONDS));
+
+        assertEquals(Abi.OK, lib.validateOffset(30, 60, Abi.OFFSET_GRANULARITY_MINUTES, false));
+        assertEquals(Abi.OK, lib.validateOffset(30, 30, Abi.OFFSET_GRANULARITY_SECONDS, true));
+        assertEquals(Abi.E_INVALID_ARG, lib.validateOffset(30, 30, Abi.OFFSET_GRANULARITY_MINUTES, false));
+        assertTrue(lib.lastErrorMessage().contains("granularity"), lib.lastErrorMessage());
+        assertEquals(Abi.E_INVALID_ARG, lib.validateOffset(0, 100_000, Abi.OFFSET_GRANULARITY_SECONDS, false));
+
+        Duration negative = Duration.ofSeconds(-1, -500_000_000);
+        assertEquals(Abi.OK, lib.validateDuration(negative, Duration.ZERO, Abi.PRECISION_SECONDS));
+        assertEquals(Abi.E_INVALID_ARG, lib.validateDuration(negative, negative, Abi.PRECISION_SECONDS));
+        assertEquals(Abi.E_INVALID_ARG, lib.validateDuration(Duration.ZERO, negative, Abi.PRECISION_NANOSECONDS));
     }
 
     static Libhegel.TimezoneInfo info(Libhegel lib, long source, String name) {
@@ -143,9 +194,10 @@ final class BindingEdges {
 
     /**
      * Every zone source call through the binding: each shape of data, links, declared names and a
-     * loader, versions, the default, a spec's source, the queries, and callbacks that fail.
+     * loader and its release, versions, the default, a spec's source, the queries, and callbacks
+     * that fail. {@code liveLoaders} counts the loaders the binding still holds state for.
      */
-    static void zoneSources(Libhegel lib) {
+    static void zoneSources(Libhegel lib, IntSupplier liveLoaders) {
         long[] out = new long[1];
         assertEquals(Abi.OK, lib.zoneSourceNew(out));
         long source = out[0];
@@ -289,7 +341,9 @@ final class BindingEdges {
 
         assertEquals(Abi.OK, lib.zoneSourceDeclare(source, List.of("Test/Lazy", "Test/Failing", "Test/Inner")));
         assertEquals(Abi.E_INVALID_ARG, lib.zoneSourceDeclare(source, List.of("")));
-        assertEquals(Abi.OK, lib.zoneSourceSetLoader(source, (into, name) -> {
+        int held = liveLoaders.getAsInt();
+        AtomicInteger released = new AtomicInteger();
+        Libhegel.ZoneLoader loader = (into, name) -> {
             if (name.equals("Test/Failing")) {
                 throw new IllegalStateException("no data for " + name);
             }
@@ -300,7 +354,10 @@ final class BindingEdges {
             if (name.equals("Test/Lazy")) {
                 assertEquals(Abi.OK, lib.zoneSourceAddLink(into, name, "Test/Rule"));
             }
-        }));
+        };
+        assertEquals(Abi.OK, lib.zoneSourceSetLoader(source, loader, released::incrementAndGet));
+        assertEquals(held + 1, liveLoaders.getAsInt());
+        assertEquals(0, released.get());
         assertEquals(
                 7200, offsetAt(lib, source, "Test/Lazy", Y2K.minusSeconds(1)).offsetSeconds());
         Libhegel.TimezoneInfo[] failed = {null};
@@ -317,7 +374,30 @@ final class BindingEdges {
                 lib.timezoneResolve(source, "Mars/Olympus_Mons", LocalDateTime.of(2000, 1, 1, 0, 0), noResolution));
         assertNull(noResolution[0]);
         assertFalse(info(lib, source, "Mars/Olympus_Mons").known());
-        assertEquals(Abi.OK, lib.zoneSourceSetLoader(source, null));
+        Libhegel.ZoneLoader nothing = (into, name) -> {};
+        assertEquals(Abi.OK, lib.zoneSourceSetLoader(source, nothing, null));
+        assertEquals(1, released.get());
+        assertEquals(held + 1, liveLoaders.getAsInt());
+        assertEquals(Abi.OK, lib.zoneSourceSetLoader(source, nothing, () -> {
+            throw new IllegalStateException("the release hook broke");
+        }));
+        assertEquals(held + 1, liveLoaders.getAsInt());
+        assertEquals(Abi.OK, lib.zoneSourceSetLoader(source, null, released::incrementAndGet));
+        assertEquals(held, liveLoaders.getAsInt());
+        assertEquals(1, released.get());
+        long[] bundled = new long[1];
+        assertEquals(Abi.OK, lib.zoneSourceBundled(bundled));
+        assertEquals(Abi.E_INVALID_ARG, lib.zoneSourceSetLoader(bundled[0], nothing, released::incrementAndGet));
+        assertEquals(2, released.get());
+        assertEquals(held, liveLoaders.getAsInt());
+        lib.zoneSourceFree(bundled[0]);
+        long[] dropped = new long[1];
+        assertEquals(Abi.OK, lib.zoneSourceNew(dropped));
+        assertEquals(Abi.OK, lib.zoneSourceSetLoader(dropped[0], nothing, released::incrementAndGet));
+        assertEquals(held + 1, liveLoaders.getAsInt());
+        lib.zoneSourceFree(dropped[0]);
+        assertEquals(3, released.get());
+        assertEquals(held, liveLoaders.getAsInt());
 
         assertEquals("", lib.zoneSourceVersion(source));
         assertEquals(Abi.OK, lib.zoneSourceSetVersion(source, "test-1"));
@@ -328,11 +408,38 @@ final class BindingEdges {
         lib.timezoneSpecSetLegacy(spec[0], true);
         assertEquals(Abi.OK, lib.timezoneSpecSetSource(spec[0], source), lib.lastErrorMessage());
         assertEquals(Abi.OK, lib.timezoneSpecSetNames(spec[0], List.of("Test/Rule", "Test/Link")));
+        assertEquals(Abi.OK, lib.timezoneSpecValidate(spec[0]), lib.lastErrorMessage());
         long[] empty = new long[1];
         assertEquals(Abi.OK, lib.zoneSourceNew(empty));
-        assertEquals(Abi.E_INVALID_ARG, lib.timezoneSpecSetSource(spec[0], empty[0]));
+        assertEquals(Abi.OK, lib.timezoneSpecSetSource(spec[0], empty[0]));
+        assertEquals(Abi.E_INVALID_ARG, lib.timezoneSpecValidate(spec[0]));
+        assertTrue(lib.lastErrorMessage().contains("Test/Rule"), lib.lastErrorMessage());
+        assertEquals(Abi.E_INVALID_HANDLE, lib.timezoneSpecValidate(0));
         lib.timezoneSpecFree(spec[0]);
         lib.zoneSourceFree(empty[0]);
+
+        long[] zoned = new long[1];
+        assertEquals(Abi.OK, lib.zonedSpecNew(zoned));
+        assertEquals(Abi.OK, lib.zonedSpecValidate(zoned[0]));
+        LocalDateTime civil = LocalDateTime.of(2000, 1, 1, 0, 0);
+        assertEquals(Abi.OK, lib.zonedSpecSetCivilBounds(zoned[0], civil, civil));
+        assertEquals(Abi.OK, lib.zonedSpecSetInstantBounds(zoned[0], Y2K, Y2K));
+        assertEquals(Abi.E_INVALID_ARG, lib.zonedSpecValidate(zoned[0]));
+        Libhegel.ZonedDatetime[] value = new Libhegel.ZonedDatetime[1];
+        assertEquals(Abi.E_INVALID_HANDLE, lib.generateZonedDatetimeForZone(0, source, "Test/Rule", zoned[0], value));
+        assertNull(value[0]);
+        lib.zonedSpecFree(zoned[0]);
+
+        long[] span = new long[1];
+        assertEquals(Abi.OK, lib.spanSpecNew(span));
+        assertEquals(Abi.E_INVALID_ARG, lib.spanSpecValidate(span[0]));
+        assertEquals(Abi.OK, lib.spanSpecSetUnitBounds(span[0], Abi.SPAN_UNIT_DAYS, -2, -1));
+        assertEquals(Abi.OK, lib.spanSpecValidate(span[0]));
+        assertEquals(Abi.OK, lib.spanSpecSetSign(span[0], Abi.SPAN_SIGN_NONNEGATIVE));
+        assertEquals(Abi.E_INVALID_ARG, lib.spanSpecValidate(span[0]));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.spanSpecValidate(0));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.zonedSpecValidate(0));
+        lib.spanSpecFree(span[0]);
 
         try {
             lib.setDefaultZoneSource(source);

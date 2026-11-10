@@ -31,6 +31,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.OptionalLong;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 /**
@@ -54,6 +55,15 @@ final class RealLibhegel implements Libhegel {
     // hegel_run_free, so each run gets a confined arena owning its stub (and out-slot), closed in
     // runFree. Runs are started and freed on the same thread (the Runner's), matching confinement.
     private final Map<Long, Arena> runArenas = new ConcurrentHashMap<>();
+
+    // hegel_zone_source_set_loader keeps the loader's upcall stub until the engine drops the
+    // loader and calls the release hook with the loader's key as user_data, so each loader gets a
+    // shared arena owning its stub, closed by releaseLoader on whichever thread the engine is on.
+    private final Map<Long, LoaderState> loaders = new ConcurrentHashMap<>();
+    private final AtomicLong loaderKeys = new AtomicLong();
+    private final MemorySegment releaseLoaderStub;
+
+    private record LoaderState(Arena arena, Runnable release) {}
 
     private final ThreadLocal<MemorySegment> context;
 
@@ -221,6 +231,7 @@ final class RealLibhegel implements Libhegel {
             FunctionDescriptor.ofVoid(ADDRESS, ADDRESS, JAVA_LONG);
     private static final FunctionDescriptor LOADER_DESC =
             FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, STRING_LAYOUT);
+    private static final FunctionDescriptor LOADER_RELEASE_DESC = FunctionDescriptor.ofVoid(ADDRESS);
     private static final FunctionDescriptor OFFSET_FN_DESC =
             FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, ADDRESS);
     private static final FunctionDescriptor NEXT_TRANSITION_FN_DESC =
@@ -239,6 +250,8 @@ final class RealLibhegel implements Libhegel {
                     MemorySegment.class,
                     MemorySegment.class,
                     MemorySegment.class));
+    private static final MethodHandle RELEASE_LOADER =
+            findBridge("releaseLoader", MethodType.methodType(void.class, RealLibhegel.class, MemorySegment.class));
     private static final MethodHandle ZONE_TYPE_AT = findBridge(
             "zoneTypeAt",
             MethodType.methodType(
@@ -314,8 +327,15 @@ final class RealLibhegel implements Libhegel {
     private final MethodHandle generateTimestamp;
     private final MethodHandle generateOffset;
     private final MethodHandle generateDuration;
+    private final MethodHandle validateDate;
+    private final MethodHandle validateTime;
+    private final MethodHandle validateDatetime;
+    private final MethodHandle validateTimestamp;
+    private final MethodHandle validateOffset;
+    private final MethodHandle validateDuration;
     private final MethodHandle generateTimezone;
     private final MethodHandle generateZonedDatetime;
+    private final MethodHandle generateZonedDatetimeForZone;
     private final MethodHandle generateSpan;
     private final MethodHandle dateOptionsNew;
     private final MethodHandle dateOptionsFree;
@@ -326,6 +346,7 @@ final class RealLibhegel implements Libhegel {
     private final MethodHandle timezoneSpecSetNames;
     private final MethodHandle timezoneSpecSetLinks;
     private final MethodHandle timezoneSpecSetLegacy;
+    private final MethodHandle timezoneSpecValidate;
     private final MethodHandle zonedSpecNew;
     private final MethodHandle zonedSpecFree;
     private final MethodHandle zonedSpecSetCivilBounds;
@@ -333,10 +354,12 @@ final class RealLibhegel implements Libhegel {
     private final MethodHandle zonedSpecSetPrecision;
     private final MethodHandle zonedSpecSetImaginary;
     private final MethodHandle zonedSpecSetAmbiguous;
+    private final MethodHandle zonedSpecValidate;
     private final MethodHandle spanSpecNew;
     private final MethodHandle spanSpecFree;
     private final MethodHandle spanSpecSetUnitBounds;
     private final MethodHandle spanSpecSetSign;
+    private final MethodHandle spanSpecValidate;
     private final MethodHandle timezoneSpecSetSource;
     private final MethodHandle timezoneInfo;
     private final MethodHandle timezoneOffsetAt;
@@ -594,6 +617,36 @@ final class RealLibhegel implements Libhegel {
                 lookup,
                 "hegel_generate_duration",
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, DURATION_LAYOUT, DURATION_LAYOUT, JAVA_INT, ADDRESS));
+        this.validateDate = h(
+                linker,
+                lookup,
+                "hegel_validate_date",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, DATE_LAYOUT, DATE_LAYOUT, ADDRESS));
+        this.validateTime = h(
+                linker,
+                lookup,
+                "hegel_validate_time",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, TIME_LAYOUT, TIME_LAYOUT, JAVA_INT));
+        this.validateDatetime = h(
+                linker,
+                lookup,
+                "hegel_validate_datetime",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, DATETIME_LAYOUT, DATETIME_LAYOUT, JAVA_INT));
+        this.validateTimestamp = h(
+                linker,
+                lookup,
+                "hegel_validate_timestamp",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, TIMESTAMP_LAYOUT, TIMESTAMP_LAYOUT, JAVA_INT));
+        this.validateOffset = h(
+                linker,
+                lookup,
+                "hegel_validate_offset",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_BOOLEAN));
+        this.validateDuration = h(
+                linker,
+                lookup,
+                "hegel_validate_duration",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, DURATION_LAYOUT, DURATION_LAYOUT, JAVA_INT));
         this.generateTimezone = h(
                 linker,
                 lookup,
@@ -604,6 +657,11 @@ final class RealLibhegel implements Libhegel {
                 lookup,
                 "hegel_generate_zoned_datetime",
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
+        this.generateZonedDatetimeForZone = h(
+                linker,
+                lookup,
+                "hegel_generate_zoned_datetime_for_zone",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, STRING_LAYOUT, ADDRESS, ADDRESS));
         this.generateSpan = h(
                 linker,
                 lookup,
@@ -642,6 +700,8 @@ final class RealLibhegel implements Libhegel {
                 lookup,
                 "hegel_timezone_spec_set_legacy",
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_BOOLEAN));
+        this.timezoneSpecValidate =
+                h(linker, lookup, "hegel_timezone_spec_validate", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
         this.zonedSpecNew =
                 h(linker, lookup, "hegel_zoned_spec_new", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
         this.zonedSpecFree =
@@ -671,6 +731,8 @@ final class RealLibhegel implements Libhegel {
                 lookup,
                 "hegel_zoned_spec_set_ambiguous",
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT));
+        this.zonedSpecValidate =
+                h(linker, lookup, "hegel_zoned_spec_validate", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
         this.spanSpecNew = h(linker, lookup, "hegel_span_spec_new", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
         this.spanSpecFree =
                 h(linker, lookup, "hegel_span_spec_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
@@ -684,6 +746,8 @@ final class RealLibhegel implements Libhegel {
                 lookup,
                 "hegel_span_spec_set_sign",
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT));
+        this.spanSpecValidate =
+                h(linker, lookup, "hegel_span_spec_validate", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
         this.timezoneSpecSetSource = h(
                 linker,
                 lookup,
@@ -739,7 +803,8 @@ final class RealLibhegel implements Libhegel {
                 linker,
                 lookup,
                 "hegel_zone_source_set_loader",
-                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS, ADDRESS, ADDRESS));
+        this.releaseLoaderStub = linker.upcallStub(RELEASE_LOADER.bindTo(this), LOADER_RELEASE_DESC, libArena);
         this.zoneSourceSetVersion = h(
                 linker,
                 lookup,
@@ -1422,6 +1487,46 @@ final class RealLibhegel implements Libhegel {
     }
 
     @Override
+    public int validateDate(LocalDate min, LocalDate max, long options) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(validateDate, dateSegment(arena, min), dateSegment(arena, max), segment(options));
+        }
+    }
+
+    @Override
+    public int validateTime(LocalTime min, LocalTime max, int precision) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(validateTime, timeSegment(arena, min), timeSegment(arena, max), precision);
+        }
+    }
+
+    @Override
+    public int validateDatetime(LocalDateTime min, LocalDateTime max, int precision) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(validateDatetime, datetimeSegment(arena, min), datetimeSegment(arena, max), precision);
+        }
+    }
+
+    @Override
+    public int validateTimestamp(Instant min, Instant max, int precision) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(validateTimestamp, timestampSegment(arena, min), timestampSegment(arena, max), precision);
+        }
+    }
+
+    @Override
+    public int validateOffset(int minSeconds, int maxSeconds, int granularity, boolean allowUnknown) {
+        return rc(validateOffset, minSeconds, maxSeconds, granularity, allowUnknown);
+    }
+
+    @Override
+    public int validateDuration(Duration min, Duration max, int precision) {
+        try (Arena arena = Arena.ofConfined()) {
+            return rc(validateDuration, durationSegment(arena, min), durationSegment(arena, max), precision);
+        }
+    }
+
+    @Override
     public int generateTimezone(long tc, long spec, String[] out) {
         try (Arena arena = Arena.ofConfined()) {
             MemorySegment result = arena.allocate(STRING_LAYOUT);
@@ -1447,19 +1552,41 @@ final class RealLibhegel implements Libhegel {
             MemorySegment zone = arena.allocate(STRING_LAYOUT);
             int code = rc(generateZonedDatetime, segment(tc), segment(tzSpec), segment(zonedSpec), value, zone);
             if (code == Abi.OK) {
-                out[0] = new ZonedDatetime(
-                        takeOwnedString(zone),
-                        readDatetime(value, 0),
-                        value.get(JAVA_INT, ZONED_OFFSET_SECONDS),
-                        value.get(JAVA_BOOLEAN, ZONED_OFFSET_KNOWN),
-                        value.get(JAVA_BOOLEAN, ZONED_FOLD),
-                        value.get(JAVA_INT, ZONED_KIND),
-                        value.get(JAVA_INT, ZONED_OFFSET_BEFORE),
-                        value.get(JAVA_INT, ZONED_OFFSET_AFTER),
-                        readTimestamp(value, ZONED_TIMESTAMP));
+                out[0] = readZoned(takeOwnedString(zone), value);
             }
             return code;
         }
+    }
+
+    @Override
+    public int generateZonedDatetimeForZone(long tc, long source, String name, long zonedSpec, ZonedDatetime[] out) {
+        try (Arena arena = Arena.ofConfined()) {
+            MemorySegment value = arena.allocate(ZONED_LAYOUT);
+            int code = rc(
+                    generateZonedDatetimeForZone,
+                    segment(tc),
+                    segment(source),
+                    str(arena, name),
+                    segment(zonedSpec),
+                    value);
+            if (code == Abi.OK) {
+                out[0] = readZoned(name, value);
+            }
+            return code;
+        }
+    }
+
+    private static ZonedDatetime readZoned(String zone, MemorySegment value) {
+        return new ZonedDatetime(
+                zone,
+                readDatetime(value, 0),
+                value.get(JAVA_INT, ZONED_OFFSET_SECONDS),
+                value.get(JAVA_BOOLEAN, ZONED_OFFSET_KNOWN),
+                value.get(JAVA_BOOLEAN, ZONED_FOLD),
+                value.get(JAVA_INT, ZONED_KIND),
+                value.get(JAVA_INT, ZONED_OFFSET_BEFORE),
+                value.get(JAVA_INT, ZONED_OFFSET_AFTER),
+                readTimestamp(value, ZONED_TIMESTAMP));
     }
 
     @Override
@@ -1524,6 +1651,11 @@ final class RealLibhegel implements Libhegel {
     }
 
     @Override
+    public int timezoneSpecValidate(long spec) {
+        return rc(timezoneSpecValidate, segment(spec));
+    }
+
+    @Override
     public int zonedSpecNew(long[] out) {
         return handleConstructor(zonedSpecNew, out);
     }
@@ -1567,6 +1699,11 @@ final class RealLibhegel implements Libhegel {
     }
 
     @Override
+    public int zonedSpecValidate(long spec) {
+        return rc(zonedSpecValidate, segment(spec));
+    }
+
+    @Override
     public int spanSpecNew(long[] out) {
         return handleConstructor(spanSpecNew, out);
     }
@@ -1584,6 +1721,11 @@ final class RealLibhegel implements Libhegel {
     @Override
     public int spanSpecSetSign(long spec, int sign) {
         return rc(spanSpecSetSign, segment(spec), sign);
+    }
+
+    @Override
+    public int spanSpecValidate(long spec) {
+        return rc(spanSpecValidate, segment(spec));
     }
 
     @Override
@@ -1756,13 +1898,43 @@ final class RealLibhegel implements Libhegel {
     }
 
     @Override
-    public int zoneSourceSetLoader(long source, ZoneLoader loader) {
-        // The engine may call the loader for as long as the source lives, which no handle bounds,
-        // so its stub lives as long as the library.
-        MemorySegment stub = loader == null
-                ? MemorySegment.NULL
-                : linker.upcallStub(LOAD_ZONE.bindTo(this).bindTo(loader), LOADER_DESC, libArena);
-        return rc(zoneSourceSetLoader, segment(source), stub, MemorySegment.NULL);
+    public int zoneSourceSetLoader(long source, ZoneLoader loader, Runnable release) {
+        if (loader == null) {
+            return rc(zoneSourceSetLoader, segment(source), MemorySegment.NULL, MemorySegment.NULL, MemorySegment.NULL);
+        }
+        long key = loaderKeys.incrementAndGet();
+        Arena arena = Arena.ofShared();
+        loaders.put(key, new LoaderState(arena, release));
+        MemorySegment stub = linker.upcallStub(LOAD_ZONE.bindTo(this).bindTo(loader), LOADER_DESC, arena);
+        // The stub goes by address: passing the segment would hold its arena open for the call,
+        // and a call that fails releases the loader, which closes the arena, before it returns.
+        return rc(
+                zoneSourceSetLoader,
+                segment(source),
+                MemorySegment.ofAddress(stub.address()),
+                MemorySegment.ofAddress(key),
+                releaseLoaderStub);
+    }
+
+    /** How many loaders the engine still holds, each with a live upcall stub. */
+    int liveLoaders() {
+        return loaders.size();
+    }
+
+    /**
+     * {@code hegel_zone_loader_release_t}: the engine dropped the loader keyed by {@code userData},
+     * so its upcall stub is freed and its release hook run. Nothing may unwind into the engine.
+     */
+    static void releaseLoader(RealLibhegel self, MemorySegment userData) {
+        try {
+            LoaderState state = self.loaders.remove(userData.address());
+            state.arena().close();
+            if (state.release() != null) {
+                state.release().run();
+            }
+        } catch (Throwable t) {
+            // Deliberately dropped: a release hook must never unwind into the engine.
+        }
     }
 
     @Override

@@ -292,6 +292,28 @@ public interface Libhegel {
     int generateDuration(long tc, Duration min, Duration max, int precision, Duration[] out);
 
     /**
+     * {@code hegel_validate_date}: whether {@link #generateDate} accepts these arguments. This and
+     * the other {@code validate} functions draw nothing and need no test case; each returns {@code
+     * Abi.OK}, or {@code Abi.E_INVALID_ARG} with the message its draw would report.
+     */
+    int validateDate(LocalDate min, LocalDate max, long options);
+
+    /** {@code hegel_validate_time}: whether {@link #generateTime} accepts these arguments. */
+    int validateTime(LocalTime min, LocalTime max, int precision);
+
+    /** {@code hegel_validate_datetime}: whether {@link #generateDatetime} accepts these arguments. */
+    int validateDatetime(LocalDateTime min, LocalDateTime max, int precision);
+
+    /** {@code hegel_validate_timestamp}: whether {@link #generateTimestamp} accepts these arguments. */
+    int validateTimestamp(Instant min, Instant max, int precision);
+
+    /** {@code hegel_validate_offset}: whether {@link #generateOffset} accepts these arguments. */
+    int validateOffset(int minSeconds, int maxSeconds, int granularity, boolean allowUnknown);
+
+    /** {@code hegel_validate_duration}: whether {@link #generateDuration} accepts these arguments. */
+    int validateDuration(Duration min, Duration max, int precision);
+
+    /**
      * {@code hegel_generate_timezone}: on OK the drawn IANA name, copied out of the engine's owned
      * string, is written to {@code out[0]}.
      */
@@ -313,6 +335,15 @@ public interface Libhegel {
     int generateZonedDatetime(long tc, long tzSpec, long zonedSpec, ZonedDatetime[] out);
 
     /**
+     * {@code hegel_generate_zoned_datetime_for_zone}: a zoned datetime in the zone {@code name} of
+     * {@code source} (or with {@code 0} of the process's default zone source as it is at this
+     * call), recording no choice for the zone. A name the source does not know is {@link
+     * Abi#E_INVALID_ARG}; a zone with no value in the bounds is {@link Abi#E_ASSUME}. On OK the
+     * value, whose zone is {@code name}, is written to {@code out[0]}.
+     */
+    int generateZonedDatetimeForZone(long tc, long source, String name, long zonedSpec, ZonedDatetime[] out);
+
+    /**
      * {@code hegel_generate_span}: on OK the ten unit values of the {@code hegel_span_t}, years
      * first and nanoseconds last ({@code Abi.SPAN_UNIT_*} order), are written to {@code out10}.
      */
@@ -320,8 +351,9 @@ public interface Libhegel {
 
     // Date options, time zone specs, zoned specs and span specs. Constructors write the new handle
     // (0 on failure) and return the raw rc; a setter that can reject its argument returns the raw rc
-    // (INVALID_ARG leaves the spec as it was); the frees and the setters that cannot fail follow the
-    // infrastructure convention.
+    // (INVALID_ARG leaves the spec as it was) and checks that argument alone; the *Validate calls
+    // return the raw rc of the checks that involve several settings, which a draw makes too; the
+    // frees and the setters that cannot fail follow the infrastructure convention.
     int dateOptionsNew(long[] out);
 
     void dateOptionsFree(long options);
@@ -336,12 +368,22 @@ public interface Libhegel {
 
     void timezoneSpecFree(long spec);
 
-    /** {@code hegel_timezone_spec_set_names}: each name exactly as the IANA database spells it. */
+    /**
+     * {@code hegel_timezone_spec_set_names}: each name exactly as the spec's zone source spells it.
+     * Whether the source knows them is checked by {@link #timezoneSpecValidate} and the first draw.
+     */
     int timezoneSpecSetNames(long spec, List<String> names);
 
     void timezoneSpecSetLinks(long spec, boolean links);
 
     void timezoneSpecSetLegacy(long spec, boolean legacy);
+
+    /**
+     * {@code hegel_timezone_spec_validate}: read the source's names and build the set of allowed
+     * ones, as the first draw would. {@link Abi#E_INVALID_ARG} for a listed name the source lacks,
+     * for a spec that allows no name and for a loader that fails.
+     */
+    int timezoneSpecValidate(long spec);
 
     int zonedSpecNew(long[] out);
 
@@ -359,6 +401,12 @@ public interface Libhegel {
     /** {@code ambiguous} is one of the {@code Abi.AMBIGUOUS_*} constants. */
     int zonedSpecSetAmbiguous(long spec, int ambiguous);
 
+    /**
+     * {@code hegel_zoned_spec_validate}: {@link Abi#E_INVALID_ARG} for a spec given both civil and
+     * instant bounds, or whose civil bounds hold no value at its precision.
+     */
+    int zonedSpecValidate(long spec);
+
     int spanSpecNew(long[] out);
 
     void spanSpecFree(long spec);
@@ -369,10 +417,13 @@ public interface Libhegel {
     /** {@code sign} is one of the {@code Abi.SPAN_SIGN_*} constants. */
     int spanSpecSetSign(long spec, int sign);
 
+    /** {@code hegel_span_spec_validate}: {@link Abi#E_INVALID_ARG} for bounds the sign policy excludes. */
+    int spanSpecValidate(long spec);
+
     /**
      * {@code hegel_timezone_spec_set_source}: draw from, and evaluate with, the zone source {@code
      * source} (a handle from {@link #zoneSourceNew} or {@link #zoneSourceBundled}), or with {@code
-     * 0} the process's default source as it is now.
+     * 0} the process's default source as it is now. The source is not read here.
      */
     int timezoneSpecSetSource(long spec, long source);
 
@@ -515,9 +566,12 @@ public interface Libhegel {
     /**
      * {@code hegel_zone_source_set_loader}: {@code loader} supplies the data of a name the first
      * time a draw or query needs it; {@code null} removes it. The binding keeps the loader
-     * reachable for the life of the process, since the source may outlive every handle on it.
+     * reachable until the engine drops it (when another loader replaces it, when the last
+     * reference to the source goes, or before this call returns when it fails) and then calls
+     * {@code release}, exactly once and on whichever thread the engine drops it on; {@code release}
+     * may be {@code null}, and is ignored with a {@code null} loader.
      */
-    int zoneSourceSetLoader(long source, ZoneLoader loader);
+    int zoneSourceSetLoader(long source, ZoneLoader loader, Runnable release);
 
     /** {@code hegel_zone_source_set_version}: record which release of its database a source holds. */
     int zoneSourceSetVersion(long source, String version);

@@ -34,7 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dev.hegel.Generators.Temporal;
+import dev.hegel.Generators.Temporals;
 import dev.hegel.generators.Deferred;
 import java.time.Duration;
 import java.time.ZoneId;
@@ -267,12 +267,12 @@ class ConformanceTest {
     void temporalGeneratorsProduceJavaTimeTypes() {
         // Typed (not strings): the engine's offset-free output parses into java.time values, so a draw
         // arriving here at all means it round-tripped through the type's parser.
-        assertAllExamples(Temporal.dates(), d -> d.getYear() >= 1 && d.getYear() <= 9999);
-        assertAllExamples(Temporal.times(), t -> t.getHour() >= 0 && t.getHour() <= 23);
-        assertAllExamples(Temporal.datetimes(), dt -> dt.getDayOfMonth() >= 1 && dt.getDayOfMonth() <= 31);
-        assertAllExamples(Temporal.durations(), Objects::nonNull);
+        assertAllExamples(Temporals.dates(), d -> d.getYear() >= 1 && d.getYear() <= 9999);
+        assertAllExamples(Temporals.times(), t -> t.getHour() >= 0 && t.getHour() <= 23);
+        assertAllExamples(Temporals.datetimes(), dt -> dt.getDayOfMonth() >= 1 && dt.getDayOfMonth() <= 31);
+        assertAllExamples(Temporals.durations(), Objects::nonNull);
         assertAllExamples(
-                Temporal.durations().min(Duration.ofSeconds(1)).max(Duration.ofSeconds(60)),
+                Temporals.durations().min(Duration.ofSeconds(1)).max(Duration.ofSeconds(60)),
                 d -> d.compareTo(Duration.ofSeconds(1)) >= 0 && d.compareTo(Duration.ofSeconds(60)) <= 0);
     }
 
@@ -280,42 +280,42 @@ class ConformanceTest {
     void boundedTemporalGenerators() {
         java.time.LocalDate dateLo = java.time.LocalDate.of(2020, 2, 5);
         java.time.LocalDate dateHi = java.time.LocalDate.of(2021, 3, 9);
-        assertAllExamples(Temporal.dates().min(dateLo).max(dateHi), d -> !d.isBefore(dateLo) && !d.isAfter(dateHi));
+        assertAllExamples(Temporals.dates().min(dateLo).max(dateHi), d -> !d.isBefore(dateLo) && !d.isAfter(dateHi));
         // Bounds are honoured at nanosecond resolution.
         java.time.LocalTime timeLo = java.time.LocalTime.of(10, 30, 0, 4);
         java.time.LocalTime timeHi = java.time.LocalTime.of(11, 0);
-        assertAllExamples(Temporal.times().min(timeLo).max(timeHi), t -> !t.isBefore(timeLo) && !t.isAfter(timeHi));
+        assertAllExamples(Temporals.times().min(timeLo).max(timeHi), t -> !t.isBefore(timeLo) && !t.isAfter(timeHi));
         java.time.LocalDateTime lo = java.time.LocalDateTime.of(1999, 12, 31, 23, 0, 0, 1);
         java.time.LocalDateTime hi = java.time.LocalDateTime.of(2000, 1, 1, 1, 0);
-        assertAllExamples(Temporal.datetimes().min(lo).max(hi), dt -> !dt.isBefore(lo) && !dt.isAfter(hi));
+        assertAllExamples(Temporals.datetimes().min(lo).max(hi), dt -> !dt.isBefore(lo) && !dt.isAfter(hi));
     }
 
     @Test
     void offsetAwareDatetimes() {
         // Bare offsets stay within the legal ZoneOffset range.
-        assertAllExamples(Temporal.offsets(), o -> o.getTotalSeconds() >= -64800 && o.getTotalSeconds() <= 64800);
+        assertAllExamples(Temporals.offsets(), o -> o.getTotalSeconds() >= -64800 && o.getTotalSeconds() <= 64800);
         assertAllExamples(
-                Temporal.offsets().min(ZoneOffset.ofHours(-2)).max(ZoneOffset.ofHours(2)),
+                Temporals.offsets().min(ZoneOffset.ofHours(-2)).max(ZoneOffset.ofHours(2)),
                 o -> o.getTotalSeconds() >= -7200 && o.getTotalSeconds() <= 7200);
-        // Temporal.datetimes().offsets(...) attaches the drawn offset to the wall-clock time.
+        // Temporals.datetimes().offsets(...) attaches the drawn offset to the wall-clock time.
         assertAllExamples(
-                Temporal.datetimes().offsets(Temporal.offsets()),
+                Temporals.datetimes().offsets(Temporals.offsets()),
                 odt -> odt.toLocalDate().getYear() >= 1);
         assertAllExamples(
-                Temporal.datetimes().offsets(just(ZoneOffset.UTC)),
+                Temporals.datetimes().offsets(just(ZoneOffset.UTC)),
                 odt -> odt.getOffset().equals(ZoneOffset.UTC));
     }
 
     @Test
     void zoneAwareDatetimes() {
-        // Temporal.zones() draws region zones the JVM knows.
-        assertAllExamples(Temporal.zones(), z -> ZoneId.getAvailableZoneIds().contains(z.getId()));
-        // Temporal.datetimes().zones(...) resolves the wall-clock time in the drawn zone (DST-aware).
+        // Temporals.zones() draws region zones the JVM knows.
+        assertAllExamples(Temporals.zones(), z -> ZoneId.getAvailableZoneIds().contains(z.getId()));
+        // Temporals.datetimes().zones(...) resolves the wall-clock time in the drawn zone (DST-aware).
         assertAllExamples(
-                Temporal.datetimes().zones(Temporal.zones()),
+                Temporals.datetimes().zones(Temporals.zones()),
                 zdt -> ZoneId.getAvailableZoneIds().contains(zdt.getZone().getId()));
         assertAllExamples(
-                Temporal.datetimes().zones(just(ZoneId.of("Europe/London"))),
+                Temporals.datetimes().zones(just(ZoneId.of("Europe/London"))),
                 zdt -> zdt.getZone().equals(ZoneId.of("Europe/London")));
     }
 

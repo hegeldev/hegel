@@ -88,22 +88,22 @@
  * {@code sampledFrom} and {@code just}, plus format generators ({@code emails}, {@code urls},
  * {@code ipAddresses}, {@code uuids}, {@code fromRegex}, …).
  *
- * <p>The date and time generators live in {@link dev.hegel.Generators.Temporal}, with their
- * classes in {@link dev.hegel.generators.temporal}: {@code Temporal.dates()}, {@code times()},
- * {@code datetimes()}, {@code zonedDateTimes()}, {@code instants()}, {@code offsets()}
+ * <p>The date and time generators live in {@link dev.hegel.Generators.Temporals}, with their
+ * classes in {@link dev.hegel.generators.temporal}: {@code Temporals.dates()}, {@code times()},
+ * {@code datetimes()}, {@code zonedDatetimes()}, {@code instants()}, {@code offsets()}
  * ({@code java.time.ZoneOffset}), {@code zones()} ({@code java.time.ZoneId}), {@code durations()}
  * ({@code java.time.Duration}) and {@code spans()} ({@code java.time.Period}). For zone-aware
  * datetimes, attach a zone to a {@code datetimes()} generator:
  *
  * <ul>
  *   <li>{@link dev.hegel.generators.temporal.DateTimeGenerator#zones zones}:
- *       {@code Temporal.datetimes().zones(Temporal.zones())} produces DST-aware
- *       {@code java.time.ZonedDateTime} values over every zone both the engine and the JVM know
- *       (see {@link dev.hegel.Generators.Temporal#zonedDateTimes()}); pin one with
- *       {@code Temporal.datetimes().zones(just(ZoneId.of("Europe/London")))}.
+ *       {@code Temporals.datetimes().zones(Temporals.zones())} produces DST-aware
+ *       {@code java.time.ZonedDateTime} values over every zone the JVM knows, as {@link
+ *       dev.hegel.Generators.Temporals#zonedDatetimes()} does; pin one with
+ *       {@code Temporals.datetimes().zones(just(ZoneId.of("Europe/London")))}.
  *   <li>{@link dev.hegel.generators.temporal.DateTimeGenerator#offsets offsets}:
- *       {@code Temporal.datetimes().offsets(Temporal.offsets())} produces fixed-offset
- *       {@code java.time.OffsetDateTime} values (see {@link dev.hegel.Generators.Temporal#offsets()}).
+ *       {@code Temporals.datetimes().offsets(Temporals.offsets())} produces fixed-offset
+ *       {@code java.time.OffsetDateTime} values (see {@link dev.hegel.Generators.Temporals#offsets()}).
  * </ul>
  *
  * <p>The bound- and size-bearing generators are fluent builders that <em>are</em> the generator:

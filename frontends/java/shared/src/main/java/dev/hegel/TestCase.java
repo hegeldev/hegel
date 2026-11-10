@@ -387,6 +387,36 @@ public final class TestCase {
     }
 
     /** @hidden */
+    public void validateDate(LocalDate min, LocalDate max, SpecHandle options) {
+        source.validateDate(min, max, options);
+    }
+
+    /** @hidden */
+    public void validateTime(LocalTime min, LocalTime max, int precision) {
+        source.validateTime(min, max, precision);
+    }
+
+    /** @hidden */
+    public void validateDatetime(LocalDateTime min, LocalDateTime max, int precision) {
+        source.validateDatetime(min, max, precision);
+    }
+
+    /** @hidden */
+    public void validateTimestamp(Instant min, Instant max, int precision) {
+        source.validateTimestamp(min, max, precision);
+    }
+
+    /** @hidden */
+    public void validateOffset(int minSeconds, int maxSeconds, int granularity) {
+        source.validateOffset(minSeconds, maxSeconds, granularity);
+    }
+
+    /** @hidden */
+    public void validateDuration(Duration min, Duration max, int precision) {
+        source.validateDuration(min, max, precision);
+    }
+
+    /** @hidden */
     public String generateTimezone(SpecHandle spec) {
         return source.generateTimezone(spec);
     }
@@ -394,6 +424,11 @@ public final class TestCase {
     /** @hidden */
     public Libhegel.ZonedDatetime generateZonedDatetime(SpecHandle tzSpec, SpecHandle zonedSpec) {
         return source.generateZonedDatetime(tzSpec, zonedSpec);
+    }
+
+    /** @hidden */
+    public Libhegel.ZonedDatetime generateZonedDatetimeForZone(long zoneSource, String name, SpecHandle zonedSpec) {
+        return source.generateZonedDatetimeForZone(zoneSource, name, zonedSpec);
     }
 
     /** @hidden */

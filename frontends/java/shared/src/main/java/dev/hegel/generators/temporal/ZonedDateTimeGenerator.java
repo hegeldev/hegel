@@ -1,11 +1,14 @@
 package dev.hegel.generators.temporal;
 
+import dev.hegel.EngineAccess;
 import dev.hegel.Generator;
+import dev.hegel.HegelException;
 import dev.hegel.Label;
 import dev.hegel.SpecHandle;
 import dev.hegel.TestCase;
 import dev.hegel.lowlevel.Abi;
 import dev.hegel.lowlevel.Libhegel;
+import java.lang.ref.Reference;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -17,32 +20,58 @@ import java.time.temporal.ChronoUnit;
  * Generates {@link ZonedDateTime} values: a zone, a wall-clock time in it and, when the clocks
  * repeated that time, which repeat is meant.
  *
- * <p>The zones come from {@link #zones(Generator)}, by default every region zone of the default
- * {@link ZoneSource} this JVM knows (see {@link ZoneGenerator}). The bounds are either on the wall clock of
- * whatever zone is drawn ({@link #min(LocalDateTime)} / {@link #max(LocalDateTime)}, the default:
- * the engine's whole range of years {@code [-999999, 999999]}) or on the instant ({@link
- * #min(Instant)} / {@link #max(Instant)}, or a {@link ZonedDateTime} standing for its instant);
- * setting a bound of one kind replaces the bounds of the other. Values shrink down a ladder of
- * zones to {@code UTC}, then toward 2000-01-01T00:00.
+ * <p>The bounds are either on the wall clock of whatever zone is drawn ({@link
+ * #min(LocalDateTime)} / {@link #max(LocalDateTime)}; by default years 1 to 9999, as for {@link
+ * DateTimeGenerator}) or on the instant ({@link #min(Instant)} / {@link #max(Instant)}, or a {@link
+ * ZonedDateTime} standing for its instant); setting bounds of both kinds is an {@link
+ * IllegalArgumentException}. A bound that was not set counts as its default, so to draw beyond the
+ * year 9999 set {@code max} before {@code min}, and before the year 1 {@code min} before {@code
+ * max}. Values shrink down a ladder of zones to {@code UTC}, then toward 2000-01-01T00:00.
  *
- * <p>The engine knows every zone's daylight-saving and offset transitions, from the zone source:
- * one draw in twenty on average lands within a second, an hour or a day of one, or of a well-known
- * instant such as the Unix epoch, so the skipped and repeated wall times where date bugs live are
- * generated deliberately. A repeated wall time is drawn as either instant by default; {@link
- * #ambiguous(Ambiguous)} picks one. A skipped wall time cannot be a {@link ZonedDateTime}, so it is
- * never drawn; the real wall times either side of the gap are.
+ * <p>The engine knows every zone's daylight-saving and offset transitions, from a {@link
+ * ZoneSource}: one draw in twenty on average lands within a second, an hour or a day of one, or of
+ * a well-known instant such as the Unix epoch, so the skipped and repeated wall times where date
+ * bugs live are generated deliberately. A repeated wall time is drawn as either instant by default;
+ * {@link #ambiguous(Ambiguous)} picks one. A skipped wall time cannot be a {@link ZonedDateTime},
+ * so it is never drawn; the real wall times either side of the gap are.
  *
- * <p>The value is built from the drawn wall-clock time with this JVM's own zone rules. Against the
- * default {@link ZoneSource#javaTime()} source the engine resolves it exactly as they do; against
- * another source (such as {@link ZoneSource#bundled()}) a value the two resolve to different
- * instants rejects the test case as if by {@code assume(false)}. Zones drawn by a generator other
- * than a {@link ZoneGenerator} are evaluated against the default source. A {@link ZoneOffset}, or a
- * region zone the default source lacks, has no transitions the engine can see: the drawn
- * wall-clock time is attached to it as is, with the earlier offset at an overlap unless {@link
- * Ambiguous#LATER} is chosen, and a skipped wall time rejects the test case.
+ * <p>Which zones are drawn, and from which zone source, is decided by {@link #zones(Generator)}
+ * and {@link #source(ZoneSource)}:
+ *
+ * <ul>
+ *   <li>With neither, the zones are every region zone of the default zone source this JVM knows
+ *       (see {@link ZoneGenerator}), and with only {@link #source(ZoneSource)} those of that
+ *       source. The default is read when the generator is created.
+ *   <li>With a {@link ZoneGenerator} as the zones, that generator's source is used. Give the
+ *       source to it, with {@link ZoneGenerator#source(ZoneSource)}: also calling {@link
+ *       #source(ZoneSource)} here is an {@link IllegalArgumentException}.
+ *   <li>With any other generator of zones (a mapped or filtered {@link ZoneGenerator}, {@code
+ *       just(...)}, {@code sampledFrom(...)}), each drawn zone is looked up by its id in the
+ *       source given to {@link #source(ZoneSource)}, or else in the default as it was when this
+ *       generator was created. A region zone that source does not know is an {@link
+ *       IllegalArgumentException} naming it. A {@link ZoneOffset}, and a fixed-offset zone such
+ *       as {@code ZoneId.of("UTC+05:00")} that the source does not list, needs no zone data: its
+ *       wall-clock time is drawn directly, within the bounds as they read at that offset.
+ * </ul>
+ *
+ * <p>The value is built from the drawn zone, wall-clock time and repeat with this JVM's own zone
+ * rules. With {@link ZoneSource#javaTime()}, the default, the engine drew from those same rules,
+ * so the value is exactly what was drawn. With another source (such as {@link
+ * ZoneSource#bundled()}) the value means what this JVM's rules say, which is the drawn instant
+ * wherever the two databases agree; a drawn wall-clock time this JVM skips, or resolves to an
+ * instant outside instant bounds, rejects the test case as if by {@code assume(false)}. Two cases
+ * under {@link ZoneSource#javaTime()} are rejected likewise, neither of which a zone of the JDK's
+ * own database reaches: after the year 10000, which takes explicit bounds, the engine has an
+ * approximation of zone rules that are not one yearly pair of transitions; and such rules can make
+ * {@code java.time} resolve a wall-clock time to one instant and read that instant back as another
+ * wall-clock time, which no value can honour.
  */
 public final class ZonedDateTimeGenerator implements Generator<ZonedDateTime> {
+    private static final String WHAT = "zonedDatetimes";
+
     private final Generator<? extends ZoneId> zones;
+    private final ZoneSource source;
+    private final ZoneSource defaultSource;
     private final LocalDateTime civilMin;
     private final LocalDateTime civilMax;
     private final Instant instantMin;
@@ -50,112 +79,167 @@ public final class ZonedDateTimeGenerator implements Generator<ZonedDateTime> {
     private final ChronoUnit precision;
     private final int precisionCode;
     private final Ambiguous ambiguous;
+
+    private final ZoneGenerator builtIn;
+    private final ZoneSource resolved;
+    private final boolean instantBounded;
+    private final LocalDateTime civilLo;
+    private final LocalDateTime civilHi;
+    private final Instant instantLo;
+    private final Instant instantHi;
     private final SpecCache spec = new SpecCache();
 
     public ZonedDateTimeGenerator() {
-        this(
-                new ZoneGenerator(),
-                DateTimeGenerator.MIN_CIVIL,
-                DateTimeGenerator.MAX_CIVIL,
-                null,
-                null,
-                ChronoUnit.NANOS,
-                Ambiguous.BOTH);
+        this(null, null, ZoneSource.getDefault(), null, null, null, null, ChronoUnit.NANOS, Ambiguous.BOTH);
     }
 
     private ZonedDateTimeGenerator(
             Generator<? extends ZoneId> zones,
+            ZoneSource source,
+            ZoneSource defaultSource,
             LocalDateTime civilMin,
             LocalDateTime civilMax,
             Instant instantMin,
             Instant instantMax,
             ChronoUnit precision,
             Ambiguous ambiguous) {
-        if (civilMin != null) {
-            DateTimeGenerator.validateCivil(civilMin, "zonedDateTimes");
-            DateTimeGenerator.validateCivil(civilMax, "zonedDateTimes");
-            if (civilMin.isAfter(civilMax)) {
-                throw new IllegalArgumentException("zonedDateTimes: min (" + civilMin + ") > max (" + civilMax + ")");
+        this.instantBounded = instantMin != null || instantMax != null;
+        if (instantBounded && (civilMin != null || civilMax != null)) {
+            throw new IllegalArgumentException(WHAT + ": the bounds are either on the wall clock (a LocalDateTime) or"
+                    + " on the instant (an Instant or a ZonedDateTime), not both");
+        }
+        this.civilLo = civilMin != null ? civilMin : DateTimeGenerator.DEFAULT_MIN;
+        this.civilHi = civilMax != null ? civilMax : DateTimeGenerator.DEFAULT_MAX;
+        this.instantLo = instantMin != null ? instantMin : InstantGenerator.DEFAULT_MIN;
+        this.instantHi = instantMax != null ? instantMax : InstantGenerator.DEFAULT_MAX;
+        DateTimeGenerator.validateCivil(civilLo, WHAT);
+        DateTimeGenerator.validateCivil(civilHi, WHAT);
+        InstantGenerator.validate(instantLo, WHAT);
+        InstantGenerator.validate(instantHi, WHAT);
+        Bounds.ordered(WHAT, civilMin, civilMax, civilLo, civilHi);
+        Bounds.ordered(WHAT, instantMin, instantMax, instantLo, instantHi);
+        if (zones instanceof ZoneGenerator) {
+            if (source != null) {
+                throw new IllegalArgumentException(WHAT + ": the zones are a zones() generator, which has a zone"
+                        + " source of its own; give the source to it, as zones().source(...), not to source(...)");
             }
+            this.builtIn = (ZoneGenerator) zones;
+            this.resolved = builtIn.source();
         } else {
-            InstantGenerator.validate(instantMin, "zonedDateTimes");
-            InstantGenerator.validate(instantMax, "zonedDateTimes");
-            if (instantMin.isAfter(instantMax)) {
-                throw new IllegalArgumentException(
-                        "zonedDateTimes: min (" + instantMin + ") > max (" + instantMax + ")");
-            }
+            this.resolved = source != null ? source : defaultSource;
+            this.builtIn = zones == null ? ZoneGenerator.of(resolved) : null;
         }
         this.zones = zones;
+        this.source = source;
+        this.defaultSource = defaultSource;
         this.civilMin = civilMin;
         this.civilMax = civilMax;
         this.instantMin = instantMin;
         this.instantMax = instantMax;
         this.precision = precision;
-        this.precisionCode = Precisions.engine(precision, "zonedDateTimes");
+        this.precisionCode = Precisions.engine(precision, WHAT);
         this.ambiguous = ambiguous;
+        spec.get(EngineAccess.setup(), this::buildSpec);
+    }
+
+    /** What {@link DateTimeGenerator#zones(Generator)} makes: wall-clock bounds, each null when not set. */
+    static ZonedDateTimeGenerator of(
+            Generator<? extends ZoneId> zones, LocalDateTime min, LocalDateTime max, ChronoUnit precision) {
+        return new ZonedDateTimeGenerator(
+                zones, null, ZoneSource.getDefault(), min, max, null, null, precision, Ambiguous.BOTH);
     }
 
     private ZonedDateTimeGenerator civil(LocalDateTime min, LocalDateTime max) {
-        return new ZonedDateTimeGenerator(zones, min, max, null, null, precision, ambiguous);
+        return new ZonedDateTimeGenerator(
+                zones, source, defaultSource, min, max, instantMin, instantMax, precision, ambiguous);
     }
 
     private ZonedDateTimeGenerator instant(Instant min, Instant max) {
-        return new ZonedDateTimeGenerator(zones, null, null, min, max, precision, ambiguous);
+        return new ZonedDateTimeGenerator(
+                zones, source, defaultSource, civilMin, civilMax, min, max, precision, ambiguous);
     }
 
     /**
+     * Draw each value's zone from {@code zones}. A {@link ZoneGenerator} brings its own zone
+     * source; the zones of any other generator are looked up in the source given to {@link
+     * #source(ZoneSource)}, or else in the default zone source as it was when this generator was
+     * created, and a region zone that source does not know fails the draw that drew it with an
+     * {@link IllegalArgumentException}.
+     *
      * @param zones the generator of the zone each value is drawn in
      * @return a copy drawing its zones from {@code zones}
+     * @throws IllegalArgumentException if {@code zones} is a {@link ZoneGenerator} and {@link
+     *     #source(ZoneSource)} was called
      */
     public ZonedDateTimeGenerator zones(Generator<? extends ZoneId> zones) {
-        return new ZonedDateTimeGenerator(zones, civilMin, civilMax, instantMin, instantMax, precision, ambiguous);
+        return new ZonedDateTimeGenerator(
+                zones, source, defaultSource, civilMin, civilMax, instantMin, instantMax, precision, ambiguous);
     }
 
     /**
-     * @param min the inclusive lower bound on the wall-clock time in whatever zone is drawn;
-     *     replaces instant bounds
+     * Draw from {@code source} rather than the default zone source: its zones when {@link
+     * #zones(Generator)} was not called, and its transitions for the zones of a generator other
+     * than a {@link ZoneGenerator}.
+     *
+     * @param source the time zone data to draw from
+     * @return a copy with the source set
+     * @throws IllegalArgumentException if the zones are a {@link ZoneGenerator}, which takes the
+     *     source itself, as {@code zones().source(source)}
+     */
+    public ZonedDateTimeGenerator source(ZoneSource source) {
+        return new ZonedDateTimeGenerator(
+                zones, source, defaultSource, civilMin, civilMax, instantMin, instantMax, precision, ambiguous);
+    }
+
+    /**
+     * @param min the inclusive lower bound on the wall-clock time in whatever zone is drawn
      * @return a copy with the bound set
+     * @throws IllegalArgumentException if an instant bound was set
      */
     public ZonedDateTimeGenerator min(LocalDateTime min) {
-        return civil(min, civilMin == null ? DateTimeGenerator.MAX_CIVIL : civilMax);
+        return civil(min, civilMax);
     }
 
     /**
-     * @param max the inclusive upper bound on the wall-clock time in whatever zone is drawn;
-     *     replaces instant bounds
+     * @param max the inclusive upper bound on the wall-clock time in whatever zone is drawn
      * @return a copy with the bound set
+     * @throws IllegalArgumentException if an instant bound was set
      */
     public ZonedDateTimeGenerator max(LocalDateTime max) {
-        return civil(civilMin == null ? DateTimeGenerator.MIN_CIVIL : civilMin, max);
+        return civil(civilMin, max);
     }
 
     /**
-     * @param min the inclusive lower bound on the instant; replaces wall-clock bounds
+     * @param min the inclusive lower bound on the instant
      * @return a copy with the bound set
+     * @throws IllegalArgumentException if a wall-clock bound was set
      */
     public ZonedDateTimeGenerator min(Instant min) {
-        return instant(min, instantMin == null ? InstantGenerator.MAX_ENGINE : instantMax);
+        return instant(min, instantMax);
     }
 
     /**
-     * @param max the inclusive upper bound on the instant; replaces wall-clock bounds
+     * @param max the inclusive upper bound on the instant
      * @return a copy with the bound set
+     * @throws IllegalArgumentException if a wall-clock bound was set
      */
     public ZonedDateTimeGenerator max(Instant max) {
-        return instant(instantMin == null ? InstantGenerator.MIN_ENGINE : instantMin, max);
+        return instant(instantMin, max);
     }
 
     /**
-     * @param min the inclusive lower bound, as the instant it denotes; replaces wall-clock bounds
+     * @param min the inclusive lower bound, as the instant it denotes
      * @return a copy with the bound set
+     * @throws IllegalArgumentException if a wall-clock bound was set
      */
     public ZonedDateTimeGenerator min(ZonedDateTime min) {
         return min(min.toInstant());
     }
 
     /**
-     * @param max the inclusive upper bound, as the instant it denotes; replaces wall-clock bounds
+     * @param max the inclusive upper bound, as the instant it denotes
      * @return a copy with the bound set
+     * @throws IllegalArgumentException if a wall-clock bound was set
      */
     public ZonedDateTimeGenerator max(ZonedDateTime max) {
         return max(max.toInstant());
@@ -165,14 +249,15 @@ public final class ZonedDateTimeGenerator implements Generator<ZonedDateTime> {
      * Draw only wall-clock times that are a whole number of {@code precision} units since
      * midnight: {@link ChronoUnit#NANOS} (the default), {@link ChronoUnit#MICROS}, {@link
      * ChronoUnit#MILLIS}, {@link ChronoUnit#SECONDS}, {@link ChronoUnit#MINUTES} or {@link
-     * ChronoUnit#HOURS}. Bounds holding no such time are rejected with an {@link
-     * IllegalArgumentException} at the first draw.
+     * ChronoUnit#HOURS}. Wall-clock bounds holding no such time are rejected with an {@link
+     * IllegalArgumentException}.
      *
      * @param precision the unit every drawn time of day is a whole number of
      * @return a copy with the precision set
      */
     public ZonedDateTimeGenerator precision(ChronoUnit precision) {
-        return new ZonedDateTimeGenerator(zones, civilMin, civilMax, instantMin, instantMax, precision, ambiguous);
+        return new ZonedDateTimeGenerator(
+                zones, source, defaultSource, civilMin, civilMax, instantMin, instantMax, precision, ambiguous);
     }
 
     /**
@@ -181,12 +266,19 @@ public final class ZonedDateTimeGenerator implements Generator<ZonedDateTime> {
      * @return a copy with the policy set
      */
     public ZonedDateTimeGenerator ambiguous(Ambiguous ambiguous) {
-        return new ZonedDateTimeGenerator(zones, civilMin, civilMax, instantMin, instantMax, precision, ambiguous);
+        return new ZonedDateTimeGenerator(
+                zones, source, defaultSource, civilMin, civilMax, instantMin, instantMax, precision, ambiguous);
     }
 
     private SpecHandle buildSpec(TestCase tc) {
         return tc.zonedSpec(
-                civilMin, civilMax, instantMin, instantMax, precisionCode, Abi.IMAGINARY_AVOID, ambiguous.engineValue);
+                instantBounded ? null : civilLo,
+                instantBounded ? null : civilHi,
+                instantBounded ? instantLo : null,
+                instantBounded ? instantHi : null,
+                precisionCode,
+                Abi.IMAGINARY_AVOID,
+                ambiguous.engineValue);
     }
 
     /** @hidden */
@@ -194,52 +286,81 @@ public final class ZonedDateTimeGenerator implements Generator<ZonedDateTime> {
     public ZonedDateTime doDraw(TestCase tc) {
         tc.startSpan(Label.ZONED_DATETIME);
         try {
-            if (zones instanceof ZoneGenerator) {
-                return fromEngine(tc, ((ZoneGenerator) zones).spec(tc));
+            if (builtIn != null) {
+                Libhegel.ZonedDatetime drawn =
+                        tc.generateZonedDatetime(builtIn.spec(tc), spec.get(tc, this::buildSpec));
+                return resolve(tc, drawn, ZoneId.of(drawn.zone()));
             }
-            ZoneId zone = zones.doDraw(tc);
-            SpecHandle single = ZoneGenerator.specFor(tc, zone);
-            return single != null ? fromEngine(tc, single) : attached(tc, zone);
+            return in(tc, zones.doDraw(tc));
         } finally {
             tc.stopSpan(false);
         }
     }
 
-    private ZonedDateTime fromEngine(TestCase tc, SpecHandle tzSpec) {
-        Libhegel.ZonedDatetime drawn = tc.generateZonedDatetime(tzSpec, spec.get(tc, this::buildSpec));
-        ZoneId zone = ZoneId.of(drawn.zone());
-        ZonedDateTime value =
-                ZonedDateTime.ofLocal(drawn.civil(), zone, ZoneOffset.ofTotalSeconds(drawn.offsetSeconds()));
-        tc.assume(value.toInstant().equals(drawn.timestamp()));
-        return value;
+    private ZonedDateTime in(TestCase tc, ZoneId zone) {
+        if (zone instanceof ZoneOffset) {
+            return fixed(tc, zone, (ZoneOffset) zone);
+        }
+        String id = zone.getId();
+        try {
+            long handle = resolved.handle(tc.binding());
+            if (tc.timezoneInfo(handle, id).known()) {
+                return resolve(tc, tc.generateZonedDatetimeForZone(handle, id, spec.get(tc, this::buildSpec)), zone);
+            }
+        } finally {
+            Reference.reachabilityFence(resolved);
+        }
+        if (!zone.getRules().isFixedOffset()) {
+            throw new IllegalArgumentException(WHAT + ": the zone source does not know the zone \"" + id
+                    + "\" that the zones generator drew; pass the source that has it to source(...)");
+        }
+        return fixed(tc, zone, zone.getRules().getOffset(Instant.EPOCH));
     }
 
-    private ZonedDateTime attached(TestCase tc, ZoneId zone) {
-        LocalDateTime lo = civilMin;
-        LocalDateTime hi = civilMax;
-        if (lo == null) {
-            lo = wallClock(instantMin, zone);
-            hi = wallClock(instantMax, zone);
-            tc.assume(!lo.isAfter(hi));
-        }
-        LocalDateTime civil = tc.generateDatetime(lo, hi, precisionCode);
-        ZonedDateTime value = ZonedDateTime.ofLocal(civil, zone, null);
-        if (ambiguous == Ambiguous.LATER) {
+    /** The drawn value under this JVM's rules, which are the engine's when it drew from {@code java.time}. */
+    private ZonedDateTime resolve(TestCase tc, Libhegel.ZonedDatetime drawn, ZoneId zone) {
+        ZonedDateTime value = ZonedDateTime.ofLocal(drawn.civil(), zone, null);
+        if (drawn.fold() || ambiguous == Ambiguous.LATER) {
             value = value.withLaterOffsetAtOverlap();
         }
-        tc.assume(value.toLocalDateTime().equals(civil));
-        if (civilMin == null) {
-            Instant instant = value.toInstant();
-            tc.assume(!instant.isBefore(instantMin) && !instant.isAfter(instantMax));
+        boolean sameWallClock = value.toLocalDateTime().equals(drawn.civil());
+        Instant instant = value.toInstant();
+        if (resolved != ZoneSource.javaTime() || drawn.civil().getYear() > JavaTimeZones.LAST_EXPANDED_YEAR) {
+            tc.assume(sameWallClock && (!instantBounded || within(instant)));
+            return value;
         }
-        return value;
+        if (sameWallClock && instant.equals(drawn.timestamp())) {
+            return value;
+        }
+        // When java.time reads the drawn instant as the drawn wall clock, the engine's data is
+        // right and it is java.time that resolves that wall clock to a different instant.
+        tc.assume(!LocalDateTime.ofInstant(drawn.timestamp(), zone).equals(drawn.civil()));
+        throw new HegelException(WHAT + ": the engine drew " + drawn.civil() + " in " + zone.getId()
+                + " as the instant " + drawn.timestamp() + ", but java.time resolves it to " + value
+                + ". The engine drew from java.time's own zone rules, so the two must agree: this is a bug"
+                + " in Hegel.");
     }
 
-    private static LocalDateTime wallClock(Instant instant, ZoneId zone) {
-        LocalDateTime wall = instant.atZone(zone).toLocalDateTime();
-        if (wall.isBefore(DateTimeGenerator.MIN_CIVIL)) {
-            return DateTimeGenerator.MIN_CIVIL;
+    private boolean within(Instant instant) {
+        return !instant.isBefore(instantLo) && !instant.isAfter(instantHi);
+    }
+
+    /** A wall-clock time in a zone with one offset for ever, which needs no zone data. */
+    private ZonedDateTime fixed(TestCase tc, ZoneId zone, ZoneOffset offset) {
+        LocalDateTime lo = civilLo;
+        LocalDateTime hi = civilHi;
+        if (instantBounded) {
+            LocalDateTime from = LocalDateTime.ofInstant(instantLo, offset);
+            LocalDateTime to = LocalDateTime.ofInstant(instantHi, offset);
+            lo = ceiling(from.isBefore(DateTimeGenerator.MIN_CIVIL) ? DateTimeGenerator.MIN_CIVIL : from);
+            hi = to.isAfter(DateTimeGenerator.MAX_CIVIL) ? DateTimeGenerator.MAX_CIVIL : to;
+            tc.assume(!lo.isAfter(hi));
         }
-        return wall.isAfter(DateTimeGenerator.MAX_CIVIL) ? DateTimeGenerator.MAX_CIVIL : wall;
+        return ZonedDateTime.ofLocal(tc.generateDatetime(lo, hi, precisionCode), zone, offset);
+    }
+
+    private LocalDateTime ceiling(LocalDateTime wall) {
+        LocalDateTime truncated = wall.truncatedTo(precision);
+        return truncated.isBefore(wall) ? truncated.plus(1, precision) : truncated;
     }
 }

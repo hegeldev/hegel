@@ -1,5 +1,6 @@
 package dev.hegel.generators.temporal;
 
+import dev.hegel.EngineAccess;
 import dev.hegel.Generator;
 import dev.hegel.SpecHandle;
 import dev.hegel.TestCase;
@@ -7,17 +8,24 @@ import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.Month;
 import java.util.Arrays;
+import java.util.Objects;
 import java.util.Set;
 
 /**
  * Generates {@link LocalDate} values within an inclusive {@code [min, max]} range.
  *
- * <p>The default range is {@code 0001-01-01} to {@code 9999-12-31}; narrow it with the fluent
- * {@link #min(LocalDate)} / {@link #max(LocalDate)} methods, and restrict it to some days of the week
- * or months with {@link #weekdays(DayOfWeek...)} and {@link #months(Month...)}. Values shrink
- * toward 2000-01-01, or the nearest bound (or allowed day) when that is out of range. One draw in
- * twenty on average targets a date tests tend to get wrong: the leap days nearest the bounds, the
- * year boundaries, the 2038 and 2106 overflow days and the days of an ISO week 53.
+ * <p>The default range is {@code 0001-01-01} to {@code 9999-12-31}; set either end with the fluent
+ * {@link #min(LocalDate)} / {@link #max(LocalDate)} methods, anywhere in the years {@code -999999}
+ * to {@code 999999}, and restrict the dates to some days of the week or months with {@link
+ * #weekdays(DayOfWeek...)} and {@link #months(Month...)}. Values shrink toward 2000-01-01, or the nearest bound (or allowed
+ * day) when that is out of range. One draw in twenty on average targets a date tests tend to get
+ * wrong: the leap days nearest the bounds, the year boundaries, the 2038 and 2106 overflow days
+ * and the days of an ISO week 53.
+ *
+ * <p>Bounds in the wrong order, and bounds that hold no date on an allowed weekday and month, are
+ * rejected with an {@link IllegalArgumentException} by the method that makes them so. A bound that
+ * was not set counts as its default, so to draw beyond the year 9999 set {@code max} before {@code
+ * min}, and before the year 1 {@code min} before {@code max}.
  */
 public final class DateGenerator implements Generator<LocalDate> {
     static final LocalDate DEFAULT_MIN = LocalDate.of(1, 1, 1);
@@ -26,52 +34,42 @@ public final class DateGenerator implements Generator<LocalDate> {
 
     private final LocalDate min;
     private final LocalDate max;
+    private final LocalDate lo;
+    private final LocalDate hi;
     private final Set<DayOfWeek> weekdays;
     private final Set<Month> months;
     private final SpecCache options = new SpecCache();
 
     public DateGenerator() {
-        this(DEFAULT_MIN, DEFAULT_MAX);
+        this(null, null, null, null);
     }
 
+    /**
+     * @param min the inclusive lower bound
+     * @param max the inclusive upper bound
+     */
     public DateGenerator(LocalDate min, LocalDate max) {
-        this(min, max, null, null);
+        this(Objects.requireNonNull(min), Objects.requireNonNull(max), null, null);
     }
 
     private DateGenerator(LocalDate min, LocalDate max, Set<DayOfWeek> weekdays, Set<Month> months) {
-        if (min.isAfter(max)) {
-            throw new IllegalArgumentException("dates: min (" + min + ") > max (" + max + ")");
-        }
-        validateYear(min);
-        validateYear(max);
+        this.lo = min != null ? min : DEFAULT_MIN;
+        this.hi = max != null ? max : DEFAULT_MAX;
+        validateYear(lo);
+        validateYear(hi);
+        Bounds.ordered("dates", min, max, lo, hi);
         this.min = min;
         this.max = max;
         this.weekdays = weekdays;
         this.months = months;
-        if (weekdays != null || months != null) {
-            checkSomeDayIsAllowed();
-        }
+        TestCase setup = EngineAccess.setup();
+        setup.validateDate(lo, hi, optionsHandle(setup));
     }
 
     private static void validateYear(LocalDate date) {
         if (date.getYear() < -MAX_ENGINE_YEAR || date.getYear() > MAX_ENGINE_YEAR) {
             throw new IllegalArgumentException("dates: year of " + date + " is outside [-999999, 999999]");
         }
-    }
-
-    private void checkSomeDayIsAllowed() {
-        for (LocalDate day = min; !day.isAfter(max); day = day.plusDays(1)) {
-            if (allows(day)) {
-                return;
-            }
-        }
-        throw new IllegalArgumentException("dates: no date between " + min + " and " + max + " falls on weekdays="
-                + weekdays + " and months=" + months);
-    }
-
-    private boolean allows(LocalDate day) {
-        return (weekdays == null || weekdays.contains(day.getDayOfWeek()))
-                && (months == null || months.contains(day.getMonth()));
     }
 
     private static <E extends Enum<E>> Set<E> nonEmpty(Set<E> values, String what) {
@@ -151,10 +149,13 @@ public final class DateGenerator implements Generator<LocalDate> {
         return tc.dateOptions(mask(weekdays), mask(months));
     }
 
+    private SpecHandle optionsHandle(TestCase tc) {
+        return weekdays == null && months == null ? null : options.get(tc, this::buildOptions);
+    }
+
     /** @hidden */
     @Override
     public LocalDate doDraw(TestCase tc) {
-        SpecHandle handle = weekdays == null && months == null ? null : options.get(tc, this::buildOptions);
-        return tc.generateDate(min, max, handle);
+        return tc.generateDate(lo, hi, optionsHandle(tc));
     }
 }

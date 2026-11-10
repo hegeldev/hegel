@@ -113,6 +113,8 @@ final class FakeLibhegel implements Libhegel {
     int generateOffsetRc = Abi.OK;
     Integer offsetGranularity;
     int generateDurationRc = Abi.OK;
+    Duration durationMin; // the bounds the last duration draw received
+    Duration durationMax;
     int generateTimezoneRc = Abi.OK;
     String timezoneValue = "UTC";
     int generateZonedDatetimeRc = Abi.OK;
@@ -126,6 +128,9 @@ final class FakeLibhegel implements Libhegel {
             0,
             0,
             Instant.ofEpochSecond(946684800));
+    int generateZonedDatetimeForZoneRc = Abi.OK;
+    Long zonedSource; // the source handle and name the last per-zone draw received
+    String zonedName;
     int generateSpanRc = Abi.OK;
     long[] spanValue = new long[10];
     // Configuration handles: return codes, captured arguments and free counts.
@@ -138,6 +143,7 @@ final class FakeLibhegel implements Libhegel {
     List<String> timezoneNames;
     Boolean timezoneLinks;
     Boolean timezoneLegacy;
+    int timezoneSpecValidateRc = Abi.OK;
     int freedTimezoneSpecs;
     int zonedSpecSetCivilBoundsRc = Abi.OK;
     int zonedSpecSetInstantBoundsRc = Abi.OK;
@@ -149,11 +155,13 @@ final class FakeLibhegel implements Libhegel {
     Integer zonedPrecision;
     Integer zonedImaginary;
     Integer zonedAmbiguous;
+    int zonedSpecValidateRc = Abi.OK;
     int freedZonedSpecs;
     int spanSpecSetUnitBoundsRc = Abi.OK;
     int spanSpecSetSignRc = Abi.OK;
     final List<long[]> spanUnitBounds = new ArrayList<>(); // {unit, min, max} per call
     Integer spanSign;
+    int spanSpecValidateRc = Abi.OK;
     int freedSpanSpecs;
     /** The names timezoneInfo reports as known (every other name is unknown). */
     List<String> knownZones = List.of("UTC", "Europe/London", "America/New_York", "Asia/Calcutta", "EST5EDT");
@@ -537,10 +545,42 @@ final class FakeLibhegel implements Libhegel {
 
     @Override
     public int generateDuration(long tc, Duration min, Duration max, int precision, Duration[] out) {
+        durationMin = min;
+        durationMax = max;
         if (generateDurationRc == Abi.OK) {
             out[0] = min;
         }
         return generateDurationRc;
+    }
+
+    @Override
+    public int validateDate(LocalDate min, LocalDate max, long options) {
+        return Abi.OK;
+    }
+
+    @Override
+    public int validateTime(LocalTime min, LocalTime max, int precision) {
+        return Abi.OK;
+    }
+
+    @Override
+    public int validateDatetime(LocalDateTime min, LocalDateTime max, int precision) {
+        return Abi.OK;
+    }
+
+    @Override
+    public int validateTimestamp(Instant min, Instant max, int precision) {
+        return Abi.OK;
+    }
+
+    @Override
+    public int validateOffset(int minSeconds, int maxSeconds, int granularity, boolean allowUnknown) {
+        return Abi.OK;
+    }
+
+    @Override
+    public int validateDuration(Duration min, Duration max, int precision) {
+        return Abi.OK;
     }
 
     @Override
@@ -557,6 +597,25 @@ final class FakeLibhegel implements Libhegel {
             out[0] = zonedValue;
         }
         return generateZonedDatetimeRc;
+    }
+
+    @Override
+    public int generateZonedDatetimeForZone(long tc, long source, String name, long zonedSpec, ZonedDatetime[] out) {
+        zonedSource = source;
+        zonedName = name;
+        if (generateZonedDatetimeForZoneRc == Abi.OK) {
+            out[0] = new ZonedDatetime(
+                    name,
+                    zonedValue.civil(),
+                    zonedValue.offsetSeconds(),
+                    zonedValue.offsetKnown(),
+                    zonedValue.fold(),
+                    zonedValue.kind(),
+                    zonedValue.offsetBefore(),
+                    zonedValue.offsetAfter(),
+                    zonedValue.timestamp());
+        }
+        return generateZonedDatetimeForZoneRc;
     }
 
     @Override
@@ -618,6 +677,11 @@ final class FakeLibhegel implements Libhegel {
     }
 
     @Override
+    public int timezoneSpecValidate(long spec) {
+        return timezoneSpecValidateRc;
+    }
+
+    @Override
     public int zonedSpecNew(long[] out) {
         out[0] = ZONED_SPEC;
         return Abi.OK;
@@ -659,6 +723,11 @@ final class FakeLibhegel implements Libhegel {
     }
 
     @Override
+    public int zonedSpecValidate(long spec) {
+        return zonedSpecValidateRc;
+    }
+
+    @Override
     public int spanSpecNew(long[] out) {
         out[0] = SPAN_SPEC;
         return Abi.OK;
@@ -679,6 +748,11 @@ final class FakeLibhegel implements Libhegel {
     public int spanSpecSetSign(long spec, int sign) {
         spanSign = sign;
         return spanSpecSetSignRc;
+    }
+
+    @Override
+    public int spanSpecValidate(long spec) {
+        return spanSpecValidateRc;
     }
 
     @Override
@@ -761,7 +835,7 @@ final class FakeLibhegel implements Libhegel {
     }
 
     @Override
-    public int zoneSourceSetLoader(long source, ZoneLoader loader) {
+    public int zoneSourceSetLoader(long source, ZoneLoader loader, Runnable release) {
         return Abi.OK;
     }
 

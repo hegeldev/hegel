@@ -1,5 +1,6 @@
 package dev.hegel.generators.temporal;
 
+import dev.hegel.EngineAccess;
 import dev.hegel.Generator;
 import dev.hegel.TestCase;
 import java.time.ZoneOffset;
@@ -20,8 +21,16 @@ public final class OffsetGenerator implements Generator<ZoneOffset> {
     private final int maxSeconds;
     private final OffsetGranularity granularity;
 
-    public OffsetGenerator(int minSeconds, int maxSeconds) {
-        this(minSeconds, maxSeconds, OffsetGranularity.SECONDS);
+    public OffsetGenerator() {
+        this(ZoneOffset.MIN, ZoneOffset.MAX);
+    }
+
+    /**
+     * @param min the inclusive lower bound
+     * @param max the inclusive upper bound
+     */
+    public OffsetGenerator(ZoneOffset min, ZoneOffset max) {
+        this(min.getTotalSeconds(), max.getTotalSeconds(), OffsetGranularity.SECONDS);
     }
 
     private OffsetGenerator(int minSeconds, int maxSeconds, OffsetGranularity granularity) {
@@ -31,6 +40,7 @@ public final class OffsetGenerator implements Generator<ZoneOffset> {
         this.minSeconds = minSeconds;
         this.maxSeconds = maxSeconds;
         this.granularity = granularity;
+        EngineAccess.setup().validateOffset(minSeconds, maxSeconds, granularity.engineValue);
     }
 
     /**
@@ -52,7 +62,7 @@ public final class OffsetGenerator implements Generator<ZoneOffset> {
     /**
      * Draw only offsets that are a whole number of {@code granularity} units ({@link
      * OffsetGranularity#SECONDS} by default). Bounds holding no such offset are rejected with an {@link
-     * IllegalArgumentException} at the first draw.
+     * IllegalArgumentException}.
      *
      * @param granularity the unit every drawn offset is a whole number of
      * @return a copy with the granularity set

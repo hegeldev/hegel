@@ -14,7 +14,7 @@ import static dev.hegel.Generators.sets;
 import static dev.hegel.Generators.text;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-import dev.hegel.Generators.Temporal;
+import dev.hegel.Generators.Temporals;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -119,40 +119,40 @@ class GeneratorValidationTest {
     void temporalBounds() {
         assertThrows(
                 IllegalArgumentException.class,
-                () -> Temporal.dates().min(LocalDate.of(2020, 1, 2)).max(LocalDate.of(2020, 1, 1)));
-        assertThrows(IllegalArgumentException.class, () -> Temporal.dates().min(LocalDate.of(-1_000_000, 1, 1)));
-        assertThrows(IllegalArgumentException.class, () -> Temporal.dates().max(LocalDate.of(1_000_000, 1, 1)));
+                () -> Temporals.dates().min(LocalDate.of(2020, 1, 2)).max(LocalDate.of(2020, 1, 1)));
+        assertThrows(IllegalArgumentException.class, () -> Temporals.dates().min(LocalDate.of(-1_000_000, 1, 1)));
+        assertThrows(IllegalArgumentException.class, () -> Temporals.dates().max(LocalDate.of(1_000_000, 1, 1)));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> Temporal.times().min(LocalTime.of(2, 0)).max(LocalTime.of(1, 0)));
+                () -> Temporals.times().min(LocalTime.of(2, 0)).max(LocalTime.of(1, 0)));
         // Bounds are nanosecond-exact, so the last instant of the day is a valid (one-value) range.
-        Temporal.times().min(LocalTime.MAX);
+        Temporals.times().min(LocalTime.MAX);
         assertThrows(
                 IllegalArgumentException.class,
-                () -> Temporal.datetimes()
+                () -> Temporals.datetimes()
                         .min(LocalDateTime.of(2020, 1, 1, 0, 0))
                         .max(LocalDateTime.of(2019, 1, 1, 0, 0)));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> Temporal.datetimes().max(LocalDateTime.of(1_000_000, 1, 1, 0, 0)));
+                () -> Temporals.datetimes().max(LocalDateTime.of(1_000_000, 1, 1, 0, 0)));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> Temporal.datetimes().min(LocalDateTime.of(-1_000_000, 1, 1, 0, 0)));
+                () -> Temporals.datetimes().min(LocalDateTime.of(-1_000_000, 1, 1, 0, 0)));
     }
 
     @Test
     void durationBounds() {
         assertThrows(
                 IllegalArgumentException.class,
-                () -> Temporal.durations().min(java.time.Duration.ofSeconds(2)).max(java.time.Duration.ofSeconds(1)));
-        Temporal.durations().min(java.time.Duration.ofSeconds(-1));
+                () -> Temporals.durations().min(java.time.Duration.ofSeconds(2)).max(java.time.Duration.ofSeconds(1)));
+        Temporals.durations().min(java.time.Duration.ofSeconds(-1));
     }
 
     @Test
     void zoneOffsetBounds() {
         assertThrows(
                 IllegalArgumentException.class,
-                () -> Temporal.offsets().min(java.time.ZoneOffset.ofHours(2)).max(java.time.ZoneOffset.ofHours(1)));
+                () -> Temporals.offsets().min(java.time.ZoneOffset.ofHours(2)).max(java.time.ZoneOffset.ofHours(1)));
     }
 
     @Test

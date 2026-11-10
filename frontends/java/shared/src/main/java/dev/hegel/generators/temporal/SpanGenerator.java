@@ -1,5 +1,6 @@
 package dev.hegel.generators.temporal;
 
+import dev.hegel.EngineAccess;
 import dev.hegel.Generator;
 import dev.hegel.SpecHandle;
 import dev.hegel.TestCase;
@@ -9,12 +10,14 @@ import java.time.Period;
 /**
  * Generates {@link Period} values: a count of years, months and days, each independently signed.
  *
- * <p>By default every unit spans the whole {@code int} range. The first of {@link #years(int,
- * int)}, {@link #months(int, int)} and {@link #days(int, int)} called replaces that default with
- * just its unit, and later calls add units, so a period of days and months is {@code
- * spans().days(0, 30).months(0, 11)}; a unit never enabled is always 0. {@link
- * #nonNegative(boolean)} draws magnitudes only. Values shrink toward {@link Period#ZERO}, or the
- * nearest value to it in each unit's bounds.
+ * <p>By default every unit spans the whole {@code int} range, which is every {@link Period} there
+ * is but far more than a date can absorb: {@code date.plus(period)} throws a {@link
+ * java.time.DateTimeException} for most of them, so bound the units when the periods are to be
+ * added to dates. The first of {@link #years(int, int)}, {@link #months(int, int)} and {@link
+ * #days(int, int)} called replaces that default with just its unit, and later calls add units, so
+ * a period of days and months is {@code spans().days(0, 30).months(0, 11)}; a unit never enabled
+ * is always 0. {@link #nonNegative(boolean)} draws magnitudes only. Values shrink toward {@link
+ * Period#ZERO}, or the nearest value to it in each unit's bounds.
  */
 public final class SpanGenerator implements Generator<Period> {
     private static final int YEARS = 0;
@@ -36,6 +39,7 @@ public final class SpanGenerator implements Generator<Period> {
     private SpanGenerator(int[][] bounds, boolean nonNegative) {
         this.bounds = bounds;
         this.nonNegative = nonNegative;
+        spec.get(EngineAccess.setup(), this::buildSpec);
     }
 
     private SpanGenerator unit(int unit, int min, int max) {
@@ -86,7 +90,7 @@ public final class SpanGenerator implements Generator<Period> {
     /**
      * @param nonNegative whether every unit is drawn as a magnitude only (off by default: each
      *     unit is signed on its own, as a {@link Period} is); a unit whose lower bound is negative
-     *     is then rejected with an {@link IllegalArgumentException} at the first draw
+     *     is then rejected with an {@link IllegalArgumentException}
      * @return a copy with the setting applied
      */
     public SpanGenerator nonNegative(boolean nonNegative) {

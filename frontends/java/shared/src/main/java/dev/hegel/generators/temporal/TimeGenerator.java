@@ -1,5 +1,6 @@
 package dev.hegel.generators.temporal;
 
+import dev.hegel.EngineAccess;
 import dev.hegel.Generator;
 import dev.hegel.TestCase;
 import java.time.LocalTime;
@@ -36,6 +37,7 @@ public final class TimeGenerator implements Generator<LocalTime> {
         this.max = max;
         this.precision = precision;
         this.precisionCode = Precisions.engine(precision, "times");
+        EngineAccess.setup().validateTime(min, max, precisionCode);
     }
 
     /**
@@ -58,7 +60,7 @@ public final class TimeGenerator implements Generator<LocalTime> {
      * Draw only times that are a whole number of {@code precision} units since midnight: {@link
      * ChronoUnit#NANOS} (the default), {@link ChronoUnit#MICROS}, {@link ChronoUnit#MILLIS}, {@link
      * ChronoUnit#SECONDS}, {@link ChronoUnit#MINUTES} or {@link ChronoUnit#HOURS}. Bounds holding
-     * no such time are rejected with an {@link IllegalArgumentException} at the first draw.
+     * no such time are rejected with an {@link IllegalArgumentException}.
      *
      * @param precision the unit every drawn time is a whole number of
      * @return a copy with the precision set

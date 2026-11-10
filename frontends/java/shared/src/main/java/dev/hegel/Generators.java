@@ -586,66 +586,68 @@ public final class Generators {
      * Generates {@link LocalDate} values.
      *
      * @return a date generator
-     * @deprecated use {@link Temporal#dates()}
+     * @deprecated use {@link Temporals#dates()}
      */
     @Deprecated
     public static DateGenerator dates() {
-        return Temporal.dates();
+        return Temporals.dates();
     }
 
     /**
      * Generates {@link LocalTime} values.
      *
      * @return a time generator
-     * @deprecated use {@link Temporal#times()}
+     * @deprecated use {@link Temporals#times()}
      */
     @Deprecated
     public static TimeGenerator times() {
-        return Temporal.times();
+        return Temporals.times();
     }
 
     /**
      * Generates {@link LocalDateTime} values.
      *
      * @return a datetime generator
-     * @deprecated use {@link Temporal#datetimes()}
+     * @deprecated use {@link Temporals#datetimes()}
      */
     @Deprecated
     public static DateTimeGenerator datetimes() {
-        return Temporal.datetimes();
+        return Temporals.datetimes();
     }
 
     /**
      * Generates {@link ZoneOffset} values.
      *
      * @return an offset generator
-     * @deprecated use {@link Temporal#offsets()}
+     * @deprecated use {@link Temporals#offsets()}
      */
     @Deprecated
     public static OffsetGenerator zoneOffsets() {
-        return Temporal.offsets();
+        return Temporals.offsets();
     }
 
     /**
      * Generates region {@link ZoneId} values.
      *
      * @return a zone generator
-     * @deprecated use {@link Temporal#zones()}
+     * @deprecated use {@link Temporals#zones()}
      */
     @Deprecated
     public static ZoneGenerator zoneIds() {
-        return Temporal.zones();
+        return Temporals.zones();
     }
 
     /**
-     * Generates {@link Duration} values.
+     * Generates non-negative {@link Duration} values of up to {@code Long.MAX_VALUE} nanoseconds
+     * (about 292 years), the range this method has always drawn from.
      *
      * @return a duration generator
-     * @deprecated use {@link Temporal#durations()}
+     * @deprecated use {@link Temporals#durations()}, which draws from the whole signed range of
+     *     {@link Duration} unless bounded
      */
     @Deprecated
     public static DurationGenerator durations() {
-        return Temporal.durations();
+        return Temporals.durations().min(Duration.ZERO).max(Duration.ofNanos(Long.MAX_VALUE));
     }
 
     /**
@@ -664,11 +666,13 @@ public final class Generators {
      * Factory methods for the date and time generators, whose classes live in {@link
      * dev.hegel.generators.temporal}.
      *
-     * <p>With {@code import static dev.hegel.Generators.*;} in scope, write {@code Temporal.dates()},
-     * {@code Temporal.zonedDateTimes()} and so on.
+     * <p>With {@code import static dev.hegel.Generators.*;} in scope, write {@code Temporals.dates()},
+     * {@code Temporals.zonedDatetimes()} and so on. The generators of dates ({@link #dates()}, {@link
+     * #datetimes()}, {@link #zonedDatetimes()} and {@link #instants()}) share one default range, the
+     * years 1 to 9999.
      */
-    public static final class Temporal {
-        private Temporal() {}
+    public static final class Temporals {
+        private Temporals() {}
 
         /**
          * Generates {@link LocalDate} values spanning years 1 to 9999 by default, shrinking toward
@@ -695,9 +699,10 @@ public final class Generators {
         }
 
         /**
-         * Generates {@link LocalDateTime} values at nanosecond resolution, shrinking toward
-         * 2000-01-01T00:00:00. Narrow the range with {@link DateTimeGenerator#min} / {@link
-         * DateTimeGenerator#max} and the resolution with {@link DateTimeGenerator#precision}. Call
+         * Generates {@link LocalDateTime} values spanning years 1 to 9999 by default, at nanosecond
+         * resolution, shrinking toward 2000-01-01T00:00:00. Narrow the range with {@link
+         * DateTimeGenerator#min} / {@link DateTimeGenerator#max} and the resolution with {@link
+         * DateTimeGenerator#precision}. Call
          * {@link DateTimeGenerator#zones} to produce zone-aware {@link ZonedDateTime} values or
          * {@link DateTimeGenerator#offsets} for offset-aware {@link java.time.OffsetDateTime} values
          * instead.
@@ -710,21 +715,24 @@ public final class Generators {
 
         /**
          * Generates {@link ZonedDateTime} values: a zone from {@link #zones()} and a wall-clock time
-         * in it, with the daylight-saving transitions of the zone targeted deliberately. Configure
-         * the zones, the bounds (on the wall clock or the instant), the precision and what repeated
-         * and skipped wall times mean with the fluent methods on {@link ZonedDateTimeGenerator}.
+         * in it, in the years 1 to 9999 by default, with the daylight-saving transitions of the
+         * zone targeted deliberately. Configure the zones and the {@link ZoneSource} they are drawn
+         * from, the bounds (on the wall clock or the instant), the precision and what a repeated
+         * wall time means with the fluent methods on {@link ZonedDateTimeGenerator}. The default
+         * zone source is read when this method is called.
          *
          * @return a zoned-datetime generator
          */
-        public static ZonedDateTimeGenerator zonedDateTimes() {
+        public static ZonedDateTimeGenerator zonedDatetimes() {
             return new ZonedDateTimeGenerator();
         }
 
         /**
-         * Generates {@link Instant} values across the engine's range of years {@code [-999999,
-         * 999999]} by default, at nanosecond resolution, shrinking toward 2000-01-01T00:00:00Z.
-         * Narrow the range with {@link InstantGenerator#min} / {@link InstantGenerator#max} and the
-         * resolution with {@link InstantGenerator#precision}.
+         * Generates {@link Instant} values spanning years 1 to 9999 by default, at nanosecond
+         * resolution, shrinking toward 2000-01-01T00:00:00Z. Set the range with {@link
+         * InstantGenerator#min} / {@link InstantGenerator#max}, anywhere in the engine's range of
+         * years {@code [-999999, 999999]}, and the resolution with {@link
+         * InstantGenerator#precision}.
          *
          * @return an instant generator
          */
@@ -740,18 +748,19 @@ public final class Generators {
          * @return an offset generator
          */
         public static OffsetGenerator offsets() {
-            return new OffsetGenerator(ZoneOffset.MIN.getTotalSeconds(), ZoneOffset.MAX.getTotalSeconds());
+            return new OffsetGenerator();
         }
 
         /**
-         * Generates region {@link ZoneId} values: every zone this JVM knows, with the daylight-saving
-         * transitions of the default {@link ZoneSource}, shrinking toward {@code UTC}. The default
-         * source is {@link ZoneSource#javaTime()}, this JVM's own zone rules; {@link
-         * ZoneSource#setDefault(ZoneSource)} replaces it for the process (with {@link
-         * ZoneSource#bundled()}, the engine's pinned IANA release, a saved failure replays the
-         * same on every JVM), and {@link ZoneGenerator#source(ZoneSource)} for one generator.
-         * Configure with the fluent methods on {@link ZoneGenerator}. Pair with {@link
-         * #zonedDateTimes()} or {@link DateTimeGenerator#zones} to build DST-aware datetimes.
+         * Generates region {@link ZoneId} values: every zone of the default {@link ZoneSource} that
+         * this JVM knows, shrinking toward {@code UTC}. The default source is {@link
+         * ZoneSource#javaTime()}, this JVM's own zone rules; {@link
+         * ZoneSource#setDefault(ZoneSource)} replaces it for the generators created afterwards
+         * (with {@link ZoneSource#bundled()}, the engine's pinned IANA release, a saved failure
+         * replays the same on every JVM), and {@link ZoneGenerator#source(ZoneSource)} for one
+         * generator. The default is read when this method is called. Configure with the fluent
+         * methods on {@link ZoneGenerator}. Pair with {@link #zonedDatetimes()} or {@link
+         * DateTimeGenerator#zones} to build DST-aware datetimes.
          *
          * @return a zone generator
          */
@@ -761,8 +770,10 @@ public final class Generators {
 
         /**
          * Generates {@link Duration} values across the whole signed range {@link Duration}
-         * represents, at nanosecond resolution, shrinking toward {@link Duration#ZERO}. Configure
-         * with the fluent methods on {@link DurationGenerator}.
+         * represents, at nanosecond resolution, shrinking toward {@link Duration#ZERO}. Most of
+         * that range is beyond what {@link Duration#toNanos()} and {@link Duration#toMillis()} can
+         * return, so bound it when the code under test converts. Configure with the fluent methods
+         * on {@link DurationGenerator}.
          *
          * @return a duration generator
          */
@@ -772,8 +783,9 @@ public final class Generators {
 
         /**
          * Generates {@link Period} values, calendar spans with years, months and days each anywhere
-         * in the {@code int} range by default, shrinking toward {@link Period#ZERO}. Configure with
-         * the fluent methods on {@link SpanGenerator}.
+         * in the {@code int} range by default, shrinking toward {@link Period#ZERO}. Most such
+         * periods overflow a date they are added to, so bound the units when they will be.
+         * Configure with the fluent methods on {@link SpanGenerator}.
          *
          * @return a span generator
          */

@@ -1,8 +1,10 @@
 package dev.hegel.generators.temporal;
 
 import dev.hegel.EngineAccess;
+import dev.hegel.SpecHandle;
 import dev.hegel.lowlevel.Abi;
 import dev.hegel.lowlevel.Libhegel;
+import java.lang.ref.Reference;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.zone.ZoneRules;
@@ -19,27 +21,36 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
- * Where the zone generators get the time zone data they classify, target and resolve wall-clock
- * times against: which transitions a zone has, and so which wall times are skipped or repeated.
+ * Where the zone generators get the time zone data they draw names from and aim wall-clock times
+ * with: which zones exist, which transitions each has, and so which wall times are skipped or
+ * repeated.
  *
  * <p>By default that is {@link #javaTime()}, the {@code java.time} database of this JVM ({@link
  * ZoneRulesProvider}), so the gaps and folds Hegel aims at are the ones the code under test sees.
  * {@link #bundled()} is the engine's own IANA database (release {@link
- * dev.hegel.Generators.Temporal#tzdbVersion()}), the same on every machine. A generator draws from
- * the source given to {@link ZoneGenerator#source(ZoneSource)}, or else from the default, which
- * {@link #setDefault(ZoneSource)} replaces for the whole process.
+ * dev.hegel.Generators.Temporals#tzdbVersion()}), the same on every machine. A generator draws from
+ * the source given to {@link ZoneGenerator#source(ZoneSource)} or {@link
+ * ZonedDateTimeGenerator#source(ZoneSource)}, or else from the default, which {@link
+ * #setDefault(ZoneSource)} replaces for the whole process. A generator reads the default when it is
+ * created, by its factory method, and keeps that source whatever the default becomes later.
  *
- * <p>A library with a database of its own provides a source through {@link #builder()}: zones from
- * TZif files, from {@code java.time} {@link ZoneRules}, or from an {@link Oracle} that answers
- * offset lookups, plus links, and names declared up front whose data a {@link Loader} supplies
- * the first time a draw needs it. A generator draws a {@link java.time.ZoneId}, so only the
- * source's names this JVM also resolves are drawn.
+ * <p>{@link #builder()} makes a source of other data, to aim draws at transitions this JVM's
+ * database does not have yet or to draw from fewer zones: zones from TZif files (those of the
+ * machine the code will run on, say), from {@code java.time} {@link ZoneRules}, or from an {@link
+ * Oracle} that answers offset lookups, plus links, and names declared up front whose data a {@link
+ * Loader} supplies the first time it is needed. The generators still produce {@link
+ * java.time.ZoneId} and {@link java.time.ZonedDateTime} values, which mean what this JVM's rules
+ * say: a source decides which zones are drawn (those of its names this JVM also resolves) and
+ * which wall-clock times a draw aims at, never the instant a drawn value denotes.
  *
  * <p>Whatever the source, the names, their shrink order and the weighting toward rare features
  * come from the engine's catalogue of IANA names, so a saved failure replays to the same zone and
  * wall-clock time everywhere. A name the catalogue lacks is drawn too, after every name it has.
- * Build a source once and keep it, as a generator is kept: the engine holds its data for the life
- * of the process.
+ *
+ * <p>Build a source once, in a static field or a test class's setup, and share it between
+ * generators: building one reads and uploads its data. The engine's copy of the data, and the
+ * source's {@link Loader}, are released once the source and every generator drawing from it are
+ * unreachable.
  */
 public final class ZoneSource {
     private static final ZoneSource BUNDLED = new ZoneSource(true, List.of(), null, null, null);
@@ -58,8 +69,13 @@ public final class ZoneSource {
     private final Loader loader;
     private final Supplier<String> version;
 
+    private final SpecCache[] hostSpecs = {new SpecCache(), new SpecCache(), new SpecCache(), new SpecCache()};
+
     private Libhegel binding;
     private long handle;
+
+    // Frees the engine's handle once this source, the only thing referring to it, is unreachable.
+    private SpecHandle owner;
 
     private ZoneSource(
             boolean bundled,
@@ -75,10 +91,10 @@ public final class ZoneSource {
     }
 
     /**
-     * The engine's bundled IANA time zone database, one pinned release on every machine. A name
-     * this JVM does not know, or knows with other rules, can then be drawn; {@link
-     * ZoneGenerator} draws only the names this JVM knows, and {@link ZonedDateTimeGenerator}
-     * rejects a test case whose value the two databases resolve differently.
+     * The engine's bundled IANA time zone database, one pinned release on every machine. It may
+     * hold a name this JVM does not know, which is then never drawn, or one this JVM knows with
+     * other rules, whose drawn values mean what this JVM's rules say (see {@link
+     * ZonedDateTimeGenerator}).
      *
      * @return the bundled source
      */
@@ -90,7 +106,7 @@ public final class ZoneSource {
      * The zone rules of this JVM's {@link ZoneRulesProvider}s, the database {@link
      * java.time.ZoneId#of(String)} answers from: every name {@link
      * java.time.ZoneId#getAvailableZoneIds()} lists, with each zone's data uploaded the first time
-     * a draw needs it. The default source.
+     * it is needed. The default source.
      *
      * @return the {@code java.time} source
      */
@@ -99,32 +115,36 @@ public final class ZoneSource {
     }
 
     /**
-     * @return a builder for a source of a library's own zone data
+     * @return a builder for a source of zone data given as TZif files, {@link ZoneRules} or oracles
      */
     public static Builder builder() {
         return new Builder();
     }
 
     /**
-     * @return the source a {@link ZoneGenerator} given none draws from: {@link #javaTime()} unless
-     *     {@link #setDefault(ZoneSource)} replaced it
+     * @return the source a generator created now and given none draws from: {@link #javaTime()}
+     *     unless {@link #setDefault(ZoneSource)} replaced it
      */
     public static ZoneSource getDefault() {
         return defaultSource;
     }
 
     /**
-     * Make {@code source} the default for the rest of the process: the one every {@link
-     * ZoneGenerator} without a {@link ZoneGenerator#source(ZoneSource)} of its own draws from
-     * from now on.
+     * Make {@code source} the default for the rest of the process: the one a {@link ZoneGenerator}
+     * or {@link ZonedDateTimeGenerator} created from now on, and given no source of its own, draws
+     * from. A generator that already exists keeps the source it read when it was created. Pass
+     * the returned source back to restore the default as it was.
      *
      * @param source the new default
+     * @return the default this call replaced
      */
-    public static void setDefault(ZoneSource source) {
+    public static ZoneSource setDefault(ZoneSource source) {
         Libhegel engine = EngineAccess.binding();
         synchronized (ZoneSource.class) {
+            ZoneSource previous = defaultSource;
             engine.setDefaultZoneSource(source.handle(engine));
             defaultSource = source;
+            return previous;
         }
     }
 
@@ -144,24 +164,32 @@ public final class ZoneSource {
      */
     public String version() {
         Libhegel engine = EngineAccess.binding();
-        return engine.zoneSourceVersion(handle(engine));
+        try {
+            return engine.zoneSourceVersion(handle(engine));
+        } finally {
+            Reference.reachabilityFence(this);
+        }
     }
 
     /**
-     * The engine handle of this source for {@code engine}, built the first time.
+     * The engine handle of this source for {@code engine}, built the first time and valid while
+     * this source is reachable: the engine's reference is released once it is not.
      *
      * @hidden
      */
     public synchronized long handle(Libhegel engine) {
         if (binding != engine) {
             long built = build(engine);
-            if (binding != null) {
-                binding.zoneSourceFree(handle);
-            }
+            owner = EngineAccess.zoneSource(engine, built);
             binding = engine;
             handle = built;
         }
         return handle;
+    }
+
+    /** The cached time zone spec of the names of this source this JVM knows, per flag combination. */
+    SpecCache hostSpec(boolean links, boolean legacy) {
+        return hostSpecs[(links ? 1 : 0) + (legacy ? 2 : 0)];
     }
 
     private long build(Libhegel engine) {
@@ -178,11 +206,12 @@ public final class ZoneSource {
                 addition.accept(zones);
             }
             check(engine, engine.zoneSourceDeclare(source, List.copyOf(declared.get())));
-            if (loader != null) {
+            Loader load = loader;
+            if (load != null) {
                 check(
                         engine,
                         engine.zoneSourceSetLoader(
-                                source, (into, name) -> loader.load(name, new EngineZones(engine, into))));
+                                source, (into, name) -> load.load(name, new EngineZones(engine, into)), null));
             }
             String release = version.get();
             if (release != null) {
@@ -197,12 +226,14 @@ public final class ZoneSource {
 
     private static void check(Libhegel engine, int rc) {
         if (rc != Abi.OK) {
-            throw new IllegalArgumentException(engine.lastErrorMessage());
+            throw EngineAccess.argumentError(engine);
         }
     }
 
     private static void loadJavaTime(String name, Zones zones) {
-        zones.rules(name, ZoneRulesProvider.getRules(name, false));
+        if (ZoneRulesProvider.getAvailableZoneIds().contains(name)) {
+            zones.rules(name, ZoneRulesProvider.getRules(name, false));
+        }
     }
 
     private static String javaTimeVersion() {
@@ -251,10 +282,11 @@ public final class ZoneSource {
     }
 
     /**
-     * Supplies a declared name's data the first time a draw or a query needs it, by adding the zone
-     * (or a link) to {@code zones}, or nothing for a name it does not know. It is called on
-     * whichever thread draws, possibly concurrently and more than once for a name; an exception it
-     * throws fails the draw with an {@link IllegalArgumentException} carrying its message.
+     * Supplies a declared name's data the first time a generator being created, a draw or a query
+     * needs it, by adding the zone (or a link) to {@code zones}, or nothing for a name it does not
+     * know. It is called on whichever thread needs the data, possibly concurrently and more than
+     * once for a name; an exception it throws fails that call with an {@link
+     * IllegalArgumentException} carrying its message and caused by it.
      */
     @FunctionalInterface
     public interface Loader {
@@ -292,10 +324,10 @@ public final class ZoneSource {
     public record LocalType(ZoneOffset offset, boolean dst, String abbreviation) {}
 
     /**
-     * A zone a library answers lookups for but does not expose as data: probed into explicit
-     * transitions over a range of years, by asking for each next transition when {@link
-     * #nextTransition(Function)} gives a way to, and by sampling the offset once a day (which
-     * misses a pair of changes less than a day apart) otherwise.
+     * A zone known only through lookups of the offset in force at an instant, not as data: probed
+     * into explicit transitions over a range of years, by asking for each next transition when
+     * {@link #nextTransition(Function)} gives a way to, and by sampling the offset once a day
+     * (which misses a pair of changes less than a day apart) otherwise.
      */
     public static final class Oracle {
         private final Function<Instant, LocalType> typeAt;
@@ -397,8 +429,8 @@ public final class ZoneSource {
         }
 
         /**
-         * Names the source knows whose data the {@link #loader(Loader)} supplies when a draw
-         * needs it, so a zone is only loaded once it is drawn.
+         * Names the source knows whose data the {@link #loader(Loader)} supplies the first time
+         * it is needed, which is when a generator that can draw the zone is created.
          *
          * @param names the names
          * @return this builder
@@ -419,7 +451,7 @@ public final class ZoneSource {
 
         /**
          * @param loader supplies the data of a name the source lacks, declared or not, the first
-         *     time a draw or a query needs it
+         *     time a generator, a draw or a query needs it
          * @return this builder
          */
         public Builder loader(Loader loader) {
@@ -438,13 +470,18 @@ public final class ZoneSource {
         }
 
         /**
-         * @return a source of what this builder collected; its data reaches the engine when a
-         *     generator first draws from it
+         * Build the source, handing its zones, links and declared names to the engine.
+         *
+         * @return a source of what this builder collected
+         * @throws IllegalArgumentException if the engine rejects some of the data: a malformed
+         *     TZif file, rules it cannot represent, an oracle that fails, or a bad name
          */
         public ZoneSource build() {
             List<String> names = List.copyOf(declared);
             String release = version;
-            return new ZoneSource(false, List.copyOf(additions), () -> names, loader, () -> release);
+            ZoneSource source = new ZoneSource(false, List.copyOf(additions), () -> names, loader, () -> release);
+            source.handle(EngineAccess.binding());
+            return source;
         }
     }
 

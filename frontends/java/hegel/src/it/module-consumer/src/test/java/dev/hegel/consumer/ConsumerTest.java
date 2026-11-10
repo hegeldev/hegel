@@ -4,7 +4,7 @@ import static dev.hegel.Generators.integers;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dev.hegel.Generators.Temporal;
+import dev.hegel.Generators.Temporals;
 import dev.hegel.HegelTest;
 import dev.hegel.TestCase;
 import dev.hegel.generators.temporal.DateGenerator;
@@ -20,7 +20,7 @@ class ConsumerTest {
 
     @HegelTest
     void temporalGeneratorsAreExported(TestCase tc) {
-        DateGenerator dates = Temporal.dates().min(LocalDate.of(2000, 1, 1));
+        DateGenerator dates = Temporals.dates().min(LocalDate.of(2000, 1, 1));
         assertTrue(tc.draw(dates).getYear() >= 2000);
     }
 }

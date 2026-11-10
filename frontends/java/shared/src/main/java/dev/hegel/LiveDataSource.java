@@ -2,6 +2,7 @@ package dev.hegel;
 
 import dev.hegel.lowlevel.Abi;
 import dev.hegel.lowlevel.Libhegel;
+import java.lang.ref.Reference;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -44,7 +45,7 @@ final class LiveDataSource implements DataSource {
                 aborted = true;
                 throw new AssumeRejected();
             case Abi.E_INVALID_ARG:
-                throw new IllegalArgumentException(nullToEmpty(lib.lastErrorMessage()));
+                throw EngineAccess.argumentError(lib);
             case Abi.E_CONCURRENT_USE:
                 throw new HegelException("hegel_" + op
                         + ": the test-case handle was used from two threads at once. In a concurrent"
@@ -122,7 +123,9 @@ final class LiveDataSource implements DataSource {
     public String generateString(StringGeneratorHandle generator) {
         checkLive();
         String[] out = new String[1];
-        translate(lib.generateString(tc, generator.handle, out), "generate_string");
+        int rc = lib.generateString(tc, generator.handle, out);
+        Reference.reachabilityFence(generator);
+        translate(rc, "generate_string");
         return out[0];
     }
 
@@ -130,7 +133,9 @@ final class LiveDataSource implements DataSource {
     public LocalDate generateDate(LocalDate min, LocalDate max, SpecHandle options) {
         checkLive();
         LocalDate[] out = new LocalDate[1];
-        translate(lib.generateDate(tc, min, max, options == null ? 0 : options.handle, out), "generate_date");
+        int rc = lib.generateDate(tc, min, max, options == null ? 0 : options.handle, out);
+        Reference.reachabilityFence(options);
+        translate(rc, "generate_date");
         return out[0];
     }
 
@@ -177,10 +182,44 @@ final class LiveDataSource implements DataSource {
     }
 
     @Override
+    public void validateDate(LocalDate min, LocalDate max, SpecHandle options) {
+        int rc = lib.validateDate(min, max, options == null ? 0 : options.handle);
+        Reference.reachabilityFence(options);
+        translate(rc, "validate_date");
+    }
+
+    @Override
+    public void validateTime(LocalTime min, LocalTime max, int precision) {
+        translate(lib.validateTime(min, max, precision), "validate_time");
+    }
+
+    @Override
+    public void validateDatetime(LocalDateTime min, LocalDateTime max, int precision) {
+        translate(lib.validateDatetime(min, max, precision), "validate_datetime");
+    }
+
+    @Override
+    public void validateTimestamp(Instant min, Instant max, int precision) {
+        translate(lib.validateTimestamp(min, max, precision), "validate_timestamp");
+    }
+
+    @Override
+    public void validateOffset(int minSeconds, int maxSeconds, int granularity) {
+        translate(lib.validateOffset(minSeconds, maxSeconds, granularity, false), "validate_offset");
+    }
+
+    @Override
+    public void validateDuration(Duration min, Duration max, int precision) {
+        translate(lib.validateDuration(min, max, precision), "validate_duration");
+    }
+
+    @Override
     public String generateTimezone(SpecHandle spec) {
         checkLive();
         String[] out = new String[1];
-        translate(lib.generateTimezone(tc, spec.handle, out), "generate_timezone");
+        int rc = lib.generateTimezone(tc, spec.handle, out);
+        Reference.reachabilityFence(spec);
+        translate(rc, "generate_timezone");
         return out[0];
     }
 
@@ -188,7 +227,20 @@ final class LiveDataSource implements DataSource {
     public Libhegel.ZonedDatetime generateZonedDatetime(SpecHandle tzSpec, SpecHandle zonedSpec) {
         checkLive();
         Libhegel.ZonedDatetime[] out = new Libhegel.ZonedDatetime[1];
-        translate(lib.generateZonedDatetime(tc, tzSpec.handle, zonedSpec.handle, out), "generate_zoned_datetime");
+        int rc = lib.generateZonedDatetime(tc, tzSpec.handle, zonedSpec.handle, out);
+        Reference.reachabilityFence(tzSpec);
+        Reference.reachabilityFence(zonedSpec);
+        translate(rc, "generate_zoned_datetime");
+        return out[0];
+    }
+
+    @Override
+    public Libhegel.ZonedDatetime generateZonedDatetimeForZone(long source, String name, SpecHandle zonedSpec) {
+        checkLive();
+        Libhegel.ZonedDatetime[] out = new Libhegel.ZonedDatetime[1];
+        int rc = lib.generateZonedDatetimeForZone(tc, source, name, zonedSpec.handle, out);
+        Reference.reachabilityFence(zonedSpec);
+        translate(rc, "generate_zoned_datetime_for_zone");
         return out[0];
     }
 
@@ -196,15 +248,20 @@ final class LiveDataSource implements DataSource {
     public long[] generateSpan(SpecHandle spec) {
         checkLive();
         long[] out = new long[10];
-        translate(lib.generateSpan(tc, spec.handle, out), "generate_span");
+        int rc = lib.generateSpan(tc, spec.handle, out);
+        Reference.reachabilityFence(spec);
+        translate(rc, "generate_span");
         return out;
     }
 
+    /** Report a failed setter or validation of a spec being built, then free the spec: freeing clears the message. */
     private void configure(long handle, SpecHandle.Freer freer, int rc, String op) {
-        if (rc != Abi.OK) {
+        try {
+            translate(rc, op);
+        } catch (RuntimeException e) {
             freer.free(lib, handle);
+            throw e;
         }
-        translate(rc, op);
     }
 
     @Override
@@ -229,9 +286,12 @@ final class LiveDataSource implements DataSource {
         translate(lib.timezoneSpecNew(out), "timezone_spec_new");
         SpecHandle.Freer freer = Libhegel::timezoneSpecFree;
         configure(out[0], freer, lib.timezoneSpecSetSource(out[0], source), "timezone_spec_set_source");
-        configure(out[0], freer, lib.timezoneSpecSetNames(out[0], names), "timezone_spec_set_names");
+        if (names != null) {
+            configure(out[0], freer, lib.timezoneSpecSetNames(out[0], names), "timezone_spec_set_names");
+        }
         lib.timezoneSpecSetLinks(out[0], links);
         lib.timezoneSpecSetLegacy(out[0], legacy);
+        configure(out[0], freer, lib.timezoneSpecValidate(out[0]), "timezone_spec_validate");
         return new SpecHandle(lib, out[0], freer);
     }
 
@@ -262,6 +322,7 @@ final class LiveDataSource implements DataSource {
         }
         configure(spec, freer, lib.zonedSpecSetImaginary(spec, imaginary), "zoned_spec_set_imaginary");
         configure(spec, freer, lib.zonedSpecSetAmbiguous(spec, ambiguous), "zoned_spec_set_ambiguous");
+        configure(spec, freer, lib.zonedSpecValidate(spec), "zoned_spec_validate");
         return new SpecHandle(lib, spec, freer);
     }
 
@@ -280,6 +341,7 @@ final class LiveDataSource implements DataSource {
                     lib.spanSpecSetUnitBounds(spec, units[i], mins[i], maxs[i]),
                     "span_spec_set_unit_bounds");
         }
+        configure(spec, freer, lib.spanSpecValidate(spec), "span_spec_validate");
         return new SpecHandle(lib, spec, freer);
     }
 

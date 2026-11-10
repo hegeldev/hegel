@@ -5,14 +5,14 @@ import java.lang.ref.Cleaner;
 
 /**
  * An opaque engine configuration handle ({@code hegel_date_options_t*}, {@code
- * hegel_timezone_spec_t*}, {@code hegel_zoned_spec_t*} or {@code hegel_span_spec_t*}) plus the
- * binding it was built by and the way to release it.
+ * hegel_timezone_spec_t*}, {@code hegel_zoned_spec_t*}, {@code hegel_span_spec_t*} or {@code
+ * hegel_zone_source_t*}) plus the binding it was built by and the way to release it.
  *
- * <p>Built once per generator configuration (validating every parameter eagerly) and cached by the
- * date and time generators in {@code dev.hegel.generators}. The handle is immutable after
- * construction and may be shared across test cases and threads. The engine-side allocation is
- * released when this wrapper becomes unreachable (via a {@link Cleaner}), since by then no draw can
- * use it again.
+ * <p>A spec is built and validated once per generator configuration and cached by the date and
+ * time generators in {@code dev.hegel.generators.temporal}; a zone source's handle is owned by its
+ * {@code ZoneSource}. The handle is immutable after construction and may be shared across test
+ * cases and threads. The engine-side allocation is released when this wrapper becomes unreachable
+ * (via a {@link Cleaner}), since by then no draw can use it again.
  *
  * @hidden
  */

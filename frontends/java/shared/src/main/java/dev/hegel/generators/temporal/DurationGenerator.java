@@ -1,5 +1,6 @@
 package dev.hegel.generators.temporal;
 
+import dev.hegel.EngineAccess;
 import dev.hegel.Generator;
 import dev.hegel.TestCase;
 import java.time.Duration;
@@ -11,9 +12,13 @@ import java.time.temporal.ChronoUnit;
  * <p>The default range is the whole signed range {@link Duration} represents, {@code
  * Long.MIN_VALUE} to {@code Long.MAX_VALUE} seconds at nanosecond resolution; narrow it with the
  * fluent {@link #min(Duration)} / {@link #max(Duration)} methods, and make every drawn duration a
- * whole number of some unit with {@link #precision(ChronoUnit)}. Values shrink toward {@link
- * Duration#ZERO}, or the nearest bound when that is out of range. One draw in twenty on average
- * targets a round duration, such as a second, an hour, 25 hours or a week, of either sign.
+ * whole number of some unit with {@link #precision(ChronoUnit)}. Most of the default range is
+ * beyond the 292 years {@link Duration#toNanos()} can return (and {@link Duration#toMillis()}
+ * overflows too), so code that converts needs bounds: {@code
+ * min(Duration.ZERO).max(Duration.ofNanos(Long.MAX_VALUE))} is the non-negative range that fits.
+ * Values shrink toward {@link Duration#ZERO}, or the nearest bound when that is out of range. One
+ * draw in twenty on average targets a round duration, such as a second, an hour, 25 hours or a
+ * week, of either sign.
  */
 public final class DurationGenerator implements Generator<Duration> {
     static final Duration MIN = Duration.ofSeconds(Long.MIN_VALUE);
@@ -40,6 +45,7 @@ public final class DurationGenerator implements Generator<Duration> {
         this.max = max;
         this.precision = precision;
         this.precisionCode = Precisions.engine(precision, "durations");
+        EngineAccess.setup().validateDuration(min, max, precisionCode);
     }
 
     /**
@@ -62,7 +68,7 @@ public final class DurationGenerator implements Generator<Duration> {
      * Draw only durations that are a whole number of {@code precision} units: {@link
      * ChronoUnit#NANOS} (the default), {@link ChronoUnit#MICROS}, {@link ChronoUnit#MILLIS}, {@link
      * ChronoUnit#SECONDS}, {@link ChronoUnit#MINUTES} or {@link ChronoUnit#HOURS}. Bounds holding
-     * no such duration are rejected with an {@link IllegalArgumentException} at the first draw.
+     * no such duration are rejected with an {@link IllegalArgumentException}.
      *
      * @param precision the unit every drawn duration is a whole number of
      * @return a copy with the precision set

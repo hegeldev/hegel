@@ -23,7 +23,7 @@ import static dev.hegel.Generators.tuples;
 import static dev.hegel.Generators.urls;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dev.hegel.Generators.Temporal;
+import dev.hegel.Generators.Temporals;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -132,10 +132,10 @@ class GeneratorSmokeTest {
         assertTrue(tc.draw(ipAddresses().v6()).contains(":"));
         String ip = tc.draw(ipAddresses());
         assertTrue(ip.contains(".") || ip.contains(":"));
-        assertTrue(tc.draw(Temporal.dates()).getYear() >= 1);
-        assertTrue(tc.draw(Temporal.times()).getHour() >= 0);
-        assertTrue(tc.draw(Temporal.datetimes()).getYear() >= 1);
-        assertTrue(tc.draw(Temporal.durations()) != null);
+        assertTrue(tc.draw(Temporals.dates()).getYear() >= 1);
+        assertTrue(tc.draw(Temporals.times()).getHour() >= 0);
+        assertTrue(tc.draw(Temporals.datetimes()).getYear() >= 1);
+        assertTrue(tc.draw(Temporals.durations()) != null);
         assertTrue(tc.draw(fromRegex("[a-z]{3}")).length() >= 0);
     }
 
