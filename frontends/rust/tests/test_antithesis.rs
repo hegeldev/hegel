@@ -154,6 +154,48 @@ fn test_a_failing_test_reports_its_verdict_once() {
     );
 }
 
+#[hegel::test(test_cases = 1)]
+#[ignore = "fixture: run via exec::self_test"]
+fn antithesis_single_case_fixture(tc: hegel::TestCase) {
+    eprintln!("ran the single case");
+    let _ = tc.draw(gs::booleans());
+    panic!("the single case fails");
+}
+
+/// A single test case inside Antithesis is not recorded, so its failure is
+/// reported from its one execution, as the panic's site and message, with
+/// nothing to shrink, replay or print a reproduce blob from.
+#[test]
+fn test_a_single_test_case_in_antithesis_runs_once_and_reports_its_failure() {
+    let output_dir = TempDir::new().unwrap();
+    let output = self_test("antithesis_single_case_fixture")
+        .env("ANTITHESIS_OUTPUT_DIR", output_dir.path().to_str().unwrap())
+        .expect_failure("the single case fails")
+        .run();
+    let stderr = &output.stderr;
+    assert_eq!(stderr.matches("ran the single case").count(), 1, "{stderr}");
+    assert!(
+        stderr.contains("test_antithesis.rs") && stderr.contains("Panic at "),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("reproduce_failure"), "{stderr}");
+}
+
+/// Outside Antithesis the same single test case is recorded: its failure
+/// is replayed and reported with a reproduce blob.
+#[test]
+fn test_a_single_test_case_outside_antithesis_is_replayed() {
+    let output = self_test("antithesis_single_case_fixture")
+        .expect_failure("the single case fails")
+        .run();
+    let stderr = &output.stderr;
+    assert!(
+        stderr.matches("ran the single case").count() > 1,
+        "{stderr}"
+    );
+    assert!(stderr.contains("reproduce_failure"), "{stderr}");
+}
+
 #[test]
 #[ignore = "fixture: run via exec::self_test"]
 fn antithesis_plain_run_fixture() {

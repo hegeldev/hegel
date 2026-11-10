@@ -153,12 +153,6 @@ pub enum Backend {
     /// source differs. On platforms without `/dev/urandom` (Windows) it falls
     /// back to an OS-seeded PRNG. You almost certainly don't want this backend
     /// unless you are running under Antithesis.
-    ///
-    /// A run of a single test case on this backend, with no database to
-    /// save a failure to, keeps no record of the choices the test case
-    /// makes, so its memory does not grow with how long it runs. Its
-    /// failure is reported as it happened: it is not shrunk or replayed and
-    /// has no reproduce blob.
     Urandom,
 }
 

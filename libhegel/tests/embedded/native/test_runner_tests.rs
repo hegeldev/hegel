@@ -1843,10 +1843,7 @@ fn run_main_with_urandom_backend_finds_counterexample() {
 
 /// The settings of a run whose one test case is generated unrecorded.
 fn unrecorded_settings() -> Settings {
-    Settings::new()
-        .test_cases(1)
-        .database(None)
-        .backend(crate::settings::Backend::Urandom)
+    Settings::base(true).test_cases(1).database(None)
 }
 
 /// Run `body` as the one test case of a run under `settings`, returning
@@ -1874,7 +1871,7 @@ fn single_case_run(
     (result, execs)
 }
 
-/// A single test case on the urandom backend with no database is run
+/// A single test case inside Antithesis with no database is run
 /// once and its failure reported as it happened: nothing was recorded to
 /// shrink, replay or encode as a blob.
 #[test]
@@ -1907,7 +1904,7 @@ fn a_passing_unrecorded_run_executes_once() {
 /// unrecorded run goes without: with a database to save the failure to,
 /// the same settings record.
 #[test]
-fn a_single_urandom_case_with_a_database_is_recorded() {
+fn a_single_antithesis_case_with_a_database_is_recorded() {
     let dir = tempfile::tempdir().unwrap();
     let settings = unrecorded_settings().database(Some(dir.path().to_str().unwrap().to_string()));
     let (result, execs) = single_case_run(&settings, Some("key"), |_| boom("recorded"));
@@ -1918,7 +1915,7 @@ fn a_single_urandom_case_with_a_database_is_recorded() {
 /// A database with no key to save under saves nothing, so the run is
 /// unrecorded all the same.
 #[test]
-fn a_single_urandom_case_with_a_keyless_database_is_unrecorded() {
+fn a_single_antithesis_case_with_a_keyless_database_is_unrecorded() {
     let dir = tempfile::tempdir().unwrap();
     let settings = unrecorded_settings().database(Some(dir.path().to_str().unwrap().to_string()));
     let (result, execs) = single_case_run(&settings, None, |_| boom("keyless"));
@@ -1927,15 +1924,23 @@ fn a_single_urandom_case_with_a_keyless_database_is_unrecorded() {
 }
 
 #[test]
-fn a_single_case_on_the_default_backend_is_recorded() {
-    let settings = Settings::new().test_cases(1).database(None);
-    let (result, execs) = single_case_run(&settings, None, |_| boom("default backend"));
+fn a_single_case_outside_antithesis_is_recorded() {
+    let settings = Settings::base(false).test_cases(1).database(None);
+    let (result, execs) = single_case_run(&settings, None, |_| boom("outside"));
     assert!(execs > 1, "{execs}");
     assert!(result.unwrap().failures[0].reproduce_blob.is_some());
 }
 
 #[test]
-fn a_urandom_run_without_the_generate_phase_runs_nothing() {
+fn several_cases_inside_antithesis_are_recorded() {
+    let settings = Settings::base(true).test_cases(2).database(None);
+    let (result, execs) = single_case_run(&settings, None, |_| boom("several"));
+    assert!(execs > 1, "{execs}");
+    assert!(result.unwrap().failures[0].reproduce_blob.is_some());
+}
+
+#[test]
+fn an_antithesis_run_without_the_generate_phase_runs_nothing() {
     let settings = unrecorded_settings().phases([Phase::Shrink]);
     let (result, execs) = single_case_run(&settings, None, |_| boom("never runs"));
     assert_eq!(execs, 0);
@@ -1967,6 +1972,38 @@ fn an_overrun_unrecorded_run_is_unsatisfiable() {
         }
         other => panic!("expected Unsatisfiable, got {other:?}"),
     }
+}
+
+/// An unrecorded test case still stops at the choice bound, which the
+/// family's draw budget enforces without a recorded sequence to measure.
+#[test]
+fn an_unrecorded_run_past_the_choice_bound_is_unsatisfiable() {
+    let mut draws = 0usize;
+    let (result, execs) = single_case_run(&unrecorded_settings(), None, |ds| {
+        loop {
+            if rbool(ds).is_err() {
+                return TestCaseResult::Overrun;
+            }
+            draws += 1;
+        }
+    });
+    assert_eq!(execs, 1);
+    assert_eq!(draws, BUFFER_SIZE);
+    assert!(matches!(result, Err(RunError::Unsatisfiable(_))));
+}
+
+/// With the choice bound lifted, an unrecorded test case draws past it.
+#[test]
+fn an_unrecorded_run_with_unbounded_choices_draws_past_the_choice_bound() {
+    let settings = unrecorded_settings().unbounded_choices(true);
+    let (result, execs) = single_case_run(&settings, None, |ds| {
+        for _ in 0..BUFFER_SIZE + 10 {
+            rbool(ds).unwrap();
+        }
+        TestCaseResult::Valid
+    });
+    assert_eq!(execs, 1);
+    assert!(result.unwrap().failures.is_empty());
 }
 
 #[test]

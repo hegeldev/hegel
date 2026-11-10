@@ -278,57 +278,13 @@ fn drive_single_failure_reraises_the_tests_own_panic() {
     );
 }
 
-/// A single test case on the urandom backend with no database is not
-/// recorded, so its failure is reported from its one execution: the body
-/// runs once, and the report is the panic's site and message.
 #[test]
-fn drive_reports_an_unrecorded_failure_from_its_one_execution() {
-    let lines = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-    let sink = Arc::clone(&lines);
-    let mut execs = 0;
-    let settings = Settings::new()
-        .database(None)
-        .backend(crate::Backend::Urandom)
-        .for_single_test_case();
-    let msg = crate::test_case::with_output_override(
-        Arc::new(move |line: &str| sink.lock().unwrap().push(line.to_string())),
-        || {
-            drive_panic_message(
-                |tc| {
-                    execs += 1;
-                    let x: i32 = tc.draw(gs::integers());
-                    panic!("unrecorded boom x={x}");
-                },
-                &settings,
-            )
-        },
+fn a_bare_diagnostic_is_the_origin_and_the_panic_message() {
+    let payload: Box<dyn std::any::Any + Send> = Box::new("boom".to_string());
+    assert_eq!(
+        bare_diagnostic("Panic at a.rs:1:1", &payload),
+        "Panic at a.rs:1:1:\nboom\n"
     );
-    assert_eq!(execs, 1);
-    assert!(msg.starts_with("unrecorded boom x="), "{msg}");
-    let lines = lines.lock().unwrap();
-    assert_eq!(lines.len(), 2, "{lines:?}");
-    assert!(lines[0].starts_with("Panic at "), "{lines:?}");
-    assert!(lines[0].ends_with(':'), "{lines:?}");
-    assert_eq!(lines[1], msg);
-}
-
-/// Under quiet verbosity an unrecorded failure prints nothing, like any
-/// other.
-#[test]
-fn drive_prints_nothing_for_an_unrecorded_failure_under_quiet() {
-    let lines = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-    let sink = Arc::clone(&lines);
-    let settings = Settings::new()
-        .database(None)
-        .backend(crate::Backend::Urandom)
-        .verbosity(Verbosity::Quiet)
-        .for_single_test_case();
-    let msg = crate::test_case::with_output_override(
-        Arc::new(move |line: &str| sink.lock().unwrap().push(line.to_string())),
-        || drive_panic_message(|_| panic!("quiet unrecorded boom"), &settings),
-    );
-    assert_eq!(msg, "quiet unrecorded boom");
-    assert!(lines.lock().unwrap().is_empty());
 }
 
 #[test]

@@ -607,8 +607,8 @@ struct CapturedReport {
 
 /// The diagnostic of a failure whose only capture is a bare one: the
 /// engine reported it from a case it never stamped for capture, as it does
-/// for a run it does not record (a single test case on the urandom backend
-/// with no database), whose failure is never replayed. It holds what such
+/// for a run it does not record (a single test case inside Antithesis with
+/// no database), whose failure is never replayed. It holds what such
 /// a case keeps, the panic's site (its origin) and its message, and no
 /// backtrace.
 fn bare_diagnostic(origin: &str, payload: &Box<dyn std::any::Any + Send>) -> String {

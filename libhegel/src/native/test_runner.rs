@@ -879,14 +879,14 @@ impl<'a> Engine<'a> {
 
     /// Whether the run's test case is generated unrecorded (see
     /// [`NativeTestCase::new_unrecorded`]): a run of a single generated
-    /// test case on [`Backend::Urandom`] with no database to save a failure
-    /// to. That is a `workload`-profile binary under Antithesis, whose one
-    /// test case may run for hours and draw without limit, where recording
-    /// every choice costs memory without bound. Antithesis reproduces such
-    /// a failure by replaying its own fuzzer's inputs, so the run reports
-    /// the failure as it happened instead of shrinking and replaying it.
+    /// test case inside Antithesis with no database to save a failure to.
+    /// That is a workload binary, whose one test case may run for hours
+    /// and draw without limit, where recording every choice costs memory
+    /// without bound. Antithesis reproduces such a failure itself, so the
+    /// run reports the failure as it happened instead of shrinking and
+    /// replaying it.
     fn runs_unrecorded(&self) -> bool {
-        self.settings.backend == Backend::Urandom
+        self.settings.in_antithesis
             && self.settings.test_cases == 1
             && self.settings.phases.contains(&Phase::Generate)
             && (self.db().is_none() || self.database_key.is_none())

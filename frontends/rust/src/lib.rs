@@ -792,11 +792,13 @@ pub use hegel_macros::test_helper;
 /// machine — so it is never stopped as an overrun. See
 /// [`Settings::suppress_health_check`].
 ///
-/// Under the `workload` profile, which a binary runs with inside
-/// [Antithesis](https://antithesis.com/), the test case's choices are not
-/// recorded, so the binary's memory does not grow with how long it runs. A
-/// failure is then reported as it happened, as the panic's location and
-/// message, rather than shrunk and replayed: see [`Backend::Urandom`].
+/// Inside [Antithesis](https://antithesis.com/) (detected from
+/// `ANTITHESIS_OUTPUT_DIR`), unless a database is configured, the test
+/// case's choices are not recorded, so the binary's memory does not grow
+/// with how long it runs. A failure is then reported as it happened, as the
+/// panic's location and message: it is not shrunk or replayed, the values
+/// it drew are not printed, and it has no reproduce blob. Antithesis
+/// reproduces the failure itself.
 ///
 /// Every setting but the test-case count is a CLI flag (with defaults
 /// taken from the attribute args), named after its `hegel.toml` key with
