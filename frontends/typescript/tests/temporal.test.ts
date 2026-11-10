@@ -1,10 +1,11 @@
 /**
- * The date and time value classes: validation, ordering, formatting and the
- * `Temporal` property-bag compatibility they promise; plus the host's `Intl`
- * view of time zones.
+ * The date and time value classes: validation, ordering, the engine's text
+ * of each and the conversions to `Temporal` they promise; plus the host's
+ * `Intl` view of time zones.
  */
 
 import { describe, it, expect, vi } from "vitest";
+import "@hegeldev/hegel";
 import {
   PlainDate,
   PlainTime,
@@ -15,27 +16,35 @@ import {
   DURATION_UNITS,
 } from "../src/temporal.js";
 import {
-  civilFromDays,
   daysFromCivil,
   daysInMonth,
   isLeapYear,
-  formatUtcOffset,
   parseUtcOffset,
+  weekdayFromDays,
 } from "../src/calendar.js";
 import { hostKnowsZone, hostOffsetSeconds, hostZoneFormatter } from "../src/hostZones.js";
 import { TIMEZONE_NAMES, TZDB_VERSION } from "../src/timezone-names.js";
+import { printedLine } from "../src/pretty.js";
+import { getLibhegel } from "../src/session.js";
+
+const lib = getLibhegel();
+const ctx = lib.newContext();
+
+/** `value` as a failing test's report prints it. */
+function printed(value: unknown): string {
+  return printedLine(lib, ctx, (printer) => printer.value(value));
+}
 
 describe("calendar arithmetic", () => {
-  it("round-trips days since the epoch through civil dates", () => {
+  it("counts days since the epoch and their weekdays", () => {
     expect(daysFromCivil(1970, 1, 1)).toBe(0);
+    expect(daysFromCivil(1969, 12, 31)).toBe(-1);
     expect(daysFromCivil(2000, 3, 1)).toBe(11017);
     expect(daysFromCivil(-271821, 4, 19)).toBe(-100_000_001);
     expect(daysFromCivil(275760, 9, 13)).toBe(100_000_000);
-    for (const days of [-100_000_001, -1, 0, 59, 11017, 100_000_000]) {
-      const date = civilFromDays(days);
-      expect(daysFromCivil(date.year, date.month, date.day)).toBe(days);
-    }
-    expect(civilFromDays(-1)).toEqual({ year: 1969, month: 12, day: 31 });
+    expect(weekdayFromDays(0)).toBe(4);
+    expect(weekdayFromDays(-1)).toBe(3);
+    expect(weekdayFromDays(-100_000_001)).toBe(1);
   });
 
   it("knows month lengths and leap years", () => {
@@ -62,7 +71,7 @@ describe("PlainDate", () => {
     expect(Object.isFrozen(new PlainDate(2024, 2, 29))).toBe(true);
   });
 
-  it("formats four-digit years plainly and others with six signed digits", () => {
+  it("prints four-digit years plainly and others with six signed digits", () => {
     expect(new PlainDate(2024, 3, 10).toString()).toBe("2024-03-10");
     expect(new PlainDate(1, 1, 1).toString()).toBe("0001-01-01");
     expect(new PlainDate(0, 1, 1).toString()).toBe("0000-01-01");
@@ -70,6 +79,7 @@ describe("PlainDate", () => {
     expect(new PlainDate(10000, 1, 1).toString()).toBe("+010000-01-01");
     expect(new PlainDate(-271821, 4, 19).toJSON()).toBe("-271821-04-19");
     expect(JSON.stringify({ date: new PlainDate(275760, 9, 13) })).toBe('{"date":"+275760-09-13"}');
+    expect(printed(new PlainDate(2024, 3, 10))).toBe("PlainDate(2024-03-10)");
   });
 
   it("converts from property bags, compares and knows the weekday", () => {
@@ -83,7 +93,33 @@ describe("PlainDate", () => {
     expect(new PlainDate(1970, 1, 1).dayOfWeek).toBe(4);
     expect(new PlainDate(1969, 12, 31).dayOfWeek).toBe(3);
     expect(new PlainDate(2024, 3, 11).dayOfWeek).toBe(1);
-    expect(date.epochDays).toBe(19792);
+  });
+
+  it("orders dates by year, then month, then day", () => {
+    const dates = [
+      new PlainDate(-1, 12, 31),
+      new PlainDate(2023, 12, 31),
+      new PlainDate(2024, 1, 31),
+      new PlainDate(2024, 2, 1),
+      new PlainDate(2024, 2, 2),
+    ];
+    for (let i = 0; i < dates.length; i++) {
+      for (let j = 0; j < dates.length; j++) {
+        expect(PlainDate.compare(dates[i], dates[j])).toBe(Math.sign(i - j));
+      }
+    }
+  });
+
+  it("refuses a date in a calendar other than ISO 8601", () => {
+    expect(
+      PlainDate.from({ year: 2024, month: 3, day: 10, calendarId: "iso8601" } as never),
+    ).toEqual(new PlainDate(2024, 3, 10));
+    expect(() =>
+      PlainDate.from({ year: 5784, month: 6, day: 30, calendarId: "hebrew" } as never),
+    ).toThrow("Dates are read in the ISO 8601 calendar, got one in the hebrew calendar");
+    expect(() =>
+      PlainDateTime.from({ year: 5784, month: 6, day: 30, calendarId: "hebrew" } as never),
+    ).toThrow("got one in the hebrew calendar");
   });
 });
 
@@ -104,9 +140,10 @@ describe("PlainTime", () => {
     expect(new PlainTime(23, 59, 59, 999, 999, 999).toJSON()).toBe("23:59:59.999999999");
     expect(new PlainTime(1, 2, 3, 0, 0, 42).toString()).toBe("01:02:03.000000042");
     expect(new PlainTime(1, 2, 3, 0, 42).toString()).toBe("01:02:03.000042");
+    expect(printed(new PlainTime(2, 30))).toBe("PlainTime(02:30:00)");
   });
 
-  it("converts from bags and nanoseconds of day, and compares", () => {
+  it("converts from bags and compares field by field", () => {
     const time = new PlainTime(12, 34, 56, 7, 8, 9);
     expect(PlainTime.from(time)).toBe(time);
     expect(
@@ -120,12 +157,8 @@ describe("PlainTime", () => {
       }),
     ).toEqual(time);
     expect(PlainTime.from({ hour: 5 }).toString()).toBe("05:00:00");
-    expect(time.nanosecondsOfDay).toBe(45_296_007_008_009);
-    expect(PlainTime.fromNanosecondsOfDay(45_296_007_008_009)).toEqual(time);
-    expect(PlainTime.fromNanosecondsOfDay(86_399_999_999_999).toString()).toBe(
-      "23:59:59.999999999",
-    );
-    expect(() => PlainTime.fromNanosecondsOfDay(86_400_000_000_000)).toThrow("nanoseconds must be");
+    expect(PlainTime.compare({ hour: 1, nanosecond: 999 }, { hour: 1, microsecond: 1 })).toBe(-1);
+    expect(PlainTime.compare({ hour: 2 }, { hour: 1, minute: 59 })).toBe(1);
     expect(
       PlainTime.compare(time, {
         hour: 12,
@@ -159,33 +192,27 @@ describe("PlainDateTime", () => {
     expect(
       PlainDateTime.from({ year: 2024, month: 3, day: 10, hour: 2, minute: 30 }).equals(value),
     ).toBe(true);
-    expect(
-      PlainDateTime.of(new PlainDate(2024, 3, 10), { hour: 2, minute: 30 }).equals(value),
-    ).toBe(true);
-    expect(PlainDateTime.of({ year: 2024, month: 3, day: 10 }).toString()).toBe(
-      "2024-03-10T00:00:00",
-    );
     expect(value.toPlainDate()).toEqual(new PlainDate(2024, 3, 10));
     expect(value.toPlainTime()).toEqual(new PlainTime(2, 30));
     expect(() => new PlainDateTime(2024, 2, 30)).toThrow("day must be an integer");
     expect(new PlainDateTime(-271821, 4, 19, 0, 0, 0, 0, 0, 1).toJSON()).toBe(
       "-271821-04-19T00:00:00.000000001",
     );
+    expect(printed(value)).toBe("PlainDateTime(2024-03-10T02:30:00)");
   });
 
-  it("maps to and from nanoseconds since the epoch, before it too", () => {
+  it("orders by the date, then the time", () => {
     const value = new PlainDateTime(2000, 1, 1, 0, 0, 0, 0, 0, 1);
-    expect(value.epochNanoseconds).toBe(946_684_800_000_000_001n);
-    expect(PlainDateTime.fromEpochNanoseconds(946_684_800_000_000_001n).equals(value)).toBe(true);
-    expect(PlainDateTime.fromEpochNanoseconds(-1n).toString()).toBe(
-      "1969-12-31T23:59:59.999999999",
-    );
-    expect(PlainDateTime.fromEpochNanoseconds(-86_400_000_000_000n).toString()).toBe(
-      "1969-12-31T00:00:00",
-    );
-    expect(PlainDateTime.fromEpochNanoseconds(0n).toString()).toBe("1970-01-01T00:00:00");
     expect(PlainDateTime.compare(value, { year: 2000, month: 1, day: 1 })).toBe(1);
-    expect(PlainDateTime.compare({ year: 1999, month: 12, day: 31 }, value)).toBe(-1);
+    expect(PlainDateTime.compare({ year: 1999, month: 12, day: 31, hour: 23 }, value)).toBe(-1);
+    expect(PlainDateTime.compare(value, value)).toBe(0);
+  });
+
+  it("is not an instant", () => {
+    expect("epochNanoseconds" in new PlainDateTime(2000, 1, 1)).toBe(false);
+    expect(() => Instant.from(new PlainDateTime(2000, 1, 1) as never)).toThrow(
+      "Instants must be within",
+    );
   });
 });
 
@@ -198,9 +225,8 @@ describe("Instant", () => {
     );
     const instant = new Instant(-1n);
     expect(Instant.from(instant)).toBe(instant);
-    expect(instant.epochSeconds).toBe(-1);
     expect(instant.epochMilliseconds).toBe(-1);
-    expect(instant.nanosecond).toBe(999_999_999);
+    expect(new Instant(-2_500_000n).epochMilliseconds).toBe(-3);
     expect(instant.toString()).toBe("1969-12-31T23:59:59.999999999Z");
     expect(Instant.fromEpochMilliseconds(-1).epochNanoseconds).toBe(-1_000_000n);
     expect(() => Instant.fromEpochMilliseconds(0.5)).toThrow(
@@ -216,7 +242,10 @@ describe("Instant", () => {
     );
     expect(() => new Instant(31_494_784_780_800_000_000_000n)).toThrow("Instants must be within");
     expect(Instant.compare(instant, { epochNanoseconds: 0n })).toBe(-1);
+    expect(Instant.compare({ epochNanoseconds: 1n }, instant)).toBe(1);
+    expect(Instant.compare(instant, instant)).toBe(0);
     expect(instant.equals({ epochNanoseconds: -1n })).toBe(true);
+    expect(printed(new Instant(0n))).toBe("Instant(1970-01-01T00:00:00Z)");
   });
 });
 
@@ -235,10 +264,39 @@ const newYorkGap = {
   epochNanoseconds: 1_710_055_800_000_000_000n,
 };
 
+const newYorkFold = {
+  ...newYorkGap,
+  month: 11,
+  day: 3,
+  hour: 1,
+  offset: "-05:00",
+  kind: "fold" as const,
+  fold: true,
+  offsetBefore: "-04:00",
+  offsetAfter: "-05:00",
+  epochNanoseconds: 1_730_615_400_000_000_000n,
+};
+
+const newYorkFirstFold = {
+  ...newYorkFold,
+  offset: "-04:00",
+  fold: false,
+  epochNanoseconds: 1_730_611_800_000_000_000n,
+};
+
+const newYorkUnique = {
+  ...newYorkGap,
+  day: 11,
+  kind: "unique" as const,
+  offsetBefore: "-04:00",
+  epochNanoseconds: 1_710_138_600_000_000_000n,
+};
+
 describe("ZonedDateTime", () => {
   it("prints the civil time, offset, zone and transition annotation", () => {
     const gap = new ZonedDateTime(newYorkGap);
     expect(gap.toString()).toBe("2024-03-10T02:30:00-04:00[America/New_York][gap]");
+    expect(printed(gap)).toBe("ZonedDateTime(2024-03-10T02:30:00-04:00[America/New_York][gap])");
     expect(ZonedDateTime.from(gap)).toBe(gap);
     expect(ZonedDateTime.from({ ...newYorkGap }).equals(gap)).toBe(true);
     expect(gap.offsetNanoseconds).toBe(-14_400_000_000_000);
@@ -247,22 +305,15 @@ describe("ZonedDateTime", () => {
     expect(gap.toPlainDateTime().toString()).toBe("2024-03-10T02:30:00");
     expect(gap.toPlainDate().toString()).toBe("2024-03-10");
     expect(gap.toPlainTime().toString()).toBe("02:30:00");
-    const fold = new ZonedDateTime({
-      ...newYorkGap,
-      month: 11,
-      day: 3,
-      hour: 1,
-      offset: "-05:00",
-      kind: "fold",
-      fold: true,
-      offsetBefore: "-04:00",
-      offsetAfter: "-05:00",
-      epochNanoseconds: 1_730_615_400_000_000_000n,
-    });
+    const fold = new ZonedDateTime(newYorkFold);
     expect(fold.toJSON()).toBe("2024-11-03T01:30:00-05:00[America/New_York][fold=1]");
     expect(fold.equals(gap)).toBe(false);
-    const first = new ZonedDateTime({ ...newYorkGap, kind: "fold", fold: false });
-    expect(first.toString()).toBe("2024-03-10T02:30:00-04:00[America/New_York][fold=0]");
+    expect(new ZonedDateTime(newYorkFirstFold).toString()).toBe(
+      "2024-11-03T01:30:00-04:00[America/New_York][fold=0]",
+    );
+    expect(new ZonedDateTime(newYorkUnique).toString()).toBe(
+      "2024-03-11T02:30:00-04:00[America/New_York]",
+    );
     const unique = new ZonedDateTime({
       year: 2000,
       month: 1,
@@ -278,6 +329,30 @@ describe("ZonedDateTime", () => {
     expect(unique.toString()).toBe("2000-01-01T00:00:00+00:00[UTC]");
     expect(unique.equals({ ...unique, timeZone: "Etc/UTC" })).toBe(false);
     expect(unique.equals({ ...unique, epochNanoseconds: 1n })).toBe(false);
+    expect(unique.equals({ ...unique, hour: 1 })).toBe(false);
+  });
+
+  it("spells its offsets as the engine does, seconds and all", () => {
+    const value = new ZonedDateTime({
+      year: 1883,
+      month: 11,
+      day: 18,
+      hour: 12,
+      timeZone: "America/New_York",
+      offset: "-04:56:02",
+      kind: "unique",
+      fold: false,
+      offsetBefore: "-04:56:02",
+      offsetAfter: "-05:00:00",
+      epochNanoseconds: -2_717_650_800_000_000_000n + 2_000_000_000n,
+    });
+    expect(value.offset).toBe("-04:56:02");
+    expect(value.offsetAfter).toBe("-05:00");
+    expect(value.offsetNanoseconds).toBe(-17_762_000_000_000);
+    expect(value.toString()).toBe("1883-11-18T12:00:00-04:56:02[America/New_York]");
+    const far = new ZonedDateTime({ ...newYorkUnique, offset: "+47:59:59" });
+    expect(far.offset).toBe("+47:59:59");
+    expect(far.toString()).toBe("2024-03-11T02:30:00+47:59:59[America/New_York]");
   });
 
   it("validates the zone, the offsets and the kind", () => {
@@ -286,30 +361,42 @@ describe("ZonedDateTime", () => {
       "kind must be",
     );
     expect(() => new ZonedDateTime({ ...newYorkGap, offset: "-4:00" })).toThrow(
-      "UTC offsets must be formatted",
+      "UTC offsets must be formatted as ±HH:MM or ±HH:MM:SS, got -4:00",
     );
     expect(() => new ZonedDateTime({ ...newYorkGap, offsetBefore: "-04:60" })).toThrow(
-      "within ±25:59:59",
+      "UTC offsets must be formatted",
     );
-    expect(() => new ZonedDateTime({ ...newYorkGap, offsetAfter: "+26:00" })).toThrow(
-      "within ±25:59:59",
+    expect(() => new ZonedDateTime({ ...newYorkGap, offsetAfter: "+05:00:60" })).toThrow(
+      "UTC offsets must be formatted",
     );
     expect(() => new ZonedDateTime({ ...newYorkGap, day: 32 })).toThrow("day must be");
+    expect(
+      () => new ZonedDateTime({ ...newYorkGap, epochNanoseconds: 1 as unknown as bigint }),
+    ).toThrow("Instants must be within");
+  });
+
+  it("converts to a Temporal value from its instant and zone", () => {
+    class Zoned {
+      constructor(
+        readonly epochNanoseconds: bigint,
+        readonly timeZone: string,
+      ) {}
+    }
+    const converted = new ZonedDateTime(newYorkGap).toTemporal({ ZonedDateTime: Zoned });
+    expect(converted).toBeInstanceOf(Zoned);
+    expect(converted).toEqual(new Zoned(1_710_055_800_000_000_000n, "America/New_York"));
   });
 });
 
-describe("UTC offset formatting", () => {
-  it("prints seconds only when needed and parses both forms", () => {
-    expect(formatUtcOffset(0)).toBe("+00:00");
-    expect(formatUtcOffset(19_800)).toBe("+05:30");
-    expect(formatUtcOffset(-2_670)).toBe("-00:44:30");
-    expect(formatUtcOffset(93_599)).toBe("+25:59:59");
-    expect(() => formatUtcOffset(93_600)).toThrow("offset must be an integer");
+describe("UTC offset parsing", () => {
+  it("reads both forms, of any number of hours", () => {
     expect(parseUtcOffset("+05:30")).toBe(19_800);
     expect(parseUtcOffset("-00:44:30")).toBe(-2_670);
     expect(parseUtcOffset("+00:00:59")).toBe(59);
-    expect(() => parseUtcOffset("+00:00:60")).toThrow("within ±25:59:59");
-    expect(() => parseUtcOffset("Z")).toThrow("formatted as ±HH:MM or ±HH:MM:SS");
+    expect(parseUtcOffset("-00:00")).toBe(-0);
+    expect(parseUtcOffset("+47:59:59")).toBe(172_799);
+    expect(() => parseUtcOffset("+00:00:60")).toThrow("formatted as ±HH:MM or ±HH:MM:SS");
+    expect(() => parseUtcOffset("Z")).toThrow("formatted as ±HH:MM or ±HH:MM:SS, got Z");
   });
 });
 
@@ -340,23 +427,24 @@ describe("Duration", () => {
     expect(positive.equals({ hours: 1, minutes: 1 })).toBe(false);
   });
 
-  it("prints ISO 8601 the way Temporal does", () => {
-    expect(new Duration().toString()).toBe("PT0S");
-    expect(new Duration({ years: 1, months: 2, days: 3, hours: 4 }).toString()).toBe("P1Y2M3DT4H");
-    expect(new Duration({ weeks: 2 }).toJSON()).toBe("P2W");
+  it("prints its units largest first, with one sign for the whole value", () => {
+    expect(new Duration().toString()).toBe("0s");
+    expect(new Duration({ years: 1, months: 2, days: 3, hours: 4 }).toString()).toBe(
+      "1y 2mo 3d 4h",
+    );
+    expect(new Duration({ weeks: 2 }).toJSON()).toBe("2w");
     expect(
       new Duration({ hours: -1, minutes: -30, seconds: -5, milliseconds: -500 }).toString(),
-    ).toBe("-PT1H30M5.5S");
-    expect(new Duration({ seconds: 5, milliseconds: 1500 }).toString()).toBe("PT6.5S");
-    expect(new Duration({ microseconds: 1, nanoseconds: 500 }).toString()).toBe("PT0.0000015S");
-    expect(new Duration({ nanoseconds: 1 }).toString()).toBe("PT0.000000001S");
-    expect(new Duration({ days: 1, seconds: 0 }).toString()).toBe("P1D");
-    expect(new Duration({ minutes: 90 }).toString()).toBe("PT90M");
+    ).toBe("-1h 30m 5s 500ms");
+    expect(new Duration({ microseconds: 1, nanoseconds: 500 }).toString()).toBe("1µs 500ns");
+    expect(new Duration({ minutes: 90 }).toString()).toBe("90m");
+    expect(printed(new Duration({ minutes: 90 }))).toBe("Duration(90m)");
+    expect(JSON.stringify([new Duration({ days: 1 })])).toBe('["1d"]');
   });
 });
 
 describe.skipIf(typeof Temporal === "undefined")("Temporal compatibility", () => {
-  it("accepts every value class as a property bag", () => {
+  it("accepts every plain value class as a property bag", () => {
     expect(Temporal.PlainDate.from(new PlainDate(-5, 1, 1)).toString()).toBe("-000005-01-01");
     expect(Temporal.PlainTime.from(new PlainTime(2, 30, 0, 500)).toString()).toBe("02:30:00.5");
     const datetime = new PlainDateTime(275760, 9, 13, 23, 59, 59, 999, 999, 999);
@@ -364,36 +452,61 @@ describe.skipIf(typeof Temporal === "undefined")("Temporal compatibility", () =>
     expect(
       Temporal.Instant.fromEpochNanoseconds(new Instant(-1n).epochNanoseconds).toString(),
     ).toBe(new Instant(-1n).toString());
-    const gap = new ZonedDateTime(newYorkGap);
-    const converted = Temporal.ZonedDateTime.from(gap, { offset: "use" });
-    expect(converted.toString()).toBe("2024-03-10T01:30:00-05:00[America/New_York]");
-    expect(converted.epochNanoseconds).toBe(gap.epochNanoseconds - 3_600_000_000_000n);
-    const exact = new Temporal.ZonedDateTime(gap.epochNanoseconds, gap.timeZone);
-    expect(exact.toString()).toBe("2024-03-10T03:30:00-04:00[America/New_York]");
-    const fold = new ZonedDateTime({
-      ...newYorkGap,
-      month: 11,
-      day: 3,
-      hour: 1,
-      offset: "-05:00",
-      kind: "fold",
-      fold: true,
-      offsetBefore: "-04:00",
-      offsetAfter: "-05:00",
-      epochNanoseconds: 1_730_615_400_000_000_000n,
-    });
-    expect(Temporal.ZonedDateTime.from(fold, { offset: "use" }).epochNanoseconds).toBe(
-      fold.epochNanoseconds,
-    );
     for (const like of [
       { years: 1, months: 2, days: 3, hours: 4 },
       { hours: -1, minutes: -30, seconds: -5, milliseconds: -500 },
       { seconds: 5, milliseconds: 1500 },
       { microseconds: 1, nanoseconds: 500 },
-      { seconds: 0 },
+      {},
     ]) {
-      expect(Temporal.Duration.from(like).toString()).toBe(new Duration(like).toString());
+      const converted = Temporal.Duration.from(new Duration(like));
+      for (const unit of DURATION_UNITS) expect(converted[unit]).toBe(like[unit] ?? 0);
     }
+  });
+
+  it("refuses a Temporal date in another calendar and reads an ISO one", () => {
+    const iso = Temporal.PlainDate.from("2024-03-10");
+    expect(PlainDate.from(iso).toString()).toBe("2024-03-10");
+    expect(PlainDateTime.from(iso.toPlainDateTime()).toString()).toBe("2024-03-10T00:00:00");
+    expect(() => PlainDate.from(iso.withCalendar("hebrew"))).toThrow("the hebrew calendar");
+    expect(() => PlainDateTime.from(iso.toPlainDateTime().withCalendar("japanese"))).toThrow(
+      "the japanese calendar",
+    );
+  });
+
+  it.each([
+    ["a gap value", newYorkGap, "2024-03-10T03:30:00-04:00[America/New_York]"],
+    ["a first fold value", newYorkFirstFold, "2024-11-03T01:30:00-04:00[America/New_York]"],
+    ["a second fold value", newYorkFold, "2024-11-03T01:30:00-05:00[America/New_York]"],
+    ["a unique value", newYorkUnique, "2024-03-11T02:30:00-04:00[America/New_York]"],
+  ])("converts %s to the Temporal value at its instant", (_name, like, expected) => {
+    const value = new ZonedDateTime(like);
+    const converted = value.toTemporal(Temporal);
+    expect(converted).toBeInstanceOf(Temporal.ZonedDateTime);
+    expect(converted.toString()).toBe(expected);
+    expect(converted.epochNanoseconds).toBe(value.epochNanoseconds);
+    expect(converted.timeZoneId).toBe(value.timeZone);
+    expect(Temporal.ZonedDateTime.from(value, { offset: "prefer" }).equals(converted)).toBe(true);
+    if (value.kind !== "gap") {
+      expect(converted.toPlainDateTime().toString()).toBe(value.toPlainDateTime().toString());
+      expect(converted.offset).toBe(value.offset);
+    }
+  });
+
+  it("is not converted by Temporal's own from(), nor by its text", () => {
+    const gap = new ZonedDateTime(newYorkGap);
+    expect(() => Temporal.ZonedDateTime.from(gap)).toThrow(RangeError);
+    expect(Temporal.ZonedDateTime.from(gap, { offset: "use" }).epochNanoseconds).not.toBe(
+      gap.epochNanoseconds,
+    );
+    for (const like of [newYorkGap, newYorkFold, newYorkFirstFold]) {
+      expect(() => Temporal.ZonedDateTime.from(new ZonedDateTime(like).toString())).toThrow(
+        RangeError,
+      );
+    }
+    expect(() => Temporal.Duration.from(new Duration({ minutes: 90 }).toString())).toThrow(
+      RangeError,
+    );
   });
 });
 

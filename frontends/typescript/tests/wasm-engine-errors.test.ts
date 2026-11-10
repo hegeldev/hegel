@@ -130,29 +130,29 @@ describe("WasmEngine malformed outputs and cleanup", () => {
     engine.freeContext(ctx);
   });
 
-  it("rejects malformed zoned datetime outputs and still releases the zone name", () => {
+  it("rejects malformed zoned datetime outputs", () => {
     const { engine, abi } = wasmFixture();
     const ctx = engine.newContext(),
       settings = engine.newSettings(ctx),
       run = engine.runStart(ctx, settings),
       tc = engine.nextTestCase(ctx, run)!;
-    const zones = engine.timezoneSpecNew(ctx),
-      zoned = engine.zonedSpecNew(ctx);
-    engine.timezoneSpecSetNames(ctx, zones, ["UTC"]);
+    const zoned = engine.zonedSpecNew(ctx);
     const call = abi.call.bind(abi);
     let corrupt: (memory: WasmMemory, value: number) => void = () => undefined;
-    const spy = vi.spyOn(abi, "call").mockImplementation((op, ...args) => {
+    vi.spyOn(abi, "call").mockImplementation((op, ...args) => {
       const code = call(op, ...args);
-      if (op === "generate_zoned_datetime") corrupt(new WasmMemory(abi.memory), Number(args[4]));
+      if (op === "generate_zoned_datetime_for_zone") {
+        corrupt(new WasmMemory(abi.memory), Number(args[5]));
+      }
       return code;
     });
+    const draw = () => engine.generateZonedDatetimeForZone(ctx, tc, null, "UTC", zoned);
+    expect(draw()).toMatchObject({ offsetSeconds: 0, kind: 0 });
     corrupt = (memory, value) => memory.bytes(value + 21, 1).set([2]);
-    expect(() => engine.generateZonedDatetime(ctx, tc, zones, zoned)).toThrow("temporal field");
+    expect(draw).toThrow("temporal field");
     corrupt = (memory, value) => memory.bytes(value + 24, 1).set([3]);
-    expect(() => engine.generateZonedDatetime(ctx, tc, zones, zoned)).toThrow("temporal field");
-    expect(spy.mock.calls.filter(([op]) => op === "owned_string_free")).toHaveLength(2);
+    expect(draw).toThrow("temporal field");
     engine.freeZonedSpec(zoned);
-    engine.freeTimezoneSpec(zones);
     engine.freeTestCase(tc);
     engine.freeRun(run);
     engine.freeSettings(settings);

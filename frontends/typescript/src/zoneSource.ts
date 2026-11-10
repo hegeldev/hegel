@@ -137,7 +137,7 @@ interface EngineSource {
 
 interface Internals {
   checksHost: boolean;
-  /** Who does not know an unknown name, for its error message. */
+  /** What the source is, for the error about a name it does not know. */
   owner: string;
   names(): readonly string[];
   knows(name: string): boolean;
@@ -348,20 +348,22 @@ export function hostZoneData(zone: string): NativeZoneData {
 }
 
 /**
- * Where the time zone data that {@link zones} and {@link zonedDateTimes}
+ * Where the time zone data that {@link zones} and {@link zonedDatetimes}
  * draw against comes from: the transitions they aim at, and how a wall-clock
  * time resolves in each zone. Zone names, their link and legacy flags and the
  * order they shrink in come from the engine's bundled catalogue whatever the
  * source.
  *
- * Draws use {@link ZoneSource.default} unless {@link zones} is given a
- * `source`. That is {@link ZoneSource.host}, the database `Temporal` and `Intl`
- * use, until {@link ZoneSource.setDefault} changes it.
+ * A generator given no `source` uses {@link ZoneSource.default}, which it
+ * reads once, when it is built: {@link ZoneSource.host}, the database
+ * `Temporal` and `Intl` use, until {@link ZoneSource.setDefault} changes it.
+ * Build a source once, outside the test body: each one keeps the zone data
+ * it has read.
  */
 export class ZoneSource {
   private static readonly BUNDLED = new ZoneSource({
     checksHost: true,
-    owner: "this host and the bundled database",
+    owner: "the bundled database, limited to the names this host knows",
     names: bundledHostNames,
     knows: (name) => bundledHostNameSet().has(name),
     upload: null,
@@ -370,7 +372,7 @@ export class ZoneSource {
 
   private static readonly HOST = new ZoneSource({
     checksHost: true,
-    owner: "this host",
+    owner: "this host's database",
     names: bundledHostNames,
     knows: hostKnowsZone,
     upload: (name) => ({ zone: hostZoneData(name) }),
@@ -402,7 +404,9 @@ export class ZoneSource {
    * yearly rule of 2099 and 2100 is inferred for later years. Its names are the
    * bundled names `Intl` knows, plus any other name `Intl` knows when named
    * explicitly. As a safety net beyond that range, a draw whose offset `Intl`
-   * disagrees with is rejected like a failed assumption.
+   * disagrees with is rejected like a failed assumption. A `Temporal` without
+   * `getTimeZoneTransition` (an implementation of an earlier draft) is not
+   * used.
    */
   static host(): ZoneSource {
     return ZoneSource.HOST;
@@ -418,7 +422,7 @@ export class ZoneSource {
    *   names: supportedZones,
    *   load: (name) => ({ oracle: { offsetAt: (s) => offsetOf(name, s) } }),
    * });
-   * gs.temporal.zonedDateTimes({ zones: gs.temporal.zones({ source }) });
+   * const zoned = gs.temporal.zonedDatetimes({ source });
    * ```
    */
   static custom(options: ZoneSourceOptions = {}): ZoneSource {
@@ -435,7 +439,7 @@ export class ZoneSource {
     };
     return new ZoneSource({
       checksHost: false,
-      owner: "its zone source",
+      owner: "a custom source",
       names: () => names,
       knows: (name) => define(name) !== undefined,
       upload: (name) => {
@@ -446,20 +450,27 @@ export class ZoneSource {
     });
   }
 
-  /** The source draws use when not given one: {@link ZoneSource.host} unless changed. */
+  /**
+   * The source a generator built now uses when not given one:
+   * {@link ZoneSource.host} unless {@link ZoneSource.setDefault} changed it.
+   */
   static default(): ZoneSource {
     return ZoneSource.current;
   }
 
   /**
-   * Make `source` the one draws use when not given one. A generator already
-   * drawing (in a running test) keeps the source it started with.
+   * Make `source` the one generators built from now on use when not given
+   * one, and return the default it replaces, to restore later. A generator
+   * reads the default when it is built, so one built earlier keeps the
+   * source it read.
    */
-  static setDefault(source: ZoneSource): void {
+  static setDefault(source: ZoneSource): ZoneSource {
     if (!(source instanceof ZoneSource)) {
       throw new Error(`setDefault needs a ZoneSource, got ${String(source)}`);
     }
+    const previous = ZoneSource.current;
     ZoneSource.current = source;
+    return previous;
   }
 
   /**
@@ -480,7 +491,9 @@ export function zoneSourceKnows(source: ZoneSource, name: string): boolean {
 
 /** @internal The error for a name `source` does not know. */
 export function unknownZone(source: ZoneSource, name: string): Error {
-  return new Error(`The time zone ${name} is not known to ${internals(source).owner}`);
+  return new Error(
+    `The time zone ${name} is not known to the zone source in use (${internals(source).owner}): pass the zone source that has it as source`,
+  );
 }
 
 /** @internal Whether draws against `source` are checked against `Intl`. */
@@ -519,18 +532,21 @@ export function engineZoneSource(
 }
 
 /**
- * @internal Make `name` a name the engine-side source of `source` (not the
- * bundled database) knows, loading its data when it is not declared.
+ * @internal Declare to the engine-side source of `source` (not the bundled
+ * database) the `names` it has not been told of, each of which `source`
+ * knows.
  */
-export function requireZoneName(
+export function declareZoneNames(
   lib: Engine,
   ctx: ContextHandle,
   source: ZoneSource,
-  name: string,
+  names: readonly string[],
 ): void {
-  if (!engineSource(lib, ctx, internals(source)).known.has(name)) {
-    loadZone(lib, ctx, source, name);
-  }
+  const state = engineSource(lib, ctx, internals(source));
+  const undeclared = names.filter((name) => !state.known.has(name));
+  if (undeclared.length === 0) return;
+  lib.zoneSourceDeclare(ctx, state.handle, undeclared);
+  for (const name of undeclared) state.known.add(name);
 }
 
 /** @internal Give the engine-side source `name`'s data, once per engine. */

@@ -4,27 +4,34 @@
  * (`gs.temporal.PlainDate` and so on).
  *
  * Each class is a plain property bag shaped like the `Temporal` class of the
- * same name, so on a host with `Temporal` the value converts with
- * `Temporal.PlainDate.from(value)`,
- * `Temporal.ZonedDateTime.from(value, { offset: "use" })` and so on, and each
- * `toString()` prints the RFC 9557 form `Temporal` would.
+ * same name, so on a host with `Temporal` a value converts with
+ * `Temporal.PlainDate.from(value)`, `Temporal.PlainTime.from(value)`,
+ * `Temporal.PlainDateTime.from(value)`, `Temporal.Duration.from(value)` and
+ * `Temporal.Instant.fromEpochNanoseconds(value.epochNanoseconds)`. A
+ * {@link ZonedDateTime} converts with {@link ZonedDateTime.toTemporal}.
+ *
+ * `toString()` and `toJSON()` give the engine's text of the value, the text
+ * a failing test's report prints it as and the same in every Hegel
+ * frontend. For a date, a time, a datetime and an instant that is the ISO
+ * 8601 string `Temporal` prints. For a {@link ZonedDateTime} and a
+ * {@link Duration} it is not a string `Temporal` parses: convert the value,
+ * not its text.
  *
  * @packageDocumentation
  */
 
 import {
   integerField,
-  pad,
   daysInMonth,
   daysFromCivil,
-  civilFromDays,
   weekdayFromDays,
-  formatUtcOffset,
   parseUtcOffset,
 } from "./calendar.js";
+import { entryEngine } from "./runtime.js";
+import { prettyPrint, type PrettyPrinter } from "./pretty.js";
+import type { NativeDate, NativeTime, NativeDatetime, NativeTimestamp } from "./engine.js";
 
 const NANOSECONDS_PER_SECOND = 1_000_000_000n;
-const NANOSECONDS_PER_DAY = 86_400n * NANOSECONDS_PER_SECOND;
 
 /** The years the engine draws: six signed digits. */
 const MAX_YEAR = 999_999;
@@ -33,28 +40,52 @@ const MIN_EPOCH_SECONDS = -31_619_087_596_800n;
 const MAX_EPOCH_SECONDS = 31_494_784_780_799n;
 const TWO_32 = 2 ** 32;
 
-function compareNumbers(a: number | bigint, b: number | bigint): -1 | 0 | 1 {
-  return a < b ? -1 : a > b ? 1 : 0;
+function compareFields(a: readonly number[], b: readonly number[]): -1 | 0 | 1 {
+  for (let index = 0; index < a.length; index++) {
+    if (a[index] !== b[index]) return a[index] < b[index] ? -1 : 1;
+  }
+  return 0;
 }
 
-function formatYear(year: number): string {
-  if (year >= 0 && year <= 9999) return pad(year, 4);
-  return `${year < 0 ? "-" : "+"}${pad(Math.abs(year), 6)}`;
+function floorDiv(a: bigint, b: bigint): bigint {
+  const q = a / b;
+  return a % b < 0n ? q - 1n : q;
 }
 
-/** The seconds fraction `Temporal` prints: nothing when zero, else the nanoseconds with trailing zeros removed. */
-function formatFraction(nanoseconds: number | bigint): string {
-  if (nanoseconds === 0 || nanoseconds === 0n) return "";
-  return `.${pad(Number(nanoseconds), 9).replace(/0+$/, "")}`;
+/** Throw for a `Temporal` value in a calendar other than ISO 8601, whose fields count differently. */
+function requireIsoCalendar(like: object): void {
+  const calendar = (like as { calendarId?: unknown }).calendarId;
+  if (calendar !== undefined && calendar !== "iso8601") {
+    throw new Error(
+      `Dates are read in the ISO 8601 calendar, got one in the ${String(calendar)} calendar`,
+    );
+  }
 }
 
-function formatClock(
-  hour: number,
-  minute: number,
-  second: number,
-  nanosecond: number | bigint,
-): string {
-  return `${pad(hour, 2)}:${pad(minute, 2)}:${pad(second, 2)}${formatFraction(nanosecond)}`;
+/** @internal The engine's form of a date. */
+export function nativeDate(date: PlainDateLike): NativeDate {
+  return { year: date.year, month: date.month, day: date.day };
+}
+
+/** @internal The engine's form of a time of day. */
+export function nativeTime(time: Required<PlainTimeLike>): NativeTime {
+  return {
+    hour: time.hour,
+    minute: time.minute,
+    second: time.second,
+    nanosecond: time.millisecond * 1_000_000 + time.microsecond * 1000 + time.nanosecond,
+  };
+}
+
+/** @internal The engine's form of a wall-clock datetime. */
+export function nativeDatetime(value: PlainDateLike & Required<PlainTimeLike>): NativeDatetime {
+  return { date: nativeDate(value), time: nativeTime(value) };
+}
+
+/** @internal The engine's form of an instant. */
+export function nativeTimestamp(epochNanoseconds: bigint): NativeTimestamp {
+  const second = floorDiv(epochNanoseconds, NANOSECONDS_PER_SECOND);
+  return { second, nanosecond: Number(epochNanoseconds - second * NANOSECONDS_PER_SECOND) };
 }
 
 /** The fields of a {@link PlainDate}; `Temporal.PlainDate` has this shape. */
@@ -78,17 +109,18 @@ export class PlainDate implements PlainDateLike {
     Object.freeze(this);
   }
 
-  /** The value with `like`'s fields; `like` may be a `Temporal.PlainDate`. */
+  /**
+   * The value with `like`'s fields; `like` may be a `Temporal.PlainDate` in
+   * the ISO 8601 calendar.
+   */
   static from(like: PlainDateLike): PlainDate {
     if (like instanceof PlainDate) return like;
+    requireIsoCalendar(like);
     return new PlainDate(like.year, like.month, like.day);
   }
 
   static compare(a: PlainDateLike, b: PlainDateLike): -1 | 0 | 1 {
-    return compareNumbers(
-      daysFromCivil(a.year, a.month, a.day),
-      daysFromCivil(b.year, b.month, b.day),
-    );
+    return compareFields([a.year, a.month, a.day], [b.year, b.month, b.day]);
   }
 
   equals(other: PlainDateLike): boolean {
@@ -100,18 +132,18 @@ export class PlainDate implements PlainDateLike {
     return weekdayFromDays(daysFromCivil(this.year, this.month, this.day));
   }
 
-  /** Days since 1970-01-01. */
-  get epochDays(): number {
-    return daysFromCivil(this.year, this.month, this.day);
-  }
-
-  /** `YYYY-MM-DD`, with a six-digit signed year outside 0000 to 9999. */
+  /** `YYYY-MM-DD`, with a signed year of six digits outside 0000 to 9999. */
   toString(): string {
-    return `${formatYear(this.year)}-${pad(this.month, 2)}-${pad(this.day, 2)}`;
+    return entryEngine().formatDate(nativeDate(this));
   }
 
   toJSON(): string {
     return this.toString();
+  }
+
+  /** Prints the value in a failing test's report, as `PlainDate(2024-03-10)`. */
+  [prettyPrint](printer: PrettyPrinter): void {
+    printer.text(`PlainDate(${this.toString()})`);
   }
 }
 
@@ -123,6 +155,10 @@ export interface PlainTimeLike {
   millisecond?: number;
   microsecond?: number;
   nanosecond?: number;
+}
+
+function timeFields(time: Required<PlainTimeLike>): number[] {
+  return [time.hour, time.minute, time.second, time.millisecond, time.microsecond, time.nanosecond];
 }
 
 /** A wall-clock time of day, like `Temporal.PlainTime`. */
@@ -157,46 +193,26 @@ export class PlainTime implements Required<PlainTimeLike> {
     );
   }
 
-  /** The time `nanoseconds` after midnight. */
-  static fromNanosecondsOfDay(nanoseconds: number): PlainTime {
-    integerField("nanoseconds", nanoseconds, 0, 86_399_999_999_999);
-    const subsecond = nanoseconds % 1_000_000_000;
-    const seconds = (nanoseconds - subsecond) / 1_000_000_000;
-    return new PlainTime(
-      Math.floor(seconds / 3600),
-      Math.floor(seconds / 60) % 60,
-      seconds % 60,
-      Math.floor(subsecond / 1_000_000),
-      Math.floor(subsecond / 1000) % 1000,
-      subsecond % 1000,
-    );
-  }
-
   static compare(a: PlainTimeLike, b: PlainTimeLike): -1 | 0 | 1 {
-    return compareNumbers(PlainTime.from(a).nanosecondsOfDay, PlainTime.from(b).nanosecondsOfDay);
+    return compareFields(timeFields(PlainTime.from(a)), timeFields(PlainTime.from(b)));
   }
 
   equals(other: PlainTimeLike): boolean {
     return PlainTime.compare(this, other) === 0;
   }
 
-  /** Nanoseconds since midnight. */
-  get nanosecondsOfDay(): number {
-    return (
-      ((this.hour * 60 + this.minute) * 60 + this.second) * 1_000_000_000 +
-      this.millisecond * 1_000_000 +
-      this.microsecond * 1000 +
-      this.nanosecond
-    );
-  }
-
   /** `HH:MM:SS`, with the fraction of a second appended when it is not zero (`02:30:00.5`). */
   toString(): string {
-    return formatClock(this.hour, this.minute, this.second, this.nanosecondsOfDay % 1_000_000_000);
+    return entryEngine().formatTime(nativeTime(this));
   }
 
   toJSON(): string {
     return this.toString();
+  }
+
+  /** Prints the value in a failing test's report, as `PlainTime(02:30:00)`. */
+  [prettyPrint](printer: PrettyPrinter): void {
+    printer.text(`PlainTime(${this.toString()})`);
   }
 }
 
@@ -240,9 +256,13 @@ export class PlainDateTime implements PlainDateLike, Required<PlainTimeLike> {
     Object.freeze(this);
   }
 
-  /** The value with `like`'s fields; `like` may be a `Temporal.PlainDateTime`. */
+  /**
+   * The value with `like`'s fields; `like` may be a `Temporal.PlainDateTime`
+   * in the ISO 8601 calendar.
+   */
   static from(like: PlainDateTimeLike): PlainDateTime {
     if (like instanceof PlainDateTime) return like;
+    requireIsoCalendar(like);
     return new PlainDateTime(
       like.year,
       like.month,
@@ -256,25 +276,10 @@ export class PlainDateTime implements PlainDateLike, Required<PlainTimeLike> {
     );
   }
 
-  /** The value `date` and `time` make together. */
-  static of(date: PlainDateLike, time: PlainTimeLike = {}): PlainDateTime {
-    return PlainDateTime.from({ ...PlainDate.from(date), ...PlainTime.from(time) });
-  }
-
-  /** The wall-clock time `nanoseconds` after 1970-01-01T00:00:00. */
-  static fromEpochNanoseconds(nanoseconds: bigint): PlainDateTime {
-    const days =
-      nanoseconds / NANOSECONDS_PER_DAY - (nanoseconds % NANOSECONDS_PER_DAY < 0n ? 1n : 0n);
-    const date = civilFromDays(Number(days));
-    const time = PlainTime.fromNanosecondsOfDay(Number(nanoseconds - days * NANOSECONDS_PER_DAY));
-    return PlainDateTime.of(date, time);
-  }
-
   static compare(a: PlainDateTimeLike, b: PlainDateTimeLike): -1 | 0 | 1 {
-    return compareNumbers(
-      PlainDateTime.from(a).epochNanoseconds,
-      PlainDateTime.from(b).epochNanoseconds,
-    );
+    const first = PlainDateTime.from(a);
+    const second = PlainDateTime.from(b);
+    return PlainDate.compare(first, second) || compareFields(timeFields(first), timeFields(second));
   }
 
   equals(other: PlainDateTimeLike): boolean {
@@ -289,21 +294,18 @@ export class PlainDateTime implements PlainDateLike, Required<PlainTimeLike> {
     return PlainTime.from(this);
   }
 
-  /** Nanoseconds from 1970-01-01T00:00:00 to this wall-clock time, read as if in UTC. */
-  get epochNanoseconds(): bigint {
-    return (
-      BigInt(this.toPlainDate().epochDays) * NANOSECONDS_PER_DAY +
-      BigInt(this.toPlainTime().nanosecondsOfDay)
-    );
-  }
-
   /** `YYYY-MM-DDTHH:MM:SS`, with the fraction of a second appended when it is not zero. */
   toString(): string {
-    return `${this.toPlainDate().toString()}T${this.toPlainTime().toString()}`;
+    return entryEngine().formatDatetime(nativeDatetime(this));
   }
 
   toJSON(): string {
     return this.toString();
+  }
+
+  /** Prints the value in a failing test's report, as `PlainDateTime(2024-03-10T02:30:00)`. */
+  [prettyPrint](printer: PrettyPrinter): void {
+    printer.text(`PlainDateTime(${this.toString()})`);
   }
 }
 
@@ -345,16 +347,15 @@ export class Instant implements InstantLike {
   }
 
   static compare(a: InstantLike, b: InstantLike): -1 | 0 | 1 {
-    return compareNumbers(a.epochNanoseconds, b.epochNanoseconds);
+    return a.epochNanoseconds < b.epochNanoseconds
+      ? -1
+      : a.epochNanoseconds > b.epochNanoseconds
+        ? 1
+        : 0;
   }
 
   equals(other: InstantLike): boolean {
     return Instant.compare(this, other) === 0;
-  }
-
-  /** Whole seconds since the epoch, rounded down. */
-  get epochSeconds(): number {
-    return Number(floorDiv(this.epochNanoseconds, NANOSECONDS_PER_SECOND));
   }
 
   /** Whole milliseconds since the epoch, rounded down. */
@@ -362,28 +363,25 @@ export class Instant implements InstantLike {
     return Number(floorDiv(this.epochNanoseconds, 1_000_000n));
   }
 
-  /** The nanoseconds within the second at {@link epochSeconds}. */
-  get nanosecond(): number {
-    return Number(this.epochNanoseconds - BigInt(this.epochSeconds) * NANOSECONDS_PER_SECOND);
-  }
-
   /** The UTC wall-clock time followed by `Z` (`2000-01-01T00:00:00Z`). */
   toString(): string {
-    return `${PlainDateTime.fromEpochNanoseconds(this.epochNanoseconds).toString()}Z`;
+    return entryEngine().formatTimestamp(nativeTimestamp(this.epochNanoseconds));
   }
 
   toJSON(): string {
     return this.toString();
   }
-}
 
-function floorDiv(a: bigint, b: bigint): bigint {
-  const q = a / b;
-  return a % b < 0n ? q - 1n : q;
+  /** Prints the value in a failing test's report, as `Instant(2000-01-01T00:00:00Z)`. */
+  [prettyPrint](printer: PrettyPrinter): void {
+    printer.text(`Instant(${this.toString()})`);
+  }
 }
 
 /** How a wall-clock time relates to its zone's transitions. */
 export type TransitionKind = "unique" | "gap" | "fold";
+
+const TRANSITION_KINDS: readonly TransitionKind[] = ["unique", "gap", "fold"];
 
 /** The fields of a {@link ZonedDateTime}. */
 export interface ZonedDateTimeLike extends PlainDateTimeLike, InstantLike {
@@ -400,20 +398,27 @@ export interface ZonedDateTimeLike extends PlainDateTimeLike, InstantLike {
   offsetAfter: string;
 }
 
+/** A UTC offset in the engine's spelling: `+05:30`, `-00:44:30`. */
+function canonicalOffset(offset: string): string {
+  return entryEngine().formatOffset({ seconds: parseUtcOffset(offset), known: true });
+}
+
 /**
  * A wall-clock time in a time zone together with the instant it names, like
  * `Temporal.ZonedDateTime`.
  *
  * A wall-clock time in a gap (one a forward transition skipped) carries
  * the offset after the transition and names the instant read with the offset
- * before it, the forward shift jiff and Python's `zoneinfo` make: 02:30 in a
- * gap from 02:00 to 03:00 is 03:30 after the shift. The same instant is
- * `new Temporal.ZonedDateTime(value.epochNanoseconds, value.timeZone)`.
- * `Temporal.ZonedDateTime.from(value, { offset: "use" })` instead applies
- * the carried offset to the wall-clock time, landing one transition's width
- * earlier (01:30 before the shift). A wall-clock time in a fold (one a
- * backward transition repeated) carries the offset of the occurrence it is,
- * so every conversion agrees.
+ * before it, the forward shift jiff, Python's `zoneinfo` and `Temporal`'s
+ * default make: 02:30 in a gap from 02:00 to 03:00 is 03:30 after the shift.
+ * A wall-clock time in a fold (one a backward transition repeated) carries
+ * the offset of the occurrence it is.
+ *
+ * {@link ZonedDateTime.toTemporal} gives the `Temporal.ZonedDateTime` at the
+ * same instant in the same zone. `Temporal.ZonedDateTime.from(value)` is not
+ * that conversion: it rejects every gap value, whose wall-clock time and
+ * offset do not occur together, and with `{ offset: "use" }` it reads one as
+ * an instant a transition's width earlier.
  */
 export class ZonedDateTime implements ZonedDateTimeLike {
   readonly year: number;
@@ -447,15 +452,15 @@ export class ZonedDateTime implements ZonedDateTimeLike {
     if (typeof like.timeZone !== "string" || like.timeZone === "") {
       throw new Error("timeZone must be a time zone name");
     }
-    if (!["unique", "gap", "fold"].includes(like.kind)) {
+    if (!TRANSITION_KINDS.includes(like.kind)) {
       throw new Error(`kind must be "unique", "gap" or "fold", got ${String(like.kind)}`);
     }
     this.timeZone = like.timeZone;
-    this.offset = formatUtcOffset(parseUtcOffset(like.offset));
+    this.offset = canonicalOffset(like.offset);
     this.kind = like.kind;
     this.fold = Boolean(like.fold);
-    this.offsetBefore = formatUtcOffset(parseUtcOffset(like.offsetBefore));
-    this.offsetAfter = formatUtcOffset(parseUtcOffset(like.offsetAfter));
+    this.offsetBefore = canonicalOffset(like.offsetBefore);
+    this.offsetAfter = canonicalOffset(like.offsetAfter);
     this.epochNanoseconds = Instant.from(like).epochNanoseconds;
     Object.freeze(this);
   }
@@ -490,6 +495,21 @@ export class ZonedDateTime implements ZonedDateTimeLike {
     return PlainTime.from(this);
   }
 
+  /**
+   * The `Temporal.ZonedDateTime` at this value's instant in its zone, given
+   * the host's `Temporal` or a polyfill's: `value.toTemporal(Temporal)`. Its
+   * wall-clock time and offset are this value's, except for a gap value,
+   * where they are the ones the clocks showed at that instant (03:30 for
+   * 02:30 in a gap from 02:00 to 03:00). It throws what `Temporal` throws
+   * for a zone `Temporal` does not know, such as one of a custom
+   * {@link ZoneSource}.
+   */
+  toTemporal<T>(temporal: {
+    ZonedDateTime: new (epochNanoseconds: bigint, timeZone: string) => T;
+  }): T {
+    return new temporal.ZonedDateTime(this.epochNanoseconds, this.timeZone);
+  }
+
   equals(other: ZonedDateTimeLike): boolean {
     return (
       this.epochNanoseconds === other.epochNanoseconds &&
@@ -499,18 +519,40 @@ export class ZonedDateTime implements ZonedDateTimeLike {
   }
 
   /**
-   * `YYYY-MM-DDTHH:MM:SS±HH:MM[zone]` (`2024-03-10T02:30:00-04:00[America/New_York]`),
+   * `YYYY-MM-DDTHH:MM:SS±HH:MM[zone]` (`2024-03-10T01:30:00-05:00[America/New_York]`),
    * with `[gap]`, `[fold=0]` or `[fold=1]` appended for a wall-clock time a
-   * transition skipped or repeated.
+   * transition skipped or repeated
+   * (`2024-03-10T02:30:00-04:00[America/New_York][gap]`), and an offset that
+   * is not a whole number of minutes printed with its seconds
+   * (`-04:56:02`). `Temporal` does not parse the annotated strings and
+   * prints such an offset rounded: use {@link ZonedDateTime.toTemporal}.
    */
   toString(): string {
-    const suffix =
-      this.kind === "gap" ? "[gap]" : this.kind === "fold" ? `[fold=${this.fold ? 1 : 0}]` : "";
-    return `${this.toPlainDateTime().toString()}${this.offset}[${this.timeZone}]${suffix}`;
+    return entryEngine().formatZonedDatetime(
+      {
+        civil: nativeDatetime(this),
+        offsetSeconds: parseUtcOffset(this.offset),
+        offsetKnown: true,
+        fold: this.fold,
+        kind: TRANSITION_KINDS.indexOf(this.kind),
+        offsetBefore: parseUtcOffset(this.offsetBefore),
+        offsetAfter: parseUtcOffset(this.offsetAfter),
+        timestamp: nativeTimestamp(this.epochNanoseconds),
+      },
+      this.timeZone,
+    );
   }
 
   toJSON(): string {
     return this.toString();
+  }
+
+  /**
+   * Prints the value in a failing test's report, as
+   * `ZonedDateTime(2024-03-10T02:30:00-04:00[America/New_York][gap])`.
+   */
+  [prettyPrint](printer: PrettyPrinter): void {
+    printer.text(`ZonedDateTime(${this.toString()})`);
   }
 }
 
@@ -545,7 +587,11 @@ export const DURATION_UNITS = [
 /** A unit of a {@link Duration}. */
 export type DurationUnit = (typeof DURATION_UNITS)[number];
 
-/** Validate `like`'s units: integers in `Temporal.Duration`'s range, all of one sign, with `-0` normalised. */
+/**
+ * Validate `like`'s units: integers, at most 2³²−1 in magnitude for years,
+ * months and weeks and 2⁵³−1 for the rest, all of one sign, with `-0`
+ * normalised.
+ */
 function durationFields(like: DurationLike): Required<DurationLike> {
   const fields: Partial<Record<DurationUnit, number>> = {};
   let sign = 0;
@@ -569,6 +615,11 @@ function durationFields(like: DurationLike): Required<DurationLike> {
  * A span of calendar and clock units, like `Temporal.Duration`: every unit
  * has the same sign, and the value is not reduced (90 minutes stays 90
  * minutes rather than becoming an hour and a half).
+ *
+ * Each unit is an integer of at most 2³²−1 in magnitude for years, months and
+ * weeks and 2⁵³−1 for the rest. `Temporal.Duration` also requires the days
+ * and smaller units to total less than 2⁵³ seconds, which every value
+ * {@link spans} draws does and a value built by hand may not.
  */
 export class Duration implements Required<DurationLike> {
   readonly years: number;
@@ -631,32 +682,32 @@ export class Duration implements Required<DurationLike> {
   }
 
   /**
-   * ISO 8601 as `Temporal.Duration` prints it: `P1Y2M3DT4H`, `-PT1H30M5.5S`,
-   * `PT0S`, with the sub-second units folded into the seconds fraction.
+   * The units that are not zero, largest first, each with its suffix (`y`,
+   * `mo`, `w`, `d`, `h`, `m`, `s`, `ms`, `µs`, `ns`): `1y 2mo 3d`, `90m`,
+   * `-1h 30m` (one sign for the whole value) and `0s` for the zero span.
+   * This is not the ISO 8601 string `Temporal.Duration` prints and parses.
    */
   toString(): string {
-    const magnitude = this.abs();
-    let date = "";
-    if (magnitude.years) date += `${magnitude.years}Y`;
-    if (magnitude.months) date += `${magnitude.months}M`;
-    if (magnitude.weeks) date += `${magnitude.weeks}W`;
-    if (magnitude.days) date += `${magnitude.days}D`;
-    let time = "";
-    if (magnitude.hours) time += `${magnitude.hours}H`;
-    if (magnitude.minutes) time += `${magnitude.minutes}M`;
-    const subsecond =
-      BigInt(magnitude.milliseconds) * 1_000_000n +
-      BigInt(magnitude.microseconds) * 1000n +
-      BigInt(magnitude.nanoseconds);
-    const totalNanoseconds = BigInt(magnitude.seconds) * NANOSECONDS_PER_SECOND + subsecond;
-    if (totalNanoseconds !== 0n || (date === "" && time === "")) {
-      const seconds = totalNanoseconds / NANOSECONDS_PER_SECOND;
-      time += `${seconds}${formatFraction(totalNanoseconds % NANOSECONDS_PER_SECOND)}S`;
-    }
-    return `${this.sign < 0 ? "-" : ""}P${date}${time === "" ? "" : `T${time}`}`;
+    return entryEngine().formatSpan({
+      years: BigInt(this.years),
+      months: BigInt(this.months),
+      weeks: BigInt(this.weeks),
+      days: BigInt(this.days),
+      hours: BigInt(this.hours),
+      minutes: BigInt(this.minutes),
+      seconds: BigInt(this.seconds),
+      milliseconds: BigInt(this.milliseconds),
+      microseconds: BigInt(this.microseconds),
+      nanoseconds: BigInt(this.nanoseconds),
+    });
   }
 
   toJSON(): string {
     return this.toString();
+  }
+
+  /** Prints the value in a failing test's report, as `Duration(1y 2mo 3d)`. */
+  [prettyPrint](printer: PrettyPrinter): void {
+    printer.text(`Duration(${this.toString()})`);
   }
 }

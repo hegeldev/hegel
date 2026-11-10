@@ -276,7 +276,8 @@ type RawSpan = Record<keyof NativeSpan, number | bigint>;
  * Fallible calls return the `hegel_result_t` code and write their handle / value
  * through a trailing JS out-array (`[null]`, `[0]`); the infallible-for-our-use
  * accessors (constructors other than `hegel_settings_new`, frees, setters,
- * result getters) are presented here as value-returning wrappers, with
+ * result getters and the `hegel_format_*` functions, which have a text for
+ * every value) are presented here as value-returning wrappers, with
  * out-parameter marshalling and checked result codes handled by
  * {@link bindLibrary}. `hegel_settings_new` and
  * `hegel_settings_new_for_profile` stay fallible: they resolve a settings
@@ -474,6 +475,27 @@ export interface Bindings {
     allowUnknown: boolean,
     out: NativeOffset[],
   ) => number;
+  validateDate: (ctx: Ptr, min: NativeDate, max: NativeDate, options: Ptr) => number;
+  validateTime: (ctx: Ptr, min: NativeTime, max: NativeTime, precision: number) => number;
+  validateDatetime: (
+    ctx: Ptr,
+    min: NativeDatetime,
+    max: NativeDatetime,
+    precision: number,
+  ) => number;
+  validateTimestamp: (
+    ctx: Ptr,
+    min: NativeTimestamp,
+    max: NativeTimestamp,
+    precision: number,
+  ) => number;
+  validateOffset: (
+    ctx: Ptr,
+    min: number,
+    max: number,
+    granularity: number,
+    allowUnknown: boolean,
+  ) => number;
   timezoneInfo: (ctx: Ptr, name: string, out: RawTimeZoneInfo[]) => number;
   timezoneSpecNew: (ctx: Ptr, out: Ptr[]) => number;
   timezoneSpecFree: (spec: Ptr) => void;
@@ -481,6 +503,7 @@ export interface Bindings {
   timezoneSpecSetSource: (ctx: Ptr, spec: Ptr, source: Ptr) => number;
   timezoneSpecSetLinks: (ctx: Ptr, spec: Ptr, links: boolean) => number;
   timezoneSpecSetLegacy: (ctx: Ptr, spec: Ptr, legacy: boolean) => number;
+  timezoneSpecValidate: (ctx: Ptr, spec: Ptr) => number;
   zoneSourceNew: (ctx: Ptr, out: Ptr[]) => number;
   zoneSourceAddTzif: (ctx: Ptr, source: Ptr, name: string, bytes: Uint8Array) => number;
   zoneSourceAddZone: (ctx: Ptr, source: Ptr, name: string, data: NativeZoneData) => number;
@@ -504,18 +527,20 @@ export interface Bindings {
   zonedSpecSetPrecision: (ctx: Ptr, spec: Ptr, precision: number) => number;
   zonedSpecSetImaginary: (ctx: Ptr, spec: Ptr, imaginary: number) => number;
   zonedSpecSetAmbiguous: (ctx: Ptr, spec: Ptr, ambiguous: number) => number;
-  generateZonedDatetime: (
+  zonedSpecValidate: (ctx: Ptr, spec: Ptr) => number;
+  generateZonedDatetimeForZone: (
     ctx: Ptr,
     tc: Ptr,
-    tzSpec: Ptr,
+    source: Ptr | null,
+    name: string,
     zonedSpec: Ptr,
-    outValue: RawZonedDatetime[],
-    outZone: NativeBuffer[],
+    out: RawZonedDatetime[],
   ) => number;
   spanSpecNew: (ctx: Ptr, out: Ptr[]) => number;
   spanSpecFree: (spec: Ptr) => void;
   spanSpecSetUnitBounds: (ctx: Ptr, spec: Ptr, unit: number, min: bigint, max: bigint) => number;
   spanSpecSetSign: (ctx: Ptr, spec: Ptr, sign: number) => number;
+  spanSpecValidate: (ctx: Ptr, spec: Ptr) => number;
   generateSpan: (ctx: Ptr, tc: Ptr, spec: Ptr, out: RawSpan[]) => number;
   generateUuid: (
     ctx: Ptr,
@@ -623,6 +648,13 @@ export interface Bindings {
 
   version: () => string;
   tzdbVersion: () => string;
+  formatDate: (value: NativeDate) => string;
+  formatTime: (value: NativeTime) => string;
+  formatDatetime: (value: NativeDatetime) => string;
+  formatTimestamp: (value: NativeTimestamp) => string;
+  formatOffset: (value: NativeOffset) => string;
+  formatSpan: (value: NativeSpan) => string;
+  formatZonedDatetime: (value: RawZonedDatetime, zone: string) => string;
 }
 
 /**
@@ -997,6 +1029,23 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     "bool",
     koffi.out(koffi.pointer(offsetType)),
   ]);
+  const validateDate = fs("hegel_validate_date", ["void*", dateType, dateType, "void*"]);
+  const validateTime = fs("hegel_validate_time", ["void*", timeType, timeType, "uint32_t"]);
+  const validateDatetime = fs("hegel_validate_datetime", [
+    "void*",
+    datetimeType,
+    datetimeType,
+    "uint32_t",
+  ]);
+  const validateTimestamp = fs("hegel_validate_timestamp", [
+    "void*",
+    timestampType,
+    timestampType,
+    "uint32_t",
+  ]);
+  const validateOffset = f(
+    "int hegel_validate_offset(void* ctx, int32_t min_seconds, int32_t max_seconds, uint32_t granularity, bool allow_unknown)",
+  );
   const timezoneInfo = fs("hegel_timezone_info", [
     "void*",
     stringType,
@@ -1019,6 +1068,7 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
   const timezoneSpecSetLegacy = f(
     "int hegel_timezone_spec_set_legacy(void* ctx, void* spec, bool legacy)",
   );
+  const timezoneSpecValidate = f("int hegel_timezone_spec_validate(void* ctx, void* spec)");
   const zoneSourceNew = f("int hegel_zone_source_new(void* ctx, _Out_ void** out)");
   const zoneSourceAddTzif = fs("hegel_zone_source_add_tzif", [
     "void*",
@@ -1074,13 +1124,14 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
   const zonedSpecSetAmbiguous = f(
     "int hegel_zoned_spec_set_ambiguous(void* ctx, void* spec, uint32_t ambiguous)",
   );
-  const generateZonedDatetime = fs("hegel_generate_zoned_datetime", [
+  const zonedSpecValidate = f("int hegel_zoned_spec_validate(void* ctx, void* spec)");
+  const generateZonedDatetimeForZone = fs("hegel_generate_zoned_datetime_for_zone", [
     "void*",
     "void*",
     "void*",
+    stringType,
     "void*",
     koffi.out(koffi.pointer(zonedDatetimeType)),
-    koffi.out(koffi.pointer(stringType)),
   ]);
   const spanSpecNew = f("int hegel_span_spec_new(void* ctx, _Out_ void** out)");
   const spanSpecFree = f("int hegel_span_spec_free(void* ctx, void* spec)");
@@ -1088,6 +1139,7 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     "int hegel_span_spec_set_unit_bounds(void* ctx, void* spec, uint32_t unit, int64_t min, int64_t max)",
   );
   const spanSpecSetSign = f("int hegel_span_spec_set_sign(void* ctx, void* spec, uint32_t sign)");
+  const spanSpecValidate = f("int hegel_span_spec_validate(void* ctx, void* spec)");
   const generateSpan = fs("hegel_generate_span", [
     "void*",
     "void*",
@@ -1208,6 +1260,19 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
   const failureCaveat = f("int hegel_failure_caveat(void* ctx, void* f, _Out_ void** out)");
   const version = fs("hegel_version", ["void*", koffi.out(koffi.pointer(stringType))]);
   const tzdbVersion = fs("hegel_tzdb_version", ["void*", koffi.out(koffi.pointer(stringType))]);
+  const ownedText = koffi.out(koffi.pointer(stringType));
+  const formatDate = fs("hegel_format_date", ["void*", dateType, ownedText]);
+  const formatTime = fs("hegel_format_time", ["void*", timeType, ownedText]);
+  const formatDatetime = fs("hegel_format_datetime", ["void*", datetimeType, ownedText]);
+  const formatTimestamp = fs("hegel_format_timestamp", ["void*", timestampType, ownedText]);
+  const formatOffset = fs("hegel_format_offset", ["void*", offsetType, ownedText]);
+  const formatSpan = fs("hegel_format_span", ["void*", koffi.pointer(spanType), ownedText]);
+  const formatZonedDatetime = fs("hegel_format_zoned_datetime", [
+    "void*",
+    koffi.pointer(zonedDatetimeType),
+    stringType,
+    ownedText,
+  ]);
 
   const readString = (result: NativeBuffer): string => wtf8ToString(copyNativeBuffer(result));
   const readOptionalString = (pointer: Ptr): string | null =>
@@ -1246,6 +1311,16 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     if (code !== RESULT_OK) {
       const message = ctx === null ? "" : readString(contextLastError(ctx));
       throw new LibhegelError(`${op} failed${message ? `: ${message}` : ""}`, code);
+    }
+  };
+
+  const formatted = (op: string, format: (out: NativeBuffer[]) => number): string => {
+    const out: NativeBuffer[] = [{ data: null, len: 0 }];
+    checked(format(out), op);
+    try {
+      return readString(out[0]);
+    } finally {
+      checked(ownedStringFree(null, out[0]), "ownedStringFree");
     }
   };
 
@@ -1515,6 +1590,12 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
       generateTimestamp(ctx, tc, min, max, precision, out),
     generateOffset: (ctx, tc, min, max, granularity, allowUnknown, out) =>
       generateOffset(ctx, tc, min, max, granularity, allowUnknown, out),
+    validateDate: (ctx, min, max, options) => validateDate(ctx, min, max, options),
+    validateTime: (ctx, min, max, precision) => validateTime(ctx, min, max, precision),
+    validateDatetime: (ctx, min, max, precision) => validateDatetime(ctx, min, max, precision),
+    validateTimestamp: (ctx, min, max, precision) => validateTimestamp(ctx, min, max, precision),
+    validateOffset: (ctx, min, max, granularity, allowUnknown) =>
+      validateOffset(ctx, min, max, granularity, allowUnknown),
     timezoneInfo: (ctx, name, out) => timezoneInfo(ctx, nativeString(name), out),
     timezoneSpecNew: (ctx, out) => timezoneSpecNew(ctx, out),
     timezoneSpecFree: (spec) => checked(timezoneSpecFree(null, spec), "timezoneSpecFree"),
@@ -1523,6 +1604,7 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     timezoneSpecSetSource: (ctx, spec, source) => timezoneSpecSetSource(ctx, spec, source),
     timezoneSpecSetLinks: (ctx, spec, links) => timezoneSpecSetLinks(ctx, spec, links),
     timezoneSpecSetLegacy: (ctx, spec, legacy) => timezoneSpecSetLegacy(ctx, spec, legacy),
+    timezoneSpecValidate: (ctx, spec) => timezoneSpecValidate(ctx, spec),
     zoneSourceNew: (ctx, out) => zoneSourceNew(ctx, out),
     zoneSourceAddTzif: (ctx, source, name, bytes) =>
       zoneSourceAddTzif(ctx, source, nativeString(name), bytes, bytes.length),
@@ -1541,13 +1623,15 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     zonedSpecSetPrecision: (ctx, spec, precision) => zonedSpecSetPrecision(ctx, spec, precision),
     zonedSpecSetImaginary: (ctx, spec, imaginary) => zonedSpecSetImaginary(ctx, spec, imaginary),
     zonedSpecSetAmbiguous: (ctx, spec, ambiguous) => zonedSpecSetAmbiguous(ctx, spec, ambiguous),
-    generateZonedDatetime: (ctx, tc, tzSpec, zonedSpec, outValue, outZone) =>
-      generateZonedDatetime(ctx, tc, tzSpec, zonedSpec, outValue, outZone),
+    zonedSpecValidate: (ctx, spec) => zonedSpecValidate(ctx, spec),
+    generateZonedDatetimeForZone: (ctx, tc, source, name, zonedSpec, out) =>
+      generateZonedDatetimeForZone(ctx, tc, source, nativeString(name), zonedSpec, out),
     spanSpecNew: (ctx, out) => spanSpecNew(ctx, out),
     spanSpecFree: (spec) => checked(spanSpecFree(null, spec), "spanSpecFree"),
     spanSpecSetUnitBounds: (ctx, spec, unit, min, max) =>
       spanSpecSetUnitBounds(ctx, spec, unit, min, max),
     spanSpecSetSign: (ctx, spec, sign) => spanSpecSetSign(ctx, spec, sign),
+    spanSpecValidate: (ctx, spec) => spanSpecValidate(ctx, spec),
     generateSpan: (ctx, tc, spec, out) => generateSpan(ctx, tc, spec, out),
     generateUuid: (ctx, tc, version, hasVersion, outBytes) =>
       generateUuid(ctx, tc, version, hasVersion, outBytes),
@@ -1648,6 +1732,18 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
       checked(tzdbVersion(null, out), "tzdbVersion");
       return readString(out[0]);
     },
+    formatDate: (value) => formatted("formatDate", (out) => formatDate(null, value, out)),
+    formatTime: (value) => formatted("formatTime", (out) => formatTime(null, value, out)),
+    formatDatetime: (value) =>
+      formatted("formatDatetime", (out) => formatDatetime(null, value, out)),
+    formatTimestamp: (value) =>
+      formatted("formatTimestamp", (out) => formatTimestamp(null, value, out)),
+    formatOffset: (value) => formatted("formatOffset", (out) => formatOffset(null, value, out)),
+    formatSpan: (value) => formatted("formatSpan", (out) => formatSpan(null, value, out)),
+    formatZonedDatetime: (value, zone) =>
+      formatted("formatZonedDatetime", (out) =>
+        formatZonedDatetime(null, value, nativeString(zone), out),
+      ),
   };
 }
 
@@ -1724,6 +1820,46 @@ export class Libhegel implements Engine {
 
   tzdbVersion(): string {
     return this.fns.tzdbVersion();
+  }
+
+  formatDate(value: NativeDate): string {
+    return this.fns.formatDate(value);
+  }
+
+  formatTime(value: NativeTime): string {
+    return this.fns.formatTime(value);
+  }
+
+  formatDatetime(value: NativeDatetime): string {
+    return this.fns.formatDatetime(value);
+  }
+
+  formatTimestamp(value: NativeTimestamp): string {
+    return this.fns.formatTimestamp(value);
+  }
+
+  formatOffset(value: NativeOffset): string {
+    return this.fns.formatOffset(value);
+  }
+
+  formatSpan(value: NativeSpan): string {
+    return this.fns.formatSpan(value);
+  }
+
+  formatZonedDatetime(value: NativeZonedDatetime, zone: string): string {
+    return this.fns.formatZonedDatetime(
+      {
+        civil: value.civil,
+        offset_seconds: value.offsetSeconds,
+        offset_known: value.offsetKnown,
+        fold: value.fold,
+        kind: value.kind,
+        offset_before: value.offsetBefore,
+        offset_after: value.offsetAfter,
+        timestamp: value.timestamp,
+      },
+      zone,
+    );
   }
 
   newContext(): ContextHandle {
@@ -2222,7 +2358,9 @@ export class Libhegel implements Engine {
       // precondition failed); discard the test case like a failed assume().
       throw new AssumeError();
     }
-    throw new LibhegelError(`${op} failed: ${this.lastError(ctx)}`, code);
+    const message = this.lastError(ctx);
+    const detail = message.startsWith(`${op}: `) ? message.slice(op.length + 2) : message;
+    throw new LibhegelError(`${op} failed: ${detail}`, code);
   }
 
   /** Draw a boolean that is `true` with probability `p`. */
@@ -2593,6 +2731,57 @@ export class Libhegel implements Engine {
     return out[0];
   }
 
+  /** Check the arguments of a date draw without drawing. */
+  validateDate(ctx: Ptr, min: NativeDate, max: NativeDate, options: Ptr): void {
+    this.check(
+      ctx,
+      this.fns.validateDate(this.ptr(ctx), min, max, options === null ? null : this.ptr(options)),
+      "hegel_validate_date",
+    );
+  }
+
+  /** Check the arguments of a time draw without drawing. */
+  validateTime(ctx: Ptr, min: NativeTime, max: NativeTime, precision: number): void {
+    this.check(
+      ctx,
+      this.fns.validateTime(this.ptr(ctx), min, max, precision),
+      "hegel_validate_time",
+    );
+  }
+
+  /** Check the arguments of a datetime draw without drawing. */
+  validateDatetime(ctx: Ptr, min: NativeDatetime, max: NativeDatetime, precision: number): void {
+    this.check(
+      ctx,
+      this.fns.validateDatetime(this.ptr(ctx), min, max, precision),
+      "hegel_validate_datetime",
+    );
+  }
+
+  /** Check the arguments of an instant draw without drawing. */
+  validateTimestamp(ctx: Ptr, min: NativeTimestamp, max: NativeTimestamp, precision: number): void {
+    this.check(
+      ctx,
+      this.fns.validateTimestamp(this.ptr(ctx), min, max, precision),
+      "hegel_validate_timestamp",
+    );
+  }
+
+  /** Check the arguments of a UTC offset draw without drawing. */
+  validateOffset(
+    ctx: Ptr,
+    min: number,
+    max: number,
+    granularity: number,
+    allowUnknown: boolean,
+  ): void {
+    this.check(
+      ctx,
+      this.fns.validateOffset(this.ptr(ctx), min, max, granularity, allowUnknown),
+      "hegel_validate_offset",
+    );
+  }
+
   /** Look `name` up in the bundled time zone database; `known` is false for an unknown name. */
   timezoneInfo(ctx: Ptr, name: string): NativeTimeZoneInfo {
     const out: RawTimeZoneInfo[] = [
@@ -2647,6 +2836,15 @@ export class Libhegel implements Engine {
       ctx,
       this.fns.timezoneSpecSetLegacy(this.ptr(ctx), this.ptr(spec), legacy),
       "hegel_timezone_spec_set_legacy",
+    );
+  }
+
+  /** Check `spec` as its first draw would. Throws {@link LibhegelError} for an unknown name or an empty set. */
+  timezoneSpecValidate(ctx: Ptr, spec: Ptr): void {
+    this.check(
+      ctx,
+      this.fns.timezoneSpecValidate(this.ptr(ctx), this.ptr(spec)),
+      "hegel_timezone_spec_validate",
     );
   }
 
@@ -2757,18 +2955,31 @@ export class Libhegel implements Engine {
     );
   }
 
+  /** Check `spec` as every draw from it does. Throws {@link LibhegelError} for bounds of both kinds. */
+  zonedSpecValidate(ctx: Ptr, spec: Ptr): void {
+    this.check(
+      ctx,
+      this.fns.zonedSpecValidate(this.ptr(ctx), this.ptr(spec)),
+      "hegel_zoned_spec_validate",
+    );
+  }
+
   freeZonedSpec(spec: Ptr): void {
     this.release(spec, (pointer) => this.fns.zonedSpecFree(pointer));
   }
 
-  /** Draw a zone from `tzSpec` and a wall-clock time in it within `zonedSpec`. */
-  generateZonedDatetime(
+  /**
+   * Draw a wall-clock time within `zonedSpec` in the zone `name` of `source`,
+   * or of the engine's default source when `source` is `null`.
+   */
+  generateZonedDatetimeForZone(
     ctx: Ptr,
     tc: Ptr,
-    tzSpec: Ptr,
+    source: Ptr | null,
+    name: string,
     zonedSpec: Ptr,
-  ): { value: NativeZonedDatetime; zone: string } {
-    const outValue: RawZonedDatetime[] = [
+  ): NativeZonedDatetime {
+    const out: RawZonedDatetime[] = [
       {
         civil: emptyDatetime(),
         offset_seconds: 0,
@@ -2780,37 +2991,29 @@ export class Libhegel implements Engine {
         timestamp: { second: 0, nanosecond: 0 },
       },
     ];
-    const outZone: NativeBuffer[] = [{ data: null, len: 0 }];
     this.check(
       ctx,
-      this.fns.generateZonedDatetime(
+      this.fns.generateZonedDatetimeForZone(
         this.ptr(ctx),
         this.ptr(tc),
-        this.ptr(tzSpec),
+        source === null ? null : this.ptr(source),
+        name,
         this.ptr(zonedSpec),
-        outValue,
-        outZone,
+        out,
       ),
-      "hegel_generate_zoned_datetime",
+      "hegel_generate_zoned_datetime_for_zone",
     );
-    try {
-      const raw = outValue[0];
-      return {
-        value: {
-          civil: raw.civil,
-          offsetSeconds: raw.offset_seconds,
-          offsetKnown: raw.offset_known,
-          fold: raw.fold,
-          kind: raw.kind,
-          offsetBefore: raw.offset_before,
-          offsetAfter: raw.offset_after,
-          timestamp: timestampFromRaw(raw.timestamp),
-        },
-        zone: wtf8ToString(copyNativeBuffer(outZone[0])),
-      };
-    } finally {
-      this.fns.ownedStringFree(outZone[0]);
-    }
+    const raw = out[0];
+    return {
+      civil: raw.civil,
+      offsetSeconds: raw.offset_seconds,
+      offsetKnown: raw.offset_known,
+      fold: raw.fold,
+      kind: raw.kind,
+      offsetBefore: raw.offset_before,
+      offsetAfter: raw.offset_after,
+      timestamp: timestampFromRaw(raw.timestamp),
+    };
   }
 
   /** Create a span spec with no unit enabled; release with {@link freeSpanSpec}. */
@@ -2833,6 +3036,15 @@ export class Libhegel implements Engine {
       ctx,
       this.fns.spanSpecSetSign(this.ptr(ctx), this.ptr(spec), sign),
       "hegel_span_spec_set_sign",
+    );
+  }
+
+  /** Check `spec` as every draw from it does. Throws {@link LibhegelError} for bounds its sign policy excludes. */
+  spanSpecValidate(ctx: Ptr, spec: Ptr): void {
+    this.check(
+      ctx,
+      this.fns.spanSpecValidate(this.ptr(ctx), this.ptr(spec)),
+      "hegel_span_spec_validate",
     );
   }
 

@@ -52,6 +52,31 @@ jobs:
       - name: Test the packed package in four browser bundlers
         run: just typescript::check-browser
 
+  # The test suite again on a Node that has `Temporal`: the test job's Node
+  # does not, so there the tests of the Temporal zone source and of
+  # conversion to Temporal values are skipped.
+  test-temporal:
+    name: test (node 26, with Temporal)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "26"
+      - name: Set up the frontend
+        run: just typescript::setup
+      - name: Build libhegel
+        run: just typescript::build-libhegel
+      - name: Run the test suite with coverage
+        run: just typescript::check-test
+
   # The built package on the oldest supported Node and on Bun and Deno.
   smoke:
     name: smoke (${{ matrix.runtime }} ${{ matrix.version }})

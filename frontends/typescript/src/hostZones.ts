@@ -12,28 +12,37 @@
 /** The instants `Date` and `Intl` can represent: ±100,000,000 days from the epoch, in milliseconds. */
 const HOST_INSTANT_LIMIT_MILLISECONDS = 8.64e15;
 
-const formatters = new Map<string, Intl.DateTimeFormat | null>();
+const formatters = new Map<string, Intl.DateTimeFormat>();
+const known = new Map<string, boolean>();
 
-/** The host's formatter for `zone`, or `null` when the host's `Intl` does not know it. Cached per zone. */
+function newFormatter(zone: string): Intl.DateTimeFormat {
+  return new Intl.DateTimeFormat("en-US-u-nu-latn", { timeZone: zone, timeZoneName: "longOffset" });
+}
+
+/** Whether the host's `Intl` knows `zone`. Cached per zone, without keeping a formatter. */
+export function hostKnowsZone(zone: string): boolean {
+  let answer = known.get(zone);
+  if (answer === undefined) {
+    try {
+      newFormatter(zone);
+      answer = true;
+    } catch {
+      answer = false;
+    }
+    known.set(zone, answer);
+  }
+  return answer;
+}
+
+/** The host's formatter for `zone`, kept for the zones draws land on, or `null` when `Intl` does not know it. */
 export function hostZoneFormatter(zone: string): Intl.DateTimeFormat | null {
+  if (!hostKnowsZone(zone)) return null;
   let formatter = formatters.get(zone);
   if (formatter === undefined) {
-    try {
-      formatter = new Intl.DateTimeFormat("en-US-u-nu-latn", {
-        timeZone: zone,
-        timeZoneName: "longOffset",
-      });
-    } catch {
-      formatter = null;
-    }
+    formatter = newFormatter(zone);
     formatters.set(zone, formatter);
   }
   return formatter;
-}
-
-/** Whether the host's `Intl` knows `zone`. */
-export function hostKnowsZone(zone: string): boolean {
-  return hostZoneFormatter(zone) !== null;
 }
 
 /** `GMT-04:00` or `GMT-00:44:30` to seconds; plain `GMT` (UTC) has no offset part. */
@@ -74,11 +83,19 @@ export interface TemporalLike {
       toZonedDateTimeISO(timeZone: string): TemporalZonedDateTimeLike;
     };
   };
+  ZonedDateTime: { prototype: { getTimeZoneTransition: unknown } };
 }
 
-/** The host's `Temporal`, when it has one. */
+/**
+ * The host's `Temporal`, when it has one that reports a zone's transitions
+ * (`ZonedDateTime#getTimeZoneTransition`, which implementations of earlier
+ * drafts of the proposal lack).
+ */
 export function hostTemporal(): TemporalLike | undefined {
-  return (globalThis as { Temporal?: TemporalLike }).Temporal;
+  const temporal = (globalThis as { Temporal?: Partial<TemporalLike> }).Temporal;
+  return typeof temporal?.ZonedDateTime?.prototype?.getTimeZoneTransition === "function"
+    ? (temporal as TemporalLike)
+    : undefined;
 }
 
 /** The host's offset lookups for one zone, in the shape a zone source oracle takes. */

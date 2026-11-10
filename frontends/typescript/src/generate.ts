@@ -21,13 +21,13 @@
  * Grammars (`hegel_grammar_t`, for `fromLark`) are compiled once per run for
  * each generator in the same cache and freed when the run ends.
  *
- * Time zone draws use the schema's zone source, or the default one when it
- * has none (`src/zoneSource.ts`). A zoned draw takes two steps: it draws the
- * name, gives the engine that zone's data if it has not had it yet, and draws
- * the wall-clock time from a spec of that one name, which gives the same
- * choice sequence as one step. Against the host's or the bundled database, a
- * zoned draw whose offset the host's `Intl` disagrees with is rejected like a
- * failed assumption.
+ * Time zone draws use the schema's zone source (`src/zoneSource.ts`), which
+ * the generator read when it was built. A zoned draw takes two steps: it
+ * draws the name (or is given one), gives the engine that zone's data if it
+ * has not had it yet, and draws the wall-clock time in that zone
+ * (`hegel_generate_zoned_datetime_for_zone`). Against the host's or the
+ * bundled database, a zoned draw whose offset the host's `Intl` disagrees
+ * with is rejected like a failed assumption.
  *
  * @packageDocumentation
  */
@@ -44,6 +44,7 @@ import {
   type GrammarHandle,
   type TimeZoneSpecHandle,
   type ZonedSpecHandle,
+  type SpanSpecHandle,
   type NativeDate,
   type NativeTime,
   type NativeDatetime,
@@ -56,12 +57,12 @@ import {
 import { fitsInt64 } from "./bytes.js";
 import { hostOffsetSeconds } from "./hostZones.js";
 import {
-  ZoneSource,
+  type ZoneSource,
   bundledZoneNames,
   checksHostOffsets,
+  declareZoneNames,
   engineZoneSource,
   loadZone,
-  requireZoneName,
 } from "./zoneSource.js";
 
 const UINT32_MAX = 0xffffffff;
@@ -129,7 +130,8 @@ export function formatIpv6(bytes: Uint8Array): string {
  * `unique` lists and dict keys the way the engine's value equality used to.
  * Numbers and bigints of equal value get the same key (the integer draw
  * downcasts to `number` exactly when the value is safe, so one logical value
- * can surface as either type).
+ * can surface as either type). A value of no other shape is a record (the
+ * date and time draws).
  */
 export function valueKey(value: unknown): string {
   if (value === null) {
@@ -150,7 +152,6 @@ export function valueKey(value: unknown): string {
   if (Array.isArray(value)) {
     return `a:${value.map(valueKey).join(",")}`;
   }
-  // The only remaining raw value shape is a record (the date and time draws).
   const record = value as Record<string, unknown>;
   const fields = Object.keys(record)
     .sort()
@@ -397,113 +398,69 @@ function hostZones(lib: Engine, ctx: ContextHandle): HostZone[] {
   return zones;
 }
 
-/** The zone source a `timezone` or `zoned_datetime` schema draws against. */
-function sourceOf(schema: Record<string, unknown>): ZoneSource {
-  return (schema["source"] as ZoneSource | null) ?? ZoneSource.default();
-}
-
 /**
- * Restrict `spec` to `names`, or to the source's names its link and legacy
- * flags allow. The flags are set before the source, which needs a name they
- * allow, and an explicit list allows every name until it replaces them.
+ * @internal The time zone spec of a `timezone` schema, validated: its names,
+ * or the names of its source that its link and legacy flags allow.
  */
-function configureTimeZoneSpec(
+export function buildTimeZoneSpec(
   lib: Engine,
   ctx: ContextHandle,
-  spec: TimeZoneSpecHandle,
-  source: ZoneSource,
-  names: readonly string[] | null,
-  schema: Record<string, unknown>,
-): void {
-  const links = schema["links"] as boolean;
-  const legacy = schema["legacy"] as boolean;
-  const handle = engineZoneSource(lib, ctx, source);
-  if (handle === null) {
-    lib.timezoneSpecSetNames(
-      ctx,
-      spec,
-      names ??
-        hostZones(lib, ctx)
-          .filter((zone) => (links || !zone.isLink) && (legacy || !zone.legacy))
-          .map((zone) => zone.name),
-    );
-    return;
-  }
-  lib.timezoneSpecSetLinks(ctx, spec, links);
-  lib.timezoneSpecSetLegacy(ctx, spec, legacy);
-  if (names !== null) {
-    for (const name of names) requireZoneName(lib, ctx, source, name);
-  }
-  lib.timezoneSpecSetSource(ctx, spec, handle);
-  if (names !== null) lib.timezoneSpecSetNames(ctx, spec, names);
-}
-
-function newTimeZoneSpec(
-  lib: Engine,
-  ctx: ContextHandle,
-  source: ZoneSource,
-  names: readonly string[] | null,
   schema: Record<string, unknown>,
 ): CachedHandle<TimeZoneSpecHandle> {
+  const source = schema["source"] as ZoneSource;
+  const names = schema["names"] as string[] | null;
+  const links = schema["allow_links"] as boolean;
+  const legacy = schema["allow_legacy"] as boolean;
   const spec = lib.timezoneSpecNew(ctx);
   const free = () => lib.freeTimezoneSpec(spec);
-  withCleanupOnFailure(() => configureTimeZoneSpec(lib, ctx, spec, source, names, schema), free);
+  withCleanupOnFailure(() => {
+    const handle = engineZoneSource(lib, ctx, source);
+    if (handle === null) {
+      lib.timezoneSpecSetNames(
+        ctx,
+        spec,
+        names ??
+          hostZones(lib, ctx)
+            .filter((zone) => (links || !zone.isLink) && (legacy || !zone.legacy))
+            .map((zone) => zone.name),
+      );
+    } else {
+      lib.timezoneSpecSetSource(ctx, spec, handle);
+      lib.timezoneSpecSetLinks(ctx, spec, links);
+      lib.timezoneSpecSetLegacy(ctx, spec, legacy);
+      if (names !== null) {
+        declareZoneNames(lib, ctx, source, names);
+        lib.timezoneSpecSetNames(ctx, spec, names);
+      }
+    }
+    lib.timezoneSpecValidate(ctx, spec);
+  }, free);
   return { value: spec, free };
 }
 
-function buildTimeZoneSpec(
+/** @internal The zoned spec of a zoned draw's bounds, validated. */
+export function buildZonedSpec(
   lib: Engine,
   ctx: ContextHandle,
-  schema: Record<string, unknown>,
-): CachedHandle<TimeZoneSpecHandle> {
-  return newTimeZoneSpec(lib, ctx, sourceOf(schema), schema["names"] as string[] | null, schema);
-}
-
-/**
- * The handles of a zoned draw: the spec its name is drawn from (`null` when
- * it names one zone), the zoned spec, and a spec of each zone drawn so far.
- */
-interface ZonedSpecs {
-  source: ZoneSource;
-  zones: TimeZoneSpecHandle | null;
-  zoned: ZonedSpecHandle;
-  single: Map<string, TimeZoneSpecHandle>;
-}
-
-function buildZonedSpecs(
-  lib: Engine,
-  ctx: ContextHandle,
-  schema: Record<string, unknown>,
-): CachedHandle<ZonedSpecs> {
-  const source = sourceOf(schema);
-  const names = schema["names"] as string[] | null;
-  const zones = names?.length === 1 ? null : newTimeZoneSpec(lib, ctx, source, names, schema);
-  const releaseZones = () => zones?.free();
-  const zoned = withCleanupOnFailure(() => lib.zonedSpecNew(ctx), releaseZones);
-  const single = new Map<string, TimeZoneSpecHandle>();
-  const free = () =>
-    withCleanup(
-      () => lib.freeZonedSpec(zoned),
-      () =>
-        withCleanup(releaseZones, () => {
-          const specs = [...single.values()];
-          single.clear();
-          for (const spec of specs) lib.freeTimezoneSpec(spec);
-        }),
-    );
+  bounds: Record<string, unknown>,
+): CachedHandle<ZonedSpecHandle> {
+  const spec = lib.zonedSpecNew(ctx);
+  const free = () => lib.freeZonedSpec(spec);
   withCleanupOnFailure(() => {
-    const civil = schema["civil"] as { min: NativeDatetime; max: NativeDatetime } | null;
-    const instant = schema["instant"] as { min: NativeTimestamp; max: NativeTimestamp } | null;
-    if (civil !== null) lib.zonedSpecSetCivilBounds(ctx, zoned, civil.min, civil.max);
-    if (instant !== null) lib.zonedSpecSetInstantBounds(ctx, zoned, instant.min, instant.max);
-    lib.zonedSpecSetPrecision(ctx, zoned, schema["precision"] as number);
-    lib.zonedSpecSetImaginary(ctx, zoned, schema["imaginary"] as number);
-    lib.zonedSpecSetAmbiguous(ctx, zoned, schema["ambiguous"] as number);
+    const civil = bounds["civil"] as { min: NativeDatetime; max: NativeDatetime } | null;
+    const instant = bounds["instant"] as { min: NativeTimestamp; max: NativeTimestamp } | null;
+    if (civil !== null) lib.zonedSpecSetCivilBounds(ctx, spec, civil.min, civil.max);
+    if (instant !== null) lib.zonedSpecSetInstantBounds(ctx, spec, instant.min, instant.max);
+    lib.zonedSpecSetPrecision(ctx, spec, bounds["precision"] as number);
+    lib.zonedSpecSetImaginary(ctx, spec, bounds["imaginary"] as number);
+    lib.zonedSpecSetAmbiguous(ctx, spec, bounds["ambiguous"] as number);
+    lib.zonedSpecValidate(ctx, spec);
   }, free);
-  return { value: { source, zones: zones?.value ?? null, zoned, single }, free };
+  return { value: spec, free };
 }
 
-function buildDateOptions(
+/** @internal The date options of a `date` schema's weekday and month masks. */
+export function buildDateOptions(
   lib: Engine,
   ctx: ContextHandle,
   schema: Record<string, unknown>,
@@ -519,17 +476,78 @@ function buildDateOptions(
   return { value: options, free };
 }
 
+/**
+ * @internal Have the engine check the arguments of a `date`, `time`,
+ * `datetime`, `timestamp` or `offset` schema's draws, without drawing.
+ */
+export function validateTemporalSchema(
+  lib: Engine,
+  ctx: ContextHandle,
+  schema: Record<string, unknown>,
+): void {
+  const precision = schema["precision"] as number;
+  switch (schema["type"]) {
+    case "date": {
+      const options = dateOptionsOf(schema) ? buildDateOptions(lib, ctx, schema) : null;
+      withCleanup(
+        () =>
+          lib.validateDate(
+            ctx,
+            schema["min"] as NativeDate,
+            schema["max"] as NativeDate,
+            options?.value ?? null,
+          ),
+        () => options?.free(),
+      );
+      return;
+    }
+    case "time":
+      lib.validateTime(ctx, schema["min"] as NativeTime, schema["max"] as NativeTime, precision);
+      return;
+    case "datetime":
+      lib.validateDatetime(
+        ctx,
+        schema["min"] as NativeDatetime,
+        schema["max"] as NativeDatetime,
+        precision,
+      );
+      return;
+    case "timestamp":
+      lib.validateTimestamp(
+        ctx,
+        schema["min"] as NativeTimestamp,
+        schema["max"] as NativeTimestamp,
+        precision,
+      );
+      return;
+    default:
+      lib.validateOffset(
+        ctx,
+        schema["min"] as number,
+        schema["max"] as number,
+        schema["granularity"] as number,
+        false,
+      );
+  }
+}
+
+/** Whether a `date` schema restricts weekdays or months, so its draws need date options. */
+function dateOptionsOf(schema: Record<string, unknown>): boolean {
+  return schema["weekdays"] !== undefined || schema["months"] !== undefined;
+}
+
 interface SpanUnitBounds {
   unit: number;
   min: bigint;
   max: bigint;
 }
 
-function buildSpanSpec(
+/** @internal The span spec of a `span` schema, validated. */
+export function buildSpanSpec(
   lib: Engine,
   ctx: ContextHandle,
   schema: Record<string, unknown>,
-): CachedHandle<ReturnType<Engine["spanSpecNew"]>> {
+): CachedHandle<SpanSpecHandle> {
   const spec = lib.spanSpecNew(ctx);
   const free = () => lib.freeSpanSpec(spec);
   withCleanupOnFailure(() => {
@@ -537,36 +555,41 @@ function buildSpanSpec(
       lib.spanSpecSetUnitBounds(ctx, spec, unit, min, max);
     }
     lib.spanSpecSetSign(ctx, spec, schema["sign"] as number);
+    lib.spanSpecValidate(ctx, spec);
   }, free);
   return { value: spec, free };
 }
 
-function drawZonedDatetime(
+/**
+ * Draw a wall-clock time within `bounds` in `zone` of `source`, giving the
+ * engine the zone's data first.
+ */
+function drawInZone(
   lib: Engine,
   ctx: ContextHandle,
   tc: TestCaseHandle,
-  schema: Record<string, unknown>,
+  source: ZoneSource,
+  zone: string,
+  bounds: Record<string, unknown>,
   cache: HandleCache,
 ): { value: NativeZonedDatetime; zone: string } {
-  const specs = cache.get(lib, ctx, schema, buildZonedSpecs);
-  const zone =
-    specs.zones === null
-      ? (schema["names"] as string[])[0]
-      : lib.generateTimezone(ctx, tc, specs.zones);
-  loadZone(lib, ctx, specs.source, zone);
-  let spec = specs.single.get(zone);
-  if (spec === undefined) {
-    spec = newTimeZoneSpec(lib, ctx, specs.source, [zone], schema).value;
-    specs.single.set(zone, spec);
+  const spec = cache.get(lib, ctx, bounds, buildZonedSpec);
+  loadZone(lib, ctx, source, zone);
+  const value = lib.generateZonedDatetimeForZone(
+    ctx,
+    tc,
+    engineZoneSource(lib, ctx, source),
+    zone,
+    spec,
+  );
+  if (checksHostOffsets(source)) {
+    const { timestamp } = value;
+    const epochMilliseconds =
+      Number(timestamp.second) * 1000 + Math.floor(timestamp.nanosecond / 1_000_000);
+    const hostOffset = hostOffsetSeconds(zone, epochMilliseconds);
+    if (hostOffset !== null && hostOffset !== value.offsetSeconds) throw new AssumeError();
   }
-  const drawn = lib.generateZonedDatetime(ctx, tc, spec, specs.zoned);
-  if (!checksHostOffsets(specs.source)) return drawn;
-  const { timestamp } = drawn.value;
-  const epochMilliseconds =
-    Number(timestamp.second) * 1000 + Math.floor(timestamp.nanosecond / 1_000_000);
-  const hostOffset = hostOffsetSeconds(drawn.zone, epochMilliseconds);
-  if (hostOffset !== null && hostOffset !== drawn.value.offsetSeconds) throw new AssumeError();
-  return drawn;
+  return { value, zone };
 }
 
 function utf8OrNull(value: string | undefined): Uint8Array | null {
@@ -819,10 +842,7 @@ export function generateValue(
         ? formatIpv4(lib.generateIpv4(ctx, tc))
         : formatIpv6(lib.generateIpv6(ctx, tc));
     case "date": {
-      const options =
-        schema["weekdays"] === undefined && schema["months"] === undefined
-          ? null
-          : cache.get(lib, ctx, schema, buildDateOptions);
+      const options = dateOptionsOf(schema) ? cache.get(lib, ctx, schema, buildDateOptions) : null;
       return lib.generateDate(
         ctx,
         tc,
@@ -866,8 +886,28 @@ export function generateValue(
       ).seconds;
     case "timezone":
       return lib.generateTimezone(ctx, tc, cache.get(lib, ctx, schema, buildTimeZoneSpec));
-    case "zoned_datetime":
-      return drawZonedDatetime(lib, ctx, tc, schema, cache);
+    case "zoned_datetime": {
+      const zones = schema["zones"] as Record<string, unknown>;
+      return drawInZone(
+        lib,
+        ctx,
+        tc,
+        zones["source"] as ZoneSource,
+        lib.generateTimezone(ctx, tc, cache.get(lib, ctx, zones, buildTimeZoneSpec)),
+        schema["bounds"] as Record<string, unknown>,
+        cache,
+      );
+    }
+    case "zoned_datetime_in_zone":
+      return drawInZone(
+        lib,
+        ctx,
+        tc,
+        schema["source"] as ZoneSource,
+        schema["zone"] as string,
+        schema["bounds"] as Record<string, unknown>,
+        cache,
+      );
     case "span":
       return lib.generateSpan(ctx, tc, cache.get(lib, ctx, schema, buildSpanSpec));
     case "uuid":

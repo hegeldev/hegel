@@ -408,6 +408,23 @@ export interface Engine {
   version(): string;
   /** The IANA release of the time zone database the engine bundles, e.g. `"2026e"`. */
   tzdbVersion(): string;
+  /** The engine's canonical text of a date: `2024-03-10`, `+010000-01-01`. */
+  formatDate(value: NativeDate): string;
+  /** The engine's canonical text of a time of day: `02:30:00`, `02:30:00.5`. */
+  formatTime(value: NativeTime): string;
+  /** The engine's canonical text of a naive datetime: `2024-03-10T02:30:00`. */
+  formatDatetime(value: NativeDatetime): string;
+  /** The engine's canonical text of an instant: `2000-01-01T00:00:00Z`. */
+  formatTimestamp(value: NativeTimestamp): string;
+  /** The engine's canonical text of a UTC offset: `+05:30`, `-00:44:30`. */
+  formatOffset(value: NativeOffset): string;
+  /** The engine's canonical text of a calendar span: `1y 2mo 3d`, `-3d 4h`, `0s`. */
+  formatSpan(value: NativeSpan): string;
+  /**
+   * The engine's canonical text of a zoned datetime in `zone`:
+   * `2024-03-10T02:30:00-04:00[America/New_York][gap]`.
+   */
+  formatZonedDatetime(value: NativeZonedDatetime, zone: string): string;
   newContext(): ContextHandle;
   /**
    * Make the string generators follow the host's Unicode version, process-wide.
@@ -666,11 +683,49 @@ export interface Engine {
     granularity: number,
     allowUnknown: boolean,
   ): NativeOffset;
+  /**
+   * Check the arguments of {@link generateDate} without drawing: throws what
+   * a draw with them would report.
+   */
+  validateDate(
+    ctx: ContextHandle,
+    min: NativeDate,
+    max: NativeDate,
+    options: DateOptionsHandle | null,
+  ): void;
+  /** Check the arguments of {@link generateTime} without drawing. */
+  validateTime(ctx: ContextHandle, min: NativeTime, max: NativeTime, precision: number): void;
+  /** Check the arguments of {@link generateDatetime} without drawing. */
+  validateDatetime(
+    ctx: ContextHandle,
+    min: NativeDatetime,
+    max: NativeDatetime,
+    precision: number,
+  ): void;
+  /** Check the arguments of {@link generateTimestamp} without drawing. */
+  validateTimestamp(
+    ctx: ContextHandle,
+    min: NativeTimestamp,
+    max: NativeTimestamp,
+    precision: number,
+  ): void;
+  /** Check the arguments of {@link generateOffset} without drawing. */
+  validateOffset(
+    ctx: ContextHandle,
+    min: number,
+    max: number,
+    granularity: number,
+    allowUnknown: boolean,
+  ): void;
   /** What the bundled time zone database knows about `name`; never fails. */
   timezoneInfo(ctx: ContextHandle, name: string): NativeTimeZoneInfo;
-  /** Create a time zone spec allowing every bundled name; released with {@link freeTimezoneSpec}. */
+  /**
+   * Create a time zone spec allowing every name of the engine's default zone
+   * source (the bundled database: this frontend never sets another);
+   * released with {@link freeTimezoneSpec}.
+   */
   timezoneSpecNew(ctx: ContextHandle): TimeZoneSpecHandle;
-  /** Restrict `spec` to `names`; a name the database lacks is an error that leaves `spec` unchanged. */
+  /** Restrict `spec` to `names`; whether its source knows them is checked by {@link timezoneSpecValidate}. */
   timezoneSpecSetNames(
     ctx: ContextHandle,
     spec: TimeZoneSpecHandle,
@@ -686,6 +741,11 @@ export interface Engine {
   timezoneSpecSetLinks(ctx: ContextHandle, spec: TimeZoneSpecHandle, links: boolean): void;
   /** Whether `spec`'s default set includes legacy names. */
   timezoneSpecSetLegacy(ctx: ContextHandle, spec: TimeZoneSpecHandle, legacy: boolean): void;
+  /**
+   * Check `spec` as its first draw would: a name of its explicit list that
+   * its source lacks, or no name left to draw, is an error.
+   */
+  timezoneSpecValidate(ctx: ContextHandle, spec: TimeZoneSpecHandle): void;
   freeTimezoneSpec(spec: TimeZoneSpecHandle): void;
   /**
    * Create an empty zone source. It is never freed: a source lives as long as
@@ -734,14 +794,25 @@ export interface Engine {
   zonedSpecSetPrecision(ctx: ContextHandle, spec: ZonedSpecHandle, precision: number): void;
   zonedSpecSetImaginary(ctx: ContextHandle, spec: ZonedSpecHandle, imaginary: number): void;
   zonedSpecSetAmbiguous(ctx: ContextHandle, spec: ZonedSpecHandle, ambiguous: number): void;
+  /**
+   * Check `spec` as every draw from it does: bounds of both kinds, or civil
+   * bounds holding no value at its precision, are an error.
+   */
+  zonedSpecValidate(ctx: ContextHandle, spec: ZonedSpecHandle): void;
   freeZonedSpec(spec: ZonedSpecHandle): void;
-  /** Draw a zone allowed by `tzSpec` and a wall-clock time in it within `zonedSpec`'s bounds. */
-  generateZonedDatetime(
+  /**
+   * Draw a wall-clock time within `zonedSpec`'s bounds in the zone `name` of
+   * `source` (`null` for the engine's default source, the bundled database),
+   * recording no choice for the zone. A zone with no value in the bounds
+   * rejects the test case; a name the source lacks is an error.
+   */
+  generateZonedDatetimeForZone(
     ctx: ContextHandle,
     tc: TestCaseHandle,
-    tzSpec: TimeZoneSpecHandle,
+    source: ZoneSourceHandle | null,
+    name: string,
     zonedSpec: ZonedSpecHandle,
-  ): { value: NativeZonedDatetime; zone: string };
+  ): NativeZonedDatetime;
   /** Create a span spec with no unit enabled; released with {@link freeSpanSpec}. */
   spanSpecNew(ctx: ContextHandle): SpanSpecHandle;
   /** Enable `unit` (a {@link NativeSpanUnit}) with the inclusive bounds `[min, max]`. */
@@ -754,6 +825,11 @@ export interface Engine {
   ): void;
   /** Set how the units' signs are drawn (a {@link NativeSpanSign}). */
   spanSpecSetSign(ctx: ContextHandle, spec: SpanSpecHandle, sign: number): void;
+  /**
+   * Check `spec` as every draw from it does: no enabled unit, or bounds its
+   * sign policy excludes, are an error.
+   */
+  spanSpecValidate(ctx: ContextHandle, spec: SpanSpecHandle): void;
   freeSpanSpec(spec: SpanSpecHandle): void;
   /** Draw a calendar span within `spec`'s bounds. */
   generateSpan(ctx: ContextHandle, tc: TestCaseHandle, spec: SpanSpecHandle): NativeSpan;

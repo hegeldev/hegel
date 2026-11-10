@@ -162,8 +162,11 @@ try {
       check(tc.draw(gs.integers({minValue: 7, maxValue: 7})) === 7, 'integer');
       check(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(tc.draw(gs.uuids({version: 4}))), 'uuid');
       const gap = {year: 2024, month: 3, day: 31, hour: 2, minute: 30};
-      const zoned = tc.draw(gs.temporal.zonedDateTimes({zones: gs.temporal.zones({names: ['Europe/Paris']}), minValue: gap, maxValue: gap}));
+      const zoned = tc.draw(gs.temporal.zonedDatetimes({zones: gs.temporal.zones({names: ['Europe/Paris']}), minValue: gap, maxValue: gap}));
       check(zoned.kind === 'gap' && zoned.offsetAfter === '+02:00', 'zoned draw against the host database');
+      check(String(zoned) === '2024-03-31T02:30:00+02:00[Europe/Paris][gap]', 'zoned text: ' + zoned);
+      const wrapped = tc.draw(gs.temporal.zonedDatetimes({zones: gs.sampledFrom(['Asia/Kolkata']), source: gs.temporal.ZoneSource.bundled(), minValue: gap, maxValue: gap}));
+      check(wrapped.offset === '+05:30', 'zoned draw in a zone another generator named: ' + wrapped);
       sync++;
     }, {testCases: 3}) === undefined, 'sync signature');
     await h.testAsync(async tc => { await Promise.resolve(); check(typeof tc.draw(gs.booleans()) === 'boolean', 'boolean'); asyncCount++; }, {testCases: 3});

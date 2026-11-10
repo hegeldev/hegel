@@ -214,6 +214,11 @@ function fakeBindings(overrides: Partial<Bindings>): Bindings {
     generateDatetime: () => 0,
     generateTimestamp: () => 0,
     generateOffset: () => 0,
+    validateDate: () => 0,
+    validateTime: () => 0,
+    validateDatetime: () => 0,
+    validateTimestamp: () => 0,
+    validateOffset: () => 0,
     timezoneInfo: () => 0,
     timezoneSpecNew: (_ctx, out) => {
       out[0] = {} as Ptr;
@@ -224,6 +229,7 @@ function fakeBindings(overrides: Partial<Bindings>): Bindings {
     timezoneSpecSetSource: () => 0,
     timezoneSpecSetLinks: () => 0,
     timezoneSpecSetLegacy: () => 0,
+    timezoneSpecValidate: () => 0,
     zoneSourceNew: (_ctx, out) => {
       out[0] = {} as Ptr;
       return 0;
@@ -243,7 +249,8 @@ function fakeBindings(overrides: Partial<Bindings>): Bindings {
     zonedSpecSetPrecision: () => 0,
     zonedSpecSetImaginary: () => 0,
     zonedSpecSetAmbiguous: () => 0,
-    generateZonedDatetime: () => 0,
+    zonedSpecValidate: () => 0,
+    generateZonedDatetimeForZone: () => 0,
     spanSpecNew: (_ctx, out) => {
       out[0] = {} as Ptr;
       return 0;
@@ -251,7 +258,15 @@ function fakeBindings(overrides: Partial<Bindings>): Bindings {
     spanSpecFree: noop,
     spanSpecSetUnitBounds: () => 0,
     spanSpecSetSign: () => 0,
+    spanSpecValidate: () => 0,
     generateSpan: () => 0,
+    formatDate: () => "",
+    formatTime: () => "",
+    formatDatetime: () => "",
+    formatTimestamp: () => "",
+    formatOffset: () => "",
+    formatSpan: () => "",
+    formatZonedDatetime: () => "",
     generateUuid: () => 0,
     generateIpv4: () => 0,
     generateIpv6: () => 0,
@@ -656,8 +671,8 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
       tags: 0,
     });
     expect(lib.generateTimezone(h, h, lib.timezoneSpecNew(h))).toBe("");
-    expect(lib.generateZonedDatetime(h, h, lib.timezoneSpecNew(h), lib.zonedSpecNew(h))).toEqual({
-      value: {
+    for (const source of [null, lib.zoneSourceNew(h)]) {
+      expect(lib.generateZonedDatetimeForZone(h, h, source, "UTC", lib.zonedSpecNew(h))).toEqual({
         civil: {
           date: { year: 0, month: 0, day: 0 },
           time: { hour: 0, minute: 0, second: 0, nanosecond: 0 },
@@ -669,9 +684,8 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
         offsetBefore: 0,
         offsetAfter: 0,
         timestamp: zero,
-      },
-      zone: "",
-    });
+      });
+    }
     expect(lib.generateSpan(h, h, lib.spanSpecNew(h))).toEqual({
       years: 0n,
       months: 0n,

@@ -83,3 +83,36 @@ hegel.test(
   { testCases: 25 },
 );
 assert.ok(stepsRun > 0, "expected the state machine to run some steps");
+
+// 5. Zoned draws against the host's time zone database: read through
+// `Temporal` where the runtime has it, and by probing `Intl` with it hidden.
+const gap = { year: 2024, month: 3, day: 31, hour: 2, minute: 30 };
+function drawGap(zone, text) {
+  const zones = gs.temporal.zones({ names: [zone] });
+  hegel.test(
+    (tc) => {
+      const zoned = tc.draw(gs.temporal.zonedDatetimes({ zones, minValue: gap, maxValue: gap }));
+      assert.equal(zoned.kind, "gap");
+      assert.equal(zoned.offsetBefore, "+01:00");
+      assert.equal(zoned.offsetAfter, "+02:00");
+      assert.equal(String(zoned), text);
+    },
+    { testCases: 5 },
+  );
+}
+drawGap("Europe/Paris", "2024-03-31T02:30:00+02:00[Europe/Paris][gap]");
+const hostTemporal = Object.getOwnPropertyDescriptor(globalThis, "Temporal");
+Reflect.deleteProperty(globalThis, "Temporal");
+try {
+  drawGap("Europe/Berlin", "2024-03-31T02:30:00+02:00[Europe/Berlin][gap]");
+} finally {
+  if (hostTemporal !== undefined) Object.defineProperty(globalThis, "Temporal", hostTemporal);
+}
+hegel.test(
+  (tc) => {
+    const zoned = tc.draw(gs.temporal.zonedDatetimes());
+    assert.match(zoned.offset, /^[+-]\d{2}:\d{2}(:\d{2})?$/);
+    assert.ok(String(zoned).includes(`${zoned.offset}[${zoned.timeZone}]`), String(zoned));
+  },
+  { testCases: 25 },
+);

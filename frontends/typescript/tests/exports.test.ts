@@ -49,7 +49,7 @@ describe("public export shape", () => {
       "spans",
       "times",
       "tzdbVersion",
-      "zonedDateTimes",
+      "zonedDatetimes",
       "zones",
     ]);
     for (const old of ["PlainDate", "Duration", "temporal"]) expect(hegel).not.toHaveProperty(old);

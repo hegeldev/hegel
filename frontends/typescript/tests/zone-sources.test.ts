@@ -27,11 +27,15 @@ afterEach(() => {
   ZoneSource.setDefault(ZoneSource.host());
 });
 
-function check<T>(generator: gs.Generator<T>, body: (value: T) => void, testCases = 30): void {
+function check<T>(
+  generator: gs.PrintableGenerator<T>,
+  body: (value: T) => void,
+  testCases = 30,
+): void {
   hegel.test((tc) => body(tc.draw(generator)), { testCases, database: hegel.Database.disabled });
 }
 
-function drawError(generator: gs.Generator<unknown>): () => void {
+function drawError(generator: gs.PrintableGenerator<unknown>): () => void {
   return () =>
     hegel.test((tc) => void tc.draw(generator), {
       testCases: 5,
@@ -39,8 +43,12 @@ function drawError(generator: gs.Generator<unknown>): () => void {
     });
 }
 
-function at(zones: gs.Generator<string>, value: PlainDateTime): gs.Generator<ZonedDateTime> {
-  return gs.temporal.zonedDateTimes({ zones, minValue: value, maxValue: value });
+function at(
+  zones: gs.Generator<string>,
+  value: PlainDateTime,
+  source?: gs.temporal.ZoneSource,
+): gs.PrintableGenerator<ZonedDateTime> {
+  return gs.temporal.zonedDatetimes({ zones, source, minValue: value, maxValue: value });
 }
 
 const cet = { offsetSeconds: 3600, abbreviation: "CET" };
@@ -58,13 +66,41 @@ const summer = new PlainDateTime(2031, 7, 1, 12);
 const winter = new PlainDateTime(2031, 1, 1, 12);
 
 describe("ZoneSource", () => {
-  test("the host source is the default until another is set", () => {
+  test("the host source is the default until another is set, which returns the one it replaces", () => {
     expect(ZoneSource.default()).toBe(ZoneSource.host());
-    ZoneSource.setDefault(ZoneSource.bundled());
+    const previous = ZoneSource.setDefault(ZoneSource.bundled());
+    expect(previous).toBe(ZoneSource.host());
     expect(ZoneSource.default()).toBe(ZoneSource.bundled());
+    expect(ZoneSource.setDefault(previous)).toBe(ZoneSource.bundled());
+    expect(ZoneSource.default()).toBe(ZoneSource.host());
     expect(() => ZoneSource.setDefault("bundled" as never)).toThrow(
       "setDefault needs a ZoneSource, got bundled",
     );
+  });
+
+  test("a generator reads the default when it is built and keeps it", () => {
+    const paris = { data: { initial: { offsetSeconds: 60 } } };
+    const toy = ZoneSource.custom({ zones: { "Europe/Paris": paris } });
+    const builtBefore = {
+      zones: gs.temporal.zones(),
+      zoned: gs.temporal.zonedDatetimes(),
+      named: at(gs.just("Europe/Paris"), winter),
+    };
+    ZoneSource.setDefault(toy);
+    const builtAfter = {
+      zones: gs.temporal.zones(),
+      zoned: gs.temporal.zonedDatetimes(),
+      named: at(gs.just("Europe/Paris"), winter),
+    };
+    ZoneSource.setDefault(ZoneSource.bundled());
+    const seen = new Set<string>();
+    check(builtBefore.zones, (zone) => void seen.add(zone), 50);
+    check(builtBefore.zoned, (value) => void seen.add(value.timeZone), 50);
+    expect(seen.size).toBeGreaterThan(5);
+    check(builtBefore.named, (value) => expect(value.offset).toBe("+01:00"), 5);
+    check(builtAfter.zones, (zone) => expect(zone).toBe("Europe/Paris"), 5);
+    check(builtAfter.zoned, (value) => expect(value.offset).toBe("+00:01"), 5);
+    check(builtAfter.named, (value) => expect(value.offset).toBe("+00:01"), 5);
   });
 
   test("reports versions", () => {
@@ -82,19 +118,24 @@ describe("ZoneSource", () => {
       "source must be a ZoneSource, got host",
     );
     expect(() => gs.temporal.zones({ names: ["Mars/Base"], source: ZoneSource.bundled() })).toThrow(
-      "The time zone Mars/Base is not known to this host and the bundled database",
+      "The time zone Mars/Base is not known to the zone source in use (the bundled database, limited to the names this host knows): pass the zone source that has it as source",
     );
     expect(() =>
       gs.temporal.zones({ names: ["Mars/Base"], source: ZoneSource.custom({ names: ["X/Y"] }) }),
-    ).toThrow("The time zone Mars/Base is not known to its zone source");
+    ).toThrow("The time zone Mars/Base is not known to the zone source in use (a custom source)");
   });
 
   test("the bundled source draws bundled names the host knows and resolves them", () => {
     const zones = gs.temporal.zones({ source: ZoneSource.bundled() });
-    check(gs.temporal.zonedDateTimes({ zones }), (value) => {
-      expect(TIMEZONE_NAMES).toContain(value.timeZone);
-      expect(hostKnowsZone(value.timeZone)).toBe(true);
-    });
+    for (const generator of [
+      gs.temporal.zonedDatetimes({ zones }),
+      gs.temporal.zonedDatetimes({ source: ZoneSource.bundled() }),
+    ]) {
+      check(generator, (value) => {
+        expect(TIMEZONE_NAMES).toContain(value.timeZone);
+        expect(hostKnowsZone(value.timeZone)).toBe(true);
+      });
+    }
     check(
       at(
         gs.temporal.zones({ names: ["Europe/Berlin"], source: ZoneSource.bundled() }),
@@ -104,12 +145,91 @@ describe("ZoneSource", () => {
     );
   });
 
-  test("the host source draws a name only Intl and the default know when named", () => {
+  test("the host source draws a zone when named", () => {
     check(at(gs.temporal.zones({ names: ["Europe/Paris"] }), springForward), (value) => {
       expect(value.kind).toBe("gap");
       expect(value.offsetBefore).toBe("+01:00");
       expect(value.offsetAfter).toBe("+02:00");
     });
+  });
+
+  test("the host source draws a name only Intl knows when named", () => {
+    const spelling = "europe/paris";
+    expect(TIMEZONE_NAMES).not.toContain(spelling);
+    const zones = gs.temporal.zones({ names: [spelling, "UTC"] });
+    const seen = new Set<string>();
+    check(zones, (zone) => void seen.add(zone), 40);
+    expect(seen).toEqual(new Set([spelling, "UTC"]));
+    check(at(gs.temporal.zones({ names: [spelling] }), winter), (value) => {
+      expect(value.timeZone).toBe(spelling);
+      expect(value.offset).toBe("+01:00");
+    });
+    check(at(gs.just("asia/tokyo"), winter), (value) => expect(value.offset).toBe("+09:00"));
+  });
+});
+
+describe("the zone source of zonedDatetimes()", () => {
+  const toy = ZoneSource.custom({
+    zones: {
+      "Europe/Paris": { data: { initial: { offsetSeconds: 60 } } },
+      "Test/Fixed": { data: { initial: { offsetSeconds: -12_345 } } },
+    },
+  });
+  const wrapped = gs.temporal.zones({ source: toy }).filter((zone) => zone.length > 0);
+
+  test("draws the default zones() from source", () => {
+    const offsets = new Set<string>();
+    check(gs.temporal.zonedDatetimes({ source: toy }), (value) => void offsets.add(value.offset));
+    expect(offsets).toEqual(new Set(["+00:01", "-03:25:45"]));
+  });
+
+  test("resolves the names of a wrapped zones() generator against source", () => {
+    const offsets = new Set<string>();
+    check(at(wrapped, winter, toy), (value) => void offsets.add(value.offset));
+    expect(offsets).toEqual(new Set(["+00:01", "-03:25:45"]));
+    check(at(gs.sampledFrom(["Europe/Paris"]), winter, toy), (value) =>
+      expect(value.offset).toBe("+00:01"),
+    );
+    check(
+      at(gs.oneOf(gs.temporal.zones({ source: toy }), gs.just("Test/Fixed")), winter, toy),
+      (value) => expect(["+00:01", "-03:25:45"]).toContain(value.offset),
+    );
+  });
+
+  test("resolves them against the default when given no source", () => {
+    check(at(gs.just("Europe/Paris"), winter), (value) => expect(value.offset).toBe("+01:00"));
+    expect(
+      drawError(
+        at(
+          wrapped.filter((zone) => zone === "Test/Fixed"),
+          winter,
+        ),
+      ),
+    ).toThrow(
+      "The time zone Test/Fixed is not known to the zone source in use (this host's database): pass the zone source that has it as source",
+    );
+  });
+
+  test("raises for a name its source lacks", () => {
+    expect(drawError(at(gs.just("Europe/London"), winter, toy))).toThrow(
+      "The time zone Europe/London is not known to the zone source in use (a custom source): pass the zone source that has it as source",
+    );
+    expect(drawError(at(gs.just("Mars/Base"), winter, ZoneSource.bundled()))).toThrow(
+      "The time zone Mars/Base is not known to the zone source in use (the bundled database",
+    );
+  });
+
+  test("refuses a source beside a zones() generator, which has its own", () => {
+    expect(() =>
+      gs.temporal.zonedDatetimes({ zones: gs.temporal.zones({ source: toy }), source: toy }),
+    ).toThrow(
+      "zonedDatetimes(): zones is a zones() generator, which has its own zone source: pass source to zones() instead",
+    );
+    check(
+      at(gs.temporal.zones({ source: toy, names: ["Test/Fixed"] }), winter),
+      (value) => expect(value.offset).toBe("-03:25:45"),
+      5,
+    );
   });
 });
 
@@ -138,10 +258,22 @@ describe("custom zone sources", () => {
     });
     check(at(zones("Test/Days"), summer), (value) => expect(value.offset).toBe("+02:00"));
     check(at(zones("Test/Days"), winter), (value) => expect(value.offset).toBe("+01:00"));
-    check(gs.temporal.zonedDateTimes({ zones: gs.temporal.zones({ source }) }), (value) =>
+    check(gs.temporal.zonedDatetimes({ zones: gs.temporal.zones({ source }) }), (value) =>
       expect(["Test/Rule", "Test/Days", "Test/Fixed"]).toContain(value.timeZone),
     );
     check(at(zones("Test/Fixed"), winter), (value) => expect(value.offset).toBe("-03:25:45"));
+  });
+
+  test("draw and print an offset of more than a day", () => {
+    const source = ZoneSource.custom({
+      zones: { "Test/Far": { data: { initial: { offsetSeconds: 108_000 } } } },
+    });
+    check(at(gs.temporal.zones({ source }), winter), (value) => {
+      expect(value.offset).toBe("+30:00");
+      expect(value.offsetNanoseconds).toBe(108_000e9);
+      expect(value.toString()).toBe("2031-01-01T12:00:00+30:00[Test/Far]");
+      expect(value.toInstant().toString()).toBe("2030-12-31T06:00:00Z");
+    });
   });
 
   test("infer a rule from the last two years of structured data", () => {
@@ -203,9 +335,9 @@ describe("custom zone sources", () => {
       expect(value.offset).toBe("+05:30");
     });
     const drawn = new Set<string>();
-    check(gs.temporal.zones({ source, links: false }), (zone) => void drawn.add(zone), 50);
+    check(gs.temporal.zones({ source, allowLinks: false }), (zone) => void drawn.add(zone), 50);
     expect([...drawn]).toEqual(["Asia/Kolkata"]);
-    check(gs.temporal.zones({ source, legacy: true }), (zone) => void drawn.add(zone), 100);
+    check(gs.temporal.zones({ source, allowLegacy: true }), (zone) => void drawn.add(zone), 100);
     expect(drawn).toEqual(new Set(["Asia/Kolkata", "Asia/Calcutta", "US/Eastern"]));
   });
 
@@ -234,9 +366,12 @@ describe("custom zone sources", () => {
     ]);
     const missing = ZoneSource.custom({ names: ["Lazy/Missing"], load });
     const zones = gs.temporal.zones({ source: missing });
-    expect(drawError(gs.temporal.zonedDateTimes({ zones }))).toThrow(
-      "The time zone Lazy/Missing is not known to its zone source",
-    );
+    for (let attempt = 0; attempt < 2; attempt++) {
+      expect(drawError(gs.temporal.zonedDatetimes({ zones }))).toThrow(
+        "The time zone Lazy/Missing is not known to the zone source in use (a custom source)",
+      );
+    }
+    expect(load.mock.calls.filter(([name]) => name === "Lazy/Missing")).toHaveLength(1);
   });
 
   test("probe oracles", () => {
@@ -343,6 +478,7 @@ const toyTemporal: TemporalLike = {
       toZonedDateTimeISO: () => toyZoned(ms),
     }),
   },
+  ZonedDateTime: { prototype: { getTimeZoneTransition: () => null } },
 };
 
 function toyZoned(ms: number): TemporalZonedDateTimeLike {
@@ -371,6 +507,19 @@ describe("the host's database", () => {
       type: { utoff: 3600, isDst: false, abbreviation: "" },
     });
     expect(london.after).toBe(NativeZoneAfter.INFER);
+  });
+
+  test("is probed through Intl when the host's Temporal cannot report transitions", () => {
+    const viaIntl = (temporal: unknown) => {
+      vi.stubGlobal("Temporal", temporal);
+      expect(hostTemporal()).toBeUndefined();
+      expect(hostZoneData("Europe/London").initial.utoff).toBe(-75);
+    };
+    viaIntl({ Instant: toyTemporal.Instant });
+    viaIntl({ Instant: toyTemporal.Instant, ZonedDateTime: {} });
+    viaIntl({ Instant: toyTemporal.Instant, ZonedDateTime: { prototype: {} } });
+    vi.stubGlobal("Temporal", toyTemporal);
+    expect(hostTemporal()).toBe(toyTemporal);
   });
 
   test.runIf(hostTemporal() !== undefined)("agrees between Temporal and Intl", () => {

@@ -91,7 +91,9 @@ export class WasmEngine implements Engine {
     if (control && code === -2) throw new AssumeError();
     // Copy before the arena or an owned handle can be released.
     const message = ctx === 0 ? "" : this.readLastError(ctx);
-    throw new EngineError(`hegel_${op} failed (${code})${message ? `: ${message}` : ""}`);
+    const prefix = `hegel_${op}: `;
+    const detail = message.startsWith(prefix) ? message.slice(prefix.length) : message;
+    throw new EngineError(`hegel_${op} failed (${code})${detail ? `: ${detail}` : ""}`);
   }
 
   /**
@@ -172,6 +174,38 @@ export class WasmEngine implements Engine {
   }
   tzdbVersion(): string {
     return this.string("tzdb_version", [0]);
+  }
+  /** Call a `hegel_format_*` operation on the struct `value` points at and copy its owned text out. */
+  private formatted(op: Operation, value: (a: WasmArena) => Argument[]): string {
+    return WasmArena.scoped(this.abi, (a) => {
+      const out = a.alloc(8, 4);
+      this.check(0, op, [0, ...value(a), out]);
+      return this.released("owned_string_free", out, () => this.copyBuffer(a, out, wtf8ToString));
+    });
+  }
+  formatDate(value: NativeDate): string {
+    return this.formatted("format_date", (a) => [this.struct(a, dateLayout, value)]);
+  }
+  formatTime(value: NativeTime): string {
+    return this.formatted("format_time", (a) => [this.struct(a, timeLayout, value)]);
+  }
+  formatDatetime(value: NativeDatetime): string {
+    return this.formatted("format_datetime", (a) => [this.struct(a, datetimeLayout, value)]);
+  }
+  formatTimestamp(value: NativeTimestamp): string {
+    return this.formatted("format_timestamp", (a) => [this.struct(a, timestampLayout, value)]);
+  }
+  formatOffset(value: NativeOffset): string {
+    return this.formatted("format_offset", (a) => [this.struct(a, offsetLayout, value)]);
+  }
+  formatSpan(value: NativeSpan): string {
+    return this.formatted("format_span", (a) => [this.struct(a, spanLayout, value)]);
+  }
+  formatZonedDatetime(value: NativeZonedDatetime, zone: string): string {
+    return this.formatted("format_zoned_datetime", (a) => [
+      this.struct(a, zonedLayout, value),
+      a.text(zone),
+    ]);
   }
   newContext(): ContextHandle {
     return this.owned(this.abi.call("context_new") >>> 0);
@@ -919,11 +953,68 @@ export class WasmEngine implements Engine {
       c,
       "generate_offset",
       [c, this.ptr(tc), i32(min), i32(max), u32(granularity), allowUnknown ? 1 : 0],
-      8,
-      4,
-      (a, p) => ({ seconds: a.view(p, 4).getInt32(0, true), known: a.boolean(p + 4) }),
+      offsetLayout.size,
+      offsetLayout.align,
+      (a, p) => offsetLayout.read(a.view(p, offsetLayout.size)),
       true,
     );
+  }
+  private validate<T>(
+    ctx: ContextHandle,
+    op: Operation,
+    min: T,
+    max: T,
+    extra: Argument,
+    layout: Layout<T>,
+  ): void {
+    WasmArena.scoped(this.abi, (a) => {
+      const c = this.ptr(ctx);
+      this.check(c, op, [c, this.struct(a, layout, min), this.struct(a, layout, max), extra]);
+    });
+  }
+  validateDate(
+    ctx: ContextHandle,
+    min: NativeDate,
+    max: NativeDate,
+    options: DateOptionsHandle | null,
+  ): void {
+    const extra = options === null ? 0 : this.ptr(options);
+    this.validate(ctx, "validate_date", min, max, extra, dateLayout);
+  }
+  validateTime(ctx: ContextHandle, min: NativeTime, max: NativeTime, precision: number): void {
+    this.validate(ctx, "validate_time", min, max, u32(precision), timeLayout);
+  }
+  validateDatetime(
+    ctx: ContextHandle,
+    min: NativeDatetime,
+    max: NativeDatetime,
+    precision: number,
+  ): void {
+    this.validate(ctx, "validate_datetime", min, max, u32(precision), datetimeLayout);
+  }
+  validateTimestamp(
+    ctx: ContextHandle,
+    min: NativeTimestamp,
+    max: NativeTimestamp,
+    precision: number,
+  ): void {
+    this.validate(ctx, "validate_timestamp", min, max, u32(precision), timestampLayout);
+  }
+  validateOffset(
+    ctx: ContextHandle,
+    min: number,
+    max: number,
+    granularity: number,
+    allowUnknown: boolean,
+  ): void {
+    const c = this.ptr(ctx);
+    this.check(c, "validate_offset", [
+      c,
+      i32(min),
+      i32(max),
+      u32(granularity),
+      allowUnknown ? 1 : 0,
+    ]);
   }
   timezoneInfo(ctx: ContextHandle, name: string): NativeTimeZoneInfo {
     return WasmArena.scoped(this.abi, (a) => {
@@ -967,6 +1058,9 @@ export class WasmEngine implements Engine {
   }
   timezoneSpecSetLegacy(ctx: ContextHandle, spec: TimeZoneSpecHandle, legacy: boolean): void {
     this.configure(ctx, "timezone_spec_set_legacy", spec, () => [+legacy]);
+  }
+  timezoneSpecValidate(ctx: ContextHandle, spec: TimeZoneSpecHandle): void {
+    this.configure(ctx, "timezone_spec_validate", spec, () => []);
   }
   freeTimezoneSpec(spec: TimeZoneSpecHandle): void {
     this.free("timezone_spec_free", spec);
@@ -1051,29 +1145,36 @@ export class WasmEngine implements Engine {
   zonedSpecSetAmbiguous(ctx: ContextHandle, spec: ZonedSpecHandle, ambiguous: number): void {
     this.configure(ctx, "zoned_spec_set_ambiguous", spec, () => [u32(ambiguous)]);
   }
+  zonedSpecValidate(ctx: ContextHandle, spec: ZonedSpecHandle): void {
+    this.configure(ctx, "zoned_spec_validate", spec, () => []);
+  }
   freeZonedSpec(spec: ZonedSpecHandle): void {
     this.free("zoned_spec_free", spec);
   }
-  generateZonedDatetime(
+  generateZonedDatetimeForZone(
     ctx: ContextHandle,
     tc: TestCaseHandle,
-    tzSpec: TimeZoneSpecHandle,
+    source: ZoneSourceHandle | null,
+    name: string,
     zonedSpec: ZonedSpecHandle,
-  ): { value: NativeZonedDatetime; zone: string } {
+  ): NativeZonedDatetime {
     return WasmArena.scoped(this.abi, (a) => {
-      const value = a.alloc(zonedLayout.size, zonedLayout.align),
-        zone = a.alloc(8, 4);
+      const out = a.alloc(zonedLayout.size, zonedLayout.align);
       const c = this.ptr(ctx);
       this.check(
         c,
-        "generate_zoned_datetime",
-        [c, this.ptr(tc), this.ptr(tzSpec), this.ptr(zonedSpec), value, zone],
+        "generate_zoned_datetime_for_zone",
+        [
+          c,
+          this.ptr(tc),
+          source === null ? 0 : this.ptr(source),
+          a.text(name),
+          this.ptr(zonedSpec),
+          out,
+        ],
         true,
       );
-      return this.released("owned_string_free", zone, () => ({
-        value: zonedLayout.read(a.view(value, zonedLayout.size)),
-        zone: this.copyBuffer(a, zone, wtf8ToString),
-      }));
+      return zonedLayout.read(a.view(out, zonedLayout.size));
     });
   }
   spanSpecNew(ctx: ContextHandle): SpanSpecHandle {
@@ -1092,6 +1193,9 @@ export class WasmEngine implements Engine {
   spanSpecSetSign(ctx: ContextHandle, spec: SpanSpecHandle, sign: number): void {
     this.configure(ctx, "span_spec_set_sign", spec, () => [u32(sign)]);
   }
+  spanSpecValidate(ctx: ContextHandle, spec: SpanSpecHandle): void {
+    this.configure(ctx, "span_spec_validate", spec, () => []);
+  }
   freeSpanSpec(spec: SpanSpecHandle): void {
     this.free("span_spec_free", spec);
   }
@@ -1101,24 +1205,9 @@ export class WasmEngine implements Engine {
       c,
       "generate_span",
       [c, this.ptr(tc), this.ptr(spec)],
-      80,
-      8,
-      (a, p) => {
-        const view = a.view(p, 80);
-        const field = (index: number) => view.getBigInt64(index * 8, true);
-        return {
-          years: field(0),
-          months: field(1),
-          weeks: field(2),
-          days: field(3),
-          hours: field(4),
-          minutes: field(5),
-          seconds: field(6),
-          milliseconds: field(7),
-          microseconds: field(8),
-          nanoseconds: field(9),
-        };
-      },
+      spanLayout.size,
+      spanLayout.align,
+      (a, p) => spanLayout.read(a.view(p, spanLayout.size)),
       true,
     );
   }
@@ -1552,9 +1641,9 @@ function writeDatetime(view: DataView, value: NativeDatetime): void {
 function readDatetime(view: DataView): NativeDatetime {
   return { date: readDate(view), time: readTime(view, 8) };
 }
-function writeTimestamp(view: DataView, value: NativeTimestamp): void {
-  view.setBigInt64(0, i64(value.second), true);
-  view.setUint32(8, integer(value.nanosecond, 0, 999999999), true);
+function writeTimestamp(view: DataView, value: NativeTimestamp, offset = 0): void {
+  view.setBigInt64(offset, i64(value.second), true);
+  view.setUint32(offset + 8, integer(value.nanosecond, 0, 999999999), true);
 }
 function readTimestamp(view: DataView, offset = 0): NativeTimestamp {
   return {
@@ -1582,13 +1671,68 @@ const datetimeLayout: Layout<NativeDatetime> = {
 const timestampLayout: Layout<NativeTimestamp> = {
   size: 16,
   align: 8,
-  write: writeTimestamp,
+  write: (view, value) => writeTimestamp(view, value),
   read: (view) => readTimestamp(view),
 };
-/** `hegel_zoned_datetime_t` is output only: civil at 0, offsets and flags from 16, timestamp at 40. */
-const zonedLayout = {
+/** `hegel_offset_t`: the seconds at 0, `known` at 4. */
+const offsetLayout: Layout<NativeOffset> = {
+  size: 8,
+  align: 4,
+  write: (view, value) => {
+    view.setInt32(0, i32(value.seconds), true);
+    view.setUint8(4, +value.known);
+  },
+  read: (view) => ({ seconds: view.getInt32(0, true), known: readBoolean(view, 4) }),
+};
+const SPAN_UNITS = [
+  "years",
+  "months",
+  "weeks",
+  "days",
+  "hours",
+  "minutes",
+  "seconds",
+  "milliseconds",
+  "microseconds",
+  "nanoseconds",
+] as const;
+/** `hegel_span_t`: one `int64_t` per unit, largest first. */
+const spanLayout: Layout<NativeSpan> = {
+  size: 80,
+  align: 8,
+  write: (view, value) => {
+    SPAN_UNITS.forEach((unit, index) => view.setBigInt64(index * 8, i64(value[unit]), true));
+  },
+  read: (view) => {
+    const field = (index: number) => view.getBigInt64(index * 8, true);
+    return {
+      years: field(0),
+      months: field(1),
+      weeks: field(2),
+      days: field(3),
+      hours: field(4),
+      minutes: field(5),
+      seconds: field(6),
+      milliseconds: field(7),
+      microseconds: field(8),
+      nanoseconds: field(9),
+    };
+  },
+};
+/** `hegel_zoned_datetime_t`: civil at 0, offsets and flags from 16, timestamp at 40. */
+const zonedLayout: Layout<NativeZonedDatetime> = {
   size: 56,
   align: 8,
+  write: (view, value) => {
+    writeDatetime(view, value.civil);
+    view.setInt32(16, i32(value.offsetSeconds), true);
+    view.setUint8(20, +value.offsetKnown);
+    view.setUint8(21, +value.fold);
+    view.setUint32(24, integer(value.kind, 0, 2), true);
+    view.setInt32(28, i32(value.offsetBefore), true);
+    view.setInt32(32, i32(value.offsetAfter), true);
+    writeTimestamp(view, value.timestamp, 40);
+  },
   read: (view: DataView): NativeZonedDatetime => ({
     civil: readDatetime(view),
     offsetSeconds: view.getInt32(16, true),

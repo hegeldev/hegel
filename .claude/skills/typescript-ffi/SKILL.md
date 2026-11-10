@@ -122,7 +122,7 @@ an explicit example's `EngineDocument` (`src/pretty.ts`, also behind the
 public `Document`) frees the standalone printer from `hegel_printer_new`, its
 deferred regions and the `hegel_printer_options_t` it was made with;
 engine-owned buffers (`hegel_generate_bytes`, `hegel_generate_string`,
-`hegel_generate_timezone`, the zone name of `hegel_generate_zoned_datetime`,
+`hegel_generate_timezone`, the text of the `hegel_format_*` functions,
 `hegel_printer_value`, `hegel_grammar_draw_result`) are copied out
 immediately and then freed. A grammar builder is freed as soon as its grammar
 is compiled, and a grammar draw when the draw ends. The exceptions:

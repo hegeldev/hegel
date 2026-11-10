@@ -1,7 +1,7 @@
 /**
  * Date and time generators, reached as `generators.temporal`: calendar dates
  * ({@link dates}), wall-clock times ({@link times}), datetimes without a zone
- * ({@link datetimes}), datetimes in a zone ({@link zonedDateTimes}), exact
+ * ({@link datetimes}), datetimes in a zone ({@link zonedDatetimes}), exact
  * moments ({@link instants}), UTC offsets ({@link offsets}), IANA time zone
  * names ({@link zones}), calendar spans ({@link spans}) and JavaScript
  * `Date`s ({@link jsDates}), plus {@link tzdbVersion}, the time zone
@@ -13,23 +13,32 @@
  *
  * hegel.test((tc) => {
  *   const date = tc.draw(gs.temporal.dates({ minValue: { year: 2000, month: 1, day: 1 } }));
- *   const zoned = tc.draw(gs.temporal.zonedDateTimes({ zones: gs.temporal.zones() }));
+ *   const zoned = tc.draw(gs.temporal.zonedDatetimes());
  * });
  * ```
  *
  * The values are the immutable classes this namespace also exports
  * ({@link PlainDate}, {@link PlainTime}, {@link PlainDateTime},
  * {@link Instant}, {@link ZonedDateTime} and {@link Duration}), shaped like
- * their `Temporal` counterparts; see each generator for the conversion.
+ * their `Temporal` counterparts; see each generator for the conversion. A
+ * failing test's report prints them as the engine writes them, as
+ * `PlainDate(2024-03-10)`, which is also what their `toString()` gives.
  *
  * Zones are drawn against a {@link ZoneSource}: the time zone database whose
  * transitions the draws aim at and whose offsets they resolve with. By default
  * that is the host's own, the one `Temporal` and `Intl` use
  * ({@link ZoneSource.host}), so a drawn value means the same to the code under
- * test as to Hegel. {@link ZoneSource.setDefault} changes the default, and
- * {@link zones} takes a `source` for one generator: {@link ZoneSource.bundled}
- * for the engine's bundled database, or {@link ZoneSource.custom} for the
- * database of a date library.
+ * test as to Hegel. {@link ZoneSource.setDefault} changes the default, which a
+ * generator reads when it is built, and {@link zones} and
+ * {@link zonedDatetimes} take a `source` for one generator:
+ * {@link ZoneSource.bundled} for the engine's bundled database, or
+ * {@link ZoneSource.custom} for the database of a date library.
+ *
+ * An argument that no draw could satisfy is an error, thrown when the
+ * generator is built: by the generator for what it can see by itself (a
+ * bound of the wrong shape, bounds in the wrong order), and by the engine,
+ * whose message it is, for the rest (bounds holding no value at the
+ * precision, no date on the allowed weekdays, a zone source without a name).
  *
  * @packageDocumentation
  */
@@ -59,6 +68,10 @@ import {
   ZonedDateTime,
   Duration,
   DURATION_UNITS,
+  nativeDate,
+  nativeTime,
+  nativeDatetime,
+  nativeTimestamp,
   type PlainDateLike,
   type PlainTimeLike,
   type PlainDateTimeLike,
@@ -66,8 +79,16 @@ import {
   type TransitionKind,
   type DurationUnit,
 } from "../temporal.js";
-import { civilFromDays, weekdayFromDays, formatUtcOffset, parseUtcOffset } from "../calendar.js";
+import { integerField, parseUtcOffset } from "../calendar.js";
 import { entryEngine } from "../runtime.js";
+import {
+  buildSpanSpec,
+  buildTimeZoneSpec,
+  buildZonedSpec,
+  validateTemporalSchema,
+  withCleanup,
+  type HandleBuilder,
+} from "../generate.js";
 import { ZoneSource, unknownZone, zoneSourceKnows } from "../zoneSource.js";
 
 export {
@@ -123,66 +144,87 @@ export type Precision =
   | "hour"
   | "hours";
 
-interface PrecisionUnit {
-  code: number;
-  nanoseconds: bigint;
-}
-
-const PRECISIONS: Record<string, PrecisionUnit> = {
-  nanosecond: { code: NativePrecision.NANOSECONDS, nanoseconds: 1n },
-  microsecond: { code: NativePrecision.MICROSECONDS, nanoseconds: 1_000n },
-  millisecond: { code: NativePrecision.MILLISECONDS, nanoseconds: 1_000_000n },
-  second: { code: NativePrecision.SECONDS, nanoseconds: NANOSECONDS_PER_SECOND },
-  minute: { code: NativePrecision.MINUTES, nanoseconds: 60n * NANOSECONDS_PER_SECOND },
-  hour: { code: NativePrecision.HOURS, nanoseconds: 3600n * NANOSECONDS_PER_SECOND },
+const PRECISIONS: Record<string, number> = {
+  nanosecond: NativePrecision.NANOSECONDS,
+  microsecond: NativePrecision.MICROSECONDS,
+  millisecond: NativePrecision.MILLISECONDS,
+  second: NativePrecision.SECONDS,
+  minute: NativePrecision.MINUTES,
+  hour: NativePrecision.HOURS,
 };
 
-function precisionUnit(precision: Precision | undefined): PrecisionUnit {
-  const unit = PRECISIONS[String(precision ?? "nanosecond").replace(/s$/, "")];
-  if (unit === undefined) {
+function precisionCode(precision: Precision | undefined): number {
+  const code = PRECISIONS[String(precision ?? "nanosecond").replace(/s$/, "")];
+  if (code === undefined) {
     throw new Error(
       `precision must be one of ${Object.keys(PRECISIONS).join(", ")}, got ${String(precision)}`,
     );
   }
-  return unit;
+  return code;
 }
 
-/** The smallest multiple of `unit` that is at least `value`. */
-function ceilTo(value: bigint, unit: bigint): bigint {
-  const truncated = (value / unit) * unit;
-  return truncated < value ? truncated + unit : truncated;
-}
-
-/** Throw unless some multiple of `unit` nanoseconds lies in `[min, max]`. */
-function requireFit(what: string, min: bigint, max: bigint, unit: bigint, bounds: string): void {
-  if (ceilTo(min, unit) > max) {
-    throw new Error(`No ${what} between ${bounds} has the requested precision`);
+/**
+ * The bounds of `generator` in order: each one given, or its default. A
+ * bound given alone that lies beyond the other's default says so.
+ */
+function orderedBounds<L, T>(
+  generator: string,
+  [minName, maxName]: readonly [string, string],
+  [givenMin, givenMax]: readonly [L | undefined, L | undefined],
+  [defaultMin, defaultMax]: readonly [T, T],
+  from: (like: L) => T,
+  compare: (a: T, b: T) => number,
+  show: (value: T) => string,
+): [T, T] {
+  const min = givenMin === undefined ? defaultMin : from(givenMin);
+  const max = givenMax === undefined ? defaultMax : from(givenMax);
+  if (compare(min, max) > 0) {
+    if (givenMax === undefined) {
+      throw new Error(
+        `${generator}: ${minName} ${show(min)} is after the default ${maxName}, ${show(max)}: pass ${maxName} as well`,
+      );
+    }
+    if (givenMin === undefined) {
+      throw new Error(
+        `${generator}: ${maxName} ${show(max)} is before the default ${minName}, ${show(min)}: pass ${minName} as well`,
+      );
+    }
+    throw new Error(`${generator}: cannot have ${maxName} < ${minName}`);
   }
+  return [min, max];
 }
 
-function requireOrdered(name: string, inverted: boolean): void {
-  if (inverted) throw new Error(`${name}: cannot have maxValue < minValue`);
+const VALUE_BOUNDS = ["minValue", "maxValue"] as const;
+const text = (value: { toString(): string }): string => value.toString();
+
+/**
+ * Build the engine's spec for `schema` and release it: the engine reports a
+ * configuration no draw could satisfy.
+ */
+function validate(build: HandleBuilder<unknown>, schema: Record<string, unknown>): void {
+  const lib = entryEngine();
+  const ctx = lib.newContext();
+  withCleanup(
+    () => build(lib, ctx, schema).free(),
+    () => lib.freeContext(ctx),
+  );
 }
 
-function nativeDate(date: PlainDate): NativeDate {
-  return { year: date.year, month: date.month, day: date.day };
-}
-
-function nativeTime(time: PlainTime): NativeTime {
-  return {
-    hour: time.hour,
-    minute: time.minute,
-    second: time.second,
-    nanosecond: time.nanosecondsOfDay % 1_000_000_000,
-  };
-}
-
-function nativeDatetime(value: PlainDateTime): NativeDatetime {
-  return { date: nativeDate(value.toPlainDate()), time: nativeTime(value.toPlainTime()) };
-}
-
-function nativeTimestamp(instant: Instant): NativeTimestamp {
-  return { second: BigInt(instant.epochSeconds), nanosecond: instant.nanosecond };
+/**
+ * The generator of a `date`, `time`, `datetime`, `timestamp` or `offset`
+ * schema, once the engine has checked the schema's arguments as a draw would.
+ */
+function checkedGenerator<T>(
+  schema: Record<string, unknown>,
+  parse: (raw: unknown) => T,
+): PrintableGenerator<T> {
+  const lib = entryEngine();
+  const ctx = lib.newContext();
+  withCleanup(
+    () => validateTemporalSchema(lib, ctx, schema),
+    () => lib.freeContext(ctx),
+  );
+  return new BasicGenerator(schema, parse);
 }
 
 function parseDate(raw: unknown): PlainDate {
@@ -190,16 +232,30 @@ function parseDate(raw: unknown): PlainDate {
   return new PlainDate(date.year, date.month, date.day);
 }
 
+function subseconds(nanosecond: number): [number, number, number] {
+  return [
+    Math.floor(nanosecond / 1_000_000),
+    Math.floor(nanosecond / 1000) % 1000,
+    nanosecond % 1000,
+  ];
+}
+
 function parseTime(raw: unknown): PlainTime {
   const time = raw as NativeTime;
-  return PlainTime.fromNanosecondsOfDay(
-    ((time.hour * 60 + time.minute) * 60 + time.second) * 1_000_000_000 + time.nanosecond,
-  );
+  return new PlainTime(time.hour, time.minute, time.second, ...subseconds(time.nanosecond));
 }
 
 function parseDatetime(raw: unknown): PlainDateTime {
-  const value = raw as NativeDatetime;
-  return PlainDateTime.of(parseDate(value.date), parseTime(value.time));
+  const { date, time } = raw as NativeDatetime;
+  return new PlainDateTime(
+    date.year,
+    date.month,
+    date.day,
+    time.hour,
+    time.minute,
+    time.second,
+    ...subseconds(time.nanosecond),
+  );
 }
 
 function parseInstant(raw: unknown): Instant {
@@ -207,22 +263,35 @@ function parseInstant(raw: unknown): Instant {
   return new Instant(timestamp.second * NANOSECONDS_PER_SECOND + BigInt(timestamp.nanosecond));
 }
 
+function formatOffset(seconds: number): string {
+  return entryEngine().formatOffset({ seconds, known: true });
+}
+
 function parseOffset(raw: unknown): string {
-  return formatUtcOffset(raw as number);
+  return formatOffset(raw as number);
 }
 
 const TRANSITION_KINDS: readonly TransitionKind[] = ["unique", "gap", "fold"];
 
 function parseZonedDatetime(raw: unknown): ZonedDateTime {
   const { value, zone } = raw as { value: NativeZonedDatetime; zone: string };
+  const civil = parseDatetime(value.civil);
   return new ZonedDateTime({
-    ...parseDatetime(value.civil),
+    year: civil.year,
+    month: civil.month,
+    day: civil.day,
+    hour: civil.hour,
+    minute: civil.minute,
+    second: civil.second,
+    millisecond: civil.millisecond,
+    microsecond: civil.microsecond,
+    nanosecond: civil.nanosecond,
     timeZone: zone,
-    offset: formatUtcOffset(value.offsetSeconds),
+    offset: formatOffset(value.offsetSeconds),
     kind: TRANSITION_KINDS[value.kind],
     fold: value.fold,
-    offsetBefore: formatUtcOffset(value.offsetBefore),
-    offsetAfter: formatUtcOffset(value.offsetAfter),
+    offsetBefore: formatOffset(value.offsetBefore),
+    offsetAfter: formatOffset(value.offsetAfter),
     epochNanoseconds: parseInstant(value.timestamp).epochNanoseconds,
   });
 }
@@ -266,50 +335,27 @@ function mask(
     }
     bits |= 1 << (value - lowest);
   }
-  if (bits === 0) throw new Error(`${name} must not be empty`);
   return bits;
-}
-
-function allowedBy(bits: number | undefined, value: number): boolean {
-  return bits === undefined || ((bits >> (value - 1)) & 1) === 1;
-}
-
-/** Whether `[min, max]` holds a date on an allowed weekday in an allowed month: 400 days see every combination. */
-function hasAllowedDate(
-  min: PlainDate,
-  max: PlainDate,
-  weekdays: number | undefined,
-  months: number | undefined,
-): boolean {
-  const first = min.epochDays;
-  const last = Math.min(max.epochDays, first + 400);
-  for (let days = first; days <= last; days++) {
-    if (
-      allowedBy(weekdays, weekdayFromDays(days)) &&
-      allowedBy(months, civilFromDays(days).month)
-    ) {
-      return true;
-    }
-  }
-  return false;
 }
 
 /**
  * Generate calendar dates as {@link PlainDate}s, shrinking towards
  * 2000-01-01. The default range is `Temporal.PlainDate`'s, so
- * `Temporal.PlainDate.from(value)` always succeeds.
+ * `Temporal.PlainDate.from(value)` always succeeds; bounds may reach year
+ * ±999999.
  */
 export function dates(options?: DateOptions): PrintableGenerator<PlainDate> {
-  const min = PlainDate.from(options?.minValue ?? TEMPORAL_MIN_DATE);
-  const max = PlainDate.from(options?.maxValue ?? TEMPORAL_MAX_DATE);
-  requireOrdered("dates()", PlainDate.compare(min, max) > 0);
+  const [min, max] = orderedBounds(
+    "dates()",
+    VALUE_BOUNDS,
+    [options?.minValue, options?.maxValue],
+    [TEMPORAL_MIN_DATE, TEMPORAL_MAX_DATE],
+    (like) => PlainDate.from(like),
+    PlainDate.compare,
+    text,
+  );
   const weekdays = mask("weekdays", options?.weekdays, 1, 7);
   const months = mask("months", options?.months, 1, 12);
-  if (!hasAllowedDate(min, max, weekdays, months)) {
-    throw new Error(
-      `dates(): no date between ${min.toString()} and ${max.toString()} is on the allowed weekdays and months`,
-    );
-  }
   const schema: Record<string, unknown> = {
     type: "date",
     min: nativeDate(min),
@@ -317,7 +363,7 @@ export function dates(options?: DateOptions): PrintableGenerator<PlainDate> {
   };
   if (weekdays !== undefined) schema["weekdays"] = weekdays;
   if (months !== undefined) schema["months"] = months;
-  return new BasicGenerator(schema, parseDate);
+  return checkedGenerator(schema, parseDate);
 }
 
 /** Options for {@link times}. */
@@ -329,39 +375,36 @@ export interface TimeOptions {
   precision?: Precision;
 }
 
+const MIDNIGHT = new PlainTime();
+const LAST_NANOSECOND = new PlainTime(23, 59, 59, 999, 999, 999);
+
 /**
  * Generate wall-clock times as {@link PlainTime}s, shrinking towards
  * midnight. `Temporal.PlainTime.from(value)` converts a value.
  */
 export function times(options?: TimeOptions): PrintableGenerator<PlainTime> {
-  const min = PlainTime.from(options?.minValue ?? {});
-  const max = PlainTime.from(
-    options?.maxValue ?? {
-      hour: 23,
-      minute: 59,
-      second: 59,
-      millisecond: 999,
-      microsecond: 999,
-      nanosecond: 999,
+  const [min, max] = orderedBounds(
+    "times()",
+    VALUE_BOUNDS,
+    [options?.minValue, options?.maxValue],
+    [MIDNIGHT, LAST_NANOSECOND],
+    (like) => PlainTime.from(like),
+    PlainTime.compare,
+    text,
+  );
+  return checkedGenerator(
+    {
+      type: "time",
+      min: nativeTime(min),
+      max: nativeTime(max),
+      precision: precisionCode(options?.precision),
     },
-  );
-  requireOrdered("times()", PlainTime.compare(min, max) > 0);
-  const unit = precisionUnit(options?.precision);
-  requireFit(
-    "time",
-    BigInt(min.nanosecondsOfDay),
-    BigInt(max.nanosecondsOfDay),
-    unit.nanoseconds,
-    `${min.toString()} and ${max.toString()}`,
-  );
-  return new BasicGenerator(
-    { type: "time", min: nativeTime(min), max: nativeTime(max), precision: unit.code },
     parseTime,
   );
 }
 
 /** Options for {@link datetimes}. */
-export interface DateTimeOptions {
+export interface DatetimeOptions {
   /** The earliest value, inclusive; a `Temporal.PlainDateTime` or its fields. Defaults to `-271821-04-19T00:00:00.000000001`. */
   minValue?: PlainDateTimeLike;
   /** The latest value, inclusive. Defaults to `+275760-09-13T23:59:59.999999999`. */
@@ -373,22 +416,25 @@ export interface DateTimeOptions {
  * Generate wall-clock datetimes without a time zone as {@link PlainDateTime}s,
  * shrinking towards 2000-01-01T00:00:00. The default range is
  * `Temporal.PlainDateTime`'s, so `Temporal.PlainDateTime.from(value)` always
- * succeeds.
+ * succeeds; bounds may reach year ±999999.
  */
-export function datetimes(options?: DateTimeOptions): PrintableGenerator<PlainDateTime> {
-  const min = PlainDateTime.from(options?.minValue ?? TEMPORAL_MIN_DATETIME);
-  const max = PlainDateTime.from(options?.maxValue ?? TEMPORAL_MAX_DATETIME);
-  requireOrdered("datetimes()", PlainDateTime.compare(min, max) > 0);
-  const unit = precisionUnit(options?.precision);
-  requireFit(
-    "datetime",
-    min.epochNanoseconds,
-    max.epochNanoseconds,
-    unit.nanoseconds,
-    `${min.toString()} and ${max.toString()}`,
+export function datetimes(options?: DatetimeOptions): PrintableGenerator<PlainDateTime> {
+  const [min, max] = orderedBounds(
+    "datetimes()",
+    VALUE_BOUNDS,
+    [options?.minValue, options?.maxValue],
+    [TEMPORAL_MIN_DATETIME, TEMPORAL_MAX_DATETIME],
+    (like) => PlainDateTime.from(like),
+    PlainDateTime.compare,
+    text,
   );
-  return new BasicGenerator(
-    { type: "datetime", min: nativeDatetime(min), max: nativeDatetime(max), precision: unit.code },
+  return checkedGenerator(
+    {
+      type: "datetime",
+      min: nativeDatetime(min),
+      max: nativeDatetime(max),
+      precision: precisionCode(options?.precision),
+    },
     parseDatetime,
   );
 }
@@ -402,30 +448,41 @@ export interface InstantOptions {
   precision?: Precision;
 }
 
+const TEMPORAL_MIN_INSTANT = new Instant(-TEMPORAL_INSTANT_LIMIT);
+const TEMPORAL_MAX_INSTANT = new Instant(TEMPORAL_INSTANT_LIMIT);
+
+function instantBounds(
+  generator: string,
+  names: readonly [string, string],
+  given: readonly [InstantLike | bigint | undefined, InstantLike | bigint | undefined],
+): { min: NativeTimestamp; max: NativeTimestamp } {
+  const [min, max] = orderedBounds(
+    generator,
+    names,
+    given,
+    [TEMPORAL_MIN_INSTANT, TEMPORAL_MAX_INSTANT],
+    (like) => Instant.from(like),
+    Instant.compare,
+    text,
+  );
+  return {
+    min: nativeTimestamp(min.epochNanoseconds),
+    max: nativeTimestamp(max.epochNanoseconds),
+  };
+}
+
 /**
  * Generate exact moments as {@link Instant}s, shrinking towards
  * 2000-01-01T00:00:00Z. The default range is `Temporal.Instant`'s, so
  * `Temporal.Instant.fromEpochNanoseconds(value.epochNanoseconds)` always
- * succeeds.
+ * succeeds; bounds may reach year ±999999.
  */
 export function instants(options?: InstantOptions): PrintableGenerator<Instant> {
-  const min = Instant.from(options?.minValue ?? -TEMPORAL_INSTANT_LIMIT);
-  const max = Instant.from(options?.maxValue ?? TEMPORAL_INSTANT_LIMIT);
-  requireOrdered("instants()", Instant.compare(min, max) > 0);
-  const unit = precisionUnit(options?.precision);
-  requireFit(
-    "instant",
-    min.epochNanoseconds,
-    max.epochNanoseconds,
-    unit.nanoseconds,
-    `${min.toString()} and ${max.toString()}`,
-  );
-  return new BasicGenerator(
+  return checkedGenerator(
     {
       type: "timestamp",
-      min: nativeTimestamp(min),
-      max: nativeTimestamp(max),
-      precision: unit.code,
+      ...instantBounds("instants()", VALUE_BOUNDS, [options?.minValue, options?.maxValue]),
+      precision: precisionCode(options?.precision),
     },
     parseInstant,
   );
@@ -442,32 +499,24 @@ export type Granularity =
   | "second"
   | "seconds";
 
-const GRANULARITIES: Record<string, { code: number; seconds: number }> = {
-  hour: { code: NativeGranularity.HOURS, seconds: 3600 },
-  "quarter-hour": { code: NativeGranularity.QUARTER_HOURS, seconds: 900 },
-  minute: { code: NativeGranularity.MINUTES, seconds: 60 },
-  second: { code: NativeGranularity.SECONDS, seconds: 1 },
+const GRANULARITIES: Record<string, number> = {
+  hour: NativeGranularity.HOURS,
+  "quarter-hour": NativeGranularity.QUARTER_HOURS,
+  minute: NativeGranularity.MINUTES,
+  second: NativeGranularity.SECONDS,
 };
 
 /** Options for {@link offsets}. */
 export interface OffsetOptions {
-  /** The smallest offset, inclusive, as `±HH:MM[:SS]` or seconds. Defaults to `-23:59`, or `-23:59:59` at second granularity. */
+  /** The smallest offset, inclusive, as `±HH:MM[:SS]` or seconds, down to `-25:59:59`. Defaults to `-23:59`, or `-23:59:59` at second granularity. */
   minValue?: string | number;
-  /** The largest offset, inclusive. Defaults to `+23:59`, or `+23:59:59` at second granularity. */
+  /** The largest offset, inclusive, up to `+25:59:59`. Defaults to `+23:59`, or `+23:59:59` at second granularity. */
   maxValue?: string | number;
   /** Which offsets are drawn: whole hours, quarter hours, minutes (the default) or seconds. */
   granularity?: Granularity;
 }
 
-function offsetSeconds(name: string, value: string | number): number {
-  if (typeof value === "string") return parseUtcOffset(value);
-  if (!Number.isInteger(value) || Math.abs(value) > 93_599) {
-    throw new Error(
-      `${name} must be a ±HH:MM[:SS] string or a whole number of seconds within ±25:59:59, got ${String(value)}`,
-    );
-  }
-  return value;
-}
+const INT32_LIMIT = 0x7fffffff;
 
 /**
  * Generate UTC offsets as `±HH:MM` strings (`±HH:MM:SS` when the offset is
@@ -483,61 +532,74 @@ export function offsets(options?: OffsetOptions): PrintableGenerator<string> {
       `granularity must be one of ${Object.keys(GRANULARITIES).join(", ")}, got ${String(options?.granularity)}`,
     );
   }
-  const limit = granularity.seconds === 1 ? 86_399 : 86_340;
-  const min = offsetSeconds("minValue", options?.minValue ?? -limit);
-  const max = offsetSeconds("maxValue", options?.maxValue ?? limit);
-  requireOrdered("offsets()", min > max);
-  if (Math.ceil(min / granularity.seconds) * granularity.seconds > max) {
-    throw new Error(
-      `No offset between ${formatUtcOffset(min)} and ${formatUtcOffset(max)} has the requested granularity`,
-    );
-  }
-  return new BasicGenerator(
-    { type: "offset", min, max, granularity: granularity.code },
-    parseOffset,
+  const limit = granularity === NativeGranularity.SECONDS ? 86_399 : 86_340;
+  const seconds =
+    (name: string) =>
+    (value: string | number): number =>
+      typeof value === "string"
+        ? parseUtcOffset(value)
+        : integerField(name, value, -INT32_LIMIT, INT32_LIMIT);
+  const min = options?.minValue === undefined ? -limit : seconds("minValue")(options.minValue);
+  const max = options?.maxValue === undefined ? limit : seconds("maxValue")(options.maxValue);
+  orderedBounds(
+    "offsets()",
+    VALUE_BOUNDS,
+    [
+      options?.minValue === undefined ? undefined : min,
+      options?.maxValue === undefined ? undefined : max,
+    ],
+    [-limit, limit],
+    (value) => value,
+    (a, b) => a - b,
+    formatOffset,
   );
+  return checkedGenerator({ type: "offset", min, max, granularity }, parseOffset);
 }
 
 /** Options for {@link zones}. */
 export interface ZoneOptions {
   /**
    * Draw only from these IANA names, each of which the zone source must know.
-   * When given, `links` and `legacy` are ignored.
+   * When given, `allowLinks` and `allowLegacy` are ignored.
    */
   names?: readonly string[];
   /** Include link names (aliases such as `Asia/Calcutta` for `Asia/Kolkata`). Defaults to `true`. */
-  links?: boolean;
+  allowLinks?: boolean;
   /** Include legacy names (`EST5EDT`, `US/Eastern`, ...). Defaults to `false`. */
-  legacy?: boolean;
+  allowLegacy?: boolean;
   /**
-   * The database the zones come from, which a {@link zonedDateTimes} drawing
+   * The database the zones come from, which a {@link zonedDatetimes} drawing
    * from this generator draws against. Defaults to {@link ZoneSource.default}
-   * at the time of the draw.
+   * as it is when this generator is built.
    */
   source?: ZoneSource;
 }
 
-class ZonesGenerator extends BasicGenerator<string> {
-  constructor(
-    readonly names: readonly string[] | null,
-    readonly links: boolean,
-    readonly legacy: boolean,
-    readonly source: ZoneSource | null,
-  ) {
-    super({ type: "timezone", names, links, legacy, source });
+class ZonesGenerator extends BasicGenerator<string> {}
+
+/** The generators of every name of a source, by their flags: built and validated once. */
+const wholeSources = new WeakMap<ZoneSource, Map<string, ZonesGenerator>>();
+
+function zoneSource(source: ZoneSource | undefined): ZoneSource {
+  if (source === undefined) return ZoneSource.default();
+  if (!(source instanceof ZoneSource)) {
+    throw new Error(`source must be a ZoneSource, got ${String(source)}`);
   }
+  return source;
 }
 
-function checkZoneNames(names: readonly string[], source: ZoneSource | null): string[] {
+function checkZoneNames(names: readonly string[], source: ZoneSource): string[] {
   const checked = [...new Set(names)];
   if (checked.length === 0) throw new Error("names must not be empty");
-  const known = source ?? ZoneSource.default();
-  for (const name of checked) {
-    if (typeof name !== "string" || !zoneSourceKnows(known, name)) {
-      throw unknownZone(known, String(name));
-    }
-  }
+  for (const name of checked) requireZone(source, name);
   return checked;
+}
+
+function requireZone(source: ZoneSource, name: unknown): string {
+  if (typeof name !== "string" || !zoneSourceKnows(source, name)) {
+    throw unknownZone(source, String(name));
+  }
+  return name;
 }
 
 /**
@@ -548,30 +610,62 @@ function checkZoneNames(names: readonly string[], source: ZoneSource | null): st
  * the source's own names for a custom source.
  */
 export function zones(options?: ZoneOptions): PrintableGenerator<string> {
-  const source = options?.source ?? null;
-  if (source !== null && !(source instanceof ZoneSource)) {
-    throw new Error(`source must be a ZoneSource, got ${String(source)}`);
+  const source = zoneSource(options?.source);
+  const allowLinks = options?.allowLinks ?? true;
+  const allowLegacy = options?.allowLegacy ?? false;
+  const build = (names: string[] | null): ZonesGenerator => {
+    const generator = new ZonesGenerator({
+      type: "timezone",
+      names,
+      allow_links: allowLinks,
+      allow_legacy: allowLegacy,
+      source,
+    });
+    validate(buildTimeZoneSpec, generator.schema);
+    return generator;
+  };
+  if (options?.names !== undefined) return build(checkZoneNames(options.names, source));
+  let generators = wholeSources.get(source);
+  if (generators === undefined) {
+    generators = new Map();
+    wholeSources.set(source, generators);
   }
-  const names = options?.names === undefined ? null : checkZoneNames(options.names, source);
-  return new ZonesGenerator(names, options?.links ?? true, options?.legacy ?? false, source);
+  const key = `${String(allowLinks)},${String(allowLegacy)}`;
+  let generator = generators.get(key);
+  if (generator === undefined) {
+    generator = build(null);
+    generators.set(key, generator);
+  }
+  return generator;
 }
 
 /**
  * Which occurrence of a wall-clock time a transition repeated a
- * {@link zonedDateTimes} draw means: `"both"` draws either, shrinking towards
+ * {@link zonedDatetimes} draw means: `"both"` draws either, shrinking towards
  * the earlier; `"earlier"` and `"later"` pin one.
  */
 export type Ambiguous = "both" | "earlier" | "later";
 
-/** Options for {@link zonedDateTimes}. */
-export interface ZonedDateTimeOptions {
+/** Options for {@link zonedDatetimes}. */
+export interface ZonedDatetimeOptions {
   /**
-   * Where the zone comes from. Defaults to {@link zones}`()`. A
-   * {@link zones} generator's source is the database the value is drawn
-   * against; any other generator of names works too, and draws against
-   * {@link ZoneSource.default}, which must know each name it yields.
+   * Where the zone comes from. Defaults to {@link zones}`({ source })`.
+   *
+   * A {@link zones} generator brings its own zone source, the database the
+   * value is drawn against, so `source` may not be given with one. Any other
+   * generator of names (a `zones()` generator that was filtered or mapped,
+   * `sampledFrom`, `oneOf`, ...) yields only names: each is resolved against
+   * `source`, and one that source does not know is an error.
    */
   zones?: Generator<string>;
+  /**
+   * The database the zones are resolved against: the source of the default
+   * {@link zones} generator, or of the names another generator yields.
+   * Defaults to {@link ZoneSource.default} as it is when this generator is
+   * built. An error with a {@link zones} generator as `zones`, which takes
+   * the source itself.
+   */
+  source?: ZoneSource;
   /** The earliest wall-clock time, inclusive. Defaults to `-271821-04-22T00:00:00`. Mutually exclusive with the instant bounds. */
   minValue?: PlainDateTimeLike;
   /** The latest wall-clock time, inclusive. Defaults to `+275760-09-10T23:59:59.999999999`. */
@@ -595,49 +689,25 @@ const AMBIGUOUS = {
   later: NativeAmbiguous.LATER,
 } as const;
 
-class ZonedDateTimesGenerator extends PrintableGenerator<ZonedDateTime> {
-  private readonly schemas = new Map<string, Record<string, unknown>>();
-  private readonly engineSchema: Record<string, unknown> | null;
-
+/** Zoned datetimes in the zones a generator of names yields, resolved against `source`. */
+class ZonedDatetimesIn extends PrintableGenerator<ZonedDateTime> {
   constructor(
     private readonly zones: Generator<string>,
-    private readonly fields: Record<string, unknown>,
+    private readonly source: ZoneSource,
+    private readonly bounds: Record<string, unknown>,
   ) {
     super();
-    this.engineSchema =
-      zones instanceof ZonesGenerator
-        ? {
-            ...fields,
-            names: zones.names,
-            links: zones.links,
-            legacy: zones.legacy,
-            source: zones.source,
-          }
-        : null;
-  }
-
-  private schemaFor(zone: unknown): Record<string, unknown> {
-    if (typeof zone !== "string") {
-      throw new Error(`zonedDateTimes() needs a generator of time zone names, got ${String(zone)}`);
-    }
-    let schema = this.schemas.get(zone);
-    if (schema === undefined) {
-      schema = {
-        ...this.fields,
-        names: checkZoneNames([zone], null),
-        links: true,
-        legacy: true,
-        source: null,
-      };
-      this.schemas.set(zone, schema);
-    }
-    return schema;
   }
 
   doDrawAndPrint(tc: TestCase, printer: PrettyPrinter): ZonedDateTime {
-    const schema =
-      this.engineSchema !== null ? this.engineSchema : this.schemaFor(tc.drawSilent(this.zones));
-    const value = parseZonedDatetime(generateRaw(tc, schema));
+    const value = parseZonedDatetime(
+      generateRaw(tc, {
+        type: "zoned_datetime_in_zone",
+        source: this.source,
+        zone: requireZone(this.source, tc.drawSilent(this.zones)),
+        bounds: this.bounds,
+      }),
+    );
     printer.value(value);
     return value;
   }
@@ -646,12 +716,6 @@ class ZonedDateTimesGenerator extends PrintableGenerator<ZonedDateTime> {
   protected override makeLabel(): LabelSpec {
     return labelSpec(LabelNames.ZONED_DATETIME, this.zones.label);
   }
-
-  override asBasic(): BasicGenerator<ZonedDateTime> | null {
-    return this.engineSchema === null
-      ? null
-      : new BasicGenerator(this.engineSchema, parseZonedDatetime);
-  }
 }
 
 /**
@@ -659,61 +723,91 @@ class ZonedDateTimesGenerator extends PrintableGenerator<ZonedDateTime> {
  * shrinking towards 2000-01-01T00:00:00 in `UTC`. Transitions are explored:
  * values in a gap (`kind: "gap"`, unless `allowImaginary` is false) and in a
  * fold (`kind: "fold"`, with `fold` telling the occurrences apart) are drawn
- * alongside unambiguous ones, against the zone source of `zones` (see
- * {@link ZoneSource}). Against {@link ZoneSource.host} or
- * {@link ZoneSource.bundled}, a draw whose offset the host's `Intl` disagrees
- * with is rejected like a failed assumption.
+ * alongside unambiguous ones, against a zone source (see {@link ZoneSource}):
+ * the one of a {@link zones} generator given as `zones`, else `source`, else
+ * the default as it is when this generator is built. Against
+ * {@link ZoneSource.host} or {@link ZoneSource.bundled}, a draw whose offset
+ * the host's `Intl` disagrees with is rejected like a failed assumption.
  *
- * The default wall-clock range lies two days inside `Temporal.PlainDateTime`'s,
- * so `Temporal.ZonedDateTime.from(value, { offset: "use" })` always succeeds;
- * see {@link ZonedDateTime} for how it treats a gap value.
+ * ```ts
+ * const anywhere = gs.temporal.zonedDatetimes();
+ * const american = gs.temporal.zonedDatetimes({
+ *   zones: gs.temporal.zones().filter((zone) => zone.startsWith("America/")),
+ *   source: gs.temporal.ZoneSource.bundled(),
+ * });
+ * ```
+ *
+ * The bounds are on the wall clock (`minValue`, `maxValue`) or on the
+ * instant (`minInstant`, `maxInstant`), never both. The default wall-clock
+ * range lies two days inside `Temporal.PlainDateTime`'s, so
+ * {@link ZonedDateTime.toTemporal} always succeeds for a zone `Temporal`
+ * knows.
  */
-export function zonedDateTimes(options?: ZonedDateTimeOptions): PrintableGenerator<ZonedDateTime> {
+export function zonedDatetimes(options?: ZonedDatetimeOptions): PrintableGenerator<ZonedDateTime> {
   const civilBounds = options?.minValue !== undefined || options?.maxValue !== undefined;
-  const instantBounds = options?.minInstant !== undefined || options?.maxInstant !== undefined;
-  if (civilBounds && instantBounds) {
+  const instants = options?.minInstant !== undefined || options?.maxInstant !== undefined;
+  if (civilBounds && instants) {
     throw new Error(
-      "zonedDateTimes() takes either wall-clock bounds (minValue, maxValue) or instant bounds (minInstant, maxInstant), not both",
+      "zonedDatetimes() takes either wall-clock bounds (minValue, maxValue) or instant bounds (minInstant, maxInstant), not both",
     );
   }
-  const unit = precisionUnit(options?.precision);
-  const fields: Record<string, unknown> = {
-    type: "zoned_datetime",
-    civil: null,
-    instant: null,
-    precision: unit.code,
-    imaginary: (options?.allowImaginary ?? true) ? NativeImaginary.ALLOW : NativeImaginary.AVOID,
-  };
   const ambiguous = options?.ambiguous ?? "both";
-  if (!(ambiguous in AMBIGUOUS)) {
+  if (!Object.hasOwn(AMBIGUOUS, ambiguous)) {
     throw new Error(`ambiguous must be "both", "earlier" or "later", got ${String(ambiguous)}`);
   }
-  fields["ambiguous"] = AMBIGUOUS[ambiguous];
-  if (instantBounds) {
-    const min = Instant.from(options?.minInstant ?? -TEMPORAL_INSTANT_LIMIT);
-    const max = Instant.from(options?.maxInstant ?? TEMPORAL_INSTANT_LIMIT);
-    requireOrdered("zonedDateTimes()", Instant.compare(min, max) > 0);
-    fields["instant"] = { min: nativeTimestamp(min), max: nativeTimestamp(max) };
-  } else {
-    const min = PlainDateTime.from(options?.minValue ?? ZONED_MIN_DATETIME);
-    const max = PlainDateTime.from(options?.maxValue ?? ZONED_MAX_DATETIME);
-    requireOrdered("zonedDateTimes()", PlainDateTime.compare(min, max) > 0);
-    requireFit(
-      "datetime",
-      min.epochNanoseconds,
-      max.epochNanoseconds,
-      unit.nanoseconds,
-      `${min.toString()} and ${max.toString()}`,
+  const bounds: Record<string, unknown> = {
+    civil: null,
+    instant: null,
+    precision: precisionCode(options?.precision),
+    imaginary: (options?.allowImaginary ?? true) ? NativeImaginary.ALLOW : NativeImaginary.AVOID,
+    ambiguous: AMBIGUOUS[ambiguous],
+  };
+  if (instants) {
+    bounds["instant"] = instantBounds(
+      "zonedDatetimes()",
+      ["minInstant", "maxInstant"],
+      [options?.minInstant, options?.maxInstant],
     );
-    fields["civil"] = { min: nativeDatetime(min), max: nativeDatetime(max) };
+  } else {
+    const [min, max] = orderedBounds(
+      "zonedDatetimes()",
+      VALUE_BOUNDS,
+      [options?.minValue, options?.maxValue],
+      [ZONED_MIN_DATETIME, ZONED_MAX_DATETIME],
+      (like) => PlainDateTime.from(like),
+      PlainDateTime.compare,
+      text,
+    );
+    bounds["civil"] = { min: nativeDatetime(min), max: nativeDatetime(max) };
   }
-  return new ZonedDateTimesGenerator(options?.zones ?? zones(), fields);
+  validate(buildZonedSpec, bounds);
+  const names = options?.zones;
+  if (names instanceof ZonesGenerator) {
+    if (options?.source !== undefined) {
+      throw new Error(
+        "zonedDatetimes(): zones is a zones() generator, which has its own zone source: pass source to zones() instead",
+      );
+    }
+    return new BasicGenerator(
+      { type: "zoned_datetime", zones: names.schema, bounds },
+      parseZonedDatetime,
+    );
+  }
+  const source = zoneSource(options?.source);
+  if (names === undefined) {
+    const all = zones({ source }) as ZonesGenerator;
+    return new BasicGenerator(
+      { type: "zoned_datetime", zones: all.schema, bounds },
+      parseZonedDatetime,
+    );
+  }
+  return new ZonedDatetimesIn(names, source, bounds);
 }
 
 /** Inclusive bounds on one unit of a {@link spans} draw. */
 export interface UnitBounds {
-  min?: number;
-  max?: number;
+  minValue?: number;
+  maxValue?: number;
 }
 
 /**
@@ -764,15 +858,6 @@ const UNIT_CODES: Record<DurationUnit, number> = {
   nanoseconds: NativeSpanUnit.NANOSECONDS,
 };
 
-function unitBound(unit: DurationUnit, side: string, value: number): number {
-  if (!Number.isSafeInteger(value) || Math.abs(value) > UNIT_LIMITS[unit]) {
-    throw new Error(
-      `${unit}.${side} must be an integer within ±${UNIT_LIMITS[unit]}, got ${String(value)}`,
-    );
-  }
-  return value;
-}
-
 /**
  * Generate calendar spans as {@link Duration}s, shrinking towards zero. The
  * units are kept as drawn rather than balanced (90 minutes stays 90 minutes),
@@ -788,26 +873,30 @@ export function spans(options?: SpanOptions): PrintableGenerator<Duration> {
   const named = DURATION_UNITS.filter((unit) => options?.[unit] !== undefined);
   const enabled = named.length === 0 ? DURATION_UNITS : named;
   const units = enabled.map((unit) => {
-    const bounds = options?.[unit] ?? {};
-    const min = unitBound(unit, "min", bounds.min ?? (sign === "uniform" ? -UNIT_LIMITS[unit] : 0));
-    const max = unitBound(unit, "max", bounds.max ?? UNIT_LIMITS[unit]);
-    if (min > max) throw new Error(`${unit}: cannot have max < min`);
-    if (sign === "non-negative" && min < 0) {
-      throw new Error(`${unit}.min must not be negative with sign "non-negative"`);
-    }
-    return { unit: UNIT_CODES[unit], min: BigInt(min), max: BigInt(max) };
+    const limit = UNIT_LIMITS[unit];
+    const given = options?.[unit] ?? {};
+    const [min, max] = orderedBounds(
+      unit,
+      VALUE_BOUNDS,
+      [given.minValue, given.maxValue],
+      [sign === "uniform" ? -limit : 0, limit],
+      (value) => value,
+      (a, b) => a - b,
+      String,
+    );
+    return {
+      unit: UNIT_CODES[unit],
+      min: BigInt(integerField(`${unit}.minValue`, min, -limit, limit)),
+      max: BigInt(integerField(`${unit}.maxValue`, max, -limit, limit)),
+    };
   });
-  if (units.some((u) => u.min > 0n) && units.some((u) => u.max < 0n)) {
-    throw new Error("spans(): the unit bounds leave no sign every unit can share");
-  }
-  return new BasicGenerator(
-    {
-      type: "span",
-      units,
-      sign: sign === "uniform" ? NativeSpanSign.UNIFORM : NativeSpanSign.NONNEGATIVE,
-    },
-    parseDuration,
-  );
+  const schema = {
+    type: "span",
+    units,
+    sign: sign === "uniform" ? NativeSpanSign.UNIFORM : NativeSpanSign.NONNEGATIVE,
+  };
+  validate(buildSpanSpec, schema);
+  return new BasicGenerator(schema, parseDuration);
 }
 
 /** Options for {@link jsDates}. */
@@ -844,7 +933,7 @@ function parseJsDate(raw: unknown): Date {
 export function jsDates(options?: JsDateOptions): PrintableGenerator<Date> {
   const min = dateMilliseconds("minValue", options?.minValue ?? new Date(-DATE_LIMIT_MILLISECONDS));
   const max = dateMilliseconds("maxValue", options?.maxValue ?? new Date(DATE_LIMIT_MILLISECONDS));
-  requireOrdered("jsDates()", min > max);
+  if (min > max) throw new Error("jsDates(): cannot have maxValue < minValue");
   return new BasicGenerator(
     {
       type: "timestamp",

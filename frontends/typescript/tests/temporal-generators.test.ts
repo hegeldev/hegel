@@ -1,10 +1,11 @@
 /**
- * The date and time generators against the real engine: argument validation,
- * the values they draw, their shrink targets, and the handle lifecycle of the
- * schema interpreter's date and time draws against the fake engine.
+ * The date and time generators against the real engine: argument validation
+ * when a generator is built (the generators' own and the engine's), the
+ * values they draw, their shrink targets and how a failing test's report
+ * prints them.
  */
 
-import { describe, test, it, expect, vi } from "vitest";
+import { describe, test, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import * as hegel from "@hegeldev/hegel";
 import * as gs from "@hegeldev/hegel/generators";
@@ -16,23 +17,15 @@ import {
   ZonedDateTime,
   Duration,
 } from "../src/temporal.js";
-import { generateValue, HandleCache } from "../src/generate.js";
-import { EngineError, NativePrecision, NativeSpanSign, NativeTimeZoneTag } from "../src/engine.js";
-import { AssumeError } from "../src/testCase.js";
-import {
-  fakeEngine,
-  context,
-  testCase,
-  dateOptions,
-  timeZoneSpec,
-  zonedSpec,
-  spanSpec,
-} from "./fakeEngine.js";
+import { NativePrecision, NativeSpanSign, NativeTimeZoneTag } from "../src/engine.js";
+import { getLibhegel } from "../src/session.js";
 import { TIMEZONE_NAMES } from "../src/timezone-names.js";
 import { hostKnowsZone } from "../src/hostZones.js";
 
+const { ZoneSource } = gs.temporal;
+
 /** Run `body` as a property and return the shrunk failing draw of `generator`. */
-function minimal<T>(generator: gs.Generator<T>, failing: (value: T) => boolean): T {
+function minimal<T>(generator: gs.PrintableGenerator<T>, failing: (value: T) => boolean): T {
   let final!: T;
   expect(() =>
     hegel.test(
@@ -46,8 +39,43 @@ function minimal<T>(generator: gs.Generator<T>, failing: (value: T) => boolean):
   return final;
 }
 
-function check<T>(generator: gs.Generator<T>, body: (value: T) => void, testCases = 60): void {
+function check<T>(
+  generator: gs.PrintableGenerator<T>,
+  body: (value: T) => void,
+  testCases = 60,
+): void {
   hegel.test((tc) => body(tc.draw(generator)), { testCases, database: hegel.Database.disabled });
+}
+
+/** Draw from `generator`, for the error a draw raises. */
+function draw(generator: gs.PrintableGenerator<unknown>): () => void {
+  return () =>
+    hegel.test((tc) => void tc.draw(generator), {
+      testCases: 5,
+      database: hegel.Database.disabled,
+    });
+}
+
+/** The lines a failing test of `generator` reports. */
+function report(generator: gs.PrintableGenerator<unknown>): string {
+  const lines: string[] = [];
+  const output = vi.spyOn(console, "error").mockImplementation((line: string) => {
+    lines.push(line);
+  });
+  try {
+    expect(() =>
+      hegel.test(
+        (tc) => {
+          tc.draw(generator);
+          throw new Error("falsified");
+        },
+        { seed: 7, database: hegel.Database.disabled },
+      ),
+    ).toThrow("falsified");
+  } finally {
+    output.mockRestore();
+  }
+  return lines.join("\n");
 }
 
 describe("gs.temporal.dates()", () => {
@@ -57,18 +85,45 @@ describe("gs.temporal.dates()", () => {
         minValue: { year: 2024, month: 1, day: 2 },
         maxValue: { year: 2024, month: 1, day: 1 },
       }),
-    ).toThrow("maxValue < minValue");
+    ).toThrow("dates(): cannot have maxValue < minValue");
     expect(() => gs.temporal.dates({ weekdays: [0] })).toThrow(
       "weekdays must be integers between 1 and 7",
     );
     expect(() => gs.temporal.dates({ months: [13] })).toThrow(
       "months must be integers between 1 and 12",
     );
-    expect(() => gs.temporal.dates({ weekdays: [] })).toThrow("weekdays must not be empty");
+    expect(() => gs.temporal.dates({ minValue: { year: 2024, month: 2, day: 30 } })).toThrow(
+      "day must be an integer between 1 and 29",
+    );
+  });
+
+  test("says which bound is the default when one given alone lies beyond it", () => {
+    expect(() => gs.temporal.dates({ minValue: { year: 300000, month: 1, day: 1 } })).toThrow(
+      "dates(): minValue +300000-01-01 is after the default maxValue, +275760-09-13: pass maxValue as well",
+    );
+    expect(() => gs.temporal.dates({ maxValue: { year: -300000, month: 1, day: 1 } })).toThrow(
+      "dates(): maxValue -300000-01-01 is before the default minValue, -271821-04-19: pass minValue as well",
+    );
+    const far = { year: 300000, month: 1, day: 1 };
+    check(gs.temporal.dates({ minValue: far, maxValue: far }), (date) =>
+      expect(date.toString()).toBe("+300000-01-01"),
+    );
+  });
+
+  test("has the engine check the masks when it is built", () => {
+    expect(() => gs.temporal.dates({ weekdays: [] })).toThrow(
+      /hegel_date_options_set_weekdays failed.*at least one weekday/,
+    );
+    expect(() => gs.temporal.dates({ months: [] })).toThrow(
+      /hegel_date_options_set_months failed.*at least one month/,
+    );
+  });
+
+  test("has the engine report bounds no allowed date lies in when it is built", () => {
     const tuesday = { year: 2024, month: 3, day: 12 };
     expect(() =>
       gs.temporal.dates({ minValue: tuesday, maxValue: tuesday, weekdays: [1] }),
-    ).toThrow("no date between 2024-03-12 and 2024-03-12");
+    ).toThrow(/hegel_validate_date failed.*falls on an allowed weekday and month/);
     expect(() =>
       gs.temporal.dates({
         minValue: tuesday,
@@ -76,7 +131,7 @@ describe("gs.temporal.dates()", () => {
         weekdays: [2],
         months: [4],
       }),
-    ).toThrow("allowed weekdays and months");
+    ).toThrow("falls on an allowed weekday and month");
   });
 
   test("draws within the bounds on the allowed weekdays and months", () => {
@@ -125,20 +180,21 @@ describe("gs.temporal.dates()", () => {
 describe("gs.temporal.times()", () => {
   test("validates its options", () => {
     expect(() => gs.temporal.times({ minValue: { hour: 2 }, maxValue: { hour: 1 } })).toThrow(
-      "maxValue < minValue",
+      "times(): cannot have maxValue < minValue",
     );
     expect(() => gs.temporal.times({ precision: "fortnight" as "hour" })).toThrow(
       "precision must be one of",
     );
+  });
+
+  test("has the engine report bounds holding no value at the precision when it is built", () => {
     expect(() =>
       gs.temporal.times({
         minValue: { hour: 1, nanosecond: 1 },
         maxValue: { hour: 1, nanosecond: 999 },
         precision: "microsecond",
       }),
-    ).toThrow(
-      "No time between 01:00:00.000000001 and 01:00:00.000000999 has the requested precision",
-    );
+    ).toThrow(/hegel_validate_time failed.*no value at precision microseconds lies in the bounds/);
   });
 
   test("draws at the requested precision within the bounds", () => {
@@ -157,6 +213,12 @@ describe("gs.temporal.times()", () => {
     );
     check(gs.temporal.times({ precision: "hour" }), (time) => expect(time.minute).toBe(0));
     expect(minimal(gs.temporal.times(), () => true).toString()).toBe("00:00:00");
+    expect(
+      minimal(
+        gs.temporal.times(),
+        (time) => time.nanosecond > 0 && time.millisecond > 0,
+      ).toString(),
+    ).toBe("00:00:00.001000001");
   });
 });
 
@@ -167,14 +229,17 @@ describe("gs.temporal.datetimes()", () => {
         minValue: { year: 2024, month: 1, day: 2 },
         maxValue: { year: 2024, month: 1, day: 1 },
       }),
-    ).toThrow("maxValue < minValue");
+    ).toThrow("datetimes(): cannot have maxValue < minValue");
+    expect(() => gs.temporal.datetimes({ minValue: { year: 280000, month: 1, day: 1 } })).toThrow(
+      "datetimes(): minValue +280000-01-01T00:00:00 is after the default maxValue, +275760-09-13T23:59:59.999999999: pass maxValue as well",
+    );
     expect(() =>
       gs.temporal.datetimes({
         minValue: { year: 2024, month: 1, day: 1, second: 1 },
         maxValue: { year: 2024, month: 1, day: 1, second: 59 },
         precision: "minute",
       }),
-    ).toThrow("No datetime between");
+    ).toThrow(/hegel_validate_datetime failed.*no value at precision minutes/);
   });
 
   test("draws within the bounds at the precision and shrinks to the millennium", () => {
@@ -206,11 +271,14 @@ describe("gs.temporal.datetimes()", () => {
 describe("gs.temporal.instants()", () => {
   test("validates its options", () => {
     expect(() => gs.temporal.instants({ minValue: 1n, maxValue: 0n })).toThrow(
-      "maxValue < minValue",
+      "instants(): cannot have maxValue < minValue",
+    );
+    expect(() => gs.temporal.instants({ maxValue: -9_000_000_000_000_000_000_000n })).toThrow(
+      "instants(): maxValue -283229-05-10T08:00:00Z is before the default minValue, -271821-04-20T00:00:00Z: pass minValue as well",
     );
     expect(() =>
       gs.temporal.instants({ minValue: 1n, maxValue: 999n, precision: "microseconds" }),
-    ).toThrow("No instant between");
+    ).toThrow(/hegel_validate_timestamp failed.*no value at precision microseconds/);
   });
 
   test("draws within Temporal's range by default and shrinks to the epoch", () => {
@@ -233,6 +301,12 @@ describe("gs.temporal.instants()", () => {
       },
     );
     expect(minimal(gs.temporal.instants(), () => true).toString()).toBe("2000-01-01T00:00:00Z");
+    expect(
+      minimal(
+        gs.temporal.instants({ maxValue: 0n }),
+        (instant) => instant.epochNanoseconds % 1_000_000_000n !== 0n,
+      ).toString(),
+    ).toBe("1969-12-31T23:59:59.999999999Z");
   });
 });
 
@@ -242,15 +316,27 @@ describe("gs.temporal.offsets()", () => {
       "granularity must be one of",
     );
     expect(() => gs.temporal.offsets({ minValue: "+01:00", maxValue: "-01:00" })).toThrow(
-      "maxValue < minValue",
+      "offsets(): cannot have maxValue < minValue",
     );
-    expect(() => gs.temporal.offsets({ minValue: 1.5 })).toThrow(
-      "minValue must be a ±HH:MM[:SS] string",
+    expect(() => gs.temporal.offsets({ minValue: 1.5 })).toThrow("minValue must be an integer");
+    expect(() => gs.temporal.offsets({ maxValue: "1h" })).toThrow(
+      "UTC offsets must be formatted as ±HH:MM or ±HH:MM:SS, got 1h",
     );
-    expect(() => gs.temporal.offsets({ maxValue: 93_600 })).toThrow("maxValue must be");
+    expect(() => gs.temporal.offsets({ minValue: "+24:30" })).toThrow(
+      "offsets(): minValue +24:30 is after the default maxValue, +23:59: pass maxValue as well",
+    );
+    expect(() => gs.temporal.offsets({ maxValue: -90_000, granularity: "seconds" })).toThrow(
+      "offsets(): maxValue -25:00 is before the default minValue, -23:59:59: pass minValue as well",
+    );
+  });
+
+  test("has the engine report its range and the granularity when it is built", () => {
+    expect(() => gs.temporal.offsets({ minValue: 0, maxValue: 93_600 })).toThrow(
+      /hegel_validate_offset failed.*must be in \[-93599, 93599\], got 93600/,
+    );
     expect(() =>
       gs.temporal.offsets({ minValue: "+00:01", maxValue: "+00:59", granularity: "hours" }),
-    ).toThrow("No offset between +00:01 and +00:59 has the requested granularity");
+    ).toThrow(/hegel_validate_offset failed.*no offset at granularity hours/);
   });
 
   test("draws offsets at the granularity, as Temporal identifiers, shrinking to UTC", () => {
@@ -264,22 +350,32 @@ describe("gs.temporal.offsets()", () => {
       expect(offset).toMatch(/^[+-]\d{2}:\d{2}(:\d{2})?$/);
     });
     check(gs.temporal.offsets(), (offset) => expect(offset).toMatch(/^[+-]\d{2}:\d{2}$/));
+    check(
+      gs.temporal.offsets({ minValue: 93_599, maxValue: "+25:59:59", granularity: "second" }),
+      (offset) => expect(offset).toBe("+25:59:59"),
+    );
     expect(minimal(gs.temporal.offsets(), () => true)).toBe("+00:00");
   });
 });
 
 describe("gs.temporal.zones()", () => {
-  test("validates explicit names against the host", () => {
+  test("validates explicit names against its source", () => {
     expect(() => gs.temporal.zones({ names: [] })).toThrow("names must not be empty");
     expect(() => gs.temporal.zones({ names: ["Mars/Olympus_Mons"] })).toThrow(
-      "Mars/Olympus_Mons is not known to this host",
+      "The time zone Mars/Olympus_Mons is not known to the zone source in use (this host's database): pass the zone source that has it as source",
     );
     expect(() => gs.temporal.zones({ names: [5 as unknown as string] })).toThrow(
-      "5 is not known to this host",
+      "The time zone 5 is not known to the zone source in use",
     );
     expect(gs.temporal.zones({ names: ["UTC", "UTC"] }).asBasic()?.schema).toMatchObject({
       names: ["UTC"],
     });
+  });
+
+  test("has the engine check that the source has a name to draw when it is built", () => {
+    expect(() => gs.temporal.zones({ source: ZoneSource.custom() })).toThrow(
+      /hegel_timezone_spec_validate failed.*has no allowed name/,
+    );
   });
 
   test("draws only names the host and the engine both know, shrinking to UTC", () => {
@@ -300,77 +396,102 @@ describe("gs.temporal.zones()", () => {
     });
   });
 
-  test("filters links and legacy names", () => {
-    check(
-      gs.temporal.zones({ links: false }),
-      (zone) => expect(zone).not.toBe("Asia/Calcutta"),
-      300,
-    );
-    check(
-      gs.temporal.zones({ legacy: true }),
-      (zone) => expect(TIMEZONE_NAMES).toContain(zone),
-      100,
-    );
-    const legacy = new Set<string>();
-    check(gs.temporal.zones({ links: false, legacy: true }), (zone) => legacy.add(zone), 300);
-    expect(
-      [...legacy].some(
-        (zone) =>
-          zone === "EST5EDT" || zone === "GMT" || zone === "US/Eastern" || zone.startsWith("Etc/"),
-      ),
-    ).toBe(true);
+  test.each([
+    ["the host's database", ZoneSource.host()],
+    ["the bundled database", ZoneSource.bundled()],
+  ])("filters links and legacy names of %s", (_name, source) => {
+    const lib = getLibhegel();
+    const ctx = lib.newContext();
+    const info = (zone: string) => lib.timezoneInfo(ctx, zone);
+    const isLegacy = (zone: string) => (info(zone).tags & NativeTimeZoneTag.LEGACY) !== 0;
+    const isLink = (zone: string) => info(zone).isLink;
+    const drawn = (options: gs.temporal.ZoneOptions): string[] => {
+      const names = new Set<string>();
+      check(gs.temporal.zones({ ...options, source }), (zone) => void names.add(zone), 400);
+      for (const name of names) expect(hostKnowsZone(name)).toBe(true);
+      return [...names];
+    };
+    try {
+      const plain = drawn({});
+      expect(plain.some(isLegacy)).toBe(false);
+      expect(plain.some(isLink)).toBe(true);
+      expect(drawn({ allowLinks: false }).some(isLink)).toBe(false);
+      const legacy = drawn({ allowLegacy: true });
+      expect(legacy.some(isLegacy)).toBe(true);
+      expect(legacy.some(isLink)).toBe(true);
+      const neither = drawn({ allowLinks: false, allowLegacy: true });
+      expect(neither.some(isLegacy)).toBe(true);
+      expect(neither.some(isLink)).toBe(false);
+    } finally {
+      lib.freeContext(ctx);
+    }
   });
 
-  test("names the engine lacks fail at draw time", () => {
-    const engine = fakeEngine();
-    engine.timezoneSpecSetNames.mockImplementation(() => {
-      throw new EngineError("unknown zone");
-    });
-    expect(() =>
-      generateValue(engine, context, testCase, {
-        type: "timezone",
-        names: ["Bogus"],
-        links: true,
-        legacy: false,
-        source: gs.temporal.ZoneSource.bundled(),
-      }),
-    ).toThrow("unknown zone");
-    expect(engine.freeTimezoneSpec).toHaveBeenCalledWith(timeZoneSpec);
+  test("gives one generator for every draw of a whole source", () => {
+    expect(gs.temporal.zones()).toBe(gs.temporal.zones({ allowLinks: true }));
+    expect(gs.temporal.zones()).not.toBe(gs.temporal.zones({ allowLegacy: true }));
+    expect(gs.temporal.zones()).not.toBe(gs.temporal.zones({ source: ZoneSource.bundled() }));
+    expect(gs.temporal.zones({ names: ["UTC"] })).not.toBe(gs.temporal.zones({ names: ["UTC"] }));
   });
 });
 
 const newYork = gs.temporal.zones({ names: ["America/New_York"] });
 
-describe("gs.temporal.zonedDateTimes()", () => {
+describe("gs.temporal.zonedDatetimes()", () => {
   test("validates its options", () => {
     expect(() =>
-      gs.temporal.zonedDateTimes({ minValue: { year: 2024, month: 1, day: 1 }, maxInstant: 0n }),
-    ).toThrow("not both");
-    expect(() => gs.temporal.zonedDateTimes({ ambiguous: "sometimes" as "both" })).toThrow(
+      gs.temporal.zonedDatetimes({ minValue: { year: 2024, month: 1, day: 1 }, maxInstant: 0n }),
+    ).toThrow(
+      "zonedDatetimes() takes either wall-clock bounds (minValue, maxValue) or instant bounds (minInstant, maxInstant), not both",
+    );
+    expect(() => gs.temporal.zonedDatetimes({ ambiguous: "sometimes" as "both" })).toThrow(
       'ambiguous must be "both", "earlier" or "later"',
     );
-    expect(() => gs.temporal.zonedDateTimes({ minInstant: 1n, maxInstant: 0n })).toThrow(
-      "maxValue < minValue",
+    expect(() => gs.temporal.zonedDatetimes({ ambiguous: "toString" as "both" })).toThrow(
+      "ambiguous must be",
+    );
+    expect(() => gs.temporal.zonedDatetimes({ minInstant: 1n, maxInstant: 0n })).toThrow(
+      "zonedDatetimes(): cannot have maxInstant < minInstant",
     );
     expect(() =>
-      gs.temporal.zonedDateTimes({
+      gs.temporal.zonedDatetimes({ minInstant: 9_000_000_000_000_000_000_000n }),
+    ).toThrow(
+      "zonedDatetimes(): minInstant +287168-08-24T16:00:00Z is after the default maxInstant, +275760-09-13T00:00:00Z: pass maxInstant as well",
+    );
+    expect(() =>
+      gs.temporal.zonedDatetimes({
         minValue: { year: 2024, month: 1, day: 2 },
         maxValue: { year: 2024, month: 1, day: 1 },
       }),
-    ).toThrow("maxValue < minValue");
+    ).toThrow("zonedDatetimes(): cannot have maxValue < minValue");
+    expect(() => gs.temporal.zonedDatetimes({ source: "host" as never })).toThrow(
+      "source must be a ZoneSource, got host",
+    );
+  });
+
+  test("has the engine check the bounds against the precision when it is built", () => {
     expect(() =>
-      gs.temporal.zonedDateTimes({
+      gs.temporal.zonedDatetimes({
         minValue: { year: 2024, month: 1, day: 1, second: 1 },
         maxValue: { year: 2024, month: 1, day: 1, second: 2 },
         precision: "hour",
       }),
-    ).toThrow("No datetime between");
+    ).toThrow(/hegel_zoned_spec_validate failed.*has no value at precision hours/);
+  });
+
+  test("does not take a PlainDateTime where it takes an instant", () => {
+    expect(() =>
+      gs.temporal.zonedDatetimes({ minInstant: new PlainDateTime(2024, 1, 1) as never }),
+    ).toThrow("Instants must be within");
+    expect(() =>
+      gs.temporal.instants({ maxValue: new PlainDateTime(2024, 1, 1) as never }),
+    ).toThrow("Instants must be within");
   });
 
   test("reports gaps with the forward shift and both sides of a fold", () => {
     const gap = new PlainDateTime(2024, 3, 10, 2, 30);
     check(
-      gs.temporal.zonedDateTimes({ zones: newYork, minValue: gap, maxValue: gap }),
+      gs.temporal.zonedDatetimes({ zones: newYork, minValue: gap, maxValue: gap }),
       (value) => {
         expect(value).toBeInstanceOf(ZonedDateTime);
         expect(value.toString()).toBe("2024-03-10T02:30:00-04:00[America/New_York][gap]");
@@ -382,7 +503,7 @@ describe("gs.temporal.zonedDateTimes()", () => {
     const fold = new PlainDateTime(2024, 11, 3, 1, 30);
     const seen = new Set<string>();
     check(
-      gs.temporal.zonedDateTimes({ zones: newYork, minValue: fold, maxValue: fold }),
+      gs.temporal.zonedDatetimes({ zones: newYork, minValue: fold, maxValue: fold }),
       (value) => {
         expect(value.kind).toBe("fold");
         expect(value.offsetBefore).toBe("-04:00");
@@ -399,7 +520,7 @@ describe("gs.temporal.zonedDateTimes()", () => {
       "2024-11-03T01:30:00-05:00[America/New_York][fold=1]",
     ]);
     check(
-      gs.temporal.zonedDateTimes({
+      gs.temporal.zonedDatetimes({
         zones: newYork,
         minValue: fold,
         maxValue: fold,
@@ -409,7 +530,7 @@ describe("gs.temporal.zonedDateTimes()", () => {
       10,
     );
     check(
-      gs.temporal.zonedDateTimes({
+      gs.temporal.zonedDatetimes({
         zones: newYork,
         minValue: fold,
         maxValue: fold,
@@ -422,7 +543,7 @@ describe("gs.temporal.zonedDateTimes()", () => {
 
   test("avoids gaps on request and draws instants at the precision", () => {
     check(
-      gs.temporal.zonedDateTimes({
+      gs.temporal.zonedDatetimes({
         zones: newYork,
         minValue: { year: 2024, month: 3, day: 10, hour: 1 },
         maxValue: { year: 2024, month: 3, day: 10, hour: 4 },
@@ -436,7 +557,7 @@ describe("gs.temporal.zonedDateTimes()", () => {
       100,
     );
     check(
-      gs.temporal.zonedDateTimes({
+      gs.temporal.zonedDatetimes({
         zones: newYork,
         minInstant: Instant.fromEpochMilliseconds(1_710_052_200_000),
         maxInstant: 1_710_059_400_000_000_000n,
@@ -447,12 +568,12 @@ describe("gs.temporal.zonedDateTimes()", () => {
       },
     );
     check(
-      gs.temporal.zonedDateTimes({ maxInstant: 0n }),
+      gs.temporal.zonedDatetimes({ maxInstant: 0n }),
       (value) => expect(value.epochNanoseconds <= 0n).toBe(true),
       20,
     );
     check(
-      gs.temporal.zonedDateTimes({ minInstant: 0n }),
+      gs.temporal.zonedDatetimes({ minInstant: 0n }),
       (value) => expect(value.epochNanoseconds >= 0n).toBe(true),
       20,
     );
@@ -460,7 +581,7 @@ describe("gs.temporal.zonedDateTimes()", () => {
 
   test("draws any host zone by default and shrinks to the millennium in UTC", () => {
     check(
-      gs.temporal.zonedDateTimes(),
+      gs.temporal.zonedDatetimes(),
       (value) => {
         expect(hostKnowsZone(value.timeZone)).toBe(true);
         expect(
@@ -482,14 +603,15 @@ describe("gs.temporal.zonedDateTimes()", () => {
       },
       100,
     );
-    expect(minimal(gs.temporal.zonedDateTimes(), () => true).toString()).toBe(
+    expect(minimal(gs.temporal.zonedDatetimes(), () => true).toString()).toBe(
       "2000-01-01T00:00:00+00:00[UTC]",
     );
-    expect(gs.temporal.zonedDateTimes().asBasic()).not.toBeNull();
+    expect(gs.temporal.zonedDatetimes().asBasic()).not.toBeNull();
+    expect(gs.temporal.zonedDatetimes({ zones: newYork }).asBasic()).not.toBeNull();
   });
 
   test("takes the zone from any generator of names, under one span", () => {
-    const generator = gs.temporal.zonedDateTimes({
+    const generator = gs.temporal.zonedDatetimes({
       zones: gs.sampledFrom(["Europe/London", "Asia/Tokyo"]),
       minValue: { year: 2024, month: 6, day: 1 },
       maxValue: { year: 2024, month: 6, day: 30 },
@@ -499,54 +621,64 @@ describe("gs.temporal.zonedDateTimes()", () => {
       expect(["Europe/London", "Asia/Tokyo"]).toContain(value.timeZone);
       expect(value.offset).toBe(value.timeZone === "Asia/Tokyo" ? "+09:00" : "+01:00");
     });
-    expect(() =>
-      hegel.test((tc) =>
-        tc.draw(gs.temporal.zonedDateTimes({ zones: gs.just(5 as unknown as string) })),
-      ),
-    ).toThrow("needs a generator of time zone names, got 5");
-    expect(() =>
-      hegel.test((tc) =>
-        tc.draw(gs.temporal.zonedDateTimes({ zones: gs.just("Mars/Olympus_Mons") })),
-      ),
-    ).toThrow("not known to this host");
+    expect(draw(gs.temporal.zonedDatetimes({ zones: gs.just(5 as unknown as string) }))).toThrow(
+      "The time zone 5 is not known to the zone source in use",
+    );
     expect(
       minimal(
-        gs.temporal.zonedDateTimes({ zones: gs.sampledFrom(["Asia/Tokyo", "Europe/London"]) }),
+        gs.temporal.zonedDatetimes({ zones: gs.sampledFrom(["Asia/Tokyo", "Europe/London"]) }),
         () => true,
       ).toString(),
     ).toBe("2000-01-01T00:00:00+09:00[Asia/Tokyo]");
+    expect(
+      minimal(
+        gs.temporal.zonedDatetimes({
+          zones: gs.temporal.zones().filter((zone) => zone.startsWith("Asia/")),
+        }),
+        (value) => value.year > 2000,
+      ).toString(),
+    ).toMatch(/^2001-01-01T00:00:00[+-]\d{2}:\d{2}\[Asia\/\w+\]$/);
+  });
+
+  test("rejects the test case when the zone has no value in the bounds", () => {
+    const seen = new Set<string>();
+    check(
+      gs.temporal.zonedDatetimes({
+        zones: gs.sampledFrom(["Asia/Tokyo", "Asia/Kolkata"]),
+        minInstant: 1_710_050_400_000_000_000n,
+        maxInstant: 1_710_050_400_000_000_000n + 1_799_999_999_999n,
+        precision: "hour",
+      }),
+      (value) => {
+        expect(value.toString()).toBe("2024-03-10T15:00:00+09:00[Asia/Tokyo]");
+        seen.add(value.timeZone);
+      },
+      20,
+    );
+    expect([...seen]).toEqual(["Asia/Tokyo"]);
   });
 
   test("rejects a draw whose offset the host disagrees with", () => {
-    const engine = fakeEngine();
-    const schema = {
-      type: "zoned_datetime",
-      names: ["UTC"],
-      links: true,
-      legacy: false,
-      civil: null,
-      instant: null,
-      precision: 0,
-      imaginary: 0,
-      ambiguous: 0,
-    };
-    const drawn = generateValue(engine, context, testCase, schema) as ReturnType<
-      typeof engine.generateZonedDatetime
-    >;
-    expect(drawn).toMatchObject({ zone: "UTC" });
-    engine.generateZonedDatetime.mockImplementation(() => ({
-      ...drawn,
-      value: { ...drawn.value, offsetSeconds: 3600 },
-    }));
-    expect(() => generateValue(engine, context, testCase, schema)).toThrow(AssumeError);
-    expect(engine.freeZonedSpec).toHaveBeenCalledTimes(2);
-    expect(engine.freeTimezoneSpec).toHaveBeenCalledTimes(2);
+    const utc = gs.temporal.zones({ names: ["UTC"], source: ZoneSource.bundled() });
+    const format = vi
+      .spyOn(Intl.DateTimeFormat.prototype, "format", "get")
+      .mockReturnValue(() => "1/1/2000, GMT+01:00");
+    try {
+      expect(draw(gs.temporal.zonedDatetimes({ zones: utc }))).toThrow(
+        hegel.FailedHealthCheckError,
+      );
+    } finally {
+      format.mockRestore();
+    }
+    check(gs.temporal.zonedDatetimes({ zones: utc }), (value) =>
+      expect(value.offset).toBe("+00:00"),
+    );
   });
 
   test("skips the host check beyond the range Intl covers", () => {
     const far = new PlainDateTime(275000, 1, 1);
     check(
-      gs.temporal.zonedDateTimes({ zones: newYork, minValue: far, maxValue: far }),
+      gs.temporal.zonedDatetimes({ zones: newYork, minValue: far, maxValue: far }),
       (value) => {
         expect(value.year).toBe(275000);
       },
@@ -554,97 +686,17 @@ describe("gs.temporal.zonedDateTimes()", () => {
     );
   });
 
-  test("draws the name, then the value from a spec of that zone, freeing every spec", () => {
-    const engine = fakeEngine();
-    const schema = {
-      type: "zoned_datetime",
-      names: null,
-      links: true,
-      legacy: false,
-      source: null,
-      civil: null,
-      instant: null,
-      precision: 0,
-      imaginary: 0,
-      ambiguous: 0,
-    };
-    const cache = new HandleCache(engine);
-    generateValue(engine, context, testCase, schema, cache);
-    generateValue(engine, context, testCase, schema, cache);
-    expect(engine.generateTimezone).toHaveBeenCalledTimes(2);
-    expect(engine.timezoneSpecNew).toHaveBeenCalledTimes(2);
-    expect(engine.timezoneSpecSetNames).toHaveBeenLastCalledWith(context, timeZoneSpec, ["UTC"]);
-    expect(engine.zoneSourceAddZone).toHaveBeenCalledTimes(1);
-    cache.dispose();
-    expect(engine.freeTimezoneSpec).toHaveBeenCalledTimes(2);
-    expect(engine.freeZonedSpec).toHaveBeenCalledTimes(1);
-    engine.zonedSpecNew.mockImplementation(() => {
-      throw new EngineError("no spec");
-    });
-    expect(() => generateValue(engine, context, testCase, { ...schema, names: ["UTC"] })).toThrow(
-      "no spec",
+  test("prints a drawn value as the engine writes it", () => {
+    const gap = new PlainDateTime(2024, 3, 10, 2, 30);
+    expect(
+      report(gs.temporal.zonedDatetimes({ zones: newYork, minValue: gap, maxValue: gap })),
+    ).toContain("const draw_1 = ZonedDateTime(2024-03-10T02:30:00-04:00[America/New_York][gap]);");
+    expect(report(gs.temporal.dates())).toContain("const draw_1 = PlainDate(2000-01-01);");
+    expect(report(gs.arrays(gs.temporal.times(), { minSize: 1, maxSize: 1 }))).toContain(
+      "const draw_1 = [PlainTime(00:00:00)];",
     );
-    expect(engine.freeTimezoneSpec).toHaveBeenCalledTimes(2);
-  });
-
-  test("releases the specs when configuring them fails", () => {
-    const engine = fakeEngine();
-    const schema = {
-      type: "zoned_datetime",
-      names: null,
-      links: true,
-      legacy: false,
-      civil: { min: {}, max: {} },
-      instant: { min: {}, max: {} },
-      precision: 0,
-      imaginary: 0,
-      ambiguous: 0,
-    };
-    engine.zonedSpecSetAmbiguous.mockImplementation(() => {
-      throw new EngineError("bad policy");
-    });
-    expect(() => generateValue(engine, context, testCase, schema)).toThrow("bad policy");
-    expect(engine.zonedSpecSetCivilBounds).toHaveBeenCalledTimes(1);
-    expect(engine.zonedSpecSetInstantBounds).toHaveBeenCalledTimes(1);
-    expect(engine.freeZonedSpec).toHaveBeenCalledWith(zonedSpec);
-    expect(engine.freeTimezoneSpec).toHaveBeenCalledWith(timeZoneSpec);
-    engine.zonedSpecNew.mockImplementation(() => {
-      throw new EngineError("no spec");
-    });
-    expect(() => generateValue(engine, context, testCase, schema)).toThrow("no spec");
-    expect(engine.freeTimezoneSpec).toHaveBeenCalledTimes(2);
-    expect(engine.freeZonedSpec).toHaveBeenCalledTimes(1);
-  });
-
-  test("fills the host zone list once per engine and filters it", () => {
-    const engine = fakeEngine();
-    engine.timezoneInfo.mockImplementation((_ctx, name) => ({
-      known: true,
-      primaryName: name,
-      isLink: name === "Asia/Calcutta",
-      rank: 0,
-      tags: name === "EST5EDT" ? NativeTimeZoneTag.LEGACY : 0,
-    }));
-    const names = (links: boolean, legacy: boolean) => {
-      generateValue(engine, context, testCase, {
-        type: "timezone",
-        names: null,
-        links,
-        legacy,
-        source: gs.temporal.ZoneSource.bundled(),
-      });
-      return engine.timezoneSpecSetNames.mock.lastCall![2];
-    };
-    expect(names(true, true)).toContain("Asia/Calcutta");
-    expect(names(true, true)).toContain("EST5EDT");
-    expect(names(false, true)).not.toContain("Asia/Calcutta");
-    expect(names(true, false)).not.toContain("EST5EDT");
-    expect(names(false, false)).toContain("America/New_York");
-    expect(names(true, true)).not.toContain("Factory");
-    const lookups = engine.timezoneInfo.mock.calls.length;
-    expect(lookups).toBeGreaterThan(400);
-    names(true, true);
-    expect(engine.timezoneInfo).toHaveBeenCalledTimes(lookups);
+    expect(report(gs.temporal.spans())).toContain("const draw_1 = Duration(0s);");
+    expect(report(gs.temporal.offsets())).toContain('const draw_1 = "+00:00";');
   });
 });
 
@@ -653,18 +705,26 @@ describe("gs.temporal.spans()", () => {
     expect(() => gs.temporal.spans({ sign: "mixed" as "uniform" })).toThrow(
       'sign must be "uniform" or "non-negative"',
     );
-    expect(() => gs.temporal.spans({ hours: { min: 2, max: 1 } })).toThrow(
-      "hours: cannot have max < min",
+    expect(() => gs.temporal.spans({ hours: { minValue: 2, maxValue: 1 } })).toThrow(
+      "hours: cannot have maxValue < minValue",
     );
-    expect(() => gs.temporal.spans({ years: { max: 2 ** 32 } })).toThrow(
-      "years.max must be an integer within ±4294967295",
+    expect(() => gs.temporal.spans({ years: { maxValue: 2 ** 32 } })).toThrow(
+      "years.maxValue must be an integer between -4294967295 and 4294967295",
     );
-    expect(() => gs.temporal.spans({ days: { min: 0.5 } })).toThrow("days.min must be an integer");
-    expect(() => gs.temporal.spans({ minutes: { min: -1 }, sign: "non-negative" })).toThrow(
-      'minutes.min must not be negative with sign "non-negative"',
+    expect(() => gs.temporal.spans({ days: { minValue: 0.5 } })).toThrow(
+      "days.minValue must be an integer",
     );
-    expect(() => gs.temporal.spans({ hours: { min: 1 }, minutes: { max: -1 } })).toThrow(
-      "no sign every unit can share",
+    expect(() => gs.temporal.spans({ days: { maxValue: -1 }, sign: "non-negative" })).toThrow(
+      "days: maxValue -1 is before the default minValue, 0: pass minValue as well",
+    );
+  });
+
+  test("has the engine check the signs when it is built", () => {
+    expect(() => gs.temporal.spans({ minutes: { minValue: -1 }, sign: "non-negative" })).toThrow(
+      /hegel_span_spec_validate failed.*requires min >= 0 for minutes, got -1/,
+    );
+    expect(() => gs.temporal.spans({ hours: { minValue: 1 }, minutes: { maxValue: -1 } })).toThrow(
+      /hegel_span_spec_validate failed.*admit none in common/,
     );
   });
 
@@ -678,28 +738,31 @@ describe("gs.temporal.spans()", () => {
       },
       100,
     );
-    expect(minimal(gs.temporal.spans(), () => true).toString()).toBe("PT0S");
-    check(gs.temporal.spans({ hours: { min: 1, max: 3 }, minutes: { max: 59 } }), (duration) => {
-      expect(duration.sign).toBe(1);
-      expect(duration.hours).toBeGreaterThanOrEqual(1);
-      expect(duration.hours).toBeLessThanOrEqual(3);
-      expect(duration.minutes).toBeLessThanOrEqual(59);
-      expect(
-        duration.years +
-          duration.months +
-          duration.weeks +
-          duration.days +
-          duration.seconds +
-          duration.milliseconds +
-          duration.microseconds +
-          duration.nanoseconds,
-      ).toBe(0);
-    });
+    expect(minimal(gs.temporal.spans(), () => true).toString()).toBe("0s");
+    check(
+      gs.temporal.spans({ hours: { minValue: 1, maxValue: 3 }, minutes: { maxValue: 59 } }),
+      (duration) => {
+        expect(duration.sign).toBe(1);
+        expect(duration.hours).toBeGreaterThanOrEqual(1);
+        expect(duration.hours).toBeLessThanOrEqual(3);
+        expect(duration.minutes).toBeLessThanOrEqual(59);
+        expect(
+          duration.years +
+            duration.months +
+            duration.weeks +
+            duration.days +
+            duration.seconds +
+            duration.milliseconds +
+            duration.microseconds +
+            duration.nanoseconds,
+        ).toBe(0);
+      },
+    );
     check(gs.temporal.spans({ sign: "non-negative", days: {} }), (duration) => {
       expect(duration.sign).toBeGreaterThanOrEqual(0);
       expect(duration.hours).toBe(0);
     });
-    check(gs.temporal.spans({ seconds: { min: -5, max: -2 } }), (duration) => {
+    check(gs.temporal.spans({ seconds: { minValue: -5, maxValue: -2 } }), (duration) => {
       expect(duration.seconds).toBeGreaterThanOrEqual(-5);
       expect(duration.seconds).toBeLessThanOrEqual(-2);
     });
@@ -707,18 +770,6 @@ describe("gs.temporal.spans()", () => {
       sign: NativeSpanSign.NONNEGATIVE,
       units: expect.arrayContaining([{ unit: 0, min: 0n, max: 4294967295n }]),
     });
-  });
-
-  test("releases the spec when configuring it fails", () => {
-    const engine = fakeEngine();
-    engine.spanSpecSetSign.mockImplementation(() => {
-      throw new EngineError("bad sign");
-    });
-    expect(() =>
-      generateValue(engine, context, testCase, gs.temporal.spans().asBasic()!.schema),
-    ).toThrow("bad sign");
-    expect(engine.spanSpecSetUnitBounds).toHaveBeenCalledTimes(10);
-    expect(engine.freeSpanSpec).toHaveBeenCalledWith(spanSpec);
   });
 });
 
@@ -742,6 +793,7 @@ describe("gs.temporal.tzdbVersion()", () => {
     vi.resetModules();
     const fresh = await import("../src/generators/temporal.js");
     expect(() => fresh.tzdbVersion()).toThrow('import "@hegeldev/hegel"');
+    expect(() => new fresh.PlainDate(2024, 3, 10).toString()).toThrow('import "@hegeldev/hegel"');
   });
 });
 
@@ -754,7 +806,7 @@ describe("gs.temporal.jsDates()", () => {
       "maxValue must be a valid Date",
     );
     expect(() => gs.temporal.jsDates({ minValue: new Date(1), maxValue: new Date(0) })).toThrow(
-      "maxValue < minValue",
+      "jsDates(): cannot have maxValue < minValue",
     );
     expect(gs.temporal.jsDates().asBasic()?.schema).toMatchObject({
       precision: NativePrecision.MILLISECONDS,
@@ -780,47 +832,5 @@ describe("gs.temporal.jsDates()", () => {
     expect(minimal(gs.temporal.jsDates(), () => true).toISOString()).toBe(
       "2000-01-01T00:00:00.000Z",
     );
-  });
-});
-
-describe("date option handles", () => {
-  it("are built once per schema and released on failure and disposal", () => {
-    const engine = fakeEngine();
-    const cache = new HandleCache(engine);
-    const schema = gs.temporal.dates({ weekdays: [1], months: [1] }).asBasic()!.schema;
-    generateValue(engine, context, testCase, schema, cache);
-    generateValue(engine, context, testCase, schema, cache);
-    expect(engine.dateOptionsNew).toHaveBeenCalledTimes(1);
-    expect(engine.dateOptionsSetWeekdays).toHaveBeenCalledWith(context, dateOptions, 1);
-    expect(engine.dateOptionsSetMonths).toHaveBeenCalledWith(context, dateOptions, 1);
-    expect(engine.generateDate).toHaveBeenLastCalledWith(
-      context,
-      testCase,
-      { year: -271821, month: 4, day: 19 },
-      { year: 275760, month: 9, day: 13 },
-      dateOptions,
-    );
-    generateValue(engine, context, testCase, gs.temporal.dates().asBasic()!.schema, cache);
-    expect(engine.generateDate).toHaveBeenLastCalledWith(
-      context,
-      testCase,
-      expect.anything(),
-      expect.anything(),
-      null,
-    );
-    cache.dispose();
-    expect(engine.freeDateOptions).toHaveBeenCalledWith(dateOptions);
-    engine.dateOptionsSetMonths.mockImplementation(() => {
-      throw new EngineError("bad mask");
-    });
-    expect(() =>
-      generateValue(
-        engine,
-        context,
-        testCase,
-        gs.temporal.dates({ months: [2] }).asBasic()!.schema,
-      ),
-    ).toThrow("bad mask");
-    expect(engine.freeDateOptions).toHaveBeenCalledTimes(2);
   });
 });

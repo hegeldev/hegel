@@ -339,7 +339,7 @@
  * - Browse the `@hegeldev/hegel/generators` module for the full list of
  *   available generators.
  * - Dates, times, time zones and spans are in the `generators.temporal`
- *   namespace (`gs.temporal.dates()`, `gs.temporal.zonedDateTimes()`, ...),
+ *   namespace (`gs.temporal.dates()`, `gs.temporal.zonedDatetimes()`, ...),
  *   along with the value classes they draw (`gs.temporal.PlainDate`, ...).
  * - See {@link stateful} for stateful (model-based) testing.
  * - See {@link Settings} for more configuration settings to customize how

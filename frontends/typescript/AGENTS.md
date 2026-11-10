@@ -135,10 +135,12 @@ so a Node import creeping into a shared module fails `check-lint`.
    `Temporal` or probed from `Intl` in JavaScript (`src/hostZones.ts`) and
    uploaded to the engine as structured data the first time a draw lands on a
    zone, so the koffi and Wasm paths behave identically (the Wasm build has no
-   callbacks). A zoned draw is two-step: draw the name, upload its data, draw
-   from a spec of that one name. Against the host and bundled sources a
-   zoned draw whose offset the host's `Intl` disagrees with is rejected like
-   a failed assumption. Text and binary draws without a `maxSize` pass
+   callbacks). A zoned draw is two-step: draw the name (from the `zones()`
+   spec, or with whatever generator `zonedDatetimes` was given), upload its
+   data, then `hegel_generate_zoned_datetime_for_zone` in that zone of the
+   source the generator captured when it was built. Against the host and
+   bundled sources a zoned draw whose offset the host's `Intl` disagrees with
+   is rejected like a failed assumption. Text and binary draws without a `maxSize` pass
    `HEGEL_MAX_SIZE_DEFAULT`, and `filter` tries `HEGEL_FILTER_ATTEMPTS`
    values: both constants live in `src/engine.ts`.
 5. **Runtime services** (`src/runtime.ts`, `src/nodeRuntime.ts`,
@@ -221,12 +223,23 @@ so a Node import creeping into a shared module fails `check-lint`.
    the `generators.temporal` namespace) draw the immutable value classes of
    `src/temporal.ts` (`PlainDate`, `PlainTime`, `PlainDateTime`, `Instant`,
    `ZonedDateTime`, `Duration`), which the same namespace re-exports:
-   property bags shaped like their `Temporal` namesakes with RFC 9557
-   `toString()`s. The calendar arithmetic and offset formatting both share
-   is the internal `src/calendar.ts`. The generators use the vocabulary every
-   frontend shares (`dates`, `times`, `datetimes`, `zonedDateTimes`,
-   `instants`, `offsets`, `zones`, `spans`, plus the JS-only `jsDates`) and
-   validate their options eagerly with plain `Error`s like `integers()` does.
+   property bags shaped like their `Temporal` namesakes. Their text
+   (`toString()`, `toJSON()` and the `ClassName(text)` a failing test
+   reports) is the engine's (`hegel_format_*`, reached through
+   `entryEngine()`), never formatted here; `src/calendar.ts` holds only the
+   field checks, the weekday arithmetic and UTC offset parsing. The
+   generators use the vocabulary every frontend shares (`dates`, `times`,
+   `datetimes`, `zonedDatetimes`, `instants`, `offsets`, `zones`, `spans`,
+   plus the JS-only `jsDates`). They check option shapes, the frontend's own
+   value ranges and bound order with plain `Error`s like `integers()` does,
+   and leave what the engine checks to the engine: every generator has the
+   engine check its arguments once on `entryEngine()` when it is constructed,
+   through `hegel_validate_*` for the handle-less draws and by building its
+   spec and calling `hegel_*_spec_validate` for `zones()`,
+   `zonedDatetimes()` and `spans()`, so the engine's error is raised there
+   and never first by a draw. Do not
+   add a JavaScript copy of an engine check. A generator reads
+   `ZoneSource.default()` when it is built, never when it draws.
 
 Both adapters hand out handles as fresh opaque objects mapped to the engine's
 pointers, never the pointers themselves, and forget the mapping when the

@@ -5,7 +5,7 @@
  * @packageDocumentation
  */
 
-import type { Generator } from "./core.js";
+import type { PrintableGenerator } from "./core.js";
 import * as temporal from "./temporal.js";
 import type { PlainDateLike, PlainTimeLike } from "../temporal.js";
 
@@ -37,7 +37,7 @@ const MAX_DATE = { year: 9999, month: 12, day: 31 };
  * @deprecated Use `temporal.dates()`, which generates `PlainDate`
  * values.
  */
-export function dates(): Generator<string> {
+export function dates(): PrintableGenerator<string> {
   return temporal.dates({ minValue: MIN_DATE, maxValue: MAX_DATE }).map(formatDate);
 }
 
@@ -48,7 +48,7 @@ export function dates(): Generator<string> {
  * @deprecated Use `temporal.times()`, which generates `PlainTime`
  * values.
  */
-export function times(): Generator<string> {
+export function times(): PrintableGenerator<string> {
   return temporal.times().map(formatTime);
 }
 
@@ -59,7 +59,7 @@ export function times(): Generator<string> {
  * @deprecated Use `temporal.datetimes()`, which generates
  * `PlainDateTime` values.
  */
-export function datetimes(): Generator<string> {
+export function datetimes(): PrintableGenerator<string> {
   return temporal
     .datetimes({
       minValue: { ...MIN_DATE, hour: 0 },
