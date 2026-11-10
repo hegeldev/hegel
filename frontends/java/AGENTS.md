@@ -185,6 +185,14 @@ aliases. The public
   (`StopTest` → OVERRUN, `AssumeRejected` → INVALID, `INVALID_ARG` →
   `IllegalArgumentException` with the engine's diagnostic, other negatives →
   `HegelException`) and short-circuiting once a case is aborted.
+- **Standalone programs** — `Hegel.main` calls `Main.run` and then exits the
+  process through `Main.exit`, which tests replace (JaCoCo cannot cover a
+  call to `System.exit`). `Main` parses the command
+  line and passes each setting option to the engine by name
+  (`hegel_settings_set_from_string`). It does this in the `configure` callback
+  of `Runner.run`, which runs after `applySettings`, so options override
+  `Settings`. Tests that exit the process or set the default profile run in a
+  child JVM (`MainProcessTest`, `MainFixture`).
 - **Run loop** — `Runner` builds the settings handle and drives
   `hegel_run_start` → `hegel_next_test_case` → `hegel_mark_complete`. The
   engine owns the *whole* run — generation, shrinking, the replays that confirm
