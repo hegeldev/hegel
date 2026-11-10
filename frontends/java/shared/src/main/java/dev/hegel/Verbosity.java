@@ -18,4 +18,14 @@ public enum Verbosity {
     Verbosity(int code) {
         this.code = code;
     }
+
+    /** The verbosity the engine reports as {@code code}. */
+    static Verbosity fromCode(int code) {
+        for (Verbosity v : values()) {
+            if (v.code == code) {
+                return v;
+            }
+        }
+        throw new HegelException("unknown hegel_verbosity_t value " + code);
+    }
 }

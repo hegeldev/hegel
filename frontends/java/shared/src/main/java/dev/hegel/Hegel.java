@@ -141,6 +141,48 @@ public final class Hegel {
         return Runner.run(Engine.get(), settings, body, reporter);
     }
 
+    /**
+     * Run {@code body} as a standalone program with default settings. See {@link #main(String[],
+     * Consumer, Settings)}.
+     *
+     * @param args the program's command line
+     * @param body the test body, run once
+     */
+    public static void main(String[] args, Consumer<TestCase> body) {
+        main(args, body, new Settings());
+    }
+
+    /**
+     * Run {@code body} as a standalone program with one test case configured from the command line.
+     * Call it from the program's own {@code main}. The process exits with status 0 if the test case passes,
+     * 1 if it fails or the run ends in an error, and 2 if the command line settings are invalid.
+     *
+     * <pre>{@code
+     * public static void main(String[] args) {
+     *   Hegel.main(args, tc -> {
+     *     int x = tc.draw(integers());
+     *     assertEquals(x + 0, x);
+     *   });
+     * }
+     * }</pre>
+     *
+     * <p>{@code --help} lists the options. Options override {@code settings}, and {@code settings} override
+     * the profile. The {@code too_slow} and {@code test_cases_too_large} health checks are suppressed. By
+     * default, the failure database key comes from the name of the class calling this method.
+     *
+     * @param args the program's command line
+     * @param body the test body, run once
+     * @param settings the run configuration, before the command line is applied
+     */
+    public static void main(String[] args, Consumer<TestCase> body, Settings settings) {
+        String program = StackWalker.getInstance()
+                .walk(frames -> frames.map(StackWalker.StackFrame::getClassName)
+                        .dropWhile(Hegel.class.getName()::equals)
+                        .findFirst())
+                .orElse("program");
+        Main.exit.accept(Main.run(Engine.get(), args, body, settings, program, System.out, System.err));
+    }
+
     private static Reporter defaultReporter() {
         return Reporter.printing(System.err);
     }

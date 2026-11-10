@@ -8,6 +8,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
+import java.util.function.LongConsumer;
 
 /**
  * Drives a single property test: builds the settings handle, pumps the engine's run loop, and turns
@@ -70,16 +71,29 @@ final class Runner {
     }
 
     static RunReport run(Libhegel lib, Settings settings, Consumer<TestCase> body, Reporter reporter) {
+        return run(lib, settings, body, reporter, s -> {});
+    }
+
+    /**
+     * As {@link #run(Libhegel, Settings, Consumer, Reporter)}, but calls {@code configure} with the
+     * settings handle after applying {@code settings}, so values set by {@code configure} override
+     * values from {@code settings}. The run and its reporters use the values after both are
+     * applied.
+     */
+    static RunReport run(
+            Libhegel lib, Settings settings, Consumer<TestCase> body, Reporter reporter, LongConsumer configure) {
         RunStatistics.Counter counts = new RunStatistics.Counter();
         RunReport report;
         long s = newSettings(lib);
         try {
             applySettings(lib, s, settings);
+            configure.accept(s);
             // The engine resolved whatever the caller left unset (its profile, hegel.toml, the
             // HEGEL_* variables); the run and its reporters see the effective configuration.
             Settings effective = settings.resolved(
                     lib.settingsGetTestCases(s),
                     lib.settingsGetPrintBlob(s),
+                    Verbosity.fromCode(lib.settingsGetVerbosity(s)),
                     NondeterminismStrictness.fromCode(lib.settingsGetNondeterminismStrictness(s)));
             reporter.runStarted(effective);
             long run = effective.reproduceFailure == null

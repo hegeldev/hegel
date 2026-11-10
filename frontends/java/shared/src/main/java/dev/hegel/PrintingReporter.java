@@ -8,12 +8,24 @@ import java.io.PrintStream;
  */
 final class PrintingReporter implements Reporter {
     private final PrintStream out;
+    private final boolean standalone;
     private boolean printBlob;
     private boolean quiet;
     private boolean multiple;
 
     PrintingReporter(PrintStream out) {
+        this(out, false);
+    }
+
+    /**
+     * Create a reporter for {@code out}.
+     *
+     * @param standalone true for a program run by {@link Hegel#main}. Prints the failure's stack
+     * trace and print {@code --failure-blob} as the way to replay a failure
+     */
+    PrintingReporter(PrintStream out, boolean standalone) {
         this.out = out;
+        this.standalone = standalone;
     }
 
     @Override
@@ -61,12 +73,19 @@ final class PrintingReporter implements Reporter {
     public void failure(Failure failure) {
         if (!quiet) {
             failure.caveat().ifPresent(caveat -> out.println("note: " + caveat));
+            if (standalone) {
+                failure.exception().printStackTrace(out);
+            }
         }
         if (printBlob) {
             failure.reproduceBlob().ifPresent(blob -> {
                 out.println();
-                out.println("To reproduce this failure, replay it with:");
-                out.println("    @HegelTest(reproduceFailure = \"" + blob + "\")");
+                if (standalone) {
+                    out.println("rerun with: --failure-blob " + blob);
+                } else {
+                    out.println("To reproduce this failure, replay it with:");
+                    out.println("    @HegelTest(reproduceFailure = \"" + blob + "\")");
+                }
             });
         }
     }
