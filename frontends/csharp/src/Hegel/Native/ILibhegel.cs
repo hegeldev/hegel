@@ -132,8 +132,11 @@ internal interface ILibhegel
     int PoolGenerate(nint testCase, nint pool, bool consume, out long variableId);
     int PoolRestore(nint testCase, nint pool, long variableId);
     void PoolFree(nint pool);
-    int NewStateMachine(nint testCase, IReadOnlyList<string> ruleNames, long[] ruleGroups, double[]? ruleWeights, IReadOnlyList<string> invariantNames, bool[] invariantAlwaysCheck, long minConcurrency, long maxConcurrency, long stepCount, out nint stateMachine, out long concurrency);
-    int StateMachineNextGroup(nint testCase, nint stateMachine, out long group);
+    int NewStateMachine(nint testCase, long minConcurrency, long maxConcurrency, long stepCount, out nint stateMachine);
+    int StateMachineAddRule(nint testCase, nint stateMachine, string name, double weight, long[] groups);
+    int StateMachineAddInvariant(nint testCase, nint stateMachine, string name, bool alwaysCheck);
+    int StateMachineStart(nint testCase, nint stateMachine, out long concurrency);
+    int StateMachineNextGroup(nint testCase, nint stateMachine, out long group, out long concurrency);
     int StateMachineNextRule(nint testCase, nint stateMachine, long workerIndex, out long rule);
     int StateMachineRuleRejected(nint testCase, nint stateMachine, long workerIndex);
     int StateMachineShouldCheckInvariant(nint testCase, nint stateMachine, long invariantIndex, out bool check);

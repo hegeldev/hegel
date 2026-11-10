@@ -7,7 +7,7 @@ module%hegel_concurrent_state_machine [@async] Counter_machine = struct
   let incr _tc s =
     s.n <- s.n + 1;
     Scheduler.yield ()
-  [@@rule { group = "ops"; weight = 2.0 }]
+  [@@rule { groups = [ "ops"; "audit" ]; weight = 2.0 }]
   ;;
 
   let read _tc _s = Scheduler.yield () [@@rule]
@@ -28,10 +28,10 @@ let test_collects_rules_and_invariants () =
     "rules"
     [ "incr"; "read" ]
     (List.map Counter_machine.rules ~f:R.name);
-  Alcotest.(check (list string))
+  Alcotest.(check (list (list string)))
     "groups"
-    [ "ops"; "<anonymous>" ]
-    (List.map Counter_machine.rules ~f:R.group);
+    [ [ "ops"; "audit" ]; [ "<anonymous>" ] ]
+    (List.map Counter_machine.rules ~f:R.groups);
   Alcotest.(check (list (float 0.)))
     "weights"
     [ 2.0; 1.0 ]

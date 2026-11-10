@@ -1,26 +1,33 @@
 /**
  * Tests using fake DataSource implementations to exercise code paths in
  * testCase.ts, generators.ts, and runner.ts that are unreachable through
- * the real hegel server.
+ * the real engine.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import * as gs from "@hegeldev/hegel/generators";
 import {
   AssumeError,
   Collection,
-  Labels,
   StopTestError,
   TestCase,
   type DataSource,
 } from "../src/testCase.js";
 import { runTestCase } from "../src/runner.js";
+import { labelSpec } from "../src/labels.js";
+import { EngineDocument, type Printer } from "../src/pretty.js";
+import { getLibhegel } from "../src/session.js";
+
+const lib = getLibhegel();
+const ctx = lib.newContext();
 
 // ---------------------------------------------------------------------------
 // FakeDataSource
 // ---------------------------------------------------------------------------
 
 class FakeDataSource implements DataSource {
+  readonly family = {};
+  readonly output = new EngineDocument(lib, ctx);
   private generates: unknown[];
   private generateIndex = 0;
   private _throwOnStartSpan: boolean;
@@ -54,7 +61,11 @@ class FakeDataSource implements DataSource {
     return this.generates[this.generateIndex++];
   }
 
-  startSpan(label: number): void {
+  label(): bigint {
+    return 1n;
+  }
+
+  startSpan(label: bigint): void {
     void label;
     if (this._throwOnStartSpan) {
       throw new Error("startSpan error");
@@ -81,6 +92,19 @@ class FakeDataSource implements DataSource {
     // no-op
   }
 
+  newRepeat(): number {
+    return 1;
+  }
+
+  repeatMore(_repeatId: number): boolean {
+    this._collectionCallCount++;
+    return this._collectionCallCount <= this._collectionCounts;
+  }
+
+  repeatFailed(_repeatId: number): void {
+    // no-op
+  }
+
   markComplete(status: number, origin: string | null): void {
     this._markCompleteCalls.push({ status, origin });
   }
@@ -95,6 +119,30 @@ class FakeDataSource implements DataSource {
   }
 
   poolGenerate(_poolId: number, _consume: boolean): bigint {
+    throw new Error("not supported by FakeDataSource");
+  }
+
+  poolRestore(_poolId: number, _variableId: bigint): void {
+    throw new Error("not supported by FakeDataSource");
+  }
+
+  newRecursion(_maxDepth: number, _maxLeaves: number): number {
+    throw new Error("not supported by FakeDataSource");
+  }
+
+  recursionBranch(_recursionId: number, _depth: number): boolean {
+    throw new Error("not supported by FakeDataSource");
+  }
+
+  recursionLeaf(_recursionId: number): boolean {
+    throw new Error("not supported by FakeDataSource");
+  }
+
+  recursionRetry(_recursionId: number): void {
+    throw new Error("not supported by FakeDataSource");
+  }
+
+  recursionFinish(_recursionId: number): boolean {
     throw new Error("not supported by FakeDataSource");
   }
 
@@ -118,6 +166,34 @@ class FakeDataSource implements DataSource {
     throw new Error("not supported by FakeDataSource");
   }
 
+  drawGrammar(): string {
+    throw new Error("not supported by FakeDataSource");
+  }
+
+  note(message: string): void {
+    this.output.note(0, message);
+  }
+
+  target(): void {}
+
+  event(): void {}
+
+  eventValue(): void {}
+
+  clone(): DataSource {
+    return this;
+  }
+
+  block(): DataSource {
+    return this;
+  }
+
+  setWorker(): void {}
+
+  printer(): Printer {
+    return this.output.view();
+  }
+
   get markCompleteCalls() {
     return this._markCompleteCalls;
   }
@@ -128,22 +204,10 @@ class FakeDataSource implements DataSource {
 // ---------------------------------------------------------------------------
 
 describe("TestCase with fake DataSource", () => {
-  it("isLastRun getter returns true when constructed with isLastRun=true", () => {
-    const ds = new FakeDataSource({ generates: [42] });
-    const tc = new TestCase(ds, true);
-    expect(tc.isLastRun).toBe(true);
-  });
-
-  it("isLastRun getter returns false when constructed with isLastRun=false", () => {
-    const ds = new FakeDataSource({ generates: [42] });
-    const tc = new TestCase(ds, false);
-    expect(tc.isLastRun).toBe(false);
-  });
-
   it("stopSpan catches errors from dataSource.stopSpan", () => {
     const ds = new FakeDataSource({ generates: [42], throwOnStopSpan: true });
     const tc = new TestCase(ds, false);
-    tc.startSpan(Labels.LIST);
+    tc.startSpan(labelSpec("span"));
     // stopSpan should NOT throw even though dataSource.stopSpan throws
     expect(() => tc.stopSpan()).not.toThrow();
   });
@@ -151,34 +215,28 @@ describe("TestCase with fake DataSource", () => {
   it("startSpan catches and re-throws errors from dataSource.startSpan", () => {
     const ds = new FakeDataSource({ generates: [42], throwOnStartSpan: true });
     const tc = new TestCase(ds, false);
-    expect(() => tc.startSpan(Labels.LIST)).toThrow("startSpan error");
+    expect(() => tc.startSpan(labelSpec("span"))).toThrow("startSpan error");
   });
 
-  it("draw logs to stderr on isLastRun=true at spanDepth=0", () => {
+  it("draw prints the value when the test case is emitted", () => {
     const ds = new FakeDataSource({ generates: [42] });
     const tc = new TestCase(ds, true);
-    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     tc.draw(gs.integers());
-    expect(spy).toHaveBeenCalledWith(expect.stringContaining("draw_1"), 42);
-    spy.mockRestore();
+    expect(ds.output.lines()).toEqual(["const draw_1 = 42;"]);
   });
 
-  it("note writes to stderr on isLastRun=true", () => {
+  it("note appends to the output when the test case is emitted", () => {
     const ds = new FakeDataSource({ generates: [] });
     const tc = new TestCase(ds, true);
-    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     tc.note("hello");
-    expect(spy).toHaveBeenCalledWith("hello");
-    spy.mockRestore();
+    expect(ds.output.lines()).toEqual(["hello"]);
   });
 
-  it("note does nothing on isLastRun=false", () => {
+  it("note does nothing when the test case is not emitted", () => {
     const ds = new FakeDataSource({ generates: [] });
     const tc = new TestCase(ds, false);
-    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     tc.note("hello");
-    expect(spy).not.toHaveBeenCalled();
-    spy.mockRestore();
+    expect(ds.output.lines()).toEqual([]);
   });
 
   it("assume(false) throws AssumeError", () => {
@@ -304,16 +362,16 @@ describe("Generator parse error paths", () => {
     expect(() => tc.draw(gs.oneOf(gs.integers(), gs.booleans()))).toThrow("Expected array");
   });
 
-  it("optional parse throws on non-array", () => {
-    const ds = new FakeDataSource({ generates: ["not array"] });
-    const tc = new TestCase(ds, false);
-    expect(() => tc.draw(gs.optional(gs.integers()))).toThrow("Expected array");
-  });
-
   it("tuples parse throws on non-array", () => {
     const ds = new FakeDataSource({ generates: ["not array"] });
     const tc = new TestCase(ds, false);
     expect(() => tc.draw(gs.tuples(gs.integers(), gs.integers()))).toThrow("Expected array");
+  });
+
+  it("record parse throws on non-array", () => {
+    const ds = new FakeDataSource({ generates: ["not array"] });
+    const tc = new TestCase(ds, false);
+    expect(() => tc.draw(gs.record({ a: gs.integers() }))).toThrow("Expected array");
   });
 });
 
@@ -393,19 +451,18 @@ describe("runTestCase with non-Error throws", () => {
     expect(ds.markCompleteCalls[0].origin).toBe("<unknown>");
   });
 
-  it("classifyResult uses String(e) when a non-Error is thrown in final replay", () => {
+  it("an emitted non-Error failure prints only the draws", () => {
     const ds = new FakeDataSource({ generates: [42] });
-    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     const result = runTestCase(
       ds,
-      () => {
+      (tc) => {
+        tc.draw(gs.integers());
         throw "string thrown";
       },
       true,
     );
     expect(result.status).toBe("interesting");
-    expect(spy).toHaveBeenCalledWith(expect.stringContaining("string thrown"));
-    spy.mockRestore();
+    expect(ds.output.lines()).toEqual(["const draw_1 = 42;"]);
   });
 });
 
@@ -414,29 +471,19 @@ describe("runTestCase with non-Error throws", () => {
 // ---------------------------------------------------------------------------
 
 describe("optional parse paths", () => {
-  it("optional emits an unwrapped one_of schema with null and inner branches", () => {
-    const innerGen = gs.integers({ minValue: 0, maxValue: 10 });
-    const basic = gs.optional(innerGen).asBasic();
-    expect(basic).not.toBeNull();
-    expect(basic!.schema).toEqual({
-      type: "one_of",
-      generators: [{ type: "constant", value: null }, innerGen.asBasic()!.schema],
-    });
-    // Guard against re-introducing the legacy tagged-tuple wrapping.
-    const generators = (basic!.schema as { generators: Record<string, unknown>[] }).generators;
-    expect(generators[0]["type"]).not.toBe("tuple");
-    expect(generators[1]["type"]).not.toBe("tuple");
+  it("optional has no schema, so it draws a boolean choice as the other frontends do", () => {
+    expect(gs.optional(gs.integers({ minValue: 0, maxValue: 10 })).asBasic()).toBeNull();
   });
 
-  it("optional returns null when index is 0", () => {
-    const ds = new FakeDataSource({ generates: [[0, null]] });
+  it("optional returns null when the choice is false", () => {
+    const ds = new FakeDataSource({ generates: [false] });
     const tc = new TestCase(ds, false);
     const result = tc.draw(gs.optional(gs.integers()));
     expect(result).toBeNull();
   });
 
-  it("optional returns value when index is 1", () => {
-    const ds = new FakeDataSource({ generates: [[1, 42]] });
+  it("optional returns value when the choice is true", () => {
+    const ds = new FakeDataSource({ generates: [true, 42] });
     const tc = new TestCase(ds, false);
     const result = tc.draw(gs.optional(gs.integers()));
     expect(result).toBe(42);
@@ -453,7 +500,10 @@ describe("oneOf parse paths", () => {
     expect(basic).not.toBeNull();
     expect(basic!.schema).toEqual({
       type: "one_of",
-      generators: [{ type: "integer", min_value: 0n, max_value: 10n }, { type: "boolean" }],
+      generators: [
+        { type: "integer", min_value: 0n, max_value: 10n },
+        { type: "boolean", p: 0.5 },
+      ],
     });
     // Guard against accidental re-introduction of the legacy
     // [constant(i), child] tuple wrapping.

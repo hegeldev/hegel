@@ -199,7 +199,7 @@ class CounterMachine
 public void CounterIsConsistent() => Property.Test(tc => Stateful.Run(new CounterMachine(), tc));
 ```
 
-Hegel chooses which rules to run and in what order, and shrinks a failing sequence to the fewest steps that still fail. `[Rule(Group = "...", Weight = ...)]` groups rules that must not run concurrently and biases the choice; `[Invariant(AlwaysRun = true)]` keeps an invariant in the run even when the engine would skip it. `StatefulOptions` sets the step count and, with `MaxConcurrency` above one, runs rules on several threads at once to find races. A `Pool<T>` (or `ConcurrentPool<T>` for concurrent machines) remembers the values rules produce, so later rules can draw from them with `pool.Reusable()` or take them with `pool.Consuming()`.
+Hegel chooses which rules to run and in what order, and shrinks a failing sequence to the fewest steps that still fail. `[Rule(Groups = ["..."], Weight = ...)]` puts a rule in concurrency groups (rules sharing a group may run at once, rules with no group in common never overlap; a rule may be in several) and biases the choice; `[Invariant(AlwaysRun = true)]` keeps an invariant in the run even when the engine would skip it. `StatefulOptions` sets the step count and, with `MaxConcurrency` above one, runs rules on several threads at once to find races. A `Pool<T>` (or `ConcurrentPool<T>` for concurrent machines) remembers the values rules produce, so later rules can draw from them with `pool.Reusable()` or take them with `pool.Consuming()`.
 
 ## F#
 

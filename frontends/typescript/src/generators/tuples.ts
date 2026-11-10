@@ -4,10 +4,12 @@
  * @packageDocumentation
  */
 
-import { TestCase, Labels } from "../testCase.js";
-import { Generator, BasicGenerator } from "./core.js";
+import { TestCase } from "../testCase.js";
+import { Block, type PrettyPrinter } from "../pretty.js";
+import { LabelNames, labelSpec, type LabelSpec } from "../labels.js";
+import { PrintableGenerator, composedBasic, type BasicGenerator, type Generator } from "./core.js";
 
-class TuplesGenerator extends Generator<unknown[]> {
+class TuplesGenerator extends PrintableGenerator<unknown[]> {
   private readonly generators: Generator<unknown>[];
   private readonly basic: BasicGenerator<unknown[]> | null;
 
@@ -18,11 +20,16 @@ class TuplesGenerator extends Generator<unknown[]> {
     const basics = generators.map((g) => g.asBasic());
     if (basics.every((b) => b !== null)) {
       const validBasics = basics as BasicGenerator<unknown>[];
-      this.basic = new BasicGenerator(
+      this.basic = composedBasic(
         { type: "tuple", elements: validBasics.map((b) => b.schema) },
-        (raw) => {
+        (raw, printer) => {
           if (!Array.isArray(raw)) throw new Error(`Expected array, got ${typeof raw}`);
-          return raw.map((v: unknown, i: number) => validBasics[i].parseRaw(v));
+          const block = new Block(printer, "[", "]");
+          const result = raw.map((v: unknown, i: number) =>
+            block.item(() => validBasics[i].parseAndPrint(v, printer)),
+          );
+          block.end();
+          return result;
         },
       );
     } else {
@@ -30,20 +37,39 @@ class TuplesGenerator extends Generator<unknown[]> {
     }
   }
 
-  doDraw(tc: TestCase): unknown[] {
-    if (this.basic) return this.basic.doDraw(tc);
-    tc.startSpan(Labels.TUPLE);
-    const result = this.generators.map((g) => g.doDraw(tc));
-    tc.stopSpan();
+  doDrawAndPrint(tc: TestCase, printer: PrettyPrinter): unknown[] {
+    if (this.basic) return this.basic.doDrawAndPrint(tc, printer);
+    const block = new Block(printer, "[", "]");
+    const result: unknown[] = [];
+    for (const generator of this.generators) {
+      block.next();
+      result.push(tc.drawAndPrint(generator as PrintableGenerator<unknown>, printer));
+      block.accept();
+    }
+    block.end();
     return result;
   }
 
   override asBasic(): BasicGenerator<unknown[]> | null {
     return this.basic;
   }
+
+  /** @internal */
+  protected override makeLabel(): LabelSpec {
+    return labelSpec(LabelNames.TUPLES, ...this.generators.map((g) => g.label));
+  }
 }
 
-/** Generate tuples from the given element generators. */
+/**
+ * Generate tuples from the given element generators. A tuple prints as an
+ * array, each element as its generator prints it.
+ */
+export function tuples<T extends unknown[]>(
+  ...generators: { [K in keyof T]: PrintableGenerator<T[K]> }
+): PrintableGenerator<T>;
+export function tuples<T extends unknown[]>(
+  ...generators: { [K in keyof T]: Generator<T[K]> }
+): Generator<T>;
 export function tuples<T extends unknown[]>(
   ...generators: { [K in keyof T]: Generator<T[K]> }
 ): Generator<T> {

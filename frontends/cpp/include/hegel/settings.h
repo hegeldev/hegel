@@ -3,8 +3,10 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace hegel {
@@ -85,13 +87,47 @@ namespace hegel {
     };
 
     /**
-     * @brief All phases, the default for Settings::phases.
+     * @brief All phases.
      * @return A vector containing every Phase variant.
      */
     inline std::vector<Phase> all_phases() {
         return {Phase::Explicit, Phase::Reuse, Phase::Generate, Phase::Target,
                 Phase::Shrink};
     }
+
+    /**
+     * @brief The phases of a run. See Settings::phases.
+     *
+     * Give the phases as a list: `.phases = {Phase::Generate}`. With an empty
+     * list (`.phases = {}`), the run does nothing.
+     */
+    class Phases {
+      public:
+        /// Run only the given phases.
+        /// @param phases The phases to run.
+        Phases(std::initializer_list<Phase> phases)
+            : set_(true), phases_(phases) {}
+
+        /// Run only the given phases.
+        /// @param phases The phases to run.
+        Phases(std::vector<Phase> phases)
+            : set_(true), phases_(std::move(phases)) {}
+
+        /// Use the phases of the settings profile.
+        /// @return An unset Phases.
+        static Phases unset() { return Phases(UnsetTag{}); }
+
+        /// @cond INTERNAL
+        bool is_set() const { return set_; }
+        const std::vector<Phase>& phases() const { return phases_; }
+        /// @endcond
+
+      private:
+        struct UnsetTag {};
+        explicit Phases(UnsetTag) {}
+        bool set_ = false;
+        std::vector<Phase> phases_;
+    };
 
     /**
      * @brief Source of randomness the engine draws from.
@@ -165,7 +201,7 @@ namespace hegel {
     namespace internal {
         // True if a CI environment is detected, by probing the variables the
         // common CI providers set. Used as the default for
-        // Settings::derandomize so runs are reproducible under CI.
+        // Settings::database, which is disabled under CI.
         inline bool in_ci() {
             // expected == nullptr means "any value present satisfies it".
             struct CiVar {
@@ -202,51 +238,49 @@ namespace hegel {
     /**
      * @brief Configuration options for hegel::test().
      *
-     * A field left at its default takes the value of the engine's settings
-     * profile: the engine resolves its `default` profile from
-     * `hegel_set_default_profile`, the `HEGEL_DEFAULT_PROFILE` environment
-     * variable, and a `hegel.toml` in the working directory or an ancestor,
-     * else from the detected environment (`workload` inside Antithesis, `ci`
-     * on a CI server, `development` otherwise).
+     * A field that you do not set gets its value from the settings profile.
+     * The engine selects the profile from `hegel_set_default_profile`, the
+     * `HEGEL_DEFAULT_PROFILE` environment variable, or a `hegel.toml` in the
+     * working directory or a parent directory. If none of these selects a
+     * profile, the engine uses `workload` in Antithesis, `ci` on a CI server,
+     * and `development` in all other environments. The `HEGEL_*` settings
+     * environment variables change the profile values. A field that you set
+     * overrides the profile.
      */
     struct Settings {
-        /// Number of test cases to run. Unset (the default) uses the engine
-        /// profile's value, which is 100 unless a `hegel.toml` changes it.
+        /// Number of test cases to run. Profile default: 100.
         std::optional<uint64_t> test_cases;
 
-        /// Verbosity level. Defaults to Verbosity::Normal.
-        Verbosity verbosity = Verbosity::Normal;
+        /// Verbosity level. Profile default: Verbosity::Normal.
+        std::optional<Verbosity> verbosity;
 
-        /// Explicit seed for the test.
+        /// Seed for the test. Profile default: no seed.
         std::optional<uint64_t> seed;
 
-        /// If true, use a deterministic RNG, making the test deterministic
-        /// across executions. Defaults to true when a CI environment is
-        /// detected, false otherwise.
-        bool derandomize = internal::in_ci();
+        /// If true, use a deterministic RNG. The test then generates the
+        /// same data each time it runs. Profile default: true on a CI
+        /// server, false in other environments.
+        std::optional<bool> derandomize;
 
-        /// If true, keep generating after the first failure to surface
-        /// additional distinct bugs, and report all of them. If false (the
-        /// default), stop the run at the first failing example.
-        bool report_multiple_failures = false;
+        /// If true, continue to generate after the first failure to find
+        /// more distinct bugs, and report all of them. If false, stop the run
+        /// at the first failing example. Profile default: false.
+        std::optional<bool> report_multiple_failures;
 
-        /// If true (the default), stop generating once a failure is found
-        /// and move on to shrinking and reporting it. If false, the run uses
-        /// its whole test_cases budget before reporting, whatever it finds
-        /// along the way; every distinct failure found is persisted to the
-        /// database either way.
-        bool stop_on_first_failure = true;
+        /// If true, stop generation when a failure occurs, then shrink and
+        /// report the failure. If false, run all test_cases before the
+        /// report. In both cases, the database keeps each distinct failure.
+        /// Profile default: true.
+        std::optional<bool> stop_on_first_failure;
 
-        /// How the run reacts to a test whose outcome or draws change when
-        /// the same generated data is replayed. Defaults to
+        /// What the run does when a replay of the same data gives a
+        /// different outcome or different draws. Profile default:
         /// NondeterminismStrictness::Quiet.
-        NondeterminismStrictness nondeterminism_strictness =
-            NondeterminismStrictness::Quiet;
+        std::optional<NondeterminismStrictness> nondeterminism_strictness;
 
-        /// If true (the default), a failure report ends with a
-        /// `rerun with:` line holding the base64 blob that replays the
-        /// failure.
-        bool print_blob = true;
+        /// If true, a failure report ends with `rerun with:` and the base64
+        /// blob that replays the failure. Profile default: true.
+        std::optional<bool> print_blob;
 
         /// Configure the Hegel database. See Database. Defaults to a database
         /// at `.hegel`, or disabled when a CI environment is detected.
@@ -261,10 +295,9 @@ namespace hegel {
         /// the engine profile's set: none locally, `TooSlow` on a CI server.
         std::vector<HealthCheck> suppress_health_check;
 
-        /// Phases to run. Defaults to all phases; phases left out are
-        /// disabled (e.g. drop Phase::Shrink to keep failing examples
-        /// unshrunk). An empty vector produces a run that does nothing.
-        std::vector<Phase> phases = all_phases();
+        /// Phases to run. With an empty list, the run does nothing. Profile
+        /// default: all phases.
+        Phases phases = Phases::unset();
 
         /// Randomness backend. Defaults to Backend::Auto; picking an explicit
         /// backend overrides the engine profile's choice.

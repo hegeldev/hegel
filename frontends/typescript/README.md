@@ -10,7 +10,7 @@
 - [Documentation](https://hegel.dev/typescript)
 - [Website](https://hegel.dev)
 
-Hegel is a property-based testing library for TypeScript. Hegel is based on [Hypothesis](https://github.com/hypothesisworks/hypothesis), using the [Hegel protocol](https://hegel.dev/).
+Hegel is a property-based testing library for TypeScript, built on libhegel, the [Hegel](https://hegel.dev/) engine. It runs in-process: as a native library on Node, Bun and Deno, and as the same engine compiled to WebAssembly in browsers.
 
 ## Installation
 
@@ -20,9 +20,7 @@ Hegel requires Node 20.11+, Bun 1.2.5+, or Deno 2+. (Note that Deno requires `--
 
 Linux amd64/arm64, macOS arm64, and Windows amd64/arm64 are supported.
 
-Browser support uses the same package imports and initializes the Rust Wasm engine during ESM module loading. It requires top-level await and secure-context Web Crypto. Tests and shrinking run on the main thread; browser persistence is unsupported.
-
-The upstream Wasm support is merged and published in libhegel 0.42.4. See [the browser guide](./BROWSER.md) for bundler configuration and how the Wasm module is packaged. Node, Bun and Deno continue to use Koffi.
+Browser support uses the same package imports and initializes the Wasm engine during ESM module loading. It requires top-level await and secure-context Web Crypto. Tests and shrinking run on the main thread; browser persistence is unsupported. See [the browser guide](./BROWSER.md) for bundler configuration and how the Wasm module is packaged.
 
 ## Quickstart
 
@@ -49,10 +47,13 @@ test("my_sort matches builtin", () =>
   }));
 ```
 
-This test will fail when run with `vitest`! Hegel will produce a minimal failing test case for us:
+This test will fail when run with `vitest`! Hegel will produce a minimal failing test case for us, printing each value the test drew and how to replay the failure, and then throw the test's own error:
 
 ```
-Draw 1: [0, 0]
+const draw_1 = [0, 0];
+
+To reproduce this failure, replay it with the Hegel builder:
+    .reproduceFailure("AXicY2VgYGBkZOBiZEBhMAAAAd8AIQ==")
 Error: sort mismatch: [0,0] != [0]
 ```
 
@@ -109,4 +110,59 @@ test("stack", () =>
   }));
 ```
 
-Hegel picks the rules to run at each step, shrinks a failing sequence down to a minimal one, and reports it step by step (`Step 1: push`, `Step 2: pop`, …). See the `stateful` module in the documentation for invariants, step counts, asynchronous rules and `Pool`, which lets rules act on values that earlier rules produced.
+Hegel picks the rules to run at each step, shrinks a failing sequence down to a minimal one, and reports it step by step (`Step 1: push {`, with the step's draws indented beneath it, then `}`). See the `stateful` module in the documentation for invariants, step counts, asynchronous rules and `Pool`, which lets rules act on values that earlier rules produced.
+
+## How failing examples print
+
+Printing is the generator's job: each generator prints the values it draws, as it draws them, laid out by the engine to fit the line. Every built-in generator prints:
+
+- Leaves (`integers`, `text`, `binary`, …) print their value as JavaScript: `-0`, `12n`, `"a"`, `Uint8Array.from([0])`.
+- Structural generators (`arrays`, `sets`, `maps`, `tuples`, `record`, `optional`, `oneOf`, `filter`, `flatMap`, `recursive`, `deferred`) print element by element through the generators they are built from, so an element's own printing shows up inside its container.
+- Value-producing generators (`map`, `just`, `sampledFrom`, `composite`) print the value they produce, as JavaScript. A `composite`'s inner draws are not printed.
+
+Arrays, objects, `Map`s and `Set`s break one item per line when they are too long. To print a generator's values some other way, give it a printer with `printWith`:
+
+```typescript
+const digits = gs.integers({ minValue: 0, maxValue: 9 }).printWith((d, p) => p.text(`Digit(${d})`));
+tc.draw(gs.arrays(digits), "ds"); // const ds_1 = [Digit(3), Digit(0)];
+```
+
+`printWith` is also how to print values with no useful JavaScript representation, such as functions, or to hide a secret. On a `map`, `printAsCall(name)` prints the input draw as an argument instead of the output: `gs.integers().map(makeKey).printAsCall("makeKey")` prints `makeKey(3)`.
+
+`tc.draw` takes a `PrintableGenerator`. A generator you write by extending `gs.Generator` and implementing only `doDraw` draws silently, with `tc.drawSilent`; make it printable with `.printAsValue()` (print each value as JavaScript) or `.printWith(...)`, or extend `gs.PrintableGenerator` and print as you draw:
+
+```typescript
+class Pairs extends gs.PrintableGenerator<[number, number]> {
+  doDrawAndPrint(tc: hegel.TestCase, p: hegel.PrettyPrinter): [number, number] {
+    return p.group(5, "Pair(", ")", () => {
+      const a = tc.drawAndPrint(gs.integers(), p);
+      p.separator();
+      const b = tc.drawAndPrint(gs.integers(), p);
+      return [a, b];
+    });
+  }
+}
+```
+
+`tc.drawAndPrint` draws an inner generator printing in place. Leave `doDraw` to its default, which runs `doDrawAndPrint` with a printer that discards everything, so that both make the same draws. Declare helper functions that return generators as returning `PrintableGenerator<T>`, not `Generator<T>`, so that their results can be drawn with `tc.draw`.
+
+A group prints on one line when it fits, each `breakable` as its separator, and otherwise breaks at every `breakable`, indenting the next line by the group's indentation. The printer also has `seq` (a delimited list laid out like the built-in containers), `ifBreak`, `hardBreak`, `comment`, `shiftIndent`, `reflow`, `value` (a value as JavaScript), `speculate` (output a rejected draw can retract) and `deferred`, a hole at the current position that can be written later: what a value prints when the test only learns how to describe it after drawing it, such as a stub function recording its calls. `hegel.Document` is a standalone document for trying printing code out outside a test.
+
+When a value is printed as JavaScript (by `value`, `map`, `just`, `composite` or `printAsValue`), instances of your own classes print as their class name and properties. To print one differently, give the class a `hegel.prettyPrint` method:
+
+```typescript
+class Interval {
+  constructor(
+    readonly lo: number,
+    readonly hi: number,
+  ) {}
+
+  [hegel.prettyPrint](p: hegel.PrettyPrinter): void {
+    p.group(9, "Interval(", ")", () => {
+      p.value(this.lo);
+      p.separator();
+      p.value(this.hi);
+    });
+  }
+}
+```

@@ -229,18 +229,18 @@ let test_state_machine_collects_marked_bindings () =
 
 module%hegel_concurrent_state_machine Ledger = struct
   let deposit _tc () (n : int Atomic.t) = Atomic.incr n [@@rule]
-  let withdraw _tc () (n : int Atomic.t) = Atomic.decr n [@@rule { group = "money" }]
+  let withdraw _tc () (n : int Atomic.t) = Atomic.decr n [@@rule { groups = [ "money" ] }]
 
   let audit _tc () (n : int Atomic.t) = ignore (Atomic.get n : int)
   [@@rule { weight = 2.5 }]
   ;;
 
   let settle _tc () (n : int Atomic.t) = Atomic.incr n
-  [@@rule { group = "money"; weight = 3 }]
+  [@@rule { groups = [ "money"; "audit" ]; weight = 3 }]
   ;;
 
   let reconcile _tc () (n : int Atomic.t) = Atomic.decr n
-  [@@rule { weight = 4.0; group = "money" }]
+  [@@rule { weight = 4.0; groups = [ "money" ] }]
   ;;
 
   let nonnegative _tc (_n : int Atomic.t) = () [@@invariant]
@@ -257,10 +257,15 @@ let test_concurrent_state_machine_collects_groups_and_weights () =
     "rule names"
     [ "deposit"; "withdraw"; "audit"; "settle"; "reconcile" ]
     (List.map Ledger.rules ~f:R.name);
-  Alcotest.(check (list string))
+  Alcotest.(check (list (list string)))
     "rule groups"
-    [ "<anonymous>"; "money"; "<anonymous>"; "money"; "money" ]
-    (List.map Ledger.rules ~f:R.group);
+    [ [ "<anonymous>" ]
+    ; [ "money" ]
+    ; [ "<anonymous>" ]
+    ; [ "money"; "audit" ]
+    ; [ "money" ]
+    ]
+    (List.map Ledger.rules ~f:R.groups);
   Alcotest.(check (list (float 0.)))
     "rule weights"
     [ 1.0; 1.0; 2.5; 3.0; 4.0 ]

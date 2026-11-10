@@ -12,7 +12,7 @@ setup:
 
 # Install the browser packaging fixture's dependencies and Chromium.
 setup-browser:
-    cd tests/browser && npm ci && npx playwright install chromium
+    cd tests/browser && npm ci && npx playwright install --only-shell chromium
 
 # Build libhegel natively and for wasm32-unknown-unknown (needs that rustup target).
 build-libhegel:
@@ -54,6 +54,7 @@ check-lint: check-format check-libhegel-version
     npx eslint .
     npx tsc --noEmit
     npm run typecheck:portable
+    npm run typecheck:tests
 
 # typedoc, with warnings as errors.
 check-docs:

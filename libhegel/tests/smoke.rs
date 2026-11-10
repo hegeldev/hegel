@@ -148,23 +148,22 @@ type FnPoolAdd = unsafe extern "C" fn(*mut u8, *mut u8, *mut u8, *mut i64) -> c_
 type FnPoolGenerate = unsafe extern "C" fn(*mut u8, *mut u8, *mut u8, bool, *mut i64) -> c_int;
 type FnPoolRestore = unsafe extern "C" fn(*mut u8, *mut u8, *mut u8, i64) -> c_int;
 type FnPoolFree = unsafe extern "C" fn(*mut u8, *mut u8) -> c_int;
-type FnNewStateMachine = unsafe extern "C" fn(
+type FnNewStateMachine =
+    unsafe extern "C" fn(*mut u8, *mut u8, i64, i64, i64, *mut *mut u8) -> c_int;
+type FnStateMachineAddRule = unsafe extern "C" fn(
     *mut u8,
     *mut u8,
-    *const hegel_string_t,
+    *mut u8,
+    hegel_string_t,
+    f64,
     *const i64,
-    *const f64,
     usize,
-    *const hegel_string_t,
-    *const bool,
-    usize,
-    i64,
-    i64,
-    i64,
-    *mut *mut u8,
-    *mut i64,
 ) -> c_int;
-type FnStateMachineNextGroup = unsafe extern "C" fn(*mut u8, *mut u8, *mut u8, *mut i64) -> c_int;
+type FnStateMachineAddInvariant =
+    unsafe extern "C" fn(*mut u8, *mut u8, *mut u8, hegel_string_t, bool) -> c_int;
+type FnStateMachineStart = unsafe extern "C" fn(*mut u8, *mut u8, *mut u8, *mut i64) -> c_int;
+type FnStateMachineNextGroup =
+    unsafe extern "C" fn(*mut u8, *mut u8, *mut u8, *mut i64, *mut i64) -> c_int;
 type FnStateMachineNextRule =
     unsafe extern "C" fn(*mut u8, *mut u8, *mut u8, i64, *mut i64) -> c_int;
 type FnStateMachineRuleRejected = unsafe extern "C" fn(*mut u8, *mut u8, *mut u8, i64) -> c_int;
@@ -238,6 +237,9 @@ struct Api<'a> {
     pool_restore: Symbol<'a, FnPoolRestore>,
     pool_free: Symbol<'a, FnPoolFree>,
     new_state_machine: Symbol<'a, FnNewStateMachine>,
+    state_machine_add_rule: Symbol<'a, FnStateMachineAddRule>,
+    state_machine_add_invariant: Symbol<'a, FnStateMachineAddInvariant>,
+    state_machine_start: Symbol<'a, FnStateMachineStart>,
     state_machine_next_group: Symbol<'a, FnStateMachineNextGroup>,
     state_machine_next_rule: Symbol<'a, FnStateMachineNextRule>,
     state_machine_rule_rejected: Symbol<'a, FnStateMachineRuleRejected>,
@@ -291,6 +293,9 @@ unsafe fn bind(lib: &Library) -> Api<'_> {
             pool_restore: lib.get(b"hegel_pool_restore\0").unwrap(),
             pool_free: lib.get(b"hegel_pool_free\0").unwrap(),
             new_state_machine: lib.get(b"hegel_new_state_machine\0").unwrap(),
+            state_machine_add_rule: lib.get(b"hegel_state_machine_add_rule\0").unwrap(),
+            state_machine_add_invariant: lib.get(b"hegel_state_machine_add_invariant\0").unwrap(),
+            state_machine_start: lib.get(b"hegel_state_machine_start\0").unwrap(),
             state_machine_next_group: lib.get(b"hegel_state_machine_next_group\0").unwrap(),
             state_machine_next_rule: lib.get(b"hegel_state_machine_next_rule\0").unwrap(),
             state_machine_rule_rejected: lib.get(b"hegel_state_machine_rule_rejected\0").unwrap(),
@@ -717,7 +722,7 @@ fn caller_usage_errors_return_error_not_abort() {
         );
         let mut group: i64 = 0;
         assert_eq!(
-            (a.state_machine_next_group)(ctx, tc, ptr::null_mut(), &mut group),
+            (a.state_machine_next_group)(ctx, tc, ptr::null_mut(), &mut group, &mut 0i64),
             HEGEL_E_INVALID_HANDLE
         );
         assert_eq!(
@@ -1121,51 +1126,41 @@ fn libhegel_state_machine_selects_registered_rules_with_swarm() {
                 break;
             }
 
-            let rule_groups: Vec<i64> = vec![0; rule_ptrs.len()];
+            let rule_groups: [i64; 1] = [0];
 
             let mut machine: *mut u8 = ptr::null_mut();
             let mut concurrency: i64 = 0;
-            let rc = (a.new_state_machine)(
-                ctx,
-                tc,
-                ptr::null(),
-                rule_groups.as_ptr(),
-                ptr::null(),
-                0,
-                invariant_ptrs.as_ptr(),
-                ptr::null(),
-                invariant_ptrs.len(),
-                1,
-                1,
-                50,
-                &mut machine,
-                &mut concurrency,
-            );
-            assert_eq!(
-                rc, HEGEL_E_INVALID_ARG,
-                "expected HEGEL_E_INVALID_ARG, got rc={}",
-                rc
-            );
-            assert!(machine.is_null());
-
-            let rc = (a.new_state_machine)(
-                ctx,
-                tc,
-                rule_ptrs.as_ptr(),
-                rule_groups.as_ptr(),
-                ptr::null(),
-                rule_ptrs.len(),
-                invariant_ptrs.as_ptr(),
-                ptr::null(),
-                invariant_ptrs.len(),
-                1,
-                1,
-                50,
-                &mut machine,
-                &mut concurrency,
-            );
+            let rc = (a.new_state_machine)(ctx, tc, 1, 1, 50, &mut machine);
             assert_eq!(rc, HEGEL_OK, "new_state_machine failed: rc={}", rc);
             assert!(!machine.is_null());
+            let rc = (a.state_machine_start)(ctx, tc, machine, &mut concurrency);
+            assert_eq!(
+                rc, HEGEL_E_INVALID_ARG,
+                "starting without rules: expected HEGEL_E_INVALID_ARG, got rc={}",
+                rc
+            );
+            for rule in &rule_ptrs {
+                let rc = (a.state_machine_add_rule)(
+                    ctx,
+                    tc,
+                    machine,
+                    *rule,
+                    1.0,
+                    rule_groups.as_ptr(),
+                    1,
+                );
+                assert_eq!(rc, HEGEL_OK, "state_machine_add_rule failed: rc={}", rc);
+            }
+            for invariant in &invariant_ptrs {
+                let rc = (a.state_machine_add_invariant)(ctx, tc, machine, *invariant, false);
+                assert_eq!(
+                    rc, HEGEL_OK,
+                    "state_machine_add_invariant failed: rc={}",
+                    rc
+                );
+            }
+            let rc = (a.state_machine_start)(ctx, tc, machine, &mut concurrency);
+            assert_eq!(rc, HEGEL_OK, "state_machine_start failed: rc={}", rc);
             assert_eq!(concurrency, 1);
 
             let mut overran = false;
@@ -1173,7 +1168,8 @@ fn libhegel_state_machine_selects_registered_rules_with_swarm() {
             let mut previous: Option<i64> = None;
             'case: for _ in 0..60 {
                 let mut group: i64 = i64::MAX;
-                let rc = (a.state_machine_next_group)(ctx, tc, machine, &mut group);
+                let mut level: i64 = 0;
+                let rc = (a.state_machine_next_group)(ctx, tc, machine, &mut group, &mut level);
                 if rc == HEGEL_E_STOP_TEST {
                     overran = true;
                     break;
@@ -1183,6 +1179,7 @@ fn libhegel_state_machine_selects_registered_rules_with_swarm() {
                     break;
                 }
                 assert_eq!(group, 0, "a single-group machine is always in group 0");
+                assert_eq!(level, 1);
                 loop {
                     let mut index: i64 = i64::MAX;
                     let rc = (a.state_machine_next_rule)(ctx, tc, machine, 0, &mut index);

@@ -438,17 +438,37 @@ internal sealed class LiveDataSource : IDataSource
 
     public void RecursionFree(nint recursion) => _lib.RecursionFree(recursion);
 
-    public StateMachineInfo NewStateMachine(IReadOnlyList<string> ruleNames, long[] ruleGroups, double[]? ruleWeights, IReadOnlyList<string> invariantNames, bool[] invariantAlwaysCheck, long minConcurrency, long maxConcurrency, long stepCount)
+    public nint NewStateMachine(long minConcurrency, long maxConcurrency, long stepCount)
     {
         CheckLive();
-        Translate(_lib.NewStateMachine(_tc, ruleNames, ruleGroups, ruleWeights, invariantNames, invariantAlwaysCheck, minConcurrency, maxConcurrency, stepCount, out var id, out var concurrency), "new_state_machine");
-        return new StateMachineInfo(id, checked((int)concurrency));
+        Translate(_lib.NewStateMachine(_tc, minConcurrency, maxConcurrency, stepCount, out var id), "new_state_machine");
+        return id;
     }
 
-    public long StateMachineNextGroup(nint stateMachineId)
+    public void StateMachineAddRule(nint stateMachineId, string name, double weight, long[] groups)
     {
         CheckLive();
-        Translate(_lib.StateMachineNextGroup(_tc, stateMachineId, out var group), "state_machine_next_group");
+        Translate(_lib.StateMachineAddRule(_tc, stateMachineId, name, weight, groups), "state_machine_add_rule");
+    }
+
+    public void StateMachineAddInvariant(nint stateMachineId, string name, bool alwaysCheck)
+    {
+        CheckLive();
+        Translate(_lib.StateMachineAddInvariant(_tc, stateMachineId, name, alwaysCheck), "state_machine_add_invariant");
+    }
+
+    public int StateMachineStart(nint stateMachineId)
+    {
+        CheckLive();
+        Translate(_lib.StateMachineStart(_tc, stateMachineId, out var concurrency), "state_machine_start");
+        return checked((int)concurrency);
+    }
+
+    public long StateMachineNextGroup(nint stateMachineId, out int concurrency)
+    {
+        CheckLive();
+        Translate(_lib.StateMachineNextGroup(_tc, stateMachineId, out var group, out var level), "state_machine_next_group");
+        concurrency = checked((int)level);
         return group;
     }
 

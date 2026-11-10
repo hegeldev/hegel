@@ -129,8 +129,11 @@ internal sealed class ExplicitDataSource : IDataSource
     public void RecursionRetry(nint recursion) => throw Unsupported();
     public bool RecursionFinish(nint recursion) => throw Unsupported();
     public void RecursionFree(nint recursion) => throw Unsupported();
-    public StateMachineInfo NewStateMachine(IReadOnlyList<string> ruleNames, long[] ruleGroups, double[]? ruleWeights, IReadOnlyList<string> invariantNames, bool[] invariantAlwaysCheck, long minConcurrency, long maxConcurrency, long stepCount) => throw Unsupported();
-    public long StateMachineNextGroup(nint stateMachineId) => throw Unsupported();
+    public nint NewStateMachine(long minConcurrency, long maxConcurrency, long stepCount) => throw Unsupported();
+    public void StateMachineAddRule(nint stateMachineId, string name, double weight, long[] groups) => throw Unsupported();
+    public void StateMachineAddInvariant(nint stateMachineId, string name, bool alwaysCheck) => throw Unsupported();
+    public int StateMachineStart(nint stateMachineId) => throw Unsupported();
+    public long StateMachineNextGroup(nint stateMachineId, out int concurrency) => throw Unsupported();
     public long StateMachineNextRule(nint stateMachineId, long workerIndex) => throw Unsupported();
     public void StateMachineRuleRejected(nint stateMachineId, long workerIndex) => throw Unsupported();
     public bool StateMachineShouldCheckInvariant(nint stateMachineId, long invariantIndex) => throw Unsupported();

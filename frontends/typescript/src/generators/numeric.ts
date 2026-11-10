@@ -5,7 +5,7 @@
  */
 
 import { TestCase, generateRaw } from "../testCase.js";
-import { Generator, BasicGenerator } from "./core.js";
+import { BasicGenerator, ValueGenerator, type PrintableGenerator } from "./core.js";
 
 export interface IntegerOptions {
   minValue?: number;
@@ -20,7 +20,7 @@ function parseInteger(raw: unknown): number {
   return raw as number;
 }
 
-class IntegersGenerator extends Generator<number> {
+class IntegersGenerator extends ValueGenerator<number> {
   private readonly schema: Record<string, unknown>;
 
   constructor(options?: IntegerOptions) {
@@ -33,9 +33,6 @@ class IntegersGenerator extends Generator<number> {
         "integers() bounds must be within Number.MIN_SAFE_INTEGER..Number.MAX_SAFE_INTEGER. Use bigIntegers() for larger ranges.",
       );
     }
-    // Encode bounds as BigInt so they always serialize as CBOR integers: the
-    // native engine strictly rejects float-encoded integer bounds, and cbor-x
-    // encodes plain JS numbers above 2**32 as CBOR floats.
     this.schema = { type: "integer", min_value: BigInt(min), max_value: BigInt(max) };
   }
 
@@ -53,7 +50,7 @@ class IntegersGenerator extends Generator<number> {
  * Throws if bounds are outside Number.MAX_SAFE_INTEGER.
  * Use bigIntegers() for arbitrary-precision integers.
  */
-export function integers(options?: IntegerOptions): Generator<number> {
+export function integers(options?: IntegerOptions): PrintableGenerator<number> {
   return new IntegersGenerator(options);
 }
 
@@ -67,11 +64,9 @@ function parseBigInt(raw: unknown): bigint {
   return BigInt(raw as number);
 }
 
-// Default bounds for an unbounded bigIntegers() side (signed 128-bit range).
-const DEFAULT_BIGINT_MIN = -(2n ** 127n);
-const DEFAULT_BIGINT_MAX = 2n ** 127n - 1n;
+const UNBOUNDED_MAGNITUDE = 2n ** 127n;
 
-class BigIntegersGenerator extends Generator<bigint> {
+class BigIntegersGenerator extends ValueGenerator<bigint> {
   private readonly schema: Record<string, unknown>;
 
   constructor(options?: BigIntegerOptions) {
@@ -81,15 +76,15 @@ class BigIntegersGenerator extends Generator<bigint> {
     if (min !== undefined && max !== undefined && min > max) {
       throw new Error("Cannot have maxValue < minValue");
     }
-    // The native engine requires explicit integer bounds. For an unbounded
-    // side, default to the signed 128-bit range: the engine's draw is
-    // bit-width-weighted (favoring small magnitudes), so a wide finite range
-    // reproduces Hypothesis's unbounded-integer distribution closely.
-    this.schema = {
-      type: "integer",
-      min_value: min ?? DEFAULT_BIGINT_MIN,
-      max_value: max ?? DEFAULT_BIGINT_MAX,
-    };
+    let lo = min ?? -UNBOUNDED_MAGNITUDE;
+    if (min === undefined && max !== undefined && max - UNBOUNDED_MAGNITUDE + 1n < lo) {
+      lo = max - UNBOUNDED_MAGNITUDE + 1n;
+    }
+    let hi = max ?? UNBOUNDED_MAGNITUDE - 1n;
+    if (max === undefined && min !== undefined && min + UNBOUNDED_MAGNITUDE - 1n > hi) {
+      hi = min + UNBOUNDED_MAGNITUDE - 1n;
+    }
+    this.schema = { type: "integer", min_value: lo, max_value: hi };
   }
 
   doDraw(tc: TestCase): bigint {
@@ -101,45 +96,119 @@ class BigIntegersGenerator extends Generator<bigint> {
   }
 }
 
-/** Generate arbitrary-precision integers as BigInt. */
-export function bigIntegers(options?: BigIntegerOptions): Generator<bigint> {
+/**
+ * Generate arbitrary-precision integers as BigInt, in `[minValue, maxValue]`.
+ *
+ * Either bound may be omitted. A missing bound is taken to be `2n ** 127n`
+ * values beyond the other bound, or beyond zero when that is further, so
+ * `bigIntegers({ minValue: 2n ** 200n })` draws values from `2n ** 200n`
+ * upward. Values shrink toward zero, or toward the bound nearest zero.
+ */
+export function bigIntegers(options?: BigIntegerOptions): PrintableGenerator<bigint> {
   return new BigIntegersGenerator(options);
 }
 
 export interface FloatOptions {
+  /**
+   * The precision of the values: 64 (the default) for any double, 32 for
+   * values exactly representable as a 32-bit float (`Math.fround(x) === x`).
+   * With width 32, the bounds must be exactly representable too.
+   */
+  width?: 32 | 64;
+  /** The inclusive lower bound. Not together with `minValueExclusive`. */
   minValue?: number;
+  /** The inclusive upper bound. Not together with `maxValueExclusive`. */
   maxValue?: number;
-  excludeMin?: boolean;
-  excludeMax?: boolean;
+  /** A lower bound that is itself excluded: every value is above it. */
+  minValueExclusive?: number;
+  /** An upper bound that is itself excluded: every value is below it. */
+  maxValueExclusive?: number;
   allowNan?: boolean;
   allowInfinity?: boolean;
+  /**
+   * Whether subnormal ("denormalised") values may be drawn. By default they
+   * are whenever the bounds admit any; pass `false` when the code under test
+   * may run with flush-to-zero floating point, where a subnormal input
+   * silently becomes zero.
+   */
+  allowSubnormal?: boolean;
 }
 
-class FloatsGenerator extends Generator<number> {
+function subnormalDefault(min: number | undefined, max: number | undefined, normal: number) {
+  if (min !== undefined && max !== undefined) {
+    if (min === max) return -normal < min && min < normal;
+    return min < normal && max > -normal;
+  }
+  if (min !== undefined) return min < normal;
+  if (max !== undefined) return max > -normal;
+  return true;
+}
+
+class FloatsGenerator extends ValueGenerator<number> {
   private readonly schema: Record<string, unknown>;
 
   constructor(options?: FloatOptions) {
     super();
-    const hasMin = options?.minValue !== undefined;
-    const hasMax = options?.maxValue !== undefined;
+    if (options?.minValue !== undefined && options.minValueExclusive !== undefined) {
+      throw new Error("Cannot give both minValue and minValueExclusive");
+    }
+    if (options?.maxValue !== undefined && options.maxValueExclusive !== undefined) {
+      throw new Error("Cannot give both maxValue and maxValueExclusive");
+    }
+    const excludeMin = options?.minValueExclusive !== undefined;
+    const excludeMax = options?.maxValueExclusive !== undefined;
+    const min = excludeMin ? options.minValueExclusive : options?.minValue;
+    const max = excludeMax ? options.maxValueExclusive : options?.maxValue;
+    const hasMin = min !== undefined;
+    const hasMax = max !== undefined;
+    const width = options?.width ?? 64;
     // NaN only when completely unbounded; infinity when at least one side is open
     const allowNan = options?.allowNan ?? (!hasMin && !hasMax);
     const allowInfinity = options?.allowInfinity ?? (!hasMin || !hasMax);
 
+    const normal = width === 32 ? 2 ** -126 : 2 ** -1022;
+    const allowSubnormal = options?.allowSubnormal ?? subnormalDefault(min, max, normal);
+    if (allowSubnormal) {
+      if (min !== undefined && min >= normal) {
+        throw new Error(
+          `allowSubnormal is true, but ${excludeMin ? "minValueExclusive" : "minValue"} excludes ` +
+            `all values below the smallest positive normal ${normal}`,
+        );
+      }
+      if (max !== undefined && max <= -normal) {
+        throw new Error(
+          `allowSubnormal is true, but ${excludeMax ? "maxValueExclusive" : "maxValue"} excludes ` +
+            `all values above the smallest negative normal ${-normal}`,
+        );
+      }
+    } else if (min !== undefined && max !== undefined) {
+      const containsZero = min <= 0 && max >= 0;
+      if (!containsZero && max < normal && min > -normal) {
+        throw new Error(
+          `allowSubnormal is false, but that leaves no ${width}-bit floating-point values in [${min}, ${max}]`,
+        );
+      }
+    }
+
     const schema: Record<string, unknown> = {
       type: "float",
-      width: 64,
+      width,
       allow_nan: allowNan,
       allow_infinity: allowInfinity,
+      smallest_nonzero_magnitude: allowSubnormal
+        ? width === 32
+          ? 2 ** -149
+          : Number.MIN_VALUE
+        : normal,
     };
 
     if (hasMin) {
-      schema["min_value"] = options!.minValue;
-      schema["exclude_min"] = options?.excludeMin ?? false;
+      schema["min_value"] = min;
+      schema["exclude_min"] = excludeMin;
     }
     if (hasMax) {
-      schema["max_value"] = options!.maxValue;
-      schema["exclude_max"] = options?.excludeMax ?? false;
+      schema["max_value"] = max;
+      schema["exclude_max"] = excludeMax;
     }
     this.schema = schema;
   }
@@ -156,15 +225,32 @@ class FloatsGenerator extends Generator<number> {
 /**
  * Generate floating-point numbers.
  *
- * By default, NaN is allowed only when no bounds are set, and infinity
- * is allowed when at least one bound is missing.
+ * By default, NaN is allowed only when no bounds are set, infinity is
+ * allowed when at least one bound is missing, and subnormal values are
+ * allowed whenever the bounds admit any. A bound is inclusive (`minValue`,
+ * `maxValue`) or exclusive (`minValueExclusive`, `maxValueExclusive`); giving
+ * both forms of one bound is an error. Pass `width: 32` for values a
+ * `Float32Array` holds exactly.
+ *
+ * ```ts
+ * const unit = gs.floats({ minValue: 0, maxValue: 1 });
+ * const positive = gs.floats({ minValueExclusive: 0 });
+ * ```
  */
-export function floats(options?: FloatOptions): Generator<number> {
+export function floats(options?: FloatOptions): PrintableGenerator<number> {
   return new FloatsGenerator(options);
 }
 
-class BooleansGenerator extends Generator<boolean> {
-  private readonly schema = { type: "boolean" };
+class BooleansGenerator extends ValueGenerator<boolean> {
+  private readonly schema: Record<string, unknown>;
+
+  constructor(p: number) {
+    super();
+    if (typeof p !== "number" || !(p >= 0 && p <= 1)) {
+      throw new Error(`weightedBooleans(p) requires p between 0 and 1, got ${String(p)}`);
+    }
+    this.schema = { type: "boolean", p };
+  }
 
   doDraw(tc: TestCase): boolean {
     return generateRaw(tc, this.schema) as boolean;
@@ -175,7 +261,15 @@ class BooleansGenerator extends Generator<boolean> {
   }
 }
 
-/** Generate boolean values. */
-export function booleans(): Generator<boolean> {
-  return new BooleansGenerator();
+/** Generate boolean values, shrinking toward `false`. */
+export function booleans(): PrintableGenerator<boolean> {
+  return new BooleansGenerator(0.5);
+}
+
+/**
+ * Generate `true` with probability `p`, in `[0, 1]`, and `false` otherwise,
+ * shrinking toward `false`. A `p` outside that range throws.
+ */
+export function weightedBooleans(p: number): PrintableGenerator<boolean> {
+  return new BooleansGenerator(p);
 }

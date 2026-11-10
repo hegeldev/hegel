@@ -4,7 +4,7 @@ set ignore-comments := true
 # Per-component recipes live next to the code they drive and run from that
 # directory: `just libhegel::test`, `just rust::test`, `just python::test`,
 # `just typescript::test`, `just cpp::test`, `just java::test`,
-# `just csharp::test`, `just ocaml::test`.
+# `just csharp::test`, `just ocaml::test`, `just go::test`.
 # Recipes here are the ones that span the whole Cargo workspace (libhegel,
 # the Rust frontend and the Python extension share one workspace and
 # lockfile; the coverage report covers the first two).
@@ -30,14 +30,17 @@ mod csharp 'frontends/csharp'
 # The OCaml frontend (needs opam; `just ocaml::setup` first)
 mod ocaml 'frontends/ocaml'
 
+# The Go frontend (needs Go)
+mod go 'frontends/go'
+
 # hegel.dev (needs Node; `just website::setup` first)
 mod website
 
 # Definition of done for the whole repo: lint + every component's tests.
-check: check-lint libhegel::check rust::check python::check typescript::check cpp::check java::check csharp::check ocaml::check
+check: check-lint libhegel::check rust::check python::check typescript::check cpp::check java::check csharp::check ocaml::check go::check
 
 # Lints spanning the Cargo workspace, plus each component's own.
-check-lint: check-format check-clippy check-nocov-style check-test-modules check-internal-asserts check-settings-env check-release-script libhegel::check-lint rust::check-lint python::check-lint typescript::check-lint cpp::check-lint java::check-lint csharp::check-lint ocaml::check-lint
+check-lint: check-format check-clippy check-nocov-style check-test-modules check-internal-asserts check-settings-env check-release-script libhegel::check-lint rust::check-lint python::check-lint typescript::check-lint cpp::check-lint java::check-lint csharp::check-lint ocaml::check-lint go::check-lint
 
 format:
     cargo fmt --all
@@ -83,9 +86,8 @@ check-release-script:
 # Coverage is measured over the whole workspace: the engine is covered both
 # by its own tests and by the Rust frontend driving it over the C ABI.
 
-# Whole-workspace line coverage (needs cargo-llvm-cov + llvm-tools-preview).
+# Whole-workspace line coverage (needs cargo-llvm-cov, cargo-nextest + llvm-tools-preview).
 check-coverage:
-    # requires cargo-llvm-cov and llvm-tools-preview
     # Force opt-level 0 (overriding `[profile.dev] opt-level` in Cargo.toml):
     # cargo-llvm-cov needs unoptimized code for accurate line attribution, as
     # optimization inlines small functions and drops their coverage regions.

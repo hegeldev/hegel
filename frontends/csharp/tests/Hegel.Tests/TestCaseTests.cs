@@ -536,14 +536,20 @@ public class TestCaseTests
         Assert.Equal(id, tc.PoolGenerate(pool, true));
         tc.PoolRestore(pool, id);
         Assert.Equal(id, tc.PoolGenerate(pool, false));
-        var machine = tc.NewStateMachine(["r"], [0], null, ["i"], [true], 1, 1, 5);
-        Assert.Equal(1, machine.Concurrency);
-        if (tc.StateMachineNextGroup(machine.Id) != Abi.StateMachineDone && tc.StateMachineNextRule(machine.Id, 0) != Abi.StateMachineDone)
+        var machine = tc.NewStateMachine(1, 1, 5);
+        tc.StateMachineAddRule(machine, "r", 1.0, [0]);
+        tc.StateMachineAddInvariant(machine, "i", true);
+        Assert.Equal(1, tc.StateMachineStart(machine));
+        if (tc.StateMachineNextGroup(machine, out var level) != Abi.StateMachineDone)
         {
-            tc.StateMachineRuleRejected(machine.Id, 0);
+            Assert.Equal(1, level);
+            if (tc.StateMachineNextRule(machine, 0) != Abi.StateMachineDone)
+            {
+                tc.StateMachineRuleRejected(machine, 0);
+            }
         }
-        Assert.True(tc.StateMachineShouldCheckInvariant(machine.Id, 0));
-        tc.StateMachineFree(machine.Id);
+        Assert.True(tc.StateMachineShouldCheckInvariant(machine, 0));
+        tc.StateMachineFree(machine);
         tc.ReleaseThreadContext();
     }
 

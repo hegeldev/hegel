@@ -354,13 +354,13 @@ public class StatefulTests
         private int _letters;
         private int _numbers;
 
-        [Rule(Group = "letters")]
+        [Rule(Groups = ["letters"])]
         internal void A(TestCase tc) => _letters++;
 
-        [Rule(Group = "letters")]
+        [Rule(Groups = ["letters"])]
         internal void B(TestCase tc) => _letters++;
 
-        [Rule(Group = "numbers")]
+        [Rule(Groups = ["numbers"])]
         internal void One(TestCase tc) => _numbers++;
 
         [Rule]
@@ -556,10 +556,10 @@ public class StatefulTests
 
     private sealed class GroupedRounds
     {
-        [Rule(Group = "letters")]
+        [Rule(Groups = ["letters"])]
         internal void A(TestCase tc) { }
 
-        [Rule(Group = "numbers")]
+        [Rule(Groups = ["numbers"])]
         internal void One(TestCase tc) { }
     }
 
@@ -573,6 +573,39 @@ public class StatefulTests
         Assert.Contains(reporter.Lines, line => line.Contains("Round 1: group \"letters\"") || line.Contains("Round 1: group \"numbers\""));
         Assert.Contains(reporter.Lines, line => line.Contains(": group \"letters\" "));
         Assert.Contains(reporter.Lines, line => line.Contains(": group \"numbers\" "));
+    }
+
+    private sealed class SharedRule
+    {
+        [Rule(Groups = ["letters", "numbers"])]
+        internal void Both(TestCase tc) { }
+    }
+
+    [Fact]
+    public void ARuleInSeveralGroupsRunsInTheRoundsOfEach()
+    {
+        var reporter = new CapturingReporter();
+        var options = new StatefulOptions { MinConcurrency = 2, MaxConcurrency = 2, StepCount = 8 };
+        var report = Property.Run(tc => Stateful.Run(new SharedRule(), tc, options), Quick with { Verbosity = Verbosity.Verbose }, reporter);
+        Assert.True(report.Passed);
+        foreach (var group in new[] { "letters", "numbers" })
+        {
+            var header = reporter.Lines.FindIndex(line => line.Contains($": group \"{group}\" "));
+            Assert.True(header >= 0);
+            Assert.EndsWith("Rule: Both {", reporter.Lines.Skip(header + 1).First(WorkerLine.IsMatch));
+        }
+    }
+
+    private sealed class RepeatedGroup
+    {
+        [Rule(Groups = ["letters", "letters"])]
+        internal void Twice(TestCase tc) { }
+    }
+
+    [Fact]
+    public void ARuleMustNotRepeatAGroup()
+    {
+        Assert.Throws<HegelUsageException>(() => Property.Test(tc => Stateful.Run(new RepeatedGroup(), tc), Quick));
     }
 
     private sealed class BadLabel

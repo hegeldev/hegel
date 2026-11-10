@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.52.1 - 2026-11-09
+
+This patch lets a long state-machine run explore more than one configuration. Between rounds, a state machine now occasionally redraws its value distribution, the rules each worker has enabled, and the concurrency level. Previously these were fixed for the whole test case, so a `#[hegel::main]` binary kept one configuration for its whole run.
+
+A concurrent machine now always starts `max_concurrency` worker threads, and only the current concurrency level's worth of them run rules in a round. A failure report notes `Concurrency level: n` at the first round and whenever the level changes.
+
+## 0.52.0 - 2026-11-03
+
+This release lets a rule of a concurrent state machine belong to several concurrency groups: the rule runs in the rounds of each of them. The list must name at least one group and must not repeat one; the engine reports either as an invalid argument when the machine runs. A bare `#[rule]` still indicates the anonymous group.
+
+Before:
+
+```rust
+#[rule(group = "write")]
+fn write(&self, tc: TestCase) { /* ... */ }
+```
+
+After:
+
+```rust
+#[rule(groups = ["write"])]
+fn write(&self, tc: TestCase) { /* ... */ }
+
+#[rule(groups = ["write", "flush"])]
+fn read(&self, tc: TestCase) { /* ... */ }
+```
+
+The `examples/concurrent_tiered_store.rs` example shows this on a two-tier store whose flush briefly hides a key: only a read that overlaps a flush can observe it.
+
 ## 0.51.0 - 2026-10-29
 
 This release brings the Rust frontend further into line with the other Hegel frontends.

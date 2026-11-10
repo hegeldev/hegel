@@ -128,8 +128,11 @@ internal class DelegatingLibhegel : ILibhegel
     public virtual int PoolGenerate(nint testCase, nint pool, bool consume, out long variableId) => Inner.PoolGenerate(testCase, pool, consume, out variableId);
     public virtual int PoolRestore(nint testCase, nint pool, long variableId) => Inner.PoolRestore(testCase, pool, variableId);
     public virtual void PoolFree(nint pool) => Inner.PoolFree(pool);
-    public virtual int NewStateMachine(nint testCase, IReadOnlyList<string> ruleNames, long[] ruleGroups, double[]? ruleWeights, IReadOnlyList<string> invariantNames, bool[] invariantAlwaysCheck, long minConcurrency, long maxConcurrency, long stepCount, out nint stateMachine, out long concurrency) => Inner.NewStateMachine(testCase, ruleNames, ruleGroups, ruleWeights, invariantNames, invariantAlwaysCheck, minConcurrency, maxConcurrency, stepCount, out stateMachine, out concurrency);
-    public virtual int StateMachineNextGroup(nint testCase, nint stateMachine, out long group) => Inner.StateMachineNextGroup(testCase, stateMachine, out group);
+    public virtual int NewStateMachine(nint testCase, long minConcurrency, long maxConcurrency, long stepCount, out nint stateMachine) => Inner.NewStateMachine(testCase, minConcurrency, maxConcurrency, stepCount, out stateMachine);
+    public virtual int StateMachineAddRule(nint testCase, nint stateMachine, string name, double weight, long[] groups) => Inner.StateMachineAddRule(testCase, stateMachine, name, weight, groups);
+    public virtual int StateMachineAddInvariant(nint testCase, nint stateMachine, string name, bool alwaysCheck) => Inner.StateMachineAddInvariant(testCase, stateMachine, name, alwaysCheck);
+    public virtual int StateMachineStart(nint testCase, nint stateMachine, out long concurrency) => Inner.StateMachineStart(testCase, stateMachine, out concurrency);
+    public virtual int StateMachineNextGroup(nint testCase, nint stateMachine, out long group, out long concurrency) => Inner.StateMachineNextGroup(testCase, stateMachine, out group, out concurrency);
     public virtual int StateMachineNextRule(nint testCase, nint stateMachine, long workerIndex, out long rule) => Inner.StateMachineNextRule(testCase, stateMachine, workerIndex, out rule);
     public virtual int StateMachineRuleRejected(nint testCase, nint stateMachine, long workerIndex) => Inner.StateMachineRuleRejected(testCase, stateMachine, workerIndex);
     public virtual int StateMachineShouldCheckInvariant(nint testCase, nint stateMachine, long invariantIndex, out bool check) => Inner.StateMachineShouldCheckInvariant(testCase, stateMachine, invariantIndex, out check);

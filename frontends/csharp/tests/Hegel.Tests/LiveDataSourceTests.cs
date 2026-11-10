@@ -386,30 +386,41 @@ public class LiveDataSourceTests
     {
         using var run = new RawRun();
         var source = run.Source();
-        var machine = source.NewStateMachine(["a", "b"], [0, 1], [1.0, 2.0], ["inv", "sampled"], [true, false], 1, 1, 3);
-        Assert.Equal(1, machine.Concurrency);
+        var machine = source.NewStateMachine(1, 1, 3);
+        source.StateMachineAddRule(machine, "a", 1.0, [0]);
+        source.StateMachineAddRule(machine, "b", 2.0, [1]);
+        source.StateMachineAddRule(machine, "both", 1.0, [0, 1]);
+        source.StateMachineAddInvariant(machine, "inv", true);
+        source.StateMachineAddInvariant(machine, "sampled", false);
+        Assert.Throws<HegelUsageException>(() => source.StateMachineAddRule(machine, "repeated", 1.0, [0, 0]));
+        Assert.Equal(1, source.StateMachineStart(machine));
+        Assert.Throws<HegelUsageException>(() => source.StateMachineAddRule(machine, "late", 1.0, [0]));
+        Assert.Throws<HegelUsageException>(() => source.StateMachineAddInvariant(machine, "late", false));
         var rejected = false;
         long group;
-        while ((group = source.StateMachineNextGroup(machine.Id)) != Abi.StateMachineDone)
+        while ((group = source.StateMachineNextGroup(machine, out var level)) != Abi.StateMachineDone)
         {
+            Assert.Equal(1, level);
             Assert.Contains(group, new long[] { 0, 1 });
             long rule;
-            while ((rule = source.StateMachineNextRule(machine.Id, 0)) != Abi.StateMachineDone)
+            while ((rule = source.StateMachineNextRule(machine, 0)) != Abi.StateMachineDone)
             {
-                Assert.Equal(group, rule);
+                Assert.Contains(rule, new long[] { group, 2 });
                 if (!rejected)
                 {
                     rejected = true;
-                    source.StateMachineRuleRejected(machine.Id, 0);
-                    Assert.Throws<HegelUsageException>(() => source.StateMachineRuleRejected(machine.Id, 0));
+                    source.StateMachineRuleRejected(machine, 0);
+                    Assert.Throws<HegelUsageException>(() => source.StateMachineRuleRejected(machine, 0));
                 }
             }
-            Assert.True(source.StateMachineShouldCheckInvariant(machine.Id, 0));
-            source.StateMachineShouldCheckInvariant(machine.Id, 1);
+            Assert.True(source.StateMachineShouldCheckInvariant(machine, 0));
+            source.StateMachineShouldCheckInvariant(machine, 1);
         }
-        Assert.Throws<HegelUsageException>(() => source.StateMachineShouldCheckInvariant(machine.Id, 2));
-        source.StateMachineFree(machine.Id);
-        Assert.Throws<HegelUsageException>(() => source.NewStateMachine([], [], null, [], [], 1, 1, 3));
+        Assert.Throws<HegelUsageException>(() => source.StateMachineShouldCheckInvariant(machine, 2));
+        source.StateMachineFree(machine);
+        var empty = source.NewStateMachine(1, 1, 3);
+        Assert.Throws<HegelUsageException>(() => source.StateMachineStart(empty));
+        source.StateMachineFree(empty);
     }
 
     [Fact]

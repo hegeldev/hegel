@@ -41,8 +41,6 @@ public sealed class GrammarHandle
     }
 }
 
-internal readonly record struct StateMachineInfo(nint Id, int Concurrency);
-
 internal interface IDataSource
 {
     bool GenerateBoolean(double p);
@@ -86,8 +84,11 @@ internal interface IDataSource
     void RecursionRetry(nint recursion);
     bool RecursionFinish(nint recursion);
     void RecursionFree(nint recursion);
-    StateMachineInfo NewStateMachine(IReadOnlyList<string> ruleNames, long[] ruleGroups, double[]? ruleWeights, IReadOnlyList<string> invariantNames, bool[] invariantAlwaysCheck, long minConcurrency, long maxConcurrency, long stepCount);
-    long StateMachineNextGroup(nint stateMachineId);
+    nint NewStateMachine(long minConcurrency, long maxConcurrency, long stepCount);
+    void StateMachineAddRule(nint stateMachineId, string name, double weight, long[] groups);
+    void StateMachineAddInvariant(nint stateMachineId, string name, bool alwaysCheck);
+    int StateMachineStart(nint stateMachineId);
+    long StateMachineNextGroup(nint stateMachineId, out int concurrency);
     long StateMachineNextRule(nint stateMachineId, long workerIndex);
     void StateMachineRuleRejected(nint stateMachineId, long workerIndex);
     bool StateMachineShouldCheckInvariant(nint stateMachineId, long invariantIndex);

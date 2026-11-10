@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.51.0 - 2026-11-09
+
+This release lets a long state-machine run explore more than one configuration. Until now a test case drew its value distribution, each worker's set of enabled rules, and its concurrency level once, at the start. A `#[hegel::main]` binary, which runs a single test case, kept that configuration for its whole life. At the start of each round, a state machine now redraws all three with probability 1/50.
+
+To let the concurrency level change between rounds without starting or stopping threads, the meaning of the concurrency values in the C ABI changes:
+
+* `hegel_state_machine_start` now writes `max_concurrency` into `*out_concurrency`. The caller runs that many workers for the whole test case.
+* `hegel_state_machine_next_group` takes a new `out_concurrency` parameter, which receives the round's concurrency level. That many workers, chosen by the engine, are handed rules. The others get `HEGEL_STATE_MACHINE_DONE` from `hegel_state_machine_next_rule`.
+
+Before:
+
+```c
+hegel_state_machine_next_group(ctx, tc, machine, &group);
+```
+
+After:
+
+```c
+hegel_state_machine_next_group(ctx, tc, machine, &group, &concurrency);
+```
+
+## 0.50.0 - 2026-11-03
+
+This release changes how a state machine is declared through the C ABI to allow rules to belong to multiple concurrency groups.
+
+`hegel_new_state_machine` no longer takes the rules and invariants. It now creates an empty machine, and the caller declares each rule with `hegel_state_machine_add_rule` and each invariant with `hegel_state_machine_add_invariant`. The caller is responsible for calling `hegel_state_machine_start` once all rules and invariants have been declared. Rules and invariants are numbered in declaration order from 0, which is what `hegel_state_machine_next_rule` and `hegel_state_machine_should_check_invariant` use. No rule or invariant may be added after `hegel_state_machine_start`, and no round may be driven before it; both are `HEGEL_E_INVALID_ARG`.
+
+Before:
+
+```c
+hegel_new_state_machine(ctx, tc, rule_names, rule_groups, rule_weights, num_rules,
+                        invariant_names, invariant_always_check, num_invariants,
+                        1, 4, 50, &machine, &concurrency);
+```
+
+After:
+
+```c
+hegel_new_state_machine(ctx, tc, 1, 4, 50, &machine);
+hegel_state_machine_add_rule(ctx, tc, machine, rule_names[0], 1.0, groups, num_groups);
+hegel_state_machine_add_invariant(ctx, tc, machine, invariant_names[0], false);
+hegel_state_machine_start(ctx, tc, machine, &concurrency);
+```
+
 ## 0.49.0 - 2026-10-28
 
 This patch adds `HEGEL_MAX_SIZE_DEFAULT`, which a frontend passes as the `max_size` of `hegel_string_generator_text` or `hegel_generate_bytes` when the user gave no maximum, or of `hegel_new_collection` for a collection that builds text or bytes, such as text whose characters come from an arbitrary generator. libhegel then applies its default of 100, or `min_size + 100` when `min_size` is above 100, so every frontend's text and binary generators share one default instead of each hard-coding its own. `UINT64_MAX` still means no upper bound. The sentinel is `UINT64_MAX - 1`, so that value is reserved: a frontend passing a user's explicit maximum should pass `UINT64_MAX` for anything at or above `HEGEL_MAX_SIZE_DEFAULT`, which no allocation could reach anyway.

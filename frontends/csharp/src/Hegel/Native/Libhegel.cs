@@ -881,36 +881,44 @@ internal sealed unsafe class Libhegel : ILibhegel
 
     public void PoolFree(nint pool) => NativeMethods.hegel_pool_free(Ctx, pool);
 
-    public int NewStateMachine(nint testCase, IReadOnlyList<string> ruleNames, long[] ruleGroups, double[]? ruleWeights, IReadOnlyList<string> invariantNames, bool[] invariantAlwaysCheck, long minConcurrency, long maxConcurrency, long stepCount, out nint stateMachine, out long concurrency)
+    public int NewStateMachine(nint testCase, long minConcurrency, long maxConcurrency, long stepCount, out nint stateMachine)
+    {
+        nint sm;
+        var rc = NativeMethods.hegel_new_state_machine(Ctx, testCase, minConcurrency, maxConcurrency, stepCount, &sm);
+        stateMachine = sm;
+        return rc;
+    }
+
+    public int StateMachineAddRule(nint testCase, nint stateMachine, string name, double weight, long[] groups)
     {
         using var a = new Arena();
-        var always = new byte[invariantAlwaysCheck.Length];
-        for (var i = 0; i < always.Length; i++)
+        fixed (long* g = groups)
         {
-            always[i] = invariantAlwaysCheck[i] ? (byte)1 : (byte)0;
+            return NativeMethods.hegel_state_machine_add_rule(Ctx, testCase, stateMachine, a.Str(name), weight, g, (nuint)groups.Length);
         }
-        nint sm;
+    }
+
+    public int StateMachineAddInvariant(nint testCase, nint stateMachine, string name, bool alwaysCheck)
+    {
+        using var a = new Arena();
+        return NativeMethods.hegel_state_machine_add_invariant(Ctx, testCase, stateMachine, a.Str(name), alwaysCheck);
+    }
+
+    public int StateMachineStart(nint testCase, nint stateMachine, out long concurrency)
+    {
         long c;
-        int rc;
-        fixed (long* groups = ruleGroups)
-        fixed (double* weights = ruleWeights)
-        fixed (byte* alwaysPtr = always)
-        {
-            rc = NativeMethods.hegel_new_state_machine(
-                Ctx, testCase, a.Strs(ruleNames), groups, weights, (nuint)ruleNames.Count,
-                a.Strs(invariantNames), alwaysPtr, (nuint)invariantNames.Count,
-                minConcurrency, maxConcurrency, stepCount, &sm, &c);
-        }
-        stateMachine = sm;
+        var rc = NativeMethods.hegel_state_machine_start(Ctx, testCase, stateMachine, &c);
         concurrency = c;
         return rc;
     }
 
-    public int StateMachineNextGroup(nint testCase, nint stateMachine, out long group)
+    public int StateMachineNextGroup(nint testCase, nint stateMachine, out long group, out long concurrency)
     {
         long o;
-        var rc = NativeMethods.hegel_state_machine_next_group(Ctx, testCase, stateMachine, &o);
+        long c = 0;
+        var rc = NativeMethods.hegel_state_machine_next_group(Ctx, testCase, stateMachine, &o, &c);
         group = o;
+        concurrency = c;
         return rc;
     }
 

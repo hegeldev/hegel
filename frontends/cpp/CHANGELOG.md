@@ -1,5 +1,70 @@
 # Changelog
 
+## 0.16.0 - 2026-11-09
+
+This release fixes `hegel::Settings` overriding the engine's settings profile. A field you do not set now takes its value from the profile: `HEGEL_DEFAULT_PROFILE`, a `hegel.toml` profile, `HEGEL_MAIN`'s `--profile`, or a settings environment variable such as `HEGEL_SEED`, `HEGEL_PHASES`, `HEGEL_VERBOSITY` or `HEGEL_PRINT_BLOB`.
+
+`verbosity`, `derandomize`, `report_multiple_failures`, `stop_on_first_failure`, `nondeterminism_strictness` and `print_blob` are now `std::optional`. `phases` is now the new `hegel::Phases` type, which is unset by default.
+
+## 0.15.1 - 2026-11-09
+
+This patch lets a long state-machine run explore more than one configuration. Between rounds, a state machine now occasionally redraws its value distribution, the rules each worker has enabled, and the concurrency level. Previously these were fixed for the whole test case, so a `HEGEL_MAIN` binary kept one configuration for its whole run.
+
+`hegel::stateful::run_concurrent` now always starts `max_concurrency` worker threads, and only the current concurrency level's worth of them run rules in a round. A failure report notes `Concurrency level: n` at the first round and whenever the level changes.
+
+## 0.15.0 - 2026-11-06
+
+This release adds weights, a hint for how often to choose the rule relative to the others, to stateful rules. `hegel::stateful::Rule` and `hegel::stateful::ConcurrentRule` each take an optional `weight`, and `weight()` returns it. A rule without a weight has weight 1.0.
+
+`hegel::stateful::Invariant` also now takes an optional `always_check` flag. An invariant with the flag runs at every step of a state machine, or every round of a concurrent one, instead of being sampled. `always_check()` returns it.
+
+These can be passed positionally or by name through the new `RuleParams`, `ConcurrentRuleParams` and `InvariantParams` structs:
+
+```cpp
+hegel::stateful::ConcurrentRule<Bank>("transfer", {"bank"}, 6.0, transfer);
+
+hegel::stateful::ConcurrentRule<Bank>({.name = "transfer",
+                                       .groups = {"bank"},
+                                       .weight = 6.0,
+                                       .step = transfer});
+```
+
+`ConcurrentRule::function()` is now `step()`, and `ConcurrentRule::Function` is now `Step`, to match `Rule`.
+
+## 0.14.1 - 2026-11-06
+
+This patch adds `HEGEL_MAIN` for running a Hegel test as a standalone binary. 
+Each setting except `test_cases` is a command-line option named after its `hegel.toml` 
+key (`--seed`, `--phases`, `--backend` and so on).
+
+```cpp
+HEGEL_MAIN(workload)(hegel::TestCase& tc) {
+    auto n = tc.draw("n", gs::integers<int>());
+    if (n + 0 != n) {
+        throw std::runtime_error("n + 0 != n");
+    }
+}
+```
+
+## 0.14.0 - 2026-11-03
+
+This release lets a rule of a concurrent state machine belong to several concurrency groups. `hegel::stateful::ConcurrentRule` now takes a list of group names in place of one name, and `group()` becomes `groups()`, returning that list. A rule constructed without groups still belongs to `anonymous_group`.
+
+Before:
+
+```cpp
+hegel::stateful::ConcurrentRule<Store>("write", "write", write);
+```
+
+After:
+
+```cpp
+hegel::stateful::ConcurrentRule<Store>("write", {"write"}, write);
+hegel::stateful::ConcurrentRule<Store>("read", {"write", "flush"}, read);
+```
+
+A rule in several groups runs in the rounds of each of them: here `read` can overlap with `write` in a `write` round and with `flush` in a `flush` round, which is the only way to observe a read racing a flush. The list must name at least one group and must not repeat one; the engine reports either as a `std::invalid_argument` when the machine starts.
+
 ## 0.13.4 - 2026-10-30
 
 This patch adds `GIT_CONFIG lfs.fetchexclude=website` to the recommended `FetchContent_Declare` in the README and the API reference. The hegeldev/hegel repository also holds the hegel.dev website, whose images and generated API references are stored in Git LFS, and with this line a machine that has git-lfs installed no longer downloads them when fetching Hegel.

@@ -67,7 +67,7 @@ struct KvTest {
 
 #[hegel::concurrent_state_machine]
 impl KvTest {
-    #[rule(group = "rw")]
+    #[rule(groups = ["rw"])]
     fn register(&self, tc: TestCase) {
         let key = tc.draw(gs::integers::<u64>().max_value(3));
         if self.store.put_if_absent(key, 0) {
@@ -75,21 +75,21 @@ impl KvTest {
         }
     }
 
-    #[rule(group = "rw")]
+    #[rule(groups = ["rw"])]
     fn increment(&self, tc: TestCase) {
         let key = tc.draw(self.keys.values_reusable());
         self.store.increment(key);
         self.increments.fetch_add(1, Ordering::SeqCst);
     }
 
-    #[rule(group = "rw")]
+    #[rule(groups = ["rw"])]
     fn read(&self, tc: TestCase) {
         let key = tc.draw(self.keys.values_reusable());
         let value = self.store.get(key);
         tc.note(&format!("read {key} -> {value:?}"));
     }
 
-    #[rule(group = "snapshot")]
+    #[rule(groups = ["snapshot"])]
     fn snapshot(&self, tc: TestCase) {
         let snapshot = self.store.snapshot();
         tc.note(&format!("snapshot holds {} keys", snapshot.len()));

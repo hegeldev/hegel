@@ -11,7 +11,7 @@ runs:
       run: |
         for tool in $TOOLS; do
           case "$tool" in
-            just|uv|doxygen) echo "$tool=true" >> "$GITHUB_OUTPUT" ;;
+            just|uv|doxygen|cargo-nextest) echo "$tool=true" >> "$GITHUB_OUTPUT" ;;
             *) echo "::error::Unknown tool: $tool"; exit 1 ;;
           esac
         done
@@ -94,4 +94,21 @@ runs:
         sudo tar -xzf "$RUNNER_TEMP/doxygen.tar.gz" -C /opt
         sudo ln -sf "/opt/doxygen-${DOXYGEN_VERSION}/bin/doxygen" /usr/local/bin/doxygen
         doxygen --version
+      shell: bash
+    # Linux x86_64 only. To bump: take the version and checksum from the
+    # release's cargo-nextest-<version>-x86_64-unknown-linux-gnu.sha256.
+    - if: steps.parse.outputs.cargo-nextest == 'true' && runner.os == 'Linux' && runner.arch == 'X64'
+      env:
+        NEXTEST_VERSION: 0.9.148
+        NEXTEST_SHA256: 223ba936714cc861a9cdedad5a8eb664dfdd69d6fbdf6cea6aa8184f523290dc
+      run: |
+        set -euo pipefail
+        archive="cargo-nextest-${NEXTEST_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+        curl -fsSL --retry 5 --retry-delay 10 -o "$RUNNER_TEMP/$archive" \
+          "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-${NEXTEST_VERSION}/$archive"
+        echo "${NEXTEST_SHA256}  $RUNNER_TEMP/$archive" | sha256sum -c -
+        bin="${CARGO_HOME:-$HOME/.cargo}/bin"
+        mkdir -p "$bin"
+        tar -xzf "$RUNNER_TEMP/$archive" -C "$bin" cargo-nextest
+        cargo nextest --version
       shell: bash

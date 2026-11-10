@@ -9,8 +9,12 @@ namespace Hegel;
 [AttributeUsage(AttributeTargets.Method, Inherited = false)]
 public sealed class RuleAttribute : Attribute
 {
-    /// <summary>The group the rule belongs to; a concurrent round runs rules of one group.</summary>
-    public string Group { get; init; } = "";
+    /// <summary>
+    /// The concurrency groups the rule belongs to. A concurrent round runs the rules of one group, so
+    /// rules sharing a group may overlap and rules with no group in common never do; a rule in several
+    /// groups runs in the rounds of each. Empty, the default, is the <see cref="Stateful.AnonymousGroup"/>.
+    /// </summary>
+    public string[] Groups { get; init; } = [];
 
     /// <summary>How often the rule is chosen relative to the others. Positive, 1 by default.</summary>
     public double Weight { get; init; } = 1.0;
@@ -38,14 +42,14 @@ public sealed record StatefulOptions
         init => _stepCount = value >= 1 ? value : throw new ArgumentOutOfRangeException(nameof(StepCount), value, "StepCount must be at least 1");
     }
 
-    /// <summary>The fewest workers to run rules concurrently on. At least 1.</summary>
+    /// <summary>The fewest workers that run rules in a round. At least 1.</summary>
     public int MinConcurrency
     {
         get => _minConcurrency;
         init => _minConcurrency = value >= 1 ? value : throw new ArgumentOutOfRangeException(nameof(MinConcurrency), value, "MinConcurrency must be at least 1");
     }
 
-    /// <summary>The most workers to run rules concurrently on. At least 1; 1 runs the machine sequentially.</summary>
+    /// <summary>The number of worker threads, and the most that run rules in a round. At least 1; 1 runs the machine sequentially.</summary>
     public int MaxConcurrency
     {
         get => _maxConcurrency;
@@ -62,7 +66,7 @@ public static class Stateful
     /// <summary>How many steps a run takes unless <see cref="StatefulOptions.StepCount"/> says otherwise.</summary>
     public const int DefaultStepCount = 50;
 
-    /// <summary>The group of rules that name none.</summary>
+    /// <summary>The group of rules whose <see cref="RuleAttribute.Groups"/> are empty.</summary>
     public const string AnonymousGroup = "<anonymous>";
 
     private static readonly StatefulOptions Default = new();
@@ -91,21 +95,31 @@ public static class Stateful
         }
         var groupNames = new List<string>();
         var groups = Groups(rules, groupNames);
-        var sm = tc.NewStateMachine(Names(rules), groups, Weights(rules), Names(invariants), AlwaysRun(invariants), options.MinConcurrency, options.MaxConcurrency, options.StepCount);
+        var weights = Weights(rules);
+        var machineId = tc.NewStateMachine(options.MinConcurrency, options.MaxConcurrency, options.StepCount);
         try
         {
+            for (var i = 0; i < rules.Count; i++)
+            {
+                tc.StateMachineAddRule(machineId, rules[i].Name, weights[i], groups[i]);
+            }
+            foreach (var invariant in invariants)
+            {
+                tc.StateMachineAddInvariant(machineId, invariant.Name, invariant.GetCustomAttribute<InvariantAttribute>()!.AlwaysRun);
+            }
+            var workers = tc.StateMachineStart(machineId);
             if (options.MaxConcurrency == 1)
             {
-                DriveSequential(machine, rules, invariants, tc, sm.Id);
+                DriveSequential(machine, rules, invariants, tc, machineId);
             }
             else
             {
-                DriveConcurrent(machine, rules, invariants, groupNames, tc, sm.Id, sm.Concurrency);
+                DriveConcurrent(machine, rules, invariants, groupNames, tc, machineId, workers);
             }
         }
         finally
         {
-            tc.StateMachineFree(sm.Id);
+            tc.StateMachineFree(machineId);
         }
     }
 
@@ -120,7 +134,7 @@ public static class Stateful
         while (true)
         {
             tc.StartSpan(Label.StatefulRule);
-            if (tc.StateMachineNextGroup(machineId) == Abi.StateMachineDone)
+            if (tc.StateMachineNextGroup(machineId, out _) == Abi.StateMachineDone)
             {
                 tc.StopSpan(false);
                 break;
@@ -177,7 +191,6 @@ public static class Stateful
 
     private static void DriveConcurrent(object machine, List<MethodInfo> rules, List<MethodInfo> invariants, List<string> groupNames, TestCase tc, nint machineId, int concurrency)
     {
-        tc.Note($"Concurrency level: {concurrency}");
         if (invariants.Count > 0)
         {
             tc.Note("Checking invariants on the initial state.");
@@ -196,12 +209,18 @@ public static class Stateful
                 worker.Start();
             }
             var round = 0;
+            var notedLevel = 0;
             while (true)
             {
-                var group = tc.StateMachineNextGroup(machineId);
+                var group = tc.StateMachineNextGroup(machineId, out var level);
                 if (group == Abi.StateMachineDone)
                 {
                     break;
+                }
+                if (level != notedLevel)
+                {
+                    tc.Note($"Concurrency level: {level}");
+                    notedLevel = level;
                 }
                 round++;
                 tc.Note($"---------------- Round {round}: group \"{groupNames[(int)group]}\" ----------------");
@@ -510,33 +529,34 @@ public static class Stateful
         return methods;
     }
 
-    private static List<string> Names(List<MethodInfo> methods) => methods.Select(m => m.Name).ToList();
-
-    private static long[] Groups(List<MethodInfo> rules, List<string> groupNames)
+    private static long[][] Groups(List<MethodInfo> rules, List<string> groupNames)
     {
-        var ids = new long[rules.Count];
+        var ids = new long[rules.Count][];
         for (var i = 0; i < ids.Length; i++)
         {
-            var group = rules[i].GetCustomAttribute<RuleAttribute>()!.Group;
-            if (group.Length == 0)
+            var names = rules[i].GetCustomAttribute<RuleAttribute>()!.Groups;
+            if (names.Length == 0)
             {
-                group = AnonymousGroup;
+                names = [AnonymousGroup];
             }
-            var id = groupNames.IndexOf(group);
-            if (id < 0)
+            ids[i] = new long[names.Length];
+            for (var j = 0; j < names.Length; j++)
             {
-                id = groupNames.Count;
-                groupNames.Add(group);
+                var id = groupNames.IndexOf(names[j]);
+                if (id < 0)
+                {
+                    id = groupNames.Count;
+                    groupNames.Add(names[j]);
+                }
+                ids[i][j] = id;
             }
-            ids[i] = id;
         }
         return ids;
     }
 
-    private static double[]? Weights(List<MethodInfo> rules)
+    private static double[] Weights(List<MethodInfo> rules)
     {
         var weights = new double[rules.Count];
-        var weighted = false;
         for (var i = 0; i < weights.Length; i++)
         {
             var w = rules[i].GetCustomAttribute<RuleAttribute>()!.Weight;
@@ -545,11 +565,7 @@ public static class Stateful
                 throw new HegelUsageException($"[Rule] Weight of {rules[i].Name} must be finite and positive, got {Printer.Double(w)}");
             }
             weights[i] = w;
-            weighted |= w != 1.0;
         }
-        return weighted ? weights : null;
+        return weights;
     }
-
-    private static bool[] AlwaysRun(List<MethodInfo> invariants) =>
-        invariants.Select(i => i.GetCustomAttribute<InvariantAttribute>()!.AlwaysRun).ToArray();
 }

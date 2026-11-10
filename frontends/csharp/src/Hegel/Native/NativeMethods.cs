@@ -122,8 +122,11 @@ internal static unsafe partial class NativeMethods
     [LibraryImport(Library)] internal static partial int hegel_pool_generate(nint ctx, nint tc, nint pool, [MarshalAs(UnmanagedType.U1)] bool consume, long* o);
     [LibraryImport(Library)] internal static partial int hegel_pool_restore(nint ctx, nint tc, nint pool, long variableId);
     [LibraryImport(Library)] internal static partial int hegel_pool_free(nint ctx, nint pool);
-    [LibraryImport(Library)] internal static partial int hegel_new_state_machine(nint ctx, nint tc, HegelString* ruleNames, long* ruleGroups, double* ruleWeights, nuint numRules, HegelString* invariantNames, byte* invariantAlwaysCheck, nuint numInvariants, long minConcurrency, long maxConcurrency, long stepCount, nint* outStateMachine, long* outConcurrency);
-    [LibraryImport(Library)] internal static partial int hegel_state_machine_next_group(nint ctx, nint tc, nint sm, long* o);
+    [LibraryImport(Library)] internal static partial int hegel_new_state_machine(nint ctx, nint tc, long minConcurrency, long maxConcurrency, long stepCount, nint* outStateMachine);
+    [LibraryImport(Library)] internal static partial int hegel_state_machine_add_rule(nint ctx, nint tc, nint sm, HegelString name, double weight, long* groups, nuint numGroups);
+    [LibraryImport(Library)] internal static partial int hegel_state_machine_add_invariant(nint ctx, nint tc, nint sm, HegelString name, [MarshalAs(UnmanagedType.U1)] bool alwaysCheck);
+    [LibraryImport(Library)] internal static partial int hegel_state_machine_start(nint ctx, nint tc, nint sm, long* outConcurrency);
+    [LibraryImport(Library)] internal static partial int hegel_state_machine_next_group(nint ctx, nint tc, nint sm, long* o, long* outConcurrency);
     [LibraryImport(Library)] internal static partial int hegel_state_machine_next_rule(nint ctx, nint tc, nint sm, long workerIndex, long* o);
     [LibraryImport(Library)] internal static partial int hegel_state_machine_rule_rejected(nint ctx, nint tc, nint sm, long workerIndex);
     [LibraryImport(Library)] internal static partial int hegel_state_machine_should_check_invariant(nint ctx, nint tc, nint sm, long invariantIndex, byte* o);

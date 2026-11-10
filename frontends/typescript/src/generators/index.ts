@@ -4,8 +4,8 @@
  * @packageDocumentation
  */
 
-export { Generator, BasicGenerator } from "./core.js";
-export { integers, bigIntegers, floats, booleans } from "./numeric.js";
+export { Generator, PrintableGenerator, BasicGenerator, Mapped } from "./core.js";
+export { integers, bigIntegers, floats, booleans, weightedBooleans } from "./numeric.js";
 export type { IntegerOptions, BigIntegerOptions, FloatOptions } from "./numeric.js";
 export { text, characters, binary, fromRegex } from "./strings.js";
 export { emails, urls, domains, ipAddresses } from "./strings.js";
@@ -22,8 +22,12 @@ export type {
 } from "./strings.js";
 export type { UuidVersion } from "../engine.js";
 
-export { arrays, sets, maps } from "./collections.js";
-export type { CollectionOptions, ArrayOptions } from "./collections.js";
-export { just, sampledFrom, oneOf, optional } from "./combinators.js";
+export { arrays, sets, maps, permutations, subsequences, samples } from "./collections.js";
+export type { CollectionOptions, ArrayOptions, SampleOptions } from "./collections.js";
+export { just, none, sampledFrom, oneOf, optional } from "./combinators.js";
+export { recursive, deferred } from "./recursive.js";
+export type { RecursiveOptions } from "./recursive.js";
 export { tuples } from "./tuples.js";
+export { fromLark } from "./lark.js";
+export type { LarkOptions } from "./lark.js";
 export { composite, record } from "./compose.js";

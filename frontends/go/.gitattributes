@@ -1,0 +1,7 @@
+# The libhegel binaries go:embed'd by internal/libhegel are empty on main; the
+# commit a release tags fills them in, stored via git-lfs. The Go module proxy
+# serving hegel.dev/go/hegel fetches them with the smudge filter, and a
+# checkout of a release tag needs `git lfs install` for the real bytes.
+internal/libhegel/libs/*.so filter=lfs diff=lfs merge=lfs -text
+internal/libhegel/libs/*.dll filter=lfs diff=lfs merge=lfs -text
+internal/libhegel/libs/*.dylib filter=lfs diff=lfs merge=lfs -text

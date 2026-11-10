@@ -602,10 +602,15 @@ public sealed class TestCase
 
     internal void PoolRestore(nint poolId, long variableId) => _source.PoolRestore(poolId, variableId);
 
-    internal StateMachineInfo NewStateMachine(IReadOnlyList<string> ruleNames, long[] ruleGroups, double[]? ruleWeights, IReadOnlyList<string> invariantNames, bool[] invariantAlwaysCheck, long minConcurrency, long maxConcurrency, long stepCount) =>
-        _source.NewStateMachine(ruleNames, ruleGroups, ruleWeights, invariantNames, invariantAlwaysCheck, minConcurrency, maxConcurrency, stepCount);
+    internal nint NewStateMachine(long minConcurrency, long maxConcurrency, long stepCount) => _source.NewStateMachine(minConcurrency, maxConcurrency, stepCount);
 
-    internal long StateMachineNextGroup(nint stateMachineId) => _source.StateMachineNextGroup(stateMachineId);
+    internal void StateMachineAddRule(nint stateMachineId, string name, double weight, long[] groups) => _source.StateMachineAddRule(stateMachineId, name, weight, groups);
+
+    internal void StateMachineAddInvariant(nint stateMachineId, string name, bool alwaysCheck) => _source.StateMachineAddInvariant(stateMachineId, name, alwaysCheck);
+
+    internal int StateMachineStart(nint stateMachineId) => _source.StateMachineStart(stateMachineId);
+
+    internal long StateMachineNextGroup(nint stateMachineId, out int concurrency) => _source.StateMachineNextGroup(stateMachineId, out concurrency);
 
     internal long StateMachineNextRule(nint stateMachineId, long workerIndex) => _source.StateMachineNextRule(stateMachineId, workerIndex);
 
