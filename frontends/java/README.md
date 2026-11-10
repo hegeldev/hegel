@@ -126,6 +126,21 @@ mvn test -pl hegel -am -Dtest=ConcurrentCounterExample -Dhegel.examples=true -Ds
 (or `-pl hegel-jna -am` for the JNA frontend) and it fails with a report of the rounds and the
 worker-stamped rule and draw lines that led to the lost update.
 
+## Standalone programs
+
+`Hegel.main` turns a test into a program that runs one test case:
+
+```java
+public static void main(String[] args) {
+    Hegel.main(args, tc -> {
+        int x = tc.draw(integers());
+        assertEquals(x + 0, x);
+    });
+}
+```
+
+Test settings are passed in as command line options. `--help` lists the settings. The process exits with status 0 if the test case passes, 1 if it fails or the run ends in an error, and 2 if the command line is invalid.
+
 ## Using Hegel as a library
 
 Frontends for other JVM languages (or custom runners) use `Hegel.run` instead of `Hegel.test`. It

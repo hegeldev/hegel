@@ -343,7 +343,7 @@ class RunnerTest {
     }
 
     @Test
-    void effectiveStrictnessIsReadBackFromTheEngine() {
+    void effectiveVerbosityAndStrictnessAreReadBackFromTheEngine() {
         FakeLibhegel fake = new FakeLibhegel();
         fake.resolvedStrictness = Abi.NONDETERMINISM_ERROR;
         Settings[] seen = new Settings[1];
@@ -353,14 +353,31 @@ class RunnerTest {
                 seen[0] = settings;
             }
         };
-        Runner.run(fake, new Settings().database(Database.disabled()), tc -> {}, reporter);
+        Runner.run(
+                fake,
+                new Settings().database(Database.disabled()),
+                tc -> {},
+                reporter,
+                s -> fake.settingsVerbosity(s, Abi.VERBOSITY_QUIET));
+        assertEquals(Verbosity.QUIET, seen[0].verbosity);
         assertEquals(NondeterminismStrictness.ERROR, seen[0].nondeterminismStrictness);
         assertEquals(NondeterminismStrictness.DEFAULT, new Settings().nondeterminismStrictness);
 
-        FakeLibhegel unknown = new FakeLibhegel();
-        unknown.resolvedStrictness = 99;
-        HegelException e = assertThrows(HegelException.class, () -> run(unknown, new Settings(), tc -> {}));
-        assertTrue(e.getMessage().contains("99"), e.getMessage());
+        FakeLibhegel unknownStrictness = new FakeLibhegel();
+        unknownStrictness.resolvedStrictness = 99;
+        HegelException e = assertThrows(HegelException.class, () -> run(unknownStrictness, new Settings(), tc -> {}));
+        assertTrue(e.getMessage().contains("hegel_nondeterminism_strictness_t value 99"), e.getMessage());
+
+        FakeLibhegel unknownVerbosity = new FakeLibhegel();
+        e = assertThrows(
+                HegelException.class,
+                () -> Runner.run(
+                        unknownVerbosity,
+                        new Settings().database(Database.disabled()),
+                        tc -> {},
+                        reporter,
+                        s -> unknownVerbosity.settingsVerbosity(s, 98)));
+        assertTrue(e.getMessage().contains("hegel_verbosity_t value 98"), e.getMessage());
     }
 
     @Test
