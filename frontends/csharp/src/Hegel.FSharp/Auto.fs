@@ -7,7 +7,15 @@ open System.Reflection
 open Microsoft.FSharp.Reflection
 open Hegel
 
-type internal Selves = (Type * IGenerator) list
+/// The generators standing for the recursive types being built, and what the plans applied to
+/// them have built so far, so a plan reached along several paths builds one generator.
+type internal Selves(known: (Type * IGenerator) list) =
+    member val Built = Dictionary<int, IGenerator>()
+
+    member _.Find(t: Type) : IGenerator =
+        known |> List.find (fun (self, _) -> self = t) |> snd
+
+    member _.With(t: Type, generator: IGenerator) = Selves((t, generator) :: known)
 
 type internal Plan = Selves -> IGenerator
 
@@ -19,11 +27,26 @@ type internal Scope =
 
 exception internal NoBaseCase of Type
 
+/// What one derivation has already worked out: the plan, or the missing base case, of each type
+/// in each scope.
+type internal Memo() =
+    member val Plans = Dictionary<nativeint list * nativeint list * Type, Result<Plan, Type>>(HashIdentity.Structural)
+
+    member this.Share(plan: Plan) : Plan =
+        let id = this.Plans.Count
+
+        fun selves ->
+            match selves.Built.TryGetValue id with
+            | true, built -> built
+            | false, _ ->
+                let built = plan selves
+                selves.Built[id] <- built
+                built
+
 type internal Plans =
     static member Fixed(generator: IGenerator) : Plan = fun _ -> generator
 
-    static member Self(t: Type) : Plan =
-        fun selves -> selves |> List.find (fun (self, _) -> self = t) |> snd
+    static member Self(t: Type) : Plan = fun selves -> selves.Find t
 
     static member Constant<'T>(value: obj) : Plan =
         Plans.Fixed(Generators.Just<'T>(unbox value))
@@ -82,7 +105,7 @@ type internal Plans =
         fun selves ->
             Generators.Recursive(
                 baseCase selves :?> Generator<'T>,
-                fun self -> full ((t, self :> IGenerator) :: selves) :?> Generator<'T>
+                fun self -> full (selves.With(t, self)) :?> Generator<'T>
             )
 
 /// Derives generators from types: the F# shapes here, everything else through
@@ -140,12 +163,35 @@ module internal Auto =
     let private empty (t: Type) =
         t.GetProperty("Empty", BindingFlags.Static ||| BindingFlags.Public ||| BindingFlags.NonPublic).GetValue null
 
-    let rec private derive (scope: Scope) (t: Type) : Plan =
+    let private handles (types: Type list) =
+        types |> List.map (fun t -> t.TypeHandle.Value) |> List.sort
+
+    let rec private derive (memo: Memo) (scope: Scope) (t: Type) : Plan =
+        let key = handles scope.Selves, handles scope.Empties, t
+
+        let result =
+            match memo.Plans.TryGetValue key with
+            | true, known -> known
+            | false, _ ->
+                let derived =
+                    try
+                        Ok(memo.Share(deriveNew memo scope t))
+                    with NoBaseCase cycle ->
+                        Error cycle
+
+                memo.Plans[key] <- derived
+                derived
+
+        match result with
+        | Ok plan -> plan
+        | Error cycle -> raise (NoBaseCase cycle)
+
+    and private deriveNew (memo: Memo) (scope: Scope) (t: Type) : Plan =
         let emptiable (name: string) (typeArgs: Type[]) (inners: Type[]) (empty: unit -> obj) =
             if inners |> Array.exists (mentions scope scope.Empties) then
                 invoke "Constant" [| t |] [| empty () |]
             else
-                invoke name typeArgs (inners |> Array.map (fun inner -> box (derive scope inner)))
+                invoke name typeArgs (inners |> Array.map (fun inner -> box (derive memo scope inner)))
 
         let args = if t.IsGenericType then t.GetGenericArguments() else [||]
 
@@ -169,7 +215,7 @@ module internal Auto =
         elif definition t = typedefof<Map<_, _>> then
             emptiable "MapPlan" args args (fun () -> empty t)
         elif FSharpType.IsTuple t then
-            invoke "TuplePlan" [| t |] [| box (FSharpType.GetTupleElements t |> Array.map (derive scope)) |]
+            invoke "TuplePlan" [| t |] [| box (FSharpType.GetTupleElements t |> Array.map (derive memo scope)) |]
         elif FSharpType.IsRecord(t, Reflection.BindingFlags.Public ||| Reflection.BindingFlags.NonPublic) then
             let fields =
                 FSharpType.GetRecordFields(t, Reflection.BindingFlags.Public ||| Reflection.BindingFlags.NonPublic)
@@ -179,7 +225,10 @@ module internal Auto =
                     "RecordPlan"
                     [| t |]
                     [|
-                        box (fields |> Array.map (fun field -> field.Name, derive scope field.PropertyType))
+                        box (
+                            fields
+                            |> Array.map (fun field -> field.Name, derive memo scope field.PropertyType)
+                        )
                     |]
 
             if fields |> Array.exists (fun field -> mentions scope [ t ] field.PropertyType) then
@@ -207,7 +256,7 @@ module internal Auto =
                     cases
                     |> Array.choose (fun case ->
                         try
-                            Some(case, fieldTypes case |> Array.map (derive scope))
+                            Some(case, fieldTypes case |> Array.map (derive memo scope))
                         with NoBaseCase _ ->
                             None)
 
@@ -246,7 +295,7 @@ module internal Auto =
             t,
             fun t ->
                 try
-                    derive { Selves = []; Empties = [] } t []
+                    derive (Memo()) { Selves = []; Empties = [] } t (Selves [])
                 with NoBaseCase cycle ->
                     raise (noBaseCase cycle)
         )
