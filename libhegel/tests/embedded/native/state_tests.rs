@@ -3900,3 +3900,75 @@ fn shaped_sample_over_a_span_just_past_a_power_of_two_does_not_pile_up_there() {
         );
     }
 }
+
+fn unrecorded(max_size: usize) -> NativeTestCase {
+    NativeTestCase::new_unrecorded(
+        EngineRng::seeded(0),
+        GenerationParameters::default(),
+        max_size,
+    )
+}
+
+#[test]
+fn an_unrecorded_test_case_draws_without_recording_choices_or_spans() {
+    let mut tc = unrecorded(usize::MAX);
+    assert_eq!(tc.start_span(1), 0);
+    assert!((0..=10).contains(&tc.draw_integer(0i64, 10i64).unwrap()));
+    tc.weighted(0.5, None).unwrap();
+    assert_eq!(tc.start_span(2), 0);
+    assert_eq!(tc.span_depth(), 2);
+    let f = tc
+        .draw_float(FloatWidth::F64, 0.0, 10.0, false, false, 5e-324)
+        .unwrap();
+    assert!((0.0..=10.0).contains(&f));
+    tc.stop_span(true);
+    assert_eq!(tc.draw_bytes(2, 2).unwrap().len(), 2);
+    tc.draw_integer_forced(0i64, 10i64, 3i64).unwrap();
+    assert_eq!(tc.draw_fresh_id().unwrap(), 0);
+    assert_eq!(tc.draw_fresh_id().unwrap(), 1);
+    assert_eq!(tc.span_depth(), 1);
+    tc.freeze();
+    assert_eq!(tc.span_depth(), 0);
+    assert_eq!(tc.status(), Some(Status::Valid));
+    assert!(tc.nodes.is_empty());
+    assert!(tc.spans.is_empty());
+}
+
+#[test]
+fn an_unrecorded_test_case_keeps_no_record_of_its_cloned_streams() {
+    let mut tc = unrecorded(usize::MAX);
+    let child = tc.clone_stream().unwrap();
+    {
+        let mut child = child.lock();
+        child.start_span(1);
+        child.weighted(0.5, None).unwrap();
+        child.stop_span(false);
+        assert!(child.nodes.is_empty());
+        assert!(child.spans.is_empty());
+    }
+    assert_eq!(Arc::strong_count(&child), 1);
+    tc.freeze();
+    tc.reassemble();
+    assert!(tc.nodes.is_empty());
+}
+
+#[test]
+fn an_unrecorded_test_case_nested_past_max_depth_concludes_invalid() {
+    let mut tc = unrecorded(usize::MAX);
+    for _ in 0..MAX_DEPTH {
+        tc.start_span(1);
+    }
+    assert_eq!(tc.status(), None);
+    tc.start_span(1);
+    assert_eq!(tc.status(), Some(Status::Invalid));
+}
+
+#[test]
+fn an_unrecorded_test_case_overruns_at_its_draw_budget() {
+    let mut tc = unrecorded(3);
+    let child = tc.clone_stream().unwrap();
+    child.lock().weighted(0.5, None).unwrap();
+    tc.weighted(0.5, None).unwrap();
+    assert!(matches!(tc.weighted(0.5, None), Err(EngineError::Overrun)));
+    assert_eq!(tc.status(), Some(Status::EarlyStop));
+}
