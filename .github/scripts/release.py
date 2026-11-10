@@ -680,10 +680,34 @@ def existing_remote_tags(tags: list[str]) -> list[str]:
     return [tag for tag in tags if tag in remote]
 
 
+WEEKLY_ATTEMPTS = 10
+
+
 def release(weekly: bool) -> None:
+    """Release what is pending: the `weekly` components' release files on the
+    weekly run, every other component's on a push to main.
+
+    A push's run releases the commit it tested or nothing (see
+    `release_head`). The weekly run has no later run to defer to, so when
+    main moves under it, it moves to the new head of main and cuts the
+    release again there.
+    """
+    if not weekly:
+        release_head(weekly)
+        return
+    for _ in range(WEEKLY_ATTEMPTS):
+        if release_head(weekly):
+            return
+        print("This is the weekly release, so it is cut again on the new head of main.")
+        git("fetch", "origin", "main", cwd=ROOT)
+        git("checkout", "--detach", "FETCH_HEAD", cwd=ROOT)
+    raise ValueError(f"main moved under the weekly release {WEEKLY_ATTEMPTS} times running.")
+
+
+def release_head(weekly: bool) -> bool:
     """Release everything pending on the commit checked out, if it is still
-    the head of main: the `weekly` components' release files on the weekly
-    run, every other component's on a push to main.
+    the head of main. False when it no longer is, in which case nothing was
+    tagged or published.
 
     The run for every push to main gets here, and two merges in quick
     succession give two runs whose trees both carry the first merge's release
@@ -693,14 +717,12 @@ def release(weekly: bool) -> None:
     run's push is rejected and it stops having changed nothing; the winner's
     tree is a superset of its release files, so nothing is lost. A failed
     release leaves its files on main for the next push's run to pick up.
-
-    The weekly run has no later run to defer to, so a rejected push fails it.
     """
     pending = pending_release_files(ROOT, weekly=weekly)
     if not pending:
         print("No release files pending.")
         set_output("released", "false")
-        return
+        return True
 
     releases: dict[Component, tuple[str, str] | None] = {
         component: (
@@ -752,17 +774,12 @@ def release(weekly: bool) -> None:
 
     pushed = subprocess.run(["git", "push", "origin", "HEAD:refs/heads/main"], cwd=ROOT)
     if pushed.returncode != 0:
-        if weekly:
-            raise ValueError(
-                "main moved on while the weekly release was being cut. Nothing was "
-                f"tagged or published for {' and '.join(tags)}: run the workflow again."
-            )
         print(
             "main has moved on since this run's commit, so the run for its new "
             f"head releases instead. Nothing was tagged or published for {' and '.join(tags)}."
         )
         set_output("released", "false")
-        return
+        return False
 
     # Every released component gets its `<path>/<version>` tag. The GitHub
     # release carries the libhegel binaries, so it is the libhegel release:
@@ -800,6 +817,7 @@ def release(weekly: bool) -> None:
             cwd=ROOT,
         )
     set_output("released", "true")
+    return True
 
 
 def release_tags(versions: dict[Component, str]) -> list[str]:

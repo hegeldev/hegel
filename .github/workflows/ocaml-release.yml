@@ -67,8 +67,8 @@ jobs:
           fetch-tags: true
 
       # The tarball bundles the binaries of the libhegel version on main, so
-      # a libhegel release that is still building them has to finish first.
-      # Leaves the head of main checked out.
+      # a libhegel release that is still building them finishes first. Leaves
+      # the head of main checked out; release.py follows main if it moves again.
       - name: Wait for the libhegel release on main to be published
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -136,6 +136,23 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
           ref: refs/tags/${{ needs.release.outputs.tag }}
+      # The release can land on a libhegel release commit that reached main
+      # while it was being cut, whose binaries are still being built.
+      - name: Wait for the libhegel release at the tag to be published
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version=$(grep '^version' libhegel/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          for _ in $(seq 90); do
+            draft=$(gh release view "libhegel/${version}" --json isDraft --jq .isDraft || echo missing)
+            if [ "$draft" = "false" ]; then
+              exit 0
+            fi
+            echo "libhegel/${version} is not published yet (isDraft: ${draft})"
+            sleep 60
+          done
+          exit 1
       - name: Build the bundled source archive
         id: archive
         env:
