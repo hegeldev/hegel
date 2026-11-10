@@ -155,7 +155,7 @@ public final class Hegel {
     /**
      * Run {@code body} as a standalone program with one test case configured from the command line.
      * Call it from the program's own {@code main}. The process exits with status 0 if the test case passes,
-     * 1 if it fails or the run ends in an error, and 2 if the command line settings are invalid.
+     * 1 if it fails or the run ends in an error, and 2 if the command line is invalid.
      *
      * <pre>{@code
      * public static void main(String[] args) {
@@ -175,12 +175,15 @@ public final class Hegel {
      * @param settings the run configuration, before the command line is applied
      */
     public static void main(String[] args, Consumer<TestCase> body, Settings settings) {
-        String program = StackWalker.getInstance()
+        Main.exit.accept(Main.run(Engine.get(), args, body, settings, callerClassName(), System.out, System.err));
+    }
+
+    private static String callerClassName() {
+        return StackWalker.getInstance()
                 .walk(frames -> frames.map(StackWalker.StackFrame::getClassName)
                         .dropWhile(Hegel.class.getName()::equals)
                         .findFirst())
-                .orElse("program");
-        Main.exit.accept(Main.run(Engine.get(), args, body, settings, program, System.out, System.err));
+                .orElseThrow();
     }
 
     private static Reporter defaultReporter() {

@@ -139,7 +139,7 @@ public static void main(String[] args) {
 }
 ```
 
-Test settings are passed in as command line options. `--help` lists the settings. The process exits with status 0 if the test case passes, 1 if it fails or the run ends in an error, and 2 if the setting is invalid.
+Test settings are passed in as command line options. `--help` lists the settings. The process exits with status 0 if the test case passes, 1 if it fails or the run ends in an error, and 2 if the command line is invalid.
 
 ## Using Hegel as a library
 

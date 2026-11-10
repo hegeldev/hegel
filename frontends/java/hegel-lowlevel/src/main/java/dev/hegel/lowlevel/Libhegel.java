@@ -166,8 +166,8 @@ public interface Libhegel {
     void settingsNondeterminismStrictness(long s, int strictness);
 
     /**
-     * {@code hegel_settings_set_from_string}: set one setting from text, under its {@code
-     * hegel.toml} key and in that key's vocabulary, as a command line gives it. Returns {@link
+     * {@code hegel_settings_set_from_string}: set one setting from text, using its {@code
+     * hegel.toml} key and the value syntax of that key. Returns {@link
      * Abi#E_INVALID_ARG} (with the message in {@link #lastErrorMessage()}) for an unknown key or a
      * value outside its vocabulary, and leaves the settings unchanged.
      */
@@ -175,9 +175,9 @@ public interface Libhegel {
 
     /**
      * {@code hegel_set_default_profile}: set the default settings profile for the whole process,
-     * over {@code HEGEL_DEFAULT_PROFILE}, or clear an earlier call with {@code ""}. The name need not
-     * exist yet: a handle from {@link #settingsNew} reports one that does not. Returns {@link
-     * Abi#E_INVALID_ARG} (with the message in {@link #lastErrorMessage()}) for an invalid name.
+     * overriding {@code HEGEL_DEFAULT_PROFILE}, or clear an earlier call with {@code ""}.
+     * {@link #settingsNew} fails if it does not exist. Returns {@link Abi#E_INVALID_ARG} (with
+     * the message in {@link #lastErrorMessage()}) for an invalid name.
      */
     int setDefaultProfile(String name);
 

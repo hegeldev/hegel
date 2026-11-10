@@ -200,15 +200,19 @@ final class FakeLibhegel implements Libhegel {
     int settingsFromStringRc = Abi.OK;
     final List<String> settingsFromStringCalls = new ArrayList<>();
     int setDefaultProfileRc = Abi.OK;
-    String defaultProfile; // what the setter received; null = never set
+    String defaultProfile; // what the setter received last; null = never set
+    String unresolvableProfile; // settingsNew fails while this is the default profile
     Integer strictness; // what the setter received; null = never set
 
     @Override
     public int settingsNew(long[] out) {
-        if (settingsNewRc == Abi.OK) {
+        int rc = unresolvableProfile != null && unresolvableProfile.equals(defaultProfile)
+                ? Abi.E_INVALID_ARG
+                : settingsNewRc;
+        if (rc == Abi.OK) {
             out[0] = SETTINGS;
         }
-        return settingsNewRc;
+        return rc;
     }
 
     @Override

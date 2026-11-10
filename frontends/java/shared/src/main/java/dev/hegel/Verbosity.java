@@ -19,7 +19,6 @@ public enum Verbosity {
         this.code = code;
     }
 
-    /** The verbosity the engine reports as {@code code}. */
     static Verbosity fromCode(int code) {
         for (Verbosity v : values()) {
             if (v.code == code) {

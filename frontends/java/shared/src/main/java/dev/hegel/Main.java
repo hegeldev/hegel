@@ -11,29 +11,26 @@ import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 
 /**
- * The command line of a program written with {@link Hegel#main}. {@link #run} does everything
- * except exit the process, so tests can call it directly.
- *
- * <p>Options other than {@code --profile} and {@code --failure-blob} are passed to the engine by
- * name, so every engine setting works as an option.
+ * {@link #run} does everything except exit the process, so tests can call it directly.
  */
 final class Main {
     private static final int EXIT_PASSED = 0;
     private static final int EXIT_FAILED = 1;
     private static final int EXIT_USAGE = 2;
 
-    /** {@link Runner#STALE_BLOB} for a blob given by {@code --failure-blob}. */
     private static final String STALE_BLOB = "the failure blob did not reproduce a failure. The failure may"
             + " have been fixed, or, for a nondeterministic blob, it may not have recurred within the"
             + " replay budget. Re-run to retry, or stop passing --failure-blob once the failure is"
             + " fixed.";
 
-    /** Ends the process. A field so tests can call {@link Hegel#main} in their own JVM. */
+    /**
+     * Exits the process. Tests replace it with a function that records the status, because JaCoCo
+     * does not mark a call to {@code System.exit} as covered.
+     */
     static IntConsumer exit = System::exit;
 
     private Main() {}
 
-    /** A command line that cannot run. */
     private static final class UsageError extends RuntimeException {
         private static final long serialVersionUID = 1L;
 
@@ -45,22 +42,10 @@ final class Main {
     /** An option that sets a setting. {@code value} is {@code null} if the option has none. */
     private record SettingOption(String flag, String key, String value) {}
 
-    /** The parsed command line. */
-    private static final class Arguments {
-        boolean help;
-        String profile;
-        String failureBlob;
-        final List<SettingOption> settings = new ArrayList<>();
+    private record Arguments(boolean help, String profile, String failureBlob, List<SettingOption> settings) {
+        static final Arguments HELP = new Arguments(true, null, null, List.of());
     }
 
-    /**
-     * Run {@code body} once under the command line {@code argv}.
-     *
-     * @param program the name to show in the usage text and to derive the database key from
-     * @param out receives the usage text when it is asked for
-     * @param err receives the report and any errors
-     * @return the status the process should exit with
-     */
     static int run(
             Libhegel lib,
             String[] argv,
@@ -71,19 +56,19 @@ final class Main {
             PrintStream err) {
         try {
             Arguments args = parse(argv);
-            if (args.help) {
+            if (args.help()) {
                 out.print(usage(program));
                 return EXIT_PASSED;
             }
-            if (args.profile != null) {
-                selectProfile(lib, args.profile);
+            if (args.profile() != null) {
+                selectProfile(lib, args.profile());
             }
             Settings effective = settings.name == null ? settings.name(program + "#main") : settings;
-            if (args.failureBlob != null) {
-                effective = effective.reproduceFailure(args.failureBlob);
+            if (args.failureBlob() != null) {
+                effective = effective.reproduceFailure(args.failureBlob());
             }
-            RunReport report =
-                    Runner.run(lib, effective, body, new PrintingReporter(err, true), s -> configure(lib, s, args));
+            RunReport report = Runner.run(
+                    lib, effective, body, PrintingReporter.forMain(err), s -> configure(lib, s, args.settings()));
             report.error().ifPresent(error -> err.println("error: " + error));
             return report.passed() ? EXIT_PASSED : EXIT_FAILED;
         } catch (UsageError e) {
@@ -91,49 +76,52 @@ final class Main {
             err.println();
             err.print(usage(program));
             return EXIT_USAGE;
+        } catch (BlobNotReproducedException e) {
+            err.println("error: "
+                    + (e.stale() ? STALE_BLOB : "the failure blob replay ended in an error: " + e.replayError()));
+            return EXIT_FAILED;
         } catch (LibhegelException | IllegalArgumentException e) {
-            boolean stale = Runner.STALE_BLOB.equals(e.getMessage());
-            err.println("error: " + (stale ? STALE_BLOB : e.getMessage()));
+            err.println("error: " + e.getMessage());
             return EXIT_FAILED;
         }
     }
 
     private static Arguments parse(String[] argv) {
-        Arguments args = new Arguments();
+        String profile = null;
+        String failureBlob = null;
+        List<SettingOption> settings = new ArrayList<>();
         for (int i = 0; i < argv.length; i++) {
             String arg = argv[i];
             if (arg.equals("-h") || arg.equals("--help")) {
-                args.help = true;
-                return args;
+                return Arguments.HELP;
             }
             if (!arg.startsWith("--") || arg.equals("--")) {
                 throw new UsageError("unknown argument: " + arg);
             }
-            String option = arg.substring(2);
-            int equals = option.indexOf('=');
-            String name = equals < 0 ? option : option.substring(0, equals);
+            String[] nameAndValue = arg.substring(2).split("=", 2);
+            String name = nameAndValue[0];
+            String flag = "--" + name;
             String value = null;
-            if (equals >= 0) {
-                value = option.substring(equals + 1);
+            if (nameAndValue.length == 2) {
+                value = nameAndValue[1];
             } else if (i + 1 < argv.length && !argv[i + 1].startsWith("--")) {
                 value = argv[++i];
             }
-            String flag = "--" + name;
-            if (name.contains("_") || name.equals("test-cases")) {
-                throw new UsageError("unknown argument: " + flag);
-            }
-            if (name.equals("profile")) {
-                args.profile = once(flag, args.profile, value);
-            } else if (name.equals("failure-blob")) {
-                args.failureBlob = once(flag, args.failureBlob, value);
-            } else {
-                args.settings.add(new SettingOption(flag, name.replace('-', '_'), value));
+            switch (name) {
+                case "profile" -> profile = once(flag, profile, value);
+                case "failure-blob" -> failureBlob = once(flag, failureBlob, value);
+                case "test-cases" -> throw new UsageError("unknown argument: " + flag);
+                default -> {
+                    if (name.contains("_")) {
+                        throw new UsageError("unknown argument: " + flag);
+                    }
+                    settings.add(new SettingOption(flag, name.replace('-', '_'), value));
+                }
             }
         }
-        return args;
+        return new Arguments(false, profile, failureBlob, List.copyOf(settings));
     }
 
-    /** The value of an option that takes a value and can be given once. */
     private static String once(String flag, String existing, String value) {
         if (value == null || value.isEmpty()) {
             throw new UsageError(flag + " requires a value");
@@ -144,27 +132,31 @@ final class Main {
         return value;
     }
 
-    /** Make {@code name} the default profile, checking that it resolves. */
+    /**
+     * If {@code name} does not resolve, resolving again without it tells a bad profile apart from
+     * invalid {@code HEGEL_*} variables or {@code hegel.toml}, which are not a usage error.
+     */
     private static void selectProfile(Libhegel lib, String name) {
-        int rc = lib.setDefaultProfile(name);
-        if (rc == Abi.OK) {
-            long[] handle = new long[1];
-            rc = lib.settingsNew(handle);
-            if (rc == Abi.OK) {
-                lib.settingsFree(handle[0]);
-                return;
-            }
+        if (lib.setDefaultProfile(name) != Abi.OK) {
+            throw new UsageError("--profile: " + lastError(lib));
         }
-        throw new UsageError("--profile: " + lastError(lib));
+        long[] handle = new long[1];
+        if (lib.settingsNew(handle) == Abi.OK) {
+            lib.settingsFree(handle[0]);
+            return;
+        }
+        String error = lastError(lib);
+        lib.setDefaultProfile("");
+        lib.settingsFree(Runner.newSettings(lib));
+        throw new UsageError("--profile: " + error);
     }
 
     /**
-     * Apply the options to the settings handle {@code s}. Each run of the program is one test case,
-     * so this sets the number of test cases to 1 and suppresses the two health checks that measure
-     * runs of many test cases.
+     * Each run of the program is one test case, so the two health checks that measure runs of many
+     * test cases are suppressed.
      */
-    private static void configure(Libhegel lib, long s, Arguments args) {
-        for (SettingOption option : args.settings) {
+    private static void configure(Libhegel lib, long s, List<SettingOption> options) {
+        for (SettingOption option : options) {
             apply(lib, s, option);
         }
         lib.settingsTestCases(s, 1);
@@ -172,25 +164,36 @@ final class Main {
                 s, lib.settingsGetSuppressHealthCheck(s) | Abi.HC_TOO_SLOW | Abi.HC_TEST_CASES_TOO_LARGE);
     }
 
+    /**
+     * An option without a value is still sent to the engine, as the empty string, so that an unknown
+     * option is reported as unknown rather than as missing its value.
+     */
     private static void apply(Libhegel lib, long s, SettingOption option) {
-        String value = Objects.toString(option.value, "");
-        boolean accepted = lib.settingsFromString(s, option.key, value) == Abi.OK;
-        String error = accepted ? "" : lastError(lib).replaceFirst("^hegel_settings_set_from_string: ", "");
-        if (error.startsWith("unknown setting")) {
-            throw new UsageError("unknown argument: " + option.flag);
+        String error = setFromString(lib, s, option.key(), Objects.requireNonNullElse(option.value(), ""));
+        if (error != null && error.startsWith("unknown setting")) {
+            throw new UsageError("unknown argument: " + option.flag());
         }
-        if (option.value == null) {
-            throw new UsageError(option.flag + " requires a value");
+        if (option.value() == null) {
+            throw new UsageError(option.flag() + " requires a value");
         }
-        if (option.key.equals("database_key") && value.isEmpty()) {
+        if (error != null) {
+            throw new UsageError(option.flag() + " " + withoutKey(error, option.key()));
+        }
+        if (option.key().equals("database_key") && option.value().isEmpty()) {
             throw new UsageError("--database-key expects a non-empty key");
         }
-        if (!accepted) {
-            // The engine's message starts with the key; replace it with the option's name.
-            String reason =
-                    error.startsWith("`" + option.key + "` ") ? error.substring(option.key.length() + 3) : error;
-            throw new UsageError(option.flag + " " + reason);
+    }
+
+    private static String setFromString(Libhegel lib, long s, String key, String value) {
+        if (lib.settingsFromString(s, key, value) == Abi.OK) {
+            return null;
         }
+        return lastError(lib).replaceFirst("^hegel_settings_set_from_string: ", "");
+    }
+
+    private static String withoutKey(String message, String key) {
+        String prefix = "`" + key + "` ";
+        return message.startsWith(prefix) ? message.substring(prefix.length()) : message;
     }
 
     private static String lastError(Libhegel lib) {

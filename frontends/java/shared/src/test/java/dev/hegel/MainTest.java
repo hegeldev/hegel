@@ -12,14 +12,15 @@ import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+import java.util.function.IntConsumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
-/** Tests {@link Main} against the engine, and against the fake for cases the engine can't cause. */
 class MainTest {
     private static final Settings NO_DATABASE = new Settings().database(Database.disabled());
     private static final Consumer<TestCase> PASS = tc -> tc.draw(integers(), "n");
@@ -89,7 +90,7 @@ class MainTest {
         };
         for (String[] c : cases) {
             AtomicInteger ran = new AtomicInteger();
-            String[] args = java.util.Arrays.copyOfRange(c, 1, c.length);
+            String[] args = Arrays.copyOfRange(c, 1, c.length);
             Result result = run(tc -> ran.incrementAndGet(), args);
             assertEquals(2, result.status, c[0]);
             assertEquals(0, ran.get(), c[0]);
@@ -187,11 +188,36 @@ class MainTest {
         assertTrue(result.err.startsWith("error: --profile: bad name"), result.err);
 
         FakeLibhegel unresolved = new FakeLibhegel();
-        unresolved.settingsNewRc = Abi.E_INVALID_ARG;
+        unresolved.unresolvableProfile = "x";
         unresolved.lastError = "no such profile";
         result = run(unresolved, tc -> {}, new Settings(), "--profile=x");
         assertEquals(2, result.status);
         assertTrue(result.err.startsWith("error: --profile: no such profile"), result.err);
+        assertEquals("", unresolved.defaultProfile);
+    }
+
+    @Test
+    void anEnvironmentErrorUnderAProfileIsNotAUsageError() {
+        FakeLibhegel badEnvironment = new FakeLibhegel();
+        badEnvironment.settingsNewRc = Abi.E_INVALID_ARG;
+        badEnvironment.lastError = "HEGEL_TEST_CASES is not a number";
+        Result result = run(badEnvironment, tc -> {}, new Settings(), "--profile=ci");
+        assertEquals(1, result.status, result.err);
+        assertTrue(result.err.startsWith("error: HEGEL_TEST_CASES"), result.err);
+        assertFalse(result.err.contains("Usage: "), result.err);
+        assertEquals("", badEnvironment.defaultProfile);
+    }
+
+    @Test
+    void aBlobReplayEndingInAnErrorNamesTheOption() {
+        FakeLibhegel fake = new FakeLibhegel();
+        fake.runStatus = Abi.RUN_STATUS_ERROR;
+        fake.runError = "health check failed";
+        Result result = run(fake, tc -> {}, new Settings(), "--failure-blob=blob");
+        assertEquals(1, result.status, result.err);
+        assertTrue(
+                result.err.startsWith("error: the failure blob replay ended in an error: health check failed"),
+                result.err);
     }
 
     @Test
@@ -206,7 +232,7 @@ class MainTest {
     @Test
     void hegelMainExitsWithTheStatusAndNamesTheCaller() {
         List<Integer> statuses = new ArrayList<>();
-        java.util.function.IntConsumer exit = Main.exit;
+        IntConsumer exit = Main.exit;
         PrintStream stdout = System.out;
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         Main.exit = statuses::add;
@@ -218,7 +244,7 @@ class MainTest {
             System.setOut(stdout);
         }
         assertEquals(List.of(0), statuses);
-        assertTrue(out.toString(StandardCharsets.UTF_8).contains(MainTest.class.getName()));
+        assertTrue(out.toString(StandardCharsets.UTF_8).startsWith("Usage: java " + MainTest.class.getName()));
     }
 
     @Test

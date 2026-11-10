@@ -18,12 +18,15 @@ final class PrintingReporter implements Reporter {
     }
 
     /**
-     * Create a reporter for {@code out}.
-     *
-     * @param standalone true for a program run by {@link Hegel#main}. Prints the failure's stack
-     * trace and print {@code --failure-blob} as the way to replay a failure
+     * A reporter for a program run by {@link Hegel#main}. It prints each failure's stack trace,
+     * since no test framework rethrows the exception, and gives {@code --failure-blob} as the way
+     * to replay a failure.
      */
-    PrintingReporter(PrintStream out, boolean standalone) {
+    static PrintingReporter forMain(PrintStream out) {
+        return new PrintingReporter(out, true);
+    }
+
+    private PrintingReporter(PrintStream out, boolean standalone) {
         this.out = out;
         this.standalone = standalone;
     }

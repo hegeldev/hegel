@@ -117,7 +117,7 @@ final class Runner {
      * fail on user input: a malformed {@code hegel.toml} or variable surfaces as an {@link
      * IllegalArgumentException} carrying the engine's diagnostic.
      */
-    private static long newSettings(Libhegel lib) {
+    static long newSettings(Libhegel lib) {
         long[] out = new long[1];
         int rc = lib.settingsNew(out);
         if (rc == Abi.E_INVALID_ARG) {
@@ -175,7 +175,7 @@ final class Runner {
         switch (lib.runResultStatus(result)) {
             case Abi.RUN_STATUS_PASSED:
                 if (replayingBlob) {
-                    throw new HegelException(STALE_BLOB);
+                    throw new BlobNotReproducedException(null);
                 }
                 return new RunReport(RunStatus.PASSED, counts.snapshot(), null, List.of());
             case Abi.RUN_STATUS_ERROR:
@@ -184,7 +184,7 @@ final class Runner {
                 // cannot decode never gets this far: hegel_run_start_blob rejects it.)
                 String error = nullToEmpty(lib.runResultError(result));
                 if (replayingBlob) {
-                    throw new HegelException("reproduceFailure: the blob replay ended in an error: " + error);
+                    throw new BlobNotReproducedException(error);
                 }
                 return new RunReport(RunStatus.ERROR, counts.snapshot(), error, List.of());
             default:

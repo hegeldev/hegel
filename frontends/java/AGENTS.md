@@ -163,7 +163,8 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   `IllegalArgumentException` with the engine's diagnostic, other negatives →
   `HegelException`) and short-circuiting once a case is aborted.
 - **Standalone programs** — `Hegel.main` calls `Main.run` and then exits the
-  process through `Main.exit`, which tests replace. `Main` parses the command
+  process through `Main.exit`, which tests replace (JaCoCo cannot cover a
+  call to `System.exit`). `Main` parses the command
   line and passes each setting option to the engine by name
   (`hegel_settings_set_from_string`). It does this in the `configure` callback
   of `Runner.run`, which runs after `applySettings`, so options override
