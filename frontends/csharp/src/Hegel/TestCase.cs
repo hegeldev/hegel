@@ -35,6 +35,47 @@ public sealed class TestCase
         }
     }
 
+    internal sealed class AttemptFrame : IDisposable
+    {
+        private readonly TestCase _tc;
+        private readonly AttemptFrame? _outer;
+        private readonly List<Action> _undo = [];
+        private bool _kept;
+
+        internal AttemptFrame(TestCase tc)
+        {
+            _tc = tc;
+            _outer = tc._attempt;
+            tc._attempt = this;
+        }
+
+        internal void OnRejection(Action undo) => _undo.Add(undo);
+
+        internal void Keep() => _kept = true;
+
+        public void Dispose()
+        {
+            _tc._attempt = _outer;
+            if (_kept)
+            {
+                _outer?._undo.AddRange(_undo);
+            }
+            else if (!_tc.IsAborted)
+            {
+                for (var i = _undo.Count - 1; i >= 0; i--)
+                {
+                    _undo[i]();
+                }
+            }
+        }
+    }
+
+    private AttemptFrame? _attempt;
+
+    internal AttemptFrame Attempt() => new(this);
+
+    internal void OnRejection(Action undo) => _attempt?.OnRejection(undo);
+
     private sealed class Shared
     {
         internal readonly bool Captured;

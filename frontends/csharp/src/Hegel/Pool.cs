@@ -14,15 +14,24 @@ internal abstract class PoolGenerator<T> : PrintableGenerator<T>
 
 internal static class PoolDraws
 {
-    internal static T Draw<T>(TestCase tc, nint poolId, Dictionary<long, T> values, bool consume)
+    internal static T Draw<T>(TestCase tc, nint poolId, Dictionary<long, T> values, object gate, bool consume)
     {
         tc.Assume(values.Count > 0);
         var variableId = tc.PoolGenerate(poolId, consume);
-        if (!consume)
-        {
-            return values[variableId];
-        }
+        return consume ? Consume(tc, poolId, values, gate, variableId) : values[variableId];
+    }
+
+    private static T Consume<T>(TestCase tc, nint poolId, Dictionary<long, T> values, object gate, long variableId)
+    {
         values.Remove(variableId, out var value);
+        tc.OnRejection(() =>
+        {
+            lock (gate)
+            {
+                tc.PoolRestore(poolId, variableId);
+                values[variableId] = value!;
+            }
+        });
         return value!;
     }
 
@@ -39,7 +48,7 @@ internal static class PoolDraws
         }
     }
 
-    internal static T DrawFiltered<T>(TestCase tc, nint poolId, Dictionary<long, T> values, Func<T, bool> predicate)
+    internal static T DrawFiltered<T>(TestCase tc, nint poolId, Dictionary<long, T> values, object gate, Func<T, bool> predicate)
     {
         var rejected = new List<long>();
         try
@@ -51,13 +60,13 @@ internal static class PoolDraws
                 try
                 {
                     var variableId = Draw(tc, poolId);
+                    rejected.Add(variableId);
                     if (predicate(values[variableId]))
                     {
                         discard = false;
-                        values.Remove(variableId, out var value);
-                        return value!;
+                        rejected.Remove(variableId);
+                        return Consume(tc, poolId, values, gate, variableId);
                     }
-                    rejected.Add(variableId);
                 }
                 finally
                 {
@@ -86,6 +95,7 @@ public sealed class Pool<T>
     private readonly TestCase _tc;
     private readonly nint _poolId;
     private readonly Dictionary<long, T> _values = [];
+    private readonly object _gate = new();
 
     /// <summary>A pool for the test case <paramref name="tc"/>.</summary>
     public Pool(TestCase tc)
@@ -115,14 +125,14 @@ public sealed class Pool<T>
     {
         public override ulong Label => Hegel.Label.PoolValuesReusable;
 
-        protected internal override T DoDraw(TestCase tc) => PoolDraws.Draw(tc, pool._poolId, pool._values, false);
+        protected internal override T DoDraw(TestCase tc) => PoolDraws.Draw(tc, pool._poolId, pool._values, pool._gate, false);
     }
 
     private sealed class ConsumingGenerator(Pool<T> pool) : PoolGenerator<T>
     {
         public override ulong Label => Hegel.Label.PoolValuesConsumed;
 
-        protected internal override T DoDraw(TestCase tc) => PoolDraws.Draw(tc, pool._poolId, pool._values, true);
+        protected internal override T DoDraw(TestCase tc) => PoolDraws.Draw(tc, pool._poolId, pool._values, pool._gate, true);
 
         public override PrintableGenerator<T> Filter(Func<T, bool> predicate) => new FilteredConsuming(pool, predicate);
     }
@@ -131,7 +141,7 @@ public sealed class Pool<T>
     {
         public override ulong Label => Hegel.Label.Combine(Hegel.Label.Filter, Hegel.Label.PoolValuesConsumed);
 
-        protected internal override T DoDraw(TestCase tc) => PoolDraws.DrawFiltered(tc, pool._poolId, pool._values, predicate);
+        protected internal override T DoDraw(TestCase tc) => PoolDraws.DrawFiltered(tc, pool._poolId, pool._values, pool._gate, predicate);
     }
 }
 
@@ -198,7 +208,7 @@ public sealed class ConcurrentPool<T>
         {
             lock (pool._gate)
             {
-                return PoolDraws.Draw(tc, pool._poolId, pool._values, false);
+                return PoolDraws.Draw(tc, pool._poolId, pool._values, pool._gate, false);
             }
         }
     }
@@ -211,7 +221,7 @@ public sealed class ConcurrentPool<T>
         {
             lock (pool._gate)
             {
-                return PoolDraws.Draw(tc, pool._poolId, pool._values, true);
+                return PoolDraws.Draw(tc, pool._poolId, pool._values, pool._gate, true);
             }
         }
 
@@ -226,7 +236,7 @@ public sealed class ConcurrentPool<T>
         {
             lock (pool._gate)
             {
-                return PoolDraws.DrawFiltered(tc, pool._poolId, pool._values, predicate);
+                return PoolDraws.DrawFiltered(tc, pool._poolId, pool._values, pool._gate, predicate);
             }
         }
     }

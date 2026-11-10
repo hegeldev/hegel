@@ -93,6 +93,7 @@ public sealed class FilteredGenerator<T> : PrintableGenerator<T>
         var output = Components.Out(printer);
         for (var attempt = 0; attempt < Attempts; attempt++)
         {
+            using var frame = tc.Attempt();
             tc.StartSpan(Hegel.Label.FilterAttempt);
             var discard = true;
             var speculation = output.Speculate();
@@ -103,6 +104,7 @@ public sealed class FilteredGenerator<T> : PrintableGenerator<T>
                 {
                     discard = false;
                     speculation.Commit();
+                    frame.Keep();
                     return value;
                 }
             }
@@ -593,6 +595,7 @@ public sealed class ListGenerator<T> : PrintableGenerator<List<T>>
             while (tc.CollectionMore(id))
             {
                 using var speculation = p.Speculate();
+                using var attempt = tc.Attempt();
                 if (output.Count > 0)
                 {
                     p.Separator();
@@ -606,6 +609,7 @@ public sealed class ListGenerator<T> : PrintableGenerator<List<T>>
                 else
                 {
                     speculation.Commit();
+                    attempt.Keep();
                     output.Add(value);
                 }
             }
@@ -696,6 +700,7 @@ public sealed class SetGenerator<T> : PrintableGenerator<HashSet<T>>
             while (tc.CollectionMore(id))
             {
                 using var speculation = p.Speculate();
+                using var attempt = tc.Attempt();
                 if (output.Count > 0)
                 {
                     p.Separator();
@@ -704,6 +709,7 @@ public sealed class SetGenerator<T> : PrintableGenerator<HashSet<T>>
                 if (output.Add(value))
                 {
                     speculation.Commit();
+                    attempt.Keep();
                 }
                 else
                 {
@@ -765,6 +771,7 @@ public sealed class MapGenerator<TKey, TValue> : PrintableGenerator<Dictionary<T
             while (tc.CollectionMore(id))
             {
                 using var speculation = p.Speculate();
+                using var attempt = tc.Attempt();
                 if (output.Count > 0)
                 {
                     p.Separator();
@@ -781,6 +788,7 @@ public sealed class MapGenerator<TKey, TValue> : PrintableGenerator<Dictionary<T
                     p.Text("] = ");
                     output[key] = Components.Draw(tc, _values, printer);
                     speculation.Commit();
+                    attempt.Keep();
                 }
             }
             p.EndGroup("}");
@@ -852,6 +860,7 @@ public sealed class RecursiveGenerator<T> : PrintableGenerator<T>
             while (true)
             {
                 using var speculation = p.Speculate();
+                using var attempt = tc.Attempt();
                 T value;
                 try
                 {
@@ -865,6 +874,7 @@ public sealed class RecursiveGenerator<T> : PrintableGenerator<T>
                 if (tc.RecursionFinish(recursion))
                 {
                     speculation.Commit();
+                    attempt.Keep();
                     return value;
                 }
             }
