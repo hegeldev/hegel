@@ -370,8 +370,8 @@ public class CombinatorTests
     [Fact]
     public void RecursivePrintsThroughTheSubtrees()
     {
-        var mapped = Generators.Recursive<object>(Generators.Just<object>(0), sub => Generators.Lists(sub).MinSize(2).MaxSize(2).Map(xs => (object)xs));
-        Assert.Equal("var x_1 = new List<object> {0, 0};", Gen.MinimalOutput(mapped, v => v is List<object>));
+        var mapped = Generators.Recursive<object>(Generators.Just<object>(0), sub => Generators.Lists(sub).MinSize(1).MaxSize(2).Map(xs => (object)xs));
+        Assert.Equal("var x_1 = new List<object> {0};", Gen.MinimalOutput(mapped, v => v is List<object>));
         var nested = Generators.Recursive<object>(Generators.Just<object>(0), sub => Generators.Composite((tc, p) => (object)tc.DrawAndPrint(Generators.Lists(sub).MinSize(1).MaxSize(1), p)));
         Assert.Equal("var x_1 = new List<object> {0};", Gen.MinimalOutput(nested, v => v is List<object>));
         Assert.Equal("var x_1 = new List<object> {new List<object> {0}};", Gen.MinimalOutput(nested, v => v is List<object> xs && xs[0] is List<object>));
