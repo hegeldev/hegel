@@ -288,6 +288,14 @@
   </build>
 
   <profiles>
+    <!-- The examples that depend on SQLite: `just java::run-sqlite-bank`. -->
+    <profile>
+      <id>sqlite-examples</id>
+      <modules>
+        <module>examples/sqlite_bank</module>
+      </modules>
+    </profile>
+
     <!-- Windows ships python.exe but no python3 launcher. -->
     <profile>
       <id>windows-python</id>
