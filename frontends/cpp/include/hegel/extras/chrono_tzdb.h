@@ -37,8 +37,7 @@
 #include <string>
 #include <vector>
 
-#if defined(__GLIBCXX__) &&                                                    \
-    !(defined(__cpp_lib_chrono) && __cpp_lib_chrono >= 201907L)
+#if defined(__GLIBCXX__) && (_GLIBCXX_RELEASE < 13 || __cplusplus < 202002L)
 #error                                                                         \
     "hegel/extras/chrono_tzdb.h needs a standard library that implements std::chrono::get_tzdb(): libstdc++ has it from GCC 13 on, in C++20 mode"
 #endif
