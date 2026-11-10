@@ -100,12 +100,17 @@ lib/                         # Library source
                              #   handles; typed draws + string-generator handles;
                              #   events; the pretty-printer document (printer_*,
                              #   test_case_printer, note); the temporal draws,
-                             #   zone sources (callbacks guarded: an OCaml
-                             #   exception becomes hegel_context_set_error, never
-                             #   an unwind into C; loader closures rooted for the
-                             #   life of the process) and zone queries
-    temporal_types.ml        # the Temporal value records/variants, shared by
-                             #   Ffi and Hegel.Temporal (which re-exports them)
+                             #   formatters, spec handles (one OCaml type per
+                             #   C handle kind), zone sources and zone queries,
+                             #   which only convert between the C structs and
+                             #   temporal_types (narrow fields wrap; enums and
+                             #   masks stay ints): the logic is in
+                             #   generators_temporal. A zone loader is rooted
+                             #   in a table until the engine's release hook
+                             #   drops it
+    temporal_types.ml        # records mirroring the C temporal structs field
+                             #   for field, one submodule each; Hegel.Temporal
+                             #   re-exports the value types among them
     loader.ml                # locate libhegel at runtime (env > site > the
                              #   checkout's in-tree target/ build (libhegel_c.<ext>))
   cli.ml / cli.mli           # Hegel.main: cmdliner flags (--profile applied
@@ -137,7 +142,10 @@ lib/                         # Library source
                              #   but no trie — the engine shrinks results)
   generators_temporal.ml.in  # Hegel.Temporal: dates/times/datetimes/instants/
                              #   offsets/zones/zoned_datetimes/durations/spans,
-                             #   their printers (the engine's RFC 9557 forms),
+                             #   a module per value type (text from the
+                             #   engine's hegel_format_*), the marshalling to
+                             #   and from Ffi (saturation, enum codes, tag
+                             #   masks, zone data, callback guards),
                              #   Zone_source, the process default source and the
                              #   resolve/offset_at/info queries (cppo → .ml)
   derive.ml                  # Hegel.Derive: scope-resolved names derived code
@@ -283,8 +291,9 @@ thin 1:1 wrappers: settings handles, the run lifecycle (`run_start`,
 `next_test_case`, `run_result`, `run_free`), and per-test-case primitives — the
 typed draws (`generate_integer`, `generate_boolean`, `generate_float`,
 `generate_bytes`, `generate_string` + the `string_generator_*` handle
-constructors, the temporal draws `generate_date`/`time`/`datetime`/`instant`/
-`offset`/`duration`/`span`/`timezone`/`zoned_datetime`, `generate_ipv4`/`ipv6`), spans,
+constructors, the temporal draws `generate_date`/`time`/`datetime`/`timestamp`/
+`offset`/`duration`/`span`/`timezone`/`zoned_datetime`/`zoned_datetime_for_zone`
+and the `format_*` text functions, `generate_ipv4`/`ipv6`), spans,
 collections, pools, state machines (`new_state_machine` takes the per-machine
 `~step_count` since libhegel 0.38.0; there is no settings-level step count;
 rules and invariants are declared one call at a time with
@@ -1094,7 +1103,7 @@ typed FFI call (`Hegel_ffi.Ffi` / `Internal.generate_*`):
 - `text` / `characters` → build a text `string_generator` handle (codec / codepoint bounds / categories / include-exclude chars) then `generate_string`; surrogates auto-excluded
 - `chars` → `generate_text` fixed to `min_size:max_size:1`, codepoints 0-0xFF (Latin-1), decoded via `String.get_utf_8_uchar` (a codepoint above 127 encodes to 2 UTF-8 bytes, so this can't just index byte 0) into a native `char` via `make_characters ~of_char ~sexp_of`
 - `from_regex` / `emails` / `urls` / `domains` → the matching `string_generator_*` handle + `generate_string`
-- `Temporal.*` → the temporal draws, each a `Leaf` over the matching `Ffi.generate_*` through `Internal.with_draw` (the stop guard), returning the plain `Temporal_types` records. The configuration handles (date options; timezone, zoned and span specs) are built on a generator's first draw and cached in its `spec_cache` (a `Locked` list keyed by zone-source address and, for the fallback zoned path, zone name), so building a generator never loads libhegel, and an engine rejection (`HEGEL_E_INVALID_ARG` → `Usage_error`) is raised from every draw since nothing is cached. The cache is freed by a `Gc.finalise` finaliser (`Ffi.free_when_unreachable`); unlike the clone finaliser described under Handle ownership, it is safe because `with_spec` keeps the cache alive across the engine call with `Sys.opaque_identity`. Only an `Unknown` offset bound and civil plus instant bounds together raise at construction. A query's `source = None` means the default source in effect at each draw (the cache key then varies with `set_default_zone_source`). `Temporal.zones` stores its `Ffi.zone_query` in the `Leaf`'s `zones` field; `zoned_datetimes` given such a leaf makes one joint engine draw, and given any other zone generator draws the zone, then a single-name zoned draw (links, legacy and opaque allowed) against the default source. The process default lives in a `Locked` cell (`None` until `set_default_zone_source`, which also sets the engine's default). A drawn zone's `primary_name` comes from an `info` query in the same source. Zone sources are never freed. The deprecated string `dates`/`times`/`datetimes` and `make_dates`/`make_times`/`make_datetimes` (`Generators_temporal.Legacy`, included into `Generators.Public`) are `map` + `with_printer` over the `Temporal` generators, formatting exactly as before
+- `Temporal.*` → the temporal draws, each a `Leaf` over the matching `Ffi.generate_*` through `Internal.with_draw` (the stop guard). Each value type is a module (`Temporal.Date`, `Time`, `Datetime`, `Instant`, `Offset`, `Zoned_datetime`, `Duration`, `Span`) with `t`, `to_string` (the engine's `hegel_format_*` text; there is no OCaml formatter), `pp`, `sexp_of_t` (that text as an `Internal.raw_text` atom), `equal`, `compare` and `hegel_generator`; the option enums are polymorphic variants, turned into the engine's codes when the generator is built. `Ffi` is not instrumented, so everything with a branch lives here and is tested: `saturated` (an int outside a narrow C field goes in as the field's maximum, which the engine rejects, instead of wrapping to a valid value), the enum codes and masks, the kind and tag decoding, `Zone_source.raw_data` (zone data as fields to the flat `Temporal_types.Zone_data`), and `guarded`, which turns an exception in an oracle or loader callback into `Ffi.context_set_error` and a failure return, never an unwind into C. The configuration handles (date options; timezone, zoned and span specs) are built on a generator's first draw, validated with the engine's `_validate` call, and kept in the generator's `cell` (a `Locked` option, one per handle), so building a generator never loads libhegel, and an engine rejection (`HEGEL_E_INVALID_ARG` → `Usage_error`) is raised from every draw since a rejected handle is freed, not kept. A cell is freed by a `Gc.finalise` finaliser (`Ffi.free_when_unreachable`); unlike the clone finaliser described under Handle ownership, it is safe because `with_spec` keeps the cell alive across the engine call with `Sys.opaque_identity`. `Generators.Private.live_temporal_specs` counts the handles built and not yet freed, for the test of that finaliser. Two argument errors raise at construction: civil plus instant bounds together, and `zoned_datetimes ~zones:(zones …) ~source`. The process default source lives in a `Locked` cell (`None`, meaning the bundled database, until `set_default_zone_source`, which sets the engine's default under the same lock and returns the previous one); a generator reads it once, when it is built (`source_in_effect`), and every engine call is given an explicit source, so the engine's own default is never what decides. `Temporal.zones` stores its `zone_query` (defined in `generators_core`, source included) in the `Leaf`'s `zones` field; `zoned_datetimes` given such a leaf, or no `~zones`, makes one joint engine draw (`hegel_generate_zoned_datetime`), and given any other zone generator draws the name, then the wall time with `hegel_generate_zoned_datetime_for_zone` against `~source` or the default it read at construction, adding a hint about `~source` to the engine's error for a name the source lacks. A zone is its name: there is no zone record and no second query per draw. A loader set with `Zone_source.set_loader` is released when another replaces it or `remove_loader` removes it; zone source handles themselves are never freed, so sources are made once, outside test bodies. The deprecated string `dates`/`times`/`datetimes` and `make_dates`/`make_times`/`make_datetimes` (`Generators_temporal.Legacy`, included into `Generators.Public`) are `map` + `with_printer` over the `Temporal` generators, formatting exactly as before
 - `ip_addresses` → `generate_ipv4`/`generate_ipv6` raw bytes, rendered to strings by the `ipaddr` library (`Ipaddr.V4/V6.{of_octets_exn, to_string}`; RFC 5952 for v6)
 - `sampled_from` → `generate_integer 0 (n-1)` then index into the values array
 - `just` → a Leaf whose `draw` ignores the engine and returns the constant

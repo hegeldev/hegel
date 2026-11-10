@@ -1,202 +1,142 @@
-type date =
-  { year : int
-  ; month : int
-  ; day : int
-  }
+module Date = struct
+  type t =
+    { year : int
+    ; month : int
+    ; day : int
+    }
+end
 
-type time =
-  { hour : int
-  ; minute : int
-  ; second : int
-  ; nanosecond : int
-  }
+module Time = struct
+  type t =
+    { hour : int
+    ; minute : int
+    ; second : int
+    ; nanosecond : int
+    }
+end
 
-type datetime =
-  { date : date
-  ; time : time
-  }
+module Datetime = struct
+  type t =
+    { date : Date.t
+    ; time : Time.t
+    }
+end
 
-type instant =
-  { second : int
-  ; nanosecond : int
-  }
+module Instant = struct
+  type t =
+    { second : int
+    ; nanosecond : int
+    }
+end
 
-type utc_offset =
-  | Known of int
-  | Unknown
+module Duration = struct
+  type t =
+    { seconds : int
+    ; nanoseconds : int
+    }
+end
 
-type time_zone =
-  { name : string
-  ; primary_name : string
-  }
+module Span = struct
+  type t =
+    { years : int
+    ; months : int
+    ; weeks : int
+    ; days : int
+    ; hours : int
+    ; minutes : int
+    ; seconds : int
+    ; milliseconds : int
+    ; microseconds : int
+    ; nanoseconds : int
+    }
+end
 
-type transition_kind =
-  | Unique
-  | Gap
-  | Fold
+module Offset = struct
+  type t =
+    { seconds : int
+    ; known : bool
+    }
+end
 
-type zoned_datetime =
-  { zone : time_zone
-  ; civil : datetime
-  ; kind : transition_kind
-  ; offset_before : utc_offset
-  ; offset_after : utc_offset
-  ; fold : bool
-  ; offset : utc_offset
-  ; instant : instant
-  }
+module Zoned = struct
+  type t =
+    { civil : Datetime.t
+    ; offset_seconds : int
+    ; offset_known : bool
+    ; fold : bool
+    ; kind : int
+    ; offset_before : int
+    ; offset_after : int
+    ; timestamp : Instant.t
+    }
+end
 
-type signed_duration =
-  { seconds : int
-  ; nanoseconds : int
-  }
+module Resolution = struct
+  type t =
+    { kind : int
+    ; offset_before : int
+    ; offset_after : int
+    ; offset_seconds : int
+    ; offset_known : bool
+    ; timestamp : Instant.t
+    }
+end
 
-type span =
-  { years : int
-  ; months : int
-  ; weeks : int
-  ; days : int
-  ; hours : int
-  ; minutes : int
-  ; seconds : int
-  ; milliseconds : int
-  ; microseconds : int
-  ; nanoseconds : int
-  }
+module Zone_offset = struct
+  type t =
+    { offset_seconds : int
+    ; offset_known : bool
+    ; is_dst : bool
+    ; abbreviation : string
+    }
+end
 
-type precision =
-  | Nanoseconds
-  | Microseconds
-  | Milliseconds
-  | Seconds
-  | Minutes
-  | Hours
+module Zone_info = struct
+  type t =
+    { known : bool
+    ; primary_name : string
+    ; is_link : bool
+    ; rank : int
+    ; tags : int
+    }
+end
 
-type granularity =
-  | Hours
-  | Quarter_hours
-  | Minutes
-  | Seconds
+module Zone_type = struct
+  type t =
+    { offset_seconds : int
+    ; is_dst : bool
+    ; abbreviation : string
+    }
+end
 
-type weekday =
-  | Monday
-  | Tuesday
-  | Wednesday
-  | Thursday
-  | Friday
-  | Saturday
-  | Sunday
+module Zone_transition = struct
+  type t =
+    { instant : int
+    ; local_type : Zone_type.t
+    }
+end
 
-type month =
-  | January
-  | February
-  | March
-  | April
-  | May
-  | June
-  | July
-  | August
-  | September
-  | October
-  | November
-  | December
+module Rule_date = struct
+  type t =
+    { kind : int
+    ; day : int
+    ; month : int
+    ; week : int
+    ; weekday : int
+    ; time : int
+    }
+end
 
-type ambiguous =
-  | Both
-  | Earlier
-  | Later
-
-type span_sign =
-  | Uniform
-  | Mixed
-  | Non_negative
-
-type span_unit =
-  | Years
-  | Months
-  | Weeks
-  | Days
-  | Hours
-  | Minutes
-  | Seconds
-  | Milliseconds
-  | Microseconds
-  | Nanoseconds
-
-type tag =
-  | Fixed
-  | Whole_hour
-  | Fractional
-  | Seconds
-  | Dst
-  | Dst_other
-  | Multi
-  | Base_change
-  | Midnight
-  | Spans_midnight
-  | Whole_day
-  | Same_offset
-  | Undefined
-  | Link
-  | Legacy
-  | Inverted_sign
-
-type zone_info =
-  { primary_name : string
-  ; is_link : bool
-  ; rank : int
-  ; tags : tag list
-  }
-
-type zone_offset =
-  { offset : utc_offset
-  ; is_dst : bool
-  ; abbreviation : string
-  }
-
-type zone_type =
-  { offset_seconds : int
-  ; is_dst : bool
-  ; abbreviation : string
-  }
-
-type zone_transition =
-  { instant : int
-  ; local_type : zone_type
-  }
-
-type rule_day =
-  | Julian of int
-  | Zero_based of int
-  | Month_week_day of
-      { month : month
-      ; week : int
-      ; weekday : weekday
-      }
-
-type rule_date =
-  { day : rule_day
-  ; time : int
-  }
-
-type dst_rule =
-  { local_type : zone_type
-  ; starts : rule_date
-  ; ends : rule_date
-  }
-
-type zone_rule =
-  { standard : zone_type
-  ; dst : dst_rule option
-  }
-
-type after =
-  | Hold
-  | Rule of zone_rule
-  | Infer of int
-
-type zone_data =
-  { initial : zone_type
-  ; transitions : zone_transition list
-  ; after : after
-  }
+module Zone_data = struct
+  type t =
+    { initial : Zone_type.t
+    ; transitions : Zone_transition.t list
+    ; after : int
+    ; standard : Zone_type.t
+    ; has_dst : bool
+    ; dst : Zone_type.t
+    ; dst_start : Rule_date.t
+    ; dst_end : Rule_date.t
+    ; last_year : int
+    }
+end

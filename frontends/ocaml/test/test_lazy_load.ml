@@ -26,11 +26,17 @@ let test_generators_do_not_load_libhegel () =
   let (_ : (int list, Hegel.printable) Hegel.generator) =
     Hegel.lists (Hegel.integers ()) ()
   in
-  let (_ : (Hegel.Temporal.zoned_datetime, Hegel.printable) Hegel.generator) =
+  let (_ : (Hegel.Temporal.Zoned_datetime.t, Hegel.printable) Hegel.generator) =
     Hegel.Temporal.zoned_datetimes ()
   in
-  let (_ : (Hegel.Temporal.utc_offset, Hegel.printable) Hegel.generator) =
+  let (_ : (Hegel.Temporal.Zoned_datetime.t, Hegel.printable) Hegel.generator) =
+    Hegel.Temporal.zoned_datetimes ~zones:(Hegel.sampled_from [ "UTC" ]) ()
+  in
+  let (_ : (Hegel.Temporal.Offset.t, Hegel.printable) Hegel.generator) =
     Hegel.Temporal.offsets ()
+  in
+  let (_ : (Hegel.Temporal.Span.t, Hegel.printable) Hegel.generator) =
+    Hegel.Temporal.Span.hegel_generator
   in
   (* The engine is only reached on the first context. *)
   expect_load_failure ~path:missing_library ();

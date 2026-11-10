@@ -207,8 +207,8 @@ val target : test_case -> label:string -> value:float -> unit
 val raw_text : string -> Sexplib0.Sexp.t
 
 (** [render_sexp ctx printer sexp] writes [sexp] to [printer] in s-expression
-    syntax, an atom from {!raw_text} verbatim. Lists are printed with breaks between elements when the line
-    overflows. *)
+    syntax, an atom from {!raw_text} verbatim. Lists are printed with breaks
+    between elements when the line overflows. *)
 val render_sexp
   :  Hegel_ffi.Ffi.context
   -> Hegel_ffi.Ffi.printer

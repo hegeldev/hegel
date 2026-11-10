@@ -64,9 +64,9 @@ end
       one of the typed {!Internal} primitives) and returns the typed value.
       Mapping a [Leaf] composes the closure in place, staying a leaf (no extra
       span), because the engine already wraps each primitive draw in its own
-      span. A leaf of [Temporal.zones] also holds its [zones] query, which
-      [Temporal.zoned_datetimes] draws the zone and the wall time from in one
-      engine draw; mapping drops it.
+      span. A leaf of [Temporal.zones] also holds its {!zone_query}, which
+      is how [Temporal.zoned_datetimes] recognises it and draws the zone and
+      the wall time in one engine draw; mapping drops it.
     - [Mapped] cores wrap a source and a transform function.
     - [FlatMapped] cores wrap a source and a function returning a core.
     - [Filtered] cores wrap a source and a predicate.
@@ -78,11 +78,30 @@ end
     Every core carries its span [label] (see {!Labels}), fixed at construction
     from the core's own kind and its components' labels. *)
 
+(** What a [Temporal.zones] generator draws: the settings of its time zone
+    spec. [source] is the zone source the generator read when it was built,
+    [None] for the bundled database. *)
+type zone_query
+#ifdef OXCAML
+  : value mod portable contended
+#endif
+  =
+  { names : string list option
+  ; allow_links : bool
+  ; allow_legacy : bool
+  ; allow_unknown : bool
+  ; allow_opaque : bool
+  ; source : Hegel_ffi.Ffi.zone_source option
+  }
+#ifdef OXCAML
+[@@unsafe_allow_any_mode_crossing]
+#endif
+
 type 'a core CROSSING =
   | Leaf :
       { draw : (Internal.test_case -> 'a)
       ; label : int64
-      ; zones : Hegel_ffi.Ffi.zone_query option
+      ; zones : zone_query option
       }
       -> 'a core
   | Mapped :

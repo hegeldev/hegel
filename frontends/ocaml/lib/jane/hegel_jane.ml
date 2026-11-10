@@ -9,15 +9,15 @@ let last_date = Date.create_exn ~y:9999 ~m:Dec ~d:31
 let first_ofday = Time_ns.Ofday.start_of_day
 let last_ofday = Time_ns.Ofday.start_of_next_day
 
-let to_hegel_date d : T.date =
+let to_hegel_date d : T.Date.t =
   { year = Date.year d; month = Month.to_int (Date.month d); day = Date.day d }
 ;;
 
-let to_core_date ({ year; month; day } : T.date) =
+let to_core_date ({ year; month; day } : T.Date.t) =
   Date.create_exn ~y:year ~m:(Month.of_int_exn month) ~d:day
 ;;
 
-let to_hegel_time t : T.time =
+let to_hegel_time t : T.Time.t =
   let ({ hr; min; sec; ms; us; ns; sign = _ } : Time_ns.Span.Parts.t) =
     Time_ns.Ofday.to_parts t
   in
@@ -28,7 +28,7 @@ let to_hegel_time t : T.time =
   }
 ;;
 
-let to_ofday ({ hour; minute; second; nanosecond } : T.time) =
+let to_ofday ({ hour; minute; second; nanosecond } : T.Time.t) =
   Time_ns.Ofday.create ~hr:hour ~min:minute ~sec:second ~ns:nanosecond ()
 ;;
 
@@ -99,11 +99,11 @@ let times
       ?(max_time = Time_ns.max_value_representable)
       ()
   =
-  let to_instant t : T.instant =
+  let to_instant t : T.Instant.t =
     let ns = Time_ns.to_int_ns_since_epoch t in
     { second = Int.( /% ) ns 1_000_000_000; nanosecond = Int.( % ) ns 1_000_000_000 }
   in
-  let of_instant ({ second; nanosecond } : T.instant) =
+  let of_instant ({ second; nanosecond } : T.Instant.t) =
     Time_ns.of_int_ns_since_epoch ((second * 1_000_000_000) + nanosecond)
   in
   (G.with_printer [@mode portable])

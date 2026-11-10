@@ -113,16 +113,15 @@ let test_dates_invalid_bounds () =
     [ ( "feb 29 2023"
       , { year = 2023; month = 2; day = 29 }
       , { year = 2024; month = 1; day = 1 }
-      , "min_value is not a valid date (year in [-999999, 999999]): 02023-02-29" )
+      , "min_value is not a valid date (year in [-999999, 999999]): 2023-02-29" )
     ; ( "month 13"
       , { year = 2024; month = 1; day = 1 }
       , { year = 2024; month = 13; day = 1 }
-      , "max_value is not a valid date (year in [-999999, 999999]): 02024-13-01" )
+      , "max_value is not a valid date (year in [-999999, 999999]): 2024-13-01" )
     ; ( "min > max"
       , { year = 2024; month = 1; day = 2 }
       , { year = 2024; month = 1; day = 1 }
-      , "generate_date requires min_value <= max_value, got [Date { year: 2024, month: \
-         1, day: 2 }, Date { year: 2024, month: 1, day: 1 }]" )
+      , "generate_date requires min_value <= max_value, got [2024-01-02, 2024-01-01]" )
     ]
 ;;
 
@@ -143,9 +142,8 @@ let test_times_invalid_bounds () =
     ; ( "min > max"
       , { hour = 0; minute = 0; second = 0; nanosecond = 1 }
       , first_time
-      , "generate_time requires min_value <= max_value, got [Time { hour: 0, minute: 0, \
-         second: 0, nanosecond: 1 }, Time { hour: 0, minute: 0, second: 0, nanosecond: 0 \
-         }]" )
+      , "generate_time requires min_value <= max_value, got [00:00:00.000000001, \
+         00:00:00]" )
     ]
 ;;
 
@@ -160,10 +158,8 @@ let test_datetimes_invalid_bounds () =
          , { hour = 0; minute = 0; second = 0; nanosecond = 1 } )
        ~max_datetime:({ year = 2024; month = 1; day = 1 }, first_time)
        ())
-    "generate_datetime requires min_value <= max_value, got [DateTime { date: Date { \
-     year: 2024, month: 1, day: 1 }, time: Time { hour: 0, minute: 0, second: 0, \
-     nanosecond: 1 } }, DateTime { date: Date { year: 2024, month: 1, day: 1 }, time: \
-     Time { hour: 0, minute: 0, second: 0, nanosecond: 0 } }]"
+    "generate_datetime requires min_value <= max_value, got \
+     [2024-01-01T00:00:00.000000001, 2024-01-01T00:00:00]"
 ;;
 
 let test_make_builders () =

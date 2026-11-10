@@ -410,8 +410,8 @@ let should_print tc =
     the document is printed once the case completes (see [capture_document]). *)
 let note tc message = if should_print tc then Ffi.note tc.context tc.handle message
 
-(** [render_sexp ctx printer sexp] writes [sexp] to [printer] in s-expression
-    syntax. Lists are printed with breaks between elemnts when the line overflows. *)
+(** The atoms {!raw_text} made, by physical identity. An entry goes when its
+    atom is collected. *)
 module Raw_atoms = Ephemeron.K1.Make (struct
     type t = Sexp.t
 
@@ -431,6 +431,8 @@ let raw_atoms_mem = Raw_atoms.mem
 
 let raw_atoms = Locked.create (fun () -> raw_atoms_create 16)
 
+(** [raw_text text] is the atom [Sexp.Atom text], marked so that
+    {!render_sexp} prints [text] verbatim. *)
 let raw_text text =
   let atom = Sexp.Atom text in
   Locked.protect raw_atoms (fun table -> raw_atoms_replace table atom ());
@@ -439,6 +441,9 @@ let raw_text text =
 
 let is_raw_text sexp = Locked.protect raw_atoms (fun table -> raw_atoms_mem table sexp)
 
+(** [render_sexp ctx printer sexp] writes [sexp] to [printer] in s-expression
+    syntax, an atom from {!raw_text} verbatim. Lists are printed with breaks
+    between elements when the line overflows. *)
 let rec render_sexp ctx printer (sexp : Sexp.t) =
   match sexp with
   | Sexp.Atom text ->
