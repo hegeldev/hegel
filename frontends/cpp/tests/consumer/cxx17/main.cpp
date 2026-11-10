@@ -5,7 +5,10 @@
 #include <chrono>
 #include <hegel/hegel.h>
 #include <iostream>
+#include <set>
+#include <stdexcept>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -74,6 +77,16 @@ int main() {
                 hegel::generators::temporal::SignedDuration::from_chrono(
                     duration);
             auto exact = tc.draw(gs::temporal::durations());
+            std::set<gs::temporal::TimeZone> zones =
+                tc.draw(gs::sets(gs::temporal::zones()));
+            std::unordered_set<gs::temporal::Date> dates{date};
+            auto at = zoned.instant.to_chrono<std::chrono::seconds>();
+            std::string text = gs::temporal::to_string(zoned);
+            if (dates.count(date) != 1 || !(date <= date) || text.empty()) {
+                throw std::runtime_error("temporal values do not compare");
+            }
+            (void)zones;
+            (void)at;
             (void)date;
             (void)zoned;
             (void)back;

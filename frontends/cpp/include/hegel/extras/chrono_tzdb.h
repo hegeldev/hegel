@@ -14,15 +14,19 @@
  * yearly rule, as the IANA data the library reads applies its rule for
  * ever.
  *
+ * Build the source once, outside the test body:
+ *
  * @code{.cpp}
  * #include <hegel/extras/chrono_tzdb.h>
  *
- * auto source = hegel::extras::chrono_tzdb::zone_source();
- * auto when = tc.draw(gs::temporal::zoned_datetimes(
- *     {.zones = gs::temporal::zones({.source = source})}));
- * auto zoned = std::chrono::zoned_time(
- *     when.zone.name, std::chrono::sys_seconds(
- *                         std::chrono::seconds(when.instant.second)));
+ * auto when = gs::temporal::zoned_datetimes(
+ *     {.source = hegel::extras::chrono_tzdb::zone_source()});
+ * hegel::test([&](hegel::TestCase& tc) {
+ *     auto drawn = tc.draw(when);
+ *     auto zoned = std::chrono::zoned_time(
+ *         drawn.zone.name, std::chrono::sys_seconds(std::chrono::seconds(
+ *                              drawn.instant.second)));
+ * });
  * @endcode
  */
 
@@ -32,6 +36,12 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+
+#if defined(__GLIBCXX__) &&                                                    \
+    !(defined(__cpp_lib_chrono) && __cpp_lib_chrono >= 201907L)
+#error                                                                         \
+    "hegel/extras/chrono_tzdb.h needs a standard library that implements std::chrono::get_tzdb(): libstdc++ has it from GCC 13 on, in C++20 mode"
+#endif
 
 #include "hegel/generators/zone_source.h"
 
@@ -65,6 +75,11 @@ namespace hegel::extras::chrono_tzdb {
         result.next_transition = [tz](int64_t after) -> std::optional<int64_t> {
             std::chrono::sys_info info = tz->get_info(
                 std::chrono::sys_seconds(std::chrono::seconds(after)));
+            constexpr std::chrono::sys_seconds last_day = std::chrono::sys_days{
+                std::chrono::year::max() / std::chrono::December / 31};
+            if (info.end >= last_day) {
+                return std::nullopt;
+            }
             return info.end.time_since_epoch().count();
         };
         result.first_year = first_year;
@@ -79,7 +94,10 @@ namespace hegel::extras::chrono_tzdb {
      *
      * Every zone and link name of the database is declared, its links
      * added, and its release recorded as the version; each zone is probed
-     * through oracle() the first time a draw or query needs it.
+     * through oracle() the first time a draw or query needs it, in the
+     * database as it is then. The names, the links and the version are
+     * those of the database when the source is built: after
+     * `std::chrono::reload_tzdb()`, build a new source.
      *
      * @return A new source.
      * @throws std::runtime_error when the standard library cannot load its
@@ -97,16 +115,16 @@ namespace hegel::extras::chrono_tzdb {
         for (const std::chrono::time_zone_link& link : db.links) {
             source.add_link(link.name(), link.target());
         }
-        source.set_loader([&db](generators::temporal::ZoneSource& s,
-                                const std::string& name) {
-            const std::chrono::time_zone* zone = nullptr;
-            try {
-                zone = db.locate_zone(name);
-            } catch (const std::runtime_error&) {
-                return;
-            }
-            s.add_oracle(name, oracle(*zone));
-        });
+        source.set_loader(
+            [](generators::temporal::ZoneSource& s, const std::string& name) {
+                const std::chrono::time_zone* zone = nullptr;
+                try {
+                    zone = std::chrono::locate_zone(name);
+                } catch (const std::runtime_error&) {
+                    return;
+                }
+                s.add_oracle(name, oracle(*zone));
+            });
         return source;
     }
 

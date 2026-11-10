@@ -1,30 +1,21 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <optional>
 #include <ostream>
 #include <ratio>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
-
-/// @cond INTERNAL
-// HEGEL_HAS_CHRONO_CALENDAR: whether std::chrono::year_month_day is
-// available. libstdc++ reports it through __cpp_lib_chrono; libc++ has had
-// the calendar types since version 7 but kept the macro at its C++17 value.
-#if defined(__cpp_lib_chrono) && __cpp_lib_chrono >= 201907L
-#define HEGEL_HAS_CHRONO_CALENDAR 1
-#elif defined(_LIBCPP_VERSION) && __cplusplus >= 202002L
-#define HEGEL_HAS_CHRONO_CALENDAR 1
-#else
-#define HEGEL_HAS_CHRONO_CALENDAR 0
-#endif
-/// @endcond
 
 /**
  * @brief Date and time generators, and the plain values they draw.
@@ -45,12 +36,14 @@
  * @ref hegel::generators::temporal::spans "spans()", and the parameter structs
  * and option enums they take.
  *
- * Each `operator<<` prints the RFC 9557 form the engine prints a
- * counterexample in, so a failing value reads the same from every language
- * binding: `2024-03-10T01:30:00-05:00[America/New_York]`, with `[gap]` or
+ * Each value type compares, orders and hashes, and to_string() and
+ * `operator<<` give the text the engine defines for it, in the form of RFC
+ * 9557: `2024-03-10T01:30:00-05:00[America/New_York]`, with `[gap]` or
  * `[fold=0]`/`[fold=1]` appended to a skipped or repeated wall time
  * (`2024-03-10T02:30:00-04:00[America/New_York][gap]`), `-00:00` for an
- * unknown offset and `Z[Etc/Unknown]` for the unknown zone.
+ * unknown offset and `Z[Etc/Unknown]` for the unknown zone. A failure
+ * report shows a drawn value as its type and that text, such as
+ * `hegel::generators::temporal::Date{"2024-03-10"}`.
  *
  * The functions resolve(), offset_at() and info() query the default zone
  * source directly, outside any test: the engine's bundled IANA database
@@ -63,8 +56,10 @@
  * engine's bundled one. To draw against the database the code under test
  * uses, build a ZoneSource from it (`hegel/extras/boost_date_time.h` does
  * this for Boost.DateTime, and `hegel/extras/chrono_tzdb.h` for a standard
- * library with `std::chrono::tzdb`) and pass it to zones(), or make it the
- * default with set_default_zone_source().
+ * library with `std::chrono::tzdb`) and pass it to zones() and
+ * zoned_datetimes(), or make it the default with
+ * set_default_zone_source(). A generator reads the default when it is
+ * built, and a query when it is called.
  */
 namespace hegel::generators::temporal {
 
@@ -116,7 +111,8 @@ namespace hegel::generators::temporal {
 
         // The count of `unit_nanos`-nanosecond units in `seconds` plus
         // `nanos`, or nullopt when that is not a whole number or does not
-        // fit in int64_t.
+        // fit in int64_t. `nanos` is within one second of zero, of either
+        // sign.
         std::optional<int64_t> units_from_parts(int64_t seconds, int64_t nanos,
                                                 int64_t unit_nanos);
 
@@ -165,36 +161,46 @@ namespace hegel::generators::temporal {
      * six-digit signed year outside `0000` to `9999`.
      */
     struct Date {
-        int32_t year;  ///< The year, negative before year 0.
-        uint8_t month; ///< The month, 1 for January.
-        uint8_t day;   ///< The day of the month, from 1.
+        int32_t year = 1970; ///< The year, negative before year 0.
+        uint8_t month = 1;   ///< The month, 1 for January.
+        uint8_t day = 1;     ///< The day of the month, from 1.
 
-#if HEGEL_HAS_CHRONO_CALENDAR
         /**
-         * @brief The same date as a `std::chrono::year_month_day`, or
-         * `std::nullopt` when the year lies outside `std::chrono::year`.
+         * @brief The same date as a calendar date of another library, or
+         * `std::nullopt` when the year lies outside the range of that
+         * library's year.
          *
+         * @code{.cpp}
+         * auto ymd = date.to_chrono<std::chrono::year_month_day>();
+         * @endcode
+         *
+         * @tparam YearMonthDay `std::chrono::year_month_day` (C++20), or a
+         *   type with its interface, such as `date::year_month_day`.
          * @return The date, or `std::nullopt`.
          */
-        std::optional<std::chrono::year_month_day> to_chrono() const {
-            if (year < static_cast<int>(std::chrono::year::min()) ||
-                year > static_cast<int>(std::chrono::year::max())) {
+        template <typename YearMonthDay>
+        std::optional<YearMonthDay> to_chrono() const {
+            using Year = decltype(std::declval<const YearMonthDay&>().year());
+            using Month = decltype(std::declval<const YearMonthDay&>().month());
+            using Day = decltype(std::declval<const YearMonthDay&>().day());
+            if (year < static_cast<int>((Year::min)()) ||
+                year > static_cast<int>((Year::max)())) {
                 return std::nullopt;
             }
-            return std::chrono::year_month_day{std::chrono::year{year},
-                                               std::chrono::month{month},
-                                               std::chrono::day{day}};
+            return YearMonthDay{Year{year}, Month{month}, Day{day}};
         }
 
         /**
-         * @brief The Date of a `std::chrono::year_month_day`, or
+         * @brief The Date of a calendar date of another library, or
          * `std::nullopt` when it is not a valid date (`!ymd.ok()`).
          *
+         * @tparam YearMonthDay `std::chrono::year_month_day` (C++20), or a
+         *   type with its interface, such as `date::year_month_day`.
          * @param ymd The date to convert.
          * @return The date, or `std::nullopt`.
          */
-        static std::optional<Date>
-        from_chrono(const std::chrono::year_month_day& ymd) {
+        template <typename YearMonthDay>
+        static std::optional<Date> from_chrono(const YearMonthDay& ymd) {
             if (!ymd.ok()) {
                 return std::nullopt;
             }
@@ -203,59 +209,7 @@ namespace hegel::generators::temporal {
                 static_cast<uint8_t>(static_cast<unsigned>(ymd.month())),
                 static_cast<uint8_t>(static_cast<unsigned>(ymd.day()))};
         }
-#endif
     };
-
-    /// @name Date comparison
-    /// @{
-
-    /// Compares two dates for equality.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` and `b` are equal.
-    inline bool operator==(const Date& a, const Date& b) {
-        return a.year == b.year && a.month == b.month && a.day == b.day;
-    }
-    /// Compares two dates for inequality.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` and `b` differ.
-    inline bool operator!=(const Date& a, const Date& b) { return !(a == b); }
-    /// Compares two dates for ordering.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` is before `b`.
-    inline bool operator<(const Date& a, const Date& b) {
-        if (a.year != b.year) {
-            return a.year < b.year;
-        }
-        if (a.month != b.month) {
-            return a.month < b.month;
-        }
-        return a.day < b.day;
-    }
-    /// Compares two dates for ordering.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` is after `b`.
-    inline bool operator>(const Date& a, const Date& b) { return b < a; }
-    /// Compares two dates for ordering.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` is not after `b`.
-    inline bool operator<=(const Date& a, const Date& b) { return !(b < a); }
-    /// Compares two dates for ordering.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` is not before `b`.
-    inline bool operator>=(const Date& a, const Date& b) { return !(a < b); }
-    /// @}
-
-    /// Prints as `2024-03-10` or, outside years 0000 to 9999, `+010000-01-01`.
-    /// @param os The stream to print to.
-    /// @param date The value to print.
-    /// @return `os`.
-    std::ostream& operator<<(std::ostream& os, const Date& date);
 
     /**
      * @brief A time of day from `00:00:00` to `23:59:59.999999999`.
@@ -265,66 +219,11 @@ namespace hegel::generators::temporal {
      * with the fraction appended when it is not zero: `02:30:00.5`.
      */
     struct Time {
-        uint8_t hour;        ///< The hour of the day.
-        uint8_t minute;      ///< The minute of the hour.
-        uint8_t second;      ///< The second of the minute.
-        uint32_t nanosecond; ///< The nanosecond of the second.
+        uint8_t hour = 0;        ///< The hour of the day.
+        uint8_t minute = 0;      ///< The minute of the hour.
+        uint8_t second = 0;      ///< The second of the minute.
+        uint32_t nanosecond = 0; ///< The nanosecond of the second.
     };
-
-    /// @name Time comparison
-    /// @{
-
-    /// Compares two times for equality.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` and `b` are equal.
-    inline bool operator==(const Time& a, const Time& b) {
-        return a.hour == b.hour && a.minute == b.minute &&
-               a.second == b.second && a.nanosecond == b.nanosecond;
-    }
-    /// Compares two times for inequality.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` and `b` differ.
-    inline bool operator!=(const Time& a, const Time& b) { return !(a == b); }
-    /// Compares two times for ordering.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` is before `b`.
-    inline bool operator<(const Time& a, const Time& b) {
-        if (a.hour != b.hour) {
-            return a.hour < b.hour;
-        }
-        if (a.minute != b.minute) {
-            return a.minute < b.minute;
-        }
-        if (a.second != b.second) {
-            return a.second < b.second;
-        }
-        return a.nanosecond < b.nanosecond;
-    }
-    /// Compares two times for ordering.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` is after `b`.
-    inline bool operator>(const Time& a, const Time& b) { return b < a; }
-    /// Compares two times for ordering.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` is not after `b`.
-    inline bool operator<=(const Time& a, const Time& b) { return !(b < a); }
-    /// Compares two times for ordering.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` is not before `b`.
-    inline bool operator>=(const Time& a, const Time& b) { return !(a < b); }
-    /// @}
-
-    /// Prints as `02:30:00` or `02:30:00.5`.
-    /// @param os The stream to print to.
-    /// @param time The value to print.
-    /// @return `os`.
-    std::ostream& operator<<(std::ostream& os, const Time& time);
 
     /**
      * @brief A wall-clock date and time with no zone or offset, in the
@@ -335,85 +234,39 @@ namespace hegel::generators::temporal {
         Time time; ///< The time of day.
     };
 
-    /// @name DateTime comparison
-    /// @{
-
-    /// Compares two datetimes for equality.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` and `b` are equal.
-    inline bool operator==(const DateTime& a, const DateTime& b) {
-        return a.date == b.date && a.time == b.time;
-    }
-    /// Compares two datetimes for inequality.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` and `b` differ.
-    inline bool operator!=(const DateTime& a, const DateTime& b) {
-        return !(a == b);
-    }
-    /// Compares two datetimes for ordering.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` is before `b`.
-    inline bool operator<(const DateTime& a, const DateTime& b) {
-        if (a.date != b.date) {
-            return a.date < b.date;
-        }
-        return a.time < b.time;
-    }
-    /// Compares two datetimes for ordering.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` is after `b`.
-    inline bool operator>(const DateTime& a, const DateTime& b) {
-        return b < a;
-    }
-    /// Compares two datetimes for ordering.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` is not after `b`.
-    inline bool operator<=(const DateTime& a, const DateTime& b) {
-        return !(b < a);
-    }
-    /// Compares two datetimes for ordering.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` is not before `b`.
-    inline bool operator>=(const DateTime& a, const DateTime& b) {
-        return !(a < b);
-    }
-    /// @}
-
-    /// Prints as `2024-03-10T02:30:00`.
-    /// @param os The stream to print to.
-    /// @param datetime The value to print.
-    /// @return `os`.
-    std::ostream& operator<<(std::ostream& os, const DateTime& datetime);
-
     /**
      * @brief An instant.
      *
      * `second`s since the Unix epoch in `[MIN_INSTANT, MAX_INSTANT]` (the
-     * civil range of Date, about ±3.2 × 10¹⁶ seconds) and a `nanosecond` in
+     * civil range of Date, about ±3.2 × 10¹³ seconds) and a `nanosecond` in
      * `[0, 999999999]` counted forward from that second, so -1.5 s is
      * `{-2, 500000000}`. Prints as the UTC wall time with a `Z` suffix:
      * `2000-01-01T00:00:00Z`.
      */
     struct Instant {
-        int64_t second;      ///< Seconds since 1970-01-01T00:00:00Z.
-        uint32_t nanosecond; ///< Nanoseconds after `second`.
+        int64_t second = 0;      ///< Seconds since 1970-01-01T00:00:00Z.
+        uint32_t nanosecond = 0; ///< Nanoseconds after `second`.
 
         /**
          * @brief The same instant as a `std::chrono::system_clock` time
          * point, or `std::nullopt` when it is not a whole number of the
          * duration's units or does not fit in its representation.
          *
+         * The range of Instant is wider than that of most time points: a
+         * 64-bit count of nanoseconds holds the years 1678 to 2262 only,
+         * and one of microseconds about ±292,000 years. Bound the
+         * generator, or name a coarser duration, when the conversion must
+         * succeed.
+         *
+         * @code{.cpp}
+         * auto at = instant.to_chrono<std::chrono::system_clock::duration>();
+         * @endcode
+         *
          * @tparam Duration A `std::chrono::duration` whose period is a
-         *   standard unit; `std::chrono::nanoseconds` by default.
+         *   standard unit, such as `std::chrono::seconds`.
          * @return The time point, or `std::nullopt`.
          */
-        template <typename Duration = std::chrono::nanoseconds>
+        template <typename Duration>
         std::optional<
             std::chrono::time_point<std::chrono::system_clock, Duration>>
         to_chrono() const {
@@ -450,67 +303,14 @@ namespace hegel::generators::temporal {
         }
     };
 
-    /// @name Instant comparison
-    /// @{
-
-    /// Compares two instants for equality.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` and `b` are equal.
-    inline bool operator==(const Instant& a, const Instant& b) {
-        return a.second == b.second && a.nanosecond == b.nanosecond;
-    }
-    /// Compares two instants for inequality.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` and `b` differ.
-    inline bool operator!=(const Instant& a, const Instant& b) {
-        return !(a == b);
-    }
-    /// Compares two instants for ordering.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` is before `b`.
-    inline bool operator<(const Instant& a, const Instant& b) {
-        if (a.second != b.second) {
-            return a.second < b.second;
-        }
-        return a.nanosecond < b.nanosecond;
-    }
-    /// Compares two instants for ordering.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` is after `b`.
-    inline bool operator>(const Instant& a, const Instant& b) { return b < a; }
-    /// Compares two instants for ordering.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` is not after `b`.
-    inline bool operator<=(const Instant& a, const Instant& b) {
-        return !(b < a);
-    }
-    /// Compares two instants for ordering.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` is not before `b`.
-    inline bool operator>=(const Instant& a, const Instant& b) {
-        return !(a < b);
-    }
-    /// @}
-
-    /// Prints as `2000-01-01T00:00:00Z`.
-    /// @param os The stream to print to.
-    /// @param instant The value to print.
-    /// @return `os`.
-    std::ostream& operator<<(std::ostream& os, const Instant& instant);
-
     /**
      * @brief A UTC offset: a known number of seconds east of UTC within
      * ±25:59:59 (MAX_OFFSET), or the unknown offset of RFC 3339's `-00:00`,
      * which the offset and zone draws yield only when asked to.
      *
      * Prints as `+05:30`, `-00:44:30` (the seconds appended when they are
-     * not zero) or `-00:00`.
+     * not zero) or `-00:00`. Two unknown offsets are equal whatever their
+     * `seconds`.
      */
     struct UtcOffset {
         int32_t seconds = 0; ///< Seconds east of UTC; 0 when not `known`.
@@ -519,31 +319,6 @@ namespace hegel::generators::temporal {
 
     /// The unknown offset, RFC 3339's `-00:00`.
     inline constexpr UtcOffset UNKNOWN_OFFSET{0, false};
-
-    /// @name UtcOffset comparison
-    /// @{
-
-    /// Compares two offsets for equality.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` and `b` are equal.
-    inline bool operator==(const UtcOffset& a, const UtcOffset& b) {
-        return a.known == b.known && (!a.known || a.seconds == b.seconds);
-    }
-    /// Compares two offsets for inequality.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` and `b` differ.
-    inline bool operator!=(const UtcOffset& a, const UtcOffset& b) {
-        return !(a == b);
-    }
-    /// @}
-
-    /// Prints as `+05:30`, `-00:44:30` or `-00:00`.
-    /// @param os The stream to print to.
-    /// @param offset The value to print.
-    /// @return `os`.
-    std::ostream& operator<<(std::ostream& os, const UtcOffset& offset);
 
     /**
      * @brief A time zone of a zone source, or UNKNOWN_ZONE.
@@ -557,31 +332,6 @@ namespace hegel::generators::temporal {
         std::string name;         ///< The name as written.
         std::string primary_name; ///< The zone whose data applies.
     };
-
-    /// @name TimeZone comparison
-    /// @{
-
-    /// Compares two zones for equality.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` and `b` are equal.
-    inline bool operator==(const TimeZone& a, const TimeZone& b) {
-        return a.name == b.name && a.primary_name == b.primary_name;
-    }
-    /// Compares two zones for inequality.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` and `b` differ.
-    inline bool operator!=(const TimeZone& a, const TimeZone& b) {
-        return !(a == b);
-    }
-    /// @}
-
-    /// Prints as the name.
-    /// @param os The stream to print to.
-    /// @param zone The value to print.
-    /// @return `os`.
-    std::ostream& operator<<(std::ostream& os, const TimeZone& zone);
 
     /// How a wall-clock time maps to instants in its zone.
     enum class TransitionKind {
@@ -605,43 +355,16 @@ namespace hegel::generators::temporal {
      * `[fold=1]` appended when relevant.
      */
     struct ZonedDateTime {
-        TimeZone zone;           ///< The zone the wall time is read in.
-        DateTime civil;          ///< The wall-clock time.
-        TransitionKind kind;     ///< How the wall time maps to instants.
+        TimeZone zone;  ///< The zone the wall time is read in.
+        DateTime civil; ///< The wall-clock time.
+        /// How the wall time maps to instants.
+        TransitionKind kind = TransitionKind::Unique;
         UtcOffset offset_before; ///< The offset before the transition.
         UtcOffset offset_after;  ///< The offset after the transition.
-        bool fold;               ///< Which repeat of a fold is meant.
+        bool fold = false;       ///< Which repeat of a fold is meant.
         UtcOffset offset;        ///< The offset in force at `instant`.
         Instant instant;         ///< The resolved instant.
     };
-
-    /// @name ZonedDateTime comparison
-    /// @{
-
-    /// Compares two zoned datetimes for equality.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` and `b` are equal.
-    inline bool operator==(const ZonedDateTime& a, const ZonedDateTime& b) {
-        return a.zone == b.zone && a.civil == b.civil && a.kind == b.kind &&
-               a.offset_before == b.offset_before &&
-               a.offset_after == b.offset_after && a.fold == b.fold &&
-               a.offset == b.offset && a.instant == b.instant;
-    }
-    /// Compares two zoned datetimes for inequality.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` and `b` differ.
-    inline bool operator!=(const ZonedDateTime& a, const ZonedDateTime& b) {
-        return !(a == b);
-    }
-    /// @}
-
-    /// Prints as `2024-03-10T02:30:00-04:00[America/New_York][gap]`.
-    /// @param os The stream to print to.
-    /// @param zoned The value to print.
-    /// @return `os`.
-    std::ostream& operator<<(std::ostream& os, const ZonedDateTime& zoned);
 
     /**
      * @brief A signed duration: `seconds` plus `nanoseconds` of the same
@@ -651,8 +374,8 @@ namespace hegel::generators::temporal {
      * when negative and `PT0S` for zero.
      */
     struct SignedDuration {
-        int64_t seconds;     ///< Whole seconds.
-        int32_t nanoseconds; ///< Nanoseconds, of the sign of `seconds`.
+        int64_t seconds = 0;     ///< Whole seconds.
+        int32_t nanoseconds = 0; ///< Nanoseconds, of the sign of `seconds`.
 
         /**
          * @brief The same duration as a `std::chrono::duration`, or
@@ -688,62 +411,6 @@ namespace hegel::generators::temporal {
         }
     };
 
-    /// @name SignedDuration comparison
-    /// @{
-
-    /// Compares two durations for equality.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` and `b` are equal.
-    inline bool operator==(const SignedDuration& a, const SignedDuration& b) {
-        return a.seconds == b.seconds && a.nanoseconds == b.nanoseconds;
-    }
-    /// Compares two durations for inequality.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` and `b` differ.
-    inline bool operator!=(const SignedDuration& a, const SignedDuration& b) {
-        return !(a == b);
-    }
-    /// Compares two durations for ordering.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` is shorter than `b`.
-    inline bool operator<(const SignedDuration& a, const SignedDuration& b) {
-        if (a.seconds != b.seconds) {
-            return a.seconds < b.seconds;
-        }
-        return a.nanoseconds < b.nanoseconds;
-    }
-    /// Compares two durations for ordering.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` is longer than `b`.
-    inline bool operator>(const SignedDuration& a, const SignedDuration& b) {
-        return b < a;
-    }
-    /// Compares two durations for ordering.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` is not longer than `b`.
-    inline bool operator<=(const SignedDuration& a, const SignedDuration& b) {
-        return !(b < a);
-    }
-    /// Compares two durations for ordering.
-    /// @param a The left operand.
-    /// @param b The right operand.
-    /// @return `true` when `a` is not shorter than `b`.
-    inline bool operator>=(const SignedDuration& a, const SignedDuration& b) {
-        return !(a < b);
-    }
-    /// @}
-
-    /// Prints as `PT1H30M5.5S`, `-PT1.5S` or `PT0S`.
-    /// @param os The stream to print to.
-    /// @param duration The value to print.
-    /// @return `os`.
-    std::ostream& operator<<(std::ostream& os, const SignedDuration& duration);
-
     /// A unit of a Span, largest first.
     enum class SpanUnit {
         Years,        ///< Calendar years.
@@ -773,9 +440,10 @@ namespace hegel::generators::temporal {
      *
      * Every unit shares one sign unless the span was drawn with
      * SpanSign::Mixed. Prints each nonzero unit in the friendly form
-     * `1y 2mo 3w 4d 5h 6m 7s 8ms 9µs 10ns`, with one leading `-` when every
-     * unit is negative or zero, a `-` on each negative unit when the signs
-     * are mixed, and `0s` for zero.
+     * `1y 2mo 3w 4d 5h 6m 7s 8ms 9µs 10ns`, and `0s` for zero. A span with
+     * no positive unit has one leading `-` for all its units (`-3d 4h` is
+     * -3 days and -4 hours), and a span with units of both signs has a sign
+     * on each unit (`-3d +4h`).
      */
     struct Span {
         int64_t years = 0;        ///< Calendar years.
@@ -795,33 +463,211 @@ namespace hegel::generators::temporal {
         int64_t get(SpanUnit unit) const;
     };
 
-    /// @name Span comparison
+    /// @cond INTERNAL
+    namespace detail {
+
+        // The fields a value type compares, orders and hashes by, in order
+        // of significance.
+        constexpr auto key(const Date& v) {
+            return std::tie(v.year, v.month, v.day);
+        }
+        constexpr auto key(const Time& v) {
+            return std::tie(v.hour, v.minute, v.second, v.nanosecond);
+        }
+        constexpr auto key(const DateTime& v) {
+            return std::tuple_cat(key(v.date), key(v.time));
+        }
+        constexpr auto key(const Instant& v) {
+            return std::tie(v.second, v.nanosecond);
+        }
+        constexpr std::tuple<bool, int32_t> key(const UtcOffset& v) {
+            return {v.known, v.known ? v.seconds : 0};
+        }
+        constexpr auto key(const TimeZone& v) {
+            return std::tie(v.name, v.primary_name);
+        }
+        constexpr auto key(const ZonedDateTime& v) {
+            return std::tuple_cat(key(v.instant), key(v.zone), key(v.civil),
+                                  std::tie(v.kind, v.fold),
+                                  key(v.offset_before), key(v.offset_after),
+                                  key(v.offset));
+        }
+        constexpr auto key(const SignedDuration& v) {
+            return std::tie(v.seconds, v.nanoseconds);
+        }
+        constexpr auto key(const Span& v) {
+            return std::tie(v.years, v.months, v.weeks, v.days, v.hours,
+                            v.minutes, v.seconds, v.milliseconds,
+                            v.microseconds, v.nanoseconds);
+        }
+
+        template <typename T, typename = void>
+        struct is_value : std::false_type {};
+        template <typename T>
+        struct is_value<
+            T, std::void_t<decltype(detail::key(std::declval<const T&>()))>>
+            : std::true_type {};
+
+        // `R` when `T` is one of the nine value types.
+        template <typename T, typename R>
+        using if_value = std::enable_if_t<is_value<T>::value, R>;
+
+        template <typename F>
+        void hash_field(std::size_t& seed, const F& field) {
+            seed ^= std::hash<F>{}(field) +
+                    static_cast<std::size_t>(0x9e3779b97f4a7c15ULL) +
+                    (seed << 6) + (seed >> 2);
+        }
+
+        template <typename T> struct value_hash {
+            std::size_t operator()(const T& value) const noexcept {
+                std::size_t seed = 0;
+                std::apply(
+                    [&seed](const auto&... field) {
+                        (hash_field(seed, field), ...);
+                    },
+                    key(value));
+                return seed;
+            }
+        };
+
+    } // namespace detail
+    /// @endcond
+
+    /**
+     * @name Comparison
+     *
+     * Date, Time, DateTime, Instant, UtcOffset, TimeZone, ZonedDateTime,
+     * SignedDuration and Span each compare for equality and have a total
+     * order, so they work as keys of `std::set` and `std::map` and in
+     * `sets()`; each also has a `std::hash`, for the unordered containers.
+     *
+     * Date, Time, DateTime and Instant order from earlier to later and
+     * SignedDuration from shorter to longer. UtcOffset orders the unknown
+     * offset before every known one, then from west to east. TimeZone
+     * orders by `name`, then `primary_name`. ZonedDateTime orders by
+     * `instant`, then by its other fields. Span orders by its units,
+     * largest first, which is not an order by length: a span has no
+     * length without a date to start from.
+     */
     /// @{
 
-    /// Compares two spans for equality.
+    /// Compares two values of one value type for equality.
+    /// @tparam T A value type of this namespace.
     /// @param a The left operand.
     /// @param b The right operand.
     /// @return `true` when `a` and `b` are equal.
-    inline bool operator==(const Span& a, const Span& b) {
-        return a.years == b.years && a.months == b.months &&
-               a.weeks == b.weeks && a.days == b.days && a.hours == b.hours &&
-               a.minutes == b.minutes && a.seconds == b.seconds &&
-               a.milliseconds == b.milliseconds &&
-               a.microseconds == b.microseconds &&
-               a.nanoseconds == b.nanoseconds;
+    template <typename T>
+    constexpr detail::if_value<T, bool> operator==(const T& a, const T& b) {
+        return detail::key(a) == detail::key(b);
     }
-    /// Compares two spans for inequality.
+    /// Compares two values of one value type for inequality.
+    /// @tparam T A value type of this namespace.
     /// @param a The left operand.
     /// @param b The right operand.
     /// @return `true` when `a` and `b` differ.
-    inline bool operator!=(const Span& a, const Span& b) { return !(a == b); }
+    template <typename T>
+    constexpr detail::if_value<T, bool> operator!=(const T& a, const T& b) {
+        return !(a == b);
+    }
+    /// Compares two values of one value type for ordering.
+    /// @tparam T A value type of this namespace.
+    /// @param a The left operand.
+    /// @param b The right operand.
+    /// @return `true` when `a` is before `b`.
+    template <typename T>
+    constexpr detail::if_value<T, bool> operator<(const T& a, const T& b) {
+        return detail::key(a) < detail::key(b);
+    }
+    /// Compares two values of one value type for ordering.
+    /// @tparam T A value type of this namespace.
+    /// @param a The left operand.
+    /// @param b The right operand.
+    /// @return `true` when `a` is after `b`.
+    template <typename T>
+    constexpr detail::if_value<T, bool> operator>(const T& a, const T& b) {
+        return b < a;
+    }
+    /// Compares two values of one value type for ordering.
+    /// @tparam T A value type of this namespace.
+    /// @param a The left operand.
+    /// @param b The right operand.
+    /// @return `true` when `a` is not after `b`.
+    template <typename T>
+    constexpr detail::if_value<T, bool> operator<=(const T& a, const T& b) {
+        return !(b < a);
+    }
+    /// Compares two values of one value type for ordering.
+    /// @tparam T A value type of this namespace.
+    /// @param a The left operand.
+    /// @param b The right operand.
+    /// @return `true` when `a` is not before `b`.
+    template <typename T>
+    constexpr detail::if_value<T, bool> operator>=(const T& a, const T& b) {
+        return !(a < b);
+    }
     /// @}
 
-    /// Prints as `1y 2mo 3d`, `-1y 2mo`, `1y -2mo` or `0s`.
-    /// @param os The stream to print to.
+    /**
+     * @name Text
+     *
+     * The text of a value is the text the engine defines for it. No value
+     * is refused: a value outside the range of its type prints its fields
+     * as they are.
+     */
+    /// @{
+
+    /// The text of a date: `2024-03-10` or, outside years 0000 to 9999,
+    /// `+010000-01-01`.
+    /// @param date The value to print.
+    /// @return The text.
+    std::string to_string(const Date& date);
+    /// The text of a time of day: `02:30:00` or `02:30:00.5`.
+    /// @param time The value to print.
+    /// @return The text.
+    std::string to_string(const Time& time);
+    /// The text of a datetime: `2024-03-10T02:30:00`.
+    /// @param datetime The value to print.
+    /// @return The text.
+    std::string to_string(const DateTime& datetime);
+    /// The text of an instant: `2000-01-01T00:00:00Z`.
+    /// @param instant The value to print.
+    /// @return The text.
+    std::string to_string(const Instant& instant);
+    /// The text of an offset: `+05:30`, `-00:44:30` or `-00:00`.
+    /// @param offset The value to print.
+    /// @return The text.
+    std::string to_string(const UtcOffset& offset);
+    /// The text of a time zone: its name.
+    /// @param zone The value to print.
+    /// @return The text.
+    std::string to_string(const TimeZone& zone);
+    /// The text of a zoned datetime:
+    /// `2024-03-10T02:30:00-04:00[America/New_York][gap]`.
+    /// @param zoned The value to print.
+    /// @return The text.
+    /// @throws std::invalid_argument for a zone name that is not UTF-8.
+    std::string to_string(const ZonedDateTime& zoned);
+    /// The text of a duration: `PT1H30M5.5S`, `-PT1.5S` or `PT0S`.
+    /// @param duration The value to print.
+    /// @return The text.
+    std::string to_string(const SignedDuration& duration);
+    /// The text of a span: `1y 2mo 3d`, `-1y 2mo`, `+1y -2mo` or `0s`.
     /// @param span The value to print.
+    /// @return The text.
+    std::string to_string(const Span& span);
+
+    /// Prints a value of a value type as to_string() gives it.
+    /// @tparam T A value type of this namespace.
+    /// @param os The stream to print to.
+    /// @param value The value to print.
     /// @return `os`.
-    std::ostream& operator<<(std::ostream& os, const Span& span);
+    template <typename T>
+    detail::if_value<T, std::ostream&> operator<<(std::ostream& os,
+                                                  const T& value) {
+        return os << to_string(value);
+    }
+    /// @}
 
     /// The unit the time part of a drawn value is counted in: the drawn
     /// value is a whole number of these units and shrinks in them.
@@ -939,11 +785,18 @@ namespace hegel::generators::temporal {
         /// link.
         std::string primary_name;
         /// Whether the name is a link to `primary_name`.
-        bool is_link;
+        bool is_link = false;
         /// The name's position on the shrink ladder; `UTC` is 0.
-        uint16_t rank;
+        uint16_t rank = 0;
         /// The zone's features, in ALL_TAGS order.
         std::vector<Tag> tags;
+
+        /// Whether the zone has a feature.
+        /// @param tag The feature to look for.
+        /// @return `true` when `tags` holds `tag`.
+        bool has(Tag tag) const {
+            return std::find(tags.begin(), tags.end(), tag) != tags.end();
+        }
     };
 
     /// @name ZoneInfo comparison
@@ -971,7 +824,7 @@ namespace hegel::generators::temporal {
         UtcOffset offset; ///< The offset in force.
         /// The database's daylight-saving flag for the offset, informational
         /// only.
-        bool is_dst;
+        bool is_dst = false;
         /// The abbreviation in force, such as `EST`, or `-00` when the
         /// offset is unknown.
         std::string abbreviation;
@@ -1050,3 +903,46 @@ namespace hegel::generators::temporal {
     ZoneOffset offset_at(std::string_view name, const Instant& instant);
 
 } // namespace hegel::generators::temporal
+
+/// @cond INTERNAL
+namespace std {
+
+    template <>
+    struct hash<hegel::generators::temporal::Date>
+        : hegel::generators::temporal::detail::value_hash<
+              hegel::generators::temporal::Date> {};
+    template <>
+    struct hash<hegel::generators::temporal::Time>
+        : hegel::generators::temporal::detail::value_hash<
+              hegel::generators::temporal::Time> {};
+    template <>
+    struct hash<hegel::generators::temporal::DateTime>
+        : hegel::generators::temporal::detail::value_hash<
+              hegel::generators::temporal::DateTime> {};
+    template <>
+    struct hash<hegel::generators::temporal::Instant>
+        : hegel::generators::temporal::detail::value_hash<
+              hegel::generators::temporal::Instant> {};
+    template <>
+    struct hash<hegel::generators::temporal::UtcOffset>
+        : hegel::generators::temporal::detail::value_hash<
+              hegel::generators::temporal::UtcOffset> {};
+    template <>
+    struct hash<hegel::generators::temporal::TimeZone>
+        : hegel::generators::temporal::detail::value_hash<
+              hegel::generators::temporal::TimeZone> {};
+    template <>
+    struct hash<hegel::generators::temporal::ZonedDateTime>
+        : hegel::generators::temporal::detail::value_hash<
+              hegel::generators::temporal::ZonedDateTime> {};
+    template <>
+    struct hash<hegel::generators::temporal::SignedDuration>
+        : hegel::generators::temporal::detail::value_hash<
+              hegel::generators::temporal::SignedDuration> {};
+    template <>
+    struct hash<hegel::generators::temporal::Span>
+        : hegel::generators::temporal::detail::value_hash<
+              hegel::generators::temporal::Span> {};
+
+} // namespace std
+/// @endcond

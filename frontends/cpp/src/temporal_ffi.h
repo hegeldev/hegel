@@ -32,6 +32,7 @@ namespace hegel::impl {
     duration_to_c(const generators::temporal::SignedDuration& duration);
     generators::temporal::SignedDuration
     duration_from_c(const hegel_duration_t& duration);
+    hegel_offset_t offset_to_c(const generators::temporal::UtcOffset& offset);
     generators::temporal::UtcOffset offset_from_c(int32_t seconds, bool known);
     generators::temporal::TransitionKind
     kind_from_c(hegel_timezone_kind_t kind);

@@ -91,7 +91,7 @@ namespace hegel::generators::temporal {
         Granularity granularity = Granularity::Seconds;
         /// Whether the draw may yield the unknown offset, RFC 3339's `-00:00`.
         /// It shrinks to a known offset first.
-        bool unknown = false;
+        bool allow_unknown = false;
     };
 
     /**
@@ -99,23 +99,23 @@ namespace hegel::generators::temporal {
      */
     struct ZonesParams {
         /// Draw only these names, each exactly as the source spells it or
-        /// `Etc/Unknown`. The `links` and `legacy` flags do not apply to an
-        /// explicit list. Default: every name of the source.
+        /// `Etc/Unknown`. The `allow_links` and `allow_legacy` flags do not
+        /// apply to an explicit list. Default: every name of the source.
         std::optional<std::vector<std::string>> names;
         /// Whether the default set includes link names such as `Asia/Calcutta`.
-        bool links = true;
+        bool allow_links = true;
         /// Whether the default set includes legacy names such as `EST5EDT` and
         /// `US/Eastern`.
-        bool legacy = false;
+        bool allow_legacy = false;
         /// Whether `Etc/Unknown`, the zone with a known instant and an unknown
         /// offset, is drawn.
-        bool unknown = false;
+        bool allow_unknown = false;
         /// Whether a name in an explicit `names` list that the source lacks
         /// is accepted as an opaque zone: one only the caller's database
         /// knows, drawn like any other name but evaluated like
         /// `Etc/Unknown`, with its civil time read as UTC and an unknown
         /// offset.
-        bool opaque = false;
+        bool allow_opaque = false;
         /// The zone data the names come from and zoned datetimes in these
         /// zones resolve against. Default: default_zone_source() as it is
         /// when the generator is built.
@@ -130,16 +130,26 @@ namespace hegel::generators::temporal {
      * an error.
      */
     struct ZonedDatetimesParams {
-        /// The generator the zone comes from. Default: zones().
+        /// The generator the zone comes from. Default: zones() over
+        /// `source`.
         ///
         /// A generator that zones() returns gives its names and its source to
         /// the engine, and the zone and the wall time come from one engine
-        /// draw. Any other generator draws a zone first, then the wall time
-        /// in that zone, resolved against default_zone_source() as it is
-        /// when this generator is built. A name that source lacks is then
-        /// an opaque zone: its civil time is read as UTC, with an unknown
-        /// offset.
+        /// draw. Any other generator, such as a zones() generator that was
+        /// filtered or mapped, draws a zone first, then the wall time in
+        /// that zone, resolved against `source`. A name `source` does not
+        /// know throws `std::invalid_argument` on the draw: it never
+        /// becomes an opaque zone. For opaque zones, use zones() with
+        /// `allow_opaque`.
         std::optional<AnyGenerator<TimeZone>> zones;
+        /// The zone source the names `zones` draws are resolved against.
+        /// Default: default_zone_source() as it is when the generator is
+        /// built.
+        ///
+        /// A generator that zones() returns has a source of its own:
+        /// setting `source` as well throws `std::invalid_argument`. Pass
+        /// the source to zones() instead.
+        std::optional<ZoneSource> source;
         /// Minimum wall-clock time (inclusive), in whatever zone is drawn.
         std::optional<DateTime> min_value;
         /// Maximum wall-clock time (inclusive), in whatever zone is drawn.
@@ -279,8 +289,9 @@ namespace hegel::generators::temporal {
      *
      * @param params Bounds and weekday / month restrictions.
      * @return Generator producing dates.
-     * @throws std::invalid_argument for an invalid or inverted bound, or an
-     *   empty weekday or month list.
+     * @throws std::invalid_argument for an invalid or inverted bound, an
+     *   empty weekday or month list, or bounds holding no day the lists
+     *   allow.
      */
     Generator<Date> dates(const DatesParams& params = {});
 
@@ -292,7 +303,8 @@ namespace hegel::generators::temporal {
      *
      * @param params Bounds and precision.
      * @return Generator producing times of day.
-     * @throws std::invalid_argument for an invalid or inverted bound.
+     * @throws std::invalid_argument for an invalid or inverted bound, or
+     *   bounds holding no value at the precision.
      */
     Generator<Time> times(TimesParams params = {});
 
@@ -305,7 +317,8 @@ namespace hegel::generators::temporal {
      *
      * @param params Bounds and precision.
      * @return Generator producing naive datetimes.
-     * @throws std::invalid_argument for an invalid or inverted bound.
+     * @throws std::invalid_argument for an invalid or inverted bound, or
+     *   bounds holding no value at the precision.
      */
     Generator<DateTime> datetimes(DatetimesParams params = {});
 
@@ -320,7 +333,8 @@ namespace hegel::generators::temporal {
      *
      * @param params Bounds and precision.
      * @return Generator producing instants.
-     * @throws std::invalid_argument for an invalid or inverted bound.
+     * @throws std::invalid_argument for an invalid or inverted bound, or
+     *   bounds holding no value at the precision.
      */
     Generator<Instant> instants(InstantsParams params = {});
 
@@ -334,7 +348,7 @@ namespace hegel::generators::temporal {
      * @param params Bounds, granularity and the unknown switch.
      * @return Generator producing UTC offsets.
      * @throws std::invalid_argument for an unknown, out-of-range or
-     *   inverted bound.
+     *   inverted bound, or bounds holding no value at the granularity.
      */
     Generator<UtcOffset> offsets(OffsetsParams params = {});
 
@@ -363,10 +377,9 @@ namespace hegel::generators::temporal {
      *
      * @param params The allowed names and their source.
      * @return Generator producing time zones.
-     * @throws std::invalid_argument for an empty list or a name the source
-     *   does not know and `opaque` does not admit. A source with no name the
-     *   `links` and `legacy` flags allow throws `std::invalid_argument` on
-     *   the first draw.
+     * @throws std::invalid_argument for an empty list, a name the source
+     *   does not know and `allow_opaque` does not admit, or a source with
+     *   no name the `allow_links` and `allow_legacy` flags allow.
      */
     Generator<TimeZone> zones(const ZonesParams& params = {});
 
@@ -392,18 +405,36 @@ namespace hegel::generators::temporal {
      *      .allow_imaginary = false}));
      * @endcode
      *
-     * Any generator of zones works, such as one of your own zones:
+     * Any generator of zones works, such as one of your own zones. Its
+     * names are resolved against `source`, or against the default zone
+     * source when there is none, and a name that source does not know makes
+     * the draw throw `std::invalid_argument`:
      *
      * @code{.cpp}
      * auto local = tc.draw(gs::temporal::zoned_datetimes(
      *     {.zones = gs::just(TimeZone{"Europe/Paris", "Europe/Paris"})}));
+     * auto mine = tc.draw(gs::temporal::zoned_datetimes(
+     *     {.zones = gs::temporal::zones({.source = my_source})
+     *                   .filter([](const TimeZone& zone) {
+     *                       return zone.name != "Etc/Skipped";
+     *                   }),
+     *      .source = my_source}));
      * @endcode
      *
-     * @param params Zones, bounds and the gap and fold policies.
+     * To draw every zone of a ZoneSource, pass it alone:
+     *
+     * @code{.cpp}
+     * auto theirs =
+     *     tc.draw(gs::temporal::zoned_datetimes({.source = my_source}));
+     * @endcode
+     *
+     * @param params Zones, their source, bounds and the gap and fold
+     *   policies.
      * @return Generator producing zoned datetimes.
      * @throws std::invalid_argument for both wall-clock and instant bounds,
-     *   an invalid or inverted bound, or bounds holding no value at the
-     *   precision.
+     *   an invalid or inverted bound, bounds holding no value at the
+     *   precision, or a `source` next to a `zones` generator that zones()
+     *   returned.
      */
     Generator<ZonedDateTime>
     zoned_datetimes(const ZonedDatetimesParams& params = {});
@@ -463,8 +494,9 @@ namespace hegel::generators::temporal {
      *   `std::chrono::duration` type.
      * @param params Bounds and, for SignedDuration, the precision.
      * @return Generator producing durations.
-     * @throws std::invalid_argument for an invalid or inverted bound, or a
-     *   bound the engine does not hold.
+     * @throws std::invalid_argument for an invalid or inverted bound, a
+     *   bound the engine does not hold, or bounds holding no value at the
+     *   precision.
      */
     template <typename Duration = SignedDuration>
     Generator<Duration> durations(DurationsParams<Duration> params = {}) {

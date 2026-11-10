@@ -220,7 +220,7 @@ TEST(FindTemporal, OffsetsRespectGranularityAndReachTheUnknown) {
             return o.seconds >= 0 && o.seconds <= 3600;
         });
     find_any<gs::temporal::UtcOffset>(
-        gs::temporal::offsets({.unknown = true}),
+        gs::temporal::offsets({.allow_unknown = true}),
         [](const gs::temporal::UtcOffset& o) { return !o.known; });
     find_any<gs::temporal::UtcOffset>(
         gs::temporal::offsets(),
@@ -250,7 +250,7 @@ TEST(FindTemporal, ZonesRespectTheSpec) {
                                                 "Asia/Kolkata";
                                      });
     assert_no_examples<gs::temporal::TimeZone>(
-        gs::temporal::zones({.links = false}),
+        gs::temporal::zones({.allow_links = false}),
         [](const gs::temporal::TimeZone& zone) {
             return has_tag(zone.name, gs::temporal::Tag::Link);
         });
@@ -259,18 +259,18 @@ TEST(FindTemporal, ZonesRespectTheSpec) {
             return has_tag(zone.name, gs::temporal::Tag::Link);
         });
     find_any<gs::temporal::TimeZone>(
-        gs::temporal::zones({.legacy = true}),
+        gs::temporal::zones({.allow_legacy = true}),
         [](const gs::temporal::TimeZone& zone) {
             return has_tag(zone.name, gs::temporal::Tag::Legacy);
         });
-    find_any<gs::temporal::TimeZone>(gs::temporal::zones({.unknown = true}),
-                                     [](const gs::temporal::TimeZone& zone) {
-                                         return zone.name ==
-                                                gs::temporal::UNKNOWN_ZONE;
-                                     });
+    find_any<gs::temporal::TimeZone>(
+        gs::temporal::zones({.allow_unknown = true}),
+        [](const gs::temporal::TimeZone& zone) {
+            return zone.name == gs::temporal::UNKNOWN_ZONE;
+        });
     assert_all_examples<gs::temporal::TimeZone>(
         gs::temporal::zones({.names = std::vector<std::string>{"Mars/Olympus"},
-                             .opaque = true}),
+                             .allow_opaque = true}),
         [](const gs::temporal::TimeZone& zone) {
             return zone.name == "Mars/Olympus" &&
                    zone.primary_name == "Mars/Olympus";
@@ -307,7 +307,7 @@ TEST(FindTemporal, ZonedDatetimesAgreeWithResolve) {
         gs::temporal::zoned_datetimes(
             {.zones = gs::temporal::zones(
                  {.names = std::vector<std::string>{"Mars/Olympus"},
-                  .opaque = true})}),
+                  .allow_opaque = true})}),
         [](const gs::temporal::ZonedDateTime& z) {
             return z.zone.name == "Mars/Olympus" &&
                    z.offset == gs::temporal::UNKNOWN_OFFSET &&
@@ -519,14 +519,18 @@ TEST(FindTemporal, ZonedDatetimesFromAGeneratorRespectBoundsAndPolicies) {
         2000);
 }
 
-TEST(FindTemporal, ZonedDatetimesFromAGeneratorAcceptOpaqueZones) {
+TEST(FindTemporal, ZonedDatetimesFromAGeneratorRefuseZonesTheSourceLacks) {
     gs::temporal::TimeZone mars{"Mars/Olympus", "Mars/Olympus"};
-    assert_all_examples<gs::temporal::ZonedDateTime>(
-        gs::temporal::zoned_datetimes({.zones = gs::just(mars)}),
-        [&](const gs::temporal::ZonedDateTime& z) {
-            return z.zone == mars && z.offset == gs::temporal::UNKNOWN_OFFSET &&
-                   z.kind == gs::temporal::TransitionKind::Unique;
-        });
+    try {
+        find_any<gs::temporal::ZonedDateTime>(
+            gs::temporal::zoned_datetimes({.zones = gs::just(mars)}),
+            [](const gs::temporal::ZonedDateTime&) { return true; });
+        ADD_FAILURE() << "a zone the source lacks was drawn";
+    } catch (const std::invalid_argument& e) {
+        EXPECT_NE(std::string(e.what()).find("\"Mars/Olympus\""),
+                  std::string::npos)
+            << e.what();
+    }
     assert_all_examples<gs::temporal::ZonedDateTime>(
         gs::temporal::zoned_datetimes(
             {.zones = gs::just(zone(std::string(gs::temporal::UNKNOWN_ZONE)))}),

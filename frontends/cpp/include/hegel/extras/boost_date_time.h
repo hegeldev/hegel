@@ -6,11 +6,13 @@
  *
  * Header-only, and the only part of Hegel that uses Boost: include it in a
  * project that already uses Boost.DateTime (1.73 or later, where the
- * library is header-only). Configuring Hegel with
- * `-DHEGEL_BOOST_DATE_TIME=ON` also gives the CMake target
- * `hegel::boost_date_time`, which links Hegel and the Boost headers (an
- * installed Boost when CMake finds one, otherwise the needed Boost
- * libraries fetched at configure time).
+ * library is header-only) and link Hegel and Boost as usual. A project
+ * that builds Hegel as part of its own build (`FetchContent` or
+ * `add_subdirectory`) can set `HEGEL_BOOST_DATE_TIME=ON` to get the CMake
+ * target `hegel::boost_date_time`, which links Hegel and the Boost headers
+ * (an installed Boost when CMake finds one, otherwise a Boost release
+ * fetched at configure time). An installed Hegel has the header and no
+ * such target.
  *
  * A Boost time zone has one rule for all time: its current standard
  * offset and, when it has daylight-saving time, the dates that time starts
@@ -18,17 +20,21 @@
  * zone with that rule and no transitions, which is what Boost itself
  * computes, so wall times resolve the same way for Hegel and for Boost.
  *
+ * Build the source once, outside the test body:
+ *
  * @code{.cpp}
  * #include <hegel/extras/boost_date_time.h>
  *
  * boost::local_time::tz_database db;
  * db.load_from_file("date_time_zonespec.csv");
- * auto source = hegel::extras::boost_date_time::zone_source(db);
- * auto when = tc.draw(gs::temporal::zoned_datetimes(
- *     {.zones = gs::temporal::zones({.source = source})}));
- * boost::local_time::local_date_time local(
- *     boost::posix_time::from_time_t(when.instant.second),
- *     db.time_zone_from_region(when.zone.name));
+ * auto when = gs::temporal::zoned_datetimes(
+ *     {.source = hegel::extras::boost_date_time::zone_source(db)});
+ * hegel::test([&](hegel::TestCase& tc) {
+ *     auto drawn = tc.draw(when);
+ *     boost::local_time::local_date_time local(
+ *         boost::posix_time::from_time_t(drawn.instant.second),
+ *         db.time_zone_from_region(drawn.zone.name));
+ * });
  * @endcode
  */
 

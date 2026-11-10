@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -139,8 +140,11 @@ namespace hegel::generators::temporal {
      * years gives that rule; anything else holds the last type.
      */
     struct InferRule {
+        /// @param year The last year the transitions cover.
+        explicit InferRule(int32_t year) : last_year(year) {}
+
         /// The last year the transitions cover, in `[MIN_YEAR, MAX_YEAR]`.
-        int32_t last_year = 0;
+        int32_t last_year;
     };
 
     /**
@@ -223,8 +227,13 @@ namespace hegel::generators::temporal {
      * must be safe to call from any thread, possibly concurrently and more
      * than once for one name. It must not draw. An exception it throws fails
      * the draw or query with `std::invalid_argument` carrying its message.
-     * Use the `source` argument rather than capturing the source, which
-     * would keep it alive for ever.
+     *
+     * The source keeps the loader, and what it captures, until
+     * ZoneSource::set_loader() replaces it or the last generator and the
+     * last ZoneSource that use the source are gone; a source that is still
+     * the default when the process exits keeps it. Use the `source`
+     * argument rather than a captured copy of the source: a copy would
+     * keep the source alive for as long as the loader is set.
      */
     using ZoneLoader =
         std::function<void(ZoneSource& source, const std::string& name)>;
@@ -236,8 +245,9 @@ namespace hegel::generators::temporal {
      * By default every draw and query uses the engine's bundled IANA
      * database, ZoneSource::bundled(). When the code under test uses
      * another database, give its data to a ZoneSource and either pass it to
-     * one generator (`zones({.source = source})`) or make it the default
-     * with set_default_zone_source(). The zone names, their link and legacy
+     * a generator (`zones({.source = source})` or
+     * `zoned_datetimes({.source = source})`) or make it the default with
+     * set_default_zone_source(). The zone names, their link and legacy
      * flags and the order they shrink in always come from the bundled
      * catalogue, so a stored failure shrinks the same way everywhere; only
      * what a wall time means in a zone comes from the source. A name the
@@ -249,13 +259,26 @@ namespace hegel::generators::temporal {
      * (add_link()) and names whose data a loader supplies on first use
      * (declare() and set_loader()).
      *
+     * Build a source once, outside the test body, and share it between
+     * test cases: a source built in the body is built again for each one.
+     *
      * @code{.cpp}
-     * ZoneSource source;
-     * source.declare({"America/New_York", "Europe/London"})
-     *     .set_loader([](ZoneSource& s, const std::string& name) {
-     *         s.add_tzif(name, read_file("/usr/share/zoneinfo/" + name));
+     * ZoneSource system_zones() {
+     *     ZoneSource source;
+     *     source.declare({"America/New_York", "Europe/London"})
+     *         .set_loader([](ZoneSource& s, const std::string& name) {
+     *             s.add_tzif(name, read_file("/usr/share/zoneinfo/" + name));
+     *         });
+     *     return source;
+     * }
+     *
+     * TEST(Meetings, StartInTheirZone) {
+     *     auto when = zoned_datetimes({.source = system_zones()});
+     *     hegel::test([&](hegel::TestCase& tc) {
+     *         ZonedDateTime start = tc.draw(when);
+     *         // ...
      *     });
-     * auto zone = tc.draw(zones({.source = source}));
+     * }
      * @endcode
      *
      * Copies share one source: data added through one copy is visible
@@ -286,6 +309,17 @@ namespace hegel::generators::temporal {
         ///   two days or more or a bad name.
         ZoneSource& add_tzif(std::string_view name,
                              const std::vector<uint8_t>& bytes);
+
+        /// Add a zone from a TZif file held in a buffer; see the other
+        /// add_tzif().
+        /// @param name The name the zone is drawn and queried by.
+        /// @param data The first byte of the file's contents, read during
+        ///   the call only.
+        /// @param size The number of bytes.
+        /// @return This source.
+        /// @throws std::invalid_argument as the other add_tzif() does.
+        ZoneSource& add_tzif(std::string_view name, const uint8_t* data,
+                             size_t size);
 
         /// Add a zone from its data given as fields.
         /// @param name As for add_tzif().
@@ -324,10 +358,13 @@ namespace hegel::generators::temporal {
         ZoneSource& declare(const std::vector<std::string>& names);
 
         /// Set the loader asked for the data of a name the source lacks;
-        /// see ZoneLoader. An empty function removes it. A name the loader
-        /// adds nothing for is unknown from then on.
+        /// see ZoneLoader. It replaces the loader set before, which is
+        /// destroyed once no call of it is running, and an empty function
+        /// removes it. A name the loader adds nothing for is unknown from
+        /// then on.
         /// @param loader The loader.
         /// @return This source.
+        /// @throws std::invalid_argument for the bundled source.
         ZoneSource& set_loader(ZoneLoader loader);
 
         /// Record which release of its database the source holds. Failure
@@ -382,12 +419,13 @@ namespace hegel::generators::temporal {
     };
 
     /**
-     * @brief The process-wide default zone source: the one zones(), the
-     * default zoned_datetimes() and the info(), resolve() and offset_at()
-     * queries use when given no source.
+     * @brief The process-wide default zone source: the one zones(),
+     * zoned_datetimes() and the info(), resolve() and offset_at() queries
+     * use when given no source.
      *
      * It is ZoneSource::bundled() until set_default_zone_source() sets
-     * another.
+     * another. A generator reads it when it is built, and a query when it
+     * is called.
      *
      * @return The default source.
      */
@@ -397,11 +435,20 @@ namespace hegel::generators::temporal {
      * @brief Replace the process-wide default zone source.
      *
      * A generator reads the default when it is built, so generators built
-     * before the call keep the source they read.
+     * before the call keep the source they read. Set it once, before any
+     * test builds a generator; to set it for a time, restore the source
+     * this returns:
+     *
+     * @code{.cpp}
+     * ZoneSource before = set_default_zone_source(source);
+     * // ...
+     * set_default_zone_source(before);
+     * @endcode
      *
      * @param source The new default; ZoneSource::bundled() restores the
      *   engine's database.
+     * @return The default source before the call.
      */
-    void set_default_zone_source(const ZoneSource& source);
+    ZoneSource set_default_zone_source(const ZoneSource& source);
 
 } // namespace hegel::generators::temporal

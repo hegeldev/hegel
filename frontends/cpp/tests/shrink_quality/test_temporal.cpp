@@ -87,18 +87,18 @@ TEST(ShrinkTemporal, OffsetsShrinkToZeroAndToKnown) {
                   [](const gs::temporal::UtcOffset&) { return true; }),
               gs::temporal::UtcOffset{0});
     EXPECT_EQ(minimal<gs::temporal::UtcOffset>(
-                  gs::temporal::offsets({.unknown = true}),
+                  gs::temporal::offsets({.allow_unknown = true}),
                   [](const gs::temporal::UtcOffset&) { return true; }),
               gs::temporal::UtcOffset{0});
     EXPECT_EQ(minimal<gs::temporal::UtcOffset>(
-                  gs::temporal::offsets({.unknown = true}),
+                  gs::temporal::offsets({.allow_unknown = true}),
                   [](const gs::temporal::UtcOffset& o) {
                       return !o.known || o.seconds >= 3600 ||
                              o.seconds <= -3600;
                   }),
               gs::temporal::UtcOffset{3600});
     EXPECT_EQ(minimal<gs::temporal::UtcOffset>(
-                  gs::temporal::offsets({.unknown = true}),
+                  gs::temporal::offsets({.allow_unknown = true}),
                   [](const gs::temporal::UtcOffset& o) { return !o.known; }),
               gs::temporal::UNKNOWN_OFFSET);
 }
@@ -110,7 +110,7 @@ TEST(ShrinkTemporal, ZonesShrinkToUtc) {
                   .name,
               "UTC");
     EXPECT_EQ(minimal<gs::temporal::TimeZone>(
-                  gs::temporal::zones({.legacy = true}),
+                  gs::temporal::zones({.allow_legacy = true}),
                   [](const gs::temporal::TimeZone&) { return true; })
                   .name,
               "UTC");

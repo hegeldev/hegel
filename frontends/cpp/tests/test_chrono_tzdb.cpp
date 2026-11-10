@@ -67,6 +67,15 @@ TEST(ChronoTzdb, LinksAndUnknownNames) {
         30);
 }
 
+TEST(ChronoTzdb, AnOracleReportsNoTransitionAfterTheLast) {
+    temporal::ZoneOracle fixed =
+        adapter::oracle(*std::chrono::locate_zone("Etc/GMT+5"));
+    EXPECT_EQ(fixed.next_transition(0), std::nullopt);
+    temporal::ZoneOracle new_york =
+        adapter::oracle(*std::chrono::locate_zone("America/New_York"));
+    EXPECT_EQ(new_york.next_transition(1'700'000'000), 1'710'054'000);
+}
+
 TEST(ChronoTzdb, AnOracleTakesItsProbeRange) {
     temporal::ZoneSource source;
     source.add_oracle(

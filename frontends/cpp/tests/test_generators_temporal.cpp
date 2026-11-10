@@ -8,13 +8,17 @@
 
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <limits>
+#include <map>
 #include <optional>
 #include <ratio>
 #include <regex>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include <hegel/hegel.h>
@@ -31,7 +35,49 @@ namespace {
     template <typename T> std::string show(const T& value) {
         std::ostringstream os;
         os << value;
+        EXPECT_EQ(os.str(), gs::temporal::to_string(value));
         return os.str();
+    }
+
+    // The message of the argument error `build` raises.
+    template <typename F> std::string build_error(F&& build) {
+        try {
+            (void)build();
+        } catch (const std::invalid_argument& e) {
+            return e.what();
+        }
+        ADD_FAILURE() << "the generator was built";
+        return "";
+    }
+
+    void expect_contains(const std::string& text, const std::string& part) {
+        EXPECT_NE(text.find(part), std::string::npos) << text;
+    }
+
+    // Checks that `values`, given in ascending order, compare, order and
+    // hash as their positions say.
+    template <typename T> void expect_ordered(const std::vector<T>& values) {
+        std::set<T> ordered;
+        std::unordered_set<T> hashed;
+        for (size_t i = 0; i < values.size(); ++i) {
+            for (size_t j = 0; j < values.size(); ++j) {
+                EXPECT_EQ(values[i] == values[j], i == j) << i << " " << j;
+                EXPECT_EQ(values[i] != values[j], i != j) << i << " " << j;
+                EXPECT_EQ(values[i] < values[j], i < j) << i << " " << j;
+                EXPECT_EQ(values[i] > values[j], i > j) << i << " " << j;
+                EXPECT_EQ(values[i] <= values[j], i <= j) << i << " " << j;
+                EXPECT_EQ(values[i] >= values[j], i >= j) << i << " " << j;
+            }
+            T copy = values[i];
+            EXPECT_EQ(std::hash<T>{}(copy), std::hash<T>{}(values[i]));
+            ordered.insert(values[i]);
+            ordered.insert(copy);
+            hashed.insert(values[i]);
+            hashed.insert(copy);
+        }
+        EXPECT_EQ(ordered.size(), values.size());
+        EXPECT_EQ(hashed.size(), values.size());
+        EXPECT_EQ(std::vector<T>(ordered.begin(), ordered.end()), values);
     }
 
     gs::temporal::DateTime datetime(int32_t year, uint8_t month, uint8_t day,
@@ -52,6 +98,16 @@ TEST(TemporalValues, DatesAndTimesPrintInRfc9557Form) {
     EXPECT_EQ(show(gs::temporal::Time{2, 30, 0, 500'000'000}), "02:30:00.5");
     EXPECT_EQ(show(gs::temporal::Time{2, 30, 0, 1}), "02:30:00.000000001");
     EXPECT_EQ(show(datetime(2024, 3, 10, 2, 30, 0)), "2024-03-10T02:30:00");
+    EXPECT_EQ(show(gs::temporal::Date{}), "1970-01-01");
+    EXPECT_EQ(show(gs::temporal::Time{}), "00:00:00");
+    EXPECT_EQ(show(gs::temporal::DateTime{}), "1970-01-01T00:00:00");
+    EXPECT_EQ(show(gs::temporal::Instant{}), "1970-01-01T00:00:00Z");
+    EXPECT_EQ(show(gs::temporal::SignedDuration{}), "PT0S");
+}
+
+TEST(TemporalValues, AValueOutsideItsRangeStillPrints) {
+    EXPECT_EQ(show(gs::temporal::Date{2024, 13, 40}), "2024-13-40");
+    EXPECT_EQ(show(gs::temporal::Time{25, 61, 61, 5}), "25:61:61.000000005");
 }
 
 TEST(TemporalValues, InstantsPrintAsUtc) {
@@ -101,7 +157,11 @@ TEST(TemporalValues, SpansPrintInFriendlyForm) {
     gs::temporal::Span mixed;
     mixed.years = 1;
     mixed.months = -2;
-    EXPECT_EQ(show(mixed), "1y -2mo");
+    EXPECT_EQ(show(mixed), "+1y -2mo");
+    gs::temporal::Span both;
+    both.days = -3;
+    both.hours = 4;
+    EXPECT_EQ(show(both), "-3d +4h");
     gs::temporal::Span lowest;
     lowest.nanoseconds = std::numeric_limits<int64_t>::min();
     EXPECT_EQ(show(lowest), "-9223372036854775808ns");
@@ -158,6 +218,14 @@ TEST(TemporalValues, ZonedDatetimesPrintAsTheEngineDoes) {
     EXPECT_EQ(show(calcutta), "2024-06-01T12:00:00+05:30[Asia/Calcutta]");
 }
 
+TEST(TemporalValues, AZoneNameThatIsNotUtf8DoesNotPrintInAZonedDatetime) {
+    gs::temporal::ZonedDateTime zoned =
+        gs::temporal::resolve("UTC", datetime(2024, 6, 1, 12, 0, 0));
+    zoned.zone.name = "\xff";
+    EXPECT_THROW(gs::temporal::to_string(zoned), std::invalid_argument);
+    EXPECT_EQ(gs::temporal::to_string(zoned.zone), "\xff");
+}
+
 TEST(TemporalValues, ResolveRejectsBadInput) {
     EXPECT_THROW(
         gs::temporal::resolve("Mars/Olympus", datetime(2024, 6, 1, 12, 0, 0)),
@@ -202,20 +270,16 @@ TEST(TemporalValues, InfoDescribesNames) {
     EXPECT_EQ(utc->primary_name, "UTC");
     EXPECT_FALSE(utc->is_link);
     EXPECT_EQ(utc->rank, 0);
-    EXPECT_NE(
-        std::find(utc->tags.begin(), utc->tags.end(), gs::temporal::Tag::Fixed),
-        utc->tags.end());
+    EXPECT_TRUE(utc->has(gs::temporal::Tag::Fixed));
+    EXPECT_FALSE(utc->has(gs::temporal::Tag::Link));
     std::optional<gs::temporal::ZoneInfo> calcutta =
         gs::temporal::info("Asia/Calcutta");
     ASSERT_TRUE(calcutta.has_value());
     EXPECT_EQ(calcutta->primary_name, "Asia/Kolkata");
     EXPECT_TRUE(calcutta->is_link);
-    EXPECT_NE(std::find(calcutta->tags.begin(), calcutta->tags.end(),
-                        gs::temporal::Tag::Link),
-              calcutta->tags.end());
-    EXPECT_NE(std::find(calcutta->tags.begin(), calcutta->tags.end(),
-                        gs::temporal::Tag::Fractional),
-              calcutta->tags.end());
+    EXPECT_TRUE(calcutta->has(gs::temporal::Tag::Link));
+    EXPECT_TRUE(calcutta->has(gs::temporal::Tag::Fractional));
+    EXPECT_FALSE(calcutta->has(gs::temporal::Tag::Undefined));
     EXPECT_NE(*utc, *calcutta);
     std::optional<gs::temporal::ZoneInfo> unknown =
         gs::temporal::info(gs::temporal::UNKNOWN_ZONE);
@@ -306,6 +370,73 @@ TEST(TemporalValues, ComparisonsFollowTheFields) {
               (gs::temporal::TimeZone{"Etc/UTC", "UTC"}));
 }
 
+TEST(TemporalValues, EveryValueTypeHasATotalOrderAndAHash) {
+    using namespace gs::temporal;
+    expect_ordered<Date>(
+        {{-1, 12, 31}, {2023, 12, 31}, {2024, 1, 1}, {2024, 1, 2}});
+    expect_ordered<Time>(
+        {{0, 0, 0, 0}, {0, 0, 0, 1}, {0, 0, 1, 0}, {0, 1, 0, 0}, {1, 0, 0, 0}});
+    expect_ordered<DateTime>({datetime(2024, 1, 1, 0, 0, 0),
+                              datetime(2024, 1, 1, 0, 0, 1),
+                              datetime(2024, 1, 2, 0, 0, 0)});
+    expect_ordered<Instant>({{-1, 0}, {-1, 5}, {0, 0}, {0, 1}, {1, 0}});
+    expect_ordered<UtcOffset>(
+        {UNKNOWN_OFFSET, UtcOffset{-3600}, UtcOffset{0}, UtcOffset{3600}});
+    expect_ordered<TimeZone>({{"Asia/Calcutta", "Asia/Kolkata"},
+                              {"Asia/Kolkata", "Asia/Kolkata"},
+                              {"UTC", "Etc/UTC"},
+                              {"UTC", "UTC"}});
+    expect_ordered<SignedDuration>(
+        {{-1, -5}, {-1, 0}, {0, -1}, {0, 0}, {1, 0}});
+    Span day;
+    day.days = 1;
+    Span month;
+    month.months = 1;
+    Span year_less_a_day;
+    year_less_a_day.years = 1;
+    year_less_a_day.days = -1;
+    Span year;
+    year.years = 1;
+    expect_ordered<Span>({Span{}, day, month, year_less_a_day, year});
+
+    ZonedDateTime earlier =
+        resolve("America/New_York", datetime(2024, 11, 3, 1, 30, 0));
+    ZonedDateTime later = earlier;
+    later.fold = true;
+    later.offset = later.offset_after;
+    later.instant.second += 3600;
+    ZonedDateTime utc = resolve("UTC", datetime(2024, 11, 3, 6, 30, 0));
+    ASSERT_EQ(utc.instant, later.instant);
+    ZonedDateTime next = resolve("UTC", datetime(2024, 11, 3, 6, 30, 1));
+    expect_ordered<ZonedDateTime>({earlier, later, utc, next});
+
+    EXPECT_EQ((UtcOffset{5, false}), UNKNOWN_OFFSET);
+    EXPECT_EQ(std::hash<UtcOffset>{}(UtcOffset{5, false}),
+              std::hash<UtcOffset>{}(UNKNOWN_OFFSET));
+    static_assert(Date{2024, 1, 1} < Date{2024, 1, 2});
+    static_assert(UNKNOWN_OFFSET < UtcOffset{-93'599});
+}
+
+TEST(TemporalValues, ValuesAreKeysOfSetsAndMaps) {
+    using namespace gs::temporal;
+    hegel::test(
+        [](hegel::TestCase& tc) {
+            std::set<TimeZone> zones = tc.draw(gs::sets(gs::temporal::zones()));
+            for (const TimeZone& zone : zones) {
+                EXPECT_TRUE(info(zone.name).has_value());
+            }
+            std::map<Date, UtcOffset> by_date =
+                tc.draw(gs::maps(dates(), offsets({.allow_unknown = true})));
+            std::unordered_set<ZonedDateTime> seen;
+            ZonedDateTime zoned = tc.draw(zoned_datetimes());
+            seen.insert(zoned);
+            EXPECT_EQ(seen.count(zoned), 1U);
+            EXPECT_LE(by_date.size(), by_date.max_size());
+        },
+        hegel::Settings{.test_cases = 20,
+                        .database = hegel::Database::disabled()});
+}
+
 TEST(TemporalChrono, DurationsConvertToAndFromChrono) {
     using namespace std::chrono;
     gs::temporal::SignedDuration d{5405, 500'000'000};
@@ -382,14 +513,20 @@ TEST(TemporalChrono, InstantsConvertToAndFromChrono) {
     using namespace std::chrono;
     using sys_ns = time_point<system_clock, nanoseconds>;
     gs::temporal::Instant epoch{0, 0};
-    EXPECT_EQ(epoch.to_chrono(), sys_ns{nanoseconds{0}});
+    EXPECT_EQ(epoch.to_chrono<nanoseconds>(), sys_ns{nanoseconds{0}});
     gs::temporal::Instant before{-2, 500'000'000};
-    EXPECT_EQ(before.to_chrono(), sys_ns{nanoseconds{-1'500'000'000}});
+    EXPECT_EQ(before.to_chrono<nanoseconds>(),
+              sys_ns{nanoseconds{-1'500'000'000}});
     EXPECT_EQ(before.to_chrono<milliseconds>(),
               (time_point<system_clock, milliseconds>{milliseconds{-1500}}));
     EXPECT_EQ(before.to_chrono<seconds>(), std::nullopt);
-    EXPECT_EQ((gs::temporal::Instant{gs::temporal::MAX_INSTANT, 0}).to_chrono(),
+    EXPECT_EQ((gs::temporal::Instant{gs::temporal::MAX_INSTANT, 0})
+                  .to_chrono<nanoseconds>(),
               std::nullopt);
+    EXPECT_EQ((gs::temporal::Instant{gs::temporal::MAX_INSTANT, 0})
+                  .to_chrono<seconds>(),
+              (time_point<system_clock, seconds>{
+                  seconds{gs::temporal::MAX_INSTANT}}));
     EXPECT_EQ(
         gs::temporal::Instant::from_chrono(sys_ns{nanoseconds{-1'500'000'000}}),
         before);
@@ -408,15 +545,77 @@ TEST(TemporalChrono, InstantsConvertToAndFromChrono) {
               std::nullopt);
 }
 
-#if HEGEL_HAS_CHRONO_CALENDAR
+TEST(TemporalChrono, EveryInstantATimePointHoldsConverts) {
+    using namespace std::chrono;
+    using sys_ns = time_point<system_clock, nanoseconds>;
+    using sys_us = time_point<system_clock, microseconds>;
+    gs::temporal::Instant first_ns{-9'223'372'037, 145'224'192};
+    EXPECT_EQ(first_ns.to_chrono<nanoseconds>(), sys_ns::min());
+    EXPECT_EQ(gs::temporal::Instant::from_chrono(sys_ns::min()), first_ns);
+    EXPECT_EQ((gs::temporal::Instant{-9'223'372'037, 145'224'193})
+                  .to_chrono<nanoseconds>(),
+              sys_ns{nanoseconds::min() + nanoseconds{1}});
+    EXPECT_EQ((gs::temporal::Instant{-9'223'372'037, 999'999'999})
+                  .to_chrono<nanoseconds>(),
+              sys_ns{nanoseconds{-9'223'372'036'000'000'001}});
+    EXPECT_EQ((gs::temporal::Instant{-9'223'372'037, 145'224'191})
+                  .to_chrono<nanoseconds>(),
+              std::nullopt);
+    EXPECT_EQ((gs::temporal::Instant{-9'223'372'038, 999'999'999})
+                  .to_chrono<nanoseconds>(),
+              std::nullopt);
+    gs::temporal::Instant last_ns{9'223'372'036, 854'775'807};
+    EXPECT_EQ(last_ns.to_chrono<nanoseconds>(), sys_ns::max());
+    EXPECT_EQ(gs::temporal::Instant::from_chrono(sys_ns::max()), last_ns);
+    EXPECT_EQ((gs::temporal::Instant{9'223'372'036, 854'775'808})
+                  .to_chrono<nanoseconds>(),
+              std::nullopt);
+
+    gs::temporal::Instant first_us{-9'223'372'036'855, 224'192'000};
+    EXPECT_EQ(first_us.to_chrono<microseconds>(), sys_us::min());
+    EXPECT_EQ(gs::temporal::Instant::from_chrono(sys_us::min()), first_us);
+    EXPECT_EQ((gs::temporal::Instant{-9'223'372'036'855, 224'191'000})
+                  .to_chrono<microseconds>(),
+              std::nullopt);
+    EXPECT_EQ((gs::temporal::Instant{-9'223'372'036'855, 224'192'001})
+                  .to_chrono<microseconds>(),
+              std::nullopt);
+
+    EXPECT_EQ((gs::temporal::Instant{-1, 999'999'999}).to_chrono<nanoseconds>(),
+              sys_ns{nanoseconds{-1}});
+    EXPECT_EQ((gs::temporal::Instant{-1, 0}).to_chrono<seconds>(),
+              (time_point<system_clock, seconds>{seconds{-1}}));
+
+    hegel::test(
+        [](hegel::TestCase& tc) {
+            gs::temporal::Instant instant = tc.draw(gs::temporal::instants());
+            std::optional<sys_ns> at = instant.to_chrono<nanoseconds>();
+            bool held =
+                instant >= gs::temporal::Instant{-9'223'372'037, 145'224'192} &&
+                instant <= gs::temporal::Instant{9'223'372'036, 854'775'807};
+            EXPECT_EQ(at.has_value(), held);
+            if (at) {
+                EXPECT_EQ(gs::temporal::Instant::from_chrono(*at), instant);
+            }
+        },
+        hegel::Settings{.test_cases = 200,
+                        .database = hegel::Database::disabled()});
+}
+
 TEST(TemporalChrono, DatesConvertToAndFromYearMonthDay) {
     using namespace std::chrono;
     std::optional<year_month_day> ymd =
-        gs::temporal::Date{2024, 3, 10}.to_chrono();
+        gs::temporal::Date{2024, 3, 10}.to_chrono<year_month_day>();
     ASSERT_TRUE(ymd.has_value());
     EXPECT_EQ(*ymd, (year_month_day{year{2024}, month{3}, day{10}}));
-    EXPECT_EQ((gs::temporal::Date{100'000, 1, 1}).to_chrono(), std::nullopt);
-    EXPECT_EQ((gs::temporal::Date{-100'000, 1, 1}).to_chrono(), std::nullopt);
+    EXPECT_EQ((gs::temporal::Date{100'000, 1, 1}).to_chrono<year_month_day>(),
+              std::nullopt);
+    EXPECT_EQ((gs::temporal::Date{-100'000, 1, 1}).to_chrono<year_month_day>(),
+              std::nullopt);
+    EXPECT_EQ((gs::temporal::Date{32'767, 12, 31}).to_chrono<year_month_day>(),
+              (year_month_day{year{32'767}, month{12}, day{31}}));
+    EXPECT_EQ((gs::temporal::Date{-32'767, 1, 1}).to_chrono<year_month_day>(),
+              (year_month_day{year{-32'767}, month{1}, day{1}}));
     EXPECT_EQ(gs::temporal::Date::from_chrono(*ymd),
               (gs::temporal::Date{2024, 3, 10}));
     EXPECT_EQ(
@@ -426,27 +625,38 @@ TEST(TemporalChrono, DatesConvertToAndFromYearMonthDay) {
                   year_month_day{year{2023}, month{2}, day{29}}),
               std::nullopt);
 }
-#endif
 
-TEST(TemporalRepr, ValuesRenderInTheEngineForm) {
+TEST(TemporalRepr, ValuesRenderAsTheirTypeAndTheEngineText) {
     using hegel::internal::cpp_type_name;
     using hegel::internal::repr;
-    EXPECT_EQ(repr(gs::temporal::Date{2024, 3, 10}), "2024-03-10");
-    EXPECT_EQ(repr(gs::temporal::Time{2, 30, 0, 0}), "02:30:00");
-    EXPECT_EQ(repr(datetime(2024, 3, 10, 2, 30, 0)), "2024-03-10T02:30:00");
-    EXPECT_EQ(repr(gs::temporal::Instant{0, 0}), "1970-01-01T00:00:00Z");
-    EXPECT_EQ(repr(gs::temporal::UtcOffset{19'800}), "+05:30");
-    EXPECT_EQ(repr(gs::temporal::TimeZone{"UTC", "UTC"}), "UTC");
+    const std::string ns = "hegel::generators::temporal::";
+    EXPECT_EQ(repr(gs::temporal::Date{2024, 3, 10}),
+              ns + "Date{\"2024-03-10\"}");
+    EXPECT_EQ(repr(gs::temporal::Time{2, 30, 0, 0}), ns + "Time{\"02:30:00\"}");
+    EXPECT_EQ(repr(datetime(2024, 3, 10, 2, 30, 0)),
+              ns + "DateTime{\"2024-03-10T02:30:00\"}");
+    EXPECT_EQ(repr(gs::temporal::Instant{0, 0}),
+              ns + "Instant{\"1970-01-01T00:00:00Z\"}");
+    EXPECT_EQ(repr(gs::temporal::UtcOffset{19'800}),
+              ns + "UtcOffset{\"+05:30\"}");
+    EXPECT_EQ(repr(gs::temporal::TimeZone{"UTC", "UTC"}),
+              ns + "TimeZone{\"UTC\"}");
+    EXPECT_EQ(repr(gs::temporal::TimeZone{"a\"b\n", "a\"b\n"}),
+              ns + "TimeZone{\"a\\\"b\\n\"}");
     EXPECT_EQ(repr(gs::temporal::resolve("UTC", datetime(2000, 1, 1, 0, 0, 0))),
-              "2000-01-01T00:00:00+00:00[UTC]");
-    EXPECT_EQ(repr(gs::temporal::SignedDuration{90, 0}), "PT1M30S");
-    EXPECT_EQ(repr(gs::temporal::Span{}), "0s");
+              ns + "ZonedDateTime{\"2000-01-01T00:00:00+00:00[UTC]\"}");
+    EXPECT_EQ(repr(gs::temporal::SignedDuration{90, 0}),
+              ns + "SignedDuration{\"PT1M30S\"}");
+    EXPECT_EQ(repr(gs::temporal::Span{}), ns + "Span{\"0s\"}");
+    gs::temporal::Span micro;
+    micro.microseconds = 9;
+    EXPECT_EQ(repr(micro), ns + "Span{\"9µs\"}");
     EXPECT_EQ(repr(std::optional<gs::temporal::Date>{
                   gs::temporal::Date{2024, 3, 10}}),
-              "std::optional<hegel::generators::temporal::Date>{2024-03-10}");
+              "std::optional<" + ns + "Date>{" + ns + "Date{\"2024-03-10\"}}");
     EXPECT_EQ(
         repr(std::vector<gs::temporal::Date>{gs::temporal::Date{2024, 3, 10}}),
-        "std::vector<hegel::generators::temporal::Date>{2024-03-10}");
+        "std::vector<" + ns + "Date>{" + ns + "Date{\"2024-03-10\"}}");
 
     EXPECT_EQ(cpp_type_name<std::chrono::nanoseconds>(),
               "std::chrono::nanoseconds");
@@ -492,13 +702,13 @@ TEST(TemporalGenerators, DrawAll) {
                 {.min_value = gs::temporal::UtcOffset{-3600},
                  .max_value = gs::temporal::UtcOffset{3600},
                  .granularity = gs::temporal::Granularity::QuarterHours,
-                 .unknown = true}));
+                 .allow_unknown = true}));
             (void)tc.draw(gs::temporal::zones());
-            (void)tc.draw(
-                gs::temporal::zones({.links = false, .legacy = true}));
+            (void)tc.draw(gs::temporal::zones(
+                {.allow_links = false, .allow_legacy = true}));
             (void)tc.draw(gs::temporal::zones(
                 {.names = std::vector<std::string>{"Mars/Olympus"},
-                 .opaque = true}));
+                 .allow_opaque = true}));
             (void)tc.draw(gs::temporal::zoned_datetimes());
             (void)tc.draw(gs::temporal::zoned_datetimes(
                 {.zones = gs::temporal::zones(
@@ -528,146 +738,155 @@ TEST(TemporalGenerators, DrawAll) {
 }
 
 TEST(TemporalGenerators, DatesValidateTheirParameters) {
-    EXPECT_THROW(
-        gs::temporal::dates({.min_value = gs::temporal::Date{2024, 2, 30}}),
-        std::invalid_argument);
-    EXPECT_THROW(
-        gs::temporal::dates({.max_value = gs::temporal::Date{2024, 13, 1}}),
-        std::invalid_argument);
-    EXPECT_THROW(
-        gs::temporal::dates({.max_value = gs::temporal::Date{2024, 1, 0}}),
-        std::invalid_argument);
-    EXPECT_THROW(
-        gs::temporal::dates(
-            {.min_value =
-                 gs::temporal::Date{gs::temporal::MAX_YEAR + 1, 1, 1}}),
-        std::invalid_argument);
-    EXPECT_THROW(
-        gs::temporal::dates({.min_value = gs::temporal::Date{2024, 1, 2},
-                             .max_value = gs::temporal::Date{2024, 1, 1}}),
-        std::invalid_argument);
+    using gs::temporal::Date;
+    for (Date invalid : {Date{2024, 2, 30}, Date{2024, 13, 1}, Date{2024, 1, 0},
+                         Date{gs::temporal::MAX_YEAR + 1, 1, 1},
+                         Date{1900, 2, 29}, Date{2024, 4, 31}}) {
+        expect_contains(build_error([&] {
+                            return gs::temporal::dates({.min_value = invalid});
+                        }),
+                        "min_value");
+        expect_contains(build_error([&] {
+                            return gs::temporal::dates({.max_value = invalid});
+                        }),
+                        "max_value");
+    }
+    expect_contains(
+        build_error([&] {
+            return gs::temporal::dates(
+                {.min_value = Date{2024, 1, 2}, .max_value = Date{2024, 1, 1}});
+        }),
+        "min_value <= max_value");
     EXPECT_THROW(
         gs::temporal::dates({.weekdays = std::vector<gs::temporal::Weekday>{}}),
         std::invalid_argument);
     EXPECT_THROW(
         gs::temporal::dates({.months = std::vector<gs::temporal::Month>{}}),
         std::invalid_argument);
-    EXPECT_NO_THROW(
-        gs::temporal::dates({.min_value = gs::temporal::Date{2024, 2, 29}}));
-    EXPECT_NO_THROW(
-        gs::temporal::dates({.min_value = gs::temporal::Date{2000, 2, 29}}));
-    EXPECT_THROW(
-        gs::temporal::dates({.min_value = gs::temporal::Date{1900, 2, 29}}),
-        std::invalid_argument);
-    EXPECT_THROW(
-        gs::temporal::dates({.min_value = gs::temporal::Date{2024, 4, 31}}),
-        std::invalid_argument);
-    EXPECT_NO_THROW(
-        gs::temporal::dates({.min_value = gs::temporal::Date{2024, 1, 31}}));
+    for (Date valid :
+         {Date{2024, 2, 29}, Date{2000, 2, 29}, Date{2024, 1, 31}}) {
+        assert_all_examples<Date>(
+            gs::temporal::dates({.min_value = valid, .max_value = valid}),
+            [valid](const Date& d) { return d == valid; }, 5);
+    }
     EXPECT_NO_THROW(gs::temporal::dates(
         {.weekdays = {
              {gs::temporal::Weekday::Monday, gs::temporal::Weekday::Tuesday,
               gs::temporal::Weekday::Wednesday, gs::temporal::Weekday::Thursday,
               gs::temporal::Weekday::Friday, gs::temporal::Weekday::Saturday,
               gs::temporal::Weekday::Sunday}}}));
-    auto no_allowed_day =
-        gs::temporal::dates({.min_value = gs::temporal::Date{2024, 1, 1},
-                             .max_value = gs::temporal::Date{2024, 1, 31},
-                             .months = {{gs::temporal::Month::March}}});
-    EXPECT_THROW(
-        find_any<gs::temporal::Date>(
-            no_allowed_day, [](const gs::temporal::Date&) { return true; }),
-        std::invalid_argument);
+    build_error([&] {
+        return gs::temporal::dates({.min_value = Date{2024, 1, 1},
+                                    .max_value = Date{2024, 1, 31},
+                                    .months = {{gs::temporal::Month::March}}});
+    });
 }
 
 TEST(TemporalGenerators, TimesValidateTheirParameters) {
-    EXPECT_THROW(
-        gs::temporal::times({.min_value = gs::temporal::Time{24, 0, 0, 0}}),
-        std::invalid_argument);
-    EXPECT_THROW(
-        gs::temporal::times({.max_value = gs::temporal::Time{0, 60, 0, 0}}),
-        std::invalid_argument);
-    EXPECT_THROW(
-        gs::temporal::times({.max_value = gs::temporal::Time{0, 0, 60, 0}}),
-        std::invalid_argument);
-    EXPECT_THROW(gs::temporal::times(
-                     {.max_value = gs::temporal::Time{0, 0, 0, 1'000'000'000}}),
-                 std::invalid_argument);
-    EXPECT_THROW(
-        gs::temporal::times({.min_value = gs::temporal::Time{1, 0, 0, 0},
-                             .max_value = gs::temporal::Time{0, 0, 0, 0}}),
-        std::invalid_argument);
-    auto no_whole_minute =
-        gs::temporal::times({.min_value = gs::temporal::Time{1, 0, 1, 0},
-                             .max_value = gs::temporal::Time{1, 0, 59, 0},
-                             .precision = gs::temporal::Precision::Minutes});
-    EXPECT_THROW(
-        find_any<gs::temporal::Time>(
-            no_whole_minute, [](const gs::temporal::Time&) { return true; }),
-        std::invalid_argument);
+    using gs::temporal::Time;
+    for (Time invalid : {Time{24, 0, 0, 0}, Time{0, 60, 0, 0},
+                         Time{0, 0, 60, 0}, Time{0, 0, 0, 1'000'000'000}}) {
+        expect_contains(build_error([&] {
+                            return gs::temporal::times({.min_value = invalid});
+                        }),
+                        "min_value");
+        expect_contains(build_error([&] {
+                            return gs::temporal::times({.max_value = invalid});
+                        }),
+                        "max_value");
+    }
+    expect_contains(
+        build_error([&] {
+            return gs::temporal::times(
+                {.min_value = Time{1, 0, 0, 0}, .max_value = Time{0, 0, 0, 0}});
+        }),
+        "min_value <= max_value");
+    build_error([&] {
+        return gs::temporal::times(
+            {.min_value = Time{1, 0, 1, 0},
+             .max_value = Time{1, 0, 59, 0},
+             .precision = gs::temporal::Precision::Minutes});
+    });
 }
 
 TEST(TemporalGenerators, DatetimesValidateTheirParameters) {
-    EXPECT_THROW(
-        gs::temporal::datetimes({.min_value = datetime(2024, 2, 30, 0, 0, 0)}),
-        std::invalid_argument);
-    EXPECT_THROW(
-        gs::temporal::datetimes({.max_value = datetime(2024, 1, 1, 25, 0, 0)}),
-        std::invalid_argument);
-    EXPECT_THROW(
-        gs::temporal::datetimes({.min_value = datetime(2024, 1, 2, 0, 0, 0),
-                                 .max_value = datetime(2024, 1, 1, 0, 0, 0)}),
-        std::invalid_argument);
+    expect_contains(build_error([&] {
+                        return gs::temporal::datetimes(
+                            {.min_value = datetime(2024, 2, 30, 0, 0, 0)});
+                    }),
+                    "min_value");
+    expect_contains(build_error([&] {
+                        return gs::temporal::datetimes(
+                            {.max_value = datetime(2024, 1, 1, 25, 0, 0)});
+                    }),
+                    "max_value");
+    expect_contains(build_error([&] {
+                        return gs::temporal::datetimes(
+                            {.min_value = datetime(2024, 1, 2, 0, 0, 0),
+                             .max_value = datetime(2024, 1, 1, 0, 0, 0)});
+                    }),
+                    "min_value <= max_value");
 }
 
 TEST(TemporalGenerators, InstantsValidateTheirParameters) {
-    EXPECT_THROW(
-        gs::temporal::instants(
-            {.min_value =
-                 gs::temporal::Instant{gs::temporal::MIN_INSTANT - 1, 0}}),
-        std::invalid_argument);
-    EXPECT_THROW(
-        gs::temporal::instants(
-            {.max_value =
-                 gs::temporal::Instant{gs::temporal::MAX_INSTANT + 1, 0}}),
-        std::invalid_argument);
-    EXPECT_THROW(gs::temporal::instants(
-                     {.max_value = gs::temporal::Instant{0, 1'000'000'000}}),
-                 std::invalid_argument);
-    EXPECT_THROW(
-        gs::temporal::instants({.min_value = gs::temporal::Instant{1, 0},
-                                .max_value = gs::temporal::Instant{0, 0}}),
-        std::invalid_argument);
+    using gs::temporal::Instant;
+    expect_contains(
+        build_error([&] {
+            return gs::temporal::instants(
+                {.min_value = Instant{gs::temporal::MIN_INSTANT - 1, 0}});
+        }),
+        "min_value.second");
+    expect_contains(
+        build_error([&] {
+            return gs::temporal::instants(
+                {.max_value = Instant{gs::temporal::MAX_INSTANT + 1, 0}});
+        }),
+        "max_value.second");
+    expect_contains(build_error([&] {
+                        return gs::temporal::instants(
+                            {.max_value = Instant{0, 1'000'000'000}});
+                    }),
+                    "max_value.nanosecond");
+    expect_contains(
+        build_error([&] {
+            return gs::temporal::instants(
+                {.min_value = Instant{1, 0}, .max_value = Instant{0, 0}});
+        }),
+        "min_value <= max_value");
 }
 
 TEST(TemporalGenerators, OffsetsValidateTheirParameters) {
+    using gs::temporal::UtcOffset;
     EXPECT_THROW(
         gs::temporal::offsets({.min_value = gs::temporal::UNKNOWN_OFFSET}),
         std::invalid_argument);
     EXPECT_THROW(
         gs::temporal::offsets({.max_value = gs::temporal::UNKNOWN_OFFSET}),
         std::invalid_argument);
-    EXPECT_THROW(
-        gs::temporal::offsets(
-            {.min_value =
-                 gs::temporal::UtcOffset{-gs::temporal::MAX_OFFSET - 1}}),
-        std::invalid_argument);
-    EXPECT_THROW(gs::temporal::offsets({.max_value =
-                                            gs::temporal::UtcOffset{
-                                                gs::temporal::MAX_OFFSET + 1}}),
-                 std::invalid_argument);
-    EXPECT_THROW(
-        gs::temporal::offsets({.min_value = gs::temporal::UtcOffset{1},
-                               .max_value = gs::temporal::UtcOffset{0}}),
-        std::invalid_argument);
-    auto no_whole_hour = gs::temporal::offsets(
-        {.min_value = gs::temporal::UtcOffset{1},
-         .max_value = gs::temporal::UtcOffset{3599},
-         .granularity = gs::temporal::Granularity::Hours});
-    EXPECT_THROW(
-        find_any<gs::temporal::UtcOffset>(
-            no_whole_hour, [](const gs::temporal::UtcOffset&) { return true; }),
-        std::invalid_argument);
+    expect_contains(
+        build_error([&] {
+            return gs::temporal::offsets(
+                {.min_value = UtcOffset{-gs::temporal::MAX_OFFSET - 1}});
+        }),
+        "min_value");
+    expect_contains(
+        build_error([&] {
+            return gs::temporal::offsets(
+                {.max_value = UtcOffset{gs::temporal::MAX_OFFSET + 1}});
+        }),
+        "max_value");
+    expect_contains(
+        build_error([&] {
+            return gs::temporal::offsets(
+                {.min_value = UtcOffset{1}, .max_value = UtcOffset{0}});
+        }),
+        "min_value <= max_value");
+    build_error([&] {
+        return gs::temporal::offsets(
+            {.min_value = UtcOffset{1},
+             .max_value = UtcOffset{3599},
+             .granularity = gs::temporal::Granularity::Hours});
+    });
 }
 
 TEST(TemporalGenerators, ZonesValidateTheirParameters) {
@@ -684,15 +903,61 @@ TEST(TemporalGenerators, ZonesValidateTheirParameters) {
              "UTC", std::string(gs::temporal::UNKNOWN_ZONE)}}));
 }
 
+TEST(TemporalGenerators, ZonedDatetimesRefuseBoundsOfBothKinds) {
+    using gs::temporal::Instant;
+    for (const gs::temporal::ZonedDatetimesParams& params :
+         {gs::temporal::ZonedDatetimesParams{.min_value =
+                                                 datetime(2024, 1, 1, 0, 0, 0),
+                                             .min_instant = Instant{0, 0}},
+          gs::temporal::ZonedDatetimesParams{.max_value =
+                                                 datetime(2024, 1, 1, 0, 0, 0),
+                                             .max_instant = Instant{0, 0}},
+          gs::temporal::ZonedDatetimesParams{.min_value =
+                                                 datetime(2024, 1, 1, 0, 0, 0),
+                                             .max_instant = Instant{0, 0}},
+          gs::temporal::ZonedDatetimesParams{.max_value =
+                                                 datetime(2024, 1, 1, 0, 0, 0),
+                                             .min_instant = Instant{0, 0}}}) {
+        try {
+            gs::temporal::zoned_datetimes(params);
+            ADD_FAILURE() << "bounds of both kinds were accepted";
+        } catch (const std::invalid_argument& e) {
+            EXPECT_EQ(std::string(e.what()),
+                      "zoned_datetimes: cannot combine wall-clock bounds "
+                      "(min_value / max_value) with instant bounds "
+                      "(min_instant / max_instant)");
+        }
+    }
+}
+
+TEST(TemporalGenerators, ZonedDatetimesNameTheirOwnParametersInErrors) {
+    using gs::temporal::Instant;
+    auto error = [](const gs::temporal::ZonedDatetimesParams& params) {
+        try {
+            gs::temporal::zoned_datetimes(params);
+        } catch (const std::invalid_argument& e) {
+            return std::string(e.what());
+        }
+        ADD_FAILURE() << "the parameters were accepted";
+        return std::string();
+    };
+    std::string inverted =
+        error({.min_instant = Instant{1, 0}, .max_instant = Instant{0, 0}});
+    expect_contains(inverted, "min_instant");
+    expect_contains(inverted, "max_instant");
+    EXPECT_EQ(inverted.find("min_value"), std::string::npos) << inverted;
+    EXPECT_EQ(inverted.find("max_value"), std::string::npos) << inverted;
+    std::string invalid = error({.max_instant = Instant{0, 1'000'000'000}});
+    expect_contains(invalid, "zoned_datetimes: ");
+    expect_contains(invalid, "max_instant.nanosecond");
+    EXPECT_EQ(invalid.find("max_value"), std::string::npos) << invalid;
+    std::string civil = error({.min_value = datetime(2024, 1, 2, 0, 0, 0),
+                               .max_value = datetime(2024, 1, 1, 0, 0, 0)});
+    expect_contains(civil, "min_value");
+    expect_contains(civil, "max_value");
+}
+
 TEST(TemporalGenerators, ZonedDatetimesValidateTheirParameters) {
-    EXPECT_THROW(gs::temporal::zoned_datetimes(
-                     {.min_value = datetime(2024, 1, 1, 0, 0, 0),
-                      .min_instant = gs::temporal::Instant{0, 0}}),
-                 std::invalid_argument);
-    EXPECT_THROW(gs::temporal::zoned_datetimes(
-                     {.max_value = datetime(2024, 1, 1, 0, 0, 0),
-                      .max_instant = gs::temporal::Instant{0, 0}}),
-                 std::invalid_argument);
     EXPECT_THROW(gs::temporal::zoned_datetimes(
                      {.min_value = datetime(2024, 1, 2, 0, 0, 0),
                       .max_value = datetime(2024, 1, 1, 0, 0, 0)}),
@@ -720,27 +985,39 @@ TEST(TemporalGenerators, ZonedDatetimesValidateTheirParameters) {
 }
 
 TEST(TemporalGenerators, DurationsValidateTheirParameters) {
-    EXPECT_THROW(gs::temporal::durations(
-                     {.min_value = gs::temporal::SignedDuration{1, -1}}),
-                 std::invalid_argument);
-    EXPECT_THROW(gs::temporal::durations(
-                     {.max_value = gs::temporal::SignedDuration{-1, 1}}),
-                 std::invalid_argument);
-    EXPECT_THROW(
-        gs::temporal::durations(
-            {.max_value = gs::temporal::SignedDuration{0, 1'000'000'000}}),
-        std::invalid_argument);
-    EXPECT_THROW(
-        gs::temporal::durations(
-            {.min_value = gs::temporal::SignedDuration{0, -1'000'000'000}}),
-        std::invalid_argument);
-    EXPECT_THROW(gs::temporal::durations(
-                     {.min_value = gs::temporal::SignedDuration{1, 0},
-                      .max_value = gs::temporal::SignedDuration{0, 0}}),
-                 std::invalid_argument);
-    EXPECT_NO_THROW(gs::temporal::durations(
-        {.min_value = gs::temporal::SignedDuration{0, -5},
-         .max_value = gs::temporal::SignedDuration{0, 5}}));
+    using gs::temporal::SignedDuration;
+    expect_contains(build_error([&] {
+                        return gs::temporal::durations(
+                            {.min_value = SignedDuration{1, -1}});
+                    }),
+                    "min_value");
+    expect_contains(build_error([&] {
+                        return gs::temporal::durations(
+                            {.max_value = SignedDuration{-1, 1}});
+                    }),
+                    "max_value");
+    expect_contains(build_error([&] {
+                        return gs::temporal::durations(
+                            {.max_value = SignedDuration{0, 1'000'000'000}});
+                    }),
+                    "max_value");
+    expect_contains(build_error([&] {
+                        return gs::temporal::durations(
+                            {.min_value = SignedDuration{0, -1'000'000'000}});
+                    }),
+                    "min_value");
+    expect_contains(build_error([&] {
+                        return gs::temporal::durations(
+                            {.min_value = SignedDuration{1, 0},
+                             .max_value = SignedDuration{0, 0}});
+                    }),
+                    "min_value <= max_value");
+    assert_all_examples<SignedDuration>(
+        gs::temporal::durations({.min_value = SignedDuration{0, -5},
+                                 .max_value = SignedDuration{0, 5}}),
+        [](const SignedDuration& d) {
+            return d >= SignedDuration{0, -5} && d <= SignedDuration{0, 5};
+        });
 }
 
 TEST(TemporalGenerators, SpansValidateTheirParameters) {
@@ -760,9 +1037,11 @@ TEST(TemporalGenerators, SpansValidateTheirParameters) {
 
 TEST(TemporalGenerators, ChronoDurationsValidateTheirParameters) {
     using namespace std::chrono;
-    EXPECT_THROW(gs::temporal::durations<seconds>(
-                     {.min_value = seconds{1}, .max_value = seconds{0}}),
-                 std::invalid_argument);
+    expect_contains(build_error([&] {
+                        return gs::temporal::durations<seconds>(
+                            {.min_value = seconds{1}, .max_value = seconds{0}});
+                    }),
+                    "min_value <= max_value");
     EXPECT_THROW(gs::temporal::durations<hours>({.min_value = hours::min()}),
                  std::invalid_argument);
     EXPECT_THROW(gs::temporal::durations<hours>({.max_value = hours::max()}),
@@ -774,11 +1053,28 @@ TEST(TemporalGenerators, ChronoDurationsValidateTheirParameters) {
 TEST(TemporalGenerators,
      ChronoDurationsDrawWholeUnitsWithinTheTypeAndTheEngine) {
     using namespace std::chrono;
-    assert_all_examples<minutes>(gs::temporal::durations<minutes>(),
-                                 [](const minutes&) { return true; });
-    assert_all_examples<duration<int8_t, std::micro>>(
-        gs::temporal::durations<duration<int8_t, std::micro>>(),
-        [](const duration<int8_t, std::micro>&) { return true; });
+    assert_all_examples<minutes>(
+        gs::temporal::durations<minutes>(), [](const minutes& d) {
+            return gs::temporal::SignedDuration::from_chrono(d).has_value();
+        });
+    find_any<minutes>(gs::temporal::durations<minutes>(), [](const minutes& d) {
+        return d > duration_cast<minutes>(
+                       seconds{std::numeric_limits<int64_t>::max() / 2});
+    });
+    using tiny = duration<int8_t, std::micro>;
+    std::set<int> seen;
+    assert_all_examples<tiny>(gs::temporal::durations<tiny>(),
+                              [&seen](const tiny& d) {
+                                  seen.insert(d.count());
+                                  return true;
+                              });
+    EXPECT_GT(seen.size(), 20U);
+    EXPECT_EQ(minimal<tiny>(gs::temporal::durations<tiny>(),
+                            [](const tiny& d) { return d.count() < -100; }),
+              tiny{-101});
+    EXPECT_EQ(minimal<tiny>(gs::temporal::durations<tiny>(),
+                            [](const tiny& d) { return d.count() > 100; }),
+              tiny{101});
     assert_all_examples<milliseconds>(
         gs::temporal::durations<milliseconds>(
             {.min_value = milliseconds{-5}, .max_value = milliseconds{5}}),

@@ -677,6 +677,21 @@ namespace hegel::impl {
             return generator;
         }
 
+        void replace_all(std::string& text, std::string_view from,
+                         std::string_view to) {
+            for (size_t at = text.find(from); at != std::string::npos;
+                 at = text.find(from, at + to.size())) {
+                text.replace(at, from.size(), to);
+            }
+        }
+
+        template <typename F> std::string formatted(F&& format) {
+            hegel_context_t* ctx = thread_context();
+            StringResultGuard guard{ctx};
+            require_configured(ctx, "to_string", format(ctx, &guard.result));
+            return std::string(guard.result.data, guard.result.len);
+        }
+
         // Owns a handle while its setters run, so that a rejected setter
         // frees it before the exception leaves the constructor.
         template <typename H> struct Building {
@@ -844,9 +859,6 @@ namespace hegel::impl {
         require_configured(building.ctx, "zones",
                            hegel_timezone_spec_set_source(
                                building.ctx, building.handle, source));
-        require_configured(building.ctx, "zones",
-                           hegel_timezone_spec_set_opaque(
-                               building.ctx, building.handle, opaque));
         if (names.has_value()) {
             std::vector<hegel_string_t> strings;
             strings.reserve(names->size());
@@ -867,6 +879,12 @@ namespace hegel::impl {
         require_configured(building.ctx, "zones",
                            hegel_timezone_spec_set_unknown(
                                building.ctx, building.handle, unknown));
+        require_configured(building.ctx, "zones",
+                           hegel_timezone_spec_set_opaque(
+                               building.ctx, building.handle, opaque));
+        require_configured(
+            building.ctx, "zones",
+            hegel_timezone_spec_validate(building.ctx, building.handle));
         return building.release();
     }
 
@@ -891,12 +909,16 @@ namespace hegel::impl {
                                                   params.civil_bounds->first,
                                                   params.civil_bounds->second));
         }
-        if (params.instant_bounds.has_value()) {
-            require_configured(building.ctx, "zoned_datetimes",
-                               hegel_zoned_spec_set_instant_bounds(
-                                   building.ctx, building.handle,
-                                   params.instant_bounds->first,
-                                   params.instant_bounds->second));
+        if (params.instant_bounds.has_value() &&
+            hegel_zoned_spec_set_instant_bounds(
+                building.ctx, building.handle, params.instant_bounds->first,
+                params.instant_bounds->second) != HEGEL_OK) {
+            // The engine names every pair of bounds min_value and
+            // max_value.
+            std::string msg = last_error(building.ctx);
+            replace_all(msg, "min_value", "min_instant");
+            replace_all(msg, "max_value", "max_instant");
+            throw std::invalid_argument("zoned_datetimes: " + msg);
         }
         require_configured(building.ctx, "zoned_datetimes",
                            hegel_zoned_spec_set_imaginary(building.ctx,
@@ -906,6 +928,9 @@ namespace hegel::impl {
                            hegel_zoned_spec_set_ambiguous(building.ctx,
                                                           building.handle,
                                                           params.ambiguous));
+        require_configured(
+            building.ctx, "zoned_datetimes",
+            hegel_zoned_spec_validate(building.ctx, building.handle));
         return building.release();
     }
 
@@ -934,11 +959,63 @@ namespace hegel::impl {
             }
             ++unit;
         }
+        require_configured(
+            building.ctx, "spans",
+            hegel_span_spec_validate(building.ctx, building.handle));
         return building.release();
     }
 
     void span_spec_free(hegel_span_spec_t* spec) {
         hegel_span_spec_free(thread_context(), spec);
+    }
+
+    std::string format_date(hegel_date_t value) {
+        return formatted([&](hegel_context_t* ctx, hegel_owned_string_t* out) {
+            return hegel_format_date(ctx, value, out);
+        });
+    }
+
+    std::string format_time(hegel_time_t value) {
+        return formatted([&](hegel_context_t* ctx, hegel_owned_string_t* out) {
+            return hegel_format_time(ctx, value, out);
+        });
+    }
+
+    std::string format_datetime(hegel_datetime_t value) {
+        return formatted([&](hegel_context_t* ctx, hegel_owned_string_t* out) {
+            return hegel_format_datetime(ctx, value, out);
+        });
+    }
+
+    std::string format_timestamp(hegel_timestamp_t value) {
+        return formatted([&](hegel_context_t* ctx, hegel_owned_string_t* out) {
+            return hegel_format_timestamp(ctx, value, out);
+        });
+    }
+
+    std::string format_offset(hegel_offset_t value) {
+        return formatted([&](hegel_context_t* ctx, hegel_owned_string_t* out) {
+            return hegel_format_offset(ctx, value, out);
+        });
+    }
+
+    std::string format_duration(hegel_duration_t value) {
+        return formatted([&](hegel_context_t* ctx, hegel_owned_string_t* out) {
+            return hegel_format_duration(ctx, value, out);
+        });
+    }
+
+    std::string format_span(const hegel_span_t& value) {
+        return formatted([&](hegel_context_t* ctx, hegel_owned_string_t* out) {
+            return hegel_format_span(ctx, &value, out);
+        });
+    }
+
+    std::string format_zoned_datetime(const hegel_zoned_datetime_t& value,
+                                      std::string_view zone) {
+        return formatted([&](hegel_context_t* ctx, hegel_owned_string_t* out) {
+            return hegel_format_zoned_datetime(ctx, &value, borrow(zone), out);
+        });
     }
 
     std::string tzdb_version() {
@@ -979,6 +1056,61 @@ namespace hegel::impl {
                            hegel_timezone_offset_at_in(
                                ctx, source, borrow(name), timestamp, &offset));
         return offset;
+    }
+
+    void validate_date(hegel_date_t min_value, hegel_date_t max_value,
+                       const hegel_date_options_t* options) {
+        hegel_context_t* ctx = thread_context();
+        require_configured(
+            ctx, "dates",
+            hegel_validate_date(ctx, min_value, max_value, options));
+    }
+
+    void validate_time(hegel_time_t min_value, hegel_time_t max_value,
+                       uint32_t precision) {
+        hegel_context_t* ctx = thread_context();
+        require_configured(
+            ctx, "times",
+            hegel_validate_time(ctx, min_value, max_value, precision));
+    }
+
+    void validate_datetime(hegel_datetime_t min_value,
+                           hegel_datetime_t max_value, uint32_t precision) {
+        hegel_context_t* ctx = thread_context();
+        require_configured(
+            ctx, "datetimes",
+            hegel_validate_datetime(ctx, min_value, max_value, precision));
+    }
+
+    void validate_timestamp(hegel_timestamp_t min_value,
+                            hegel_timestamp_t max_value, uint32_t precision) {
+        hegel_context_t* ctx = thread_context();
+        require_configured(
+            ctx, "instants",
+            hegel_validate_timestamp(ctx, min_value, max_value, precision));
+    }
+
+    void validate_offset(int32_t min_seconds, int32_t max_seconds,
+                         uint32_t granularity, bool allow_unknown) {
+        hegel_context_t* ctx = thread_context();
+        if (hegel_validate_offset(ctx, min_seconds, max_seconds, granularity,
+                                  allow_unknown) == HEGEL_OK) {
+            return;
+        }
+        // The engine names the bounds of an offset draw min_seconds and
+        // max_seconds.
+        std::string msg = last_error(ctx);
+        replace_all(msg, "min_seconds", "min_value");
+        replace_all(msg, "max_seconds", "max_value");
+        throw std::invalid_argument("offsets: " + msg);
+    }
+
+    void validate_duration(hegel_duration_t min_value,
+                           hegel_duration_t max_value, uint32_t precision) {
+        hegel_context_t* ctx = thread_context();
+        require_configured(
+            ctx, "durations",
+            hegel_validate_duration(ctx, min_value, max_value, precision));
     }
 
     hegel_date_t draw_date(const TestCase& tc, hegel_date_t min_value,
@@ -1076,6 +1208,18 @@ namespace hegel::impl {
                            "hegel_generate_zoned_datetime");
         return ZonedDraw{value,
                          std::string(guard.result.data, guard.result.len)};
+    }
+
+    hegel_zoned_datetime_t draw_zoned_datetime_for_zone(
+        const TestCase& tc, const hegel_zone_source_t* source,
+        std::string_view name, const hegel_zoned_spec_t* zoned_spec) {
+        DrawScope scope(tc);
+        hegel_zoned_datetime_t value{};
+        scope.raise_for_rc(
+            hegel_generate_zoned_datetime_for_zone(
+                scope.ctx, scope.tc, source, borrow(name), zoned_spec, &value),
+            "hegel_generate_zoned_datetime_for_zone");
+        return value;
     }
 
     hegel_span_t draw_span(const TestCase& tc, const hegel_span_spec_t* spec) {

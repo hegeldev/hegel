@@ -7,10 +7,12 @@
 
 #include <atomic>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <hegel/hegel.h>
@@ -129,15 +131,33 @@ namespace {
                                     .database = hegel::Database::disabled()});
     }
 
-    class RestoreDefault {
+    // Makes `source` the default until the end of the scope.
+    class ScopedDefault {
       public:
-        RestoreDefault() = default;
-        ~RestoreDefault() {
-            temporal::set_default_zone_source(ZoneSource::bundled());
-        }
-        RestoreDefault(const RestoreDefault&) = delete;
-        RestoreDefault& operator=(const RestoreDefault&) = delete;
+        explicit ScopedDefault(const ZoneSource& source)
+            : previous_(temporal::set_default_zone_source(source)) {}
+        ~ScopedDefault() { temporal::set_default_zone_source(previous_); }
+        ScopedDefault(const ScopedDefault&) = delete;
+        ScopedDefault& operator=(const ScopedDefault&) = delete;
+
+      private:
+        ZoneSource previous_;
     };
+
+    // The message of the argument error the first draw from `gen` raises.
+    template <typename T> std::string draw_error(const gs::Generator<T>& gen) {
+        try {
+            find_any<T>(gen, [](const T&) { return true; });
+        } catch (const std::invalid_argument& e) {
+            return e.what();
+        }
+        ADD_FAILURE() << "the draw raised no argument error";
+        return "";
+    }
+
+    void expect_contains(const std::string& text, const std::string& part) {
+        EXPECT_NE(text.find(part), std::string::npos) << text;
+    }
 
 } // namespace
 
@@ -244,6 +264,12 @@ TEST(ZoneSource, TzifFilesAreParsed) {
     EXPECT_THROW(source.add_tzif("Etc/TestBad", {'T', 'Z', 'i', 'f'}),
                  std::invalid_argument);
     EXPECT_THROW(source.add_tzif("Etc/TestEmpty", {}), std::invalid_argument);
+
+    std::vector<uint8_t> bytes = tzif_from_plus1_to_plus2_at(change);
+    source.add_tzif("Etc/TestTzifBytes", bytes.data(), bytes.size());
+    EXPECT_EQ(offset_in(source, "Etc/TestTzifBytes", change), 7200);
+    EXPECT_THROW(source.add_tzif("Etc/TestShort", bytes.data(), 4),
+                 std::invalid_argument);
 }
 
 TEST(ZoneSource, OraclesAreProbedWithOrWithoutNextTransition) {
@@ -415,6 +441,95 @@ TEST(ZoneSource, DrawsLoadOnlyTheZonesTheyLandOn) {
     EXPECT_EQ(loads->load(), static_cast<int>(drawn.size()));
 }
 
+TEST(ZoneSource, ALoaderIsFreedWhenTheSourceLetsItGo) {
+    auto token = std::make_shared<int>(0);
+    auto loader = [token](ZoneSource& s, const std::string& name) {
+        s.add_zone(name, fixed(*token, "Z"));
+    };
+    {
+        ZoneSource source;
+        source.set_loader(loader);
+        EXPECT_EQ(token.use_count(), 3);
+        source.set_loader([](ZoneSource&, const std::string&) {});
+        EXPECT_EQ(token.use_count(), 2);
+        source.set_loader(loader);
+        EXPECT_EQ(token.use_count(), 3);
+        source.set_loader(nullptr);
+        EXPECT_EQ(token.use_count(), 2);
+        source.set_loader(loader);
+        EXPECT_EQ(token.use_count(), 3);
+    }
+    EXPECT_EQ(token.use_count(), 2);
+
+    {
+        ZoneSource source;
+        source.declare({"Etc/TestLater"}).set_loader(loader);
+        auto zoned = temporal::zoned_datetimes(
+            {.zones = temporal::zones({.source = std::move(source)})});
+        EXPECT_EQ(token.use_count(), 3);
+        assert_all_examples<temporal::ZonedDateTime>(
+            zoned, [](const temporal::ZonedDateTime& z) {
+                return z.zone.name == "Etc/TestLater";
+            });
+    }
+    EXPECT_EQ(token.use_count(), 2);
+
+    ZoneSource bundled = ZoneSource::bundled();
+    EXPECT_THROW(bundled.set_loader(loader), std::invalid_argument);
+    EXPECT_EQ(token.use_count(), 2);
+}
+
+TEST(ZoneSource, ThreadsLoadAndDrawFromOneSourceTogether) {
+    std::vector<std::string> names;
+    for (int i = 0; i < 16; ++i) {
+        names.push_back("Etc/TestZone" + std::to_string(i));
+    }
+    auto loads = std::make_shared<std::atomic<int>>(0);
+    ZoneSource source;
+    source.declare(names).set_loader([loads](ZoneSource& s,
+                                             const std::string& name) {
+        ++*loads;
+        int index = std::stoi(name.substr(std::string("Etc/TestZone").size()));
+        s.add_zone(name, fixed(index * 60, "T" + std::to_string(index)));
+    });
+    auto builtin = temporal::zoned_datetimes(
+        {.zones = temporal::zones({.source = source})});
+    auto wrapped = temporal::zoned_datetimes(
+        {.zones = temporal::zones({.source = source})
+                      .filter([](const temporal::TimeZone&) { return true; }),
+         .source = source});
+    std::atomic<int> wrong{0};
+    std::vector<std::thread> threads;
+    for (int t = 0; t < 8; ++t) {
+        threads.emplace_back([&, t] {
+            for (size_t i = 0; i < names.size(); ++i) {
+                size_t index = (i + static_cast<size_t>(t)) % names.size();
+                if (offset_in(source, names[index], 0) !=
+                    static_cast<int32_t>(index) * 60) {
+                    ++wrong;
+                }
+            }
+            hegel::test(
+                [&](hegel::TestCase& tc) {
+                    for (const auto& gen : {builtin, wrapped}) {
+                        temporal::ZonedDateTime z = tc.draw(gen);
+                        int index = std::stoi(z.zone.name.substr(
+                            std::string("Etc/TestZone").size()));
+                        if (z.offset.seconds != index * 60) {
+                            ++wrong;
+                        }
+                    }
+                },
+                quick());
+        });
+    }
+    for (std::thread& thread : threads) {
+        thread.join();
+    }
+    EXPECT_EQ(wrong.load(), 0);
+    EXPECT_GE(loads->load(), static_cast<int>(names.size()));
+}
+
 TEST(ZoneSource, ALoaderFailureFailsTheQuery) {
     ZoneSource source;
     source.declare({"Etc/TestBroken"})
@@ -491,10 +606,15 @@ TEST(ZoneSourceGenerators, ZonesDrawTheSourcesNames) {
                          .source = source}),
         std::invalid_argument);
     (void)temporal::zones({.names = std::vector<std::string>{"Europe/London"},
-                           .opaque = true,
+                           .allow_opaque = true,
                            .source = source});
-    EXPECT_THROW(draw_once(temporal::zones({.source = ZoneSource()})),
+    EXPECT_THROW(temporal::zones({.source = ZoneSource()}),
                  std::invalid_argument);
+    ZoneSource legacy_only;
+    legacy_only.add_zone("EST5EDT", eastern());
+    EXPECT_THROW(temporal::zones({.source = legacy_only}),
+                 std::invalid_argument);
+    draw_once(temporal::zones({.allow_legacy = true, .source = legacy_only}));
 
     ZoneSource mars;
     mars.add_zone("Mars/Olympus", fixed(0, "MAR"));
@@ -518,13 +638,201 @@ TEST(ZoneSourceGenerators, ZonedDatetimesResolveAgainstTheSource) {
     EXPECT_EQ(gap.civil.time.hour, 2);
 }
 
+TEST(ZoneSourceGenerators, ZonedDatetimesTakeASourceWithoutZones) {
+    ZoneSource source;
+    source.add_zone("Etc/TestEastern", eastern());
+    auto gap = find_any<temporal::ZonedDateTime>(
+        temporal::zoned_datetimes({.source = source,
+                                   .min_value = datetime(2024, 3, 10, 0, 0),
+                                   .max_value = datetime(2024, 3, 10, 5, 0)}),
+        [](const temporal::ZonedDateTime& z) {
+            return z.kind == TransitionKind::Gap;
+        });
+    EXPECT_EQ(gap.zone.name, "Etc/TestEastern");
+    EXPECT_EQ(gap.zone.primary_name, "Etc/TestEastern");
+}
+
+TEST(ZoneSourceGenerators, AWrappedZonesGeneratorResolvesAgainstTheSource) {
+    ZoneSource source;
+    source.add_zone("Etc/TestEastern", eastern());
+    source.add_zone("Etc/TestFixed", fixed(3600, "ONE"));
+    source.add_link("Etc/TestAlias", "Etc/TestEastern");
+    auto wrapped = temporal::zones({.source = source})
+                       .filter([](const temporal::TimeZone& zone) {
+                           return zone.name != "Etc/TestFixed";
+                       });
+    auto zoned =
+        temporal::zoned_datetimes({.zones = wrapped,
+                                   .source = source,
+                                   .min_value = datetime(2024, 3, 10, 0, 0),
+                                   .max_value = datetime(2024, 3, 10, 5, 0)});
+    assert_all_examples<temporal::ZonedDateTime>(
+        zoned, [&](const temporal::ZonedDateTime& z) {
+            return z.zone.name != "Etc/TestFixed" &&
+                   z.zone.primary_name == "Etc/TestEastern" && z == [&] {
+                       temporal::ZonedDateTime again =
+                           source.resolve(z.zone.name, z.civil);
+                       again.fold = z.fold;
+                       again.offset = z.offset;
+                       again.instant = z.instant;
+                       return again;
+                   }();
+        });
+    auto gap = find_any<temporal::ZonedDateTime>(
+        zoned, [](const temporal::ZonedDateTime& z) {
+            return z.kind == TransitionKind::Gap &&
+                   z.zone.name == "Etc/TestAlias";
+        });
+    EXPECT_EQ(gap.civil.time.hour, 2);
+    EXPECT_EQ(gap.offset_before.seconds, -5 * 3600);
+
+    for (const auto& zones :
+         {gs::just(temporal::TimeZone{"Etc/TestEastern", "Etc/TestEastern"}),
+          gs::sampled_from(std::vector<temporal::TimeZone>{
+              {"Etc/TestEastern", "Etc/TestEastern"}}),
+          gs::one_of<temporal::TimeZone>({temporal::zones(
+              {.names = std::vector<std::string>{"Etc/TestEastern"},
+               .source = source})})}) {
+        auto fold = find_any<temporal::ZonedDateTime>(
+            temporal::zoned_datetimes(
+                {.zones = zones,
+                 .source = source,
+                 .min_value = datetime(2024, 11, 3, 0, 0),
+                 .max_value = datetime(2024, 11, 3, 3, 0)}),
+            [](const temporal::ZonedDateTime& z) {
+                return z.kind == TransitionKind::Fold && z.fold;
+            });
+        EXPECT_EQ(fold.offset.seconds, -5 * 3600);
+        EXPECT_EQ(fold.zone.primary_name, "Etc/TestEastern");
+    }
+}
+
+TEST(ZoneSourceGenerators, ANameTheSourceLacksIsAnError) {
+    ZoneSource source;
+    source.add_zone("Etc/TestEastern", eastern());
+    std::string missing = draw_error(temporal::zoned_datetimes(
+        {.zones =
+             gs::just(temporal::TimeZone{"Europe/London", "Europe/London"}),
+         .source = source}));
+    expect_contains(missing, "\"Europe/London\"");
+    expect_contains(missing, "`source`");
+
+    std::string not_in_default = draw_error(temporal::zoned_datetimes(
+        {.zones = temporal::zones({.source = source})
+                      .map([](temporal::TimeZone zone) { return zone; })}));
+    expect_contains(not_in_default, "\"Etc/TestEastern\"");
+    expect_contains(not_in_default, "`source`");
+
+    std::string opaque = draw_error(temporal::zoned_datetimes(
+        {.zones =
+             temporal::zones({.names = std::vector<std::string>{"Mars/Olympus"},
+                              .allow_opaque = true})
+                 .filter([](const temporal::TimeZone&) { return true; })}));
+    expect_contains(opaque, "\"Mars/Olympus\"");
+
+    auto unknown = temporal::zoned_datetimes(
+        {.zones =
+             gs::just(temporal::TimeZone{std::string(temporal::UNKNOWN_ZONE),
+                                         std::string(temporal::UNKNOWN_ZONE)}),
+         .source = source});
+    assert_all_examples<temporal::ZonedDateTime>(
+        unknown, [](const temporal::ZonedDateTime& z) {
+            return z.offset == temporal::UNKNOWN_OFFSET;
+        });
+}
+
+TEST(ZoneSourceGenerators, ASourceNextToAZonesGeneratorWithItsOwnIsAnError) {
+    ZoneSource source;
+    source.add_zone("Etc/TestEastern", eastern());
+    for (const auto& zones :
+         {temporal::zones(), temporal::zones({.source = source})}) {
+        try {
+            temporal::zoned_datetimes({.zones = zones, .source = source});
+            ADD_FAILURE() << "the source was accepted";
+        } catch (const std::invalid_argument& e) {
+            expect_contains(e.what(), "Pass the source to zones() instead");
+        }
+    }
+}
+
+TEST(ZoneSourceGenerators, AZoneWithNoValueInTheBoundsRejectsTheTestCase) {
+    ZoneSource source;
+    source.add_zone("Etc/TestWhole", fixed(3600, "W"));
+    source.add_zone("Etc/TestHalf", fixed(30, "H"));
+    int64_t noon = epoch(2024, 6, 1, 12);
+    auto zoned = temporal::zoned_datetimes(
+        {.zones = temporal::zones({.source = source})
+                      .filter([](const temporal::TimeZone&) { return true; }),
+         .source = source,
+         .min_instant = Instant{noon + 1, 0},
+         .max_instant = Instant{noon + 59, 0},
+         .precision = temporal::Precision::Minutes});
+    std::set<std::string> drawn;
+    hegel::test(
+        [&](hegel::TestCase& tc) {
+            temporal::ZonedDateTime z = tc.draw(zoned);
+            drawn.insert(z.zone.name);
+            EXPECT_EQ(z.instant, (Instant{noon + 30, 0}));
+            EXPECT_EQ(z.civil, datetime(2024, 6, 1, 12, 1));
+        },
+        quick());
+    EXPECT_EQ(drawn, (std::set<std::string>{"Etc/TestHalf"}));
+}
+
+TEST(ZoneSourceDefault, SettingTheDefaultReturnsThePreviousOne) {
+    ZoneSource source;
+    source.add_zone("Etc/TestEastern", eastern());
+    ZoneSource previous = temporal::set_default_zone_source(source);
+    EXPECT_EQ(previous.version(), temporal::tzdb_version());
+    EXPECT_TRUE(previous.info("Europe/London").has_value());
+    EXPECT_TRUE(temporal::info("Etc/TestEastern").has_value());
+    ZoneSource mine = temporal::set_default_zone_source(previous);
+    mine.add_zone("Etc/TestFixed", fixed(60, "M"));
+    EXPECT_TRUE(source.info("Etc/TestFixed").has_value());
+    EXPECT_TRUE(temporal::info("Europe/London").has_value());
+    EXPECT_FALSE(temporal::info("Etc/TestEastern").has_value());
+}
+
+TEST(ZoneSourceDefault, AGeneratorKeepsTheDefaultItWasBuiltWith) {
+    temporal::TimeZone london{"Europe/London", "Europe/London"};
+    auto zones_before = temporal::zones();
+    auto zoned_before = temporal::zoned_datetimes();
+    auto wrapped_before =
+        temporal::zoned_datetimes({.zones = gs::just(london)});
+    ZoneSource source;
+    source.add_zone("Etc/TestEastern", eastern());
+    ScopedDefault scoped(source);
+
+    ZoneSource bundled = ZoneSource::bundled();
+    assert_all_examples<temporal::TimeZone>(
+        zones_before, [&](const temporal::TimeZone& zone) {
+            return bundled.info(zone.name).has_value();
+        });
+    assert_all_examples<temporal::ZonedDateTime>(
+        zoned_before, [&](const temporal::ZonedDateTime& z) {
+            return bundled.info(z.zone.name).has_value();
+        });
+    auto summer = find_any<temporal::ZonedDateTime>(
+        wrapped_before, [](const temporal::ZonedDateTime& z) {
+            return z.offset.seconds == 3600;
+        });
+    EXPECT_EQ(summer.zone, london);
+
+    expect_contains(
+        draw_error(temporal::zoned_datetimes({.zones = gs::just(london)})),
+        "\"Europe/London\"");
+    assert_all_examples<temporal::TimeZone>(
+        temporal::zones(), [](const temporal::TimeZone& zone) {
+            return zone.name == "Etc/TestEastern";
+        });
+}
+
 TEST(ZoneSourceDefault, TheDefaultSourceDrivesZonesAndQueries) {
-    RestoreDefault restore;
     EXPECT_EQ(temporal::default_zone_source().version(),
               temporal::tzdb_version());
     ZoneSource source;
     source.add_zone("Etc/TestEastern", eastern());
-    temporal::set_default_zone_source(source);
+    ZoneSource previous = temporal::set_default_zone_source(source);
 
     EXPECT_FALSE(temporal::info("Europe/London").has_value());
     EXPECT_EQ(temporal::offset_at("Etc/TestEastern",
@@ -544,7 +852,7 @@ TEST(ZoneSourceDefault, TheDefaultSourceDrivesZonesAndQueries) {
          .min_value = datetime(2024, 3, 10, 2, 0),
          .max_value = datetime(2024, 3, 10, 2, 59)});
 
-    temporal::set_default_zone_source(ZoneSource::bundled());
+    temporal::set_default_zone_source(previous);
     assert_all_examples<temporal::ZonedDateTime>(
         any_zone, [](const temporal::ZonedDateTime& z) {
             return z.kind == TransitionKind::Gap &&

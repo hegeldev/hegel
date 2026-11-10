@@ -7,7 +7,9 @@
 #include <cstdint>
 #include <functional>
 #include <regex>
+#include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <hegel/hegel.h>
 #include <hegel/internal.h>
@@ -113,6 +115,30 @@ TEST(FailureReport, WideValueBreaksAcrossLines) {
     std::string out = capture_failure_report([](hegel::TestCase& tc) {
         (void)tc.draw(gs::vectors(gs::just(std::string("a wide value")),
                                   {.min_size = 3, .max_size = 3}));
+        throw std::runtime_error("boom");
+    });
+    Approvals::verify(out, scrub_blob());
+}
+
+TEST(FailureReport, TemporalValuesPrintAsTheirTypeAndTheEngineText) {
+    namespace temporal = gs::temporal;
+    std::string out = capture_failure_report([](hegel::TestCase& tc) {
+        (void)tc.draw("date", temporal::dates());
+        (void)tc.draw(
+            "meeting",
+            temporal::zoned_datetimes(
+                {.zones = temporal::zones(
+                     {.names = std::vector<std::string>{"America/New_York"}}),
+                 .min_value = temporal::DateTime{{2024, 3, 10}, {2, 30, 0, 0}},
+                 .max_value =
+                     temporal::DateTime{{2024, 3, 10}, {2, 30, 0, 0}}}));
+        (void)tc.draw("spans",
+                      gs::vectors(temporal::spans({.microseconds = {{5, 5}}}),
+                                  {.min_size = 2, .max_size = 2}));
+        (void)tc.draw(
+            "offset",
+            temporal::offsets({.min_value = temporal::UtcOffset{19'800},
+                               .max_value = temporal::UtcOffset{19'800}}));
         throw std::runtime_error("boom");
     });
     Approvals::verify(out, scrub_blob());

@@ -5,12 +5,9 @@
 #include <temporal_ffi.h>
 
 #include <cstdint>
-#include <cstdio>
 #include <limits>
 #include <optional>
-#include <ostream>
 #include <string>
-#include <string_view>
 #include <utility>
 
 namespace hegel::generators::temporal {
@@ -27,6 +24,14 @@ namespace hegel::generators::temporal {
                 return seconds / seconds_per_unit;
             }
             int64_t units_per_second = nanos_per_second / unit_nanos;
+            // An instant before the epoch counts its nanoseconds forward
+            // from a negative second. Counted back from the next second,
+            // the two parts have one sign, and neither the product nor the
+            // sum below leaves the range unless the result does.
+            if (seconds < 0 && nanos > 0) {
+                seconds += 1;
+                nanos -= nanos_per_second;
+            }
             if (nanos % unit_nanos != 0 ||
                 seconds >
                     std::numeric_limits<int64_t>::max() / units_per_second ||
@@ -69,180 +74,58 @@ namespace hegel::generators::temporal {
 
     } // namespace detail
 
-    namespace {
-
-        constexpr int64_t seconds_per_day = 86'400;
-
-        void write_year(std::ostream& os, int64_t year) {
-            char buf[16];
-            if (year >= 0 && year <= 9999) {
-                std::snprintf(buf, sizeof(buf), "%04lld",
-                              static_cast<long long>(year));
-            } else {
-                std::snprintf(buf, sizeof(buf), "%+07lld",
-                              static_cast<long long>(year));
-            }
-            os << buf;
-        }
-
-        void write_two(std::ostream& os, unsigned value) {
-            char buf[8];
-            std::snprintf(buf, sizeof(buf), "%02u", value);
-            os << buf;
-        }
-
-        void write_fraction(std::ostream& os, uint32_t nanosecond) {
-            if (nanosecond == 0) {
-                return;
-            }
-            char buf[16];
-            std::snprintf(buf, sizeof(buf), "%09u", nanosecond);
-            std::string digits(buf);
-            while (digits.back() == '0') {
-                digits.pop_back();
-            }
-            os << '.' << digits;
-        }
-
-        void write_date(std::ostream& os, int64_t year, unsigned month,
-                        unsigned day) {
-            write_year(os, year);
-            os << '-';
-            write_two(os, month);
-            os << '-';
-            write_two(os, day);
-        }
-
-        void write_time(std::ostream& os, const Time& time) {
-            write_two(os, time.hour);
-            os << ':';
-            write_two(os, time.minute);
-            os << ':';
-            write_two(os, time.second);
-            write_fraction(os, time.nanosecond);
-        }
-
-        // Howard Hinnant's civil_from_days.
-        void civil_from_days(int64_t days, int64_t& year, unsigned& month,
-                             unsigned& day) {
-            int64_t z = days + 719'468;
-            int64_t era = (z >= 0 ? z : z - 146'096) / 146'097;
-            int64_t doe = z - era * 146'097;
-            int64_t yoe =
-                (doe - doe / 1460 + doe / 36'524 - doe / 146'096) / 365;
-            int64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-            int64_t mp = (5 * doy + 2) / 153;
-            day = static_cast<unsigned>(doy - (153 * mp + 2) / 5 + 1);
-            month = static_cast<unsigned>(mp < 10 ? mp + 3 : mp - 9);
-            year = yoe + era * 400 + (month <= 2 ? 1 : 0);
-        }
-
-    } // namespace
-
-    std::ostream& operator<<(std::ostream& os, const Date& date) {
-        write_date(os, date.year, date.month, date.day);
-        return os;
+    std::string to_string(const Date& date) {
+        return impl::format_date(impl::date_to_c(date));
     }
 
-    std::ostream& operator<<(std::ostream& os, const Time& time) {
-        write_time(os, time);
-        return os;
+    std::string to_string(const Time& time) {
+        return impl::format_time(impl::time_to_c(time));
     }
 
-    std::ostream& operator<<(std::ostream& os, const DateTime& datetime) {
-        return os << datetime.date << 'T' << datetime.time;
+    std::string to_string(const DateTime& datetime) {
+        return impl::format_datetime(impl::datetime_to_c(datetime));
     }
 
-    std::ostream& operator<<(std::ostream& os, const Instant& instant) {
-        int64_t days = instant.second / seconds_per_day;
-        int64_t second_of_day = instant.second % seconds_per_day;
-        if (second_of_day < 0) {
-            days -= 1;
-            second_of_day += seconds_per_day;
-        }
-        int64_t year = 0;
-        unsigned month = 0;
-        unsigned day = 0;
-        civil_from_days(days, year, month, day);
-        write_date(os, year, month, day);
-        os << 'T';
-        write_time(os, Time{static_cast<uint8_t>(second_of_day / 3600),
-                            static_cast<uint8_t>(second_of_day / 60 % 60),
-                            static_cast<uint8_t>(second_of_day % 60),
-                            instant.nanosecond});
-        return os << 'Z';
+    std::string to_string(const Instant& instant) {
+        return impl::format_timestamp(impl::timestamp_to_c(instant));
     }
 
-    std::ostream& operator<<(std::ostream& os, const UtcOffset& offset) {
-        if (!offset.known) {
-            return os << "-00:00";
-        }
-        os << (offset.seconds < 0 ? '-' : '+');
-        auto magnitude = static_cast<unsigned>(
-            offset.seconds < 0 ? -static_cast<int64_t>(offset.seconds)
-                               : offset.seconds);
-        write_two(os, magnitude / 3600);
-        os << ':';
-        write_two(os, magnitude / 60 % 60);
-        if (magnitude % 60 != 0) {
-            os << ':';
-            write_two(os, magnitude % 60);
-        }
-        return os;
+    std::string to_string(const UtcOffset& offset) {
+        return impl::format_offset(impl::offset_to_c(offset));
     }
 
-    std::ostream& operator<<(std::ostream& os, const TimeZone& zone) {
-        return os << zone.name;
-    }
+    std::string to_string(const TimeZone& zone) { return zone.name; }
 
-    std::ostream& operator<<(std::ostream& os, const ZonedDateTime& zoned) {
-        os << zoned.civil;
-        if (zoned.zone.name == UNKNOWN_ZONE) {
-            os << 'Z';
-        } else {
-            os << zoned.offset;
-        }
-        os << '[' << zoned.zone << ']';
+    std::string to_string(const ZonedDateTime& zoned) {
+        hegel_zoned_datetime_t c{};
+        c.civil = impl::datetime_to_c(zoned.civil);
+        hegel_offset_t offset = impl::offset_to_c(zoned.offset);
+        c.offset_seconds = offset.seconds;
+        c.offset_known = offset.known;
+        c.fold = zoned.fold;
         switch (zoned.kind) {
         case TransitionKind::Gap:
-            os << "[gap]";
+            c.kind = HEGEL_TIMEZONE_KIND_GAP;
             break;
         case TransitionKind::Fold:
-            os << "[fold=" << (zoned.fold ? 1 : 0) << ']';
+            c.kind = HEGEL_TIMEZONE_KIND_FOLD;
             break;
         default:
+            c.kind = HEGEL_TIMEZONE_KIND_UNIQUE;
             break;
         }
-        return os;
+        return impl::format_zoned_datetime(c, zoned.zone.name);
     }
 
-    std::ostream& operator<<(std::ostream& os, const SignedDuration& duration) {
-        if (duration.seconds < 0 || duration.nanoseconds < 0) {
-            os << '-';
-        }
-        os << "PT";
-        auto seconds = static_cast<uint64_t>(duration.seconds);
-        if (duration.seconds < 0) {
-            seconds = static_cast<uint64_t>(0) - seconds;
-        }
-        uint64_t hours = seconds / 3600;
-        uint64_t minutes = seconds / 60 % 60;
-        seconds %= 60;
-        auto nanos = static_cast<uint32_t>(duration.nanoseconds < 0
-                                               ? -duration.nanoseconds
-                                               : duration.nanoseconds);
-        if (hours != 0) {
-            os << hours << 'H';
-        }
-        if (minutes != 0) {
-            os << minutes << 'M';
-        }
-        if (seconds != 0 || nanos != 0 || (hours == 0 && minutes == 0)) {
-            os << seconds;
-            write_fraction(os, nanos);
-            os << 'S';
-        }
-        return os;
+    std::string to_string(const SignedDuration& duration) {
+        return impl::format_duration(impl::duration_to_c(duration));
+    }
+
+    std::string to_string(const Span& span) {
+        return impl::format_span(hegel_span_t{
+            span.years, span.months, span.weeks, span.days, span.hours,
+            span.minutes, span.seconds, span.milliseconds, span.microseconds,
+            span.nanoseconds});
     }
 
     int64_t Span::get(SpanUnit unit) const {
@@ -268,43 +151,6 @@ namespace hegel::generators::temporal {
         default:
             return nanoseconds;
         }
-    }
-
-    std::ostream& operator<<(std::ostream& os, const Span& span) {
-        static constexpr const char* suffixes[] = {"y", "mo", "w",  "d",  "h",
-                                                   "m", "s",  "ms", "µs", "ns"};
-        bool any_negative = false;
-        bool any_positive = false;
-        for (SpanUnit unit : ALL_SPAN_UNITS) {
-            int64_t value = span.get(unit);
-            any_negative = any_negative || value < 0;
-            any_positive = any_positive || value > 0;
-        }
-        bool uniform_negative = any_negative && !any_positive;
-        if (uniform_negative) {
-            os << '-';
-        }
-        bool written = false;
-        for (size_t i = 0; i < ALL_SPAN_UNITS.size(); ++i) {
-            int64_t value = span.get(ALL_SPAN_UNITS[i]);
-            if (value == 0) {
-                continue;
-            }
-            if (written) {
-                os << ' ';
-            }
-            written = true;
-            if (uniform_negative) {
-                os << static_cast<uint64_t>(0) - static_cast<uint64_t>(value);
-            } else {
-                os << value;
-            }
-            os << suffixes[i];
-        }
-        if (!written) {
-            os << "0s";
-        }
-        return os;
     }
 
     std::string tzdb_version() { return impl::tzdb_version(); }
@@ -363,6 +209,10 @@ namespace hegel::impl {
     duration_from_c(const hegel_duration_t& duration) {
         return generators::temporal::SignedDuration{duration.seconds,
                                                     duration.nanoseconds};
+    }
+
+    hegel_offset_t offset_to_c(const generators::temporal::UtcOffset& offset) {
+        return hegel_offset_t{offset.known ? offset.seconds : 0, offset.known};
     }
 
     generators::temporal::UtcOffset offset_from_c(int32_t seconds, bool known) {

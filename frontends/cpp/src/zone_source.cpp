@@ -31,14 +31,14 @@ namespace hegel::generators::temporal {
         Impl(Impl&&) = delete;
         Impl& operator=(Impl&&) = delete;
 
+        // What the engine keeps for a loader, until it calls
+        // release_loader.
         struct Loader {
             Impl* impl;
             ZoneLoader load;
         };
 
         hegel_zone_source_t* handle;
-        std::mutex loaders_mutex;
-        std::vector<std::unique_ptr<Loader>> loaders;
     };
 
     namespace {
@@ -47,19 +47,20 @@ namespace hegel::generators::temporal {
             hegel_context_set_error(ctx, impl::borrow(message));
         }
 
-        template <typename F>
-        hegel_result_t guarded(hegel_context_t* ctx, F&& body) {
+        // Runs a callback body for the engine: 0 when it returns, and 1
+        // with its message reported when it throws.
+        template <typename F> int32_t guarded(hegel_context_t* ctx, F&& body) {
             impl::CallbackContextScope scope(ctx);
             try {
                 body();
-                return HEGEL_OK;
+                return 0;
             } catch (const std::exception& e) {
                 report(ctx, e.what());
             } catch (...) {
                 report(ctx, "the callback threw an exception that does not "
                             "derive from std::exception");
             }
-            return HEGEL_E_INVALID_ARG;
+            return 1;
         }
 
         hegel_zone_type_t type_to_c(const ZoneType& type) {
@@ -96,9 +97,8 @@ namespace hegel::generators::temporal {
             std::string abbreviation;
         };
 
-        hegel_result_t oracle_offset_at(void* user_data, hegel_context_t* ctx,
-                                        int64_t instant,
-                                        hegel_zone_type_t* out_type) {
+        int32_t oracle_offset_at(void* user_data, hegel_context_t* ctx,
+                                 int64_t instant, hegel_zone_type_t* out_type) {
             auto* state = static_cast<OracleState*>(user_data);
             return guarded(ctx, [&] {
                 ZoneType type = state->oracle->offset_at(instant);
@@ -109,10 +109,9 @@ namespace hegel::generators::temporal {
             });
         }
 
-        hegel_result_t oracle_next_transition(void* user_data,
-                                              hegel_context_t* ctx,
-                                              int64_t after, bool* out_found,
-                                              int64_t* out_instant) {
+        int32_t oracle_next_transition(void* user_data, hegel_context_t* ctx,
+                                       int64_t after, bool* out_found,
+                                       int64_t* out_instant) {
             auto* state = static_cast<OracleState*>(user_data);
             return guarded(ctx, [&] {
                 std::optional<int64_t> next =
@@ -124,13 +123,17 @@ namespace hegel::generators::temporal {
             });
         }
 
-        hegel_result_t load_zone(void* user_data, hegel_context_t* ctx,
-                                 hegel_zone_source_t*, hegel_string_t name) {
+        int32_t load_zone(void* user_data, hegel_context_t* ctx,
+                          hegel_zone_source_t*, hegel_string_t name) {
             auto* loader = static_cast<ZoneSource::Impl::Loader*>(user_data);
             return guarded(ctx, [&] {
                 ZoneSource source(loader->impl->shared_from_this());
                 loader->load(source, std::string(name.data, name.len));
             });
+        }
+
+        void release_loader(void* user_data) {
+            delete static_cast<ZoneSource::Impl::Loader*>(user_data);
         }
 
         std::mutex default_mutex;
@@ -163,11 +166,16 @@ namespace hegel::generators::temporal {
 
     ZoneSource& ZoneSource::add_tzif(std::string_view name,
                                      const std::vector<uint8_t>& bytes) {
+        return add_tzif(name, bytes.data(), bytes.size());
+    }
+
+    ZoneSource& ZoneSource::add_tzif(std::string_view name, const uint8_t* data,
+                                     size_t size) {
         hegel_context_t* ctx = impl::thread_context();
-        impl::require_configured(
-            ctx, "add_tzif",
-            hegel_zone_source_add_tzif(ctx, impl_->handle, impl::borrow(name),
-                                       bytes.data(), bytes.size()));
+        impl::require_configured(ctx, "add_tzif",
+                                 hegel_zone_source_add_tzif(ctx, impl_->handle,
+                                                            impl::borrow(name),
+                                                            data, size));
         return *this;
     }
 
@@ -252,19 +260,19 @@ namespace hegel::generators::temporal {
     ZoneSource& ZoneSource::set_loader(ZoneLoader loader) {
         hegel_context_t* ctx = impl::thread_context();
         if (!loader) {
-            impl::require_configured(ctx, "set_loader",
-                                     hegel_zone_source_set_loader(
-                                         ctx, impl_->handle, nullptr, nullptr));
+            impl::require_configured(
+                ctx, "set_loader",
+                hegel_zone_source_set_loader(ctx, impl_->handle, nullptr,
+                                             nullptr, nullptr));
             return *this;
         }
-        auto state = std::make_unique<Impl::Loader>(
-            Impl::Loader{impl_.get(), std::move(loader)});
+        // The engine owns the state from the call on, and frees it with
+        // release_loader, also when the call fails.
+        auto* state = new Impl::Loader{impl_.get(), std::move(loader)};
         impl::require_configured(
             ctx, "set_loader",
-            hegel_zone_source_set_loader(ctx, impl_->handle, load_zone,
-                                         state.get()));
-        std::lock_guard<std::mutex> lock(impl_->loaders_mutex);
-        impl_->loaders.push_back(std::move(state));
+            hegel_zone_source_set_loader(ctx, impl_->handle, load_zone, state,
+                                         release_loader));
         return *this;
     }
 
@@ -330,13 +338,13 @@ namespace hegel::generators::temporal {
         return default_source();
     }
 
-    void set_default_zone_source(const ZoneSource& source) {
+    ZoneSource set_default_zone_source(const ZoneSource& source) {
         std::lock_guard<std::mutex> lock(default_mutex);
         hegel_context_t* ctx = impl::thread_context();
         impl::require_configured(
             ctx, "set_default_zone_source",
             hegel_set_default_zone_source(ctx, source.impl()->handle));
-        default_source() = source;
+        return std::exchange(default_source(), source);
     }
 
     std::optional<ZoneInfo> info(std::string_view name) {

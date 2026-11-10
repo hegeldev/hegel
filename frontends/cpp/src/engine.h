@@ -265,9 +265,11 @@ namespace hegel::impl {
 
     // Date and time option handles. Each is built once at generator
     // construction from parameters the engine validates, throwing
-    // std::invalid_argument (with the engine's diagnostic) on rejection.
-    // The returned handle is immutable, shareable across test cases and
-    // threads, and must be released with the matching *_free.
+    // std::invalid_argument (with the engine's diagnostic) on rejection:
+    // a setter reports its own arguments, and the spec's validate function
+    // what a draw from the finished spec would reject. The returned handle
+    // is immutable, shareable across test cases and threads, and must be
+    // released with the matching *_free.
 
     hegel_date_options_t* date_options_new(uint32_t weekday_mask,
                                            uint32_t month_mask);
@@ -315,6 +317,19 @@ namespace hegel::impl {
     timezone_offset_at(const hegel_zone_source_t* source, std::string_view name,
                        hegel_timestamp_t timestamp);
 
+    // The engine's text of a date or time value.
+
+    std::string format_date(hegel_date_t value);
+    std::string format_time(hegel_time_t value);
+    std::string format_datetime(hegel_datetime_t value);
+    std::string format_timestamp(hegel_timestamp_t value);
+    std::string format_offset(hegel_offset_t value);
+    std::string format_duration(hegel_duration_t value);
+    std::string format_span(const hegel_span_t& value);
+    /// A zone name that is not UTF-8 throws std::invalid_argument.
+    std::string format_zoned_datetime(const hegel_zoned_datetime_t& value,
+                                      std::string_view zone);
+
     // Draw primitives used by the non-template generators in
     // generators.cpp and generators_temporal.cpp. (The template-visible
     // ones live in hegel::internal — see include/hegel/internal.h.)
@@ -327,6 +342,22 @@ namespace hegel::impl {
                             const hegel_string_generator_t* generator);
     std::vector<uint8_t> draw_bytes(const TestCase& tc, uint64_t min_size,
                                     uint64_t max_size);
+    // Check the arguments of the draw of the same name, as the engine does
+    // on the draw: a rejected argument throws std::invalid_argument with
+    // the engine's diagnostic.
+    void validate_date(hegel_date_t min_value, hegel_date_t max_value,
+                       const hegel_date_options_t* options);
+    void validate_time(hegel_time_t min_value, hegel_time_t max_value,
+                       uint32_t precision);
+    void validate_datetime(hegel_datetime_t min_value,
+                           hegel_datetime_t max_value, uint32_t precision);
+    void validate_timestamp(hegel_timestamp_t min_value,
+                            hegel_timestamp_t max_value, uint32_t precision);
+    void validate_offset(int32_t min_seconds, int32_t max_seconds,
+                         uint32_t granularity, bool allow_unknown);
+    void validate_duration(hegel_duration_t min_value,
+                           hegel_duration_t max_value, uint32_t precision);
+
     hegel_date_t draw_date(const TestCase& tc, hegel_date_t min_value,
                            hegel_date_t max_value,
                            const hegel_date_options_t* options);
@@ -356,6 +387,12 @@ namespace hegel::impl {
     ZonedDraw draw_zoned_datetime(const TestCase& tc,
                                   const hegel_timezone_spec_t* tz_spec,
                                   const hegel_zoned_spec_t* zoned_spec);
+    /// A zoned datetime in the zone `name` of `source`, with no draw of
+    /// the zone. A name the source does not know throws
+    /// std::invalid_argument.
+    hegel_zoned_datetime_t draw_zoned_datetime_for_zone(
+        const TestCase& tc, const hegel_zone_source_t* source,
+        std::string_view name, const hegel_zoned_spec_t* zoned_spec);
     hegel_span_t draw_span(const TestCase& tc, const hegel_span_spec_t* spec);
     std::string draw_uuid(const TestCase& tc, std::optional<uint8_t> version);
     /// Dotted-quad (v4) / RFC 5952 colon-hex (v6) text form.

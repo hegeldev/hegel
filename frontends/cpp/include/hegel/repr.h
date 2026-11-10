@@ -117,21 +117,12 @@ namespace hegel::internal {
             static constexpr std::size_t size = N;
         };
 
-        // The date and time values print in the engine's RFC 9557 form
-        // rather than as a C++ expression, so a counterexample reads the
-        // same from every frontend.
+        // The date and time values print as their type around the engine's
+        // text in quotes, rather than field by field: the text alone, such
+        // as 2024-03-10, reads as arithmetic in a C++ expression.
         template <typename T>
-        struct is_temporal_value
-            : std::disjunction<
-                  std::is_same<T, hegel::generators::temporal::Date>,
-                  std::is_same<T, hegel::generators::temporal::Time>,
-                  std::is_same<T, hegel::generators::temporal::DateTime>,
-                  std::is_same<T, hegel::generators::temporal::Instant>,
-                  std::is_same<T, hegel::generators::temporal::UtcOffset>,
-                  std::is_same<T, hegel::generators::temporal::TimeZone>,
-                  std::is_same<T, hegel::generators::temporal::ZonedDateTime>,
-                  std::is_same<T, hegel::generators::temporal::SignedDuration>,
-                  std::is_same<T, hegel::generators::temporal::Span>> {};
+        using is_temporal_value =
+            hegel::generators::temporal::detail::is_value<T>;
 
         template <typename T> struct is_chrono_duration : std::false_type {};
         template <typename Rep, typename Period>
@@ -233,6 +224,22 @@ namespace hegel::internal {
             char buf[8];
             std::snprintf(buf, sizeof(buf), "\\%03o", c);
             out += buf;
+        }
+
+        // `text` as a string literal. The bytes of a UTF-8 character
+        // outside ASCII stay as they are.
+        inline std::string quoted(const std::string& text) {
+            std::string out = "\"";
+            for (char c : text) {
+                auto byte = static_cast<unsigned char>(c);
+                if (byte >= 0x80) {
+                    out += c;
+                } else {
+                    append_escaped(out, byte, /*in_string=*/true);
+                }
+            }
+            out += "\"";
+            return out;
         }
 
     } // namespace repr_detail
@@ -506,9 +513,8 @@ namespace hegel::internal {
                             p.end_block("}");
                         });
         } else if constexpr (repr_detail::is_temporal_value<T>::value) {
-            std::ostringstream os;
-            os << value;
-            printer.text(os.str());
+            printer.text(cpp_type_name<T>() + "{" +
+                         repr_detail::quoted(to_string(value)) + "}");
         } else if constexpr (repr_detail::is_chrono_duration<T>::value) {
             printer.text(cpp_type_name<T>() + "{");
             print_value(printer, value.count());
