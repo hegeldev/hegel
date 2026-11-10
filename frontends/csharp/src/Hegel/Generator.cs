@@ -49,6 +49,29 @@ public abstract class Generator<T> : IGenerator
         return new FlatMappedGenerator<T, TResult>(this, f);
     }
 
+    /// <summary>
+    /// <see cref="Map{TResult}"/> under the name C# query expressions use, so a <c>select</c> clause
+    /// maps the values: <c>from x in gen select x * 2</c>.
+    /// </summary>
+    public MappedGenerator<T, TResult> Select<TResult>(Func<T, TResult> selector) => Map(selector);
+
+    /// <summary>
+    /// <see cref="Filter"/> under the name C# query expressions use, so a <c>where</c> clause
+    /// filters the values: <c>from x in gen where x &gt; 0 select x</c>.
+    /// </summary>
+    public PrintableGenerator<T> Where(Func<T, bool> predicate) => Filter(predicate);
+
+    /// <summary><see cref="FlatMap{TResult}"/> under the name C# query expressions use.</summary>
+    public PrintableGenerator<TResult> SelectMany<TResult>(Func<T, Generator<TResult>> selector) => FlatMap(selector);
+
+    /// <summary><see cref="FlatMap{TResult}"/>, combining both values with <paramref name="resultSelector"/>: a query's second <c>from</c>.</summary>
+    public PrintableGenerator<TResult> SelectMany<TOther, TResult>(Func<T, Generator<TOther>> selector, Func<T, TOther, TResult> resultSelector)
+    {
+        ArgumentNullException.ThrowIfNull(selector);
+        ArgumentNullException.ThrowIfNull(resultSelector);
+        return FlatMap(x => selector(x).Map(y => resultSelector(x, y)));
+    }
+
     /// <summary>This generator, printing its values with <paramref name="print"/>.</summary>
     public PrintableGenerator<T> PrintWith(Action<T, Printer> print)
     {

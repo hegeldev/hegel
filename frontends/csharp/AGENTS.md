@@ -125,7 +125,8 @@ There is no engine version pin to keep in step in this directory.
   `Hegel` itself) when working out a failure's origin, so a frontend layered
   on this package (`Hegel.FSharp` applies it) reports the user's frame.
 - `Generator`, `Generators`, `Generators/` — `Generator<T>` (`DoDraw`,
-  `Label`, `Map`/`Filter`/`FlatMap`/`PrintWith`) and `PrintableGenerator<T>`
+  `Label`, `Map`/`Filter`/`FlatMap`/`PrintWith`, and `Select`/`Where`/`SelectMany`
+  over them for query expressions) and `PrintableGenerator<T>`
   (`DoDrawAndPrint`, which prints as it draws). The two hooks are
   `protected internal`: only `TestCase.DrawSilent`/`DrawAndPrint` call them,
   inside the generator's span, so a generator draws its parts through the
