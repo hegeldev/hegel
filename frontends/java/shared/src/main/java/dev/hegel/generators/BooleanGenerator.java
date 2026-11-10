@@ -16,7 +16,7 @@ public final class BooleanGenerator implements Generator<Boolean> {
     public BooleanGenerator(double p) {
         this.p = p;
     }
-    
+
     /** @hidden */
     @Override
     public Boolean doDraw(TestCase tc) {
