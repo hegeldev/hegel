@@ -23,7 +23,8 @@ use hegel_c::{
     hegel_offset_t, hegel_owned_string_free, hegel_owned_string_t, hegel_settings_set_test_cases,
     hegel_span_spec_free, hegel_span_spec_new, hegel_span_spec_set_sign,
     hegel_span_spec_set_unit_bounds, hegel_span_spec_validate, hegel_span_t, hegel_status_t,
-    hegel_time_t, hegel_timestamp_t,
+    hegel_time_t, hegel_timestamp_t, hegel_validate_date, hegel_validate_datetime,
+    hegel_validate_duration, hegel_validate_offset, hegel_validate_time, hegel_validate_timestamp,
 };
 use std::collections::BTreeSet;
 use std::ptr;
@@ -924,4 +925,437 @@ fn drawn_values_format_as_jiff_parses_them() {
         assert!(fractional);
     }
     unsafe { ok(hegel_context_free(ctx)) };
+}
+
+/// Check that a `hegel_validate_*` call and the draw it stands for agree
+/// on one set of arguments. With `rejected` unset both accept them; with
+/// it set both report `HEGEL_E_INVALID_ARG` with a message holding that
+/// text, the same message but for the C function's name where the draw's
+/// carries it.
+fn check_agreement(
+    ctx: *mut HegelContext,
+    what: &str,
+    rejected: Option<&str>,
+    validate: impl FnOnce() -> hegel_c::hegel_result_t,
+    draw: impl FnOnce() -> hegel_c::hegel_result_t,
+) {
+    let validated = (validate(), last_error(ctx));
+    let drawn = (draw(), last_error(ctx));
+    match rejected {
+        None => {
+            assert_eq!(validated, (HEGEL_OK, String::new()), "{what}");
+            assert_eq!(drawn, (HEGEL_OK, String::new()), "{what}");
+        }
+        Some(text) => {
+            assert_eq!(validated.0, HEGEL_E_INVALID_ARG, "{what}");
+            assert_eq!(drawn.0, HEGEL_E_INVALID_ARG, "{what}");
+            assert!(validated.1.contains(text), "{what}: {}", validated.1);
+            assert_eq!(
+                validated.1,
+                drawn.1.replace("hegel_generate_", "hegel_validate_"),
+                "{what}"
+            );
+        }
+    }
+}
+
+#[test]
+fn validate_functions_accept_and_reject_what_their_draws_do() {
+    let ctx = hegel_context_new();
+    unsafe {
+        let mondays = date_options(ctx);
+        ok(hegel_date_options_set_weekdays(ctx, mondays, 0b000_0001));
+        let sundays = date_options(ctx);
+        ok(hegel_date_options_set_weekdays(ctx, sundays, 0b100_0000));
+        let none: *const HegelDateOptions = ptr::null();
+        let monday = date(2024, 1, 1);
+        let dates = [
+            ("a year", date(2000, 1, 1), date(2000, 12, 31), none, None),
+            (
+                "a masked year",
+                date(2000, 1, 1),
+                date(2000, 12, 31),
+                mondays.cast_const(),
+                None,
+            ),
+            (
+                "one allowed day",
+                monday,
+                monday,
+                mondays.cast_const(),
+                None,
+            ),
+            (
+                "a bad min date",
+                date(2023, 2, 30),
+                date(2024, 1, 1),
+                none,
+                Some("min_value is not a valid date"),
+            ),
+            (
+                "a bad max date",
+                date(2023, 1, 1),
+                date(1_000_000, 1, 1),
+                none,
+                Some("max_value is not a valid date"),
+            ),
+            (
+                "inverted dates",
+                date(2024, 1, 2),
+                date(2024, 1, 1),
+                none,
+                Some("generate_date requires min_value <= max_value"),
+            ),
+            (
+                "no allowed day",
+                monday,
+                monday,
+                sundays.cast_const(),
+                Some("generate_date: no date in"),
+            ),
+        ];
+        let midnight = time(0, 0, 0, 0);
+        let last = time(23, 59, 59, 999_999_999);
+        let times = [
+            ("a day", midnight, last, NANOSECONDS, None),
+            (
+                "one time",
+                midnight,
+                midnight,
+                HEGEL_PRECISION_HOURS as u32,
+                None,
+            ),
+            (
+                "a bad min time",
+                time(24, 0, 0, 0),
+                last,
+                SECONDS,
+                Some("min_value is not a valid time"),
+            ),
+            (
+                "a bad max time",
+                midnight,
+                time(0, 0, 0, 1_000_000_000),
+                SECONDS,
+                Some("max_value is not a valid time"),
+            ),
+            (
+                "inverted times",
+                time(1, 0, 0, 0),
+                midnight,
+                SECONDS,
+                Some("generate_time requires min_value <= max_value"),
+            ),
+            (
+                "a time precision",
+                midnight,
+                last,
+                9,
+                Some("hegel_validate_time: unknown precision 9"),
+            ),
+            (
+                "no time",
+                time(0, 0, 0, 1),
+                time(0, 0, 0, 999),
+                SECONDS,
+                Some("generate_time: no value at precision"),
+            ),
+        ];
+        let datetime = |date: hegel_date_t, time: hegel_time_t| hegel_datetime_t { date, time };
+        let start = datetime(date(2000, 1, 1), midnight);
+        let end = datetime(date(2000, 12, 31), last);
+        let datetimes = [
+            ("a year", start, end, NANOSECONDS, None),
+            (
+                "one datetime",
+                start,
+                start,
+                HEGEL_PRECISION_HOURS as u32,
+                None,
+            ),
+            (
+                "a bad min date",
+                datetime(date(2000, 13, 1), midnight),
+                end,
+                SECONDS,
+                Some("min_value.date is not a valid date"),
+            ),
+            (
+                "a bad max date",
+                start,
+                datetime(date(2000, 4, 31), midnight),
+                SECONDS,
+                Some("max_value.date is not a valid date"),
+            ),
+            (
+                "a bad min time",
+                datetime(date(2000, 1, 1), time(0, 60, 0, 0)),
+                end,
+                SECONDS,
+                Some("min_value.time is not a valid time"),
+            ),
+            (
+                "a bad max time",
+                start,
+                datetime(date(2000, 12, 31), time(0, 0, 60, 0)),
+                SECONDS,
+                Some("max_value.time is not a valid time"),
+            ),
+            (
+                "inverted datetimes",
+                end,
+                start,
+                SECONDS,
+                Some("generate_datetime requires min_value <= max_value"),
+            ),
+            (
+                "a datetime precision",
+                start,
+                end,
+                6,
+                Some("hegel_validate_datetime: unknown precision 6"),
+            ),
+            (
+                "no datetime",
+                datetime(date(2000, 1, 1), time(0, 0, 0, 1)),
+                datetime(date(2000, 1, 1), time(0, 0, 0, 999)),
+                SECONDS,
+                Some("generate_datetime: no value at precision"),
+            ),
+        ];
+        let instant = |second: i64, nanosecond: u32| hegel_timestamp_t { second, nanosecond };
+        let timestamps = [
+            (
+                "a century",
+                at(-1_000_000_000),
+                at(2_000_000_000),
+                NANOSECONDS,
+                None,
+            ),
+            (
+                "one instant",
+                at(3_600),
+                at(3_600),
+                HEGEL_PRECISION_HOURS as u32,
+                None,
+            ),
+            (
+                "a min second out of range",
+                at(i64::MIN),
+                at(0),
+                SECONDS,
+                Some("min_value.second must be in"),
+            ),
+            (
+                "a max second out of range",
+                at(0),
+                at(i64::MAX),
+                SECONDS,
+                Some("max_value.second must be in"),
+            ),
+            (
+                "a bad min nanosecond",
+                instant(0, 1_000_000_000),
+                at(1),
+                SECONDS,
+                Some("min_value.nanosecond must be at most 999999999"),
+            ),
+            (
+                "a bad max nanosecond",
+                at(0),
+                instant(1, 1_000_000_000),
+                SECONDS,
+                Some("max_value.nanosecond must be at most 999999999"),
+            ),
+            (
+                "inverted instants",
+                at(1),
+                at(0),
+                SECONDS,
+                Some("generate_timestamp requires min_value <= max_value"),
+            ),
+            (
+                "a timestamp precision",
+                at(0),
+                at(1),
+                7,
+                Some("hegel_validate_timestamp: unknown precision 7"),
+            ),
+            (
+                "no instant",
+                instant(0, 1),
+                instant(0, 999),
+                SECONDS,
+                Some("generate_timestamp: no value at precision"),
+            ),
+        ];
+        let hours = HEGEL_OFFSET_GRANULARITY_HOURS as u32;
+        let seconds = HEGEL_OFFSET_GRANULARITY_SECONDS as u32;
+        let offsets = [
+            ("every offset", -93_599, 93_599, seconds, true, None),
+            ("whole hours", -3_600, 3_600, hours, false, None),
+            (
+                "a min offset out of range",
+                -93_600,
+                0,
+                seconds,
+                false,
+                Some("min_seconds must be in"),
+            ),
+            (
+                "a max offset out of range",
+                0,
+                93_600,
+                seconds,
+                true,
+                Some("max_seconds must be in"),
+            ),
+            (
+                "inverted offsets",
+                1,
+                0,
+                seconds,
+                false,
+                Some("generate_offset requires min_seconds <= max_seconds"),
+            ),
+            (
+                "a granularity",
+                0,
+                1,
+                4,
+                false,
+                Some("hegel_validate_offset: unknown granularity 4"),
+            ),
+            (
+                "no offset",
+                1,
+                3_599,
+                hours,
+                true,
+                Some("generate_offset: no offset at granularity"),
+            ),
+        ];
+        let durations = [
+            (
+                "a day either way",
+                duration(-86_400, 0),
+                duration(86_400, 0),
+                NANOSECONDS,
+                None,
+            ),
+            (
+                "one duration",
+                duration(0, 0),
+                duration(0, 0),
+                HEGEL_PRECISION_HOURS as u32,
+                None,
+            ),
+            (
+                "a bad min duration",
+                duration(1, -1),
+                duration(2, 0),
+                SECONDS,
+                Some("min_value is not a valid duration"),
+            ),
+            (
+                "a bad max duration",
+                duration(0, 0),
+                duration(0, 1_000_000_000),
+                SECONDS,
+                Some("max_value is not a valid duration"),
+            ),
+            (
+                "inverted durations",
+                duration(1, 0),
+                duration(0, 0),
+                SECONDS,
+                Some("generate_duration requires min_value <= max_value"),
+            ),
+            (
+                "a duration precision",
+                duration(0, 0),
+                duration(1, 0),
+                8,
+                Some("hegel_validate_duration: unknown precision 8"),
+            ),
+            (
+                "no duration",
+                duration(0, 1),
+                duration(0, 999),
+                SECONDS,
+                Some("generate_duration: no value at precision"),
+            ),
+        ];
+
+        let cases = each_case(ctx, 20, |tc| {
+            for (what, min, max, options, rejected) in dates {
+                let mut out = date(0, 0, 0);
+                check_agreement(
+                    ctx,
+                    what,
+                    rejected,
+                    || hegel_validate_date(ctx, min, max, options),
+                    || hegel_generate_date(ctx, tc, min, max, options, &mut out),
+                );
+            }
+            for (what, min, max, precision, rejected) in times {
+                let mut out = midnight;
+                check_agreement(
+                    ctx,
+                    what,
+                    rejected,
+                    || hegel_validate_time(ctx, min, max, precision),
+                    || hegel_generate_time(ctx, tc, min, max, precision, &mut out),
+                );
+            }
+            for (what, min, max, precision, rejected) in datetimes {
+                let mut out = start;
+                check_agreement(
+                    ctx,
+                    what,
+                    rejected,
+                    || hegel_validate_datetime(ctx, min, max, precision),
+                    || hegel_generate_datetime(ctx, tc, min, max, precision, &mut out),
+                );
+            }
+            for (what, min, max, precision, rejected) in timestamps {
+                let mut out = at(0);
+                check_agreement(
+                    ctx,
+                    what,
+                    rejected,
+                    || hegel_validate_timestamp(ctx, min, max, precision),
+                    || hegel_generate_timestamp(ctx, tc, min, max, precision, &mut out),
+                );
+            }
+            for (what, min, max, granularity, unknown, rejected) in offsets {
+                let mut out = hegel_offset_t {
+                    seconds: 0,
+                    known: false,
+                };
+                check_agreement(
+                    ctx,
+                    what,
+                    rejected,
+                    || hegel_validate_offset(ctx, min, max, granularity, unknown),
+                    || hegel_generate_offset(ctx, tc, min, max, granularity, unknown, &mut out),
+                );
+            }
+            for (what, min, max, precision, rejected) in durations {
+                let mut out = duration(0, 0);
+                check_agreement(
+                    ctx,
+                    what,
+                    rejected,
+                    || hegel_validate_duration(ctx, min, max, precision),
+                    || hegel_generate_duration(ctx, tc, min, max, precision, &mut out),
+                );
+            }
+        });
+        assert_eq!(cases.len(), 20);
+
+        ok(hegel_date_options_free(ctx, mondays));
+        ok(hegel_date_options_free(ctx, sundays));
+        ok(hegel_context_free(ctx));
+    }
 }

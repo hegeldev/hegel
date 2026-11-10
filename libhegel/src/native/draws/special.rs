@@ -576,6 +576,34 @@ fn aligned_range(
     Ok((lo, hi))
 }
 
+/// Check the arguments of [`generate_date`], which makes this check and
+/// no other: each bound a valid date, the bounds in order, the masks
+/// valid and some day in the bounds allowed by them. Gives the bounds as
+/// day numbers.
+pub fn date_bounds(
+    min: &Date,
+    max: &Date,
+    options: &DateOptions,
+) -> Result<(i64, i64), EngineError> {
+    validate_date("min_value", min)?;
+    validate_date("max_value", max)?;
+    options.validate()?;
+    let (min_days, max_days) = (days_from_civil(min), days_from_civil(max));
+    if min_days > max_days {
+        return Err(EngineError::InvalidArgument(format!(
+            "generate_date requires min_value <= max_value, got [{min:?}, {max:?}]"
+        )));
+    }
+    let probe = max_days.min(min_days + SNAP_RANGE);
+    if !options.is_unrestricted() && !(min_days..=probe).any(|d| options.allows(d)) {
+        return Err(EngineError::InvalidArgument(format!(
+            "generate_date: no date in [{min:?}, {max:?}] falls on an allowed weekday and \
+             month ({options:?})"
+        )));
+    }
+    Ok((min_days, max_days))
+}
+
 /// Draw a [`Date`] in `[min, max]` on a weekday and in a month `options`
 /// allows, wrapped in a span so the shrinker treats it as a unit. Shrinks
 /// toward 2000-01-01, or the nearest bound when that is out of range, or
@@ -586,24 +614,9 @@ pub fn generate_date(
     max: Date,
     options: &DateOptions,
 ) -> Result<Date, EngineError> {
-    validate_date("min_value", &min)?;
-    validate_date("max_value", &max)?;
-    options.validate()?;
-    let (min_days, max_days) = (days_from_civil(&min), days_from_civil(&max));
-    if min_days > max_days {
-        return Err(EngineError::InvalidArgument(format!(
-            "generate_date requires min_value <= max_value, got [{min:?}, {max:?}]"
-        )));
-    }
+    let (min_days, max_days) = date_bounds(&min, &max, options)?;
     if options.is_unrestricted() {
         return spanned(ntc, LABEL_DATE, |ntc| draw_date_in(ntc, min_days, max_days));
-    }
-    let probe = max_days.min(min_days + SNAP_RANGE);
-    if !(min_days..=probe).any(|d| options.allows(d)) {
-        return Err(EngineError::InvalidArgument(format!(
-            "generate_date: no date in [{min:?}, {max:?}] falls on an allowed weekday and \
-             month ({options:?})"
-        )));
     }
     spanned(ntc, LABEL_DATE, |ntc| {
         let drawn = days_from_civil(&draw_date_in(ntc, min_days, max_days)?);
@@ -614,18 +627,18 @@ pub fn generate_date(
     })
 }
 
-/// Draw a [`Time`] in `[min, max]` as a whole number of `precision`
-/// units, wrapped in a span. Shrinks toward `min` (the representable time
-/// closest to midnight at the precision).
-pub fn generate_time(
-    ntc: &mut NativeTestCase,
-    min: Time,
-    max: Time,
+/// Check the arguments of [`generate_time`], which makes this check and
+/// no other: each bound a valid time, the bounds in order and holding a
+/// value at `precision`. Gives the first and last such value, in
+/// nanoseconds of the day.
+pub fn time_bounds(
+    min: &Time,
+    max: &Time,
     precision: Precision,
-) -> Result<Time, EngineError> {
-    validate_time("min_value", &min)?;
-    validate_time("max_value", &max)?;
-    let (min_ns, max_ns) = (time_to_ns(&min), time_to_ns(&max));
+) -> Result<(i64, i64), EngineError> {
+    validate_time("min_value", min)?;
+    validate_time("max_value", max)?;
+    let (min_ns, max_ns) = (time_to_ns(min), time_to_ns(max));
     if min_ns > max_ns {
         return Err(EngineError::InvalidArgument(format!(
             "generate_time requires min_value <= max_value, got [{min:?}, {max:?}]"
@@ -637,9 +650,43 @@ pub fn generate_time(
         i128::from(max_ns),
         precision,
     )?;
+    Ok((lo as i64, hi as i64))
+}
+
+/// Draw a [`Time`] in `[min, max]` as a whole number of `precision`
+/// units, wrapped in a span. Shrinks toward `min` (the representable time
+/// closest to midnight at the precision).
+pub fn generate_time(
+    ntc: &mut NativeTestCase,
+    min: Time,
+    max: Time,
+    precision: Precision,
+) -> Result<Time, EngineError> {
+    let (lo, hi) = time_bounds(&min, &max, precision)?;
     spanned(ntc, LABEL_TIME, |ntc| {
-        draw_time_in(ntc, lo as i64, hi as i64, precision.unit())
+        draw_time_in(ntc, lo, hi, precision.unit())
     })
+}
+
+/// Check the arguments of [`generate_datetime`], which makes this check
+/// and no other: each bound a valid date and time, the bounds in order
+/// and holding a value at `precision`. Gives the first and last such
+/// value, as wall-clock nanoseconds.
+pub fn datetime_bounds(
+    min: &DateTime,
+    max: &DateTime,
+    precision: Precision,
+) -> Result<(i128, i128), EngineError> {
+    validate_date("min_value.date", &min.date)?;
+    validate_date("max_value.date", &max.date)?;
+    validate_time("min_value.time", &min.time)?;
+    validate_time("max_value.time", &max.time)?;
+    if wall_ns(min) > wall_ns(max) {
+        return Err(EngineError::InvalidArgument(format!(
+            "generate_datetime requires min_value <= max_value, got [{min:?}, {max:?}]"
+        )));
+    }
+    aligned_range("generate_datetime", wall_ns(min), wall_ns(max), precision)
 }
 
 /// Draw a [`DateTime`] in `[min, max]` whose time is a whole number of
@@ -652,16 +699,7 @@ pub fn generate_datetime(
     max: DateTime,
     precision: Precision,
 ) -> Result<DateTime, EngineError> {
-    validate_date("min_value.date", &min.date)?;
-    validate_date("max_value.date", &max.date)?;
-    validate_time("min_value.time", &min.time)?;
-    validate_time("max_value.time", &max.time)?;
-    if wall_ns(&min) > wall_ns(&max) {
-        return Err(EngineError::InvalidArgument(format!(
-            "generate_datetime requires min_value <= max_value, got [{min:?}, {max:?}]"
-        )));
-    }
-    let (lo, hi) = aligned_range("generate_datetime", wall_ns(&min), wall_ns(&max), precision)?;
+    let (lo, hi) = datetime_bounds(&min, &max, precision)?;
     spanned(ntc, LABEL_DATETIME, |ntc| {
         draw_datetime_in(ntc, lo, hi, precision.unit())
     })

@@ -99,6 +99,15 @@ int main(void) {
     HEGEL_CHECK(hegel_format_span, ctx, &span, &text);
     expect_text(ctx, "span", &text, "-3d +4h");
 
+    /* The arguments of a draw can be checked where a generator is built. */
+    hegel_datetime_t earliest = {{2001, 9, 1}, {0, 0, 0, 0}};
+    hegel_datetime_t latest = {{2001, 9, 30}, {23, 59, 59, 0}};
+    HEGEL_CHECK(hegel_validate_datetime, ctx, earliest, latest, HEGEL_PRECISION_SECONDS);
+    expect(hegel_validate_datetime(ctx, latest, earliest, HEGEL_PRECISION_SECONDS) == HEGEL_E_INVALID_ARG,
+           "inverted bounds to be rejected");
+    expect(hegel_validate_offset(ctx, -3600, 3600, HEGEL_OFFSET_GRANULARITY_HOURS, true) == HEGEL_OK,
+           "whole-hour offsets to be accepted");
+
     /* A zone at UT until 2001-09-09T01:46:40Z and an hour ahead from then. */
     hegel_zone_transition_t transitions[] = {
         {1000000000, {3600, false, STRING("BBB")}},
@@ -125,8 +134,7 @@ int main(void) {
     hegel_zoned_spec_t *spec;
     HEGEL_CHECK(hegel_zoned_spec_new, ctx, &spec);
     HEGEL_CHECK(hegel_zoned_spec_set_precision, ctx, spec, HEGEL_PRECISION_SECONDS);
-    HEGEL_CHECK(hegel_zoned_spec_set_civil_bounds, ctx, spec, (hegel_datetime_t){{2001, 9, 1}, {0, 0, 0, 0}},
-                (hegel_datetime_t){{2001, 9, 30}, {23, 59, 59, 0}});
+    HEGEL_CHECK(hegel_zoned_spec_set_civil_bounds, ctx, spec, earliest, latest);
     HEGEL_CHECK(hegel_zoned_spec_validate, ctx, spec);
 
     hegel_settings_t *s;

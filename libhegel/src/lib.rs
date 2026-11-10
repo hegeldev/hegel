@@ -6517,6 +6517,19 @@ fn named(fn_name: &str, mut e: EngineError) -> EngineError {
     e
 }
 
+/// Shared body of the `hegel_validate_*` functions: clear the error
+/// channel, run `check` and report the argument error it finds.
+fn validate_arguments(
+    ctx: *mut HegelContext,
+    check: impl FnOnce() -> Result<(), EngineError>,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    match check() {
+        Ok(()) => HEGEL_OK,
+        Err(e) => translate_construct_error(ctx, e),
+    }
+}
+
 /// Shared prologue of the `hegel_date_options_set_*` setters: resolve the
 /// handle and apply `set`, which leaves the options as they were when it
 /// rejects its argument, reported as `HEGEL_E_INVALID_ARG`.
@@ -6710,6 +6723,101 @@ pub unsafe extern "C" fn hegel_generate_datetime(
             },
         )
     }
+}
+
+/// Check the arguments of a `hegel_generate_date` call without drawing,
+/// so that a frontend can report a bad generator where it is built
+/// rather than at its first draw.
+///
+/// Parameters:
+/// `min_value` / `max_value` / `options`: As for `hegel_generate_date`;
+///   `options` may be NULL.
+///
+/// Returns `HEGEL_OK` when `hegel_generate_date` accepts these arguments,
+/// and otherwise `HEGEL_E_INVALID_ARG` with the message that draw would
+/// report: for a bound that is not a valid date, for inverted bounds, and
+/// for bounds in which no date falls on an allowed weekday and month.
+///
+/// This and the other `hegel_validate_*` functions make the checks their
+/// draws make and no others, record nothing and need no test case.
+/// Calling one is optional: the draw checks its arguments either way.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_validate_date(
+    ctx: *mut HegelContext,
+    min_value: hegel_date_t,
+    max_value: hegel_date_t,
+    options: *const HegelDateOptions,
+) -> hegel_result_t {
+    let options = unsafe { options.as_ref() }
+        .map(|o| o.options)
+        .unwrap_or_default();
+    validate_arguments(ctx, || {
+        crate::native::draws::special::date_bounds(
+            &rust_date(&min_value),
+            &rust_date(&max_value),
+            &options,
+        )?;
+        Ok(())
+    })
+}
+
+/// Check the arguments of a `hegel_generate_time` call without drawing;
+/// see `hegel_validate_date`.
+///
+/// Parameters:
+/// `min_value` / `max_value` / `precision`: As for `hegel_generate_time`.
+///
+/// Returns `HEGEL_OK` when `hegel_generate_time` accepts these arguments,
+/// and otherwise `HEGEL_E_INVALID_ARG` with the message that draw would
+/// report: for a bound that is not a valid time, for inverted bounds, for
+/// an unknown precision (reported under this function's name) and for
+/// bounds holding no value at the precision.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_validate_time(
+    ctx: *mut HegelContext,
+    min_value: hegel_time_t,
+    max_value: hegel_time_t,
+    precision: u32,
+) -> hegel_result_t {
+    validate_arguments(ctx, || {
+        let precision = rust_precision("hegel_validate_time", precision)?;
+        crate::native::draws::special::time_bounds(
+            &rust_time(&min_value),
+            &rust_time(&max_value),
+            precision,
+        )?;
+        Ok(())
+    })
+}
+
+/// Check the arguments of a `hegel_generate_datetime` call without
+/// drawing; see `hegel_validate_date`.
+///
+/// Parameters:
+/// `min_value` / `max_value` / `precision`: As for
+///   `hegel_generate_datetime`.
+///
+/// Returns `HEGEL_OK` when `hegel_generate_datetime` accepts these
+/// arguments, and otherwise `HEGEL_E_INVALID_ARG` with the message that
+/// draw would report: for a bound whose date or time is not valid, for
+/// inverted bounds, for an unknown precision (reported under this
+/// function's name) and for bounds holding no value at the precision.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_validate_datetime(
+    ctx: *mut HegelContext,
+    min_value: hegel_datetime_t,
+    max_value: hegel_datetime_t,
+    precision: u32,
+) -> hegel_result_t {
+    validate_arguments(ctx, || {
+        let precision = rust_precision("hegel_validate_datetime", precision)?;
+        crate::native::draws::special::datetime_bounds(
+            &rust_datetime(&min_value),
+            &rust_datetime(&max_value),
+            precision,
+        )?;
+        Ok(())
+    })
 }
 
 /// Parameters:
@@ -10618,7 +10726,6 @@ pub unsafe extern "C" fn hegel_generate_timestamp(
     precision: u32,
     out_value: *mut hegel_timestamp_t,
 ) -> hegel_result_t {
-    use crate::native::timezone::Timestamp;
     unsafe {
         typed_draw(
             ctx,
@@ -10629,14 +10736,8 @@ pub unsafe extern "C" fn hegel_generate_timestamp(
                 let precision = rust_precision("hegel_generate_timestamp", precision)
                     .map_err(|e| DataSourceError::InvalidArgument(e.to_string()))?;
                 tc.stream.generate_timestamp(
-                    Timestamp {
-                        second: min_value.second,
-                        nanosecond: min_value.nanosecond,
-                    },
-                    Timestamp {
-                        second: max_value.second,
-                        nanosecond: max_value.nanosecond,
-                    },
+                    rust_timestamp(&min_value),
+                    rust_timestamp(&max_value),
                     precision,
                 )
             },
@@ -10660,6 +10761,37 @@ pub enum hegel_offset_granularity_t {
     HEGEL_OFFSET_GRANULARITY_QUARTER_HOURS = 1,
     HEGEL_OFFSET_GRANULARITY_MINUTES = 2,
     HEGEL_OFFSET_GRANULARITY_SECONDS = 3,
+}
+
+/// Check the arguments of a `hegel_generate_timestamp` call without
+/// drawing; see `hegel_validate_date`.
+///
+/// Parameters:
+/// `min_value` / `max_value` / `precision`: As for
+///   `hegel_generate_timestamp`.
+///
+/// Returns `HEGEL_OK` when `hegel_generate_timestamp` accepts these
+/// arguments, and otherwise `HEGEL_E_INVALID_ARG` with the message that
+/// draw would report: for a bound outside the civil range or with an
+/// invalid nanosecond, for inverted bounds, for an unknown precision
+/// (reported under this function's name) and for bounds holding no value
+/// at the precision.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_validate_timestamp(
+    ctx: *mut HegelContext,
+    min_value: hegel_timestamp_t,
+    max_value: hegel_timestamp_t,
+    precision: u32,
+) -> hegel_result_t {
+    validate_arguments(ctx, || {
+        let precision = rust_precision("hegel_validate_timestamp", precision)?;
+        crate::native::draws::scalar::timestamp_bounds(
+            &rust_timestamp(&min_value),
+            &rust_timestamp(&max_value),
+            precision,
+        )?;
+        Ok(())
+    })
 }
 
 /// A drawn UTC offset: `seconds` east of UT, 0 when not `known`.
@@ -10699,8 +10831,6 @@ pub unsafe extern "C" fn hegel_generate_offset(
     allow_unknown: bool,
     out_value: *mut hegel_offset_t,
 ) -> hegel_result_t {
-    use crate::native::draws::scalar::Granularity;
-    use hegel_offset_granularity_t as c;
     unsafe {
         typed_draw(
             ctx,
@@ -10708,19 +10838,8 @@ pub unsafe extern "C" fn hegel_generate_offset(
             "hegel_generate_offset",
             out_value.is_null(),
             |tc| {
-                let granularity = match granularity {
-                    x if x == c::HEGEL_OFFSET_GRANULARITY_HOURS as u32 => Granularity::Hours,
-                    x if x == c::HEGEL_OFFSET_GRANULARITY_QUARTER_HOURS as u32 => {
-                        Granularity::QuarterHours
-                    }
-                    x if x == c::HEGEL_OFFSET_GRANULARITY_MINUTES as u32 => Granularity::Minutes,
-                    x if x == c::HEGEL_OFFSET_GRANULARITY_SECONDS as u32 => Granularity::Seconds,
-                    _ => {
-                        return Err(DataSourceError::InvalidArgument(format!(
-                            "hegel_generate_offset: unknown granularity {granularity}"
-                        )));
-                    }
-                };
+                let granularity = rust_granularity("hegel_generate_offset", granularity)
+                    .map_err(|e| DataSourceError::InvalidArgument(e.to_string()))?;
                 tc.stream
                     .generate_offset(min_seconds, max_seconds, granularity, allow_unknown)
             },
@@ -10732,6 +10851,59 @@ pub unsafe extern "C" fn hegel_generate_offset(
             },
         )
     }
+}
+
+/// The granularity `granularity` names, or an argument error naming
+/// `fn_name`, the C function it was passed to.
+fn rust_granularity(
+    fn_name: &str,
+    granularity: u32,
+) -> Result<crate::native::draws::scalar::Granularity, EngineError> {
+    use crate::native::draws::scalar::Granularity;
+    use hegel_offset_granularity_t as c;
+    Ok(match granularity {
+        x if x == c::HEGEL_OFFSET_GRANULARITY_HOURS as u32 => Granularity::Hours,
+        x if x == c::HEGEL_OFFSET_GRANULARITY_QUARTER_HOURS as u32 => Granularity::QuarterHours,
+        x if x == c::HEGEL_OFFSET_GRANULARITY_MINUTES as u32 => Granularity::Minutes,
+        x if x == c::HEGEL_OFFSET_GRANULARITY_SECONDS as u32 => Granularity::Seconds,
+        _ => {
+            return Err(EngineError::InvalidArgument(format!(
+                "{fn_name}: unknown granularity {granularity}"
+            )));
+        }
+    })
+}
+
+/// Check the arguments of a `hegel_generate_offset` call without
+/// drawing; see `hegel_validate_date`.
+///
+/// Parameters:
+/// `min_seconds` / `max_seconds` / `granularity` / `allow_unknown`: As
+///   for `hegel_generate_offset`. `allow_unknown` has no invalid value
+///   and is taken so that the two calls take the same arguments.
+///
+/// Returns `HEGEL_OK` when `hegel_generate_offset` accepts these
+/// arguments, and otherwise `HEGEL_E_INVALID_ARG` with the message that
+/// draw would report: for a bound outside ±93599, for inverted bounds,
+/// for an unknown granularity (reported under this function's name) and
+/// for bounds holding no offset at the granularity.
+#[expect(
+    unused_variables,
+    reason = "allow_unknown is taken so the call mirrors hegel_generate_offset's"
+)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_validate_offset(
+    ctx: *mut HegelContext,
+    min_seconds: i32,
+    max_seconds: i32,
+    granularity: u32,
+    allow_unknown: bool,
+) -> hegel_result_t {
+    validate_arguments(ctx, || {
+        let granularity = rust_granularity("hegel_validate_offset", granularity)?;
+        crate::native::draws::scalar::offset_bounds(min_seconds, max_seconds, granularity)?;
+        Ok(())
+    })
 }
 
 /// A duration: `seconds` plus `nanoseconds` of the same sign, the latter
@@ -10802,6 +10974,43 @@ pub unsafe extern "C" fn hegel_generate_duration(
             },
         )
     }
+}
+
+/// Check the arguments of a `hegel_generate_duration` call without
+/// drawing; see `hegel_validate_date`.
+///
+/// Parameters:
+/// `min_value` / `max_value` / `precision`: As for
+///   `hegel_generate_duration`.
+///
+/// Returns `HEGEL_OK` when `hegel_generate_duration` accepts these
+/// arguments, and otherwise `HEGEL_E_INVALID_ARG` with the message that
+/// draw would report: for a bound that is not a valid duration, for
+/// inverted bounds, for an unknown precision (reported under this
+/// function's name) and for bounds holding no value at the precision.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_validate_duration(
+    ctx: *mut HegelContext,
+    min_value: hegel_duration_t,
+    max_value: hegel_duration_t,
+    precision: u32,
+) -> hegel_result_t {
+    use crate::native::draws::scalar::Duration;
+    validate_arguments(ctx, || {
+        let precision = rust_precision("hegel_validate_duration", precision)?;
+        crate::native::draws::scalar::duration_bounds(
+            &Duration {
+                seconds: min_value.seconds,
+                nanoseconds: min_value.nanoseconds,
+            },
+            &Duration {
+                seconds: max_value.seconds,
+                nanoseconds: max_value.nanoseconds,
+            },
+            precision,
+        )?;
+        Ok(())
+    })
 }
 
 /// A unit of a calendar span; see `hegel_span_spec_set_unit_bounds`.

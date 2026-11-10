@@ -72,6 +72,35 @@ static TRANSITION_CATALOGUE: Lazy<Result<Vec<i64>, InternalError>> = Lazy::new(|
     Ok(set.into_iter().collect())
 });
 
+/// Check the arguments of [`generate_timestamp`], which makes this check
+/// and no other: each bound a valid timestamp, the bounds in order and
+/// holding a value at `precision`. Gives the first and last such value,
+/// in nanoseconds since the epoch.
+pub fn timestamp_bounds(
+    min: &Timestamp,
+    max: &Timestamp,
+    precision: Precision,
+) -> Result<(i128, i128), EngineError> {
+    validate_timestamp("min_value", min)?;
+    validate_timestamp("max_value", max)?;
+    if min > max {
+        return Err(EngineError::InvalidArgument(format!(
+            "generate_timestamp requires min_value <= max_value, got [{min:?}, {max:?}]"
+        )));
+    }
+    let unit = i128::from(precision.unit());
+    let (lo, hi) = (
+        align_up(instant_ns(min), unit),
+        align_down(instant_ns(max), unit),
+    );
+    if lo > hi {
+        return Err(EngineError::InvalidArgument(format!(
+            "generate_timestamp: no value at precision {precision:?} lies in [{min:?}, {max:?}]"
+        )));
+    }
+    Ok((lo, hi))
+}
+
 /// Draw a [`Timestamp`] in `[min, max]` as a whole number of `precision`
 /// units, wrapped in a span. Shrinks toward 2000-01-01T00:00:00Z, or the
 /// nearest bound when that is out of range.
@@ -81,23 +110,8 @@ pub fn generate_timestamp(
     max: Timestamp,
     precision: Precision,
 ) -> Result<Timestamp, EngineError> {
-    validate_timestamp(&min)?;
-    validate_timestamp(&max)?;
-    if min > max {
-        return Err(EngineError::InvalidArgument(format!(
-            "generate_timestamp requires min_value <= max_value, got [{min:?}, {max:?}]"
-        )));
-    }
+    let (lo, hi) = timestamp_bounds(&min, &max, precision)?;
     let unit = i128::from(precision.unit());
-    let (lo, hi) = (
-        align_up(instant_ns(&min), unit),
-        align_down(instant_ns(&max), unit),
-    );
-    if lo > hi {
-        return Err(EngineError::InvalidArgument(format!(
-            "generate_timestamp: no value at precision {precision:?} lies in [{min:?}, {max:?}]"
-        )));
-    }
     let origin = (i128::from(EPOCH_2000) * NS).clamp(lo, hi);
     let catalogue = TRANSITION_CATALOGUE.as_ref().map_err(Clone::clone)?;
     let (lo_s, hi_s) = (lo.div_euclid(NS) as i64, hi.div_euclid(NS) as i64);
@@ -192,18 +206,15 @@ static OFFSET_CATALOGUE: Lazy<Result<Vec<i32>, InternalError>> = Lazy::new(|| {
     Ok(set.into_iter().collect())
 });
 
-/// Draw a [`UtcOffset`] in `[min_seconds, max_seconds]` at `granularity`,
-/// or the unknown offset when `allow_unknown`, wrapped in a span: the
-/// weighted unknown node when allowed, then the count node in either
-/// case, so that the unknown's choice sequence is no shorter than a known
-/// offset's. Shrinks to known, then toward 0 or the nearest bound.
-pub fn generate_offset(
-    ntc: &mut NativeTestCase,
+/// Check the arguments of [`generate_offset`], which makes this check
+/// and no other: each bound within the widest offset, the bounds in order
+/// and holding an offset at `granularity`. Gives the first and last such
+/// offset, as counts of the granularity's unit.
+pub fn offset_bounds(
     min_seconds: i32,
     max_seconds: i32,
     granularity: Granularity,
-    allow_unknown: bool,
-) -> Result<UtcOffset, EngineError> {
+) -> Result<(i32, i32), EngineError> {
     for (what, seconds) in [("min_seconds", min_seconds), ("max_seconds", max_seconds)] {
         if seconds.unsigned_abs() > MAX_OFFSET.unsigned_abs() {
             return Err(EngineError::InvalidArgument(format!(
@@ -228,6 +239,23 @@ pub fn generate_offset(
              [{min_seconds}, {max_seconds}]"
         )));
     }
+    Ok((lo, hi))
+}
+
+/// Draw a [`UtcOffset`] in `[min_seconds, max_seconds]` at `granularity`,
+/// or the unknown offset when `allow_unknown`, wrapped in a span: the
+/// weighted unknown node when allowed, then the count node in either
+/// case, so that the unknown's choice sequence is no shorter than a known
+/// offset's. Shrinks to known, then toward 0 or the nearest bound.
+pub fn generate_offset(
+    ntc: &mut NativeTestCase,
+    min_seconds: i32,
+    max_seconds: i32,
+    granularity: Granularity,
+    allow_unknown: bool,
+) -> Result<UtcOffset, EngineError> {
+    let (lo, hi) = offset_bounds(min_seconds, max_seconds, granularity)?;
+    let unit = granularity.unit();
     let catalogue = OFFSET_CATALOGUE.as_ref().map_err(Clone::clone)?;
     let targets: Vec<i128> = catalogue
         .iter()
@@ -296,20 +324,18 @@ fn duration_of(ns: i128) -> Duration {
     }
 }
 
-/// Draw a [`Duration`] in `[min, max]` as a whole number of `precision`
-/// units, wrapped in a span. Shrinks toward zero, or the nearest bound
-/// when that is out of range. Targets the bounds, one unit of the
-/// precision of either sign and the [`interesting_duration_ns`] in the
-/// bounds at the precision.
-pub fn generate_duration(
-    ntc: &mut NativeTestCase,
-    min: Duration,
-    max: Duration,
+/// Check the arguments of [`generate_duration`], which makes this check
+/// and no other: each bound a valid duration, the bounds in order and
+/// holding a value at `precision`. Gives the first and last such value,
+/// in nanoseconds.
+pub fn duration_bounds(
+    min: &Duration,
+    max: &Duration,
     precision: Precision,
-) -> Result<Duration, EngineError> {
-    validate_duration("min_value", &min)?;
-    validate_duration("max_value", &max)?;
-    let (min_ns, max_ns) = (duration_ns(&min), duration_ns(&max));
+) -> Result<(i128, i128), EngineError> {
+    validate_duration("min_value", min)?;
+    validate_duration("max_value", max)?;
+    let (min_ns, max_ns) = (duration_ns(min), duration_ns(max));
     if min_ns > max_ns {
         return Err(EngineError::InvalidArgument(format!(
             "generate_duration requires min_value <= max_value, got [{min:?}, {max:?}]"
@@ -322,6 +348,22 @@ pub fn generate_duration(
             "generate_duration: no value at precision {precision:?} lies in [{min:?}, {max:?}]"
         )));
     }
+    Ok((lo, hi))
+}
+
+/// Draw a [`Duration`] in `[min, max]` as a whole number of `precision`
+/// units, wrapped in a span. Shrinks toward zero, or the nearest bound
+/// when that is out of range. Targets the bounds, one unit of the
+/// precision of either sign and the [`interesting_duration_ns`] in the
+/// bounds at the precision.
+pub fn generate_duration(
+    ntc: &mut NativeTestCase,
+    min: Duration,
+    max: Duration,
+    precision: Precision,
+) -> Result<Duration, EngineError> {
+    let (lo, hi) = duration_bounds(&min, &max, precision)?;
+    let unit = i128::from(precision.unit());
     let mut targets: Vec<i128> = [lo, hi, unit, -unit]
         .into_iter()
         .chain(interesting_duration_ns())

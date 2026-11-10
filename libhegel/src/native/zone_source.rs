@@ -326,6 +326,10 @@ fn renumber(zone: &Zone) -> Zone {
     )
 }
 
+fn dst_word(is_dst: bool) -> &'static str {
+    if is_dst { "daylight" } else { "standard" }
+}
+
 /// Check `zone`, confine it to the civil envelope and prune it; see the
 /// module docs. A rule whose daylight-saving type is its standard type
 /// changes nothing and is kept as the standard type alone, and a rule
@@ -390,13 +394,15 @@ fn prepare(mut zone: Zone) -> Result<Zone, EngineError> {
         if ruled != last.kind {
             return Err(invalid(format!(
                 "zone {name}: the rule after the last transition does not continue it: the \
-                 transition at {} changes to {} (UT{:+}s), and the rule has {} (UT{:+}s) in \
-                 force then",
+                 transition at {} changes to {} (UT{:+}s, {}), and the rule has {} (UT{:+}s, {}) \
+                 in force then",
                 last.instant,
                 abbreviation(&zone, last.kind)?,
                 last.kind.utoff,
+                dst_word(last.kind.is_dst),
                 abbreviation(&zone, ruled)?,
-                ruled.utoff
+                ruled.utoff,
+                dst_word(ruled.is_dst)
             )));
         }
     }

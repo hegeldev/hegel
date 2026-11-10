@@ -272,8 +272,8 @@ fn a_rule_must_continue_the_last_transition() {
         e,
         format!(
             "zone Test/Zone: the rule after the last transition does not continue it: the \
-             transition at {winter} changes to WAT (UT-3600s), and the rule has GMT (UT+0s) in \
-             force then"
+             transition at {winter} changes to WAT (UT-3600s, standard), and the rule has GMT \
+             (UT+0s, standard) in force then"
         )
     );
     let e = message(
@@ -282,7 +282,7 @@ fn a_rule_must_continue_the_last_transition() {
             .unwrap_err(),
     );
     assert!(
-        e.contains("changes to BST (UT+3600s), and the rule has GMT"),
+        e.contains("changes to BST (UT+3600s, daylight), and the rule has GMT"),
         "{e}"
     );
     let summer = year(2000) + 200 * DAY;

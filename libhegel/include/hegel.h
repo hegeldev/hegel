@@ -3900,6 +3900,66 @@ hegel_result_t hegel_generate_datetime(hegel_context_t *ctx,
                                        hegel_datetime_t *out_value);
 
 /*
+ Check the arguments of a `hegel_generate_date` call without drawing,
+ so that a frontend can report a bad generator where it is built
+ rather than at its first draw.
+
+ Parameters:
+ `min_value` / `max_value` / `options`: As for `hegel_generate_date`;
+   `options` may be NULL.
+
+ Returns `HEGEL_OK` when `hegel_generate_date` accepts these arguments,
+ and otherwise `HEGEL_E_INVALID_ARG` with the message that draw would
+ report: for a bound that is not a valid date, for inverted bounds, and
+ for bounds in which no date falls on an allowed weekday and month.
+
+ This and the other `hegel_validate_*` functions make the checks their
+ draws make and no others, record nothing and need no test case.
+ Calling one is optional: the draw checks its arguments either way.
+ */
+hegel_result_t hegel_validate_date(hegel_context_t *ctx,
+                                   hegel_date_t min_value,
+                                   hegel_date_t max_value,
+                                   const hegel_date_options_t *options);
+
+/*
+ Check the arguments of a `hegel_generate_time` call without drawing;
+ see `hegel_validate_date`.
+
+ Parameters:
+ `min_value` / `max_value` / `precision`: As for `hegel_generate_time`.
+
+ Returns `HEGEL_OK` when `hegel_generate_time` accepts these arguments,
+ and otherwise `HEGEL_E_INVALID_ARG` with the message that draw would
+ report: for a bound that is not a valid time, for inverted bounds, for
+ an unknown precision (reported under this function's name) and for
+ bounds holding no value at the precision.
+ */
+hegel_result_t hegel_validate_time(hegel_context_t *ctx,
+                                   hegel_time_t min_value,
+                                   hegel_time_t max_value,
+                                   uint32_t precision);
+
+/*
+ Check the arguments of a `hegel_generate_datetime` call without
+ drawing; see `hegel_validate_date`.
+
+ Parameters:
+ `min_value` / `max_value` / `precision`: As for
+   `hegel_generate_datetime`.
+
+ Returns `HEGEL_OK` when `hegel_generate_datetime` accepts these
+ arguments, and otherwise `HEGEL_E_INVALID_ARG` with the message that
+ draw would report: for a bound whose date or time is not valid, for
+ inverted bounds, for an unknown precision (reported under this
+ function's name) and for bounds holding no value at the precision.
+ */
+hegel_result_t hegel_validate_datetime(hegel_context_t *ctx,
+                                       hegel_datetime_t min_value,
+                                       hegel_datetime_t max_value,
+                                       uint32_t precision);
+
+/*
  Parameters:
  `version` / `has_version`: When `has_version` is set, the RFC 4122
    version nibble is forced to `version` (0..=15, conventionally 1..=5)
@@ -5257,6 +5317,26 @@ hegel_result_t hegel_generate_timestamp(hegel_context_t *ctx,
                                         hegel_timestamp_t *out_value);
 
 /*
+ Check the arguments of a `hegel_generate_timestamp` call without
+ drawing; see `hegel_validate_date`.
+
+ Parameters:
+ `min_value` / `max_value` / `precision`: As for
+   `hegel_generate_timestamp`.
+
+ Returns `HEGEL_OK` when `hegel_generate_timestamp` accepts these
+ arguments, and otherwise `HEGEL_E_INVALID_ARG` with the message that
+ draw would report: for a bound outside the civil range or with an
+ invalid nanosecond, for inverted bounds, for an unknown precision
+ (reported under this function's name) and for bounds holding no value
+ at the precision.
+ */
+hegel_result_t hegel_validate_timestamp(hegel_context_t *ctx,
+                                        hegel_timestamp_t min_value,
+                                        hegel_timestamp_t max_value,
+                                        uint32_t precision);
+
+/*
  Draw a UTC offset in `[min_seconds, max_seconds]`.
 
  Parameters:
@@ -5285,6 +5365,27 @@ hegel_result_t hegel_generate_offset(hegel_context_t *ctx,
                                      hegel_offset_t *out_value);
 
 /*
+ Check the arguments of a `hegel_generate_offset` call without
+ drawing; see `hegel_validate_date`.
+
+ Parameters:
+ `min_seconds` / `max_seconds` / `granularity` / `allow_unknown`: As
+   for `hegel_generate_offset`. `allow_unknown` has no invalid value
+   and is taken so that the two calls take the same arguments.
+
+ Returns `HEGEL_OK` when `hegel_generate_offset` accepts these
+ arguments, and otherwise `HEGEL_E_INVALID_ARG` with the message that
+ draw would report: for a bound outside ±93599, for inverted bounds,
+ for an unknown granularity (reported under this function's name) and
+ for bounds holding no offset at the granularity.
+ */
+hegel_result_t hegel_validate_offset(hegel_context_t *ctx,
+                                     int32_t min_seconds,
+                                     int32_t max_seconds,
+                                     uint32_t granularity,
+                                     bool allow_unknown);
+
+/*
  Draw a duration in `[min_value, max_value]`.
 
  Parameters:
@@ -5309,6 +5410,25 @@ hegel_result_t hegel_generate_duration(hegel_context_t *ctx,
                                        hegel_duration_t max_value,
                                        uint32_t precision,
                                        hegel_duration_t *out_value);
+
+/*
+ Check the arguments of a `hegel_generate_duration` call without
+ drawing; see `hegel_validate_date`.
+
+ Parameters:
+ `min_value` / `max_value` / `precision`: As for
+   `hegel_generate_duration`.
+
+ Returns `HEGEL_OK` when `hegel_generate_duration` accepts these
+ arguments, and otherwise `HEGEL_E_INVALID_ARG` with the message that
+ draw would report: for a bound that is not a valid duration, for
+ inverted bounds, for an unknown precision (reported under this
+ function's name) and for bounds holding no value at the precision.
+ */
+hegel_result_t hegel_validate_duration(hegel_context_t *ctx,
+                                       hegel_duration_t min_value,
+                                       hegel_duration_t max_value,
+                                       uint32_t precision);
 
 /*
  Create a span spec with no unit enabled and the uniform sign policy.

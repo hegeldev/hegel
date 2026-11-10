@@ -1184,7 +1184,7 @@ fn bad_bounds_are_rejected() {
             min: at(MIN_INSTANT - 1),
             max: at(0),
         }),
-        "timestamp.second",
+        "min_value.second must be in",
     );
     reject(
         spec_with(ZonedBounds::Instant {
@@ -1194,7 +1194,7 @@ fn bad_bounds_are_rejected() {
                 nanosecond: 1_000_000_000,
             },
         }),
-        "timestamp.nanosecond",
+        "max_value.nanosecond must be at most",
     );
     let no_minute = ZonedSpec {
         bounds: ZonedBounds::Instant {
@@ -1996,7 +1996,15 @@ fn settings_check_each_bound_alone_and_the_two_kinds_together() {
     let message = invalid_argument(settings.set_instant_bounds(at(1), at(0)));
     assert!(message.contains("min_value <= max_value"), "{message}");
     let message = invalid_argument(settings.set_instant_bounds(at(MIN_INSTANT - 1), at(0)));
-    assert!(message.contains("timestamp.second"), "{message}");
+    assert!(
+        message.starts_with("min_value.second must be in"),
+        "{message}"
+    );
+    let message = invalid_argument(settings.set_instant_bounds(at(0), at(MAX_INSTANT + 1)));
+    assert!(
+        message.starts_with("max_value.second must be in"),
+        "{message}"
+    );
     assert_eq!(settings, ZonedSettings::default());
 
     settings.precision = Precision::Minutes;

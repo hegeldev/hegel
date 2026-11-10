@@ -156,7 +156,7 @@ impl TimeZone {
 
     /// The offset in force at `timestamp`.
     pub fn offset_at(&self, timestamp: Timestamp) -> Result<Offset, EngineError> {
-        validate_timestamp(&timestamp)?;
+        validate_timestamp("timestamp", &timestamp)?;
         match self.data() {
             None => Ok(Offset {
                 seconds: 0,
@@ -219,16 +219,18 @@ impl TimeZone {
     }
 }
 
-pub(crate) fn validate_timestamp(timestamp: &Timestamp) -> Result<(), EngineError> {
+/// Check that `timestamp`, the argument named `what`, is within the
+/// civil range and has a valid nanosecond.
+pub(crate) fn validate_timestamp(what: &str, timestamp: &Timestamp) -> Result<(), EngineError> {
     if !(MIN_INSTANT..=MAX_INSTANT).contains(&timestamp.second) {
         return Err(EngineError::InvalidArgument(format!(
-            "timestamp.second must be in [{MIN_INSTANT}, {MAX_INSTANT}], got {}",
+            "{what}.second must be in [{MIN_INSTANT}, {MAX_INSTANT}], got {}",
             timestamp.second
         )));
     }
     if timestamp.nanosecond > 999_999_999 {
         return Err(EngineError::InvalidArgument(format!(
-            "timestamp.nanosecond must be at most 999999999, got {}",
+            "{what}.nanosecond must be at most 999999999, got {}",
             timestamp.nanosecond
         )));
     }

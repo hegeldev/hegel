@@ -608,6 +608,10 @@ hegel_generate_zoned_datetime(ctx, tc, tz_spec, zoned_spec, out, out_zone)
 hegel_generate_zoned_datetime_for_zone(ctx, tc, source, name, zoned_spec, out)
   // the same draw in a zone the caller names (§6.2); source may be NULL
 
+hegel_validate_date(ctx, min, max, options)           // a draw's arguments, checked
+hegel_validate_time / _datetime / _timestamp / _duration(ctx, min, max, precision)
+hegel_validate_offset(ctx, min_seconds, max_seconds, granularity, allow_unknown)
+
 hegel_generate_timestamp(ctx, tc, min, max, precision, out)
 hegel_generate_offset(ctx, tc, min_seconds, max_seconds, granularity,
                       allow_unknown, out)             // hegel_offset_t { seconds, known }
@@ -648,6 +652,16 @@ generator where the user built it rather than at its first draw. A time
 zone spec reads the process default zone source when it is created
 (zone-sources.md §3.3), and `hegel_timezone_spec_new` reads nothing else,
 so it does not fail on a default source that has no names.
+
+The six draws that take their arguments directly rather than in a spec
+have the same check without a handle: `hegel_validate_date`,
+`hegel_validate_time`, `hegel_validate_datetime`,
+`hegel_validate_timestamp`, `hegel_validate_offset` and
+`hegel_validate_duration` take the arguments of `hegel_generate_date` and
+the rest, less the test case and the out pointer, and report the argument
+error that draw would report, without drawing. Each draw and its
+validate function call one check in the engine, so the two cannot
+disagree.
 
 `hegel_generate_time` and `hegel_generate_datetime` gain a `precision`
 argument (a breaking signature change, as `hegel_generate_datetime` had

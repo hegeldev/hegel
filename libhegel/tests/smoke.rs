@@ -1677,10 +1677,14 @@ fn libhegel_exports_the_temporal_functions() {
         *mut hegel_owned_string_t,
     ) -> c_int;
     type FnOwnedStringFree = unsafe extern "C" fn(*mut u8, *mut hegel_owned_string_t) -> c_int;
+    type FnValidateTimestamp =
+        unsafe extern "C" fn(*mut u8, hegel_timestamp_t, hegel_timestamp_t, u32) -> c_int;
 
     let lib = unsafe { load() };
     let a = unsafe { bind(&lib) };
     unsafe {
+        let validate_timestamp: Symbol<FnValidateTimestamp> =
+            lib.get(b"hegel_validate_timestamp\0").unwrap();
         let source_new: Symbol<FnNew> = lib.get(b"hegel_zone_source_new\0").unwrap();
         let source_free: Symbol<FnHandle> = lib.get(b"hegel_zone_source_free\0").unwrap();
         let add_tzif: Symbol<FnAddTzif> = lib.get(b"hegel_zone_source_add_tzif\0").unwrap();
@@ -1712,6 +1716,11 @@ fn libhegel_exports_the_temporal_functions() {
             b"hegel_format_duration\0",
             b"hegel_format_span\0",
             b"hegel_zone_source_set_loader\0",
+            b"hegel_validate_date\0",
+            b"hegel_validate_time\0",
+            b"hegel_validate_datetime\0",
+            b"hegel_validate_offset\0",
+            b"hegel_validate_duration\0",
         ] {
             lib.get::<unsafe extern "C" fn()>(name).unwrap();
         }
@@ -1735,6 +1744,21 @@ fn libhegel_exports_the_temporal_functions() {
         };
         assert_eq!(format_timestamp(ctx, before_the_epoch, &mut text), HEGEL_OK);
         assert_eq!(read(&mut text), "1969-12-31T23:59:58.5Z");
+        let epoch = hegel_timestamp_t {
+            second: 0,
+            nanosecond: 0,
+        };
+        let seconds = hegel_c::hegel_precision_t::HEGEL_PRECISION_SECONDS as u32;
+        assert_eq!(
+            validate_timestamp(ctx, before_the_epoch, epoch, seconds),
+            HEGEL_OK
+        );
+        assert_eq!(
+            validate_timestamp(ctx, epoch, before_the_epoch, seconds),
+            HEGEL_E_INVALID_ARG
+        );
+        let err = read_string(a.context_last_error(ctx)).to_string_lossy();
+        assert!(err.contains("min_value <= max_value"), "{err}");
 
         let mut source: *mut u8 = ptr::null_mut();
         assert_eq!(source_new(ctx, &mut source), HEGEL_OK);

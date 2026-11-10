@@ -193,8 +193,8 @@ fn validate_civil_bounds(min: &DateTime, max: &DateTime) -> Result<(), EngineErr
 
 /// Check instant bounds by themselves: each a valid timestamp, in order.
 fn validate_instant_bounds(min: &Timestamp, max: &Timestamp) -> Result<(), EngineError> {
-    validate_timestamp(min)?;
-    validate_timestamp(max)?;
+    validate_timestamp("min_value", min)?;
+    validate_timestamp("max_value", max)?;
     if min > max {
         return Err(EngineError::InvalidArgument(format!(
             "zoned datetime bounds require min_value <= max_value, got [{min:?}, {max:?}]"

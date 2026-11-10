@@ -205,6 +205,12 @@ macro_rules! for_each_hegel_fn {
             fn hegel_timezone_spec_set_unknown(ctx: *mut HegelContext, spec: *mut HegelTimezoneSpec, unknown: bool) -> hegel_result_t;
             fn hegel_timezone_spec_validate(ctx: *mut HegelContext, spec: *const HegelTimezoneSpec) -> hegel_result_t;
             fn hegel_tzdb_version(ctx: *mut HegelContext, out_version: *mut hegel_string_t) -> hegel_result_t;
+            fn hegel_validate_date(ctx: *mut HegelContext, min_value: hegel_date_t, max_value: hegel_date_t, options: *const HegelDateOptions) -> hegel_result_t;
+            fn hegel_validate_datetime(ctx: *mut HegelContext, min_value: hegel_datetime_t, max_value: hegel_datetime_t, precision: u32) -> hegel_result_t;
+            fn hegel_validate_duration(ctx: *mut HegelContext, min_value: hegel_duration_t, max_value: hegel_duration_t, precision: u32) -> hegel_result_t;
+            fn hegel_validate_offset(ctx: *mut HegelContext, min_seconds: i32, max_seconds: i32, granularity: u32, allow_unknown: bool) -> hegel_result_t;
+            fn hegel_validate_time(ctx: *mut HegelContext, min_value: hegel_time_t, max_value: hegel_time_t, precision: u32) -> hegel_result_t;
+            fn hegel_validate_timestamp(ctx: *mut HegelContext, min_value: hegel_timestamp_t, max_value: hegel_timestamp_t, precision: u32) -> hegel_result_t;
             fn hegel_version(ctx: *mut HegelContext, out_version: *mut hegel_string_t) -> hegel_result_t;
             fn hegel_zone_source_add_link(ctx: *mut HegelContext, source: *mut HegelZoneSource, name: hegel_string_t, target: hegel_string_t) -> hegel_result_t;
             fn hegel_zone_source_add_oracle(ctx: *mut HegelContext, source: *mut HegelZoneSource, name: hegel_string_t, oracle: *const hegel_zone_oracle_t) -> hegel_result_t;
