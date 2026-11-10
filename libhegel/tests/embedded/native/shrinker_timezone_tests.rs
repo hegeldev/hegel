@@ -22,14 +22,14 @@ fn text_of(node: &ChoiceNode) -> String {
 }
 
 fn spec(names: &[&str]) -> TimeZoneSpec {
-    let mut spec = TimeZoneSpec::new().unwrap();
+    let mut spec = TimeZoneSpec::new();
     spec.set_names(names.iter().map(|s| s.to_string()).collect())
         .unwrap();
     spec
 }
 
 fn zone_node(spec: &TimeZoneSpec, name: &str) -> ChoiceNode {
-    ChoiceNode::string((**spec.kind()).clone(), cps(name), false)
+    ChoiceNode::string((**spec.kind().unwrap()).clone(), cps(name), false)
 }
 
 fn shrinker(
@@ -103,7 +103,7 @@ fn strings_that_are_not_zone_names_are_skipped() {
     let spec = spec(&LADDER);
     let plain = ChoiceNode::string(
         crate::native::core::StringChoice {
-            intervals: spec.kind().intervals.clone(),
+            intervals: spec.kind().unwrap().intervals.clone(),
             min_size: 0,
             max_size: 8,
             constraint: None,

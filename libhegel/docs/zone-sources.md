@@ -1,8 +1,9 @@
 # Zone sources: generating against the time zone data the code under test uses
 
-Status: phase 1 (the engine, §5) implemented (2026-10-23); the frontends
-still draw against the bundled database. Supersedes the version-skew
-contract of `datetime.md` §8.1 as each frontend adopts it.
+Status: implemented in the engine (2026-10-23) and adopted by every
+frontend except Go, which has no temporal generators yet. Supersedes the
+version-skew contract of `datetime.md` §8.1. The Summary and §1 describe
+the problem as it stood before zone sources.
 
 ## Summary
 
@@ -140,12 +141,13 @@ typedef struct {
 hegel_result_t hegel_zone_source_add_zone(hegel_context_t*, hegel_zone_source_t*,
                                           hegel_string_t name, const hegel_zone_data_t*);
 
-/* shape 3: an offset oracle, probed during the call */
-typedef hegel_result_t (*hegel_zone_offset_fn_t)(void* user_data, hegel_context_t* ctx,
-                                                 int64_t instant, hegel_zone_type_t* out_type);
-typedef hegel_result_t (*hegel_zone_next_transition_fn_t)(void* user_data, hegel_context_t* ctx,
-                                                          int64_t after, bool* out_found,
-                                                          int64_t* out_instant);
+/* shape 3: an offset oracle, probed during the call; a callback returns 0
+   for success and anything else for failure */
+typedef int32_t (*hegel_zone_offset_fn_t)(void* user_data, hegel_context_t* ctx,
+                                          int64_t instant, hegel_zone_type_t* out_type);
+typedef int32_t (*hegel_zone_next_transition_fn_t)(void* user_data, hegel_context_t* ctx,
+                                                   int64_t after, bool* out_found,
+                                                   int64_t* out_instant);
 typedef struct {
     hegel_zone_offset_fn_t offset_at;               /* required */
     hegel_zone_next_transition_fn_t next_transition; /* optional */
@@ -161,10 +163,12 @@ hegel_result_t hegel_zone_source_add_link(hegel_context_t*, hegel_zone_source_t*
                                           hegel_string_t name, hegel_string_t target);
 hegel_result_t hegel_zone_source_declare(hegel_context_t*, hegel_zone_source_t*,
                                          const hegel_string_t* names, size_t len);
-typedef hegel_result_t (*hegel_zone_loader_t)(void* user_data, hegel_context_t* ctx,
-                                              hegel_zone_source_t* source, hegel_string_t name);
+typedef int32_t (*hegel_zone_loader_t)(void* user_data, hegel_context_t* ctx,
+                                       hegel_zone_source_t* source, hegel_string_t name);
+typedef void (*hegel_zone_loader_release_t)(void* user_data);
 hegel_result_t hegel_zone_source_set_loader(hegel_context_t*, hegel_zone_source_t*,
-                                            hegel_zone_loader_t, void* user_data);
+                                            hegel_zone_loader_t, void* user_data,
+                                            hegel_zone_loader_release_t release);
 
 hegel_result_t hegel_zone_source_set_version(hegel_context_t*, hegel_zone_source_t*,
                                              hegel_string_t version);
@@ -180,6 +184,15 @@ hegel_result_t hegel_set_default_zone_source(hegel_context_t*, const hegel_zone_
 /* attach to a draw, overriding the default; NULL means the default as it is now */
 hegel_result_t hegel_timezone_spec_set_source(hegel_context_t*, hegel_timezone_spec_t*,
                                               const hegel_zone_source_t*);
+/* check a spec against its source, as its first draw would */
+hegel_result_t hegel_timezone_spec_validate(hegel_context_t*, const hegel_timezone_spec_t*);
+
+/* a zoned datetime in a zone the caller names; NULL means the default source */
+hegel_result_t hegel_generate_zoned_datetime_for_zone(hegel_context_t*, hegel_test_case_t*,
+                                                      const hegel_zone_source_t*,
+                                                      hegel_string_t name,
+                                                      const hegel_zoned_spec_t*,
+                                                      hegel_zoned_datetime_t* out_value);
 
 /* the queries against a source; the existing ones pass NULL, the default */
 hegel_result_t hegel_timezone_resolve_in(hegel_context_t*, const hegel_zone_source_t*,
@@ -201,15 +214,20 @@ hegel_result_t hegel_timezone_info_in(hegel_context_t*, const hegel_zone_source_
 - **Checks.** Whatever the shape, the data is checked: every offset within
   two days of UT, transitions strictly ascending, rule dates as RFC 9636
   §3.3.1 allows, abbreviations without NUL bytes, names non-empty, without
-  NUL bytes and not `Etc/Unknown`. It is then confined to the engine's
-  civil envelope (a transition before it folds into the initial type; one
-  after it ends the history there and drops the rule), pruned of records
-  that change nothing as `generate_tzdata.py` prunes the bundled table, and
-  its abbreviations renumbered in the script's order. A TZif file of the
-  same release as the bundled table therefore gives exactly the bundled
-  zone (`zone_source_tests.rs` checks every zone against `jiff-tzdb`; the
-  five zones with negative daylight saving time differ only in their
-  `is_dst` flags, since `jiff-tzdb` compiles the rearguard format).
+  NUL bytes and not `Etc/Unknown`. A rule must continue the explicit
+  transitions: the type the last transition changes to has to be the one
+  the rule has in force at that instant, since anything else would give the
+  zone two answers there. A rule whose daylight type equals its standard
+  type is the standard type alone. The data is then confined to the
+  engine's civil envelope (a transition before it folds into the initial
+  type; one after it ends the history there and drops the rule), pruned of
+  records that change nothing as `generate_tzdata.py` prunes the bundled
+  table, and its abbreviations renumbered in the script's order. A TZif
+  file of the same release as the bundled table therefore gives exactly the
+  bundled zone (`zone_source_tests.rs` checks every zone against
+  `jiff-tzdb`; the five zones with negative daylight saving time differ
+  only in their `is_dst` flags, since `jiff-tzdb` compiles the rearguard
+  format).
 - **Interning.** Zone data is stored once per distinct zone for the life
   of the process. That is what keeps `TimeZone` a `Copy` value that draws
   and queries pass around, and what lets the queries return abbreviations
@@ -219,8 +237,10 @@ hegel_result_t hegel_timezone_info_in(hegel_context_t*, const hegel_zone_source_
 - **The probe.** With `next_transition` the engine walks the transitions
   one by one and stops after `last_year`; without it, it samples once a day
   and bisects each change to the second. Before `first_year` the type at
-  its start holds. A probe that finds more than 100,000 transitions, or a
-  `next_transition` that does not move forward, is an argument error.
+  its start holds. A probe that takes more than 100,000 steps (transitions
+  `next_transition` reports, whether or not the type changes there, or
+  changes the sampling finds), or a `next_transition` that does not move
+  forward, is an argument error.
   `HEGEL_ZONE_AFTER_INFER` is also accepted for structured data, so a
   frontend that probes on its own (the Wasm build) gets the same
   inference.
@@ -241,18 +261,29 @@ hegel_result_t hegel_timezone_info_in(hegel_context_t*, const hegel_zone_source_
   data to come. A lookup of a declared name, or of a name the source does
   not know at all, asks the loader, once per name; a name the loader does
   not know is remembered as missing until declared again. A declared name
-  the loader supplies nothing for, a link to a name nothing supplies, more
-  than 16 links in a row, and a loader's failure are argument errors with
-  the loader's message. Without a loader, a declared name can be drawn but
-  not evaluated: a zoned draw or query of it is an argument error.
+  the loader supplies nothing for, a link to a name nothing supplies, a
+  chain of more than 16 links (counting links only, however many of them
+  the loader had to supply), and a loader's failure are argument errors,
+  the last with the loader's message. Without a loader, a declared name can
+  be drawn but not evaluated: a zoned draw or query of it is an argument
+  error.
 - **Laziness.** A spec draws its names from the catalogue's entries, so a
   name the catalogue has never loads to be drawn: with a loader, only the
   zones a zoned draw lands on load. A name the catalogue lacks loads when
-  the spec is built, since its tags come from its data.
-- **Without callbacks.** The Wasm build declares the names, draws the
-  name with `hegel_generate_timezone`, adds that zone's data, then draws
-  the zoned value from a spec of that one name. The choice sequence is
-  the same as a one-step draw's.
+  the spec is first validated or drawn from, since its tags come from its
+  data.
+- **Without callbacks.** A host that cannot be called back (the Wasm
+  build) declares the names, draws the name with `hegel_generate_timezone`,
+  adds that zone's data, then draws the value in that zone with
+  `hegel_generate_zoned_datetime_for_zone`. The second call records no zone
+  node of its own, so the two calls record what
+  `hegel_generate_zoned_datetime` records in one, and a failure found one
+  way replays the other way. The function also serves a frontend whose
+  user supplies the zone. It takes a name the source knows or
+  `Etc/Unknown`, and never treats another name as opaque: for an opaque
+  name the first step drew, the frontend passes `Etc/Unknown`, which
+  records the nodes an opaque zone's value does, and reports the value
+  under the name it drew.
 - **The catalogue.** A name the catalogue has keeps its flags, tags and
   rank whatever data the source has for it. A name it lacks has the rank
   after every catalogued name and the tags the classifier gives its data
@@ -264,34 +295,64 @@ hegel_result_t hegel_timezone_info_in(hegel_context_t*, const hegel_zone_source_
   `Etc/Unknown`. `classify_tests.rs` checks the classifier against every
   bundled name's tags.
 - **The spec.** Without an explicit list a spec draws the source's names
-  the link and legacy flags allow; drawing from a spec with none is an
-  argument error (setting it is not, so an explicit list can follow). An explicit list must name names the source knows, unless opaque
-  names are accepted.
+  the link and legacy flags allow. An explicit list must name names the
+  source knows, unless opaque names are accepted. Neither is checked by a
+  setter, which reports only a bad argument of its own, so the setters can
+  be called in any order: `hegel_timezone_spec_validate` and the spec's
+  draws check the spec as it then stands, and report a name the source
+  lacks or a spec with nothing to draw as an argument error. A spec that
+  fails can be fixed with further setters and used again.
 
 ### 3.3 The default and versions
 
-- **Precedence.** A spec reads the process default when it is built, and
-  again on `hegel_timezone_spec_set_source(spec, NULL)`; a spec built
-  before the default changes keeps the source it read, as a string
-  generator keeps the Unicode version it was built with. The queries
-  without a source read the default at each call.
+- **Precedence.** A spec reads the process default when
+  `hegel_timezone_spec_new` creates it, and again on
+  `hegel_timezone_spec_set_source(spec, NULL)`; a spec created before the
+  default changes keeps the source it read, as a string generator keeps
+  the Unicode version it was built with. The queries without a source, and
+  `hegel_generate_zoned_datetime_for_zone` with a NULL source, read the
+  default at each call.
 - **Unchanged without a source.** With no source set, the bundled source
   takes the path the engine took before zone sources, so draws, choice
   sequences and query results are unchanged.
 - **Versions.** `hegel_tzdb_version` stays the bundled release. A custom
   source's version is what `hegel_zone_source_set_version` recorded, or
   empty; nothing in failure output reports it (§6).
-- **Callbacks.** A callback gets a fresh context and fails by returning
-  anything but `HEGEL_OK`; its message, set with `hegel_context_set_error`
-  or by a failed libhegel call, becomes the argument error the draw,
-  query or upload reports. Nothing a callback does can panic the engine.
+- **Callbacks.** A callback gets a fresh context and returns an
+  `int32_t`: 0 for success, anything else for failure (not a
+  `hegel_result_t`, so a host that maps its own error codes or exceptions
+  onto the return value cannot hand the engine an enum value it does not
+  have). The failure's message, set with `hegel_context_set_error` or by a
+  failed libhegel call, becomes the argument error the draw, query or
+  upload reports; without one the error names the callback and the value
+  it returned. Nothing a callback does can panic the engine.
+- **The loader's lifetime.** `hegel_zone_source_set_loader` takes a
+  `release` hook next to the loader's `user_data`. The engine calls it
+  exactly once, with that `user_data`, when it lets go of the loader: when
+  another loader replaces it, when a NULL loader removes it, when the
+  source's last holder (a handle, a spec or the process default) goes, or
+  before returning when the call that offered it fails; never while a call
+  of the loader is in flight, so possibly later than that event and on
+  another thread. A frontend allocates the loader's state, hands it over,
+  and frees it in the hook, so nothing has to outlive the source by
+  convention. A NULL `release` means the state needs no freeing, and a NULL
+  loader's `user_data` and `release` are ignored. Oracle callbacks need no
+  hook: they are only called during `hegel_zone_source_add_oracle`.
 - **Scalar draws.** The UTC-offset and timestamp draws, which target the
   transitions of every bundled zone, keep the bundled table: they draw no
   zone, so there is no source to read.
-- **Replay.** Choice sequences stay valid across hosts. Zones are drawn by
-  name and wall times as civil fields, so a stored failure replays to the
-  same name and wall time. Only the classification may differ on a host
-  whose data differs, the same trade the Unicode version makes.
+- **Replay.** Choice sequences stay valid across hosts: every recorded
+  sequence replays to some value on any data. Zones are recorded by name,
+  and an untargeted wall time as civil fields, so those replay to the same
+  name and wall time, with only the classification differing on a host
+  whose data differs. A targeted draw does not: a draw aimed at a
+  transition records a position among the zone's transitions, and the
+  instant fallback of `datetime.md` §6.2 one among the zone's values in
+  the bounds, so on different data the same choices decode to a different
+  wall time (still within the bounds, still a value the generator can
+  produce). A stored failure that hinges on a particular
+  transition is therefore tied to the data it was found on, the same
+  trade the Unicode version makes.
 
 ## 4. Per frontend
 
@@ -320,6 +381,10 @@ code and can go. Where a source is an oracle, they stay, for instants
 beyond the probe range.
 
 ## 5. Phasing
+
+All five phases are delivered, and the OCaml frontend, which the plan
+below does not list, has zone sources too. Each frontend's own
+documentation is the reference for what it built.
 
 1. **Engine:** zone sources, a TZif parser, structured upload, the loader
    callback, the process default and per-spec attachment, source-aware

@@ -269,7 +269,10 @@ pub fn type_at(zone: &Zone, second: i64) -> Result<LocalTimeType, InternalError>
     }
 }
 
-fn footer_type_at(footer: &Footer, second: i64) -> Result<LocalTimeType, InternalError> {
+/// The type `footer` has in force at `second`: its standard type, or with
+/// a daylight-saving rule the type after the rule's last transition at or
+/// before `second`. The rule's two types must differ.
+pub(crate) fn footer_type_at(footer: &Footer, second: i64) -> Result<LocalTimeType, InternalError> {
     let Some(dst) = footer.dst else {
         return Ok(footer.standard);
     };

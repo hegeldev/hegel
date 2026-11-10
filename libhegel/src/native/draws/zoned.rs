@@ -37,10 +37,14 @@
 //! fixes which repeat of a fold the value means, so no fold node follows.
 //! The wall-clock window of civil bounds is likewise narrowed to the wall
 //! times whose instants lie in the Timestamp range of §4. Either way, a
-//! zone with no value in the bounds concludes the test case invalid,
-//! unless no allowed zone has one, which is an argument error; and a
-//! drawn wall time whose instant falls outside the bounds (a fold on the
-//! wrong side of a bound) concludes the test case invalid.
+//! zone with no value in the bounds (no wall time at the precision, or
+//! under `avoid` a window that lies within a gap) concludes the test case
+//! invalid, unless no allowed zone has one, which is an argument error;
+//! and a drawn wall time whose instant falls outside the bounds (a fold on
+//! the wrong side of a bound) concludes the test case invalid. A draw in a
+//! zone the caller named ([`generate_zoned_datetime_in`]) records the same
+//! nodes without the zone node, and concludes the test case invalid
+//! whenever that zone has no value.
 //!
 //! Under the `avoid` policy the time node's sampler redraws a wall time
 //! that lands in a gap, uniformly and up to [`GAP_RESAMPLES`] times, so
@@ -49,23 +53,24 @@
 //! clocks skipped entirely) is moved to the first wall time after the gap,
 //! or when that lies past the window to the last wall time before it, as
 //! a transform of the drawn value; when neither lies in the window the
-//! window lies within the gap and the test case is concluded invalid. A
+//! window lies within the gap and the zone has no value. A
 //! zone the engine cannot evaluate (an opaque name the spec accepted)
 //! reads its civil time as UTC with an unknown offset, as `Etc/Unknown`
 //! does.
 
 use alloc::format;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::fmt;
 
+use super::scalar::UtcOffset;
 pub use super::special::Precision;
 use super::special::{
     DAY_NS, Date, DateTime, LAST_NS_OF_DAY, MAX_YEAR, MIN_YEAR, NS, Time, align_down, align_up,
     civil_from_days, date_origin, datetime_of_wall, days_from_civil, time_from_ns, validate_date,
     validate_time, wall_ns,
 };
-use super::timezone::{Entry, TimeZoneSpec, draw_timezone};
+use super::timezone::{TimeZoneSpec, draw_timezone};
 use super::{LABEL_TIMEZONE, LABEL_ZONED_DATETIME, spanned};
 use crate::control::{hegel_internal_assert, hegel_internal_error, hegel_internal_unwrap};
 use crate::native::bignum::{BigInt, ToPrimitive};
@@ -78,8 +83,8 @@ use crate::native::core::{
 };
 use crate::native::rng::EngineRng;
 use crate::native::timezone::{
-    Kind, MAX_INSTANT, MIN_INSTANT, Resolution, TimeZone, Timestamp, UNKNOWN_NAME, ZoneTransition,
-    transitions, type_at, validate_timestamp,
+    Kind, MAX_INSTANT, MIN_INSTANT, Resolution, TimeZone, Timestamp, ZoneTransition, transitions,
+    type_at, validate_timestamp,
 };
 use crate::native::zone_source::Lookup;
 use crate::tzdata::Zone;
@@ -171,6 +176,33 @@ impl Default for ZonedSpec {
     }
 }
 
+/// Check civil bounds by themselves: each a valid wall-clock time, in
+/// order.
+fn validate_civil_bounds(min: &DateTime, max: &DateTime) -> Result<(), EngineError> {
+    validate_date("min_value.date", &min.date)?;
+    validate_date("max_value.date", &max.date)?;
+    validate_time("min_value.time", &min.time)?;
+    validate_time("max_value.time", &max.time)?;
+    if wall_ns(min) > wall_ns(max) {
+        return Err(EngineError::InvalidArgument(format!(
+            "zoned datetime bounds require min_value <= max_value, got [{min:?}, {max:?}]"
+        )));
+    }
+    Ok(())
+}
+
+/// Check instant bounds by themselves: each a valid timestamp, in order.
+fn validate_instant_bounds(min: &Timestamp, max: &Timestamp) -> Result<(), EngineError> {
+    validate_timestamp(min)?;
+    validate_timestamp(max)?;
+    if min > max {
+        return Err(EngineError::InvalidArgument(format!(
+            "zoned datetime bounds require min_value <= max_value, got [{min:?}, {max:?}]"
+        )));
+    }
+    Ok(())
+}
+
 impl ZonedSpec {
     /// Check the bounds: each valid and in order, and civil bounds holding
     /// a value at the precision. Whether instant bounds hold one depends on
@@ -178,36 +210,90 @@ impl ZonedSpec {
     pub fn validate(&self) -> Result<(), EngineError> {
         match &self.bounds {
             ZonedBounds::Civil { min, max } => {
-                validate_date("min_value.date", &min.date)?;
-                validate_date("max_value.date", &max.date)?;
-                validate_time("min_value.time", &min.time)?;
-                validate_time("max_value.time", &max.time)?;
-                if wall_ns(min) > wall_ns(max) {
-                    return Err(EngineError::InvalidArgument(format!(
-                        "generate_zoned_datetime requires min_value <= max_value, got \
-                         [{min:?}, {max:?}]"
-                    )));
-                }
+                validate_civil_bounds(min, max)?;
                 let unit = i128::from(self.precision.unit());
                 if align_up(wall_ns(min), unit) > align_down(wall_ns(max), unit) {
                     return Err(EngineError::InvalidArgument(format!(
-                        "generate_zoned_datetime: no value at precision {:?} lies in {:?}",
+                        "a zoned datetime draw has no value at precision {:?} in {:?}",
                         self.precision, self.bounds
                     )));
                 }
+                Ok(())
             }
-            ZonedBounds::Instant { min, max } => {
-                validate_timestamp(min)?;
-                validate_timestamp(max)?;
-                if min > max {
-                    return Err(EngineError::InvalidArgument(format!(
-                        "generate_zoned_datetime requires min_value <= max_value, got \
-                         [{min:?}, {max:?}]"
-                    )));
-                }
-            }
+            ZonedBounds::Instant { min, max } => validate_instant_bounds(min, max),
         }
+    }
+}
+
+/// The settings of a zoned datetime draw as a caller makes them, one at a
+/// time and in any order: each setter checks its own arguments alone, and
+/// [`ZonedSettings::spec`] checks them against each other.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ZonedSettings {
+    civil: Option<(DateTime, DateTime)>,
+    instant: Option<(Timestamp, Timestamp)>,
+    pub precision: Precision,
+    pub imaginary: Imaginary,
+    pub ambiguous: Ambiguous,
+}
+
+impl Default for ZonedSettings {
+    /// The settings of [`ZonedSpec::default`].
+    fn default() -> ZonedSettings {
+        let spec = ZonedSpec::default();
+        ZonedSettings {
+            civil: None,
+            instant: None,
+            precision: spec.precision,
+            imaginary: spec.imaginary,
+            ambiguous: spec.ambiguous,
+        }
+    }
+}
+
+impl ZonedSettings {
+    /// Bound the wall-clock time in whatever zone is drawn.
+    pub fn set_civil_bounds(&mut self, min: DateTime, max: DateTime) -> Result<(), EngineError> {
+        validate_civil_bounds(&min, &max)?;
+        self.civil = Some((min, max));
         Ok(())
+    }
+
+    /// Bound the instant.
+    pub fn set_instant_bounds(
+        &mut self,
+        min: Timestamp,
+        max: Timestamp,
+    ) -> Result<(), EngineError> {
+        validate_instant_bounds(&min, &max)?;
+        self.instant = Some((min, max));
+        Ok(())
+    }
+
+    /// The spec the settings make: the whole civil range when no bounds
+    /// were set, and an argument error when both kinds were, or when the
+    /// civil bounds hold no value at the precision.
+    pub fn spec(&self) -> Result<ZonedSpec, EngineError> {
+        let bounds = match (self.civil, self.instant) {
+            (Some(_), Some(_)) => {
+                return Err(EngineError::InvalidArgument(
+                    "a zoned datetime draw is bounded on the wall clock or on the instant, not \
+                     both: civil bounds and instant bounds were both set"
+                        .to_string(),
+                ));
+            }
+            (Some((min, max)), None) => ZonedBounds::Civil { min, max },
+            (None, Some((min, max))) => ZonedBounds::Instant { min, max },
+            (None, None) => FULL_CIVIL_BOUNDS,
+        };
+        let spec = ZonedSpec {
+            bounds,
+            precision: self.precision,
+            imaginary: self.imaginary,
+            ambiguous: self.ambiguous,
+        };
+        spec.validate()?;
+        Ok(spec)
     }
 }
 
@@ -232,42 +318,19 @@ pub struct ZonedDateTime {
 }
 
 impl fmt::Display for ZonedDateTime {
-    /// RFC 9557 (§6.5): `2024-03-10T01:30:00-05:00[America/New_York]`,
-    /// with `[gap]` or `[fold=N]` appended to a skipped or repeated wall
-    /// time, `-00:00` for an unknown offset and `Z[Etc/Unknown]` for the
-    /// unknown zone.
+    /// The canonical text of §6.5; see [`super::format`].
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let (d, t) = (&self.civil.date, &self.civil.time);
-        if (0..=9999).contains(&d.year) {
-            write!(f, "{:04}", d.year)?;
-        } else {
-            write!(f, "{:+07}", d.year)?;
-        }
-        let (month, day, hour, minute, second) = (d.month, d.day, t.hour, t.minute, t.second);
-        write!(f, "-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}")?;
-        if t.nanosecond != 0 {
-            let digits = format!("{:09}", t.nanosecond);
-            write!(f, ".{}", digits.trim_end_matches('0'))?;
-        }
-        if self.zone == UNKNOWN_NAME {
-            f.write_str("Z")?;
-        } else if !self.offset_known {
-            f.write_str("-00:00")?;
-        } else {
-            let sign = if self.offset_seconds < 0 { '-' } else { '+' };
-            let magnitude = self.offset_seconds.unsigned_abs();
-            let (hours, minutes) = (magnitude / 3600, magnitude / 60 % 60);
-            write!(f, "{sign}{hours:02}:{minutes:02}")?;
-            if magnitude % 60 != 0 {
-                write!(f, ":{:02}", magnitude % 60)?;
-            }
-        }
-        write!(f, "[{}]", self.zone)?;
-        match self.kind {
-            Kind::Unique => Ok(()),
-            Kind::Gap => f.write_str("[gap]"),
-            Kind::Fold => write!(f, "[fold={}]", u8::from(self.fold)),
-        }
+        let offset = UtcOffset {
+            seconds: self.offset_seconds,
+            known: self.offset_known,
+        };
+        f.write_str(&super::format::zoned_datetime(
+            &self.civil,
+            &offset,
+            &self.zone,
+            self.kind,
+            self.fold,
+        ))
     }
 }
 
@@ -449,18 +512,48 @@ fn invalid(ntc: &mut NativeTestCase) -> EngineError {
     EngineError::InvalidTestCase
 }
 
-/// The outcome of a drawn zone with no value in `spec`'s bounds: the test
-/// case concluded invalid when another zone `tz` allows has one, which
-/// `has_value` decides, and an argument error when none does.
+/// Whether `zone` has a value in `spec`'s bounds: a wall-clock window
+/// that holds a value at the precision and, under `avoid`, does not lie
+/// within a gap, or when the draw falls back to the instant a non-empty
+/// [`Values`]. A draw in a zone this says has no value never yields one.
+fn has_value(zone: TimeZone, spec: &ZonedSpec) -> Result<bool, EngineError> {
+    let unit = i128::from(spec.precision.unit());
+    let window = match &spec.bounds {
+        ZonedBounds::Civil { min, max } => civil_window(zone, min, max, unit)?,
+        ZonedBounds::Instant { min, max } => {
+            match wall_window(zone, min, max, unit, spec.imaginary == Imaginary::Allow)? {
+                Some(window) => Some(window),
+                None => return Ok(Values::of(zone, min, max, spec)?.total > 0),
+            }
+        }
+    };
+    let Some(window) = window else {
+        return Ok(false);
+    };
+    if spec.imaginary == Imaginary::Allow {
+        return Ok(true);
+    }
+    let resolution = zone.resolve_any(&datetime_of_wall(window.lo), false)?;
+    Ok(resolution.kind != Kind::Gap || past_gap(zone, &resolution, unit, &window)?.is_some())
+}
+
+/// The outcome of a drawn zone with no value in `spec`'s bounds. When the
+/// zone was one of `others`' allowed names, the test case is concluded
+/// invalid if another of them has a value (see [`has_value`]; a name whose
+/// data the source does not have yet counts as having one) and the draw is
+/// an argument error if none does. When the caller named the zone
+/// (`others` is `None`), the test case is concluded invalid.
 fn no_value<T>(
     ntc: &mut NativeTestCase,
-    tz: &TimeZoneSpec,
+    others: Option<&TimeZoneSpec>,
     spec: &ZonedSpec,
-    has_value: impl Fn(TimeZone) -> Result<bool, EngineError>,
 ) -> Result<T, EngineError> {
+    let Some(tz) = others else {
+        return Err(invalid(ntc));
+    };
     for other in tz.constraint()?.ladder() {
         let has = match tz.lookup(other)? {
-            Lookup::Zone(zone) => has_value(zone)?,
+            Lookup::Zone(zone) => has_value(zone, spec)?,
             Lookup::Unloaded | Lookup::Unknown => true,
         };
         if has {
@@ -468,7 +561,7 @@ fn no_value<T>(
         }
     }
     Err(EngineError::InvalidArgument(format!(
-        "generate_zoned_datetime: no value at precision {:?} lies in {:?} in any allowed zone",
+        "a zoned datetime draw has no value at precision {:?} in {:?} in any allowed zone",
         spec.precision, spec.bounds
     )))
 }
@@ -830,8 +923,8 @@ impl Values {
 /// invalid, unless no allowed zone has one, which is an argument error.
 fn draw_from_instant(
     ntc: &mut NativeTestCase,
-    tz: &TimeZoneSpec,
-    entry: &Entry,
+    others: Option<&TimeZoneSpec>,
+    name: &str,
     zone: TimeZone,
     spec: &ZonedSpec,
     min: &Timestamp,
@@ -839,9 +932,7 @@ fn draw_from_instant(
 ) -> Result<ZonedDateTime, EngineError> {
     let values = Values::of(zone, min, max, spec)?;
     if values.total == 0 {
-        return no_value(ntc, tz, spec, |zone| {
-            Ok(Values::of(zone, min, max, spec)?.total > 0)
-        });
+        return no_value(ntc, others, spec);
     }
     let last = hegel_internal_unwrap!(
         i64::try_from(values.total - 1).ok(),
@@ -872,7 +963,7 @@ fn draw_from_instant(
     let (civil, fold) = values.at(i128::from(index))?;
     let resolution = zone.resolve_any(&civil, fold)?;
     Ok(zoned(
-        entry,
+        name,
         civil,
         fold && resolution.kind == Kind::Fold,
         &resolution,
@@ -925,9 +1016,9 @@ fn civil_window(
     ))
 }
 
-fn zoned(entry: &Entry, civil: DateTime, fold: bool, r: &Resolution) -> ZonedDateTime {
+fn zoned(name: &str, civil: DateTime, fold: bool, r: &Resolution) -> ZonedDateTime {
     ZonedDateTime {
-        zone: entry.name.clone(),
+        zone: name.to_string(),
         civil,
         offset_seconds: r.offset,
         offset_known: r.offset_known,
@@ -939,14 +1030,18 @@ fn zoned(entry: &Entry, civil: DateTime, fold: bool, r: &Resolution) -> ZonedDat
     }
 }
 
-fn draw_zoned(
+/// The nodes of a zoned draw after the zone node: the wall time in
+/// `zone`, drawn as the name `name`, and the fold. `others` is the spec
+/// the zone was drawn from, `None` when the caller named it; see
+/// [`no_value`].
+fn draw_in_zone(
     ntc: &mut NativeTestCase,
-    tz: &TimeZoneSpec,
+    others: Option<&TimeZoneSpec>,
+    name: &str,
+    zone: TimeZone,
     spec: &ZonedSpec,
 ) -> Result<ZonedDateTime, EngineError> {
     let unit = i128::from(spec.precision.unit());
-    let entry = spanned(ntc, LABEL_TIMEZONE, |ntc| draw_timezone(ntc, tz))?;
-    let zone = tz.zone_of(entry)?;
     let avoid = match spec.imaginary {
         Imaginary::Avoid => zone.data(),
         Imaginary::Allow => None,
@@ -957,16 +1052,12 @@ fn draw_zoned(
                 window,
                 (instant_ns(&MIN_TIMESTAMP), instant_ns(&MAX_TIMESTAMP)),
             ),
-            None => {
-                return no_value(ntc, tz, spec, |zone| {
-                    Ok(civil_window(zone, min, max, unit)?.is_some())
-                });
-            }
+            None => return no_value(ntc, others, spec),
         },
         ZonedBounds::Instant { min, max } => {
             match wall_window(zone, min, max, unit, spec.imaginary == Imaginary::Allow)? {
                 Some(window) => (window, (instant_ns(min), instant_ns(max))),
-                None => return draw_from_instant(ntc, tz, entry, zone, spec, min, max),
+                None => return draw_from_instant(ntc, others, name, zone, spec, min, max),
             }
         }
     };
@@ -975,13 +1066,12 @@ fn draw_zoned(
     if resolution.kind == Kind::Gap && spec.imaginary == Imaginary::Avoid {
         civil = match past_gap(zone, &resolution, unit, &window)? {
             Some(moved) => moved,
-            None => return Err(invalid(ntc)),
+            None => return no_value(ntc, others, spec),
         };
         resolution = zone.resolve_any(&civil, false)?;
         hegel_internal_assert!(
             resolution.kind != Kind::Gap,
-            "the wall time next to a gap in {} is in a gap",
-            entry.name
+            "the wall time next to a gap in {name} is in a gap"
         );
     }
     let fold = match (resolution.kind, spec.ambiguous) {
@@ -996,7 +1086,7 @@ fn draw_zoned(
     if instant < instants.0 || instant > instants.1 {
         return Err(invalid(ntc));
     }
-    Ok(zoned(entry, civil, fold, &resolution))
+    Ok(zoned(name, civil, fold, &resolution))
 }
 
 /// The wall time: the targeted node when a target lies in `window`, then
@@ -1047,7 +1137,28 @@ pub fn generate_zoned_datetime(
     spec: &ZonedSpec,
 ) -> Result<ZonedDateTime, EngineError> {
     spec.validate()?;
-    spanned(ntc, LABEL_ZONED_DATETIME, |ntc| draw_zoned(ntc, tz, spec))
+    spanned(ntc, LABEL_ZONED_DATETIME, |ntc| {
+        let entry = spanned(ntc, LABEL_TIMEZONE, |ntc| draw_timezone(ntc, tz))?;
+        let zone = tz.zone_of(entry)?;
+        draw_in_zone(ntc, Some(tz), &entry.name, zone, spec)
+    })
+}
+
+/// Draw a [`ZonedDateTime`] in `zone`, reported under the name `name`,
+/// within `spec`'s bounds, wrapped in a span: the nodes
+/// [`generate_zoned_datetime`] records after its zone node, and no zone
+/// node. A zone with no value in the bounds concludes the test case
+/// invalid, since the caller chose the zone where the engine cannot see.
+pub fn generate_zoned_datetime_in(
+    ntc: &mut NativeTestCase,
+    name: &str,
+    zone: TimeZone,
+    spec: &ZonedSpec,
+) -> Result<ZonedDateTime, EngineError> {
+    spec.validate()?;
+    spanned(ntc, LABEL_ZONED_DATETIME, |ntc| {
+        draw_in_zone(ntc, None, name, zone, spec)
+    })
 }
 
 #[cfg(test)]

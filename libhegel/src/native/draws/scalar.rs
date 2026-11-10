@@ -12,7 +12,8 @@
 //! node of granularity units shrinking toward 0, sampled with the offsets
 //! any bundled zone has ever used mixed in, preceded by a weighted boolean
 //! node when the unknown offset is allowed, whose `true` is the unknown
-//! offset with no seconds node, so a draw shrinks to a known offset before
+//! offset; the count node is drawn either way, so the draw's shape does
+//! not depend on the boolean, and a draw shrinks to a known offset before
 //! the offset itself shrinks. A duration is one integer node of precision
 //! units shrinking toward 0. A span is one integer node per enabled unit,
 //! largest first, under a sign policy: `uniform` draws one sign node when
@@ -437,20 +438,25 @@ impl SpanSpec {
         (pos && any_pos, neg && any_neg)
     }
 
-    /// Check that each enabled unit's bounds are in order and that the
-    /// sign policy admits a value: `nonnegative` needs every lower bound
-    /// at or above 0, and `uniform` needs every unit to admit one common
-    /// sign.
+    /// Check that a unit is enabled, that each enabled unit's bounds are
+    /// in order and that the sign policy admits a value: `nonnegative`
+    /// needs every lower bound at or above 0, and `uniform` needs every
+    /// unit to admit one common sign.
     pub fn validate(&self) -> Result<(), EngineError> {
+        if self.enabled().next().is_none() {
+            return Err(EngineError::InvalidArgument(
+                "a span draw needs a unit enabled; set bounds on at least one".into(),
+            ));
+        }
         for (unit, min, max) in self.enabled() {
             if min > max {
                 return Err(EngineError::InvalidArgument(format!(
-                    "generate_span requires min <= max for {unit:?}, got [{min}, {max}]"
+                    "a span draw requires min <= max for {unit:?}, got [{min}, {max}]"
                 )));
             }
             if self.sign == SpanSign::NonNegative && min < 0 {
                 return Err(EngineError::InvalidArgument(format!(
-                    "generate_span: the nonnegative sign policy requires min >= 0 for \
+                    "a span draw under the nonnegative sign policy requires min >= 0 for \
                      {unit:?}, got {min}"
                 )));
             }
@@ -458,8 +464,8 @@ impl SpanSpec {
         let (pos, neg) = self.admits();
         if self.sign == SpanSign::Uniform && !pos && !neg {
             return Err(EngineError::InvalidArgument(format!(
-                "generate_span: the uniform sign policy needs every unit to admit one sign, \
-                 but {:?} admit none in common",
+                "a span draw under the uniform sign policy needs every unit to admit one \
+                 sign, but {:?} admit none in common",
                 self.bounds
             )));
         }
@@ -472,11 +478,6 @@ impl SpanSpec {
 /// each unit's bounds.
 pub fn generate_span(ntc: &mut NativeTestCase, spec: &SpanSpec) -> Result<Span, EngineError> {
     spec.validate()?;
-    if spec.enabled().next().is_none() {
-        return Err(EngineError::InvalidArgument(
-            "generate_span: no unit is enabled; set bounds on at least one".into(),
-        ));
-    }
     spanned(ntc, LABEL_SPAN, |ntc| {
         let mut span = Span::default();
         let negative = match (spec.sign, spec.admits_nonzero()) {

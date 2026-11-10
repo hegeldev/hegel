@@ -6,24 +6,29 @@
 
 mod common;
 
-use common::{last_error, make_settings_no_db, next_case, ok, start};
+use common::{check_zoned_value, last_error, make_settings_no_db, next_case, ok, start};
 use hegel_c::hegel_result_t::*;
 use hegel_c::hegel_zone_after_t::*;
 use hegel_c::hegel_zone_rule_day_t::*;
 use hegel_c::{
     HEGEL_TIMEZONE_TAG_LEGACY, HEGEL_TIMEZONE_TAG_LINK, HegelContext, HegelZoneSource,
     hegel_context_free, hegel_context_new, hegel_context_set_error, hegel_date_t, hegel_datetime_t,
-    hegel_generate_timezone, hegel_owned_string_free, hegel_owned_string_t, hegel_result_t,
-    hegel_settings_free, hegel_string_t, hegel_test_case_free, hegel_time_t, hegel_timestamp_t,
-    hegel_timezone_info_in, hegel_timezone_info_t, hegel_timezone_kind_t,
-    hegel_timezone_offset_at_in, hegel_timezone_offset_t, hegel_timezone_resolution_t,
-    hegel_timezone_resolve_in, hegel_timezone_spec_free, hegel_timezone_spec_new,
-    hegel_timezone_spec_set_source, hegel_zone_data_t, hegel_zone_oracle_t, hegel_zone_rule_date_t,
-    hegel_zone_source_add_link, hegel_zone_source_add_oracle, hegel_zone_source_add_tzif,
-    hegel_zone_source_add_zone, hegel_zone_source_bundled, hegel_zone_source_declare,
-    hegel_zone_source_free, hegel_zone_source_new, hegel_zone_source_set_loader,
-    hegel_zone_source_set_version, hegel_zone_source_version, hegel_zone_transition_t,
-    hegel_zone_type_t,
+    hegel_generate_timezone, hegel_owned_string_free, hegel_owned_string_t, hegel_settings_free,
+    hegel_string_t, hegel_test_case_free, hegel_time_t, hegel_timestamp_t, hegel_timezone_info_in,
+    hegel_timezone_info_t, hegel_timezone_kind_t, hegel_timezone_offset_at_in,
+    hegel_timezone_offset_t, hegel_timezone_resolution_t, hegel_timezone_resolve_in,
+    hegel_timezone_spec_free, hegel_timezone_spec_new, hegel_timezone_spec_set_source,
+    hegel_zone_data_t, hegel_zone_oracle_t, hegel_zone_rule_date_t, hegel_zone_source_add_link,
+    hegel_zone_source_add_oracle, hegel_zone_source_add_tzif, hegel_zone_source_add_zone,
+    hegel_zone_source_bundled, hegel_zone_source_declare, hegel_zone_source_free,
+    hegel_zone_source_new, hegel_zone_source_set_loader, hegel_zone_source_set_version,
+    hegel_zone_source_version, hegel_zone_transition_t, hegel_zone_type_t,
+};
+use hegel_c::{
+    hegel_generate_zoned_datetime, hegel_generate_zoned_datetime_for_zone, hegel_mark_complete,
+    hegel_precision_t, hegel_status_t, hegel_timezone_spec_validate, hegel_zoned_datetime_t,
+    hegel_zoned_spec_free, hegel_zoned_spec_new, hegel_zoned_spec_set_civil_bounds,
+    hegel_zoned_spec_set_precision, hegel_zoned_spec_validate,
 };
 use std::ffi::c_void;
 use std::ptr;
@@ -198,7 +203,28 @@ fn tzif_data_is_read_through_the_c_abi() {
             hegel_timezone_resolve_in(ctx, source, s("Europe/London"), civil, &mut resolution),
             HEGEL_E_INVALID_ARG
         );
-        assert!(last_error(ctx).contains("unknown time zone \"Europe/London\""));
+        assert!(
+            last_error(ctx)
+                .starts_with("hegel_timezone_resolve_in: unknown time zone \"Europe/London\""),
+            "{}",
+            last_error(ctx)
+        );
+        let mut offset = hegel_timezone_offset_t {
+            offset_seconds: 0,
+            offset_known: false,
+            is_dst: false,
+            abbreviation: hegel_string_t::default(),
+        };
+        assert_eq!(
+            hegel_timezone_offset_at_in(ctx, source, s("Europe/London"), at(0), &mut offset),
+            HEGEL_E_INVALID_ARG
+        );
+        assert!(
+            last_error(ctx)
+                .starts_with("hegel_timezone_offset_at_in: unknown time zone \"Europe/London\""),
+            "{}",
+            last_error(ctx)
+        );
         assert_eq!(
             hegel_zone_source_add_tzif(ctx, ptr::null_mut(), s("A/B"), ptr::null(), 0),
             HEGEL_E_INVALID_HANDLE
@@ -367,6 +393,14 @@ fn structured_data_is_read_through_the_c_abi() {
             assert!(error.contains(message), "{error}");
         };
         rejects(ptr::null(), "data is null");
+        let too_many = hegel_zone_data_t {
+            transition_count: usize::MAX / 2,
+            ..london_data(&transitions)
+        };
+        rejects(
+            &too_many,
+            &format!("transition_count {} is too large", usize::MAX / 2),
+        );
         let null_transitions = hegel_zone_data_t {
             transitions: ptr::null(),
             transition_count: 2,
@@ -437,18 +471,25 @@ unsafe extern "C" fn step_offset(
     ctx: *mut HegelContext,
     instant: i64,
     out_type: *mut hegel_zone_type_t,
-) -> hegel_result_t {
+) -> i32 {
     let mode = unsafe { *user_data.cast::<u32>() };
     match mode {
         1 => {
             ok(unsafe { hegel_context_set_error(ctx, s("the oracle is closed")) });
-            HEGEL_E_INVALID_ARG
+            7
         }
-        2 => HEGEL_E_INVALID_ARG,
+        2 => -3,
         3 => {
             unsafe { *out_type = zone_type(0, false, "") };
             unsafe { (*out_type).abbreviation = null_string() };
-            HEGEL_OK
+            0
+        }
+        5 => {
+            unsafe {
+                *out_type = zone_type(0, false, "AAA");
+                ptr::addr_of_mut!((*out_type).is_dst).cast::<u8>().write(2);
+            }
+            0
         }
         _ => {
             let kind = if instant < CHANGE {
@@ -457,7 +498,7 @@ unsafe extern "C" fn step_offset(
                 zone_type(3600, false, "BBB")
             };
             unsafe { *out_type = kind };
-            HEGEL_OK
+            0
         }
     }
 }
@@ -468,16 +509,16 @@ unsafe extern "C" fn step_next(
     after: i64,
     out_found: *mut bool,
     out_instant: *mut i64,
-) -> hegel_result_t {
+) -> i32 {
     if unsafe { *user_data.cast::<u32>() } == 4 {
         ok(unsafe { hegel_context_set_error(ctx, s("no more")) });
-        return HEGEL_E_INVALID_ARG;
+        return 7;
     }
     unsafe {
         *out_found = after < CHANGE;
         *out_instant = CHANGE;
     }
-    HEGEL_OK
+    0
 }
 
 #[test]
@@ -507,6 +548,15 @@ fn oracles_are_probed_through_the_c_abi() {
             assert_eq!((before.offset_seconds, after.offset_seconds), (0, 3600));
             assert_eq!(string(after.abbreviation), "BBB");
         }
+        let mut any_byte: u32 = 5;
+        let o = oracle(&mut any_byte, false);
+        ok(hegel_zone_source_add_oracle(
+            ctx,
+            source,
+            s("Test/Byte"),
+            &o,
+        ));
+        assert!(offset_in(ctx, source, "Test/Byte", CHANGE).is_dst);
         let o = hegel_zone_oracle_t {
             after: HEGEL_ZONE_AFTER_INFER as u32,
             ..oracle(&mut mode, true)
@@ -558,10 +608,7 @@ fn oracles_are_probed_through_the_c_abi() {
                 1,
                 "the oracle's offset_at(946684800) failed: the oracle is closed",
             ),
-            (
-                2,
-                "the oracle's offset_at(946684800) failed with HEGEL_E_INVALID_ARG",
-            ),
+            (2, "the oracle's offset_at(946684800) failed, returning -3"),
             (3, "the oracle's answer.abbreviation is null"),
             (4, "the oracle's next_transition(946684800) failed: no more"),
         ] {
@@ -661,6 +708,29 @@ fn links_names_and_versions_go_through_the_c_abi() {
 
 struct LoaderState {
     calls: AtomicUsize,
+    released: AtomicUsize,
+}
+
+impl LoaderState {
+    fn new() -> LoaderState {
+        LoaderState {
+            calls: AtomicUsize::new(0),
+            released: AtomicUsize::new(0),
+        }
+    }
+
+    fn user_data(&self) -> *mut c_void {
+        (self as *const LoaderState).cast_mut().cast()
+    }
+
+    fn released(&self) -> usize {
+        self.released.load(Ordering::SeqCst)
+    }
+}
+
+unsafe extern "C" fn release(user_data: *mut c_void) {
+    let state = unsafe { &*user_data.cast::<LoaderState>() };
+    state.released.fetch_add(1, Ordering::SeqCst);
 }
 
 unsafe extern "C" fn loader(
@@ -668,21 +738,21 @@ unsafe extern "C" fn loader(
     ctx: *mut HegelContext,
     source: *mut HegelZoneSource,
     name: hegel_string_t,
-) -> hegel_result_t {
+) -> i32 {
     let state = unsafe { &*user_data.cast::<LoaderState>() };
     state.calls.fetch_add(1, Ordering::SeqCst);
     let name = string(name);
     match name {
         "Fail/Loudly" => {
             ok(unsafe { hegel_context_set_error(ctx, s("cannot read the file")) });
-            HEGEL_E_INVALID_ARG
+            7
         }
-        "Fail/Quietly" => HEGEL_E_INVALID_ARG,
+        "Fail/Quietly" => 2,
         _ => match jiff_tzdb::get(name) {
             Some((_, bytes)) => unsafe {
-                hegel_zone_source_add_tzif(ctx, source, s(name), bytes.as_ptr(), bytes.len())
+                hegel_zone_source_add_tzif(ctx, source, s(name), bytes.as_ptr(), bytes.len()) as i32
             },
-            None => HEGEL_OK,
+            None => 0,
         },
     }
 }
@@ -690,9 +760,7 @@ unsafe extern "C" fn loader(
 #[test]
 fn a_loader_supplies_data_through_the_c_abi() {
     let ctx = hegel_context_new();
-    let state = LoaderState {
-        calls: AtomicUsize::new(0),
-    };
+    let state = LoaderState::new();
     unsafe {
         let source = new_source(ctx);
         let names = [s("Europe/London"), s("Asia/Tokyo")];
@@ -702,12 +770,12 @@ fn a_loader_supplies_data_through_the_c_abi() {
             names.as_ptr(),
             names.len(),
         ));
-        let user_data = (&state as *const LoaderState).cast_mut().cast();
         ok(hegel_zone_source_set_loader(
             ctx,
             source,
             Some(loader),
-            user_data,
+            state.user_data(),
+            None,
         ));
         assert_eq!(
             offset_in(ctx, source, "Europe/London", JULY_2024).offset_seconds,
@@ -726,7 +794,7 @@ fn a_loader_supplies_data_through_the_c_abi() {
             ),
             (
                 "Fail/Quietly",
-                "the zone source's loader for \"Fail/Quietly\" failed with HEGEL_E_INVALID_ARG",
+                "the zone source's loader for \"Fail/Quietly\" failed, returning 2",
             ),
         ] {
             assert_eq!(
@@ -766,12 +834,269 @@ fn a_loader_supplies_data_through_the_c_abi() {
             source,
             None,
             ptr::null_mut(),
+            None,
         ));
         assert_eq!(
-            hegel_zone_source_set_loader(ctx, ptr::null_mut(), None, ptr::null_mut()),
+            hegel_zone_source_set_loader(ctx, ptr::null_mut(), None, ptr::null_mut(), None),
             HEGEL_E_INVALID_HANDLE
         );
         ok(hegel_zone_source_free(ctx, source));
+        ok(hegel_context_free(ctx));
+    }
+}
+
+#[test]
+fn a_loader_is_released_exactly_once() {
+    let ctx = hegel_context_new();
+    let states: Vec<LoaderState> = (0..7).map(|_| LoaderState::new()).collect();
+    let released = || -> Vec<usize> { states.iter().map(LoaderState::released).collect() };
+    unsafe {
+        let source = new_source(ctx);
+        let set = |state: &LoaderState| {
+            hegel_zone_source_set_loader(
+                ctx,
+                source,
+                Some(loader),
+                state.user_data(),
+                Some(release),
+            )
+        };
+        ok(set(&states[0]));
+        assert_eq!(released(), [0, 0, 0, 0, 0, 0, 0]);
+        ok(set(&states[1]));
+        assert_eq!(released(), [1, 0, 0, 0, 0, 0, 0]);
+        ok(hegel_zone_source_set_loader(
+            ctx,
+            source,
+            None,
+            states[2].user_data(),
+            Some(release),
+        ));
+        assert_eq!(released(), [1, 1, 0, 0, 0, 0, 0]);
+        ok(hegel_zone_source_set_loader(
+            ctx,
+            source,
+            None,
+            ptr::null_mut(),
+            None,
+        ));
+        assert_eq!(released(), [1, 1, 0, 0, 0, 0, 0]);
+
+        ok(set(&states[3]));
+        assert_eq!(
+            offset_in(ctx, source, "Europe/London", JULY_2024).offset_seconds,
+            3600
+        );
+        assert_eq!(states[3].calls.load(Ordering::SeqCst), 1);
+        let mut spec = ptr::null_mut();
+        ok(hegel_timezone_spec_new(ctx, &mut spec));
+        ok(hegel_timezone_spec_set_source(ctx, spec, source));
+        ok(hegel_zone_source_free(ctx, source));
+        assert_eq!(released(), [1, 1, 0, 0, 0, 0, 0]);
+        ok(hegel_timezone_spec_free(ctx, spec));
+        assert_eq!(released(), [1, 1, 0, 1, 0, 0, 0]);
+
+        let mut bundled = ptr::null_mut();
+        ok(hegel_zone_source_bundled(ctx, &mut bundled));
+        assert_eq!(
+            hegel_zone_source_set_loader(
+                ctx,
+                bundled,
+                Some(loader),
+                states[4].user_data(),
+                Some(release),
+            ),
+            HEGEL_E_INVALID_ARG
+        );
+        assert!(last_error(ctx).contains("bundled zone source cannot be changed"));
+        assert_eq!(released(), [1, 1, 0, 1, 1, 0, 0]);
+        ok(hegel_zone_source_free(ctx, bundled));
+        assert_eq!(
+            hegel_zone_source_set_loader(
+                ctx,
+                ptr::null_mut(),
+                Some(loader),
+                states[5].user_data(),
+                Some(release),
+            ),
+            HEGEL_E_INVALID_HANDLE
+        );
+        assert_eq!(released(), [1, 1, 0, 1, 1, 1, 0]);
+
+        let unreleased = new_source(ctx);
+        ok(hegel_zone_source_set_loader(
+            ctx,
+            unreleased,
+            Some(loader),
+            states[6].user_data(),
+            None,
+        ));
+        ok(hegel_zone_source_free(ctx, unreleased));
+        assert_eq!(released(), [1, 1, 0, 1, 1, 1, 0]);
+        ok(hegel_context_free(ctx));
+    }
+}
+
+#[test]
+fn zoned_datetimes_are_drawn_through_a_loader_and_an_oracle() {
+    let ctx = hegel_context_new();
+    let state = LoaderState::new();
+    let names = ["Europe/London", "America/New_York", "Test/Step"];
+    unsafe {
+        let source = new_source(ctx);
+        let declared = [s("Europe/London"), s("America/New_York")];
+        ok(hegel_zone_source_declare(
+            ctx,
+            source,
+            declared.as_ptr(),
+            declared.len(),
+        ));
+        ok(hegel_zone_source_set_loader(
+            ctx,
+            source,
+            Some(loader),
+            state.user_data(),
+            Some(release),
+        ));
+        let mut mode: u32 = 0;
+        let oracle = hegel_zone_oracle_t {
+            offset_at: Some(step_offset),
+            next_transition: Some(step_next),
+            user_data: (&mut mode as *mut u32).cast(),
+            first_year: 2000,
+            last_year: 2002,
+            after: HEGEL_ZONE_AFTER_HOLD as u32,
+        };
+        ok(hegel_zone_source_add_oracle(
+            ctx,
+            source,
+            s("Test/Step"),
+            &oracle,
+        ));
+        let mut tz = ptr::null_mut();
+        ok(hegel_timezone_spec_new(ctx, &mut tz));
+        ok(hegel_timezone_spec_set_source(ctx, tz, source));
+        ok(hegel_timezone_spec_validate(ctx, tz));
+        assert_eq!(state.calls.load(Ordering::SeqCst), 0);
+        let mut spec = ptr::null_mut();
+        ok(hegel_zoned_spec_new(ctx, &mut spec));
+        ok(hegel_zoned_spec_set_precision(
+            ctx,
+            spec,
+            hegel_precision_t::HEGEL_PRECISION_SECONDS as u32,
+        ));
+        let bound = |year: i32, month: u8, day: u8| hegel_datetime_t {
+            date: hegel_date_t { year, month, day },
+            time: hegel_time_t {
+                hour: 0,
+                minute: 0,
+                second: 0,
+                nanosecond: 0,
+            },
+        };
+        ok(hegel_zoned_spec_set_civil_bounds(
+            ctx,
+            spec,
+            bound(2001, 9, 1),
+            bound(2001, 9, 30),
+        ));
+        ok(hegel_zoned_spec_validate(ctx, spec));
+        let mut value = hegel_zoned_datetime_t {
+            civil: bound(0, 0, 0),
+            offset_seconds: 0,
+            offset_known: false,
+            fold: false,
+            kind: hegel_timezone_kind_t::HEGEL_TIMEZONE_KIND_UNIQUE,
+            offset_before: 0,
+            offset_after: 0,
+            timestamp: at(0),
+        };
+        let mut zone = hegel_owned_string_t {
+            data: ptr::null(),
+            len: 0,
+        };
+        let settings = make_settings_no_db(ctx);
+        let run = start(ctx, settings);
+        let mut seen = std::collections::BTreeSet::new();
+        let mut step_offsets = std::collections::BTreeSet::new();
+        loop {
+            let tc = next_case(ctx, run);
+            if tc.is_null() {
+                break;
+            }
+            for _ in 0..5 {
+                ok(hegel_generate_zoned_datetime(
+                    ctx, tc, tz, spec, &mut value, &mut zone,
+                ));
+                let name = string(hegel_string_t {
+                    data: zone.data,
+                    len: zone.len,
+                })
+                .to_string();
+                ok(hegel_owned_string_free(ctx, &mut zone));
+                check_zoned_value(ctx, source, &name, &value);
+                seen.insert(name);
+            }
+            for name in names {
+                ok(hegel_generate_zoned_datetime_for_zone(
+                    ctx,
+                    tc,
+                    source,
+                    s(name),
+                    spec,
+                    &mut value,
+                ));
+                check_zoned_value(ctx, source, name, &value);
+                assert_eq!((value.civil.date.year, value.civil.date.month), (2001, 9));
+                if name == "Test/Step" {
+                    step_offsets.insert(value.offset_seconds);
+                }
+            }
+            assert_eq!(
+                hegel_generate_zoned_datetime_for_zone(
+                    ctx,
+                    tc,
+                    source,
+                    s("Nowhere/Nope"),
+                    spec,
+                    &mut value,
+                ),
+                HEGEL_E_INVALID_ARG
+            );
+            assert!(
+                last_error(ctx).contains("unknown time zone \"Nowhere/Nope\""),
+                "{}",
+                last_error(ctx)
+            );
+            assert_eq!(
+                hegel_generate_zoned_datetime_for_zone(
+                    ctx,
+                    tc,
+                    ptr::null(),
+                    s("Test/Step"),
+                    spec,
+                    &mut value,
+                ),
+                HEGEL_E_INVALID_ARG
+            );
+            ok(hegel_mark_complete(
+                ctx,
+                tc,
+                hegel_status_t::HEGEL_STATUS_VALID as u32,
+                ptr::null(),
+            ));
+            ok(hegel_test_case_free(ctx, tc));
+        }
+        assert_eq!(seen.len(), 3, "{seen:?}");
+        assert_eq!(step_offsets, [0, 3600].into_iter().collect());
+        assert_eq!(state.calls.load(Ordering::SeqCst), 3);
+        ok(hegel_c::hegel_run_free(ctx, run));
+        ok(hegel_settings_free(ctx, settings));
+        ok(hegel_zoned_spec_free(ctx, spec));
+        ok(hegel_timezone_spec_free(ctx, tz));
+        assert_eq!(state.released(), 0);
+        ok(hegel_zone_source_free(ctx, source));
+        assert_eq!(state.released(), 1);
         ok(hegel_context_free(ctx));
     }
 }

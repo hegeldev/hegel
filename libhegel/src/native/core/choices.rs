@@ -413,7 +413,7 @@ impl Constraint {
         match self {
             Constraint::Grammar(grammar) => grammar.simplest(),
             Constraint::Regex(regex) => regex.simplest(),
-            Constraint::TimeZone(zones) => Some(zones.simplest()),
+            Constraint::TimeZone(zones) => zones.simplest(),
         }
     }
 

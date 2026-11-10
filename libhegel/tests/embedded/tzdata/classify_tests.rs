@@ -7,6 +7,18 @@ use crate::tzdata::{RuleDate, RuleDay, Transition, names};
 use std::string::ToString;
 use std::vec;
 
+fn union(a: Tags, b: Tags) -> Tags {
+    b.iter().fold(a, Tags::with)
+}
+
+fn zone_tags(name: &str, zone: &Zone) -> Tags {
+    union(data_tags(zone), name_tags(name))
+}
+
+fn link_tags(name: &str, target_data_tags: Tags) -> Tags {
+    union(target_data_tags.with(Tag::Link), name_tags(name))
+}
+
 #[test]
 fn the_port_reproduces_every_bundled_tag() {
     for name in names().unwrap() {

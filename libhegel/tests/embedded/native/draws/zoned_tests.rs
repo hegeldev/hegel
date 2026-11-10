@@ -13,6 +13,7 @@ use crate::native::draws::special::time_to_ns;
 use crate::native::draws::timezone::TimeZoneSpec;
 use crate::native::rng::EngineRng;
 use crate::native::shrinker::{ShrinkRun, Shrinker};
+use crate::native::timezone::UNKNOWN_NAME;
 use crate::native::timezone::{MAX_INSTANT, MIN_INSTANT};
 use crate::native::zone_source::{After, ZoneData, ZoneSource};
 use crate::tzdata::{self, Tag, tzif};
@@ -54,7 +55,7 @@ fn spec_with(bounds: ZonedBounds) -> ZonedSpec {
 }
 
 fn zones(names: &[&str]) -> TimeZoneSpec {
-    let mut spec = TimeZoneSpec::new().unwrap();
+    let mut spec = TimeZoneSpec::new();
     spec.set_names(names.iter().map(|s| s.to_string()).collect())
         .unwrap();
     spec
@@ -136,7 +137,7 @@ fn check_with_jiff(z: &ZonedDateTime) {
 
 #[test]
 fn every_value_round_trips_through_jiff() {
-    let tz = TimeZoneSpec::new().unwrap();
+    let tz = TimeZoneSpec::new();
     let spec = spec_with(years(1850, 2100));
     let mut kinds = [0usize; 3];
     for seed in 0..3000 {
@@ -215,7 +216,7 @@ fn every_zone_targets_the_interesting_instants() {
         .collect();
     assert_eq!(in_window.len(), 16);
     let mut unknown = zones(&["Etc/Unknown"]);
-    unknown.set_unknown(true).unwrap();
+    unknown.set_unknown(true);
     for (name, tz) in [("UTC", zones(&["UTC"])), (UNKNOWN_NAME, unknown)] {
         let prefix = |index: i64| {
             vec![
@@ -335,7 +336,7 @@ fn replay(tz: &TimeZoneSpec, spec: &ZonedSpec, nodes: &[ChoiceNode]) -> ZonedDat
 
 #[test]
 fn a_failure_in_every_value_shrinks_to_utc_at_the_origin() {
-    let tz = Arc::new(TimeZoneSpec::new().unwrap());
+    let tz = Arc::new(TimeZoneSpec::new());
     let spec = spec_with(years(1900, 2100));
     let (mut shrinker, _) = shrinker_for(Arc::clone(&tz), spec, |_| true);
     drive_no_yield(shrinker.shrink()).unwrap();
@@ -355,7 +356,7 @@ fn a_failure_in_zones_with_daylight_saving_shrinks_to_the_lowest_ranked_one() {
             .tags
             .contains(Tag::Dst)
     };
-    let tz = Arc::new(TimeZoneSpec::new().unwrap());
+    let tz = Arc::new(TimeZoneSpec::new());
     let spec = spec_with(years(1990, 2030));
     let (mut shrinker, initial) = shrinker_for(Arc::clone(&tz), spec, has_dst);
     drive_no_yield(shrinker.shrink()).unwrap();
@@ -387,7 +388,7 @@ fn a_stored_zone_the_spec_no_longer_allows_is_punned_on_replay() {
     let ChoiceValue::String(stored) = nodes[0].value() else {
         unreachable!()
     };
-    assert!(!narrow.kind().validate(&stored));
+    assert!(!narrow.kind().unwrap().validate(&stored));
     let punned = replay(&narrow, &spec, &nodes);
     assert_eq!(punned.zone, "UTC");
     assert_eq!(punned.offset_seconds, 0);
@@ -525,9 +526,39 @@ fn avoid_rejects_a_value_moved_past_the_window() {
     for seed in 0..20 {
         let mut ntc = fresh_ntc(seed);
         let err = generate_zoned_datetime(&mut ntc, &tz, &spec).unwrap_err();
-        assert!(matches!(err, EngineError::InvalidTestCase), "{err:?}");
-        assert_eq!(ntc.status(), Some(Status::Invalid));
+        assert!(
+            matches!(&err, EngineError::InvalidArgument(m) if m.contains("in any allowed zone")),
+            "{err:?}"
+        );
+        assert_eq!(ntc.status(), None);
     }
+    let both = zones(&["America/New_York", "UTC"]);
+    let mut outcomes = BTreeSet::new();
+    for seed in 0..40 {
+        let mut ntc = fresh_ntc(seed);
+        match generate_zoned_datetime(&mut ntc, &both, &spec) {
+            Ok(z) => {
+                assert_eq!(z.zone, "UTC");
+                outcomes.insert(true);
+            }
+            Err(err) => {
+                assert!(matches!(err, EngineError::InvalidTestCase), "{err:?}");
+                assert_eq!(ntc.status(), Some(Status::Invalid));
+                outcomes.insert(false);
+            }
+        }
+    }
+    assert_eq!(outcomes.len(), 2);
+    let mut ntc = fresh_ntc(0);
+    let err = generate_zoned_datetime_in(
+        &mut ntc,
+        "America/New_York",
+        TimeZone::lookup("America/New_York").unwrap().unwrap(),
+        &spec,
+    )
+    .unwrap_err();
+    assert!(matches!(err, EngineError::InvalidTestCase), "{err:?}");
+    assert_eq!(ntc.status(), Some(Status::Invalid));
     let allow = ZonedSpec {
         imaginary: Imaginary::Allow,
         ..spec
@@ -955,7 +986,7 @@ fn instant_bounds_at_the_civil_envelope_clamp_the_wall_window() {
 #[test]
 fn instant_bounds_in_the_unknown_zone_read_as_utc() {
     let mut tz = zones(&["Etc/Unknown"]);
-    tz.set_unknown(true).unwrap();
+    tz.set_unknown(true);
     let spec = ZonedSpec {
         bounds: ZonedBounds::Instant {
             min: at(DAY),
@@ -975,10 +1006,10 @@ fn instant_bounds_in_the_unknown_zone_read_as_utc() {
 
 #[test]
 fn opaque_and_unknown_zones_read_civil_time_as_utc() {
-    let mut tz = TimeZoneSpec::new().unwrap();
-    tz.set_opaque(true).unwrap();
+    let mut tz = TimeZoneSpec::new();
+    tz.set_opaque(true);
     tz.set_names(vec!["Mars/Olympus_Mons".to_string()]).unwrap();
-    tz.set_unknown(true).unwrap();
+    tz.set_unknown(true);
     let spec = spec_with(years(2050, 2060));
     let mut seen = [false; 2];
     for seed in 0..40 {
@@ -1795,8 +1826,8 @@ fn a_run_between_two_folds_ends_in_the_earlier_repeat() {
 }
 
 fn with_source(source: &Arc<ZoneSource>, names: Option<&[&str]>) -> TimeZoneSpec {
-    let mut tz = TimeZoneSpec::new().unwrap();
-    tz.set_source(Some(Arc::clone(source))).unwrap();
+    let mut tz = TimeZoneSpec::new();
+    tz.set_source(Some(Arc::clone(source)));
     if let Some(names) = names {
         tz.set_names(names.iter().map(|s| s.to_string()).collect())
             .unwrap();
@@ -1905,7 +1936,7 @@ fn a_zone_without_a_loader_is_drawn_in_two_steps() {
     let spec = spec_with(years(2020, 2030));
     let err = generate_zoned_datetime(&mut fresh_ntc(0), &tz, &spec).unwrap_err();
     assert!(
-        matches!(&err, EngineError::InvalidArgument(m) if m.contains("has no data for the time zone")),
+        matches!(&err, EngineError::InvalidArgument(m) if m.contains("has no data for") && m.contains("it was declared")),
         "{err:?}"
     );
     let mut ntc = fresh_ntc(0);
@@ -1913,9 +1944,16 @@ fn a_zone_without_a_loader_is_drawn_in_two_steps() {
     source
         .add_tzif(&name, jiff_tzdb::get(&name).unwrap().1)
         .unwrap();
-    let only = with_source(&source, Some(&[name.as_str()]));
-    let z = generate_zoned_datetime(&mut ntc, &only, &spec).unwrap();
+    let before = ntc.nodes.len();
+    let zone = source.timezone(&name).unwrap().unwrap();
+    let z = generate_zoned_datetime_in(&mut ntc, &name, zone, &spec).unwrap();
     assert_eq!(z.zone, name);
+    check_with_jiff(&z);
+    assert!(
+        ntc.nodes[before..]
+            .iter()
+            .all(|n| !matches!(n.value(), ChoiceValue::String(_)))
+    );
 }
 
 #[test]
@@ -1934,4 +1972,255 @@ fn an_unloaded_zone_counts_as_having_a_value() {
     let mut ntc = NativeTestCase::for_choices(&[name("Asia/Kolkata")], None, None);
     let err = generate_zoned_datetime(&mut ntc, &tz, &before_the_range).unwrap_err();
     assert!(matches!(err, EngineError::InvalidTestCase), "{err:?}");
+}
+
+fn invalid_argument<T: core::fmt::Debug>(result: Result<T, EngineError>) -> String {
+    match result {
+        Err(EngineError::InvalidArgument(message)) => message,
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn settings_check_each_bound_alone_and_the_two_kinds_together() {
+    let mut settings = ZonedSettings::default();
+    assert_eq!(settings.spec().unwrap(), ZonedSpec::default());
+    let message = invalid_argument(
+        settings.set_civil_bounds(civil(2001, 1, 1, 0, 0, 0), civil(2000, 1, 1, 0, 0, 0)),
+    );
+    assert!(message.contains("min_value <= max_value"), "{message}");
+    let message = invalid_argument(
+        settings.set_civil_bounds(civil(2000, 2, 30, 0, 0, 0), civil(2001, 1, 1, 0, 0, 0)),
+    );
+    assert!(message.contains("min_value.date"), "{message}");
+    let message = invalid_argument(settings.set_instant_bounds(at(1), at(0)));
+    assert!(message.contains("min_value <= max_value"), "{message}");
+    let message = invalid_argument(settings.set_instant_bounds(at(MIN_INSTANT - 1), at(0)));
+    assert!(message.contains("timestamp.second"), "{message}");
+    assert_eq!(settings, ZonedSettings::default());
+
+    settings.precision = Precision::Minutes;
+    settings.imaginary = Imaginary::Avoid;
+    settings.ambiguous = Ambiguous::Later;
+    settings
+        .set_civil_bounds(civil(2000, 1, 1, 0, 0, 1), civil(2000, 1, 1, 0, 0, 59))
+        .unwrap();
+    let message = invalid_argument(settings.spec());
+    assert!(
+        message.starts_with("a zoned datetime draw has no value at precision Minutes"),
+        "{message}"
+    );
+    settings.precision = Precision::Seconds;
+    assert_eq!(
+        settings.spec().unwrap(),
+        ZonedSpec {
+            bounds: ZonedBounds::Civil {
+                min: civil(2000, 1, 1, 0, 0, 1),
+                max: civil(2000, 1, 1, 0, 0, 59),
+            },
+            precision: Precision::Seconds,
+            imaginary: Imaginary::Avoid,
+            ambiguous: Ambiguous::Later,
+        }
+    );
+
+    let mut instant = ZonedSettings::default();
+    instant.set_instant_bounds(at(1), at(59)).unwrap();
+    assert_eq!(
+        instant.spec().unwrap(),
+        spec_with(ZonedBounds::Instant {
+            min: at(1),
+            max: at(59),
+        })
+    );
+    for civil_first in [true, false] {
+        let mut both = ZonedSettings::default();
+        if civil_first {
+            both.set_civil_bounds(civil(2000, 1, 1, 0, 0, 0), civil(2001, 1, 1, 0, 0, 0))
+                .unwrap();
+            both.set_instant_bounds(at(1), at(59)).unwrap();
+        } else {
+            both.set_instant_bounds(at(1), at(59)).unwrap();
+            both.set_civil_bounds(civil(2000, 1, 1, 0, 0, 0), civil(2001, 1, 1, 0, 0, 0))
+                .unwrap();
+        }
+        assert_eq!(
+            invalid_argument(both.spec()),
+            "a zoned datetime draw is bounded on the wall clock or on the instant, not both: \
+             civil bounds and instant bounds were both set"
+        );
+    }
+}
+
+fn skipped_day_in_apia() -> ZonedSpec {
+    ZonedSpec {
+        bounds: ZonedBounds::Civil {
+            min: civil(2011, 12, 30, 0, 0, 0),
+            max: civil(2011, 12, 30, 23, 59, 59),
+        },
+        imaginary: Imaginary::Avoid,
+        ..ZonedSpec::default()
+    }
+}
+
+#[test]
+fn bounds_within_a_gap_of_every_allowed_zone_are_an_argument_error_under_avoid() {
+    let spec = skipped_day_in_apia();
+    let apia = zones(&["Pacific/Apia"]);
+    for seed in 0..20 {
+        let mut ntc = fresh_ntc(seed);
+        let message = invalid_argument(generate_zoned_datetime(&mut ntc, &apia, &spec));
+        assert!(message.ends_with("in any allowed zone"), "{message}");
+        assert_eq!(ntc.status(), None);
+    }
+    let allow = ZonedSpec {
+        imaginary: Imaginary::Allow,
+        ..spec
+    };
+    let z = generate_zoned_datetime(&mut fresh_ntc(0), &apia, &allow).unwrap();
+    assert_eq!(z.kind, Kind::Gap);
+
+    let with_another = zones(&["Pacific/Apia", "Pacific/Auckland"]);
+    let mut zones_drawn = BTreeSet::new();
+    let mut rejected = false;
+    for seed in 0..60 {
+        let mut ntc = fresh_ntc(seed);
+        match generate_zoned_datetime(&mut ntc, &with_another, &spec) {
+            Ok(z) => {
+                assert_eq!(z.zone, "Pacific/Auckland");
+                check_with_jiff(&z);
+                zones_drawn.insert(z.zone);
+            }
+            Err(err) => {
+                assert!(matches!(err, EngineError::InvalidTestCase), "{err:?}");
+                assert_eq!(ntc.status(), Some(Status::Invalid));
+                rejected = true;
+            }
+        }
+    }
+    assert!(rejected);
+    assert_eq!(zones_drawn.len(), 1);
+}
+
+#[test]
+fn a_gap_at_the_start_of_the_bounds_leaves_the_values_after_it() {
+    let tz = zones(&["America/New_York"]);
+    let spec = ZonedSpec {
+        bounds: ZonedBounds::Civil {
+            min: civil(2024, 3, 10, 2, 0, 0),
+            max: civil(2024, 3, 10, 3, 30, 0),
+        },
+        imaginary: Imaginary::Avoid,
+        precision: Precision::Seconds,
+        ..ZonedSpec::default()
+    };
+    let zone = TimeZone::lookup("America/New_York").unwrap().unwrap();
+    assert!(has_value(zone, &spec).unwrap());
+    for seed in 0..50 {
+        let z = generate_zoned_datetime(&mut fresh_ntc(seed), &tz, &spec).unwrap();
+        assert_eq!(z.kind, Kind::Unique);
+        assert_eq!(z.civil.time.hour, 3);
+        check_with_jiff(&z);
+    }
+    let in_the_gap = ZonedSpec {
+        bounds: ZonedBounds::Civil {
+            min: civil(2024, 3, 10, 2, 0, 0),
+            max: civil(2024, 3, 10, 2, 59, 59),
+        },
+        ..spec
+    };
+    assert!(!has_value(zone, &in_the_gap).unwrap());
+    assert!(has_value(TimeZone::Unknown, &in_the_gap).unwrap());
+    let allowed = ZonedSpec {
+        imaginary: Imaginary::Allow,
+        ..in_the_gap
+    };
+    assert!(has_value(zone, &allowed).unwrap());
+    let no_unit = ZonedSpec {
+        bounds: ZonedBounds::Instant {
+            min: at(1),
+            max: at(59),
+        },
+        precision: Precision::Minutes,
+        ..ZonedSpec::default()
+    };
+    assert!(!has_value(zone, &no_unit).unwrap());
+    let before_the_range = spec_with(ZonedBounds::Civil {
+        min: MIN_CIVIL,
+        max: civil(MIN_YEAR, 1, 1, 5, 0, 0),
+    });
+    let kolkata = TimeZone::lookup("Asia/Kolkata").unwrap().unwrap();
+    assert!(!has_value(kolkata, &before_the_range).unwrap());
+    assert!(has_value(zone, &before_the_range).unwrap());
+}
+
+#[test]
+fn a_draw_in_a_named_zone_records_what_follows_the_zone_node() {
+    let spec = ZonedSpec {
+        precision: Precision::Seconds,
+        ..spec_with(years(1990, 2030))
+    };
+    for name in ["America/New_York", "Asia/Kolkata", "Australia/Lord_Howe"] {
+        let tz = zones(&[name]);
+        let zone = TimeZone::lookup(name).unwrap().unwrap();
+        for seed in 0..40 {
+            let mut whole = fresh_ntc(seed);
+            let expected = generate_zoned_datetime(&mut whole, &tz, &spec).unwrap();
+            let rest: Vec<ChoiceValue> =
+                whole.nodes[1..].iter().map(|n| n.value().clone()).collect();
+            let mut ntc = NativeTestCase::for_choices(&rest, None, None);
+            let z = generate_zoned_datetime_in(&mut ntc, name, zone, &spec).unwrap();
+            assert_eq!(z, expected);
+            assert_eq!(ntc.nodes.len(), rest.len());
+            check_with_jiff(&z);
+        }
+    }
+}
+
+#[test]
+fn a_draw_in_a_named_zone_reports_the_name_it_was_given() {
+    let spec = spec_with(years(2020, 2030));
+    let z = generate_zoned_datetime_in(&mut fresh_ntc(0), UNKNOWN_NAME, TimeZone::Unknown, &spec)
+        .unwrap();
+    assert_eq!(z.zone, UNKNOWN_NAME);
+    assert!(!z.offset_known);
+    assert_eq!(z.kind, Kind::Unique);
+    let london = TimeZone::lookup("Europe/London").unwrap().unwrap();
+    let z =
+        generate_zoned_datetime_in(&mut fresh_ntc(0), "Europe/Atlantis", london, &spec).unwrap();
+    assert_eq!(z.zone, "Europe/Atlantis");
+    assert!(z.offset_known);
+    let bad = spec_with(years(2001, 2000));
+    let mut ntc = fresh_ntc(0);
+    let message = invalid_argument(generate_zoned_datetime_in(&mut ntc, "UTC", london, &bad));
+    assert!(message.contains("min_value <= max_value"), "{message}");
+    assert!(ntc.nodes.is_empty());
+}
+
+#[test]
+fn a_named_zone_with_no_value_rejects_the_test_case() {
+    let apia = TimeZone::lookup("Pacific/Apia").unwrap().unwrap();
+    let no_unit = ZonedSpec {
+        bounds: ZonedBounds::Instant {
+            min: at(1),
+            max: at(59),
+        },
+        precision: Precision::Minutes,
+        ..ZonedSpec::default()
+    };
+    let before_the_range = spec_with(ZonedBounds::Civil {
+        min: MIN_CIVIL,
+        max: civil(MIN_YEAR, 1, 1, 5, 0, 0),
+    });
+    let kolkata = TimeZone::lookup("Asia/Kolkata").unwrap().unwrap();
+    for (zone, spec) in [
+        (apia, skipped_day_in_apia()),
+        (apia, no_unit),
+        (kolkata, before_the_range),
+    ] {
+        let mut ntc = fresh_ntc(0);
+        let err = generate_zoned_datetime_in(&mut ntc, "Test/Zone", zone, &spec).unwrap_err();
+        assert!(matches!(err, EngineError::InvalidTestCase), "{err:?}");
+        assert_eq!(ntc.status(), Some(Status::Invalid));
+    }
 }

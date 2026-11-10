@@ -12,7 +12,7 @@ use crate::native::draws::zoned::{ZonedDateTime, ZonedSpec};
 use crate::native::draws::{FloatSpec, StringSpec};
 use crate::native::lark::generate::GrammarSpec;
 use crate::native::lark::grammar_draw::GrammarDraw;
-use crate::native::timezone::Timestamp;
+use crate::native::timezone::{TimeZone, Timestamp};
 use crate::settings::HealthCheck;
 
 /// Error returned by [`DataSource`] methods when an operation cannot complete.
@@ -178,6 +178,16 @@ pub trait DataSource: Send + Sync {
     fn generate_zoned_datetime(
         &self,
         tz: &TimeZoneSpec,
+        spec: &ZonedSpec,
+    ) -> Result<ZonedDateTime, DataSourceError>;
+
+    /// Draw a [`ZonedDateTime`] in `zone`, reported under the name `name`,
+    /// within `spec`'s bounds, recording no zone choice. Rejects the test
+    /// case when the zone has no value in the bounds.
+    fn generate_zoned_datetime_in(
+        &self,
+        name: &str,
+        zone: TimeZone,
         spec: &ZonedSpec,
     ) -> Result<ZonedDateTime, DataSourceError>;
 

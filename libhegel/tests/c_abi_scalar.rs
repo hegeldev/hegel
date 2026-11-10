@@ -16,11 +16,14 @@ use hegel_c::{
     HegelContext, HegelDateOptions, HegelRun, HegelSpanSpec, HegelTestCase, hegel_context_free,
     hegel_context_new, hegel_date_options_free, hegel_date_options_new,
     hegel_date_options_set_months, hegel_date_options_set_weekdays, hegel_date_t, hegel_datetime_t,
-    hegel_duration_t, hegel_generate_date, hegel_generate_datetime, hegel_generate_duration,
-    hegel_generate_offset, hegel_generate_span, hegel_generate_time, hegel_generate_timestamp,
-    hegel_mark_complete, hegel_offset_t, hegel_settings_set_test_cases, hegel_span_spec_free,
-    hegel_span_spec_new, hegel_span_spec_set_sign, hegel_span_spec_set_unit_bounds, hegel_span_t,
-    hegel_status_t, hegel_time_t, hegel_timestamp_t,
+    hegel_duration_t, hegel_format_date, hegel_format_datetime, hegel_format_duration,
+    hegel_format_offset, hegel_format_span, hegel_format_time, hegel_format_timestamp,
+    hegel_generate_date, hegel_generate_datetime, hegel_generate_duration, hegel_generate_offset,
+    hegel_generate_span, hegel_generate_time, hegel_generate_timestamp, hegel_mark_complete,
+    hegel_offset_t, hegel_owned_string_free, hegel_owned_string_t, hegel_settings_set_test_cases,
+    hegel_span_spec_free, hegel_span_spec_new, hegel_span_spec_set_sign,
+    hegel_span_spec_set_unit_bounds, hegel_span_spec_validate, hegel_span_t, hegel_status_t,
+    hegel_time_t, hegel_timestamp_t,
 };
 use std::collections::BTreeSet;
 use std::ptr;
@@ -506,9 +509,27 @@ fn span_specs_validate_their_arguments_and_draw() {
             hegel_span_spec_set_unit_bounds(ctx, spec, HEGEL_SPAN_UNIT_YEARS as u32, 1, 0),
             HEGEL_E_INVALID_ARG
         );
-        assert!(last_error(ctx).contains("min <= max"));
+        assert_eq!(
+            last_error(ctx),
+            "hegel_span_spec_set_unit_bounds: min_value <= max_value is required for Years, \
+             got [1, 0]"
+        );
         assert_eq!(hegel_span_spec_set_sign(ctx, spec, 3), HEGEL_E_INVALID_ARG);
-        assert!(last_error(ctx).contains("unknown sign policy 3"));
+        assert_eq!(
+            last_error(ctx),
+            "hegel_span_spec_set_sign: unknown sign policy 3"
+        );
+        assert_eq!(hegel_span_spec_validate(ctx, spec), HEGEL_E_INVALID_ARG);
+        assert_eq!(
+            last_error(ctx),
+            "hegel_span_spec_validate: a span draw needs a unit enabled; set bounds on at least \
+             one"
+        );
+        assert_eq!(
+            hegel_span_spec_validate(ctx, ptr::null()),
+            HEGEL_E_INVALID_HANDLE
+        );
+        assert!(last_error(ctx).contains("hegel_span_spec_validate: spec pointer is null"));
         ok(hegel_span_spec_set_sign(
             ctx,
             spec,
@@ -528,11 +549,27 @@ fn span_specs_validate_their_arguments_and_draw() {
             0,
             11,
         ));
-        assert_eq!(
-            hegel_span_spec_set_sign(ctx, spec, HEGEL_SPAN_SIGN_NONNEGATIVE as u32),
-            HEGEL_E_INVALID_ARG
+        ok(hegel_span_spec_validate(ctx, spec));
+        ok(hegel_span_spec_set_sign(
+            ctx,
+            spec,
+            HEGEL_SPAN_SIGN_NONNEGATIVE as u32,
+        ));
+        assert_eq!(hegel_span_spec_validate(ctx, spec), HEGEL_E_INVALID_ARG);
+        assert!(
+            last_error(ctx).contains(
+                "hegel_span_spec_validate: a span draw under the nonnegative sign policy \
+                 requires min >= 0 for Years"
+            ),
+            "{}",
+            last_error(ctx)
         );
-        assert!(last_error(ctx).contains("requires min >= 0"));
+        ok(hegel_span_spec_set_sign(
+            ctx,
+            spec,
+            HEGEL_SPAN_SIGN_UNIFORM as u32,
+        ));
+        ok(hegel_span_spec_validate(ctx, spec));
         let conflict = span_spec(ctx);
         ok(hegel_span_spec_set_unit_bounds(
             ctx,
@@ -541,12 +578,30 @@ fn span_specs_validate_their_arguments_and_draw() {
             1,
             2,
         ));
-        assert_eq!(
-            hegel_span_spec_set_unit_bounds(ctx, conflict, HEGEL_SPAN_UNIT_DAYS as u32, -5, -1),
-            HEGEL_E_INVALID_ARG
+        ok(hegel_span_spec_set_unit_bounds(
+            ctx,
+            conflict,
+            HEGEL_SPAN_UNIT_DAYS as u32,
+            -5,
+            -1,
+        ));
+        assert_eq!(hegel_span_spec_validate(ctx, conflict), HEGEL_E_INVALID_ARG);
+        assert!(
+            last_error(ctx).contains("needs every unit to admit one sign"),
+            "{}",
+            last_error(ctx)
         );
-        assert!(last_error(ctx).contains("one sign"));
-        ok(hegel_span_spec_free(ctx, conflict));
+        ok(hegel_span_spec_set_sign(
+            ctx,
+            conflict,
+            HEGEL_SPAN_SIGN_MIXED as u32,
+        ));
+        ok(hegel_span_spec_validate(ctx, conflict));
+        ok(hegel_span_spec_set_sign(
+            ctx,
+            conflict,
+            HEGEL_SPAN_SIGN_UNIFORM as u32,
+        ));
         let empty = span_spec(ctx);
         let values = each_case(ctx, 100, |tc| {
             let mut out = span();
@@ -564,7 +619,20 @@ fn span_specs_validate_their_arguments_and_draw() {
                 hegel_generate_span(ctx, tc, empty, &mut out),
                 HEGEL_E_INVALID_ARG
             );
-            assert!(last_error(ctx).contains("no unit is enabled"));
+            assert!(
+                last_error(ctx).contains("hegel_generate_span: a span draw needs a unit enabled"),
+                "{}",
+                last_error(ctx)
+            );
+            assert_eq!(
+                hegel_generate_span(ctx, tc, conflict, &mut out),
+                HEGEL_E_INVALID_ARG
+            );
+            assert!(
+                last_error(ctx).contains("hegel_generate_span: a span draw under the uniform"),
+                "{}",
+                last_error(ctx)
+            );
             ok(hegel_generate_span(ctx, tc, spec, &mut out));
             out
         });
@@ -601,8 +669,259 @@ fn span_specs_validate_their_arguments_and_draw() {
         });
         assert!(values.iter().all(|s| (-5..=-1).contains(&s.days)));
         assert!(values.iter().any(|s| s.years > 0));
+        ok(hegel_span_spec_free(ctx, conflict));
         ok(hegel_span_spec_free(ctx, empty));
         ok(hegel_span_spec_free(ctx, spec));
+    }
+    unsafe { ok(hegel_context_free(ctx)) };
+}
+
+/// The text a `hegel_format_*` call writes, freed.
+unsafe fn text(
+    ctx: *mut HegelContext,
+    format: impl FnOnce(*mut hegel_owned_string_t) -> hegel_c::hegel_result_t,
+) -> String {
+    let mut out = hegel_owned_string_t {
+        data: ptr::null(),
+        len: 0,
+    };
+    ok(format(&mut out));
+    assert_eq!(last_error(ctx), "");
+    assert_eq!(unsafe { *out.data.add(out.len) }, 0);
+    let text = String::from_utf8(
+        unsafe { std::slice::from_raw_parts(out.data.cast::<u8>(), out.len) }.to_vec(),
+    )
+    .unwrap();
+    ok(unsafe { hegel_owned_string_free(ctx, &mut out) });
+    text
+}
+
+#[test]
+fn values_format_as_their_canonical_text() {
+    let ctx = hegel_context_new();
+    unsafe {
+        for (value, expected) in [
+            (date(2024, 3, 10), "2024-03-10"),
+            (date(10_000, 1, 1), "+010000-01-01"),
+            (date(-1, 12, 31), "-000001-12-31"),
+            (date(2024, 13, 99), "2024-13-99"),
+        ] {
+            assert_eq!(
+                text(ctx, |out| hegel_format_date(ctx, value, out)),
+                expected
+            );
+        }
+        for (value, expected) in [
+            (time(2, 30, 0, 0), "02:30:00"),
+            (time(2, 30, 0, 500_000_000), "02:30:00.5"),
+            (time(23, 59, 59, 999_999_999), "23:59:59.999999999"),
+        ] {
+            assert_eq!(
+                text(ctx, |out| hegel_format_time(ctx, value, out)),
+                expected
+            );
+        }
+        let datetime = hegel_datetime_t {
+            date: date(2024, 3, 10),
+            time: time(2, 30, 0, 120_000_000),
+        };
+        assert_eq!(
+            text(ctx, |out| hegel_format_datetime(ctx, datetime, out)),
+            "2024-03-10T02:30:00.12"
+        );
+        for (value, expected) in [
+            (at(946_684_800), "2000-01-01T00:00:00Z"),
+            (
+                hegel_timestamp_t {
+                    second: -2,
+                    nanosecond: 500_000_000,
+                },
+                "1969-12-31T23:59:58.5Z",
+            ),
+            (at(i64::MIN), "-292277022657-01-27T08:29:52Z"),
+        ] {
+            assert_eq!(
+                text(ctx, |out| hegel_format_timestamp(ctx, value, out)),
+                expected
+            );
+        }
+        for (seconds, known, expected) in [
+            (19_800, true, "+05:30"),
+            (-2_670, true, "-00:44:30"),
+            (0, true, "+00:00"),
+            (0, false, "-00:00"),
+        ] {
+            let value = hegel_offset_t { seconds, known };
+            assert_eq!(
+                text(ctx, |out| hegel_format_offset(ctx, value, out)),
+                expected
+            );
+        }
+        for (value, expected) in [
+            (duration(5_405, 500_000_000), "PT1H30M5.5S"),
+            (duration(0, -500_000_000), "-PT0.5S"),
+            (duration(0, 0), "PT0S"),
+            (duration(86_400, 0), "PT24H"),
+        ] {
+            assert_eq!(
+                text(ctx, |out| hegel_format_duration(ctx, value, out)),
+                expected
+            );
+        }
+        let spans = [
+            (span(), "0s"),
+            (
+                hegel_span_t {
+                    years: 1,
+                    months: 2,
+                    days: 3,
+                    ..span()
+                },
+                "1y 2mo 3d",
+            ),
+            (
+                hegel_span_t {
+                    days: -3,
+                    hours: -4,
+                    ..span()
+                },
+                "-3d 4h",
+            ),
+            (
+                hegel_span_t {
+                    days: -3,
+                    hours: 4,
+                    ..span()
+                },
+                "-3d +4h",
+            ),
+            (
+                hegel_span_t {
+                    weeks: 1,
+                    minutes: 2,
+                    seconds: 3,
+                    milliseconds: 4,
+                    microseconds: 5,
+                    nanoseconds: 6,
+                    ..span()
+                },
+                "1w 2m 3s 4ms 5µs 6ns",
+            ),
+        ];
+        for (value, expected) in &spans {
+            assert_eq!(
+                text(ctx, |out| hegel_format_span(ctx, value, out)),
+                *expected
+            );
+        }
+
+        let null_out: [Call<'_>; 7] = [
+            (
+                "hegel_format_date",
+                Box::new(|| hegel_format_date(ctx, date(2000, 1, 1), ptr::null_mut())),
+            ),
+            (
+                "hegel_format_time",
+                Box::new(|| hegel_format_time(ctx, time(0, 0, 0, 0), ptr::null_mut())),
+            ),
+            (
+                "hegel_format_datetime",
+                Box::new(|| hegel_format_datetime(ctx, datetime, ptr::null_mut())),
+            ),
+            (
+                "hegel_format_timestamp",
+                Box::new(|| hegel_format_timestamp(ctx, at(0), ptr::null_mut())),
+            ),
+            (
+                "hegel_format_offset",
+                Box::new(|| {
+                    let value = hegel_offset_t {
+                        seconds: 0,
+                        known: true,
+                    };
+                    hegel_format_offset(ctx, value, ptr::null_mut())
+                }),
+            ),
+            (
+                "hegel_format_duration",
+                Box::new(|| hegel_format_duration(ctx, duration(0, 0), ptr::null_mut())),
+            ),
+            (
+                "hegel_format_span",
+                Box::new(|| hegel_format_span(ctx, &span(), ptr::null_mut())),
+            ),
+        ];
+        for (name, call) in &null_out {
+            assert_eq!(call(), HEGEL_E_INVALID_ARG, "{name}");
+            assert_eq!(last_error(ctx), format!("{name}: out parameter is null"));
+        }
+        let mut out = hegel_owned_string_t {
+            data: ptr::null(),
+            len: 0,
+        };
+        assert_eq!(
+            hegel_format_span(ctx, ptr::null(), &mut out),
+            HEGEL_E_INVALID_ARG
+        );
+        assert_eq!(last_error(ctx), "hegel_format_span: value is null");
+        assert!(out.data.is_null());
+    }
+    unsafe { ok(hegel_context_free(ctx)) };
+}
+
+#[test]
+fn drawn_values_format_as_jiff_parses_them() {
+    let ctx = hegel_context_new();
+    unsafe {
+        let min = hegel_timestamp_t {
+            second: -3,
+            nanosecond: 250_000_000,
+        };
+        let max = hegel_timestamp_t {
+            second: -1,
+            nanosecond: 750_000_000,
+        };
+        let drawn = each_case(ctx, 100, |tc| {
+            let mut ts = at(0);
+            ok(hegel_generate_timestamp(
+                ctx,
+                tc,
+                min,
+                max,
+                NANOSECONDS,
+                &mut ts,
+            ));
+            let mut d = duration(0, 0);
+            ok(hegel_generate_duration(
+                ctx,
+                tc,
+                duration(-3, -500_000_000),
+                duration(3, 500_000_000),
+                NANOSECONDS,
+                &mut d,
+            ));
+            (ts, d)
+        });
+        let mut fractional = false;
+        for (ts, d) in drawn {
+            assert!(ts.nanosecond < 1_000_000_000);
+            assert!((-3..=-1).contains(&ts.second), "{}", ts.second);
+            let nanos = i128::from(ts.second) * 1_000_000_000 + i128::from(ts.nanosecond);
+            assert!((-2_750_000_000..=-250_000_000).contains(&nanos), "{nanos}");
+            fractional |= ts.nanosecond != 0;
+            let shown = text(ctx, |out| hegel_format_timestamp(ctx, ts, out));
+            let theirs: jiff::Timestamp = shown.parse().unwrap();
+            assert_eq!(theirs.as_nanosecond(), nanos, "{shown}");
+            assert_eq!(theirs.to_string(), shown);
+            let shown = text(ctx, |out| hegel_format_duration(ctx, d, out));
+            // jiff parses a negative duration under a second as positive,
+            // so the sign is checked apart from the magnitude.
+            let theirs: jiff::SignedDuration = shown.parse().unwrap();
+            let expected = jiff::SignedDuration::new(d.seconds, d.nanoseconds);
+            assert_eq!(theirs.abs(), expected.abs(), "{shown}");
+            assert_eq!(shown.starts_with('-'), expected.is_negative(), "{shown}");
+        }
+        assert!(fractional);
     }
     unsafe { ok(hegel_context_free(ctx)) };
 }

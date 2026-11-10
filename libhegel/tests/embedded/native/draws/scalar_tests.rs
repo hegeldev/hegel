@@ -862,10 +862,18 @@ fn spans_reject_invalid_specs() {
         );
     }
     assert!(ntc.nodes.is_empty());
-    assert!(bad[1].validate().is_err());
-    assert!(bad[2].validate().is_err());
-    assert!(bad[3].validate().is_err());
-    assert!(bad[0].validate().is_ok());
+    for (spec, message) in bad.iter().zip([
+        "a span draw needs a unit enabled",
+        "requires min <= max for Years",
+        "admit none in common",
+        "requires min >= 0 for Years",
+    ]) {
+        let err = spec.validate().unwrap_err();
+        assert!(
+            matches!(&err, EngineError::InvalidArgument(m) if m.contains(message)),
+            "{err}"
+        );
+    }
     let mixed = span_spec(
         SpanSign::Mixed,
         &[(SpanUnit::Years, 1, 2), (SpanUnit::Months, -2, -1)],

@@ -41,11 +41,12 @@ fn script_constant(name: &str) -> &'static str {
 
 #[test]
 fn version_matches_the_script_and_jiff() {
-    assert_eq!(VERSION, script_constant("IANA_VERSION"));
-    assert_eq!(jiff_tzdb::VERSION, Some(VERSION));
-    assert_eq!(VERSION_CSTR.to_str().unwrap(), VERSION);
-    assert_eq!(table().unwrap().version, VERSION);
-    assert!(TABLE_TEXT.contains(&format!("\nV {VERSION}\n")));
+    let version = VERSION_CSTR.to_str().unwrap();
+    assert_eq!(version, script_constant("IANA_VERSION"));
+    assert_eq!(jiff_tzdb::VERSION, Some(version));
+    assert_eq!(version, include_str!("../../src/tzdata/version.txt"));
+    assert_eq!(table().unwrap().version, version);
+    assert!(TABLE_TEXT.contains(&format!("\nV {version}\n")));
     let pin = format!("tzdata=={}", script_constant("TZDATA_PYPI_VERSION"));
     assert!(
         SCRIPT.contains(&pin),
@@ -906,7 +907,7 @@ fn table_is_reproducible() {
     );
     for (name, expected) in [
         ("tzdata.txt", TABLE_TEXT),
-        ("version.txt", VERSION),
+        ("version.txt", VERSION_CSTR.to_str().unwrap()),
         ("checksum.txt", CHECKSUM),
     ] {
         let written = std::fs::read_to_string(out.path().join(name)).unwrap();

@@ -11,13 +11,17 @@
 //! rather than from the year of a last explicit transition before that,
 //! since the rule repeats every year and only its state from 1969 on is
 //! looked at; and the per-year offsets of `base_change` are computed in
-//! one pass rather than one scan per year.
+//! one pass rather than one scan per year. Pruning asks the evaluator
+//! itself for the rule's type at an instant, where the script lists the
+//! rule's transitions of the two years before: they differ only for a
+//! rule that fires in the last days of the year before the one it is
+//! written for, which no bundled zone has.
 
 use alloc::vec::Vec;
 
 use super::{Footer, LocalTimeType, Tag, Tags, Zone};
 use crate::native::draws::special::civil_from_days;
-use crate::native::timezone::rule_instant;
+use crate::native::timezone::{footer_type_at, rule_instant};
 
 const DAY: i64 = 86_400;
 const HOUR: i32 = 3_600;
@@ -290,35 +294,6 @@ pub fn uncatalogued_name_tags(name: &str) -> Tags {
         .fold(Tags::EMPTY, Tags::with)
 }
 
-fn union(a: Tags, b: Tags) -> Tags {
-    b.iter().fold(a, Tags::with)
-}
-
-/// The tags of the zone `name` whose data is `zone`.
-pub fn zone_tags(name: &str, zone: &Zone) -> Tags {
-    union(data_tags(zone), name_tags(name))
-}
-
-/// The tags of the link `name` given the data tags of its target.
-pub fn link_tags(name: &str, target_data_tags: Tags) -> Tags {
-    union(target_data_tags.with(Tag::Link), name_tags(name))
-}
-
-/// The footer rule's type at `instant`, or `None` when no rule transition
-/// precedes it within the two years before.
-fn rule_type_at(footer: &Footer, instant: i64) -> Option<LocalTimeType> {
-    let year = utc_year(instant);
-    let mut changes: Vec<Change> = (year - 2..=year)
-        .flat_map(|y| footer_transitions(footer, y))
-        .collect();
-    changes.sort_by_key(|c| c.instant);
-    changes
-        .iter()
-        .take_while(|c| c.instant <= instant)
-        .last()
-        .map(|c| c.after)
-}
-
 /// Whether `record`, the zone's last record when `last`, repeats the type
 /// in force before it, the kept record `preceding` or the initial type,
 /// and changes no answer the evaluator gives.
@@ -351,7 +326,7 @@ fn is_redundant(
     if fires {
         return false;
     }
-    rule_type_at(footer, start).is_some_and(|t| same_type(zone, t, record.kind))
+    footer_type_at(footer, start).is_ok_and(|t| same_type(zone, t, record.kind))
 }
 
 /// Drop the records that change nothing, as the generator script does

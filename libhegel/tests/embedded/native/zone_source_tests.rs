@@ -5,6 +5,7 @@
 //! rest.
 
 use super::*;
+use crate::native::draws::special::{Date, DateTime, Time};
 use crate::native::timezone::{transitions, type_at};
 use alloc::vec;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -199,6 +200,106 @@ fn structured_data_is_checked() {
         };
         assert!(bad("Test/Zone", infer).contains("last year"));
     }
+}
+
+#[test]
+fn a_rule_whose_daylight_type_is_its_standard_type_is_the_standard_type_alone() {
+    let source = Arc::new(ZoneSource::new());
+    let ruled = |dst: ZoneType| {
+        let mut rule = london_rule();
+        rule.dst.as_mut().unwrap().0 = dst;
+        ZoneData {
+            initial: zone_type(0, false, "GMT"),
+            transitions: vec![],
+            after: After::Rule(rule),
+        }
+    };
+    source
+        .add_zone("Test/Same", &ruled(zone_type(0, false, "GMT")))
+        .unwrap();
+    let zone = data_of(&source, "Test/Same");
+    let footer = zone.footer.as_ref().unwrap();
+    assert!(footer.dst.is_none());
+    assert_eq!(transitions(zone, year(1990), year(2100)).count(), 0);
+    for at in [year(1990), year(2024) + 200 * DAY, year(2199)] {
+        assert_eq!(type_of(zone, at), zone_type(0, false, "GMT"));
+    }
+    let zone = source.timezone("Test/Same").unwrap().unwrap();
+    let july = DateTime {
+        date: Date {
+            year: 2024,
+            month: 7,
+            day: 1,
+        },
+        time: Time {
+            hour: 1,
+            minute: 30,
+            second: 0,
+            nanosecond: 0,
+        },
+    };
+    assert_eq!(zone.resolve(&july, false).unwrap().offset, 0);
+    for (name, dst) in [
+        ("Test/Abbreviation", zone_type(0, false, "IST")),
+        ("Test/Flag", zone_type(0, true, "GMT")),
+        ("Test/Offset", zone_type(3_600, false, "GMT")),
+    ] {
+        source.add_zone(name, &ruled(dst.clone())).unwrap();
+        let zone = data_of(&source, name);
+        assert!(zone.footer.as_ref().unwrap().dst.is_some(), "{name}");
+        assert_eq!(type_of(zone, year(2024) + 200 * DAY), dst, "{name}");
+    }
+}
+
+#[test]
+fn a_rule_must_continue_the_last_transition() {
+    let source = Arc::new(ZoneSource::new());
+    let data = |last: (i64, ZoneType)| ZoneData {
+        initial: zone_type(0, false, "LMT"),
+        transitions: vec![(year(1990), zone_type(0, false, "GMT")), last],
+        after: After::Rule(london_rule()),
+    };
+    let winter = year(2000) + 10 * DAY;
+    let e = message(
+        source
+            .add_zone(
+                "Test/Zone",
+                &data((winter, zone_type(-3_600, false, "WAT"))),
+            )
+            .unwrap_err(),
+    );
+    assert_eq!(
+        e,
+        format!(
+            "zone Test/Zone: the rule after the last transition does not continue it: the \
+             transition at {winter} changes to WAT (UT-3600s), and the rule has GMT (UT+0s) in \
+             force then"
+        )
+    );
+    let e = message(
+        source
+            .add_zone("Test/Zone", &data((winter, zone_type(3_600, true, "BST"))))
+            .unwrap_err(),
+    );
+    assert!(
+        e.contains("changes to BST (UT+3600s), and the rule has GMT"),
+        "{e}"
+    );
+    let summer = year(2000) + 200 * DAY;
+    source
+        .add_zone("Test/Zone", &data((summer, zone_type(3_600, true, "BST"))))
+        .unwrap();
+    let zone = data_of(&source, "Test/Zone");
+    assert_eq!(type_of(zone, summer), zone_type(3_600, true, "BST"));
+    assert_eq!(
+        type_of(zone, year(2001) + 10 * DAY),
+        zone_type(0, false, "GMT")
+    );
+    let held = ZoneData {
+        after: After::Hold,
+        ..data((winter, zone_type(-3_600, false, "WAT")))
+    };
+    source.add_zone("Test/Held", &held).unwrap();
 }
 
 #[test]
@@ -467,6 +568,39 @@ fn oracle_failures_are_errors() {
             .unwrap_err(),
     );
     assert!(e.contains("more than"), "{e}");
+    let mut steps = 0usize;
+    let mut counted = |t: i64| {
+        steps += 1;
+        Ok(Some(t + 1))
+    };
+    let oracle = Oracle {
+        offset_at: &mut fixed,
+        next_transition: Some(&mut counted),
+    };
+    let e = message(
+        source
+            .add_oracle("Test/Zone", oracle, oracle_range(2000, 2001, false))
+            .unwrap_err(),
+    );
+    assert_eq!(
+        e,
+        format!("zone Test/Zone: probing found more than {MAX_PROBED_TRANSITIONS} transitions")
+    );
+    assert_eq!(steps, MAX_PROBED_TRANSITIONS + 1);
+    let mut changing = |t: i64| Ok(zone_type((t % 1_000) as i32, false, "A"));
+    let oracle = Oracle {
+        offset_at: &mut changing,
+        next_transition: None,
+    };
+    let e = message(
+        source
+            .add_oracle("Test/Zone", oracle, oracle_range(2000, 2001, false))
+            .unwrap_err(),
+    );
+    assert_eq!(
+        e,
+        format!("zone Test/Zone: probing found more than {MAX_PROBED_TRANSITIONS} transitions")
+    );
 }
 
 #[test]
@@ -493,9 +627,12 @@ fn versions_are_recorded_and_interned() {
     assert_eq!(source.version(), c"");
     source.set_version("2099z").unwrap();
     assert_eq!(source.version(), c"2099z");
-    assert!(message(source.set_version("a\0b").unwrap_err()).contains("NUL"));
+    assert_eq!(
+        message(source.set_version("a\0b").unwrap_err()),
+        "version \"a\\0b\" contains a NUL byte"
+    );
     assert!(core::ptr::eq(
-        intern_c_string("2099z").unwrap(),
+        intern_c_string("version", "2099z").unwrap(),
         source.version()
     ));
 }
@@ -612,6 +749,57 @@ fn links_are_followed() {
     assert!(format!("{source:?}").contains("names"));
 }
 
+fn link_name(depth: usize) -> String {
+    format!("Test/Link{depth}")
+}
+
+#[test]
+fn a_name_may_pass_through_sixteen_links() {
+    let source = Arc::new(ZoneSource::new());
+    source
+        .add_tzif(&link_name(0), real("Asia/Kolkata"))
+        .unwrap();
+    for depth in 1..=MAX_LINK_DEPTH + 1 {
+        source
+            .add_link(&link_name(depth), &link_name(depth - 1))
+            .unwrap();
+    }
+    assert_eq!(MAX_LINK_DEPTH, 16);
+    let through_links = data_of(&source, &link_name(16));
+    assert_eq!(through_links.name, link_name(0));
+    assert_eq!(
+        through_links.transitions,
+        bundled("Asia/Kolkata").transitions
+    );
+    let e = message(source.lookup(&link_name(17)).unwrap_err());
+    assert_eq!(
+        e,
+        "the zone source's name \"Test/Link17\" passes through more than 16 links"
+    );
+}
+
+#[test]
+fn links_a_loader_supplies_have_the_same_budget() {
+    let source = Arc::new(ZoneSource::new());
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&calls);
+    let loader = move |source: &Arc<ZoneSource>, name: &str| {
+        counter.fetch_add(1, Ordering::SeqCst);
+        let depth: usize = name.strip_prefix("Test/Link").unwrap().parse().unwrap();
+        if depth == 0 {
+            source.add_tzif(name, real("Asia/Kolkata"))
+        } else {
+            source.add_link(name, &link_name(depth - 1))
+        }
+    };
+    source.set_loader(Some(Arc::new(loader))).unwrap();
+    let e = message(source.lookup(&link_name(17)).unwrap_err());
+    assert!(e.contains("passes through more than 16 links"), "{e}");
+    assert_eq!(calls.load(Ordering::SeqCst), 17);
+    assert_eq!(data_of(&source, &link_name(16)).name, link_name(0));
+    assert_eq!(calls.load(Ordering::SeqCst), 18);
+}
+
 #[test]
 fn a_link_to_a_declared_name_loads_its_target() {
     let (source, counting) = loading_source(&["Asia/Kolkata"]);
@@ -655,10 +843,7 @@ fn the_classifier_describes_the_names_the_catalogue_lacks() {
     source.add_link("Etc/GMT+77", "Europe/Atlantis").unwrap();
     source.declare(["Mars/Base"]).unwrap();
     let atlantis = source.describe("Europe/Atlantis").unwrap().unwrap();
-    assert_eq!(
-        atlantis.tags,
-        classify::zone_tags("Europe/Atlantis", bundled("Europe/London"))
-    );
+    assert_eq!(atlantis.tags, classify::data_tags(bundled("Europe/London")));
     assert!(!atlantis.is_link);
     assert_eq!(atlantis.catalogued.map(|n| n.rank), None);
     assert_eq!(atlantis.rank().unwrap(), uncatalogued_rank().unwrap());
@@ -671,7 +856,9 @@ fn the_classifier_describes_the_names_the_catalogue_lacks() {
     assert_eq!(link.primary, "Europe/Atlantis");
     assert_eq!(
         link.tags,
-        classify::link_tags("Etc/GMT+77", classify::data_tags(bundled("Europe/London")))
+        classify::data_tags(bundled("Europe/London"))
+            .with(Tag::Link)
+            .with(Tag::InvertedSign)
     );
     let mars = source.describe("Mars/Base").unwrap().unwrap();
     assert!(mars.tags.is_empty());

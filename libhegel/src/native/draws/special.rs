@@ -110,22 +110,49 @@ impl Default for DateOptions {
 /// holds one of its own.
 const SNAP_RANGE: i64 = 400;
 
+/// Check that `mask` names at least one weekday and no bit beyond them.
+fn check_weekdays(mask: u32) -> Result<(), EngineError> {
+    if mask == 0 || mask & !u32::from(ALL_WEEKDAYS) != 0 {
+        return Err(EngineError::InvalidArgument(format!(
+            "weekdays mask must name at least one weekday in bits 0..=6, got {mask:#x}"
+        )));
+    }
+    Ok(())
+}
+
+/// Check that `mask` names at least one month and no bit beyond them.
+fn check_months(mask: u32) -> Result<(), EngineError> {
+    if mask == 0 || mask & !u32::from(ALL_MONTHS) != 0 {
+        return Err(EngineError::InvalidArgument(format!(
+            "months mask must name at least one month in bits 0..=11, got {mask:#x}"
+        )));
+    }
+    Ok(())
+}
+
 impl DateOptions {
     /// Check that each mask names at least one weekday or month and no
     /// bit beyond them.
     pub fn validate(&self) -> Result<(), EngineError> {
-        if self.weekdays == 0 || self.weekdays & !ALL_WEEKDAYS != 0 {
-            return Err(EngineError::InvalidArgument(format!(
-                "weekdays mask must name at least one weekday in bits 0..=6, got {:#x}",
-                self.weekdays
-            )));
-        }
-        if self.months == 0 || self.months & !ALL_MONTHS != 0 {
-            return Err(EngineError::InvalidArgument(format!(
-                "months mask must name at least one month in bits 0..=11, got {:#x}",
-                self.months
-            )));
-        }
+        check_weekdays(u32::from(self.weekdays))?;
+        check_months(u32::from(self.months))
+    }
+
+    /// Allow the weekdays `mask` names, bit 0 for Monday; an argument
+    /// error, leaving the options as they were, when it names none or has
+    /// a bit beyond Sunday's.
+    pub fn set_weekdays(&mut self, mask: u32) -> Result<(), EngineError> {
+        check_weekdays(mask)?;
+        self.weekdays = mask as u8;
+        Ok(())
+    }
+
+    /// Allow the months `mask` names, bit 0 for January; an argument
+    /// error, leaving the options as they were, when it names none or has
+    /// a bit beyond December's.
+    pub fn set_months(&mut self, mask: u32) -> Result<(), EngineError> {
+        check_months(mask)?;
+        self.months = mask as u16;
         Ok(())
     }
 
@@ -210,8 +237,9 @@ pub(crate) fn days_from_civil(d: &Date) -> i64 {
     era * 146_097 + doe - 719_468
 }
 
-/// Inverse of [`days_from_civil`]. Port of Hinnant's `civil_from_days`.
-pub(crate) fn civil_from_days(z: i64) -> Date {
+/// The year, month and day `z` days after 1970-01-01, for any `z` whose
+/// year fits `i64`. Port of Hinnant's `civil_from_days`.
+pub(crate) fn civil_of_days(z: i64) -> (i64, u8, u8) {
     let z = z + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z - era * 146_097;
@@ -221,8 +249,14 @@ pub(crate) fn civil_from_days(z: i64) -> Date {
     let mp = (5 * doy + 2) / 153;
     let day = (doy - (153 * mp + 2) / 5 + 1) as u8;
     let month = if mp < 10 { mp + 3 } else { mp - 9 } as u8;
+    (y + i64::from(month <= 2), month, day)
+}
+
+/// Inverse of [`days_from_civil`], for a day whose year fits `i32`.
+pub(crate) fn civil_from_days(z: i64) -> Date {
+    let (year, month, day) = civil_of_days(z);
     Date {
-        year: (y + i64::from(month <= 2)) as i32,
+        year: year as i32,
         month,
         day,
     }
@@ -366,7 +400,7 @@ const INTERESTING_DATES: [(i32, u8, u8); 36] = [
     (9999, 12, 31),
     (-9999, 1, 1),
     (275_760, 9, 13),
-    (-275_760, 9, 13),
+    (-271_821, 4, 20),
     (2024, 12, 30),
     (2024, 12, 31),
     (2021, 1, 3),

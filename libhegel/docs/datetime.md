@@ -1,8 +1,9 @@
 # Dates, times and time zones
 
-**Status:** Implemented (engine, C ABI and the Rust frontend with its
-`jiff`, `chrono` and `time` extras; the other frontends' mappings in §8.3
-remain to do). Written 2026-10-16 from a survey of the engine, the seven
+**Status:** Implemented in the engine, the C ABI and every frontend
+except Go (Rust with its `jiff`, `chrono` and `time` extras, Python,
+TypeScript, C++, Java and OCaml; each frontend's own documentation
+describes its API, of which §8.3 is the original sketch). Written 2026-10-16 from a survey of the engine, the seven
 frontends, the property-based testing libraries in Appendix A and the
 date/time libraries in Appendix B. The open questions were decided on
 2026-10-17; §10 records the outcome. §4–§8 describe what was built, with
@@ -142,7 +143,11 @@ R2. Generation and shrinking of time zones and zoned datetimes are
     identical on every machine, independent of the host tz database.
 R3. A stored failure survives a tz database update as long as the zone
     still exists; a removed zone degrades to the simplest zone, not to an
-    error.
+    error. Surviving means the stored choices still replay to a value the
+    generator can produce. They replay to the same wall time only when the
+    draw was not a targeted one: a targeted draw and the instant fallback
+    of §6.2 record a position among the zone's transitions, so an update
+    that adds or removes a transition changes what they decode to.
 R4. Gap wall times, both folds of ambiguous wall times, and the exact
     boundary instants of transitions are generated deliberately, at a rate
     a user can rely on, in every zone that has them.
@@ -361,6 +366,14 @@ membership, and a stored name the spec no longer allows replays as the
 lowest-ranked allowed name; `simplest` is that name too. An empty explicit
 list is an argument error.
 
+The spec is settings plus a ladder built from them on first use. A setter
+checks only its own argument and discards the ladder, so the setters can
+be called in any order; `validate` and every draw build the ladder from
+the settings as they then stand and report what is wrong with them (an
+explicit name the zone source lacks, or nothing left to draw) as an
+argument error. A spec that fails stays usable: further setters can fix
+it.
+
 Fresh generation mixes two samplers: with probability ½ uniform over the
 allowed set, so every zone is reachable and a name-parsing bug in a rare
 link name is found; otherwise weighted by feature tags, so that zones with
@@ -380,8 +393,21 @@ is drawn, as Hypothesis's naive mode and all the current frontends) or
 instants (`Timestamp` pair), a precision, an **imaginary** policy (`allow`
 or `avoid`) and an **ambiguous** policy (`both`, `earlier`, `later`).
 
+A spec holds one kind of bound. Setting both civil and instant bounds is
+an argument error, reported when the spec is validated or drawn from
+rather than by whichever setter came second, so that the setters commute.
+
 The node sequence is: zone (6.1) · targeted? (boolean) · [target index ·
 half-width] · date · time · [fold].
+
+`generate_zoned_datetime_in(name, zone, spec)` draws in a zone the caller
+supplies: the same sequence without the zone node. A host that cannot be
+called back while the engine draws (zone-sources.md §3.2) draws the name
+with `generate_timezone`, supplies that zone's data, and then makes this
+draw, and the two record together what the one-step draw records. It is
+also the draw for a zone the user fixed. Since the engine did not choose
+the zone, a zone with no value in the bounds rejects the test case and is
+never an argument error.
 
 1. Draw the zone. A zone the engine cannot evaluate (an opaque name the
    spec accepted) reads its civil time as UTC with an unknown offset, as
@@ -406,7 +432,9 @@ half-width] · date · time · [fold].
    no fold node follows. Hypothesis's aware mode found this fallback
    necessary and the reasons apply here unchanged. A drawn zone with no
    value in the bounds rejects the test case; bounds no allowed zone has
-   a value in are an argument error.
+   a value in are an argument error. Under `avoid` a wall-clock window
+   lying within a gap of the zone holds no value either (step 6), and is
+   treated the same way.
 3. Draw `targeted`, a boolean whose rate is a generation parameter drawn
    per test case with mean 5% (§10, Q4) the first time a zoned draw needs
    it, and recorded under a fixed weight so the node's kind is the same
@@ -420,8 +448,16 @@ half-width] · date · time · [fold].
    time are drawn uniformly within it, since the integer sampler's
    preference for the low end would otherwise reach one side of the
    transition only.
-5. Draw the date and time nodes exactly as `generate_datetime` does, at
-   the requested precision.
+5. Draw the date and time nodes in the encoding `generate_datetime`
+   uses, at the requested precision: a day count from the origin, then a
+   count of precision units within the day, narrowed on the first and
+   last day of the window. The encoding is shared and the sampling is
+   not. An untargeted zoned draw samples both nodes with the plain biased
+   integer sampler, so it does not get the date and time targets of
+   Appendix C that `generate_datetime` mixes in (Feb 29, the year
+   boundaries, 23:59:59.999999999 and the rest); the zone's transitions
+   and the Appendix C instants reach it through steps 3 and 4 instead,
+   and a targeted draw samples uniformly within its window.
 6. Classify the wall time against the zone. Unique: done. Fold with
    policy `both`: draw one boolean node, the fold. Gap with policy
    `allow`: report kind `gap`, both offsets and the forward-shifted
@@ -430,8 +466,10 @@ half-width] · date · time · [fold].
    non-gap times of the day; a value that still lands in one (a replayed
    or shrunk value, or one on a day the clocks skipped entirely) is moved
    to the first wall time after the gap, or to the last wall time before
-   it when that lies past the window, and a window lying within a gap
-   rejects the test case. The draw never returns a gap under `avoid`.
+   it when that lies past the window. A window lying wholly within a gap
+   has neither, so the zone has no value: as in step 2, that rejects the
+   test case, or is an argument error when no allowed zone has a value.
+   The draw never returns a gap under `avoid`.
 7. Instant bounds: if the resolved instant is outside them (a fold on the
    wrong side of a bound), reject the test case as Hypothesis does; this
    can only happen within one transition's width of a bound.
@@ -509,15 +547,40 @@ draws print as RFC 9557 strings
 (`2024-03-10T02:30:00-04:00[America/New_York][gap]`) and `[fold=0]` or
 `[fold=1]` to a repeated one, an unknown offset as `-00:00` and
 the unknown zone as `Z[Etc/Unknown]` (jiff's spelling), so a counterexample in any frontend's
-output can be read without knowing that frontend's type. The Rust
-frontend prints a duration in the ISO 8601 form (`PT1H30M5.5S`) and a
-span in jiff's friendly form (`1y 2mo 3d`).
+output can be read without knowing that frontend's type.
+
+The text is the engine's, not each frontend's: the `hegel_format_*`
+functions of §7 return it, one per value type, so every frontend prints
+the same value the same way and none re-implements the rules. Every
+function is total: a field outside its documented range is printed as it
+stands, since a failure report must still show a wrong value. Two valid
+values of a type with the same text are the same value; for a zoned
+datetime that means the same wall time, offset, zone, kind and fold, the
+other fields of the struct following from those.
+
+| Value | Form | Examples |
+|---|---|---|
+| date | `YYYY-MM-DD`; a year outside 0 to 9999 has a sign and at least six digits | `2024-03-10`, `+010000-01-01`, `-000001-12-31` |
+| time | `HH:MM:SS`, then the fraction with trailing zeros dropped, when there is one | `02:30:00`, `02:30:00.5`, `23:59:59.999999999` |
+| datetime | date, `T`, time | `2024-03-10T02:30:00` |
+| timestamp | the UTC datetime, then `Z`; any `int64_t` second count has a text | `2000-01-01T00:00:00Z`, `1969-12-31T23:59:58.5Z` |
+| offset | `±HH:MM`, with `:SS` when the seconds are not zero; the unknown offset is `-00:00` | `+05:30`, `-00:44:30`, `+00:00`, `-00:00` |
+| duration | ISO 8601 `PT…H…M…S` with hours as the largest unit, one leading `-` for a negative one, `PT0S` for zero | `PT1H30M5.5S`, `-PT0.5S`, `PT24H` |
+| span | the nonzero units, largest first, separated by spaces, with the suffixes `y mo w d h m s ms µs ns`; `0s` for the zero span | `1y 2mo 3d` |
+| zoned datetime | datetime, offset, `[zone]`, then `[gap]` for a skipped wall time, or `[fold=0]` (the earlier instant) or `[fold=1]` for a repeated one; an unknown offset is `-00:00`, and the zone `Etc/Unknown` has `Z` for its offset | `2024-03-10T01:30:00-05:00[America/New_York]`, `2000-01-01T00:00:00Z[Etc/Unknown]` |
+
+A span's units carry their own signs, so its text has three shapes. With
+no negative unit there are no signs (`1y 2mo 3d`). With no positive unit
+one `-` leads the whole text (`-3d 4h`). With units of both signs every
+unit is signed (`-3d +4h`, `+1y -2mo`), which is the only shape with a
+`+` in it and so cannot be mistaken for either of the others.
 
 ## 7. C ABI
 
 Following the `hegel_reflow_options_t` precedent, options travel in
-caller-owned handles so signatures can grow without breaking. New
-functions (names subject to the `just c-header` regeneration):
+caller-owned handles so signatures can grow without breaking. The new
+functions, in outline (`include/hegel.h`, regenerated by
+`just libhegel::header`, has the exact signatures and documents each):
 
 ```
 hegel_tzdb_version(ctx, out_string)
@@ -527,7 +590,8 @@ hegel_timezone_spec_set_links(ctx, spec, bool)
 hegel_timezone_spec_set_legacy(ctx, spec, bool)
 hegel_timezone_spec_set_unknown(ctx, spec, bool)      // Etc/Unknown
 hegel_timezone_spec_set_opaque(ctx, spec, bool)       // names the database lacks
-hegel_timezone_spec_free(spec)
+hegel_timezone_spec_validate(ctx, spec)               // what a draw would reject
+hegel_timezone_spec_free(ctx, spec)
 hegel_generate_timezone(ctx, tc, spec, out_string_result)
 
 hegel_zoned_spec_new / _free
@@ -536,17 +600,25 @@ hegel_zoned_spec_set_instant_bounds(ctx, spec, min, max)
 hegel_zoned_spec_set_precision(ctx, spec, hegel_precision_t)
 hegel_zoned_spec_set_imaginary(ctx, spec, HEGEL_IMAGINARY_ALLOW|AVOID)
 hegel_zoned_spec_set_ambiguous(ctx, spec, HEGEL_AMBIGUOUS_BOTH|EARLIER|LATER)
+hegel_zoned_spec_validate(ctx, spec)
 hegel_generate_zoned_datetime(ctx, tc, tz_spec, zoned_spec, out, out_zone)
   // out: hegel_zoned_datetime_t { civil, offset_seconds, offset_known,
   //       fold, kind, offset_before, offset_after, timestamp }; out_zone:
   //       the zone name as a string result the caller frees
+hegel_generate_zoned_datetime_for_zone(ctx, tc, source, name, zoned_spec, out)
+  // the same draw in a zone the caller names (§6.2); source may be NULL
 
 hegel_generate_timestamp(ctx, tc, min, max, precision, out)
 hegel_generate_offset(ctx, tc, min_seconds, max_seconds, granularity,
                       allow_unknown, out)             // hegel_offset_t { seconds, known }
 hegel_generate_duration(ctx, tc, min, max, precision, out)
-hegel_span_spec_new / _set_unit_bounds / _set_sign / _free
+hegel_span_spec_new / _set_unit_bounds / _set_sign / _validate / _free
 hegel_generate_span(ctx, tc, spec, out)
+
+hegel_format_date / _time / _datetime / _timestamp / _offset / _duration
+                                                      // (ctx, value, out_string)
+hegel_format_span(ctx, &span, out_string)
+hegel_format_zoned_datetime(ctx, &value, zone, out_string)   // the text of §6.5
 
 hegel_timezone_resolve(ctx, name, civil, out)   // classify a wall time
 hegel_timezone_offset_at(ctx, name, timestamp, out)
@@ -560,6 +632,22 @@ hegel_timezone_spec_set_source(ctx, spec, source)
 hegel_timezone_resolve_in / _offset_at_in / _info_in(ctx, source, ...)
 hegel_context_set_error(ctx, message)             // a failing callback's message
 ```
+
+The three spec handles follow one rule. `_new` cannot fail on its
+arguments. A setter reports only a bad argument of its own (an unknown
+enum value, a reversed pair of bounds, a NULL handle) and never the state
+of the rest of the spec, so setters can be called in any order and a
+frontend can apply a user's options in whatever order it holds them.
+`_validate` reports everything a draw from the spec as it stands would
+reject as an argument error: for a time zone spec an explicit name its
+source lacks or nothing to draw, for a zoned spec bounds of both kinds or
+civil bounds holding no value at the precision, for a span spec no
+enabled unit or bounds its sign policy excludes. A draw makes the same checks, so calling
+`_validate` is optional; it exists so a frontend can report a bad
+generator where the user built it rather than at its first draw. A time
+zone spec reads the process default zone source when it is created
+(zone-sources.md §3.3), and `hegel_timezone_spec_new` reads nothing else,
+so it does not fail on a default source that has no names.
 
 `hegel_generate_time` and `hegel_generate_datetime` gain a `precision`
 argument (a breaking signature change, as `hegel_generate_datetime` had
@@ -603,11 +691,13 @@ be noise, and jiff and `time` cannot report a release at all. A frontend
 whose host database is updated independently (Python's `tzdata`, the JVM)
 can warn once per run when the two differ.
 
-Zone sources (`zone-sources.md`) replace this contract as each frontend
-adopts them: a frontend whose host database the engine can read sets it
-as the process-wide default source, and the engine then targets and
-classifies against the host's own data. The engine side is in place; no
-frontend sets a source yet.
+Zone sources (`zone-sources.md`) replace this contract: a frontend whose
+host database the engine can read sets it as the process-wide default
+source, or attaches it to the draws of the library it belongs to, and the
+engine then targets and classifies against the host's own data. Every
+frontend except Go now does so; Go has no temporal generators yet, and
+when it gains them it starts from zone sources rather than from this
+contract.
 
 ### 8.2 Rust
 
@@ -675,6 +765,10 @@ since an `OffsetDateTime` holds a civil time and one offset),
 
 ### 8.3 Other frontends (mapping only)
 
+This is the mapping each frontend started from. All of them but Go have
+since been built, and each one's own documentation is the reference for
+what it exposes.
+
 - **Python:** the generators move to `gs.temporal` under the shared
   names (the released `gs.dates`, `gs.times`, `gs.datetimes`,
   `gs.timedeltas` and `gs.timezones` stay as deprecated aliases).
@@ -704,6 +798,10 @@ since an `OffsetDateTime` holds a civil time and one offset),
   query functions.
 
 ## 9. Delivery
+
+Phases 1 and 2 are delivered, apart from the Go mapping. Of phase 3, the
+engine's parts (synthetic time zones and the string generator) are not
+started.
 
 Phase 1 (engine + Rust + Python): tz table and script, tz evaluator with
 the jiff oracle tests, `generate_timezone`, `generate_zoned_datetime` with
@@ -953,8 +1051,10 @@ Gregorian); 1900-02-28 / 1900-03-01 (spreadsheet leap-year bug);
 2000-02-29, 2100-02-28, 2400-02-29 (the 100- and 400-year rules);
 0000-02-29 (year 0 is a leap year and 1 BCE); 0001-01-01 (Python,
 `whenever`, Go zero); 9999-12-31 and -9999-01-01 (jiff, Python, Noda Time
-edges, which differ by a day or two between libraries); ±275760-09-13
-(Temporal and `Date`); 2024-12-30 (ISO week 2025-W01-1), 2021-01-03
+edges, which differ by a day or two between libraries); +275760-09-13 and
+-271821-04-20 (the two ends of Temporal's and `Date`'s range, 10^8 days
+either side of the epoch, which are not the same date with the year's
+sign flipped); 2024-12-30 (ISO week 2025-W01-1), 2021-01-03
 (2020-W53-7), 2027-01-01 (a Friday, so 2026 has 53 weeks); day 366 of a
 leap year; 1972-11-03 (java.time's UT1/UTC boundary); the bounds
 themselves.

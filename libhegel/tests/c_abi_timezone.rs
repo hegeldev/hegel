@@ -300,7 +300,8 @@ fn arguments_are_checked() {
     assert_eq!(
         last_error(ctx),
         "hegel_timezone_resolve: unknown time zone \"Nowhere/Nope\"; names are matched \
-         exactly as the IANA database spells them, plus Etc/Unknown"
+         exactly as the zone source spells them (the bundled database as IANA does), plus \
+         Etc/Unknown"
     );
     assert_eq!(
         unsafe { hegel_timezone_offset_at(ctx, nowhere, at(0), &mut o) },

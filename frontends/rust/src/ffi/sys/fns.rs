@@ -24,6 +24,14 @@ macro_rules! for_each_hegel_fn {
             fn hegel_failure_free(ctx: *mut HegelContext, f: *mut HegelFailure) -> hegel_result_t;
             fn hegel_failure_origin(ctx: *mut HegelContext, f: *const HegelFailure, out_origin: *mut hegel_string_t) -> hegel_result_t;
             fn hegel_failure_reproduction_blob(ctx: *mut HegelContext, f: *const HegelFailure, out_blob: *mut *const hegel_string_t) -> hegel_result_t;
+            fn hegel_format_date(ctx: *mut HegelContext, value: hegel_date_t, out: *mut hegel_owned_string_t) -> hegel_result_t;
+            fn hegel_format_datetime(ctx: *mut HegelContext, value: hegel_datetime_t, out: *mut hegel_owned_string_t) -> hegel_result_t;
+            fn hegel_format_duration(ctx: *mut HegelContext, value: hegel_duration_t, out: *mut hegel_owned_string_t) -> hegel_result_t;
+            fn hegel_format_offset(ctx: *mut HegelContext, value: hegel_offset_t, out: *mut hegel_owned_string_t) -> hegel_result_t;
+            fn hegel_format_span(ctx: *mut HegelContext, value: *const hegel_span_t, out: *mut hegel_owned_string_t) -> hegel_result_t;
+            fn hegel_format_time(ctx: *mut HegelContext, value: hegel_time_t, out: *mut hegel_owned_string_t) -> hegel_result_t;
+            fn hegel_format_timestamp(ctx: *mut HegelContext, value: hegel_timestamp_t, out: *mut hegel_owned_string_t) -> hegel_result_t;
+            fn hegel_format_zoned_datetime(ctx: *mut HegelContext, value: *const hegel_zoned_datetime_t, zone: hegel_string_t, out: *mut hegel_owned_string_t) -> hegel_result_t;
             fn hegel_generate_boolean(ctx: *mut HegelContext, tc: *mut HegelTestCase, p: f64, forced: bool, has_forced: bool, out_value: *mut bool) -> hegel_result_t;
             fn hegel_generate_bytes(ctx: *mut HegelContext, tc: *mut HegelTestCase, min_size: u64, max_size: u64, out_result: *mut hegel_generate_bytes_result_t) -> hegel_result_t;
             fn hegel_generate_bytes_result_free(ctx: *mut HegelContext, result: *mut hegel_generate_bytes_result_t) -> hegel_result_t;
@@ -44,6 +52,7 @@ macro_rules! for_each_hegel_fn {
             fn hegel_generate_timezone(ctx: *mut HegelContext, tc: *mut HegelTestCase, spec: *const HegelTimezoneSpec, out_result: *mut hegel_owned_string_t) -> hegel_result_t;
             fn hegel_generate_uuid(ctx: *mut HegelContext, tc: *mut HegelTestCase, version: u8, has_version: bool, out_bytes: *mut u8) -> hegel_result_t;
             fn hegel_generate_zoned_datetime(ctx: *mut HegelContext, tc: *mut HegelTestCase, tz_spec: *const HegelTimezoneSpec, zoned_spec: *const HegelZonedSpec, out_value: *mut hegel_zoned_datetime_t, out_zone: *mut hegel_owned_string_t) -> hegel_result_t;
+            fn hegel_generate_zoned_datetime_for_zone(ctx: *mut HegelContext, tc: *mut HegelTestCase, source: *const HegelZoneSource, name: hegel_string_t, zoned_spec: *const HegelZonedSpec, out_value: *mut hegel_zoned_datetime_t) -> hegel_result_t;
             fn hegel_grammar_builder_file(ctx: *mut HegelContext, builder: *const HegelGrammarBuilder, index: usize, out_path: *mut hegel_string_t) -> hegel_result_t;
             fn hegel_grammar_builder_free(ctx: *mut HegelContext, builder: *mut HegelGrammarBuilder) -> hegel_result_t;
             fn hegel_grammar_builder_new(ctx: *mut HegelContext, text: hegel_string_t, out_builder: *mut *mut HegelGrammarBuilder) -> hegel_result_t;
@@ -155,6 +164,7 @@ macro_rules! for_each_hegel_fn {
             fn hegel_span_spec_new(ctx: *mut HegelContext, out_spec: *mut *mut HegelSpanSpec) -> hegel_result_t;
             fn hegel_span_spec_set_sign(ctx: *mut HegelContext, spec: *mut HegelSpanSpec, sign: u32) -> hegel_result_t;
             fn hegel_span_spec_set_unit_bounds(ctx: *mut HegelContext, spec: *mut HegelSpanSpec, unit: u32, min_value: i64, max_value: i64) -> hegel_result_t;
+            fn hegel_span_spec_validate(ctx: *mut HegelContext, spec: *const HegelSpanSpec) -> hegel_result_t;
             fn hegel_start_span(ctx: *mut HegelContext, tc: *mut HegelTestCase, label: u64) -> hegel_result_t;
             fn hegel_state_machine_add_invariant(ctx: *mut HegelContext, tc: *mut HegelTestCase, state_machine: *mut HegelStateMachine, name: hegel_string_t, always_check: bool) -> hegel_result_t;
             fn hegel_state_machine_add_rule(ctx: *mut HegelContext, tc: *mut HegelTestCase, state_machine: *mut HegelStateMachine, name: hegel_string_t, weight: f64, groups: *const i64, num_groups: usize) -> hegel_result_t;
@@ -193,6 +203,7 @@ macro_rules! for_each_hegel_fn {
             fn hegel_timezone_spec_set_opaque(ctx: *mut HegelContext, spec: *mut HegelTimezoneSpec, opaque: bool) -> hegel_result_t;
             fn hegel_timezone_spec_set_source(ctx: *mut HegelContext, spec: *mut HegelTimezoneSpec, source: *const HegelZoneSource) -> hegel_result_t;
             fn hegel_timezone_spec_set_unknown(ctx: *mut HegelContext, spec: *mut HegelTimezoneSpec, unknown: bool) -> hegel_result_t;
+            fn hegel_timezone_spec_validate(ctx: *mut HegelContext, spec: *const HegelTimezoneSpec) -> hegel_result_t;
             fn hegel_tzdb_version(ctx: *mut HegelContext, out_version: *mut hegel_string_t) -> hegel_result_t;
             fn hegel_version(ctx: *mut HegelContext, out_version: *mut hegel_string_t) -> hegel_result_t;
             fn hegel_zone_source_add_link(ctx: *mut HegelContext, source: *mut HegelZoneSource, name: hegel_string_t, target: hegel_string_t) -> hegel_result_t;
@@ -203,7 +214,7 @@ macro_rules! for_each_hegel_fn {
             fn hegel_zone_source_declare(ctx: *mut HegelContext, source: *mut HegelZoneSource, names: *const hegel_string_t, len: usize) -> hegel_result_t;
             fn hegel_zone_source_free(ctx: *mut HegelContext, source: *mut HegelZoneSource) -> hegel_result_t;
             fn hegel_zone_source_new(ctx: *mut HegelContext, out_source: *mut *mut HegelZoneSource) -> hegel_result_t;
-            fn hegel_zone_source_set_loader(ctx: *mut HegelContext, source: *mut HegelZoneSource, loader: hegel_zone_loader_t, user_data: *mut c_void) -> hegel_result_t;
+            fn hegel_zone_source_set_loader(ctx: *mut HegelContext, source: *mut HegelZoneSource, loader: hegel_zone_loader_t, user_data: *mut c_void, release: hegel_zone_loader_release_t) -> hegel_result_t;
             fn hegel_zone_source_set_version(ctx: *mut HegelContext, source: *mut HegelZoneSource, version: hegel_string_t) -> hegel_result_t;
             fn hegel_zone_source_version(ctx: *mut HegelContext, source: *const HegelZoneSource, out_version: *mut hegel_string_t) -> hegel_result_t;
             fn hegel_zoned_spec_free(ctx: *mut HegelContext, spec: *mut HegelZonedSpec) -> hegel_result_t;
@@ -213,6 +224,7 @@ macro_rules! for_each_hegel_fn {
             fn hegel_zoned_spec_set_imaginary(ctx: *mut HegelContext, spec: *mut HegelZonedSpec, imaginary: u32) -> hegel_result_t;
             fn hegel_zoned_spec_set_instant_bounds(ctx: *mut HegelContext, spec: *mut HegelZonedSpec, min_value: hegel_timestamp_t, max_value: hegel_timestamp_t) -> hegel_result_t;
             fn hegel_zoned_spec_set_precision(ctx: *mut HegelContext, spec: *mut HegelZonedSpec, precision: u32) -> hegel_result_t;
+            fn hegel_zoned_spec_validate(ctx: *mut HegelContext, spec: *const HegelZonedSpec) -> hegel_result_t;
         }
     };
 }

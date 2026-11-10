@@ -67,6 +67,16 @@
  * to keep, so you may free or reuse the memory as soon as the call returns.
  * Run results own their data and are independent of the run they came from.
  *
+ * There is one exception: a zone source keeps the loader and user_data
+ * given to hegel_zone_source_set_loader, and calls them after that call
+ * has returned, for as long as the source keeps the loader. It hands them
+ * back through the release callback given with them, which it calls once
+ * when it drops the loader; see hegel_zone_source_set_loader.
+ *
+ * A pointer libhegel passes to a callback (the context, the source and
+ * the name given to a zone source's loader or oracle) is borrowed for the
+ * duration of that callback: do not free it or keep it.
+ *
  * Release every pointer returned by these functions with its matching free:
  *
  *     hegel_context_new          ->  hegel_context_free
@@ -92,6 +102,9 @@
  *     hegel_generate_string      ->  hegel_owned_string_free
  *     hegel_generate_grammar     ->  hegel_owned_string_free
  *     hegel_grammar_draw_result  ->  hegel_owned_string_free
+ *     hegel_generate_timezone    ->  hegel_owned_string_free
+ *     hegel_generate_zoned_datetime (out_zone)  ->  hegel_owned_string_free
+ *     hegel_format_*             ->  hegel_owned_string_free
  *     hegel_printer_options_new  ->  hegel_printer_options_free
  *     hegel_reflow_options_new   ->  hegel_reflow_options_free
  *     hegel_timezone_spec_new    ->  hegel_timezone_spec_free
@@ -108,6 +121,8 @@
  * Every other string libhegel hands back is borrowed. The caller
  * must not free it, and it is valid only until a documented point.
  * hegel_context_last_error is invalidated by the next call on that context.
+ * The strings of the time zone queries (a version, an abbreviation, a
+ * primary name) are static: valid for the life of the process.
  *
  * Threading
  * ---------
@@ -129,6 +144,22 @@
  *   Concurrent calls on it return HEGEL_E_CONCURRENT_USE. It belongs to the
  *   test-case handle it is first advanced with: start a new draw for each
  *   test case.
+ * - A date options, time zone spec, zoned spec or span spec handle may be
+ *   shared across threads once configured: any number of threads may
+ *   validate it and draw from it at once, but each setter call (and the
+ *   free) requires exclusive access.
+ * - A zone source may be used from any number of threads at once,
+ *   including adding to it while other threads draw or query. A handle to
+ *   it is a reference: hegel_zone_source_free requires that no other
+ *   thread is using that handle, not that none is using the source.
+ * - hegel_set_default_zone_source may be called from any thread. It
+ *   changes what later calls read; a time zone spec keeps the source it
+ *   read when it was created.
+ * - A zone source's loader is called on whichever thread draws or queries,
+ *   possibly on several at once, and its release callback on whichever
+ *   thread drops the loader. Both must be safe to call from any thread. A
+ *   zone oracle's callbacks are called only on the thread that called
+ *   hegel_zone_source_add_oracle, during that call.
  */
 
 #ifndef HEGEL_H
@@ -1077,9 +1108,19 @@ typedef struct hegel_settings_t hegel_settings_t;
  Build one with `hegel_span_spec_new`, which enables no unit and draws
  one sign for every unit; enable units with
  `hegel_span_spec_set_unit_bounds`, set the policy with
- `hegel_span_spec_set_sign` and free it with `hegel_span_spec_free`. A
- spec may be drawn from by any number of test cases and threads once
- configured; each setter call requires exclusive access.
+ `hegel_span_spec_set_sign`, check it with `hegel_span_spec_validate`
+ and free it with `hegel_span_spec_free`.
+
+ The setters may be called in any order: each checks only its own
+ arguments. What depends on several settings together (whether the sign
+ policy admits a value within the units' bounds, whether any unit is
+ enabled) is checked by `hegel_span_spec_validate` and by every draw. A
+ frontend calls `hegel_span_spec_validate` when it builds its
+ generator, after the setters, to report a bad configuration there
+ rather than at the first draw.
+
+ A spec may be validated and drawn from by any number of test cases and
+ threads at once; each setter call requires exclusive access.
  */
 typedef struct hegel_span_spec_t hegel_span_spec_t;
 
@@ -1131,11 +1172,22 @@ typedef struct hegel_test_case_t hegel_test_case_t;
  Build one with `hegel_timezone_spec_new`, which allows every name of
  the process's default zone source (the bundled database unless
  `hegel_set_default_zone_source` set another) with link names in and
- legacy names out, change
- it with the `hegel_timezone_spec_set_*` setters, and free it with
- `hegel_timezone_spec_free` once no draws will use it again. A spec may
- be drawn from by any number of test cases and threads once configured;
- each setter call requires exclusive access.
+ legacy names out, change it with the `hegel_timezone_spec_set_*`
+ setters, check it with `hegel_timezone_spec_validate`, and free it with
+ `hegel_timezone_spec_free` once no draws will use it again.
+
+ The setters may be called in any order: each checks only its own
+ argument. What depends on several settings together (an explicit name
+ the source lacks when opaque names are not accepted, a set with no
+ name at all) is checked once, by `hegel_timezone_spec_validate` or by
+ the first draw after the last setter, and that is also when the
+ source's names are read and the source is asked about each (which may
+ call its loader). A frontend calls `hegel_timezone_spec_validate` when
+ it builds its generator, after the setters, to report a bad
+ configuration there rather than at the first draw.
+
+ A spec may be validated and drawn from by any number of test cases and
+ threads at once; each setter call requires exclusive access.
  */
 typedef struct hegel_timezone_spec_t hegel_timezone_spec_t;
 
@@ -1156,9 +1208,17 @@ typedef struct hegel_timezone_spec_t hegel_timezone_spec_t;
 
  A source may be used by any number of threads, including while it is
  being filled; a spec reads the names a source knows when the spec is
- built or reconfigured, so add or declare names before building specs
- that draw from them. Data added for a name replaces what the source had
- for it.
+ first validated or drawn from, so add or declare names before then.
+ Data added for a name replaces what the source had for it.
+
+ Zone data is never freed. The engine keeps one copy of each distinct
+ zone (its name, types, transitions and rule) ever added to any source,
+ and of each distinct version and primary-name string, for the life of
+ the process, which is what lets it hand their strings out as static
+ ones. Freeing a source releases its table of names and its loader, not
+ the zones. Adding the same data again costs nothing; a program that
+ keeps adding zones that differ (an oracle probed over ever-changing
+ ranges, say) grows without bound.
  */
 typedef struct hegel_zone_source_t hegel_zone_source_t;
 
@@ -1168,10 +1228,19 @@ typedef struct hegel_zone_source_t hegel_zone_source_t;
  Build one with `hegel_zoned_spec_new`, whose defaults are the whole
  civil range of years `[-999999, 999999]` on the wall clock, nanosecond
  precision, gap times allowed and both folds drawn; change it with the
- `hegel_zoned_spec_set_*` setters and free it with
- `hegel_zoned_spec_free`. A spec may be drawn from by any number of test
- cases and threads once configured; each setter call requires exclusive
- access.
+ `hegel_zoned_spec_set_*` setters, check it with
+ `hegel_zoned_spec_validate` and free it with `hegel_zoned_spec_free`.
+
+ The setters may be called in any order: each checks only its own
+ arguments. What depends on several settings together (bounds of both
+ kinds, civil bounds that hold no value at the precision) is checked by
+ `hegel_zoned_spec_validate` and by every draw. A frontend calls
+ `hegel_zoned_spec_validate` when it builds its generator, after the
+ setters, to report a bad configuration there rather than at the first
+ draw.
+
+ A spec may be validated and drawn from by any number of test cases and
+ threads at once; each setter call requires exclusive access.
  */
 typedef struct hegel_zoned_spec_t hegel_zoned_spec_t;
 
@@ -1278,7 +1347,8 @@ typedef struct {
 /*
  An instant: `second`s since the Unix epoch and a `nanosecond` in
  `[0, 999999999]` counted forward from that second, so -1.5 s is
- `{-2, 500000000}`.
+ `{-2, 500000000}`. (A `hegel_duration_t` splits differently: its two
+ fields share a sign, so -1.5 s is `{-1, -500000000}`.)
  */
 typedef struct {
     int64_t second;
@@ -1347,11 +1417,13 @@ typedef struct {
 } hegel_timezone_offset_t;
 
 /*
- What libhegel knows about a time zone name, from `hegel_timezone_info`.
+ What a zone source knows about a time zone name, from
+ `hegel_timezone_info` (the process's default zone source) or
+ `hegel_timezone_info_in` (a given one).
  */
 typedef struct {
     /*
-     Whether the name is one in the bundled database or `Etc/Unknown`; the
+     Whether the name is one the source knows or `Etc/Unknown`; the
      other fields are zero when it is not.
      */
     bool known;
@@ -1367,8 +1439,9 @@ typedef struct {
     bool is_link;
     /*
      The name's position on the shrink ladder: `UTC` is 0 and every
-     bundled name has its own rank; `Etc/Unknown` reports `UINT16_MAX`,
-     after all of them.
+     name of the bundled catalogue has its own rank; a name the
+     catalogue lacks reports the rank after all of those, and
+     `Etc/Unknown` reports `UINT16_MAX`.
      */
     uint16_t rank;
     /*
@@ -1429,7 +1502,10 @@ typedef struct {
      */
     uint8_t week;
     /*
-     For the month form: the weekday in `[0, 6]`, 0 being Sunday.
+     For the month form: the weekday in `[0, 6]`, 0 being Sunday, as
+     in a POSIX TZ string. (The weekday mask of
+     `hegel_date_options_set_weekdays` counts differently: its bit 0 is
+     Monday.)
      */
     uint8_t weekday;
     int32_t time;
@@ -1473,26 +1549,32 @@ typedef struct {
  The local time type in force at `instant` (Unix seconds), written to
  `*out_type`; see `hegel_zone_oracle_t`. The abbreviation's bytes must
  stay valid until the oracle is next called or
- `hegel_zone_source_add_oracle` returns. Returns `HEGEL_OK`, or any
- other code to fail the probe, with a message set on `ctx` by
- `hegel_context_set_error` or by a failed libhegel call.
+ `hegel_zone_source_add_oracle` returns.
+
+ Returns 0 for success. Any other value fails the probe, and
+ `hegel_zone_source_add_oracle` then returns `HEGEL_E_INVALID_ARG` with
+ the message the callback set on `ctx` (with `hegel_context_set_error`,
+ or by a libhegel call that failed), or the value returned when it set
+ none. The return type is a plain `int32_t`, not `hegel_result_t`, so
+ that no value a callback returns is invalid.
  */
-typedef hegel_result_t (*hegel_zone_offset_fn_t)(void *user_data,
-                                                 hegel_context_t *ctx,
-                                                 int64_t instant,
-                                                 hegel_zone_type_t *out_type);
+typedef int32_t (*hegel_zone_offset_fn_t)(void *user_data,
+                                          hegel_context_t *ctx,
+                                          int64_t instant,
+                                          hegel_zone_type_t *out_type);
 
 /*
  The first instant after `after` at which the type in force changes,
  written to `*out_instant` with `*out_found` set, or `*out_found` left
  false when it never changes again; see `hegel_zone_oracle_t`. Returns
- as `hegel_zone_offset_fn_t` does.
+ as `hegel_zone_offset_fn_t` does: 0 for success, any other value to
+ fail the probe.
  */
-typedef hegel_result_t (*hegel_zone_next_transition_fn_t)(void *user_data,
-                                                          hegel_context_t *ctx,
-                                                          int64_t after,
-                                                          bool *out_found,
-                                                          int64_t *out_instant);
+typedef int32_t (*hegel_zone_next_transition_fn_t)(void *user_data,
+                                                   hegel_context_t *ctx,
+                                                   int64_t after,
+                                                   bool *out_found,
+                                                   int64_t *out_instant);
 
 /*
  An offset oracle: a library that answers lookups but does not expose
@@ -1537,22 +1619,44 @@ typedef struct {
  `hegel_zone_source_set_loader`, a fresh context, the source and the
  name, it adds that name's zone (or a link) with the
  `hegel_zone_source_add_*` functions, or adds nothing when it does not
- know the name. It is called from whichever thread draws or queries, so
- it must be safe to call from any thread, possibly concurrently and more
- than once for one name when threads race; it must not draw. Returns
- `HEGEL_OK`, or any other code to fail the draw or query with
- `HEGEL_E_INVALID_ARG`, with a message set on `ctx` by
- `hegel_context_set_error` or by a failed libhegel call.
+ know the name.
+
+ - `source` is borrowed: it is valid only until the loader returns, and
+   the loader must not free it or keep it. (To use the source later,
+   keep the handle `hegel_zone_source_new` returned.)
+ - `name`'s bytes are valid only until the loader returns.
+ - It is called from whichever thread draws or queries, so it must be
+   safe to call from any thread, possibly concurrently, and more than
+   once for one name when threads race.
+ - The engine holds no lock of the source during the call, so the loader
+   may call any `hegel_zone_source_*` function on `source`. When a draw
+   needs the data, the call happens inside that draw, with the test
+   case's state locked: the loader must not draw from or otherwise use a
+   `hegel_test_case_t`, and must not wait for a thread that does.
+
+ Returns 0 for success (whether or not it added anything). Any other
+ value fails the draw or query with `HEGEL_E_INVALID_ARG`, carrying the
+ message the loader set on `ctx` (with `hegel_context_set_error`, or by
+ a libhegel call that failed), or the value returned when it set none.
+ The return type is a plain `int32_t`, not `hegel_result_t`, so that no
+ value a callback returns is invalid.
  */
-typedef hegel_result_t (*hegel_zone_loader_t)(void *user_data,
-                                              hegel_context_t *ctx,
-                                              hegel_zone_source_t *source,
-                                              hegel_string_t name);
+typedef int32_t (*hegel_zone_loader_t)(void *user_data,
+                                       hegel_context_t *ctx,
+                                       hegel_zone_source_t *source,
+                                       hegel_string_t name);
 
 /*
- A drawn zoned datetime: the wall-clock time `civil` in the zone named
- by the draw's string result, resolved as `hegel_timezone_resolve`
- resolves it.
+ Releases what a zone source's loader keeps alive: called with the
+ `user_data` given to `hegel_zone_source_set_loader`, once, when the
+ engine drops that loader. See `hegel_zone_source_set_loader`.
+ */
+typedef void (*hegel_zone_loader_release_t)(void *user_data);
+
+/*
+ A drawn zoned datetime: the wall-clock time `civil` in the zone the
+ draw reports or was given, resolved as `hegel_timezone_resolve_in`
+ resolves it against the zone source drawn from.
  */
 typedef struct {
     hegel_datetime_t civil;
@@ -1596,7 +1700,9 @@ typedef struct {
 
 /*
  A duration: `seconds` plus `nanoseconds` of the same sign, the latter
- within ±999999999, so -1.5 s is `{-1, -500000000}`.
+ within ±999999999, so -1.5 s is `{-1, -500000000}`. (A
+ `hegel_timestamp_t` splits differently: its `nanosecond` counts forward
+ from the second, so -1.5 s is `{-2, 500000000}`.)
  */
 typedef struct {
     int64_t seconds;
@@ -1604,8 +1710,8 @@ typedef struct {
 } hegel_duration_t;
 
 /*
- A drawn calendar span: one value per unit, 0 for a unit the spec did
- not enable.
+ A calendar span: one value per unit, 0 for a unit the spec that drew
+ it did not enable.
  */
 typedef struct {
     int64_t years;
@@ -3697,7 +3803,9 @@ hegel_result_t hegel_date_options_free(hegel_context_t *ctx, hegel_date_options_
 
  Parameters:
  `mask`: A bit set with bit 0 for Monday through bit 6 for Sunday, at
-   least one bit set and none above bit 6.
+   least one bit set and none above bit 6. (A zone rule's
+   `hegel_zone_rule_date_t.weekday` counts differently, from 0 for
+   Sunday, as the tz database does.)
 
  Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `options`, or
  `HEGEL_E_INVALID_ARG` for an empty or out-of-range mask.
@@ -4493,14 +4601,16 @@ hegel_result_t hegel_timezone_offset_at_in(hegel_context_t *ctx,
                                            hegel_timezone_offset_t *out);
 
 /*
- What libhegel knows about a time zone name.
+ What the process's default zone source knows about a time zone name.
 
  Parameters:
  `name`: Any string; an unknown name is not an error but reports
    `known` false.
  `out`: Receives the description; see `hegel_timezone_info_t`.
 
- Returns `HEGEL_OK`. `hegel_timezone_info_in` asks a given source.
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for a NULL `out`, a
+ `name` that is not UTF-8, or a failure to load the name's data (see
+ `hegel_timezone_info_in`, which asks a given source).
  */
 hegel_result_t hegel_timezone_info(hegel_context_t *ctx,
                                    hegel_string_t name,
@@ -4582,10 +4692,16 @@ hegel_result_t hegel_zone_source_add_tzif(hegel_context_t *ctx,
  `data`: The zone's data; see `hegel_zone_data_t`. Read during the call
    only.
 
+ A rule whose daylight type is its standard type (the same offset, flag
+ and abbreviation) changes nothing and is read as the standard type
+ alone.
+
  Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `source`, or
  `HEGEL_E_INVALID_ARG` for a NULL `data`, transitions out of order, an
- offset of two days or more, a field out of range, a string that is not
- UTF-8 or holds a NUL byte, a bad name, or the bundled source.
+ offset of two days or more, a field out of range, a rule that does not
+ have the last transition's type in force at that transition, a string
+ that is not UTF-8 or holds a NUL byte, a bad name, or the bundled
+ source.
  */
 hegel_result_t hegel_zone_source_add_zone(hegel_context_t *ctx,
                                           hegel_zone_source_t *source,
@@ -4604,9 +4720,11 @@ hegel_result_t hegel_zone_source_add_zone(hegel_context_t *ctx,
  Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `source`, or
  `HEGEL_E_INVALID_ARG` for a NULL `oracle` or `offset_at`, a probe range
  out of order or outside `[-999999, 999999]`, an unknown `after`, a
- callback that fails or answers an invalid type, a next transition that
- is not later than the instant asked about, more than 100000
- transitions, a bad name, or the bundled source.
+ callback that fails (returns a value other than 0) or answers an
+ invalid type, a next transition that is not later than the instant
+ asked about, more than 100000 transitions (found, or reported by
+ `next_transition` whether or not the type changes at them), a bad
+ name, or the bundled source.
  */
 hegel_result_t hegel_zone_source_add_oracle(hegel_context_t *ctx,
                                             hegel_zone_source_t *source,
@@ -4635,8 +4753,10 @@ hegel_result_t hegel_zone_source_add_link(hegel_context_t *ctx,
  Without callbacks (the Wasm build), a frontend declares every name,
  draws a name with `hegel_generate_timezone` from a spec using the
  source (which needs no data), adds that zone's data, and then draws the
- zoned datetime from a spec restricted to that one name with
- `hegel_timezone_spec_set_names`.
+ datetime in that zone with `hegel_generate_zoned_datetime_for_zone`.
+ The two draws record the zone node and then the datetime nodes, the
+ sequence `hegel_generate_zoned_datetime` records in one, except that
+ each is wrapped in its own span.
 
  Parameters:
  `names`, `len`: `len` names, each as for `hegel_zone_source_add_tzif`.
@@ -4657,21 +4777,41 @@ hegel_result_t hegel_zone_source_declare(hegel_context_t *ctx,
  names, is loaded the first time it is needed; a name the loader adds
  nothing for is known to be unknown from then on.
 
+ Parameters:
+ `loader`: The loader, or NULL for none.
+ `user_data`: Passed to every call of `loader` and to `release`. The
+   source keeps it (and `loader`) past this call, for as long as it
+   keeps the loader.
+ `release`: NULL, or a callback that frees what `user_data` keeps
+   alive. With a non-NULL `loader`, the engine calls `release(user_data)`
+   exactly once, when it drops the loader: when a later
+   `hegel_zone_source_set_loader` on the source replaces or removes it,
+   when the last reference to the source goes away (its handles freed,
+   no spec using it, and not the process's default), or before this call
+   returns when this call fails. It is never called while a call of
+   `loader` is in flight, so it may run later than the event that
+   dropped the loader, and on whichever thread finished last: it must be
+   safe to call from any thread, and like the loader it must not use a
+   `hegel_test_case_t`. A source that is still the process's default
+   when the process exits is never released. With a NULL `loader`,
+   `user_data` and `release` are ignored.
+
  Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `source`, or
  `HEGEL_E_INVALID_ARG` for the bundled source.
  */
 hegel_result_t hegel_zone_source_set_loader(hegel_context_t *ctx,
                                             hegel_zone_source_t *source,
                                             hegel_zone_loader_t loader,
-                                            void *user_data);
+                                            void *user_data,
+                                            hegel_zone_loader_release_t release);
 
 /*
  Record which release of its database a source holds, such as the
  `tzdata` package's `IANA_VERSION`. Failure output does not report it.
 
  Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `source`, or
- `HEGEL_E_INVALID_ARG` for a string that is not UTF-8, or the bundled
- source.
+ `HEGEL_E_INVALID_ARG` for a string that is not UTF-8 or holds a NUL
+ byte, or the bundled source.
  */
 hegel_result_t hegel_zone_source_set_version(hegel_context_t *ctx,
                                              hegel_zone_source_t *source,
@@ -4693,11 +4833,14 @@ hegel_result_t hegel_zone_source_version(hegel_context_t *ctx,
 
 /*
  Set the process-wide default zone source: the one a time zone spec
- built from now on draws from, and the `hegel_timezone_*` queries ask
- when given no source. Until a frontend sets one it is the bundled
- database; NULL restores it. A frontend sets its standard library's
- database once, at startup; specs built earlier keep the source they
- read.
+ reads when `hegel_timezone_spec_new` creates it or
+ `hegel_timezone_spec_set_source` resets it to NULL, and the one
+ `hegel_timezone_resolve`, `hegel_timezone_offset_at`,
+ `hegel_timezone_info`, their `_in` forms given a NULL source and
+ `hegel_generate_zoned_datetime_for_zone` given a NULL source ask at the
+ time of the call. Until a frontend sets one it is the bundled database;
+ NULL restores it. A frontend sets its standard library's database once,
+ at startup; specs created earlier keep the source they read.
 
  Returns `HEGEL_OK`.
  */
@@ -4716,13 +4859,16 @@ hegel_result_t hegel_context_set_error(hegel_context_t *ctx, hegel_string_t mess
 
 /*
  Create a time zone spec allowing every name of the process's default
- zone source, read now, with link names such as `Asia/Calcutta`
- included, legacy names such as `EST5EDT` excluded and `Etc/Unknown`
- excluded.
+ zone source, with link names such as `Asia/Calcutta` included, legacy
+ names such as `EST5EDT` excluded and `Etc/Unknown` excluded. The spec
+ reads which source is the default now, and keeps it whatever
+ `hegel_set_default_zone_source` does later; it reads that source's
+ names when it is first validated or drawn from.
 
  On success writes a caller-owned handle into `*out_spec` (release with
  `hegel_timezone_spec_free`) and returns `HEGEL_OK`. Returns
- `HEGEL_E_INVALID_ARG` for a NULL `out_spec`.
+ `HEGEL_E_INVALID_ARG` for a NULL `out_spec`. It cannot otherwise fail:
+ it does not read the source's names or call its loader.
  */
 hegel_result_t hegel_timezone_spec_new(hegel_context_t *ctx, hegel_timezone_spec_t **out_spec);
 
@@ -4736,14 +4882,16 @@ hegel_result_t hegel_timezone_spec_free(hegel_context_t *ctx, hegel_timezone_spe
  Restrict the draw to an explicit list of names.
 
  Parameters:
- `names`, `len`: `len` names, each exactly as the IANA database spells
-   it or `Etc/Unknown`. The link and legacy flags do
-   not apply to an explicit list. A name the database lacks is an
-   argument error unless `hegel_timezone_spec_set_opaque` allowed it.
+ `names`, `len`: `len` names, each exactly as the spec's zone source
+   spells it (the bundled database as IANA does), or `Etc/Unknown`. The
+   link and legacy flags do not apply to an explicit list. Whether the
+   source knows each name is checked when the spec is validated or
+   first drawn from, not here: a name it lacks is then an argument
+   error unless `hegel_timezone_spec_set_opaque` accepted it.
 
  Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
- `HEGEL_E_INVALID_ARG` for an empty list, a NULL or non-UTF-8 name, or
- an unknown name not allowed as opaque, which leaves the spec as it was.
+ `HEGEL_E_INVALID_ARG` for an empty list or a NULL or non-UTF-8 name,
+ which leaves the spec as it was.
  */
 hegel_result_t hegel_timezone_spec_set_names(hegel_context_t *ctx,
                                              hegel_timezone_spec_t *spec,
@@ -4781,14 +4929,14 @@ hegel_result_t hegel_timezone_spec_set_unknown(hegel_context_t *ctx,
                                                bool unknown);
 
 /*
- Whether a name in an explicit list that the bundled database lacks is
- accepted as an opaque zone (off by default): one the frontend's own
+ Whether a name in an explicit list that the spec's zone source lacks
+ is accepted as an opaque zone (off by default): one the frontend's own
  database knows, drawn like any other name but evaluated like
  `Etc/Unknown`, with its civil time read as UTC and an unknown offset.
 
- Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
- `HEGEL_E_INVALID_ARG` for turning it off while an opaque name is
- allowed, which leaves the spec as it was.
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_HANDLE` for a NULL `spec`.
+ Turning it off while the explicit list holds a name the source lacks
+ is reported when the spec is next validated or drawn from.
  */
 hegel_result_t hegel_timezone_spec_set_opaque(hegel_context_t *ctx,
                                               hegel_timezone_spec_t *spec,
@@ -4804,15 +4952,33 @@ hegel_result_t hegel_timezone_spec_set_opaque(hegel_context_t *ctx,
  `source`: The source, which the spec keeps alive; NULL for the
    process's default zone source as it is now.
 
- Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
- `HEGEL_E_INVALID_ARG` when the source lacks a name of the spec's
- explicit list not allowed as opaque, the source's names leave nothing
- to draw, or loading a name's data to tag it fails, which leaves the
- spec as it was.
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_HANDLE` for a NULL `spec`. The
+ source is not read here: a name of the spec's explicit list that it
+ lacks, a source whose names leave nothing to draw and a failure to
+ load a name's data are reported when the spec is next validated or
+ drawn from.
  */
 hegel_result_t hegel_timezone_spec_set_source(hegel_context_t *ctx,
                                               hegel_timezone_spec_t *spec,
                                               const hegel_zone_source_t *source);
+
+/*
+ Check a time zone spec's settings against each other and against its
+ zone source, as the first draw from it would: read the source's names
+ (calling its loader for a name whose data it needs to describe) and
+ build the set of allowed names. A spec that validates keeps what it
+ built until a setter is next called, so draws from it do not read the
+ source's names again; one that does not is checked again by the next
+ call or draw.
+
+ Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
+ `HEGEL_E_INVALID_ARG` when the explicit list holds a name the source
+ lacks and opaque names are not accepted, when no name is allowed (the
+ source has none that the link and legacy flags admit), or when the
+ source's loader fails.
+ */
+hegel_result_t hegel_timezone_spec_validate(hegel_context_t *ctx,
+                                            const hegel_timezone_spec_t *spec);
 
 /*
  Draw a time zone name allowed by `spec`.
@@ -4822,12 +4988,15 @@ hegel_result_t hegel_timezone_spec_set_source(hegel_context_t *ctx,
  `out_result`: Receives the name as a libhegel-allocated
    `hegel_owned_string_t`; release with `hegel_owned_string_free`.
 
- Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`.
+ Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`, or `HEGEL_E_INVALID_ARG`
+ for a spec `hegel_timezone_spec_validate` rejects, which a spec that
+ has not been validated since its last setter reports here.
 
  Half the draws are uniform over the allowed names and half weighted by
  the zones' feature tags, so that zones with a rare feature are drawn
  at a rate a short run reaches. Shrinks down the rank ladder
- `hegel_timezone_info` reports, to `UTC` when it is allowed.
+ `hegel_timezone_info_in` reports for the spec's source, to `UTC` when
+ it is allowed.
  */
 hegel_result_t hegel_generate_timezone(hegel_context_t *ctx,
                                        hegel_test_case_t *tc,
@@ -4851,15 +5020,18 @@ hegel_result_t hegel_zoned_spec_new(hegel_context_t *ctx, hegel_zoned_spec_t **o
 hegel_result_t hegel_zoned_spec_free(hegel_context_t *ctx, hegel_zoned_spec_t *spec);
 
 /*
- Bound the draw on the wall clock of whatever zone is drawn.
+ Bound the draw on the wall clock of whatever zone is drawn. A spec is
+ bounded on the wall clock or on the instant, not both: one given both
+ kinds of bounds fails validation, and so does one whose civil bounds
+ hold no value at its precision.
 
  Parameters:
  `min_value` / `max_value`: Inclusive bounds on the civil datetime, as
    for `hegel_generate_datetime`.
 
  Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
- `HEGEL_E_INVALID_ARG` for invalid or inverted bounds, or bounds holding
- no value at the spec's precision.
+ `HEGEL_E_INVALID_ARG` for invalid or inverted bounds, which leaves the
+ spec as it was.
  */
 hegel_result_t hegel_zoned_spec_set_civil_bounds(hegel_context_t *ctx,
                                                  hegel_zoned_spec_t *spec,
@@ -4867,7 +5039,9 @@ hegel_result_t hegel_zoned_spec_set_civil_bounds(hegel_context_t *ctx,
                                                  hegel_datetime_t max_value);
 
 /*
- Bound the draw on the instant.
+ Bound the draw on the instant. A spec is bounded on the wall clock or
+ on the instant, not both: one given both kinds of bounds fails
+ validation.
 
  Parameters:
  `min_value` / `max_value`: Inclusive bounds on the instant, each with
@@ -4875,11 +5049,11 @@ hegel_result_t hegel_zoned_spec_set_civil_bounds(hegel_context_t *ctx,
    `nanosecond` at most 999999999.
 
  Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
- `HEGEL_E_INVALID_ARG` for invalid or inverted bounds. Whether the
- bounds hold a value at the spec's precision depends on the drawn
- zone's offset: a draw whose zone has none rejects the test case, and
- one for which no allowed zone has any fails with
- `HEGEL_E_INVALID_ARG`.
+ `HEGEL_E_INVALID_ARG` for invalid or inverted bounds, which leaves the
+ spec as it was. Whether the bounds hold a value at the spec's
+ precision depends on the drawn zone's offset: a draw whose zone has
+ none rejects the test case, and one for which no allowed zone has any
+ fails with `HEGEL_E_INVALID_ARG`.
 
  The bounds become a wall-clock window in the drawn zone, clamped to
  the civil range; when that window holds no value at the precision, or
@@ -4905,8 +5079,8 @@ hegel_result_t hegel_zoned_spec_set_instant_bounds(hegel_context_t *ctx,
    whole number of these units, and shrinks toward midnight in them.
 
  Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
- `HEGEL_E_INVALID_ARG` for an unknown precision or one at which the
- spec's bounds hold no value.
+ `HEGEL_E_INVALID_ARG` for an unknown precision. A precision at which
+ the spec's civil bounds hold no value fails validation.
  */
 hegel_result_t hegel_zoned_spec_set_precision(hegel_context_t *ctx,
                                               hegel_zoned_spec_t *spec,
@@ -4925,8 +5099,8 @@ hegel_result_t hegel_zoned_spec_set_precision(hegel_context_t *ctx,
    the clocks skipped entirely) is moved to the first wall time after
    the gap, or when that lies past the bounds to the last wall time
    before it, as a transform of the drawn value; when neither lies
-   within the bounds, which then lie within the gap, the test case is
-   rejected.
+   within the bounds, which then lie within the gap, the zone has no
+   value in the bounds (see `hegel_generate_zoned_datetime`).
 
  Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
  `HEGEL_E_INVALID_ARG` for an unknown policy.
@@ -4952,6 +5126,16 @@ hegel_result_t hegel_zoned_spec_set_ambiguous(hegel_context_t *ctx,
                                               uint32_t ambiguous);
 
 /*
+ Check a zoned datetime spec's settings against each other, as every
+ draw from it does.
+
+ Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
+ `HEGEL_E_INVALID_ARG` when the spec was given both civil bounds and
+ instant bounds, or its civil bounds hold no value at its precision.
+ */
+hegel_result_t hegel_zoned_spec_validate(hegel_context_t *ctx, const hegel_zoned_spec_t *spec);
+
+/*
  Draw a zoned datetime in a zone allowed by `tz_spec` within
  `zoned_spec`'s bounds.
 
@@ -4962,7 +5146,21 @@ hegel_result_t hegel_zoned_spec_set_ambiguous(hegel_context_t *ctx,
  `out_zone`: Receives the zone name as a libhegel-allocated
    `hegel_owned_string_t`; release with `hegel_owned_string_free`.
 
- Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`.
+ Returns:
+ - `HEGEL_OK` with the value written.
+ - `HEGEL_E_STOP_TEST` as any draw does.
+ - `HEGEL_E_ASSUME`, rejecting the test case, when the drawn zone has
+   no value in the bounds but another allowed zone does (no wall time
+   at the precision, or under `HEGEL_IMAGINARY_AVOID` bounds that lie
+   within a gap of that zone), or when the drawn wall time's instant
+   falls outside instant bounds (a fold on the wrong side of a bound).
+   As after any `HEGEL_E_ASSUME`, the frontend abandons the test case.
+ - `HEGEL_E_INVALID_ARG` for a spec `hegel_timezone_spec_validate` or
+   `hegel_zoned_spec_validate` rejects, for bounds in which no allowed
+   zone has a value, for a drawn name the source declared but has no
+   data for and no loader to ask, and for a loader that fails or
+   supplies no data for a declared name.
+ - `HEGEL_E_INVALID_HANDLE` for a NULL spec.
 
  The draw is a zone, then a wall-clock time within the bounds in that
  zone, then the fold when the wall time is ambiguous. One draw in
@@ -4983,6 +5181,52 @@ hegel_result_t hegel_generate_zoned_datetime(hegel_context_t *ctx,
                                              const hegel_zoned_spec_t *zoned_spec,
                                              hegel_zoned_datetime_t *out_value,
                                              hegel_owned_string_t *out_zone);
+
+/*
+ Draw a zoned datetime within `zoned_spec`'s bounds in a zone the
+ caller names, for a frontend that chose the zone some other way (from
+ a generator of its own, say): the draw `hegel_generate_zoned_datetime`
+ makes once it has drawn its zone. It records the choices that draw
+ records after the zone (the wall-clock time and, when the wall time is
+ ambiguous, the fold) and no choice for the zone, so the caller's own
+ draw of the name is what replays and shrinks it.
+
+ Parameters:
+ `source`: The zone source `name` is resolved against, or NULL for the
+   process's default zone source as it is at this call.
+ `name`: A name the source knows, exactly as it spells it, or
+   `Etc/Unknown`, in which the civil time is read as UTC with an
+   unknown offset. The name's data is loaded through the source's
+   loader if the source does not have it yet.
+ `zoned_spec`: A spec built by `hegel_zoned_spec_new`.
+ `out_value`: Receives the value; see `hegel_zoned_datetime_t`. The
+   zone is `name`.
+
+ Returns:
+ - `HEGEL_OK` with the value written.
+ - `HEGEL_E_STOP_TEST` as any draw does.
+ - `HEGEL_E_ASSUME`, rejecting the test case, when the zone has no
+   value in the bounds (no wall time at the precision, or under
+   `HEGEL_IMAGINARY_AVOID` bounds that lie within a gap of the zone),
+   or when the drawn wall time's instant falls outside instant bounds.
+   It is never an argument error for the zone to have no value, since
+   the engine cannot see what other zones the caller might have named.
+ - `HEGEL_E_INVALID_ARG` for a name the source does not know (the
+   message names it; it is never drawn as an opaque zone), a name that
+   is not UTF-8, a spec `hegel_zoned_spec_validate` rejects, a NULL
+   `out_value`, a name the source declared but has no data for and no
+   loader to ask, and a loader that fails or supplies no data.
+ - `HEGEL_E_INVALID_HANDLE` for a NULL `zoned_spec`.
+
+ Targets and shrinks as `hegel_generate_zoned_datetime` does within one
+ zone.
+ */
+hegel_result_t hegel_generate_zoned_datetime_for_zone(hegel_context_t *ctx,
+                                                      hegel_test_case_t *tc,
+                                                      const hegel_zone_source_t *source,
+                                                      hegel_string_t name,
+                                                      const hegel_zoned_spec_t *zoned_spec,
+                                                      hegel_zoned_datetime_t *out_value);
 
 /*
  Draw an instant in `[min_value, max_value]`.
@@ -5093,9 +5337,11 @@ hegel_result_t hegel_span_spec_free(hegel_context_t *ctx, hegel_span_spec_t *spe
    within `[max(min_value, 0), max_value]`.
 
  Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
- `HEGEL_E_INVALID_ARG` for an unknown unit, inverted bounds, a negative
- `min_value` under the nonnegative policy or bounds that leave the
- uniform policy no common sign.
+ `HEGEL_E_INVALID_ARG` for an unknown unit or inverted bounds, which
+ leaves the spec as it was. Whether the sign policy admits the bounds
+ (a negative `min_value` under the nonnegative policy, bounds that
+ leave the uniform policy no common sign) is checked at validation,
+ since the policy may be set afterwards.
  */
 hegel_result_t hegel_span_spec_set_unit_bounds(hegel_context_t *ctx,
                                                hegel_span_spec_t *spec,
@@ -5115,12 +5361,23 @@ hegel_result_t hegel_span_spec_set_unit_bounds(hegel_context_t *ctx,
    enabled unit's `min_value` must be at least 0.
 
  Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
- `HEGEL_E_INVALID_ARG` for an unknown policy or one the enabled units'
- bounds do not admit.
+ `HEGEL_E_INVALID_ARG` for an unknown policy. Whether the enabled
+ units' bounds admit the policy is checked at validation.
  */
 hegel_result_t hegel_span_spec_set_sign(hegel_context_t *ctx,
                                         hegel_span_spec_t *spec,
                                         uint32_t sign);
+
+/*
+ Check a span spec's settings against each other, as every draw from
+ it does.
+
+ Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `spec`, or
+ `HEGEL_E_INVALID_ARG` when no unit is enabled, when a unit's
+ `min_value` is negative under the nonnegative sign policy, or when the
+ units' bounds leave the uniform policy no sign every unit admits.
+ */
+hegel_result_t hegel_span_spec_validate(hegel_context_t *ctx, const hegel_span_spec_t *spec);
 
 /*
  Draw a calendar span within `spec`'s bounds.
@@ -5130,7 +5387,7 @@ hegel_result_t hegel_span_spec_set_sign(hegel_context_t *ctx,
    enabled.
 
  Returns `HEGEL_OK` or `HEGEL_E_STOP_TEST`, or `HEGEL_E_INVALID_ARG`
- when no unit is enabled.
+ for a spec `hegel_span_spec_validate` rejects.
 
  The draw is the sign, when the policy is uniform and a span of either
  sign other than zero lies in the bounds, then one value per enabled
@@ -5142,6 +5399,145 @@ hegel_result_t hegel_generate_span(hegel_context_t *ctx,
                                    hegel_test_case_t *tc,
                                    const hegel_span_spec_t *spec,
                                    hegel_span_t *out_value);
+
+/*
+ The canonical text of a date: `YYYY-MM-DD`, the year four digits from
+ 0 to 9999 and otherwise a sign and at least six digits (ISO 8601's
+ expanded year). `{2024, 3, 10}` is `2024-03-10`, `{10000, 1, 1}` is
+ `+010000-01-01` and `{-1, 12, 31}` is `-000001-12-31`.
+
+ This and the other `hegel_format_*` functions give the text every
+ frontend prints its own temporal value types as, so that a value reads
+ the same in every language. They never fail on a value: a field
+ outside its documented range is printed as it stands.
+
+ Parameters:
+ `out`: Receives the text as a libhegel-allocated
+   `hegel_owned_string_t`; release with `hegel_owned_string_free`.
+
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for a NULL `out`.
+ */
+hegel_result_t hegel_format_date(hegel_context_t *ctx,
+                                 hegel_date_t value,
+                                 hegel_owned_string_t *out);
+
+/*
+ The canonical text of a time of day: `HH:MM:SS`, followed when the
+ nanosecond is not zero by `.` and its nine digits without trailing
+ zeros. `{2, 30, 0, 0}` is `02:30:00` and `{2, 30, 0, 500000000}` is
+ `02:30:00.5`.
+
+ Parameters and return codes are as for `hegel_format_date`.
+ */
+hegel_result_t hegel_format_time(hegel_context_t *ctx,
+                                 hegel_time_t value,
+                                 hegel_owned_string_t *out);
+
+/*
+ The canonical text of a naive datetime: the date as
+ `hegel_format_date` gives it, `T`, and the time as `hegel_format_time`
+ gives it, such as `2024-03-10T02:30:00`.
+
+ Parameters and return codes are as for `hegel_format_date`.
+ */
+hegel_result_t hegel_format_datetime(hegel_context_t *ctx,
+                                     hegel_datetime_t value,
+                                     hegel_owned_string_t *out);
+
+/*
+ The canonical text of an instant: its UTC datetime as
+ `hegel_format_datetime` gives it, and `Z`. `{946684800, 0}` is
+ `2000-01-01T00:00:00Z` and `{-2, 500000000}` (-1.5 s) is
+ `1969-12-31T23:59:58.5Z`. Any `second` is printed, with a year of as
+ many digits as it needs.
+
+ Parameters and return codes are as for `hegel_format_date`.
+ */
+hegel_result_t hegel_format_timestamp(hegel_context_t *ctx,
+                                      hegel_timestamp_t value,
+                                      hegel_owned_string_t *out);
+
+/*
+ The canonical text of a UTC offset: `+HH:MM` or `-HH:MM`, followed by
+ `:SS` when the seconds are not zero, and `-00:00` (RFC 3339's unknown
+ offset) when `known` is false. `{19800, true}` is `+05:30`,
+ `{-2670, true}` is `-00:44:30`, `{0, true}` is `+00:00` and
+ `{0, false}` is `-00:00`.
+
+ Parameters and return codes are as for `hegel_format_date`.
+ */
+hegel_result_t hegel_format_offset(hegel_context_t *ctx,
+                                   hegel_offset_t value,
+                                   hegel_owned_string_t *out);
+
+/*
+ The canonical text of a duration: ISO 8601's `PT` form in hours,
+ minutes and seconds, each present when it is not zero, the seconds
+ carrying the fraction without trailing zeros, with a leading `-` when
+ the duration is negative and `PT0S` for zero. `{5405, 500000000}` is
+ `PT1H30M5.5S`, `{0, -500000000}` is `-PT0.5S` and `{86400, 0}` is
+ `PT24H`: there is no day unit, since a duration is an exact number of
+ seconds.
+
+ Parameters and return codes are as for `hegel_format_date`.
+ */
+hegel_result_t hegel_format_duration(hegel_context_t *ctx,
+                                     hegel_duration_t value,
+                                     hegel_owned_string_t *out);
+
+/*
+ The canonical text of a calendar span: its units that are not zero,
+ largest first, each the count and the unit's suffix (`y`, `mo`, `w`,
+ `d`, `h`, `m`, `s`, `ms`, `µs`, `ns`), separated by single spaces, and
+ `0s` for the zero span. The text is UTF-8: the microsecond suffix is
+ U+00B5 MICRO SIGN and `s`.
+
+ The signs are written so that two different spans never print the
+ same. A span with no negative unit has none: `1y 2mo 3d`. A span with
+ no positive unit has one leading `-` that applies to every unit:
+ `-3d 4h` is -3 days and -4 hours. A span with units of both signs
+ writes a `+` or `-` on every unit: `-3d +4h` is -3 days and +4 hours,
+ and `+1y -2mo` is 1 year and -2 months.
+
+ Parameters:
+ `value`: The span, read during the call only.
+ `out`: As for `hegel_format_date`.
+
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for a NULL `value` or
+ `out`.
+ */
+hegel_result_t hegel_format_span(hegel_context_t *ctx,
+                                 const hegel_span_t *value,
+                                 hegel_owned_string_t *out);
+
+/*
+ The canonical text of a zoned datetime, in the form of RFC 9557: the
+ civil datetime as `hegel_format_datetime` gives it; the offset as
+ `hegel_format_offset` gives it, except that in the zone `Etc/Unknown`
+ it is `Z`; the zone name in brackets; and, for a wall time the clocks
+ skipped, `[gap]`, or for one they repeated `[fold=0]` (the earlier
+ instant) or `[fold=1]` (the later). For example
+ `2024-03-10T01:30:00-05:00[America/New_York]`,
+ `2024-03-10T02:30:00-04:00[America/New_York][gap]`,
+ `2024-11-03T01:30:00-05:00[America/New_York][fold=1]`,
+ `2000-01-01T00:00:00Z[Etc/Unknown]` and, for an opaque zone, whose
+ offset is not known, `2000-01-01T00:00:00-00:00[Mars/Base]`.
+
+ Parameters:
+ `value`: The value, read during the call only. Its `civil`,
+   `offset_seconds`, `offset_known`, `fold` and `kind` are what is
+   printed.
+ `zone`: The zone name, as the draw reported it or was given it.
+ `out`: As for `hegel_format_date`.
+
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for a NULL `value` or
+ `out`, a `zone` that is not UTF-8, or a `kind` that is not a
+ `hegel_timezone_kind_t`.
+ */
+hegel_result_t hegel_format_zoned_datetime(hegel_context_t *ctx,
+                                           const hegel_zoned_datetime_t *value,
+                                           hegel_string_t zone,
+                                           hegel_owned_string_t *out);
 
 #ifdef __cplusplus
 }  // extern "C"

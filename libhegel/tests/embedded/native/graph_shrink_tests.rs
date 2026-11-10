@@ -780,7 +780,7 @@ fn a_string_under_a_grammar_moves_to_its_simplest_or_down_its_derivation() {
 }
 
 fn zone_body(tc: &mut NativeTestCase, _: &mut Lcg) -> Option<bool> {
-    let spec = crate::native::draws::timezone::TimeZoneSpec::new().unwrap();
+    let spec = crate::native::draws::timezone::TimeZoneSpec::new();
     let name = draw(tc, 1, |tc| {
         crate::native::draws::timezone::draw_timezone(tc, &spec).map(|e| e.name.clone())
     })?;
@@ -788,7 +788,7 @@ fn zone_body(tc: &mut NativeTestCase, _: &mut Lcg) -> Option<bool> {
 }
 
 fn any_zone_body(tc: &mut NativeTestCase, _: &mut Lcg) -> Option<bool> {
-    let spec = crate::native::draws::timezone::TimeZoneSpec::new().unwrap();
+    let spec = crate::native::draws::timezone::TimeZoneSpec::new();
     draw(tc, 1, |tc| {
         crate::native::draws::timezone::draw_timezone(tc, &spec).map(|_| true)
     })
@@ -797,7 +797,7 @@ fn any_zone_body(tc: &mut NativeTestCase, _: &mut Lcg) -> Option<bool> {
 #[test]
 fn a_string_under_a_time_zone_set_moves_to_the_simplest_or_down_the_ladder() {
     let cb = |s: &str| ChoiceValue::String(s.chars().map(|c| c as u32).collect());
-    let mut spec = crate::native::draws::timezone::TimeZoneSpec::new().unwrap();
+    let mut spec = crate::native::draws::timezone::TimeZoneSpec::new();
     spec.set_names(
         [
             "UTC",
@@ -813,7 +813,7 @@ fn a_string_under_a_time_zone_set_moves_to_the_simplest_or_down_the_ladder() {
     .unwrap();
     let under_zones = |value: &str| {
         ChoiceData::String(
-            Arc::clone(spec.kind()),
+            Arc::clone(spec.kind().unwrap()),
             value.chars().map(u32::from).collect(),
         )
     };

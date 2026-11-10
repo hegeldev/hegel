@@ -1646,6 +1646,167 @@ fn health_check_surfaces_as_run_error() {
     }
 }
 
+/// The temporal functions and handle types are exported by the built
+/// library and callable through it: a zone source, a time zone spec over
+/// it, the spec validators, a zoned draw in a named zone and the
+/// formatters, with their structs passed by value and by pointer.
+#[test]
+fn libhegel_exports_the_temporal_functions() {
+    use hegel_c::{
+        hegel_date_t, hegel_datetime_t, hegel_owned_string_t, hegel_time_t, hegel_timestamp_t,
+        hegel_timezone_kind_t, hegel_zoned_datetime_t,
+    };
+    type FnNew = unsafe extern "C" fn(*mut u8, *mut *mut u8) -> c_int;
+    type FnHandle = unsafe extern "C" fn(*mut u8, *mut u8) -> c_int;
+    type FnAddTzif =
+        unsafe extern "C" fn(*mut u8, *mut u8, hegel_string_t, *const u8, usize) -> c_int;
+    type FnForZone = unsafe extern "C" fn(
+        *mut u8,
+        *mut u8,
+        *const u8,
+        hegel_string_t,
+        *const u8,
+        *mut hegel_zoned_datetime_t,
+    ) -> c_int;
+    type FnFormatTimestamp =
+        unsafe extern "C" fn(*mut u8, hegel_timestamp_t, *mut hegel_owned_string_t) -> c_int;
+    type FnFormatZoned = unsafe extern "C" fn(
+        *mut u8,
+        *const hegel_zoned_datetime_t,
+        hegel_string_t,
+        *mut hegel_owned_string_t,
+    ) -> c_int;
+    type FnOwnedStringFree = unsafe extern "C" fn(*mut u8, *mut hegel_owned_string_t) -> c_int;
+
+    let lib = unsafe { load() };
+    let a = unsafe { bind(&lib) };
+    unsafe {
+        let source_new: Symbol<FnNew> = lib.get(b"hegel_zone_source_new\0").unwrap();
+        let source_free: Symbol<FnHandle> = lib.get(b"hegel_zone_source_free\0").unwrap();
+        let add_tzif: Symbol<FnAddTzif> = lib.get(b"hegel_zone_source_add_tzif\0").unwrap();
+        let tz_new: Symbol<FnNew> = lib.get(b"hegel_timezone_spec_new\0").unwrap();
+        let tz_set_source: Symbol<unsafe extern "C" fn(*mut u8, *mut u8, *const u8) -> c_int> =
+            lib.get(b"hegel_timezone_spec_set_source\0").unwrap();
+        let tz_validate: Symbol<FnHandle> = lib.get(b"hegel_timezone_spec_validate\0").unwrap();
+        let tz_free: Symbol<FnHandle> = lib.get(b"hegel_timezone_spec_free\0").unwrap();
+        let zoned_new: Symbol<FnNew> = lib.get(b"hegel_zoned_spec_new\0").unwrap();
+        let zoned_validate: Symbol<FnHandle> = lib.get(b"hegel_zoned_spec_validate\0").unwrap();
+        let zoned_free: Symbol<FnHandle> = lib.get(b"hegel_zoned_spec_free\0").unwrap();
+        let span_new: Symbol<FnNew> = lib.get(b"hegel_span_spec_new\0").unwrap();
+        let span_validate: Symbol<FnHandle> = lib.get(b"hegel_span_spec_validate\0").unwrap();
+        let span_free: Symbol<FnHandle> = lib.get(b"hegel_span_spec_free\0").unwrap();
+        let for_zone: Symbol<FnForZone> = lib
+            .get(b"hegel_generate_zoned_datetime_for_zone\0")
+            .unwrap();
+        let format_timestamp: Symbol<FnFormatTimestamp> =
+            lib.get(b"hegel_format_timestamp\0").unwrap();
+        let format_zoned: Symbol<FnFormatZoned> =
+            lib.get(b"hegel_format_zoned_datetime\0").unwrap();
+        let owned_string_free: Symbol<FnOwnedStringFree> =
+            lib.get(b"hegel_owned_string_free\0").unwrap();
+        for name in [
+            &b"hegel_format_date\0"[..],
+            b"hegel_format_time\0",
+            b"hegel_format_datetime\0",
+            b"hegel_format_offset\0",
+            b"hegel_format_duration\0",
+            b"hegel_format_span\0",
+            b"hegel_zone_source_set_loader\0",
+        ] {
+            lib.get::<unsafe extern "C" fn()>(name).unwrap();
+        }
+
+        let ctx = (a.context_new)();
+        let read = |text: &mut hegel_owned_string_t| {
+            let s = String::from_utf8(
+                std::slice::from_raw_parts(text.data.cast::<u8>(), text.len).to_vec(),
+            )
+            .unwrap();
+            assert_eq!(owned_string_free(ctx, text), HEGEL_OK);
+            s
+        };
+        let mut text = hegel_owned_string_t {
+            data: ptr::null(),
+            len: 0,
+        };
+        let before_the_epoch = hegel_timestamp_t {
+            second: -2,
+            nanosecond: 500_000_000,
+        };
+        assert_eq!(format_timestamp(ctx, before_the_epoch, &mut text), HEGEL_OK);
+        assert_eq!(read(&mut text), "1969-12-31T23:59:58.5Z");
+
+        let mut source: *mut u8 = ptr::null_mut();
+        assert_eq!(source_new(ctx, &mut source), HEGEL_OK);
+        let name = hegel_string_t {
+            data: c"Europe/Atlantis".as_ptr(),
+            len: 15,
+        };
+        let bytes = jiff_tzdb::get("Europe/London").unwrap().1;
+        assert_eq!(
+            add_tzif(ctx, source, name, bytes.as_ptr(), bytes.len()),
+            HEGEL_OK
+        );
+        let mut tz: *mut u8 = ptr::null_mut();
+        assert_eq!(tz_new(ctx, &mut tz), HEGEL_OK);
+        assert_eq!(tz_set_source(ctx, tz, source), HEGEL_OK);
+        assert_eq!(tz_validate(ctx, tz), HEGEL_OK);
+        let mut zoned: *mut u8 = ptr::null_mut();
+        assert_eq!(zoned_new(ctx, &mut zoned), HEGEL_OK);
+        assert_eq!(zoned_validate(ctx, zoned), HEGEL_OK);
+        let mut span: *mut u8 = ptr::null_mut();
+        assert_eq!(span_new(ctx, &mut span), HEGEL_OK);
+        assert_eq!(span_validate(ctx, span), HEGEL_E_INVALID_ARG);
+        let err = read_string(a.context_last_error(ctx)).to_string_lossy();
+        assert!(err.starts_with("hegel_span_spec_validate: "), "{err}");
+
+        let s = a.settings_new(ctx);
+        a.settings_test_cases(ctx, s, 1);
+        let empty = CString::new("").unwrap();
+        (a.settings_database)(ctx, s, &test_string(&empty));
+        a.settings_derandomize(ctx, s, true);
+        let run = a.run_start(ctx, s);
+        let tc = a.next_test_case(ctx, run);
+        let mut value = hegel_zoned_datetime_t {
+            civil: hegel_datetime_t {
+                date: hegel_date_t {
+                    year: 0,
+                    month: 0,
+                    day: 0,
+                },
+                time: hegel_time_t {
+                    hour: 0,
+                    minute: 0,
+                    second: 0,
+                    nanosecond: 0,
+                },
+            },
+            offset_seconds: 0,
+            offset_known: false,
+            fold: false,
+            kind: hegel_timezone_kind_t::HEGEL_TIMEZONE_KIND_UNIQUE,
+            offset_before: 0,
+            offset_after: 0,
+            timestamp: before_the_epoch,
+        };
+        assert_eq!(for_zone(ctx, tc, source, name, zoned, &mut value), HEGEL_OK);
+        assert!(value.offset_known);
+        assert!((1..=12).contains(&value.civil.date.month));
+        assert_eq!(format_zoned(ctx, &value, name, &mut text), HEGEL_OK);
+        let shown = read(&mut text);
+        assert!(shown.contains("[Europe/Atlantis]"), "{shown}");
+        a.complete_and_free(ctx, tc, CStatus::Valid, ptr::null());
+
+        a.run_free(ctx, run);
+        a.settings_free(ctx, s);
+        assert_eq!(span_free(ctx, span), HEGEL_OK);
+        assert_eq!(zoned_free(ctx, zoned), HEGEL_OK);
+        assert_eq!(source_free(ctx, source), HEGEL_OK);
+        assert_eq!(tz_free(ctx, tz), HEGEL_OK);
+        (a.context_free)(ctx);
+    }
+}
+
 unsafe fn c_string_from_ptr(data: *const std::ffi::c_char) -> hegel_c::hegel_string_t {
     hegel_c::hegel_string_t {
         data,

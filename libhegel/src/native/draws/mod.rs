@@ -1,5 +1,6 @@
 //! Typed draw parameter handling for the `hegel_generate_*` C ABI.
 
+pub mod format;
 pub mod internet;
 pub mod regex;
 pub mod scalar;

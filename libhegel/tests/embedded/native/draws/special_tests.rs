@@ -255,6 +255,90 @@ fn civil_day_conversions_round_trip() {
 }
 
 #[test]
+fn days_convert_to_civil_dates_beyond_the_date_envelope() {
+    assert_eq!(civil_of_days(0), (1970, 1, 1));
+    assert_eq!(civil_of_days(-100_000_000), (-271_821, 4, 20));
+    assert_eq!(civil_of_days(100_000_000), (275_760, 9, 13));
+    assert_eq!(days_from_civil(&date(-271_821, 4, 20)), -100_000_000);
+    assert_eq!(days_from_civil(&date(275_760, 9, 13)), 100_000_000);
+    assert_eq!(
+        civil_of_days(i64::MAX.div_euclid(86_400)),
+        (292_277_026_596, 12, 4)
+    );
+    assert_eq!(
+        civil_of_days(i64::MIN.div_euclid(86_400)),
+        (-292_277_022_657, 1, 27)
+    );
+    for days in [-1_000_000_000, -146_097, -1, 0, 59, 146_096, 1_000_000_000] {
+        let (year, month, day) = civil_of_days(days);
+        let (next_year, next_month, next_day) = civil_of_days(days + 1);
+        if next_day != 1 {
+            assert_eq!((next_year, next_month, next_day), (year, month, day + 1));
+        } else if next_month != 1 {
+            assert_eq!((next_year, next_month), (year, month + 1));
+        } else {
+            assert_eq!((next_year, month, day), (year + 1, 12, 31));
+        }
+    }
+}
+
+#[test]
+fn the_ecmascript_date_range_is_targeted_at_both_ends() {
+    for edge in [date(-271_821, 4, 20), date(275_760, 9, 13)] {
+        assert!(
+            INTERESTING_DATES
+                .iter()
+                .any(|&(year, month, day)| date(year, month, day) == edge),
+            "{edge:?}"
+        );
+        assert_eq!(days_from_civil(&edge).unsigned_abs(), 100_000_000);
+    }
+    let edge = date(-271_821, 4, 20);
+    let (min, max) = (date(-300_000, 1, 1), date(-250_000, 1, 1));
+    let hit = (0..4000).any(|seed| {
+        generate_date(&mut fresh_ntc(seed), min, max, &DateOptions::default()).unwrap() == edge
+    });
+    assert!(hit);
+}
+
+#[test]
+fn date_mask_setters_check_the_whole_mask() {
+    let invalid = |r: Result<(), EngineError>| match r {
+        Err(EngineError::InvalidArgument(m)) => m,
+        other => panic!("{other:?}"),
+    };
+    let mut options = DateOptions::default();
+    for (mask, text) in [
+        (0, "0x0"),
+        (0x80, "0x80"),
+        (0x100, "0x100"),
+        (u32::MAX, "0xffffffff"),
+    ] {
+        assert_eq!(
+            invalid(options.set_weekdays(mask)),
+            format!("weekdays mask must name at least one weekday in bits 0..=6, got {text}")
+        );
+    }
+    for (mask, text) in [(0, "0x0"), (0x1000, "0x1000"), (0x1_0001, "0x10001")] {
+        assert_eq!(
+            invalid(options.set_months(mask)),
+            format!("months mask must name at least one month in bits 0..=11, got {text}")
+        );
+    }
+    assert_eq!(options, DateOptions::default());
+    options.set_weekdays(0x41).unwrap();
+    options.set_months(0x802).unwrap();
+    assert_eq!(
+        options,
+        DateOptions {
+            weekdays: 0x41,
+            months: 0x802
+        }
+    );
+    options.validate().unwrap();
+}
+
+#[test]
 fn generate_date_respects_bounds() {
     let min = date(1990, 6, 15);
     let max = date(2010, 2, 3);

@@ -48,7 +48,8 @@ use crate::native::draws::special::{
     Date, MAX_YEAR, MIN_YEAR, civil_from_days, days_from_civil, days_in_month,
 };
 use crate::native::timezone::{
-    CStrings, MAX_INSTANT, MIN_INSTANT, TimeZone, UNKNOWN_NAME, rule_instant,
+    CStrings, MAX_INSTANT, MIN_INSTANT, TimeZone, UNKNOWN_NAME, abbreviation, footer_type_at,
+    rule_instant,
 };
 use crate::sys::sync::{Lazy, Mutex};
 use crate::tzdata::classify;
@@ -225,15 +226,16 @@ fn c_string(what: &str, s: &str) -> Result<CString, EngineError> {
 }
 
 /// `s` as a NUL-terminated string valid for the life of the process,
-/// stored once per distinct string.
-pub fn intern_c_string(s: &str) -> Result<&'static CStr, EngineError> {
+/// stored once per distinct string; `what` names it in the error for a
+/// string with a NUL byte.
+pub fn intern_c_string(what: &str, s: &str) -> Result<&'static CStr, EngineError> {
     static STRINGS: Lazy<Mutex<BTreeMap<String, &'static CStr>>> =
         Lazy::new(|| Mutex::new(BTreeMap::new()));
     let mut strings = STRINGS.lock();
     if let Some(found) = strings.get(s) {
         return Ok(found);
     }
-    let leaked: &'static CStr = Box::leak(c_string("name", s)?.into_boxed_c_str());
+    let leaked: &'static CStr = Box::leak(c_string(what, s)?.into_boxed_c_str());
     strings.insert(s.to_string(), leaked);
     Ok(leaked)
 }
@@ -325,17 +327,28 @@ fn renumber(zone: &Zone) -> Zone {
 }
 
 /// Check `zone`, confine it to the civil envelope and prune it; see the
-/// module docs.
+/// module docs. A rule whose daylight-saving type is its standard type
+/// changes nothing and is kept as the standard type alone, and a rule
+/// that does not have the last explicit transition's type in force at
+/// that transition is an argument error: the evaluator answers from the
+/// rule from that instant on, so the two would disagree about it.
 fn prepare(mut zone: Zone) -> Result<Zone, EngineError> {
     let name = zone.name.clone();
     let mut types: Vec<LocalTimeType> = Vec::from([zone.initial]);
     types.extend(zone.transitions.iter().map(|t| t.kind));
-    if let Some(footer) = &zone.footer {
+    if let Some(footer) = &mut zone.footer {
         types.push(footer.standard);
         if let Some(dst) = &footer.dst {
             types.push(dst.kind);
             check_rule_date(&name, &dst.start)?;
             check_rule_date(&name, &dst.end)?;
+            let (a, b) = (dst.kind, footer.standard);
+            let same = a.utoff == b.utoff
+                && a.is_dst == b.is_dst
+                && zone.abbreviations.get(a.abbreviation) == zone.abbreviations.get(b.abbreviation);
+            if same {
+                footer.dst = None;
+            }
         }
     }
     if let Some(kind) = types
@@ -371,7 +384,23 @@ fn prepare(mut zone: Zone) -> Result<Zone, EngineError> {
         zone.footer = None;
     }
     classify::prune_transitions(&mut zone);
-    Ok(renumber(&zone))
+    let zone = renumber(&zone);
+    if let (Some(footer), Some(last)) = (&zone.footer, zone.transitions.last()) {
+        let ruled = footer_type_at(footer, last.instant)?;
+        if ruled != last.kind {
+            return Err(invalid(format!(
+                "zone {name}: the rule after the last transition does not continue it: the \
+                 transition at {} changes to {} (UT{:+}s), and the rule has {} (UT{:+}s) in \
+                 force then",
+                last.instant,
+                abbreviation(&zone, last.kind)?,
+                last.kind.utoff,
+                abbreviation(&zone, ruled)?,
+                ruled.utoff
+            )));
+        }
+    }
+    Ok(zone)
 }
 
 /// The zone `name` holding `data`, before [`prepare`].
@@ -560,11 +589,14 @@ fn probe(name: &str, oracle: Oracle<'_>, range: ProbeRange) -> Result<ZoneData, 
     let initial = offset_at(start)?;
     let mut transitions: Vec<(i64, ZoneType)> = Vec::new();
     let mut current = initial.clone();
+    let too_many = || {
+        invalid(format!(
+            "zone {name}: probing found more than {MAX_PROBED_TRANSITIONS} transitions"
+        ))
+    };
     let mut push = |instant: i64, kind: ZoneType, current: &mut ZoneType| {
         if transitions.len() == MAX_PROBED_TRANSITIONS {
-            return Err(invalid(format!(
-                "zone {name}: probing found more than {MAX_PROBED_TRANSITIONS} transitions"
-            )));
+            return Err(too_many());
         }
         transitions.push((instant, kind.clone()));
         *current = kind;
@@ -573,6 +605,7 @@ fn probe(name: &str, oracle: Oracle<'_>, range: ProbeRange) -> Result<ZoneData, 
     match next_transition {
         Some(next) => {
             let mut at = start;
+            let mut reported = 0usize;
             while let Some(instant) = next(at)? {
                 if instant <= at {
                     return Err(invalid(format!(
@@ -582,6 +615,10 @@ fn probe(name: &str, oracle: Oracle<'_>, range: ProbeRange) -> Result<ZoneData, 
                 }
                 if instant > last {
                     break;
+                }
+                reported += 1;
+                if reported > MAX_PROBED_TRANSITIONS {
+                    return Err(too_many());
                 }
                 let kind = offset_at(instant)?;
                 if kind != current {
@@ -734,9 +771,12 @@ impl ZoneSource {
         Ok(())
     }
 
-    /// Set the loader, or with `None` remove it.
+    /// Set the loader, or with `None` remove it. The loader it replaces
+    /// is dropped once no lookup is still calling it, and with no lock of
+    /// the source held, since dropping it may run the host's code.
     pub fn set_loader(&self, loader: Option<Arc<dyn ZoneLoader>>) -> Result<(), EngineError> {
-        *self.custom()?.loader.lock() = loader;
+        let replaced = core::mem::replace(&mut *self.custom()?.loader.lock(), loader);
+        drop(replaced);
         Ok(())
     }
 
@@ -744,7 +784,7 @@ impl ZoneSource {
     /// output does not report it (§6).
     pub fn set_version(&self, version: &str) -> Result<(), EngineError> {
         let custom = self.custom()?;
-        *custom.version.lock() = Some(intern_c_string(version)?);
+        *custom.version.lock() = Some(intern_c_string("version", version)?);
         Ok(())
     }
 
@@ -778,7 +818,8 @@ impl ZoneSource {
     /// The zone `name` evaluates as, loading its data when the source has
     /// a loader and not the data; see [`Lookup`]. `Etc/Unknown` is the
     /// unknown zone in every source. A link to a name with no data, or a
-    /// chain of links longer than 16, is an argument error, as is a
+    /// name that passes through more than 16 links, however many of them
+    /// the loader supplied, is an argument error, as is a
     /// declared name the loader supplies no data for, and a loader's error
     /// is passed on.
     pub fn lookup(self: &Arc<Self>, name: &str) -> Result<Lookup, EngineError> {
@@ -790,11 +831,19 @@ impl ZoneSource {
         };
         let mut current = name.to_string();
         let mut asked: Vec<String> = Vec::new();
-        for _ in 0..=MAX_LINK_DEPTH * 2 {
+        let mut links = 0;
+        loop {
             let slot = self.slot(&current);
             match slot {
                 Some(Slot::Zone(zone)) => return Ok(Lookup::Zone(TimeZone::Sourced(zone))),
                 Some(Slot::Link(target)) => {
+                    links += 1;
+                    if links > MAX_LINK_DEPTH {
+                        return Err(invalid(format!(
+                            "the zone source's name {name:?} passes through more than \
+                             {MAX_LINK_DEPTH} links"
+                        )));
+                    }
                     current = target;
                     continue;
                 }
@@ -823,9 +872,6 @@ impl ZoneSource {
                 ))),
             };
         }
-        Err(invalid(format!(
-            "the zone source's name {name:?} passes through more than {MAX_LINK_DEPTH} links"
-        )))
     }
 
     /// [`lookup`](Self::lookup) as the zone to evaluate: `None` for a name
@@ -926,9 +972,12 @@ pub fn default_source() -> Arc<ZoneSource> {
 }
 
 /// Set the process-wide default source; `None` restores the bundled one.
-/// Specs built earlier keep the source they read.
+/// Specs built earlier keep the source they read. The source it replaces
+/// is dropped with the lock released, since dropping the last reference
+/// to a source drops its loader, which may run the host's code.
 pub fn set_default_source(source: Option<Arc<ZoneSource>>) {
-    *DEFAULT_SOURCE.lock() = source;
+    let replaced = core::mem::replace(&mut *DEFAULT_SOURCE.lock(), source);
+    drop(replaced);
 }
 
 #[cfg(test)]

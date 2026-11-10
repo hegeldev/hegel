@@ -27,10 +27,8 @@ pub mod tzif;
 /// The deflated table; see the module docs.
 const COMPRESSED_TABLE: &[u8] = include_bytes!("tzdata.txt.z");
 
-/// The IANA release the table was generated from, such as `"2026e"`.
-pub const VERSION: &str = include_str!("version.txt");
-
-/// [`VERSION`] as a NUL-terminated C string.
+/// The IANA release the table was generated from, such as `"2026e"`, as a
+/// NUL-terminated C string.
 pub static VERSION_CSTR: &CStr =
     match CStr::from_bytes_with_nul(concat!(include_str!("version.txt"), "\0").as_bytes()) {
         Ok(c) => c,
@@ -255,6 +253,7 @@ impl Name {
 }
 
 struct Table {
+    #[cfg_attr(not(test), allow(dead_code))]
     version: String,
     names: Vec<Name>,
 }
