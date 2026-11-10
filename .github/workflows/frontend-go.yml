@@ -44,6 +44,8 @@ jobs:
 
   # The suite on the other OSes with runners (macos-latest is arm64,
   # windows-latest amd64), so the FFI loader runs end to end off Linux.
+  # macOS runs only in the merge queue and on main, since macOS runners are
+  # scarce.
   test-os:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -52,7 +54,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["windows-latest"]' || '["macos-latest", "windows-latest"]') }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
