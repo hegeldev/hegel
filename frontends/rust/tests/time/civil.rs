@@ -88,7 +88,7 @@ fn test_dates_property(tc: hegel::TestCase) {
 }
 
 #[hegel::test]
-#[should_panic(expected = "max_value < min_value")]
+#[should_panic(expected = "min_value <= max_value")]
 fn test_dates_min_greater_than_max(tc: hegel::TestCase) {
     tc.draw(
         time_gs::dates()
@@ -147,7 +147,7 @@ fn test_times_property(tc: hegel::TestCase) {
 }
 
 #[hegel::test]
-#[should_panic(expected = "max_value < min_value")]
+#[should_panic(expected = "min_value <= max_value")]
 fn test_times_min_greater_than_max(tc: hegel::TestCase) {
     tc.draw(
         time_gs::times()
@@ -223,7 +223,7 @@ fn test_primitive_datetimes_property(tc: hegel::TestCase) {
 }
 
 #[hegel::test]
-#[should_panic(expected = "max_value < min_value")]
+#[should_panic(expected = "min_value <= max_value")]
 fn test_primitive_datetimes_min_greater_than_max(tc: hegel::TestCase) {
     tc.draw(
         time_gs::primitive_datetimes()

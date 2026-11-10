@@ -1,5 +1,6 @@
 use std::fmt;
 
+use super::source::default_zone_source;
 use crate::ffi;
 
 /// The lowest year of a [`Date`].
@@ -18,11 +19,8 @@ pub const MAX_OFFSET: i32 = 93_599;
 /// offset is not.
 pub const UNKNOWN_ZONE: &str = "Etc/Unknown";
 
-const NANOS_PER_SECOND: u32 = 1_000_000_000;
-const SECONDS_PER_DAY: i64 = 86_400;
-
-/// A value outside the range of the type it was meant for, a time zone
-/// name a zone source does not know, or zone data a
+/// A time zone name a zone source does not know, a wall time or instant
+/// a query cannot answer for, or zone data a
 /// [`ZoneSource`](super::ZoneSource) rejects or fails to load. A loader or
 /// oracle reports its own failures as one, built from a message with
 /// `From`.
@@ -61,6 +59,10 @@ fn error(message: String) -> Error {
 /// `[MIN_YEAR, MAX_YEAR]` (±999,999), `month` in `[1, 12]` and `day` in
 /// `[1, days in the month]`. Prints as `2024-03-10`, with a six-digit
 /// signed year outside `0000` to `9999`.
+///
+/// This and the other value types of this module are plain data: nothing
+/// checks the fields when a value is built, and a generator given a bound
+/// that is not a real date reports it as a usage error when it draws.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Date {
     pub year: i32,
@@ -68,42 +70,16 @@ pub struct Date {
     pub day: u8,
 }
 
-fn is_leap_year(year: i32) -> bool {
-    year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
-}
-
-fn days_in_month(year: i32, month: u8) -> u8 {
-    match month {
-        2 if is_leap_year(year) => 29,
-        2 => 28,
-        4 | 6 | 9 | 11 => 30,
-        _ => 31,
-    }
-}
-
 impl Date {
-    /// A date, or an error when the fields are out of range.
-    pub fn new(year: i32, month: u8, day: u8) -> Result<Date, Error> {
-        let date = Date { year, month, day };
-        if !(MIN_YEAR..=MAX_YEAR).contains(&year)
-            || !(1..=12).contains(&month)
-            || day == 0
-            || day > days_in_month(year, month)
-        {
-            return Err(error(format!("{date} is not a valid date")));
-        }
-        Ok(date)
+    /// The date with these fields.
+    pub const fn new(year: i32, month: u8, day: u8) -> Date {
+        Date { year, month, day }
     }
 }
 
 impl fmt::Display for Date {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if (0..=9999).contains(&self.year) {
-            write!(f, "{:04}", self.year)?;
-        } else {
-            write!(f, "{:+07}", self.year)?;
-        }
-        write!(f, "-{:02}-{:02}", self.month, self.day)
+        f.write_str(&ffi::format_date(date_to_c(*self)))
     }
 }
 
@@ -120,33 +96,20 @@ pub struct Time {
 }
 
 impl Time {
-    /// A time of day, or an error when the fields are out of range.
-    pub fn new(hour: u8, minute: u8, second: u8, nanosecond: u32) -> Result<Time, Error> {
-        let time = Time {
+    /// The time of day with these fields.
+    pub const fn new(hour: u8, minute: u8, second: u8, nanosecond: u32) -> Time {
+        Time {
             hour,
             minute,
             second,
             nanosecond,
-        };
-        if hour > 23 || minute > 59 || second > 59 || nanosecond >= NANOS_PER_SECOND {
-            return Err(error(format!("{time} is not a valid time of day")));
         }
-        Ok(time)
     }
-}
-
-fn write_fraction(f: &mut fmt::Formatter<'_>, nanosecond: u32) -> fmt::Result {
-    if nanosecond != 0 {
-        let digits = format!("{nanosecond:09}");
-        write!(f, ".{}", digits.trim_end_matches('0'))?;
-    }
-    Ok(())
 }
 
 impl fmt::Display for Time {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:02}:{:02}:{:02}", self.hour, self.minute, self.second)?;
-        write_fraction(f, self.nanosecond)
+        f.write_str(&ffi::format_time(time_to_c(*self)))
     }
 }
 
@@ -159,17 +122,15 @@ pub struct DateTime {
 }
 
 impl DateTime {
-    /// A datetime, or an error when either part is out of range.
-    pub fn new(date: Date, time: Time) -> Result<DateTime, Error> {
-        let date = Date::new(date.year, date.month, date.day)?;
-        let time = Time::new(time.hour, time.minute, time.second, time.nanosecond)?;
-        Ok(DateTime { date, time })
+    /// The datetime with these parts.
+    pub const fn new(date: Date, time: Time) -> DateTime {
+        DateTime { date, time }
     }
 }
 
 impl fmt::Display for DateTime {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}T{}", self.date, self.time)
+        f.write_str(&ffi::format_datetime(datetime_to_c(*self)))
     }
 }
 
@@ -185,48 +146,15 @@ pub struct Instant {
 }
 
 impl Instant {
-    /// An instant, or an error when the fields are out of range.
-    pub fn new(second: i64, nanosecond: u32) -> Result<Instant, Error> {
-        if !(MIN_INSTANT..=MAX_INSTANT).contains(&second) || nanosecond >= NANOS_PER_SECOND {
-            return Err(error(format!(
-                "second {second}, nanosecond {nanosecond} is not a valid instant (seconds in \
-                 [{MIN_INSTANT}, {MAX_INSTANT}], nanoseconds in [0, 999999999])"
-            )));
-        }
-        Ok(Instant { second, nanosecond })
+    /// The instant with these fields.
+    pub const fn new(second: i64, nanosecond: u32) -> Instant {
+        Instant { second, nanosecond }
     }
-}
-
-fn civil_from_days(days: i64) -> (i64, u8, u8) {
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = (doy - (153 * mp + 2) / 5 + 1) as u8;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 } as u8;
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    (year, month, day)
 }
 
 impl fmt::Display for Instant {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let days = self.second.div_euclid(SECONDS_PER_DAY);
-        let second_of_day = self.second.rem_euclid(SECONDS_PER_DAY);
-        let (year, month, day) = civil_from_days(days);
-        let date = Date {
-            year: year as i32,
-            month,
-            day,
-        };
-        let time = Time {
-            hour: (second_of_day / 3600) as u8,
-            minute: (second_of_day / 60 % 60) as u8,
-            second: (second_of_day % 60) as u8,
-            nanosecond: self.nanosecond,
-        };
-        write!(f, "{date}T{time}Z")
+        f.write_str(&ffi::format_timestamp(timestamp_to_c(*self)))
     }
 }
 
@@ -240,33 +168,22 @@ pub enum UtcOffset {
     Unknown,
 }
 
-impl UtcOffset {
-    /// A known offset, or an error when `seconds` is out of range.
-    pub fn new(seconds: i32) -> Result<UtcOffset, Error> {
-        if seconds.unsigned_abs() > MAX_OFFSET.unsigned_abs() {
-            return Err(error(format!(
-                "{seconds} s is not a valid UTC offset (within ±{MAX_OFFSET} s, 25:59:59)"
-            )));
-        }
-        Ok(UtcOffset::Known(seconds))
+pub(crate) fn offset_to_c(offset: UtcOffset) -> ffi::sys::hegel_offset_t {
+    match offset {
+        UtcOffset::Known(seconds) => ffi::sys::hegel_offset_t {
+            seconds,
+            known: true,
+        },
+        UtcOffset::Unknown => ffi::sys::hegel_offset_t {
+            seconds: 0,
+            known: false,
+        },
     }
 }
 
 impl fmt::Display for UtcOffset {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            UtcOffset::Unknown => f.write_str("-00:00"),
-            UtcOffset::Known(seconds) => {
-                let sign = if *seconds < 0 { '-' } else { '+' };
-                let magnitude = seconds.unsigned_abs();
-                let (hours, minutes) = (magnitude / 3600, magnitude / 60 % 60);
-                write!(f, "{sign}{hours:02}:{minutes:02}")?;
-                if magnitude % 60 != 0 {
-                    write!(f, ":{:02}", magnitude % 60)?;
-                }
-                Ok(())
-            }
-        }
+        f.write_str(&ffi::format_offset(offset_to_c(*self)))
     }
 }
 
@@ -282,16 +199,13 @@ pub struct TimeZone {
 }
 
 impl TimeZone {
-    /// The zone `name` names, or an error when the default zone source does
-    /// not know it. Names are matched exactly as the database spells them.
+    /// The zone `name` names in the default zone source
+    /// ([`default_zone_source`](super::default_zone_source)), or an error
+    /// when that source does not know it or fails to load it. Names are
+    /// matched exactly as the source spells them. For a zone of another
+    /// source, use [`ZoneSource::zone`](super::ZoneSource::zone).
     pub fn new(name: &str) -> Result<TimeZone, Error> {
-        match info(name) {
-            Some(info) => Ok(TimeZone {
-                name: name.to_string(),
-                primary_name: info.primary_name,
-            }),
-            None => Err(error(format!("unknown time zone {name:?}"))),
-        }
+        default_zone_source().zone(name)
     }
 }
 
@@ -312,42 +226,62 @@ pub enum TransitionKind {
     Fold,
 }
 
-/// A wall-clock time in a time zone, resolved to an instant: the
-/// [`TransitionKind`] of the wall time, the offsets in force before and after the
-/// transition it falls on (both the resolved offset for a unique time),
-/// which repeat of a fold it means (`fold`, the later when set), the
-/// resolved `offset` (unknown in [`UNKNOWN_ZONE`] and in a zone only the
-/// caller's database knows) and the `instant`: the unique instant, the
-/// one `fold` picks, or for a gap the wall time read with `offset_before`.
+/// A wall-clock time in a time zone, resolved to an instant.
+///
 /// Prints as `2024-03-10T01:30:00-05:00[America/New_York]`, with `[gap]`
 /// (`2024-03-10T02:30:00-04:00[America/New_York][gap]`) or `[fold=0]` /
-/// `[fold=1]` appended when relevant.
+/// `[fold=1]` appended to a skipped or repeated wall time.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ZonedDateTime {
+    /// The zone the wall time is in.
     pub zone: TimeZone,
+    /// The wall-clock time.
     pub civil: DateTime,
+    /// Whether the zone's clocks showed `civil` once, never or twice.
     pub kind: TransitionKind,
+    /// For a gap or fold, the offset in force before the transition;
+    /// `offset` otherwise.
     pub offset_before: UtcOffset,
+    /// For a gap or fold, the offset in force after the transition;
+    /// `offset` otherwise.
     pub offset_after: UtcOffset,
+    /// Which instant of a repeated wall time is meant, the later when
+    /// set; `false` for a unique or skipped wall time.
     pub fold: bool,
+    /// The offset in force at `instant`, unknown in [`UNKNOWN_ZONE`] and
+    /// in an opaque zone. For a gap this is `offset_after`, since the
+    /// instant lies after the transition, so there `civil` minus `offset`
+    /// is not `instant`.
     pub offset: UtcOffset,
+    /// The instant `civil` resolves to: the unique one, the one `fold`
+    /// picks, or for a gap the wall time read with `offset_before`, which
+    /// shifts it forward by the gap's length.
     pub instant: Instant,
+}
+
+fn kind_to_c(kind: TransitionKind) -> ffi::sys::hegel_timezone_kind_t {
+    use ffi::sys::hegel_timezone_kind_t as c;
+    match kind {
+        TransitionKind::Unique => c::HEGEL_TIMEZONE_KIND_UNIQUE,
+        TransitionKind::Gap => c::HEGEL_TIMEZONE_KIND_GAP,
+        TransitionKind::Fold => c::HEGEL_TIMEZONE_KIND_FOLD,
+    }
 }
 
 impl fmt::Display for ZonedDateTime {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.civil)?;
-        if self.zone.name == UNKNOWN_ZONE {
-            f.write_str("Z")?;
-        } else {
-            write!(f, "{}", self.offset)?;
-        }
-        write!(f, "[{}]", self.zone)?;
-        match self.kind {
-            TransitionKind::Unique => Ok(()),
-            TransitionKind::Gap => f.write_str("[gap]"),
-            TransitionKind::Fold => write!(f, "[fold={}]", u8::from(self.fold)),
-        }
+        let offset = offset_to_c(self.offset);
+        let value = ffi::sys::hegel_zoned_datetime_t {
+            civil: datetime_to_c(self.civil),
+            offset_seconds: offset.seconds,
+            offset_known: offset.known,
+            fold: self.fold,
+            kind: kind_to_c(self.kind),
+            offset_before: offset_to_c(self.offset_before).seconds,
+            offset_after: offset_to_c(self.offset_after).seconds,
+            timestamp: timestamp_to_c(self.instant),
+        };
+        f.write_str(&ffi::format_zoned_datetime(&value, &self.zone.name))
     }
 }
 
@@ -362,48 +296,38 @@ pub struct SignedDuration {
 }
 
 impl SignedDuration {
-    /// A duration, or an error when `nanoseconds` is out of range or of
-    /// the opposite sign to `seconds`.
-    pub fn new(seconds: i64, nanoseconds: i32) -> Result<SignedDuration, Error> {
-        let consistent = seconds == 0 || nanoseconds == 0 || (seconds < 0) == (nanoseconds < 0);
-        if nanoseconds.unsigned_abs() >= NANOS_PER_SECOND || !consistent {
-            return Err(error(format!(
-                "{seconds} s {nanoseconds} ns is not a valid duration (nanoseconds within \
-                 ±999999999 and of the sign of seconds)"
-            )));
-        }
-        Ok(SignedDuration {
+    /// The duration with these fields.
+    pub const fn new(seconds: i64, nanoseconds: i32) -> SignedDuration {
+        SignedDuration {
             seconds,
             nanoseconds,
-        })
+        }
+    }
+}
+
+pub(crate) fn duration_to_c(d: SignedDuration) -> ffi::sys::hegel_duration_t {
+    ffi::sys::hegel_duration_t {
+        seconds: d.seconds,
+        nanoseconds: d.nanoseconds,
+    }
+}
+
+pub(crate) fn duration_from_c(d: ffi::sys::hegel_duration_t) -> SignedDuration {
+    SignedDuration {
+        seconds: d.seconds,
+        nanoseconds: d.nanoseconds,
     }
 }
 
 impl fmt::Display for SignedDuration {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.seconds < 0 || self.nanoseconds < 0 {
-            f.write_str("-")?;
-        }
-        f.write_str("PT")?;
-        let seconds = self.seconds.unsigned_abs();
-        let (hours, minutes, seconds) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
-        if hours != 0 {
-            write!(f, "{hours}H")?;
-        }
-        if minutes != 0 {
-            write!(f, "{minutes}M")?;
-        }
-        if seconds != 0 || self.nanoseconds != 0 || (hours == 0 && minutes == 0) {
-            write!(f, "{seconds}")?;
-            write_fraction(f, self.nanoseconds.unsigned_abs())?;
-            f.write_str("S")?;
-        }
-        Ok(())
+        f.write_str(&ffi::format_duration(duration_to_c(*self)))
     }
 }
 
 /// A unit of a [`Span`], largest first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum SpanUnit {
     Years,
     Months,
@@ -419,7 +343,7 @@ pub enum SpanUnit {
 
 impl SpanUnit {
     /// Every unit, largest first.
-    pub const ALL: [SpanUnit; 10] = [
+    pub const ALL: &'static [SpanUnit] = &[
         SpanUnit::Years,
         SpanUnit::Months,
         SpanUnit::Weeks,
@@ -437,9 +361,10 @@ impl SpanUnit {
 /// nanoseconds, never normalised (90 minutes is not an hour and a half,
 /// and a month is not a number of days). Every unit shares one sign
 /// unless the span was drawn with [`SpanSign::Mixed`]. Prints each
-/// nonzero unit in jiff's friendly form, `1y 2mo 3w 4d 5h 6m 7s 8ms 9µs
-/// 10ns`, with one leading `-` when every unit is negative or zero, a `-`
-/// on each negative unit when the signs are mixed, and `0s` for zero.
+/// nonzero unit, largest first: `1y 2mo 3w 4d 5h 6m 7s 8ms 9µs 10ns`, with
+/// one leading `-` when no unit is positive (`-3d 4h` is -3 days and -4
+/// hours), a sign on every unit when the signs are mixed (`-3d +4h`), and
+/// `0s` for zero.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Span {
     pub years: i64,
@@ -472,40 +397,46 @@ impl Span {
     }
 }
 
-const SPAN_UNIT_SUFFIXES: [&str; 10] = ["y", "mo", "w", "d", "h", "m", "s", "ms", "µs", "ns"];
+pub(crate) fn span_to_c(s: &Span) -> ffi::sys::hegel_span_t {
+    ffi::sys::hegel_span_t {
+        years: s.years,
+        months: s.months,
+        weeks: s.weeks,
+        days: s.days,
+        hours: s.hours,
+        minutes: s.minutes,
+        seconds: s.seconds,
+        milliseconds: s.milliseconds,
+        microseconds: s.microseconds,
+        nanoseconds: s.nanoseconds,
+    }
+}
+
+pub(crate) fn span_from_c(s: ffi::sys::hegel_span_t) -> Span {
+    Span {
+        years: s.years,
+        months: s.months,
+        weeks: s.weeks,
+        days: s.days,
+        hours: s.hours,
+        minutes: s.minutes,
+        seconds: s.seconds,
+        milliseconds: s.milliseconds,
+        microseconds: s.microseconds,
+        nanoseconds: s.nanoseconds,
+    }
+}
 
 impl fmt::Display for Span {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let values = SpanUnit::ALL.map(|unit| self.get(unit));
-        let uniform_negative = values.iter().any(|v| *v < 0) && values.iter().all(|v| *v <= 0);
-        if uniform_negative {
-            f.write_str("-")?;
-        }
-        let mut written = false;
-        for (value, suffix) in values.into_iter().zip(SPAN_UNIT_SUFFIXES) {
-            if value == 0 {
-                continue;
-            }
-            if written {
-                f.write_str(" ")?;
-            }
-            written = true;
-            if uniform_negative {
-                write!(f, "{}{suffix}", value.unsigned_abs())?;
-            } else {
-                write!(f, "{value}{suffix}")?;
-            }
-        }
-        if !written {
-            f.write_str("0s")?;
-        }
-        Ok(())
+        f.write_str(&ffi::format_span(&span_to_c(self)))
     }
 }
 
 /// The unit the time part of a drawn value is counted in: the drawn
 /// value is a whole number of these units and shrinks in them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum Precision {
     Nanoseconds,
     Microseconds,
@@ -518,6 +449,7 @@ pub enum Precision {
 /// The values a UTC offset draw restricts itself to: whole hours, quarter
 /// hours, minutes or seconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum Granularity {
     Hours,
     QuarterHours,
@@ -557,6 +489,7 @@ pub enum Month {
 /// Which instant a zoned datetime draw means by a wall time the clocks
 /// repeated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Ambiguous {
     /// Either, decided by a drawn fold that shrinks to the earlier.
     Both,
@@ -568,6 +501,7 @@ pub enum Ambiguous {
 
 /// How the signs of a span's units are drawn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum SpanSign {
     /// One sign for every unit, as a jiff `Span` or Temporal `Duration`
     /// has.
@@ -583,6 +517,7 @@ pub enum SpanSign {
 /// 1970" means at any instant from 1970-01-01T00:00:00Z on, the rule in
 /// force after the last explicit transition included.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum Tag {
     /// No transition after 1970.
     Fixed,
@@ -630,7 +565,7 @@ pub enum Tag {
 
 impl Tag {
     /// Every tag, in the order of the engine's bit set.
-    pub const ALL: [Tag; 16] = [
+    pub const ALL: &'static [Tag] = &[
         Tag::Fixed,
         Tag::WholeHour,
         Tag::Fractional,
@@ -684,32 +619,45 @@ pub fn tzdb_version() -> String {
     ffi::tzdb_version()
 }
 
-/// What the default zone source knows about `name`, matched exactly as
-/// the source spells it, or `None` for a name it lacks or whose data fails
-/// to load. [`UNKNOWN_ZONE`] is known, with itself as primary name,
-/// [`Tag::Undefined`] and the highest rank. The default is the bundled
-/// database unless [`set_default_zone_source`](super::set_default_zone_source)
-/// replaced it.
-pub fn info(name: &str) -> Option<ZoneInfo> {
-    info_in(None, name).ok().flatten()
+/// What the default zone source
+/// ([`default_zone_source`](super::default_zone_source)) knows about
+/// `name`, matched exactly as the source spells it: `None` for a name it
+/// lacks, and an error when loading the name's data fails.
+/// [`UNKNOWN_ZONE`] is known, with itself as primary name,
+/// [`Tag::Undefined`] and the highest rank. The default is read at each
+/// call.
+pub fn info(name: &str) -> Result<Option<ZoneInfo>, Error> {
+    default_zone_source().info(name)
 }
 
 pub(crate) fn info_in(
-    source: Option<&ffi::ZoneSourceHandle>,
+    source: &ffi::ZoneSourceHandle,
     name: &str,
 ) -> Result<Option<ZoneInfo>, Error> {
-    let info = ffi::timezone_info(source, name).map_err(error)?;
+    let info = ffi::timezone_info(Some(source), name).map_err(error)?;
     Ok(info.map(|info| ZoneInfo {
         primary_name: info.primary_name,
         is_link: info.is_link,
         rank: info.rank,
         tags: Tag::ALL
-            .into_iter()
+            .iter()
             .enumerate()
             .filter(|(bit, _)| info.tags & (1 << bit) != 0)
-            .map(|(_, tag)| tag)
+            .map(|(_, tag)| *tag)
             .collect(),
     }))
+}
+
+/// The zone `name` of `source`: the name with the primary name `source`
+/// resolves it to.
+pub(crate) fn zone_in(source: &ffi::ZoneSourceHandle, name: &str) -> Result<TimeZone, Error> {
+    match info_in(source, name)? {
+        Some(info) => Ok(TimeZone {
+            name: name.to_string(),
+            primary_name: info.primary_name,
+        }),
+        None => Err(error(format!("unknown time zone {name:?}"))),
+    }
 }
 
 pub(crate) fn kind_from_c(kind: ffi::sys::hegel_timezone_kind_t) -> TransitionKind {
@@ -792,28 +740,25 @@ pub(crate) fn timestamp_to_c(t: Instant) -> ffi::sys::hegel_timestamp_t {
 }
 
 /// Classify the wall-clock time `civil` in the zone `name` of the default
-/// zone source and resolve it to an instant, meaning the earlier instant
+/// zone source ([`default_zone_source`](super::default_zone_source), read
+/// at each call) and resolve it to an instant, meaning the earlier instant
 /// of a repeated wall time (`fold` false); the later is the wall time read
 /// with `offset_after`. An error names a zone the source lacks or fails to
-/// load, a `civil` out of range, or one whose instant in the zone lies
-/// outside the range of [`Instant`], which a wall time within an offset's
-/// width of the civil range's ends can do.
+/// load, a `civil` that is not a real wall time, or one whose instant in
+/// the zone lies outside the range of [`Instant`], which a wall time
+/// within an offset's width of the civil range's ends can do.
 pub fn resolve(name: &str, civil: DateTime) -> Result<ZonedDateTime, Error> {
-    resolve_in(None, name, civil)
+    default_zone_source().resolve(name, civil)
 }
 
 pub(crate) fn resolve_in(
-    source: Option<&ffi::ZoneSourceHandle>,
+    source: &ffi::ZoneSourceHandle,
     name: &str,
     civil: DateTime,
 ) -> Result<ZonedDateTime, Error> {
-    let r = ffi::timezone_resolve(source, name, datetime_to_c(civil)).map_err(error)?;
-    let zone = TimeZone {
-        name: name.to_string(),
-        primary_name: info_in(source, name)?.unwrap().primary_name,
-    };
+    let r = ffi::timezone_resolve(Some(source), name, datetime_to_c(civil)).map_err(error)?;
     Ok(ZonedDateTime {
-        zone,
+        zone: zone_in(source, name)?,
         civil,
         kind: kind_from_c(r.kind),
         offset_before: offset_from_c(r.offset_before, r.offset_known),
@@ -824,19 +769,20 @@ pub(crate) fn resolve_in(
     })
 }
 
-/// The offset the zone `name` of the default zone source has in force at
-/// `instant`. An error names a zone the source lacks or fails to load, or
-/// an `instant` out of range.
+/// The offset the zone `name` of the default zone source
+/// ([`default_zone_source`](super::default_zone_source), read at each
+/// call) has in force at `instant`. An error names a zone the source lacks
+/// or fails to load, or an `instant` out of range.
 pub fn offset_at(name: &str, instant: Instant) -> Result<ZoneOffset, Error> {
-    offset_at_in(None, name, instant)
+    default_zone_source().offset_at(name, instant)
 }
 
 pub(crate) fn offset_at_in(
-    source: Option<&ffi::ZoneSourceHandle>,
+    source: &ffi::ZoneSourceHandle,
     name: &str,
     instant: Instant,
 ) -> Result<ZoneOffset, Error> {
-    let o = ffi::timezone_offset_at(source, name, timestamp_to_c(instant)).map_err(error)?;
+    let o = ffi::timezone_offset_at(Some(source), name, timestamp_to_c(instant)).map_err(error)?;
     Ok(ZoneOffset {
         offset: offset_from_c(o.seconds, o.known),
         is_dst: o.is_dst,

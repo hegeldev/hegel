@@ -427,21 +427,21 @@ mod datetime_validation {
     use super::expect_draw_panic;
     use hegel::generators as gs;
     use hegel::generators::temporal::{
-        Date, DateTime, Instant, Precision, SignedDuration, SpanSign, SpanUnit, Time, UtcOffset,
-        Weekday,
+        Date, DateTime, Error, Instant, Precision, SignedDuration, SpanSign, SpanUnit, Time,
+        TimeZone, UtcOffset, Weekday, ZoneSource,
     };
     use std::time::{Duration, UNIX_EPOCH};
 
     fn date(year: i32, month: u8, day: u8) -> Date {
-        Date::new(year, month, day).unwrap()
+        Date::new(year, month, day)
     }
 
     fn time(hour: u8, minute: u8, second: u8, nanosecond: u32) -> Time {
-        Time::new(hour, minute, second, nanosecond).unwrap()
+        Time::new(hour, minute, second, nanosecond)
     }
 
     fn datetime(year: i32, month: u8, day: u8) -> DateTime {
-        DateTime::new(date(year, month, day), time(0, 0, 0, 0)).unwrap()
+        DateTime::new(date(year, month, day), time(0, 0, 0, 0))
     }
 
     #[test]
@@ -450,7 +450,7 @@ mod datetime_validation {
             gs::temporal::dates()
                 .min_value(date(2024, 1, 2))
                 .max_value(date(2024, 1, 1)),
-            "max_value < min_value",
+            "min_value <= max_value",
         );
     }
 
@@ -491,7 +491,7 @@ mod datetime_validation {
             gs::temporal::times()
                 .min_value(time(1, 0, 0, 0))
                 .max_value(time(0, 0, 0, 0)),
-            "max_value < min_value",
+            "min_value <= max_value",
         );
     }
 
@@ -512,7 +512,7 @@ mod datetime_validation {
             gs::temporal::datetimes()
                 .min_value(datetime(2024, 1, 2))
                 .max_value(datetime(2024, 1, 1)),
-            "max_value < min_value",
+            "min_value <= max_value",
         );
     }
 
@@ -520,9 +520,9 @@ mod datetime_validation {
     fn test_instants_min_greater_than_max() {
         expect_draw_panic(
             gs::temporal::instants()
-                .min_value(Instant::new(1, 0).unwrap())
-                .max_value(Instant::new(0, 0).unwrap()),
-            "max_value < min_value",
+                .min_value(Instant::new(1, 0))
+                .max_value(Instant::new(0, 0)),
+            "min_value <= max_value",
         );
     }
 
@@ -564,7 +564,7 @@ mod datetime_validation {
     fn test_offsets_out_of_range_bound() {
         expect_draw_panic(
             gs::temporal::offsets().max_value(UtcOffset::Known(100_000)),
-            "max_seconds must be in",
+            "max_value must be within ±25:59:59 \\(93599 seconds\\), got 100000 seconds",
         );
     }
 
@@ -590,7 +590,7 @@ mod datetime_validation {
             gs::temporal::zoned_datetimes()
                 .min_value(datetime(2024, 1, 2))
                 .max_value(datetime(2024, 1, 1)),
-            "max_value < min_value",
+            "min_value <= max_value",
         );
     }
 
@@ -598,8 +598,8 @@ mod datetime_validation {
     fn test_zoned_datetimes_min_instant_greater_than_max_instant() {
         expect_draw_panic(
             gs::temporal::zoned_datetimes()
-                .min_instant(Instant::new(1, 0).unwrap())
-                .max_instant(Instant::new(0, 0).unwrap()),
+                .min_instant(Instant::new(1, 0))
+                .max_instant(Instant::new(0, 0)),
             "max_instant < min_instant",
         );
     }
@@ -641,12 +641,87 @@ mod datetime_validation {
     }
 
     #[test]
+    fn test_zoned_datetimes_wall_clock_and_instant_bounds() {
+        let message = "Cannot combine the wall-clock bounds min_value and max_value with the \
+                       instant bounds min_instant and max_instant";
+        expect_draw_panic(
+            gs::temporal::zoned_datetimes()
+                .min_value(datetime(2024, 1, 1))
+                .max_instant(Instant::new(0, 0)),
+            message,
+        );
+        expect_draw_panic(
+            gs::temporal::zoned_datetimes()
+                .min_instant(Instant::new(0, 0))
+                .max_value(datetime(2024, 1, 1)),
+            message,
+        );
+        expect_draw_panic(
+            gs::temporal::zoned_datetimes()
+                .zones(gs::just(TimeZone::new("Europe/London").unwrap()))
+                .max_instant(Instant::new(0, 0))
+                .min_value(datetime(2024, 1, 1)),
+            message,
+        );
+    }
+
+    fn unresolved(name: &str) -> TimeZone {
+        TimeZone {
+            name: name.to_string(),
+            primary_name: name.to_string(),
+        }
+    }
+
+    #[test]
+    fn test_zoned_datetimes_zone_the_source_does_not_know() {
+        expect_draw_panic(
+            gs::temporal::zoned_datetimes().zones(gs::just(unresolved("Mars/Olympus"))),
+            "zoned_datetimes\\(\\): the zones generator drew the time zone \"Mars/Olympus\", \
+             which the default zone source does not know\\. Pass the zone source that has it \
+             to source\\(\\)\\.",
+        );
+        expect_draw_panic(
+            gs::temporal::zoned_datetimes()
+                .zones(gs::just(unresolved("Mars/Olympus")))
+                .source(ZoneSource::bundled()),
+            "the time zone \"Mars/Olympus\", which the zone source given to source\\(\\) does \
+             not know",
+        );
+    }
+
+    #[test]
+    fn test_zoned_datetimes_zone_the_source_fails_to_load() {
+        let source = ZoneSource::builder()
+            .declare(["Test/Broken"])
+            .loader(|_, name| Err(Error::from(format!("cannot load {name}"))))
+            .build()
+            .unwrap();
+        expect_draw_panic(
+            gs::temporal::zoned_datetimes()
+                .zones(gs::just(unresolved("Test/Broken")))
+                .source(source),
+            "the zone source's loader for \"Test/Broken\" failed: cannot load Test/Broken",
+        );
+    }
+
+    #[test]
+    fn test_zoned_datetimes_source_with_a_zones_generator() {
+        expect_draw_panic(
+            gs::temporal::zoned_datetimes()
+                .zones(gs::temporal::zones())
+                .source(ZoneSource::bundled()),
+            "source\\(\\) cannot be combined with a zones\\(\\) generator, which has a zone \
+             source of its own\\. Pass the source to zones\\(\\)\\.source\\(\\) instead\\.",
+        );
+    }
+
+    #[test]
     fn test_durations_min_greater_than_max() {
         expect_draw_panic(
             gs::temporal::durations()
-                .min_value(SignedDuration::new(1, 0).unwrap())
-                .max_value(SignedDuration::new(0, 0).unwrap()),
-            "max_value < min_value",
+                .min_value(SignedDuration::new(1, 0))
+                .max_value(SignedDuration::new(0, 0)),
+            "min_value <= max_value",
         );
     }
 
@@ -666,7 +741,7 @@ mod datetime_validation {
     fn test_spans_inverted_unit_bounds() {
         expect_draw_panic(
             gs::temporal::spans().unit_bounds(SpanUnit::Days, 5, 3),
-            "requires min <= max for Days",
+            "min_value <= max_value is required for days",
         );
     }
 
@@ -696,7 +771,7 @@ mod datetime_validation {
             gs::temporal::std_durations()
                 .min_value(Duration::from_secs(2))
                 .max_value(Duration::from_secs(1)),
-            "max_value < min_value",
+            "min_value <= max_value",
         );
     }
 
@@ -714,7 +789,7 @@ mod datetime_validation {
             gs::temporal::system_times()
                 .min_value(UNIX_EPOCH + Duration::from_secs(1))
                 .max_value(UNIX_EPOCH),
-            "max_value < min_value",
+            "min_value <= max_value",
         );
     }
 }

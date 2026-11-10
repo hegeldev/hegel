@@ -153,7 +153,7 @@ fn duration_max_below_min_is_a_clean_usage_error() {
                 .max_value(Duration::from_secs(1)),
         );
     });
-    assert_clean_usage_error(&msg, "Cannot have max_value < min_value");
+    assert_clean_usage_error(&msg, "requires min_value <= max_value");
 }
 
 #[test]

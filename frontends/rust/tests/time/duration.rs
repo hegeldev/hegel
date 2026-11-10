@@ -54,7 +54,7 @@ fn test_durations_property(tc: hegel::TestCase) {
 }
 
 #[hegel::test]
-#[should_panic(expected = "max_value < min_value")]
+#[should_panic(expected = "min_value <= max_value")]
 fn test_durations_min_greater_than_max(tc: hegel::TestCase) {
     tc.draw(
         time_gs::durations()

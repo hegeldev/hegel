@@ -1,9 +1,9 @@
 use std::marker::PhantomData;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use super::values::{
-    DateTime, Error, Instant, Month, Weekday, ZoneInfo, ZoneOffset, ZonedDateTime, info_in,
-    offset_at_in, resolve_in,
+    DateTime, Error, Instant, Month, TimeZone, Weekday, ZoneInfo, ZoneOffset, ZonedDateTime,
+    info_in, offset_at_in, resolve_in, zone_in,
 };
 use crate::ffi;
 use crate::ffi::sys as hegel_c;
@@ -122,6 +122,7 @@ pub struct ZoneRule {
 
 /// What a zone does after its last explicit transition.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum ZoneAfter {
     /// The last type stays in force.
     Hold,
@@ -145,6 +146,7 @@ pub struct ZoneData {
 
 /// What an oracle's zone does after the last year probed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum AfterProbe {
     /// The last type stays in force, as chrono-tz does after its table
     /// ends.
@@ -335,12 +337,14 @@ impl ZoneLoader<'_> {
 /// classify, target and resolve wall times against.
 ///
 /// The engine's bundled IANA database, [`ZoneSource::bundled`], is the
-/// default source of the Rust frontend, and
-/// [`set_default_zone_source`] replaces it for the whole process. A
-/// [`ZoneGenerator`](super::ZoneGenerator) draws against another source
-/// with [`source`](super::ZoneGenerator::source), which the `jiff` and
-/// `chrono-tz` integrations' generators do with their own library's
-/// database (`hegel::extras::jiff::zone_source()` and
+/// default source of the Rust frontend until [`set_default_zone_source`]
+/// replaces it for the whole process; [`default_zone_source`] is the
+/// current one. A generator reads the default when it is built, and
+/// draws against another source when given one with
+/// [`ZoneGenerator::source`](super::ZoneGenerator::source) or
+/// [`ZonedDateTimeGenerator::source`](super::ZonedDateTimeGenerator::source).
+/// The `jiff` and `chrono-tz` integrations' generators draw against their
+/// own library's database (`hegel::extras::jiff::zone_source()` and
 /// `hegel::extras::chrono::zone_source()`), so a drawn wall time's gap or
 /// fold is the one that library computes.
 ///
@@ -352,25 +356,33 @@ impl ZoneLoader<'_> {
 /// catalogue, so a name it has keeps them whatever its data, and a name it
 /// lacks is drawn last, tagged from its data.
 ///
-/// A source is cheap to clone, and may be shared between threads.
+/// A source is cheap to clone, and may be shared between threads; two
+/// sources are equal when they are clones of one another. Build a source
+/// once, in a `static`, rather than in a test body, which runs once per
+/// test case.
 ///
 /// ```no_run
+/// use std::sync::LazyLock;
+///
 /// use hegel::generators as gs;
 /// use hegel::generators::temporal::ZoneSource;
 ///
-/// #[hegel::test]
-/// fn my_test(tc: hegel::TestCase) {
-///     // Two zones of a zoneinfo directory, each read the first time a
-///     // draw needs it.
-///     let source = ZoneSource::builder()
+/// // Two zones of a zoneinfo directory, each read the first time a draw
+/// // needs it.
+/// static ZONEINFO: LazyLock<ZoneSource> = LazyLock::new(|| {
+///     ZoneSource::builder()
 ///         .declare(["America/New_York", "Europe/London"])
 ///         .loader(|source, name| match std::fs::read(format!("/usr/share/zoneinfo/{name}")) {
 ///             Ok(bytes) => source.tzif(name, &bytes),
 ///             Err(_) => Ok(()),
 ///         })
 ///         .build()
-///         .unwrap();
-///     let z = tc.draw(gs::temporal::zoned_datetimes().zones(gs::temporal::zones().source(source)));
+///         .unwrap()
+/// });
+///
+/// #[hegel::test]
+/// fn my_test(tc: hegel::TestCase) {
+///     let z = tc.draw(gs::temporal::zoned_datetimes().source(ZONEINFO.clone()));
 ///     assert!(z.zone.name == "America/New_York" || z.zone.name == "Europe/London");
 /// }
 /// ```
@@ -378,6 +390,14 @@ impl ZoneLoader<'_> {
 pub struct ZoneSource {
     handle: Arc<ffi::ZoneSourceHandle>,
 }
+
+impl PartialEq for ZoneSource {
+    fn eq(&self, other: &ZoneSource) -> bool {
+        Arc::ptr_eq(&self.handle, &other.handle)
+    }
+}
+
+impl Eq for ZoneSource {}
 
 impl ZoneSource {
     /// The engine's bundled IANA database, whose release is
@@ -407,20 +427,28 @@ impl ZoneSource {
     }
 
     /// What the source knows about `name`, as [`info`](super::info)
-    /// reports it for the default source, or an error when loading the
-    /// name's data fails.
+    /// reports it for the default source: `None` for a name the source
+    /// lacks, and an error when loading the name's data fails.
     pub fn info(&self, name: &str) -> Result<Option<ZoneInfo>, Error> {
-        info_in(Some(&self.handle), name)
+        info_in(&self.handle, name)
+    }
+
+    /// The zone `name` names in this source, with the primary name the
+    /// source resolves it to, or an error when the source does not know
+    /// the name or fails to load it. Names are matched exactly as the
+    /// source spells them.
+    pub fn zone(&self, name: &str) -> Result<TimeZone, Error> {
+        zone_in(&self.handle, name)
     }
 
     /// [`resolve`](super::resolve) against this source.
     pub fn resolve(&self, name: &str, civil: DateTime) -> Result<ZonedDateTime, Error> {
-        resolve_in(Some(&self.handle), name, civil)
+        resolve_in(&self.handle, name, civil)
     }
 
     /// [`offset_at`](super::offset_at) against this source.
     pub fn offset_at(&self, name: &str, instant: Instant) -> Result<ZoneOffset, Error> {
-        offset_at_in(Some(&self.handle), name, instant)
+        offset_at_in(&self.handle, name, instant)
     }
 
     pub(crate) fn handle(&self) -> &ffi::ZoneSourceHandle {
@@ -428,15 +456,44 @@ impl ZoneSource {
     }
 }
 
-/// Make `source` the process-wide default zone source: the one every zone
-/// generator built from now on draws from unless given its own, and the
-/// one [`info`](super::info), [`resolve`](super::resolve) and
-/// [`offset_at`](super::offset_at) ask. The default is the bundled
-/// database until this is called; `set_default_zone_source(&ZoneSource::bundled())`
-/// restores it. A generator that has already drawn keeps the source it
-/// drew from.
-pub fn set_default_zone_source(source: &ZoneSource) {
+/// The default zone source this frontend last set, `None` standing for
+/// the bundled database libhegel starts with. The lock is held across the
+/// engine call that changes the default, so the two never disagree.
+static DEFAULT_ZONE_SOURCE: Mutex<Option<ZoneSource>> = Mutex::new(None);
+
+/// The process-wide default zone source: the bundled database
+/// ([`ZoneSource::bundled`]) until [`set_default_zone_source`] replaces
+/// it.
+///
+/// A generator reads the default when it is built, by
+/// [`zones()`](super::zones), [`zoned_datetimes()`](super::zoned_datetimes)
+/// or a generator made from them, and keeps the source it read: changing
+/// the default afterwards does not change what that generator draws
+/// against. The queries [`info`](super::info), [`resolve`](super::resolve)
+/// and [`offset_at`](super::offset_at) and [`TimeZone::new`] read it at
+/// each call.
+pub fn default_zone_source() -> ZoneSource {
+    let default = DEFAULT_ZONE_SOURCE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    default.clone().unwrap_or_else(ZoneSource::bundled)
+}
+
+/// Make `source` the process-wide default zone source
+/// ([`default_zone_source`]) and return the one it replaces, so a caller
+/// can put that back afterwards. Generators built from now on, and the
+/// queries without a source, use `source`; a generator already built
+/// keeps the source it read.
+///
+/// The default is shared by every test of the process, and tests run on
+/// several threads, so set it once before any test runs (or in a test
+/// binary of its own) rather than around one test.
+pub fn set_default_zone_source(source: ZoneSource) -> ZoneSource {
+    let mut default = DEFAULT_ZONE_SOURCE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
     source.handle.set_default();
+    default.replace(source).unwrap_or_else(ZoneSource::bundled)
 }
 
 /// Builds a [`ZoneSource`]. Created by [`ZoneSource::builder`].
@@ -493,11 +550,15 @@ impl ZoneSourceBuilder {
     /// Supply the data of a name the source lacks the first time a draw or
     /// query needs it: `loader` adds that name's zone or a link through the
     /// [`ZoneLoader`] it is given, or adds nothing when it does not know the
-    /// name, which the source then remembers as unknown. It is called once
-    /// per name from whichever thread draws or queries, possibly
-    /// concurrently, and must not draw. An `Err`, or a panic, fails the
-    /// draw or query that needed the name as a usage error carrying its
-    /// message. The loader lives as long as the process.
+    /// name, which the source then remembers as unknown. It is called from
+    /// whichever thread draws or queries, possibly concurrently and more
+    /// than once for a name when threads race to load it, and must not
+    /// draw. An `Err`, or a panic, fails the draw or query that needed the
+    /// name as a usage error carrying its message. A second call replaces
+    /// the loader. The loader, and what it captures, is dropped when it is
+    /// replaced or when the source's last user is gone: every clone of the
+    /// source, every generator drawing against it and the process default
+    /// if it was made that.
     pub fn loader<F>(self, loader: F) -> Self
     where
         F: Fn(&ZoneLoader<'_>, &str) -> Result<(), Error> + Send + Sync + 'static,

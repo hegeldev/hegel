@@ -1,3 +1,4 @@
+use crate::generators::temporal::generators::zoned_datetimes_within;
 use crate::generators::temporal::{self, Ambiguous, Granularity, Precision};
 use crate::generators::{self as gs, Generator, PrintableGenerator, TestCase, label_from_name};
 use crate::pretty::PrettyPrinter;
@@ -394,11 +395,6 @@ pub fn utc_offsets() -> UtcOffsetGenerator {
     }
 }
 
-enum OffsetDateTimeBounds {
-    Civil(PrimitiveDateTime, PrimitiveDateTime),
-    Instant(OffsetDateTime, OffsetDateTime),
-}
-
 /// The earliest instant whose wall time is in range at every offset.
 fn earliest_instant() -> OffsetDateTime {
     PrimitiveDateTime::MIN.assume_offset(UtcOffset::from_hms(-25, -59, -59).unwrap())
@@ -413,75 +409,59 @@ fn latest_instant() -> OffsetDateTime {
 /// [`offset_datetimes()`].
 pub struct OffsetDateTimeGenerator {
     inner: gs::temporal::ZonedDateTimeGenerator,
-    bounds: OffsetDateTimeBounds,
 }
 
 impl OffsetDateTimeGenerator {
     /// Draw the time zone whose offset the value carries from `zones`
-    /// rather than from every name of the default zone source; give it a
-    /// [`source`](gs::temporal::ZoneGenerator::source) to read the offset
-    /// from another database.
-    pub fn zones(mut self, zones: gs::temporal::ZoneGenerator) -> Self {
+    /// rather than from every name of the zone source: any generator of
+    /// [`temporal::TimeZone`], drawn as
+    /// [`ZonedDateTimeGenerator::zones`](gs::temporal::ZonedDateTimeGenerator::zones)
+    /// describes.
+    pub fn zones<G>(mut self, zones: G) -> Self
+    where
+        G: Generator<temporal::TimeZone> + Send + Sync + 'static,
+    {
         self.inner = self.inner.zones(zones);
         self
     }
 
-    fn civil_bounds(mut self, min: PrimitiveDateTime, max: PrimitiveDateTime) -> Self {
-        self.bounds = OffsetDateTimeBounds::Civil(min, max);
-        self.inner = self
-            .inner
-            .min_value(hegel_datetime(min))
-            .max_value(hegel_datetime(max));
-        self
-    }
-
-    fn instant_bounds(mut self, min: OffsetDateTime, max: OffsetDateTime) -> Self {
-        self.bounds = OffsetDateTimeBounds::Instant(min, max);
-        self.inner = self
-            .inner
-            .min_instant(hegel_timestamp(min))
-            .max_instant(hegel_timestamp(max));
+    /// Read the zones and their offsets from `source` rather than from
+    /// the default zone source, as
+    /// [`ZonedDateTimeGenerator::source`](gs::temporal::ZonedDateTimeGenerator::source)
+    /// describes.
+    pub fn source(mut self, source: temporal::ZoneSource) -> Self {
+        self.inner = self.inner.source(source);
         self
     }
 
     /// Set the minimum wall-clock time (inclusive), in whatever zone is
-    /// drawn. Replaces instant bounds.
-    pub fn min_value(self, min: PrimitiveDateTime) -> Self {
-        let max = match self.bounds {
-            OffsetDateTimeBounds::Civil(_, max) => max,
-            OffsetDateTimeBounds::Instant(..) => PrimitiveDateTime::MAX,
-        };
-        self.civil_bounds(min, max)
+    /// drawn. Wall-clock bounds cannot be combined with instant bounds.
+    pub fn min_value(mut self, min: PrimitiveDateTime) -> Self {
+        self.inner = self.inner.min_value(hegel_datetime(min));
+        self
     }
 
     /// Set the maximum wall-clock time (inclusive), in whatever zone is
-    /// drawn. Replaces instant bounds.
-    pub fn max_value(self, max: PrimitiveDateTime) -> Self {
-        let min = match self.bounds {
-            OffsetDateTimeBounds::Civil(min, _) => min,
-            OffsetDateTimeBounds::Instant(..) => PrimitiveDateTime::MIN,
-        };
-        self.civil_bounds(min, max)
+    /// drawn. Wall-clock bounds cannot be combined with instant bounds.
+    pub fn max_value(mut self, max: PrimitiveDateTime) -> Self {
+        self.inner = self.inner.max_value(hegel_datetime(max));
+        self
     }
 
     /// Set the minimum instant (inclusive); only `min`'s instant matters,
-    /// not its offset. Replaces wall-clock bounds.
-    pub fn min_instant(self, min: OffsetDateTime) -> Self {
-        let max = match self.bounds {
-            OffsetDateTimeBounds::Instant(_, max) => max,
-            OffsetDateTimeBounds::Civil(..) => latest_instant(),
-        };
-        self.instant_bounds(min, max)
+    /// not its offset. Instant bounds cannot be combined with wall-clock
+    /// bounds.
+    pub fn min_instant(mut self, min: OffsetDateTime) -> Self {
+        self.inner = self.inner.min_instant(hegel_timestamp(min));
+        self
     }
 
     /// Set the maximum instant (inclusive); only `max`'s instant matters,
-    /// not its offset. Replaces wall-clock bounds.
-    pub fn max_instant(self, max: OffsetDateTime) -> Self {
-        let min = match self.bounds {
-            OffsetDateTimeBounds::Instant(min, _) => min,
-            OffsetDateTimeBounds::Civil(..) => earliest_instant(),
-        };
-        self.instant_bounds(min, max)
+    /// not its offset. Instant bounds cannot be combined with wall-clock
+    /// bounds.
+    pub fn max_instant(mut self, max: OffsetDateTime) -> Self {
+        self.inner = self.inner.max_instant(hegel_timestamp(max));
+        self
     }
 
     /// Draw only wall-clock times that are a whole number of `precision`
@@ -538,7 +518,9 @@ impl PrintableGenerator<OffsetDateTime> for OffsetDateTimeGenerator {
 /// reading of the zone from the default zone source, the bundled IANA
 /// database unless [`set_default_zone_source`](crate::generators::temporal::set_default_zone_source)
 /// replaced it, since the `time` crate has no database of its own to
-/// resolve the wall time with. The zone with an unknown
+/// resolve the wall time with; the default is read here, when the
+/// generator is built, and [`source`](OffsetDateTimeGenerator::source)
+/// names another. The zone with an unknown
 /// offset, `Etc/Unknown`, is read as UTC. The value's instant lies within
 /// the range too, so `to_utc` never panics on it: a wall time within a
 /// day of the range's ends whose instant at the drawn offset falls outside
@@ -561,11 +543,17 @@ impl PrintableGenerator<OffsetDateTime> for OffsetDateTimeGenerator {
 /// ```
 pub fn offset_datetimes() -> OffsetDateTimeGenerator {
     OffsetDateTimeGenerator {
-        inner: gs::temporal::zoned_datetimes()
-            .min_value(hegel_datetime(PrimitiveDateTime::MIN))
-            .max_value(hegel_datetime(PrimitiveDateTime::MAX))
-            .allow_imaginary(false),
-        bounds: OffsetDateTimeBounds::Civil(PrimitiveDateTime::MIN, PrimitiveDateTime::MAX),
+        inner: zoned_datetimes_within(
+            (
+                hegel_datetime(PrimitiveDateTime::MIN),
+                hegel_datetime(PrimitiveDateTime::MAX),
+            ),
+            (
+                hegel_timestamp(earliest_instant()),
+                hegel_timestamp(latest_instant()),
+            ),
+        )
+        .allow_imaginary(false),
     }
 }
 

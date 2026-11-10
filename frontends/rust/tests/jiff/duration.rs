@@ -72,7 +72,7 @@ fn test_jiff_timestamps_property(tc: hegel::TestCase) {
 }
 
 #[hegel::test]
-#[should_panic(expected = "max_value < min_value")]
+#[should_panic(expected = "min_value <= max_value")]
 fn test_jiff_timestamps_min_greater_than_max(tc: hegel::TestCase) {
     tc.draw(
         jiff_gs::timestamps()
@@ -272,7 +272,7 @@ fn test_jiff_signed_durations_reach_both_ends_of_the_range() {
 }
 
 #[hegel::test]
-#[should_panic(expected = "max_value < min_value")]
+#[should_panic(expected = "min_value <= max_value")]
 fn test_jiff_signed_durations_min_greater_than_max(tc: hegel::TestCase) {
     tc.draw(
         jiff_gs::signed_durations()

@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::any::Any;
 use std::sync::OnceLock;
 
 use jiff::civil::{Date, DateTime, Era, ISOWeekDate, Time, Weekday};
@@ -7,6 +7,9 @@ use jiff::{SignedDuration, Span, Timestamp, Zoned};
 use std::sync::LazyLock;
 
 use super::source::zone_source;
+use crate::generators::temporal::generators::{
+    ZonedBounds, draw_and_print_display, zoned_datetimes_within,
+};
 use crate::generators::temporal::{
     self as dt, Ambiguous, Granularity, Month, Precision, SpanSign, SpanUnit, TransitionKind,
     UtcOffset,
@@ -27,21 +30,9 @@ static SIGNED_DURATION_LABEL: LazyLock<u64> =
     LazyLock::new(|| label_from_name("hegel.jiff.signed_durations"));
 static OFFSET_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.jiff.offsets"));
 static ZONED_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.jiff.zoneds"));
-static TIME_ZONE_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.jiff.timezones"));
+static TIME_ZONE_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.jiff.zones"));
 
 const NANOS_PER_SECOND: i128 = 1_000_000_000;
-
-/// Draw from `generator` and print the value's `Display` form, jiff's
-/// RFC 9557 spelling, which is also the engine's.
-fn draw_and_print_display<T: Display>(
-    generator: &impl Generator<T>,
-    tc: &TestCase,
-    printer: &mut PrettyPrinter,
-) -> T {
-    let value = generator.do_draw(tc);
-    printer.text(&value.to_string());
-    value
-}
 
 fn engine_date(d: Date) -> dt::Date {
     dt::Date {
@@ -528,14 +519,16 @@ impl SpanGenerator {
     }
 
     /// Set the minimum number of nanoseconds, keeping the maximum:
-    /// `nanoseconds(min, max)` with the current maximum.
+    /// `nanoseconds(min, max)` with the current maximum, which like any
+    /// per-unit call names nanoseconds as a unit to draw.
     pub fn min_nanoseconds(self, min: i64) -> Self {
         let (_, max) = self.nanosecond_bounds();
         self.nanoseconds(min, max)
     }
 
     /// Set the maximum number of nanoseconds, keeping the minimum:
-    /// `nanoseconds(min, max)` with the current minimum.
+    /// `nanoseconds(min, max)` with the current minimum, which like any
+    /// per-unit call names nanoseconds as a unit to draw.
     pub fn max_nanoseconds(self, max: i64) -> Self {
         let (min, _) = self.nanosecond_bounds();
         self.nanoseconds(min, max)
@@ -568,7 +561,7 @@ impl SpanGenerator {
                 SpanSign::Uniform
             };
             let mut generator = gs::temporal::spans().sign(sign);
-            for (index, unit) in SpanUnit::ALL.into_iter().enumerate() {
+            for (index, unit) in SpanUnit::ALL.iter().copied().enumerate() {
                 let (name, limit) = (UNIT_NAMES[index], UNIT_LIMITS[index]);
                 let bound = match self.bounds {
                     None => Some((self.default_min(limit), limit)),
@@ -771,7 +764,7 @@ impl PrintableGenerator<Offset> for OffsetGenerator {
 /// targets an offset some time zone has used, so `+05:45` and `-00:44:30`
 /// appear. An [`Offset`] is always known, so the engine's unknown offset
 /// is never drawn; a zone with an unknown offset is
-/// [`TimeZone::unknown`], which [`timezones()`] draws when asked to. See
+/// [`TimeZone::unknown`], which [`zones()`] draws when asked to. See
 /// [`OffsetGenerator`] for builder methods.
 ///
 /// # Example
@@ -809,19 +802,20 @@ fn require_a_database(empty: bool) {
 }
 
 /// Generator for [`jiff::tz::TimeZone`] values named in the IANA
-/// database. Created by [`timezones()`].
-pub struct TimeZoneGenerator {
+/// database. Created by [`zones()`].
+pub struct ZoneGenerator {
     names: Option<Vec<String>>,
-    links: bool,
-    legacy: bool,
-    unknown: bool,
+    allow_links: bool,
+    allow_legacy: bool,
+    allow_unknown: bool,
     inner: OnceLock<gs::temporal::ZoneGenerator>,
 }
 
-impl TimeZoneGenerator {
+impl ZoneGenerator {
     /// Draw only these names, each one jiff's database resolves or
-    /// `Etc/Unknown`. The [`links`](Self::links) and
-    /// [`legacy`](Self::legacy) flags do not apply to an explicit list.
+    /// `Etc/Unknown`. The [`allow_links`](Self::allow_links) and
+    /// [`allow_legacy`](Self::allow_legacy) flags do not apply to an
+    /// explicit list.
     pub fn names(mut self, names: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.names = Some(names.into_iter().map(Into::into).collect());
         self.inner = OnceLock::new();
@@ -830,24 +824,24 @@ impl TimeZoneGenerator {
 
     /// Whether the default set includes link names such as
     /// `Asia/Calcutta` (on by default).
-    pub fn links(mut self, links: bool) -> Self {
-        self.links = links;
+    pub fn allow_links(mut self, allow: bool) -> Self {
+        self.allow_links = allow;
         self.inner = OnceLock::new();
         self
     }
 
     /// Whether the default set includes legacy names such as `EST5EDT`
     /// and `US/Eastern` (off by default).
-    pub fn legacy(mut self, legacy: bool) -> Self {
-        self.legacy = legacy;
+    pub fn allow_legacy(mut self, allow: bool) -> Self {
+        self.allow_legacy = allow;
         self.inner = OnceLock::new();
         self
     }
 
     /// Whether [`TimeZone::unknown`], the zone `Etc/Unknown` with a known
     /// instant and an unknown offset, is drawn (off by default).
-    pub fn unknown(mut self, unknown: bool) -> Self {
-        self.unknown = unknown;
+    pub fn allow_unknown(mut self, allow: bool) -> Self {
+        self.allow_unknown = allow;
         self.inner = OnceLock::new();
         self
     }
@@ -868,10 +862,12 @@ impl TimeZoneGenerator {
             }
             None => {
                 require_a_database(jiff::tz::db().available().next().is_none());
-                generator.links(self.links).legacy(self.legacy)
+                generator
+                    .allow_links(self.allow_links)
+                    .allow_legacy(self.allow_legacy)
             }
         };
-        generator.unknown(self.unknown)
+        generator.allow_unknown(self.allow_unknown)
     }
 
     fn inner(&self) -> &gs::temporal::ZoneGenerator {
@@ -881,25 +877,25 @@ impl TimeZoneGenerator {
 
 /// The jiff zone of a name the engine drew under a spec restricted to
 /// jiff's database.
-fn jiff_time_zone(zone: &dt::TimeZone) -> TimeZone {
-    TimeZone::get(&zone.name).unwrap()
+pub(super) fn jiff_time_zone(name: &str) -> TimeZone {
+    TimeZone::get(name).unwrap()
 }
 
-impl Generator<TimeZone> for TimeZoneGenerator {
+impl Generator<TimeZone> for ZoneGenerator {
     fn label(&self) -> u64 {
         *TIME_ZONE_LABEL
     }
 
     fn do_draw(&self, tc: &TestCase) -> TimeZone {
-        jiff_time_zone(&self.inner().do_draw(tc))
+        jiff_time_zone(&self.inner().draw_name(tc))
     }
 }
 
-impl PrintableGenerator<TimeZone> for TimeZoneGenerator {
+impl PrintableGenerator<TimeZone> for ZoneGenerator {
     fn do_draw_and_print(&self, tc: &TestCase, printer: &mut PrettyPrinter) -> TimeZone {
-        let zone = self.inner().do_draw(tc);
-        printer.text(&zone.name);
-        jiff_time_zone(&zone)
+        let name = self.inner().draw_name(tc);
+        printer.text(&name);
+        jiff_time_zone(&name)
     }
 }
 
@@ -918,7 +914,7 @@ impl PrintableGenerator<TimeZone> for TimeZoneGenerator {
 /// `gs::default::<TimeZone>()` does. jiff must have a time zone database
 /// for any name to be known, one of its `tzdb-*` features or the
 /// system's; without one the draw is a usage error. See
-/// [`TimeZoneGenerator`] for builder methods.
+/// [`ZoneGenerator`] for builder methods.
 ///
 /// # Example
 ///
@@ -927,16 +923,16 @@ impl PrintableGenerator<TimeZone> for TimeZoneGenerator {
 ///
 /// #[hegel::test]
 /// fn my_test(tc: hegel::TestCase) {
-///     let zone = tc.draw(jiff_gs::timezones().names(["Europe/London", "Asia/Calcutta"]));
+///     let zone = tc.draw(jiff_gs::zones().names(["Europe/London", "Asia/Calcutta"]));
 ///     assert!(zone.iana_name() == Some("Europe/London") || zone.iana_name() == Some("Asia/Calcutta"));
 /// }
 /// ```
-pub fn timezones() -> TimeZoneGenerator {
-    TimeZoneGenerator {
+pub fn zones() -> ZoneGenerator {
+    ZoneGenerator {
         names: None,
-        links: true,
-        legacy: false,
-        unknown: false,
+        allow_links: true,
+        allow_legacy: false,
+        allow_unknown: false,
         inner: OnceLock::new(),
     }
 }
@@ -949,15 +945,17 @@ pub const MIN_CIVIL: DateTime = DateTime::constant(-9999, 1, 3, 4, 0, 0, 0);
 /// offset it allows: 26 hours before [`Timestamp::MAX`].
 pub const MAX_CIVIL: DateTime = DateTime::constant(9999, 12, 29, 20, 0, 0, 0);
 
-enum ZonedBounds {
-    Civil(DateTime, DateTime),
-    Instant(Timestamp, Timestamp),
-}
+trait AnyZones: Generator<TimeZone> + Any + Send + Sync {}
+
+impl<G> AnyZones for G where G: Generator<TimeZone> + Any + Send + Sync {}
 
 /// Generator for [`jiff::Zoned`] values. Created by [`zoneds()`].
 pub struct ZonedGenerator {
-    zones: TimeZoneGenerator,
-    bounds: ZonedBounds,
+    zones: Box<dyn AnyZones>,
+    min_value: Option<DateTime>,
+    max_value: Option<DateTime>,
+    min_instant: Option<Timestamp>,
+    max_instant: Option<Timestamp>,
     precision: Precision,
     allow_imaginary: bool,
     ambiguous: Ambiguous,
@@ -967,54 +965,61 @@ pub struct ZonedGenerator {
 impl ZonedGenerator {
     /// Draw the zone from `zones` rather than from every name of jiff's
     /// database.
-    pub fn timezones(mut self, zones: TimeZoneGenerator) -> Self {
-        self.zones = zones;
+    ///
+    /// Given a [`ZoneGenerator`] (what [`zones()`] returns, with whatever
+    /// builder methods were applied), the zone and the wall time come
+    /// from one engine draw, so the zone shrinks down the engine's ladder
+    /// of names and transitions are targeted across the allowed zones.
+    ///
+    /// Any other generator of [`TimeZone`] draws the zone first and then
+    /// a wall time in it, under the same bounds and options: a zone with
+    /// an IANA name is classified against jiff's database
+    /// ([`zone_source`]), and a fixed-offset zone such as
+    /// `TimeZone::fixed(offset)` or `TimeZone::UTC`, which has no gaps or
+    /// folds, takes any wall time in the bounds. So
+    /// `gs::just(TimeZone::UTC)`, `offsets().map(TimeZone::fixed)` and
+    /// `gs::default::<TimeZone>()` all work here. A zone that is neither,
+    /// such as one built from a POSIX time zone string, or one whose name
+    /// jiff's database does not have, is a usage error.
+    pub fn zones<G>(mut self, zones: G) -> Self
+    where
+        G: Generator<TimeZone> + Send + Sync + 'static,
+    {
+        self.zones = Box::new(zones);
         self.inner = OnceLock::new();
         self
     }
 
     /// Set the minimum wall-clock time (inclusive), in whatever zone is
-    /// drawn, at or after [`MIN_CIVIL`]. Replaces instant bounds.
+    /// drawn, at or after [`MIN_CIVIL`]. Wall-clock bounds cannot be
+    /// combined with instant bounds.
     pub fn min_value(mut self, min: DateTime) -> Self {
-        let max = match self.bounds {
-            ZonedBounds::Civil(_, max) => max,
-            ZonedBounds::Instant(..) => MAX_CIVIL,
-        };
-        self.bounds = ZonedBounds::Civil(min, max);
+        self.min_value = Some(min);
         self.inner = OnceLock::new();
         self
     }
 
     /// Set the maximum wall-clock time (inclusive), in whatever zone is
-    /// drawn, at or before [`MAX_CIVIL`]. Replaces instant bounds.
+    /// drawn, at or before [`MAX_CIVIL`]. Wall-clock bounds cannot be
+    /// combined with instant bounds.
     pub fn max_value(mut self, max: DateTime) -> Self {
-        let min = match self.bounds {
-            ZonedBounds::Civil(min, _) => min,
-            ZonedBounds::Instant(..) => MIN_CIVIL,
-        };
-        self.bounds = ZonedBounds::Civil(min, max);
+        self.max_value = Some(max);
         self.inner = OnceLock::new();
         self
     }
 
-    /// Set the minimum instant (inclusive). Replaces wall-clock bounds.
+    /// Set the minimum instant (inclusive). Instant bounds cannot be
+    /// combined with wall-clock bounds.
     pub fn min_instant(mut self, min: Timestamp) -> Self {
-        let max = match self.bounds {
-            ZonedBounds::Instant(_, max) => max,
-            ZonedBounds::Civil(..) => Timestamp::MAX,
-        };
-        self.bounds = ZonedBounds::Instant(min, max);
+        self.min_instant = Some(min);
         self.inner = OnceLock::new();
         self
     }
 
-    /// Set the maximum instant (inclusive). Replaces wall-clock bounds.
+    /// Set the maximum instant (inclusive). Instant bounds cannot be
+    /// combined with wall-clock bounds.
     pub fn max_instant(mut self, max: Timestamp) -> Self {
-        let min = match self.bounds {
-            ZonedBounds::Instant(min, _) => min,
-            ZonedBounds::Civil(..) => Timestamp::MIN,
-        };
-        self.bounds = ZonedBounds::Instant(min, max);
+        self.max_instant = Some(max);
         self.inner = OnceLock::new();
         self
     }
@@ -1047,45 +1052,104 @@ impl ZonedGenerator {
         self
     }
 
+    /// The zones when they are a [`ZoneGenerator`], which the engine
+    /// draws together with the wall time.
+    fn named_zones(&self) -> Option<&ZoneGenerator> {
+        let zones: &dyn Any = &*self.zones;
+        zones.downcast_ref::<ZoneGenerator>()
+    }
+
     fn inner(&self) -> &gs::temporal::ZonedDateTimeGenerator {
         self.inner.get_or_init(|| {
-            let generator = gs::temporal::zoned_datetimes()
-                .zones(self.zones.engine_generator())
-                .precision(self.precision)
-                .allow_imaginary(self.allow_imaginary)
-                .ambiguous(self.ambiguous);
-            match self.bounds {
-                ZonedBounds::Civil(min, max) => {
-                    if min < MIN_CIVIL {
-                        invalid_argument!(
-                            "min_value must be at or after {MIN_CIVIL}, the earliest wall time \
-                             jiff converts to an instant at every offset"
-                        );
-                    }
-                    if max > MAX_CIVIL {
-                        invalid_argument!(
-                            "max_value must be at or before {MAX_CIVIL}, the latest wall time \
-                             jiff converts to an instant at every offset"
-                        );
-                    }
-                    generator
-                        .min_value(engine_datetime(min))
-                        .max_value(engine_datetime(max))
+            let mut generator = zoned_datetimes_within(
+                (engine_datetime(MIN_CIVIL), engine_datetime(MAX_CIVIL)),
+                (
+                    engine_timestamp(Timestamp::MIN),
+                    engine_timestamp(Timestamp::MAX),
+                ),
+            )
+            .precision(self.precision)
+            .allow_imaginary(self.allow_imaginary)
+            .ambiguous(self.ambiguous);
+            generator = match self.named_zones() {
+                Some(zones) => generator.zones(zones.engine_generator()),
+                None => generator.source(zone_source()),
+            };
+            if let Some(min) = self.min_value {
+                if min < MIN_CIVIL {
+                    invalid_argument!(
+                        "min_value must be at or after {MIN_CIVIL}, the earliest wall time \
+                         jiff converts to an instant at every offset"
+                    );
                 }
-                ZonedBounds::Instant(min, max) => generator
-                    .min_instant(engine_timestamp(min))
-                    .max_instant(engine_timestamp(max)),
+                generator = generator.min_value(engine_datetime(min));
             }
+            if let Some(max) = self.max_value {
+                if max > MAX_CIVIL {
+                    invalid_argument!(
+                        "max_value must be at or before {MAX_CIVIL}, the latest wall time \
+                         jiff converts to an instant at every offset"
+                    );
+                }
+                generator = generator.max_value(engine_datetime(max));
+            }
+            if let Some(min) = self.min_instant {
+                generator = generator.min_instant(engine_timestamp(min));
+            }
+            if let Some(max) = self.max_instant {
+                generator = generator.max_instant(engine_timestamp(max));
+            }
+            generator
         })
+    }
+
+    /// Draw a wall time in `zone`, which a generator other than
+    /// [`zones()`] drew.
+    fn draw_in_zone(&self, tc: &TestCase, zone: TimeZone) -> Zoned {
+        let inner = self.inner();
+        if zone.to_fixed_offset().is_ok() {
+            let (min, max) = match inner.bounds() {
+                ZonedBounds::Civil(min, max) => (jiff_datetime(min), jiff_datetime(max)),
+                ZonedBounds::Instant(min, max) => (
+                    jiff_timestamp(min).to_zoned(zone.clone()).datetime(),
+                    jiff_timestamp(max).to_zoned(zone.clone()).datetime(),
+                ),
+            };
+            let civil = tc.draw_silent(
+                datetimes()
+                    .min_value(min)
+                    .max_value(max)
+                    .precision(self.precision),
+            );
+            return civil.to_zoned(zone).unwrap();
+        }
+        let Some(name) = zone.iana_name() else {
+            invalid_argument!(
+                "zoneds() draws in a time zone with an IANA name or a fixed offset, which \
+                 {zone:?} from the zones generator is not"
+            );
+        };
+        let engine_zone = dt::TimeZone {
+            name: name.to_string(),
+            primary_name: name.to_string(),
+        };
+        let z = inner
+            .draw_in_zone(tc, engine_zone)
+            .unwrap_or_else(|message| {
+                invalid_argument!(
+                    "zoneds(): jiff's time zone database cannot place a wall time in the time zone \
+                 {name:?} the zones generator drew: {message}"
+                )
+            });
+        jiff_zoned(&z, zone).unwrap_or_else(|| tc.reject())
     }
 }
 
-/// Build the jiff value of an engine draw from its wall time, zone and
+/// Build the jiff value of an engine draw in `zone` from its wall time and
 /// fold, and from its instant for a skipped wall time. `None` when jiff
 /// reads the instant it resolves the wall time to back as a different
 /// wall time, as it does in the last second before some pre-1970 gaps.
-fn jiff_zoned(z: &dt::ZonedDateTime) -> Option<Zoned> {
-    let zone = jiff_time_zone(&z.zone);
+fn jiff_zoned(z: &dt::ZonedDateTime, zone: TimeZone) -> Option<Zoned> {
     match z.kind {
         TransitionKind::Gap => Some(jiff_timestamp(z.instant).to_zoned(zone)),
         TransitionKind::Unique | TransitionKind::Fold => {
@@ -1107,7 +1171,12 @@ impl Generator<Zoned> for ZonedGenerator {
     }
 
     fn do_draw(&self, tc: &TestCase) -> Zoned {
-        jiff_zoned(&self.inner().do_draw(tc)).unwrap_or_else(|| tc.reject())
+        if self.named_zones().is_none() {
+            let zone = tc.draw_silent(&*self.zones);
+            return self.draw_in_zone(tc, zone);
+        }
+        let z = self.inner().do_draw(tc);
+        jiff_zoned(&z, jiff_time_zone(&z.zone.name)).unwrap_or_else(|| tc.reject())
     }
 }
 
@@ -1120,19 +1189,21 @@ impl PrintableGenerator<Zoned> for ZonedGenerator {
 /// Generate [`jiff::Zoned`] values: a zone, a wall-clock time in it and,
 /// when the clocks repeated that time, which repeat is meant.
 ///
-/// By default any zone [`timezones()`] draws and any wall-clock time
+/// By default any zone [`zones()`] draws and any wall-clock time
 /// from [`MIN_CIVIL`] to [`MAX_CIVIL`] at nanosecond precision, skipped
 /// wall times avoided and both repeats of a fold drawn; shrinks down the
 /// zone ladder, then toward 2000-01-01T00:00:00, preferring a unique wall
 /// time to a repeated one. One draw in twenty on average targets a
 /// transition of the zone, which is how folds and the exact boundary
 /// instants are reached. The value is built from the wall time, the zone
-/// name and the fold with jiff's own rules (`to_ambiguous_zoned` and
+/// and the fold with jiff's own rules (`to_ambiguous_zoned` and
 /// `earlier` or `later`), against the data of jiff's database the engine
 /// drew with ([`zone_source`]); a wall time jiff reads back as another
 /// wall time, as it does in the last second before some pre-1970 gaps
 /// and at some transitions that change only the abbreviation, is rejected
-/// as if by `assume(false)`. See [`ZonedGenerator`] for builder methods.
+/// as if by `assume(false)`. [`zones`](ZonedGenerator::zones) takes any
+/// generator of [`TimeZone`], fixed-offset zones included. See
+/// [`ZonedGenerator`] for builder methods.
 ///
 /// # Example
 ///
@@ -1144,15 +1215,18 @@ impl PrintableGenerator<Zoned> for ZonedGenerator {
 /// fn my_test(tc: hegel::TestCase) {
 ///     let min = DateTime::constant(2024, 1, 1, 0, 0, 0, 0);
 ///     let z = tc.draw(jiff_gs::zoneds()
-///         .timezones(jiff_gs::timezones().names(["Europe/London"]))
+///         .zones(jiff_gs::zones().names(["Europe/London"]))
 ///         .min_value(min));
 ///     assert!(z.datetime() >= min && z.time_zone().iana_name() == Some("Europe/London"));
 /// }
 /// ```
 pub fn zoneds() -> ZonedGenerator {
     ZonedGenerator {
-        zones: timezones(),
-        bounds: ZonedBounds::Civil(MIN_CIVIL, MAX_CIVIL),
+        zones: Box::new(zones()),
+        min_value: None,
+        max_value: None,
+        min_instant: None,
+        max_instant: None,
         precision: Precision::Nanoseconds,
         allow_imaginary: false,
         ambiguous: Ambiguous::Both,

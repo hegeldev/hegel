@@ -45,6 +45,10 @@ struct OracleState<'a, 'b> {
     abbreviation: String,
 }
 
+/// What a callback returns for success; any other value is failure.
+const CALLBACK_OK: i32 = 0;
+const CALLBACK_FAILED: i32 = 1;
+
 /// Run a callback's body, turning an `Err` or a panic into the message
 /// libhegel reports for the failed callback: nothing may unwind across the
 /// C ABI.
@@ -52,9 +56,9 @@ fn callback_result(
     ctx: *mut hegel_c::HegelContext,
     what: &str,
     body: impl FnOnce() -> Result<(), String>,
-) -> hegel_result_t {
+) -> i32 {
     let message = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)) {
-        Ok(Ok(())) => return hegel_result_t::HEGEL_OK,
+        Ok(Ok(())) => return CALLBACK_OK,
         Ok(Err(message)) => message,
         Err(payload) => format!(
             "{what} panicked: {}",
@@ -65,7 +69,7 @@ fn callback_result(
     // the message outlives the call. The message is valid UTF-8, so the
     // call succeeds.
     let _ = unsafe { hegel_c::hegel_context_set_error(ctx, view(message.as_bytes())) };
-    hegel_result_t::HEGEL_E_INVALID_ARG
+    CALLBACK_FAILED
 }
 
 unsafe extern "C" fn oracle_offset_trampoline(
@@ -73,7 +77,7 @@ unsafe extern "C" fn oracle_offset_trampoline(
     ctx: *mut hegel_c::HegelContext,
     instant: i64,
     out_type: *mut hegel_c::hegel_zone_type_t,
-) -> hegel_result_t {
+) -> i32 {
     // SAFETY: user_data is the `OracleState` `add_oracle` passed, alive and
     // ours alone for the length of that call, the only time libhegel calls
     // the oracle, on the calling thread.
@@ -100,7 +104,7 @@ unsafe extern "C" fn oracle_next_trampoline(
     after: i64,
     out_found: *mut bool,
     out_instant: *mut i64,
-) -> hegel_result_t {
+) -> i32 {
     // SAFETY: as for `oracle_offset_trampoline`.
     let state = unsafe { &mut *user_data.cast::<OracleState<'_, '_>>() };
     callback_result(ctx, "zone oracle", || {
@@ -124,14 +128,23 @@ unsafe extern "C" fn loader_trampoline(
     ctx: *mut hegel_c::HegelContext,
     source: *mut hegel_c::HegelZoneSource,
     name: hegel_c::hegel_string_t,
-) -> hegel_result_t {
-    // SAFETY: user_data is the loader `set_loader` leaked, which lives for
-    // the rest of the process and is only ever shared.
+) -> i32 {
+    // SAFETY: user_data is the loader `set_loader` handed libhegel, which
+    // keeps it alive until it calls `loader_release`, never during a call
+    // of the loader, and it is only ever shared.
     let loader = unsafe { &*user_data.cast::<Box<ZoneLoaderFn>>() };
     let name = string_opt(name).unwrap_or_default();
     callback_result(ctx, &format!("zone loader for {name:?}"), || {
         loader(ZoneTarget { ctx, source }, &name)
     })
+}
+
+unsafe extern "C" fn loader_release(user_data: *mut c_void) {
+    // SAFETY: user_data is the box `set_loader` handed libhegel, which
+    // calls this exactly once, when no call of the loader is in flight or
+    // will follow.
+    let loader = unsafe { Box::from_raw(user_data.cast::<Box<ZoneLoaderFn>>()) };
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || drop(loader)));
 }
 
 /// A zone source to add data to, through a context: this thread's while
@@ -239,7 +252,7 @@ impl ZoneTarget {
 /// An owned libhegel zone-source handle (`hegel_zone_source_t`), freed on
 /// drop. libhegel keeps the source itself alive while the default or a
 /// spec uses it, and may call its loader from any thread until then, so
-/// a loader is leaked rather than freed with the handle.
+/// the loader is libhegel's to release, not the handle's.
 pub(crate) struct ZoneSourceHandle {
     raw: *mut hegel_c::HegelZoneSource,
 }
@@ -288,18 +301,22 @@ impl ZoneSourceHandle {
         })
     }
 
-    /// Set the loader asked for the data of a name the source lacks.
+    /// Set the loader asked for the data of a name the source lacks,
+    /// dropped when libhegel lets go of it: when another loader replaces
+    /// it or the source's last holder goes.
     pub(crate) fn set_loader(&self, loader: Box<ZoneLoaderFn>) {
-        let user_data: *mut Box<ZoneLoaderFn> = Box::leak(Box::new(loader));
-        // SAFETY: the loader is leaked, so it outlives every call libhegel
-        // makes to it. Only a custom source gets a loader, which accepts
-        // one.
+        let user_data: *mut Box<ZoneLoaderFn> = Box::into_raw(Box::new(loader));
+        // SAFETY: libhegel owns the loader from here, whether or not the
+        // call succeeds, and frees it through `loader_release` once no
+        // call of it can follow. Only a custom source gets a loader, which
+        // accepts one.
         require_ok(with_context(|ctx| unsafe {
             hegel_c::hegel_zone_source_set_loader(
                 ctx,
                 self.raw,
                 Some(loader_trampoline),
                 user_data.cast(),
+                Some(loader_release),
             )
         }));
     }

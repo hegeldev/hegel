@@ -1,6 +1,6 @@
 mod common;
 
-use common::utils::assert_all_examples;
+use common::utils::{assert_all_examples, find_any};
 use hegel::generators as gs;
 use std::time::Duration;
 
@@ -25,6 +25,15 @@ fn test_deprecated_top_level_durations_draw_std_durations() {
     let max = Duration::from_secs(60);
     let generator: gs::DurationGenerator = gs::durations().max_value(max);
     assert_all_examples(generator, move |d| *d <= max);
+}
+
+#[test]
+#[allow(deprecated)]
+fn test_deprecated_top_level_durations_keep_their_range() {
+    let max = Duration::from_nanos(u64::MAX);
+    assert_all_examples(gs::durations(), move |d| *d <= max);
+    find_any(gs::durations(), move |d| *d == max);
+    find_any(gs::temporal::std_durations(), move |d| *d > max);
 }
 
 #[test]

@@ -67,14 +67,16 @@ pub use strings::{
     from_regex, ip_addresses, text, time_strings, urls, uuids,
 };
 /// Deprecated name of [`temporal::StdDurationGenerator`].
-#[deprecated(since = "0.51.0", note = "use `gs::temporal::StdDurationGenerator`")]
+#[deprecated(since = "0.53.0", note = "use `gs::temporal::StdDurationGenerator`")]
 pub type DurationGenerator = temporal::StdDurationGenerator;
 
 /// Deprecated name of [`temporal::std_durations`], which generates
-/// [`std::time::Duration`] values.
-#[deprecated(since = "0.51.0", note = "use `gs::temporal::std_durations()`")]
+/// [`std::time::Duration`] values. It keeps the default range it always
+/// had, zero to `u64::MAX` nanoseconds (about 584 years), where
+/// [`temporal::std_durations`] goes up to `i64::MAX` seconds.
+#[deprecated(since = "0.53.0", note = "use `gs::temporal::std_durations()`")]
 pub fn durations() -> temporal::StdDurationGenerator {
-    temporal::std_durations()
+    temporal::std_durations().max_value(std::time::Duration::from_nanos(u64::MAX))
 }
 pub use tuples::{
     Tuple0Generator, Tuple1Generator, Tuple2Generator, Tuple3Generator, Tuple4Generator,

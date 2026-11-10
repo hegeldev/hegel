@@ -1215,6 +1215,22 @@ impl TestCase {
         self.draw_or_raise(|ctc| ctc.generate_zoned_datetime(tz_spec, zoned_spec))
     }
 
+    /// Draw a zoned datetime within `zoned_spec`'s bounds in the zone
+    /// `name` of `source`. `Err` carries the engine's diagnostic for a
+    /// name the source does not know or fails to load.
+    pub(crate) fn generate_zoned_datetime_for_zone(
+        &self,
+        source: &crate::ffi::ZoneSourceHandle,
+        name: &str,
+        zoned_spec: &crate::ffi::ZonedSpec,
+    ) -> Result<hegel_c::hegel_zoned_datetime_t, String> {
+        self.with_ctc(|ctc| ctc.generate_zoned_datetime_for_zone(source, name, zoned_spec))
+            .map_err(|rc| match rc {
+                hegel_c::hegel_result_t::HEGEL_E_INVALID_ARG => crate::ffi::last_error_string(),
+                rc => raise_for_rc(rc),
+            })
+    }
+
     /// Draw a UUID's 16 big-endian bytes, optionally forcing the version.
     pub(crate) fn generate_uuid(&self, version: Option<u8>) -> [u8; 16] {
         self.draw_or_raise(|ctc| ctc.generate_uuid(version))

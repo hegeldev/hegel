@@ -5,8 +5,8 @@
 //! value, converted to jiff's type at the boundary: [`dates`], [`times`],
 //! [`datetimes`], [`timestamps`], [`offsets`], [`signed_durations`] and
 //! [`spans`] with the bounds, precision, granularity and per-unit options
-//! of their first-party counterparts; [`timezones`], the IANA names both
-//! jiff's database and the engine's know, resolved with
+//! of their first-party counterparts; [`zones`], the IANA names of
+//! jiff's database, resolved with
 //! [`TimeZone::get`](jiff::tz::TimeZone::get); and [`zoneds`], a zone and
 //! a wall-clock time in it built with jiff's own resolution rules
 //! (`to_ambiguous_zoned` then `earlier` or `later`), skipped wall times

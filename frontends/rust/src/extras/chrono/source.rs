@@ -43,7 +43,7 @@ fn load(source: &ZoneLoader<'_>, name: &str) -> Result<(), crate::generators::te
 /// offsets the first time a draw needs it, so the gaps and folds the
 /// engine targets are the ones chrono-tz resolves. After 2099, where
 /// chrono-tz's tables end, each zone keeps its last offset, as chrono-tz
-/// does. [`timezones()`](super::timezones) and the
+/// does. [`zones()`](super::zones) and the
 /// `DateTime<chrono_tz::Tz>` draws of [`datetimes()`](super::datetimes)
 /// draw against it.
 pub fn zone_source() -> ZoneSource {

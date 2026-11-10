@@ -9,7 +9,7 @@ use super::{
     DateGenerator, DateTimeGenerator, EraGenerator, ISOWeekDateGenerator, MAX_CIVIL, MIN_CIVIL,
     OffsetGenerator, SignedDurationGenerator, SpanGenerator, TimeGenerator, TimestampGenerator,
     WeekdayGenerator, ZonedGenerator, dates, datetimes, eras, iso_week_dates, offsets,
-    signed_durations, spans, times, timestamps, timezones, weekdays, zoneds,
+    signed_durations, spans, times, timestamps, weekdays, zoneds, zones,
 };
 
 impl DefaultGenerator for Date {
@@ -85,7 +85,7 @@ impl DefaultGenerator for Offset {
 impl DefaultGenerator for TimeZone {
     type Generator = BoxedGenerator<'static, TimeZone>;
     fn default_generator() -> Self::Generator {
-        one_of([timezones().boxed(), offsets().map(TimeZone::fixed).boxed()]).boxed()
+        one_of([zones().boxed(), offsets().map(TimeZone::fixed).boxed()]).boxed()
     }
 }
 
@@ -101,7 +101,7 @@ impl DefaultGenerator for Zoned {
 /// jiff has not yet resolved.
 fn ambiguous_draws() -> ZonedDateTimeGenerator {
     gs::temporal::zoned_datetimes()
-        .zones(timezones().engine_generator())
+        .zones(zones().engine_generator())
         .min_value(super::engine_datetime(MIN_CIVIL))
         .max_value(super::engine_datetime(MAX_CIVIL))
         .allow_imaginary(true)
@@ -109,15 +109,11 @@ fn ambiguous_draws() -> ZonedDateTimeGenerator {
 }
 
 fn ambiguous_zoned(z: ZonedDateTime) -> AmbiguousZoned {
-    TimeZone::get(&z.zone.name)
-        .unwrap()
-        .to_ambiguous_zoned(super::jiff_datetime(z.civil))
+    super::jiff_time_zone(&z.zone.name).to_ambiguous_zoned(super::jiff_datetime(z.civil))
 }
 
 fn ambiguous_timestamp(z: ZonedDateTime) -> AmbiguousTimestamp {
-    TimeZone::get(&z.zone.name)
-        .unwrap()
-        .to_ambiguous_timestamp(super::jiff_datetime(z.civil))
+    super::jiff_time_zone(&z.zone.name).to_ambiguous_timestamp(super::jiff_datetime(z.civil))
 }
 
 impl DefaultGenerator for AmbiguousZoned {

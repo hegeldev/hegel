@@ -1,5 +1,8 @@
-use super::generators::{duration_from_c, duration_to_c, precision_to_c};
-use super::values::{Instant, Precision, SignedDuration, timestamp_from_c, timestamp_to_c};
+use super::generators::precision_to_c;
+use super::values::{
+    Instant, Precision, SignedDuration, duration_from_c, duration_to_c, timestamp_from_c,
+    timestamp_to_c,
+};
 use crate::generators::{
     Generator, PrintableGenerator, TestCase, draw_and_print_value, label_from_name,
 };
@@ -68,9 +71,6 @@ impl Generator<Duration> for StdDurationGenerator {
                 "min_value exceeds the largest generatable Duration \
                  (i64::MAX seconds, about 292 billion years)"
             );
-        }
-        if self.min_value > self.max_value {
-            invalid_argument!("Cannot have max_value < min_value");
         }
         let d = duration_from_c(tc.generate_duration(
             duration_to_c(signed(self.min_value)),
@@ -176,9 +176,6 @@ fn system_time_of(t: Instant) -> SystemTime {
 
 impl SystemTimeGenerator {
     fn draw_timestamp(&self, tc: &TestCase) -> Instant {
-        if self.min_value > self.max_value {
-            invalid_argument!("Cannot have max_value < min_value");
-        }
         timestamp_from_c(tc.generate_timestamp(
             timestamp_to_c(timestamp_of(self.min_value)),
             timestamp_to_c(timestamp_of(self.max_value)),

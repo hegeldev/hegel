@@ -36,7 +36,7 @@ fn test_datetimes_offset_constrained() {
     let min_off = FixedOffset::east_opt(-3600).unwrap();
     let max_off = FixedOffset::east_opt(3600).unwrap();
     assert_all_examples(
-        chrono_gs::datetimes().timezones(
+        chrono_gs::datetimes().zones(
             chrono_gs::fixed_offsets()
                 .min_value(min_off)
                 .max_value(max_off),
@@ -68,7 +68,7 @@ fn test_datetimes_min_greater_than_max() {
 
 #[test]
 fn test_datetimes_utc_default() {
-    check_can_generate_examples(chrono_gs::datetimes().timezones(gs::just(Utc)));
+    check_can_generate_examples(chrono_gs::datetimes().zones(gs::just(Utc)));
 }
 
 #[test]
@@ -76,7 +76,7 @@ fn test_datetimes_utc_min_value() {
     let min = DateTime::<Utc>::from_timestamp(0, 0).unwrap();
     assert_all_examples(
         chrono_gs::datetimes()
-            .timezones(gs::just(Utc))
+            .zones(gs::just(Utc))
             .min_value(min.naive_utc()),
         move |dt| *dt >= min,
     );
@@ -87,7 +87,7 @@ fn test_datetimes_utc_max_value() {
     let max = DateTime::<Utc>::from_timestamp(2_000_000_000, 0).unwrap();
     assert_all_examples(
         chrono_gs::datetimes()
-            .timezones(gs::just(Utc))
+            .zones(gs::just(Utc))
             .max_value(max.naive_utc()),
         move |dt| *dt <= max,
     );
@@ -99,7 +99,7 @@ fn test_datetimes_utc_in_vec() {
     assert_all_examples(
         gs::vecs(
             chrono_gs::datetimes()
-                .timezones(gs::just(Utc))
+                .zones(gs::just(Utc))
                 .max_value(max.naive_utc()),
         )
         .max_size(5),
@@ -120,7 +120,7 @@ fn test_datetimes_utc_property(tc: hegel::TestCase) {
     let max = DateTime::<Utc>::from_timestamp(hi, 0).unwrap();
     let v = tc.draw(
         chrono_gs::datetimes()
-            .timezones(gs::just(Utc))
+            .zones(gs::just(Utc))
             .min_value(min.naive_utc())
             .max_value(max.naive_utc()),
     );
@@ -131,7 +131,7 @@ fn test_datetimes_utc_property(tc: hegel::TestCase) {
 fn test_datetimes_full_range_bounds() {
     check_can_generate_examples(
         chrono_gs::datetimes()
-            .timezones(gs::just(Utc))
+            .zones(gs::just(Utc))
             .min_value(DateTime::<Utc>::MIN_UTC.naive_utc())
             .max_value(DateTime::<Utc>::MAX_UTC.naive_utc()),
     );
@@ -153,7 +153,7 @@ fn test_datetimes_utc_precision() {
     use hegel::generators::temporal::Precision;
     assert_all_examples(
         chrono_gs::datetimes()
-            .timezones(gs::just(Utc))
+            .zones(gs::just(Utc))
             .precision(Precision::Hours),
         |dt| dt.minute() == 0 && dt.second() == 0 && dt.nanosecond() == 0,
     );
@@ -165,7 +165,7 @@ fn test_datetimes_utc_instant_bounds() {
     let max = DateTime::<Utc>::from_timestamp(1_800_000_000, 0).unwrap();
     assert_all_examples(
         chrono_gs::datetimes()
-            .timezones(gs::just(Utc))
+            .zones(gs::just(Utc))
             .min_instant(min)
             .max_instant(max),
         move |dt| *dt >= min && *dt <= max,
@@ -183,44 +183,29 @@ fn test_datetimes_fixed_offset_instant_bounds() {
 }
 
 #[test]
-fn test_datetimes_instant_bounds_replace_wall_clock_bounds() {
-    let min = DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap();
-    let max = DateTime::<Utc>::from_timestamp(1_800_000_000, 0).unwrap();
-    let far = DateTime::<Utc>::from_timestamp(4_000_000_000, 0).unwrap();
-    assert_all_examples(
+#[should_panic(
+    expected = "Cannot combine the wall-clock bounds min_value and max_value with the instant bounds min_instant and max_instant"
+)]
+fn test_datetimes_wall_clock_and_instant_bounds() {
+    let epoch = DateTime::<Utc>::from_timestamp(0, 0).unwrap();
+    check_can_generate_examples(
         chrono_gs::datetimes()
-            .min_value(far.naive_utc())
-            .max_instant(max)
-            .min_instant(min),
-        move |dt| *dt >= min && *dt <= max,
-    );
-    assert_all_examples(
-        chrono_gs::datetimes()
-            .max_value(far.naive_utc())
-            .min_instant(min)
-            .max_instant(max),
-        move |dt| *dt >= min && *dt <= max,
+            .min_value(epoch.naive_utc())
+            .max_instant(epoch),
     );
 }
 
 #[test]
-fn test_datetimes_wall_clock_bounds_replace_instant_bounds() {
-    let min = DateTime::<Utc>::from_timestamp(1_700_000_000, 0).unwrap();
-    let max = DateTime::<Utc>::from_timestamp(1_800_000_000, 0).unwrap();
-    let far = DateTime::<Utc>::from_timestamp(4_000_000_000, 0).unwrap();
-    assert_all_examples(
+#[should_panic(
+    expected = "Cannot combine the wall-clock bounds min_value and max_value with the instant bounds min_instant and max_instant"
+)]
+fn test_datetimes_instant_and_wall_clock_bounds() {
+    let epoch = DateTime::<Utc>::from_timestamp(0, 0).unwrap();
+    check_can_generate_examples(
         chrono_gs::datetimes()
-            .min_instant(far)
-            .max_value(max.naive_utc())
-            .min_value(min.naive_utc()),
-        move |dt| dt.naive_local() >= min.naive_utc() && dt.naive_local() <= max.naive_utc(),
-    );
-    assert_all_examples(
-        chrono_gs::datetimes()
-            .max_instant(far)
-            .min_value(min.naive_utc())
-            .max_value(max.naive_utc()),
-        move |dt| dt.naive_local() >= min.naive_utc() && dt.naive_local() <= max.naive_utc(),
+            .zones(gs::just(Utc))
+            .min_instant(epoch)
+            .max_value(epoch.naive_utc()),
     );
 }
 
@@ -278,7 +263,7 @@ fn test_datetimes_unreachable_wall_clock_window_is_rejected() {
                     chrono_gs::datetimes()
                         .min_value(min)
                         .max_value(max)
-                        .timezones(gs::just(ahead)),
+                        .zones(gs::just(ahead)),
                 );
             })
             .settings(hegel::Settings::new().database(None))
@@ -297,7 +282,7 @@ fn test_datetimes_wall_clock_window_is_clipped_to_the_offset() {
         chrono_gs::datetimes()
             .min_value(min)
             .max_value(max)
-            .timezones(gs::just(behind)),
+            .zones(gs::just(behind)),
         move |dt| dt.naive_local() >= min && dt.naive_local() <= max,
     );
 }
@@ -337,7 +322,7 @@ fn test_datetimes_year_3000() {
     let max = "3001-01-01T00:00:00Z".parse::<DateTime<Utc>>().unwrap();
     assert_all_examples(
         chrono_gs::datetimes()
-            .timezones(gs::just(Utc))
+            .zones(gs::just(Utc))
             .min_value(min.naive_utc())
             .max_value(max.naive_utc()),
         move |dt| *dt >= min && *dt <= max,

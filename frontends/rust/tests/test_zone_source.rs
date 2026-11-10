@@ -4,18 +4,15 @@ use common::utils::{assert_all_examples, expect_panic, find_any};
 use hegel::generators as gs;
 use hegel::generators::temporal::{
     AfterProbe, Date, DateTime, DstRule, Error, Instant, LocalTimeType, Month, RuleDate, RuleDay,
-    Tag, Time, TransitionKind, UtcOffset, Weekday, ZoneAfter, ZoneData, ZoneOracle, ZoneRule,
-    ZoneSource, ZoneTransition, tzdb_version,
+    Tag, Time, TransitionKind, UNKNOWN_ZONE, UtcOffset, Weekday, ZoneAfter, ZoneData, ZoneOracle,
+    ZoneRule, ZoneSource, ZoneTransition, tzdb_version,
 };
+use hegel::{Generator, TestCase};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn datetime(year: i32, month: u8, day: u8, hour: u8, minute: u8) -> DateTime {
-    DateTime::new(
-        Date::new(year, month, day).unwrap(),
-        Time::new(hour, minute, 0, 0).unwrap(),
-    )
-    .unwrap()
+    DateTime::new(Date::new(year, month, day), Time::new(hour, minute, 0, 0))
 }
 
 fn local(offset_hours: i32, is_dst: bool, abbreviation: &str) -> LocalTimeType {
@@ -32,7 +29,7 @@ fn kind(source: &ZoneSource, name: &str, civil: DateTime) -> TransitionKind {
 
 fn offset(source: &ZoneSource, name: &str, second: i64) -> UtcOffset {
     source
-        .offset_at(name, Instant::new(second, 0).unwrap())
+        .offset_at(name, Instant::new(second, 0))
         .unwrap()
         .offset
 }
@@ -153,7 +150,7 @@ fn test_structured_zone_with_a_rule() {
         TransitionKind::Unique
     );
     let summer = source
-        .offset_at("Test/Eastern", Instant::new(1_720_000_000, 0).unwrap())
+        .offset_at("Test/Eastern", Instant::new(1_720_000_000, 0))
         .unwrap();
     assert_eq!(summer.offset, hours(-4));
     assert!(summer.is_dst);
@@ -253,7 +250,7 @@ fn eastern_at(second: i64) -> LocalTimeType {
         .build()
         .unwrap();
     let o = source
-        .offset_at("Test/Eastern", Instant::new(second, 0).unwrap())
+        .offset_at("Test/Eastern", Instant::new(second, 0))
         .unwrap();
     LocalTimeType {
         offset: match o.offset {
@@ -276,7 +273,7 @@ fn test_sampled_oracle_held_after_its_range() {
             "Test/Oracle",
             ZoneOracle::new(2020, 2025, AfterProbe::Hold, |second| {
                 let o = rule
-                    .offset_at("Test/Eastern", Instant::new(second, 0).unwrap())
+                    .offset_at("Test/Eastern", Instant::new(second, 0))
                     .unwrap();
                 let UtcOffset::Known(offset) = o.offset else {
                     return Err(Error::from("unknown offset"));
@@ -418,7 +415,7 @@ fn test_loader_failures_are_reported() {
     let error = source.resolve("Test/Failing", civil).unwrap_err();
     assert!(error.to_string().contains("no data for you"), "{error}");
     let error = source
-        .offset_at("Test/Panicking", Instant::new(0, 0).unwrap())
+        .offset_at("Test/Panicking", Instant::new(0, 0))
         .unwrap_err();
     assert!(
         error
@@ -530,4 +527,214 @@ fn test_zone_sources_are_shared_between_threads() {
 #[test]
 fn test_zone_source_debug() {
     assert!(format!("{:?}", ZoneSource::bundled()).contains("ZoneSource"));
+}
+
+#[test]
+fn test_zone_sources_compare_by_identity() {
+    let source = loading_source(Arc::new(AtomicUsize::new(0)));
+    assert_eq!(source, source.clone());
+    assert_ne!(source, loading_source(Arc::new(AtomicUsize::new(0))));
+    assert_eq!(ZoneSource::bundled(), ZoneSource::bundled());
+    assert_ne!(source, ZoneSource::bundled());
+}
+
+#[test]
+fn test_zone_names_a_zone_of_the_source() {
+    let source = ZoneSource::builder()
+        .tzif("Test/Tokyo", tzif("Asia/Tokyo"))
+        .link("Test/Alias", "Test/Tokyo")
+        .build()
+        .unwrap();
+    let zone = source.zone("Test/Alias").unwrap();
+    assert_eq!(zone.name, "Test/Alias");
+    assert_eq!(zone.primary_name, "Test/Tokyo");
+    let error = source.zone("Europe/London").unwrap_err();
+    assert_eq!(error.to_string(), "unknown time zone \"Europe/London\"");
+    let failing = loading_source(Arc::new(AtomicUsize::new(0)));
+    let error = failing.zone("Test/Failing").unwrap_err();
+    assert!(error.to_string().contains("no data for you"), "{error}");
+}
+
+/// The zone data a loader reads, counting when it is dropped.
+struct Tzifs {
+    drops: Arc<AtomicUsize>,
+}
+
+impl Tzifs {
+    fn get(&self, name: &str) -> &'static [u8] {
+        tzif(name)
+    }
+}
+
+impl Drop for Tzifs {
+    fn drop(&mut self) {
+        self.drops.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+#[test]
+fn test_a_loader_is_dropped_with_the_last_user_of_its_source() {
+    let drops = Arc::new(AtomicUsize::new(0));
+    let tzifs = Tzifs {
+        drops: Arc::clone(&drops),
+    };
+    let source = ZoneSource::builder()
+        .declare(["Europe/London"])
+        .loader(move |source, name| source.tzif(name, tzifs.get(name)))
+        .build()
+        .unwrap();
+    assert_eq!(offset(&source, "Europe/London", 1_720_000_000), hours(1));
+    let zones = gs::temporal::zones().source(source.clone());
+    let zoned = gs::temporal::zoned_datetimes().source(source.clone());
+    assert_all_examples(gs::temporal::zones().source(source.clone()), |zone| {
+        zone.name == "Europe/London"
+    });
+    drop(source);
+    assert_eq!(drops.load(Ordering::SeqCst), 0);
+    drop(zones);
+    assert_eq!(drops.load(Ordering::SeqCst), 0);
+    drop(zoned);
+    assert_eq!(drops.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn test_a_replaced_loader_is_dropped() {
+    let drops = Arc::new(AtomicUsize::new(0));
+    let tzifs = Tzifs {
+        drops: Arc::clone(&drops),
+    };
+    let builder = ZoneSource::builder()
+        .declare(["Europe/London"])
+        .loader(move |source, name| source.tzif(name, tzifs.get(name)));
+    assert_eq!(drops.load(Ordering::SeqCst), 0);
+    let source = builder
+        .loader(|source, name| source.tzif(name, tzif("Asia/Tokyo")))
+        .build()
+        .unwrap();
+    assert_eq!(drops.load(Ordering::SeqCst), 1);
+    assert_eq!(offset(&source, "Europe/London", 1_720_000_000), hours(9));
+}
+
+/// A source whose New York never changes its clocks, with a zone the
+/// bundled database lacks.
+fn fixed_source() -> ZoneSource {
+    let fixed = |offset_hours| ZoneData {
+        initial: local(offset_hours, false, "FIX"),
+        transitions: vec![],
+        after: ZoneAfter::Hold,
+    };
+    ZoneSource::builder()
+        .zone("America/New_York", &fixed(-5))
+        .zone("Test/Fixed", &fixed(9))
+        .build()
+        .unwrap()
+}
+
+fn is_a_fixed_source_value(z: &hegel::generators::temporal::ZonedDateTime) -> bool {
+    z.kind == TransitionKind::Unique
+        && match z.zone.name.as_str() {
+            "America/New_York" => z.offset == hours(-5),
+            "Test/Fixed" => z.offset == hours(9),
+            _ => false,
+        }
+}
+
+fn spring_forward_day() -> gs::temporal::ZonedDateTimeGenerator {
+    gs::temporal::zoned_datetimes()
+        .min_value(datetime(2024, 3, 10, 0, 0))
+        .max_value(datetime(2024, 3, 10, 23, 59))
+}
+
+#[test]
+fn test_zoned_datetimes_source_draws_the_zones_of_the_source() {
+    let source = fixed_source();
+    assert_all_examples(
+        spring_forward_day().source(source.clone()),
+        is_a_fixed_source_value,
+    );
+    for name in ["America/New_York", "Test/Fixed"] {
+        find_any(spring_forward_day().source(source.clone()), move |z| {
+            z.zone.name == name
+        });
+    }
+}
+
+#[test]
+fn test_zoned_datetimes_source_resolves_what_another_zones_generator_draws() {
+    let source = fixed_source();
+    let zones = || gs::temporal::zones().source(source.clone());
+    let wrapped = [
+        zones().boxed(),
+        zones().map(|zone| zone).boxed(),
+        zones().filter(|zone| zone.name != "UTC").boxed(),
+        gs::one_of(vec![zones().boxed(), zones().names(["Test/Fixed"]).boxed()]).boxed(),
+        gs::sampled_from(vec![
+            source.zone("America/New_York").unwrap(),
+            source.zone("Test/Fixed").unwrap(),
+        ])
+        .boxed(),
+    ];
+    for zones in wrapped {
+        assert_all_examples(
+            spring_forward_day().zones(zones).source(source.clone()),
+            is_a_fixed_source_value,
+        );
+    }
+}
+
+#[test]
+fn test_zoned_datetimes_without_a_source_resolve_another_generators_zones_in_the_default() {
+    let new_york = fixed_source().zone("America/New_York").unwrap();
+    find_any(spring_forward_day().zones(gs::just(new_york)), |z| {
+        z.kind == TransitionKind::Gap
+    });
+}
+
+/// The wall times New York's clocks skipped in March 2024, with skipped
+/// wall times not allowed: a draw New York has no value for.
+fn in_new_yorks_gap() -> gs::temporal::ZonedDateTimeGenerator {
+    gs::temporal::zoned_datetimes()
+        .min_value(datetime(2024, 3, 10, 2, 10))
+        .max_value(datetime(2024, 3, 10, 2, 50))
+        .allow_imaginary(false)
+}
+
+/// Run a test drawing from `generator`, returning how many test cases
+/// began the draw and how many got a value from it.
+fn draws_and_values(generator: gs::temporal::ZonedDateTimeGenerator) -> (usize, usize) {
+    let draws = Arc::new(AtomicUsize::new(0));
+    let values = Arc::new(AtomicUsize::new(0));
+    let (d, v) = (Arc::clone(&draws), Arc::clone(&values));
+    hegel::Hegel::new(move |tc: TestCase| {
+        d.fetch_add(1, Ordering::SeqCst);
+        let z = tc.draw(&generator);
+        assert_ne!(z.zone.name, "America/New_York");
+        v.fetch_add(1, Ordering::SeqCst);
+    })
+    .settings(
+        hegel::Settings::new()
+            .test_cases(100)
+            .database(None)
+            .suppress_health_check(hegel::HealthCheck::all()),
+    )
+    .run();
+    (draws.load(Ordering::SeqCst), values.load(Ordering::SeqCst))
+}
+
+#[test]
+fn test_zoned_datetimes_in_a_zone_with_no_value_in_the_bounds_reject_the_test_case() {
+    let zone = |name| hegel::generators::temporal::TimeZone::new(name).unwrap();
+    let (draws, values) = draws_and_values(in_new_yorks_gap().zones(gs::sampled_from(vec![
+        zone("America/New_York"),
+        zone("UTC"),
+    ])));
+    assert!(values > 0 && values < draws, "{values} of {draws}");
+}
+
+#[test]
+fn test_zoned_datetimes_reject_a_zone_with_no_value_when_the_unknown_zone_has_one() {
+    let (draws, values) = draws_and_values(
+        in_new_yorks_gap().zones(gs::temporal::zones().names(["America/New_York", UNKNOWN_ZONE])),
+    );
+    assert!(values > 0 && values < draws, "{values} of {draws}");
 }

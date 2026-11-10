@@ -1102,19 +1102,7 @@ impl CTestCase {
             data: ptr::null(),
             len: 0,
         };
-        let mut out = hegel_c::hegel_zoned_datetime_t {
-            civil: crate::test_case::full_ranges::MIN_DATETIME,
-            offset_seconds: 0,
-            offset_known: false,
-            fold: false,
-            kind: hegel_c::hegel_timezone_kind_t::HEGEL_TIMEZONE_KIND_UNIQUE,
-            offset_before: 0,
-            offset_after: 0,
-            timestamp: hegel_c::hegel_timestamp_t {
-                second: 0,
-                nanosecond: 0,
-            },
-        };
+        let mut out = BLANK_ZONED_DATETIME;
         let rc = with_context(|ctx| unsafe {
             hegel_c::hegel_generate_zoned_datetime(
                 ctx,
@@ -1127,6 +1115,30 @@ impl CTestCase {
         });
         let zone = take_string_result(rc, result)?;
         Ok((out, zone))
+    }
+
+    /// Draw a zoned datetime within `zoned_spec`'s bounds in the zone
+    /// `name` of `source`, recording no choice for the zone.
+    pub(crate) fn generate_zoned_datetime_for_zone(
+        &self,
+        source: &ZoneSourceHandle,
+        name: &str,
+        zoned_spec: &ZonedSpec,
+    ) -> Result<hegel_c::hegel_zoned_datetime_t, hegel_result_t> {
+        let mut out = BLANK_ZONED_DATETIME;
+        // SAFETY: the name outlives the call and &mut out is a valid
+        // out-parameter.
+        let rc = with_context(|ctx| unsafe {
+            hegel_c::hegel_generate_zoned_datetime_for_zone(
+                ctx,
+                self.raw,
+                source.as_ptr(),
+                view(name.as_bytes()),
+                zoned_spec.raw,
+                &mut out,
+            )
+        });
+        rc_to_value(rc, out)
     }
 
     /// Draw a UUID's 16 big-endian bytes, optionally forcing the RFC 4122
@@ -2425,6 +2437,91 @@ fn static_string(p: hegel_c::hegel_string_t) -> String {
     string_from_engine_bytes(bytes)
 }
 
+/// The value a zoned datetime out-parameter holds before the engine
+/// writes it.
+const BLANK_ZONED_DATETIME: hegel_c::hegel_zoned_datetime_t = hegel_c::hegel_zoned_datetime_t {
+    civil: crate::test_case::full_ranges::MIN_DATETIME,
+    offset_seconds: 0,
+    offset_known: false,
+    fold: false,
+    kind: hegel_c::hegel_timezone_kind_t::HEGEL_TIMEZONE_KIND_UNIQUE,
+    offset_before: 0,
+    offset_after: 0,
+    timestamp: hegel_c::hegel_timestamp_t {
+        second: 0,
+        nanosecond: 0,
+    },
+};
+
+/// The canonical text a `hegel_format_*` call writes, which no value makes
+/// fail.
+fn formatted(
+    format: impl FnOnce(
+        *mut hegel_c::HegelContext,
+        *mut hegel_c::hegel_owned_string_t,
+    ) -> hegel_result_t,
+) -> String {
+    let mut out = hegel_c::hegel_owned_string_t {
+        data: ptr::null(),
+        len: 0,
+    };
+    let rc = with_context(|ctx| format(ctx, &mut out));
+    take_string_result(rc, out).unwrap_or_else(|rc| crate::test_case::raise_for_rc(rc))
+}
+
+/// The engine's text of a date (`hegel_format_date`).
+pub(crate) fn format_date(value: hegel_c::hegel_date_t) -> String {
+    // SAFETY: `out` is a valid out-parameter.
+    formatted(|ctx, out| unsafe { hegel_c::hegel_format_date(ctx, value, out) })
+}
+
+/// The engine's text of a time of day (`hegel_format_time`).
+pub(crate) fn format_time(value: hegel_c::hegel_time_t) -> String {
+    // SAFETY: `out` is a valid out-parameter.
+    formatted(|ctx, out| unsafe { hegel_c::hegel_format_time(ctx, value, out) })
+}
+
+/// The engine's text of a naive datetime (`hegel_format_datetime`).
+pub(crate) fn format_datetime(value: hegel_c::hegel_datetime_t) -> String {
+    // SAFETY: `out` is a valid out-parameter.
+    formatted(|ctx, out| unsafe { hegel_c::hegel_format_datetime(ctx, value, out) })
+}
+
+/// The engine's text of an instant (`hegel_format_timestamp`).
+pub(crate) fn format_timestamp(value: hegel_c::hegel_timestamp_t) -> String {
+    // SAFETY: `out` is a valid out-parameter.
+    formatted(|ctx, out| unsafe { hegel_c::hegel_format_timestamp(ctx, value, out) })
+}
+
+/// The engine's text of a UTC offset (`hegel_format_offset`).
+pub(crate) fn format_offset(value: hegel_c::hegel_offset_t) -> String {
+    // SAFETY: `out` is a valid out-parameter.
+    formatted(|ctx, out| unsafe { hegel_c::hegel_format_offset(ctx, value, out) })
+}
+
+/// The engine's text of a duration (`hegel_format_duration`).
+pub(crate) fn format_duration(value: hegel_c::hegel_duration_t) -> String {
+    // SAFETY: `out` is a valid out-parameter.
+    formatted(|ctx, out| unsafe { hegel_c::hegel_format_duration(ctx, value, out) })
+}
+
+/// The engine's text of a calendar span (`hegel_format_span`).
+pub(crate) fn format_span(value: &hegel_c::hegel_span_t) -> String {
+    // SAFETY: `value` is read during the call and `out` is a valid
+    // out-parameter.
+    formatted(|ctx, out| unsafe { hegel_c::hegel_format_span(ctx, value, out) })
+}
+
+/// The engine's text of a zoned datetime in the zone `zone`
+/// (`hegel_format_zoned_datetime`).
+pub(crate) fn format_zoned_datetime(value: &hegel_c::hegel_zoned_datetime_t, zone: &str) -> String {
+    // SAFETY: `value` and the zone name are read during the call and `out`
+    // is a valid out-parameter.
+    formatted(|ctx, out| unsafe {
+        hegel_c::hegel_format_zoned_datetime(ctx, value, view(zone.as_bytes()), out)
+    })
+}
+
 /// Classify the wall time `civil` in the zone `name` of `source`, or of
 /// the default source (`hegel_timezone_resolve_in`); `Err` carries the
 /// engine's diagnostic for an unknown name, an invalid datetime or a
@@ -2642,6 +2739,13 @@ impl SpanSpec {
             hegel_c::hegel_span_spec_set_sign(ctx, self.raw, sign)
         }))
     }
+
+    /// Check the settings together, as a draw from the spec would.
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        rc_to_diagnostic(with_context(|ctx| unsafe {
+            hegel_c::hegel_span_spec_validate(ctx, self.raw)
+        }))
+    }
 }
 
 impl Drop for SpanSpec {
@@ -2654,9 +2758,10 @@ impl Drop for SpanSpec {
 
 /// An owned libhegel time-zone-spec handle (`hegel_timezone_spec_t`),
 /// freed on drop: the names a time zone draw may yield. Each setter
-/// returns `Err` with the engine's diagnostic for a configuration it
-/// rejects. The handle is only read once configured, so it may be shared
-/// across test cases and threads.
+/// returns `Err` with the engine's diagnostic for an argument it rejects,
+/// and `validate` for settings that do not fit together. The handle is
+/// only read once configured, so it may be shared across test cases and
+/// threads.
 pub(crate) struct TimeZoneSpec {
     raw: *mut hegel_c::HegelTimezoneSpec,
 }
@@ -2726,6 +2831,14 @@ impl TimeZoneSpec {
     pub(crate) fn set_opaque(&mut self, opaque: bool) -> Result<(), String> {
         rc_to_diagnostic(with_context(|ctx| unsafe {
             hegel_c::hegel_timezone_spec_set_opaque(ctx, self.raw, opaque)
+        }))
+    }
+
+    /// Check the settings together and build the zone ladder, as a draw
+    /// from the spec would.
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        rc_to_diagnostic(with_context(|ctx| unsafe {
+            hegel_c::hegel_timezone_spec_validate(ctx, self.raw)
         }))
     }
 }
@@ -2809,6 +2922,13 @@ impl ZonedSpec {
     pub(crate) fn set_ambiguous(&mut self, ambiguous: u32) -> Result<(), String> {
         rc_to_diagnostic(with_context(|ctx| unsafe {
             hegel_c::hegel_zoned_spec_set_ambiguous(ctx, self.raw, ambiguous)
+        }))
+    }
+
+    /// Check the settings together, as a draw from the spec would.
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        rc_to_diagnostic(with_context(|ctx| unsafe {
+            hegel_c::hegel_zoned_spec_validate(ctx, self.raw)
         }))
     }
 }

@@ -107,7 +107,7 @@ impl DefaultGenerator for NaiveDateTime {
 impl DefaultGenerator for DateTime<Utc> {
     type Generator = DateTimeGenerator<JustGenerator<Utc>, Utc>;
     fn default_generator() -> Self::Generator {
-        datetimes().timezones(just(Utc))
+        datetimes().zones(just(Utc))
     }
 }
 
@@ -120,16 +120,16 @@ impl DefaultGenerator for DateTime<FixedOffset> {
 
 #[cfg(feature = "chrono-tz")]
 impl DefaultGenerator for chrono_tz::Tz {
-    type Generator = super::TimeZoneGenerator;
+    type Generator = super::ZoneGenerator;
     fn default_generator() -> Self::Generator {
-        super::timezones()
+        super::zones()
     }
 }
 
 #[cfg(feature = "chrono-tz")]
 impl DefaultGenerator for DateTime<chrono_tz::Tz> {
-    type Generator = DateTimeGenerator<super::TimeZoneGenerator, chrono_tz::Tz>;
+    type Generator = DateTimeGenerator<super::ZoneGenerator, chrono_tz::Tz>;
     fn default_generator() -> Self::Generator {
-        datetimes().timezones(super::timezones())
+        datetimes().zones(super::zones())
     }
 }

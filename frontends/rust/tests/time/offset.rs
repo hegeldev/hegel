@@ -4,10 +4,12 @@ use crate::common::utils::{
 use hegel::HealthCheck;
 use hegel::extras::time as time_gs;
 use hegel::generators as gs;
-use hegel::generators::temporal::{Ambiguous, Granularity, Precision, UNKNOWN_ZONE};
+use hegel::generators::temporal::{
+    Ambiguous, Granularity, LocalTimeType, Precision, UNKNOWN_ZONE, ZoneAfter, ZoneData, ZoneSource,
+};
 use jiff::tz::AmbiguousOffset;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock};
 use time::{Date, Month, OffsetDateTime, PrimitiveDateTime, Time, UtcOffset};
 
 fn datetime(year: i32, month: u8, day: u8, hour: u8, minute: u8, second: u8) -> PrimitiveDateTime {
@@ -238,7 +240,7 @@ fn test_offset_datetimes_property(tc: hegel::TestCase) {
 }
 
 #[hegel::test]
-#[should_panic(expected = "max_value < min_value")]
+#[should_panic(expected = "min_value <= max_value")]
 fn test_offset_datetimes_min_greater_than_max(tc: hegel::TestCase) {
     tc.draw(
         time_gs::offset_datetimes()
@@ -306,35 +308,33 @@ fn test_offset_datetimes_instant_bounds_reach_the_ends_of_the_time_range() {
 }
 
 #[test]
-fn test_offset_datetimes_instant_bounds_replace_wall_clock_bounds() {
-    let millennium = datetime(2000, 1, 1, 0, 0, 0);
-    find_any(
+#[should_panic(
+    expected = "Cannot combine the wall-clock bounds min_value and max_value with the instant bounds min_instant and max_instant"
+)]
+fn test_offset_datetimes_wall_clock_and_instant_bounds() {
+    check_can_generate_examples(
         time_gs::offset_datetimes()
-            .min_value(millennium)
+            .min_value(datetime(2000, 1, 1, 0, 0, 0))
             .max_instant(OffsetDateTime::UNIX_EPOCH),
-        |dt| dt.year() == PrimitiveDateTime::MIN.year(),
-    );
-    find_any(
-        time_gs::offset_datetimes()
-            .max_value(millennium)
-            .min_instant(OffsetDateTime::UNIX_EPOCH),
-        |dt| dt.year() == PrimitiveDateTime::MAX.year(),
     );
 }
 
 #[test]
-fn test_offset_datetimes_wall_clock_bounds_replace_instant_bounds() {
-    let epoch = datetime(1970, 1, 1, 0, 0, 0);
+fn test_offset_datetimes_default_to_the_whole_range_on_the_unbounded_side() {
     find_any(
-        time_gs::offset_datetimes()
-            .min_instant(OffsetDateTime::UNIX_EPOCH)
-            .min_value(epoch),
+        time_gs::offset_datetimes().max_instant(OffsetDateTime::UNIX_EPOCH),
+        |dt| dt.year() == PrimitiveDateTime::MIN.year(),
+    );
+    find_any(
+        time_gs::offset_datetimes().min_instant(OffsetDateTime::UNIX_EPOCH),
         |dt| dt.year() == PrimitiveDateTime::MAX.year(),
     );
     find_any(
-        time_gs::offset_datetimes()
-            .max_instant(OffsetDateTime::UNIX_EPOCH)
-            .max_value(epoch),
+        time_gs::offset_datetimes().min_value(datetime(1970, 1, 1, 0, 0, 0)),
+        |dt| dt.year() == PrimitiveDateTime::MAX.year(),
+    );
+    find_any(
+        time_gs::offset_datetimes().max_value(datetime(1970, 1, 1, 0, 0, 0)),
         |dt| dt.year() == PrimitiveDateTime::MIN.year(),
     );
 }
@@ -366,5 +366,50 @@ fn test_offset_datetimes_instant_bounds_keep_each_other() {
     assert_all_examples(
         time_gs::offset_datetimes().max_instant(hi).min_instant(lo),
         move |dt| *dt >= lo && *dt <= hi,
+    );
+}
+
+/// A source whose London is always nine hours ahead of UTC.
+static SHIFTED_LONDON: LazyLock<ZoneSource> = LazyLock::new(|| {
+    ZoneSource::builder()
+        .zone(
+            "Europe/London",
+            &ZoneData {
+                initial: LocalTimeType {
+                    offset: 9 * 3600,
+                    is_dst: false,
+                    abbreviation: "FIX".to_string(),
+                },
+                transitions: vec![],
+                after: ZoneAfter::Hold,
+            },
+        )
+        .build()
+        .unwrap()
+});
+
+#[test]
+fn test_offset_datetimes_source() {
+    assert_all_examples(
+        time_gs::offset_datetimes().source(SHIFTED_LONDON.clone()),
+        |dt| dt.offset() == UtcOffset::from_hms(9, 0, 0).unwrap(),
+    );
+}
+
+#[test]
+fn test_offset_datetimes_from_any_generator_of_zones() {
+    let london = || gs::just(SHIFTED_LONDON.zone("Europe/London").unwrap());
+    assert_all_examples(
+        time_gs::offset_datetimes()
+            .zones(london())
+            .source(SHIFTED_LONDON.clone()),
+        |dt| dt.offset() == UtcOffset::from_hms(9, 0, 0).unwrap(),
+    );
+    assert_all_examples(
+        time_gs::offset_datetimes()
+            .zones(london())
+            .min_value(datetime(1900, 1, 1, 0, 0, 0))
+            .max_value(datetime(2100, 12, 31, 23, 59, 59)),
+        london_offset_agrees_with_jiff,
     );
 }

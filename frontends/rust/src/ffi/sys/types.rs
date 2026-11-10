@@ -316,7 +316,7 @@ pub(crate) type hegel_zone_offset_fn_t = Option<
         ctx: *mut HegelContext,
         instant: i64,
         out_type: *mut hegel_zone_type_t,
-    ) -> hegel_result_t,
+    ) -> i32,
 >;
 
 pub(crate) type hegel_zone_next_transition_fn_t = Option<
@@ -326,7 +326,7 @@ pub(crate) type hegel_zone_next_transition_fn_t = Option<
         after: i64,
         out_found: *mut bool,
         out_instant: *mut i64,
-    ) -> hegel_result_t,
+    ) -> i32,
 >;
 
 #[repr(C)]
@@ -346,8 +346,10 @@ pub(crate) type hegel_zone_loader_t = Option<
         ctx: *mut HegelContext,
         source: *mut HegelZoneSource,
         name: hegel_string_t,
-    ) -> hegel_result_t,
+    ) -> i32,
 >;
+
+pub(crate) type hegel_zone_loader_release_t = Option<unsafe extern "C" fn(user_data: *mut c_void)>;
 
 #[repr(C)]
 #[derive(Copy, Clone)]

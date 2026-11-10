@@ -13,14 +13,13 @@ fn engine_civil(second: i64) -> DateTime {
         .to_zoned(TimeZone::UTC)
         .datetime();
     DateTime::new(
-        Date::new(i32::from(dt.year()), dt.month() as u8, dt.day() as u8).unwrap(),
-        Time::new(dt.hour() as u8, dt.minute() as u8, dt.second() as u8, 0).unwrap(),
+        Date::new(i32::from(dt.year()), dt.month() as u8, dt.day() as u8),
+        Time::new(dt.hour() as u8, dt.minute() as u8, dt.second() as u8, 0),
     )
-    .unwrap()
 }
 
 fn engine_offset(source: &ZoneSource, name: &str, second: i64) -> i32 {
-    let instant = Instant::new(second, 0).unwrap();
+    let instant = Instant::new(second, 0);
     match source.offset_at(name, instant).unwrap().offset {
         UtcOffset::Known(seconds) => seconds,
         UtcOffset::Unknown => panic!("{name} has an unknown offset"),
@@ -114,14 +113,14 @@ fn test_jiff_zone_source_knows_jiffs_names() {
 }
 
 #[test]
-fn test_jiff_zone_source_version() {
-    let version = jiff_gs::zone_source().version();
-    assert!(
-        regex::Regex::new(r"^[0-9]{4}[a-z]$")
-            .unwrap()
-            .is_match(&version),
-        "{version:?}"
-    );
+fn test_jiff_zone_source_lacks_a_name_jiff_lacks() {
+    let source = jiff_gs::zone_source();
+    assert_eq!(source.info("Mars/Olympus_Mons").unwrap(), None);
+}
+
+#[test]
+fn test_jiff_zone_source_reports_no_version() {
+    assert_eq!(jiff_gs::zone_source().version(), "");
 }
 
 #[test]
@@ -129,6 +128,21 @@ fn test_jiff_zone_source_is_the_source_of_zoned_draws() {
     assert_all_examples(
         gs::temporal::zoned_datetimes()
             .zones(gs::temporal::zones().source(jiff_gs::zone_source()))
+            .min_value(engine_civil(946_684_800))
+            .max_value(engine_civil(4_102_444_800)),
+        |z| {
+            let zone = TimeZone::get(&z.zone.name).unwrap();
+            let offset = jiff_offset(&zone, z.instant.second);
+            z.kind == TransitionKind::Gap || z.offset == UtcOffset::Known(offset)
+        },
+    );
+}
+
+#[test]
+fn test_jiff_zone_source_as_the_source_of_zoned_draws() {
+    assert_all_examples(
+        gs::temporal::zoned_datetimes()
+            .source(jiff_gs::zone_source())
             .min_value(engine_civil(946_684_800))
             .max_value(engine_civil(4_102_444_800)),
         |z| {
