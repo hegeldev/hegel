@@ -153,14 +153,16 @@ pub(crate) fn opt_string_from(p: *const c::hegel_string_t) -> Option<String> {
 
 /// Map a libhegel result code to `Ok(())` or the matching Python exception.
 pub(crate) fn check(rc: Rc) -> PyResult<()> {
+    let callback_error = zone_source::take_callback_error();
     match rc {
         Rc::HEGEL_OK => Ok(()),
         Rc::HEGEL_E_STOP_TEST => Err(StopTest::new_err(())),
         Rc::HEGEL_E_ASSUME => Err(AssumeFailed::new_err(())),
         Rc::HEGEL_E_RETRY => Err(RetrySignal::new_err(())),
-        Rc::HEGEL_E_INVALID_ARG => Err(zone_source::with_callback_cause(InvalidArgument::new_err(
-            last_error(),
-        ))),
+        Rc::HEGEL_E_INVALID_ARG => Err(zone_source::with_callback_cause(
+            InvalidArgument::new_err(last_error()),
+            callback_error,
+        )),
         Rc::HEGEL_E_BACKEND => Err(BackendError::new_err(last_error())),
         // A test body can't see its own test case finish, so this means a
         // TestCase (or a pool or collection holding one) outlived its test.
@@ -320,6 +322,14 @@ fn _native(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(time::tzdb_version, m)?)?;
     m.add_function(wrap_pyfunction!(time::timezone_info, m)?)?;
     m.add_function(wrap_pyfunction!(time::timezone_resolve, m)?)?;
+    m.add_function(wrap_pyfunction!(time::timezone_offset_at, m)?)?;
+    m.add_function(wrap_pyfunction!(time::format_span, m)?)?;
+    m.add_function(wrap_pyfunction!(time::validate_date, m)?)?;
+    m.add_function(wrap_pyfunction!(time::validate_time, m)?)?;
+    m.add_function(wrap_pyfunction!(time::validate_datetime, m)?)?;
+    m.add_function(wrap_pyfunction!(time::validate_timestamp, m)?)?;
+    m.add_function(wrap_pyfunction!(time::validate_offset, m)?)?;
+    m.add_function(wrap_pyfunction!(time::validate_duration, m)?)?;
     m.add_function(wrap_pyfunction!(zone_source::set_default_zone_source, m)?)?;
     m.add_function(wrap_pyfunction!(label_from_name, m)?)?;
     m.add_function(wrap_pyfunction!(label_combine, m)?)?;

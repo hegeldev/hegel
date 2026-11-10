@@ -11,8 +11,7 @@ import os
 import threading
 import zoneinfo
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import KW_ONLY, dataclass
-from functools import cache
+from dataclasses import KW_ONLY, astuple, dataclass
 from importlib import resources
 from typing import TYPE_CHECKING, Any
 
@@ -21,6 +20,7 @@ from hegel._labels import combine_labels, label_from_name
 from hegel.errors import InvalidArgument
 from hegel.generators.base import Generator, _PrintsValue
 from hegel.generators.combinators import as_generator
+from hegel.test_case import _duration_of
 
 if TYPE_CHECKING:
     from hegel.test_case import TestCase
@@ -29,7 +29,9 @@ __all__ = [
     "RuleDate",
     "Span",
     "ZoneData",
+    "ZoneNameInfo",
     "ZoneOracle",
+    "ZoneResolution",
     "ZoneRule",
     "ZoneSource",
     "ZoneType",
@@ -54,15 +56,19 @@ DATETIME_LABEL = label_from_name("hegel.datetimes")
 ZONED_DATETIME_LABEL = label_from_name("hegel.zoned_datetimes")
 INSTANT_LABEL = label_from_name("hegel.instants")
 SPAN_LABEL = label_from_name("hegel.spans")
-DURATION_LABEL = label_from_name("hegel.timedeltas")
-ZONE_NAME_LABEL = label_from_name("hegel.timezone_keys")
-ZONE_LABEL = label_from_name("hegel.timezones")
-OFFSET_LABEL = label_from_name("hegel.utc_offsets")
+DURATION_LABEL = label_from_name("hegel.durations")
+ZONE_NAME_LABEL = label_from_name("hegel.zone_names")
+ZONE_LABEL = label_from_name("hegel.zones")
+OFFSET_LABEL = label_from_name("hegel.offsets")
 
 _EPOCH = dt.datetime(1970, 1, 1, tzinfo=dt.UTC)
 _MICROSECOND = dt.timedelta(microseconds=1)
 _SECOND = dt.timedelta(seconds=1)
 _MAX_OFFSET = dt.timedelta(hours=23, minutes=59, seconds=59)
+_MIN_INSTANT = dt.datetime.min.replace(tzinfo=dt.UTC)
+_MAX_INSTANT = dt.datetime.max.replace(tzinfo=dt.UTC)
+_I64_MIN = -(2**63)
+_I64_MAX = 2**63 - 1
 
 _PRECISIONS: dict[str, tuple[int, int]] = {
     "microseconds": (_native.PRECISION_MICROSECONDS, 1),
@@ -102,19 +108,20 @@ def _precision(precision: Any) -> tuple[int, int]:
     return _PRECISIONS[precision]
 
 
-def _check_fits(unit_name: str, min_units: int, max_units: int, unit: int, what: str) -> None:
-    """Raise unless some whole multiple of ``unit`` lies in
-    ``[min_units, max_units]``."""
-    if -(-min_units // unit) * unit > max_units:
-        raise InvalidArgument(
-            f"no {what} between min_value and max_value is a whole number of {unit_name}"
-        )
+def _arguments(**values: Any) -> str:
+    """The ``name=value, ...`` text of the arguments a generator's repr
+    shows, skipping those that are ``None``."""
+    return ", ".join(f"{name}={value!r}" for name, value in values.items() if value is not None)
 
 
-def _keywords(**values: Any) -> str:
-    """The ``, name=value`` text of each argument a generator's repr shows,
-    skipping those that are ``None``."""
-    return "".join(f", {name}={value!r}" for name, value in values.items() if value is not None)
+def _unless(value: Any, default: Any) -> Any:
+    """``value`` for a repr to show, or ``None`` when it is the default."""
+    return None if value == default else value
+
+
+def _check_order(min_value: Any, max_value: Any) -> None:
+    if min_value > max_value:
+        raise InvalidArgument(f"Cannot have max_value={max_value!r} < min_value={min_value!r}")
 
 
 def _members(mask: int | None, lowest: int, count: int) -> list[int] | None:
@@ -136,17 +143,23 @@ def _mask(name: str, values: Any, lowest: int, highest: int) -> int:
                 f"{name}={values!r} must contain ints from {lowest} to {highest}, not {value!r}"
             )
         mask |= 1 << (value - lowest)
-    if mask == 0:
-        raise InvalidArgument(f"{name}={values!r} must not be empty")
     return mask
 
 
 class Dates(_PrintsValue[dt.date]):
     def __init__(
-        self, min_value: dt.date, max_value: dt.date, weekdays: int | None, months: int | None
+        self,
+        min_value: dt.date | None,
+        max_value: dt.date | None,
+        weekdays: int | None,
+        months: int | None,
     ) -> None:
         self.min_value = min_value
         self.max_value = max_value
+        self.bounds = (
+            dt.date.min if min_value is None else min_value,
+            dt.date.max if max_value is None else max_value,
+        )
         self.weekdays = weekdays
         self.months = months
         self.options = (
@@ -154,26 +167,27 @@ class Dates(_PrintsValue[dt.date]):
         )
         self.label = DATE_LABEL
 
-    def allows(self, value: dt.date) -> bool:
-        return (self.weekdays is None or bool(self.weekdays >> value.weekday() & 1)) and (
-            self.months is None or bool(self.months >> (value.month - 1) & 1)
-        )
-
     def do_draw(self, tc: TestCase) -> dt.date:
-        return tc._generate_date(self.min_value, self.max_value, self.options)
+        return tc._generate_date(*self.bounds, self.options)
 
     def __repr__(self) -> str:
-        keywords = _keywords(
-            weekdays=_members(self.weekdays, 0, 7), months=_members(self.months, 1, 12)
+        arguments = _arguments(
+            min_value=self.min_value,
+            max_value=self.max_value,
+            weekdays=_members(self.weekdays, 0, 7),
+            months=_members(self.months, 1, 12),
         )
-        return (
-            f"temporal.dates(min_value={self.min_value!r}, max_value={self.max_value!r}{keywords})"
-        )
+        return f"temporal.dates({arguments})"
+
+
+def _check_date(name: str, value: Any) -> None:
+    if isinstance(value, dt.datetime) or not isinstance(value, dt.date):
+        raise InvalidArgument(f"{name}={value!r} must be a date (a datetime is not accepted)")
 
 
 def dates(
-    min_value: dt.date = dt.date.min,
-    max_value: dt.date = dt.date.max,
+    min_value: dt.date | None = None,
+    max_value: dt.date | None = None,
     *,
     weekdays: Iterable[int] | None = None,
     months: Iterable[int] | None = None,
@@ -181,10 +195,11 @@ def dates(
     """Generate :class:`datetime.date` objects in ``[min_value, max_value]``,
     inclusive, shrinking toward 2000-01-01 (or the bound nearest it).
 
-    The bounds default to the whole range :mod:`datetime` supports. One
-    draw in twenty on average targets a date tests tend to get wrong: the
-    leap days nearest the bounds, the year boundaries, the 2038 and 2106
-    overflow days and the days of an ISO week 53.
+    Either bound may be omitted: a missing bound is the end of the range
+    :mod:`datetime` supports. One draw in twenty on average targets a date
+    tests tend to get wrong: the leap days nearest the bounds, the year
+    boundaries, the 2038 and 2106 overflow days and the days of an ISO
+    week 53.
 
     ``weekdays`` restricts the draw to those days of the week, numbered as
     :meth:`datetime.date.weekday` does (Monday is 0, Sunday 6, so
@@ -198,64 +213,65 @@ def dates(
     ``months``, or bounds holding no allowed date are an
     :class:`~hegel.InvalidArgument`.
     """
-    _check_type("min_value", min_value, dt.date)
-    _check_type("max_value", max_value, dt.date)
-    if isinstance(min_value, dt.datetime) or isinstance(max_value, dt.datetime):
-        raise InvalidArgument("dates() bounds must be date objects, not datetimes")
-    if min_value > max_value:
-        raise InvalidArgument(f"Cannot have max_value={max_value!r} < min_value={min_value!r}")
+    if min_value is not None:
+        _check_date("min_value", min_value)
+    if max_value is not None:
+        _check_date("max_value", max_value)
     weekday_mask = None if weekdays is None else _mask("weekdays", weekdays, 0, 6)
     month_mask = None if months is None else _mask("months", months, 1, 12)
     result = Dates(min_value, max_value, weekday_mask, month_mask)
-    if result.options is not None:
-        candidate = min_value
-        while not result.allows(candidate):
-            if candidate == max_value or candidate - min_value > dt.timedelta(days=400):
-                raise InvalidArgument(
-                    f"no date between min_value={min_value!r} and max_value={max_value!r} "
-                    f"falls on weekdays={weekdays!r} and months={months!r}"
-                )
-            candidate += dt.timedelta(days=1)
+    low, high = result.bounds
+    _check_order(low, high)
+    _native.validate_date(
+        (low.year, low.month, low.day), (high.year, high.month, high.day), result.options
+    )
     return result
 
 
 class Times(_PrintsValue[dt.time]):
     def __init__(
         self,
-        min_value: dt.time,
-        max_value: dt.time,
+        min_value: dt.time | None,
+        max_value: dt.time | None,
         zones: Generator[Any] | None,
         precision: str,
     ) -> None:
         self.min_value = min_value
         self.max_value = max_value
+        self.bounds = (
+            dt.time.min if min_value is None else min_value,
+            dt.time.max if max_value is None else max_value,
+        )
         self.zones = zones
         self.precision = precision
         self.label = TIME_LABEL if zones is None else combine_labels([TIME_LABEL, zones.label])
 
     def do_draw(self, tc: TestCase) -> dt.time:
-        value = tc._generate_time(self.min_value, self.max_value, _PRECISIONS[self.precision][0])
-        if self.zones is not None:
-            value = value.replace(tzinfo=tc.draw_silent(self.zones))
-        return value
+        value = tc._generate_time(*self.bounds, _PRECISIONS[self.precision][0])
+        if self.zones is None:
+            return value
+        tz = tc.draw_silent(self.zones)
+        if tz is not None and not isinstance(tz, dt.tzinfo):
+            raise InvalidArgument(f"zones must generate tzinfo objects, got {tz!r}")
+        return value.replace(tzinfo=tz)
 
     def __repr__(self) -> str:
-        keywords = _keywords(
+        arguments = _arguments(
+            min_value=self.min_value,
+            max_value=self.max_value,
             zones=self.zones,
-            precision=None if self.precision == "microseconds" else self.precision,
+            precision=_unless(self.precision, "microseconds"),
         )
-        return (
-            f"temporal.times(min_value={self.min_value!r}, max_value={self.max_value!r}{keywords})"
-        )
+        return f"temporal.times({arguments})"
 
 
-def _time_microseconds(value: dt.time) -> int:
-    return ((value.hour * 60 + value.minute) * 60 + value.second) * 1_000_000 + value.microsecond
+def _time_fields(value: dt.time) -> tuple[int, int, int, int]:
+    return value.hour, value.minute, value.second, value.microsecond * 1000
 
 
 def times(
-    min_value: dt.time = dt.time.min,
-    max_value: dt.time = dt.time.max,
+    min_value: dt.time | None = None,
+    max_value: dt.time | None = None,
     *,
     zones: Generator[Any] | None = None,
     precision: str = "microseconds",
@@ -263,28 +279,36 @@ def times(
     """Generate :class:`datetime.time` objects in ``[min_value, max_value]``,
     inclusive, shrinking toward midnight.
 
-    The bounds must be naive. The times are naive too, unless
-    ``zones`` is given: a generator of :class:`datetime.tzinfo` objects
-    (such as :func:`zones`), one of which is attached to each time.
-    ``fold`` is never set.
+    Either bound may be omitted, and a bound given must be naive. The
+    times are naive too, unless ``zones`` is given: a generator of
+    :class:`datetime.tzinfo` objects (or ``None``), one of which is
+    attached to each time. ``fold`` is never set. A time has no date, so
+    a zone whose offset depends on the date, as a
+    :class:`zoneinfo.ZoneInfo` from :func:`zones` does, gives it no
+    :meth:`~datetime.time.utcoffset`; :func:`offsets` generates zones
+    that do.
 
     ``precision`` names the unit every drawn time is a whole number of,
     as the ``timespec`` argument of :meth:`~datetime.time.isoformat` does:
     ``"microseconds"`` (the default), ``"milliseconds"``, ``"seconds"``,
-    ``"minutes"`` or ``"hours"``. Bounds holding no time at the precision
-    are an :class:`~hegel.InvalidArgument`.
+    ``"minutes"`` or ``"hours"``.
+
+    Bounds that are not naive times, ``min_value > max_value``, bounds
+    holding no time at the precision, or a ``zones`` generator producing
+    something other than ``tzinfo`` objects or ``None`` are an
+    :class:`~hegel.InvalidArgument`.
     """
-    _check_type("min_value", min_value, dt.time)
-    _check_type("max_value", max_value, dt.time)
-    if min_value.tzinfo is not None or max_value.tzinfo is not None:
-        raise InvalidArgument("times() bounds must be naive")
-    if min_value > max_value:
-        raise InvalidArgument(f"Cannot have max_value={max_value!r} < min_value={min_value!r}")
-    _, unit = _precision(precision)
-    _check_fits(
-        precision, _time_microseconds(min_value), _time_microseconds(max_value), unit, "time"
-    )
-    return Times(min_value, max_value, None if zones is None else as_generator(zones), precision)
+    for name, value in (("min_value", min_value), ("max_value", max_value)):
+        if value is not None:
+            _check_type(name, value, dt.time)
+            if value.tzinfo is not None:
+                raise InvalidArgument(f"{name}={value!r} must be naive")
+    engine_precision, _ = _precision(precision)
+    result = Times(min_value, max_value, None if zones is None else as_generator(zones), precision)
+    low, high = result.bounds
+    _check_order(low, high)
+    _native.validate_time(_time_fields(low), _time_fields(high), engine_precision)
+    return result
 
 
 def tzdb_version() -> str:
@@ -299,17 +323,16 @@ def tzdb_version() -> str:
     return _native.tzdb_version()
 
 
-_MAX_ZONE_OFFSET = dt.timedelta(days=2)
+_MAX_ZONE_OFFSET = dt.timedelta(days=2) - _SECOND
 _MAX_RULE_TIME = dt.timedelta(hours=167)
 
 
-def _whole_seconds(name: str, value: Any, limit: dt.timedelta) -> int:
+def _check_whole_seconds(name: str, value: Any, limit: dt.timedelta) -> None:
     _check_type(name, value, dt.timedelta)
-    if value % _SECOND or not -limit < value < limit:
+    if value % _SECOND or not -limit <= value <= limit:
         raise InvalidArgument(
-            f"{name}={value!r} must be a whole number of seconds strictly within {limit} of zero"
+            f"{name}={value!r} must be a whole number of seconds, at most {limit} from zero"
         )
-    return value // _SECOND
 
 
 def _check_int(name: str, value: Any, lowest: int, highest: int) -> None:
@@ -322,14 +345,14 @@ class ZoneType:
     """A local time type of a zone: its UTC offset, whether it is daylight
     saving time, and its abbreviation, such as
     ``ZoneType(dt.timedelta(hours=1), True, "BST")``. The offset is a whole
-    number of seconds strictly within two days of zero."""
+    number of seconds less than two days from zero."""
 
     offset: dt.timedelta
     is_dst: bool = False
     abbreviation: str = ""
 
     def __post_init__(self) -> None:
-        _whole_seconds("offset", self.offset, _MAX_ZONE_OFFSET)
+        _check_whole_seconds("offset", self.offset, _MAX_ZONE_OFFSET)
         _check_type("is_dst", self.is_dst, bool)
         _check_type("abbreviation", self.abbreviation, str)
 
@@ -349,8 +372,9 @@ class RuleDate:
     """When a yearly daylight-saving rule changes the clocks: ``time``
     after local midnight (in the offset in force before the change) of a
     day of the year, as the ``Jn``, ``n`` and ``Mm.w.d`` forms of a POSIX
-    TZ string name it. Build one with :meth:`julian`, :meth:`zero_based`
-    or :meth:`month_week_day`."""
+    TZ string name it. ``time`` is a whole number of seconds from -167 to
+    167 hours, the range a TZif file allows. Build one with
+    :meth:`julian`, :meth:`zero_based` or :meth:`month_week_day`."""
 
     kind: str
     day: int = 0
@@ -367,7 +391,7 @@ class RuleDate:
             _check_int("weekday", self.weekday, 0, 6)
         else:
             _check_int("day", self.day, 1 if self.kind == "julian" else 0, 365)
-        _whole_seconds("time", self.time, _MAX_RULE_TIME)
+        _check_whole_seconds("time", self.time, _MAX_RULE_TIME)
 
     @classmethod
     def julian(cls, day: int, time: dt.timedelta = dt.timedelta(hours=2)) -> RuleDate:
@@ -622,6 +646,49 @@ def _zoneinfo_version() -> str:
     return str(tzdata.IANA_VERSION)
 
 
+_KINDS: dict[int, str] = {
+    _native.TIMEZONE_KIND_UNIQUE: "unique",
+    _native.TIMEZONE_KIND_GAP: "gap",
+    _native.TIMEZONE_KIND_FOLD: "fold",
+}
+
+
+@dataclass(frozen=True)
+class ZoneNameInfo:
+    """What a :class:`ZoneSource` knows about a time zone name, from
+    :meth:`ZoneSource.info`: ``primary_name``, the zone whose data applies
+    (the link target for a link, the name itself otherwise); ``is_link``
+    and ``is_legacy``, which the ``allow_links`` and ``allow_legacy``
+    arguments of :func:`zone_names` go by; and ``rank``, the name's place
+    in the order names shrink in, 0 for ``"UTC"``."""
+
+    primary_name: str
+    is_link: bool
+    is_legacy: bool
+    rank: int
+
+
+@dataclass(frozen=True)
+class ZoneResolution:
+    """How a :class:`ZoneSource`'s data reads a wall-clock time in a zone,
+    from :meth:`ZoneSource.resolve`.
+
+    ``kind`` is ``"unique"`` for a wall time the zone's clocks showed
+    once, ``"gap"`` for one they skipped and ``"fold"`` for one they
+    showed twice. For a gap or a fold ``offset_before`` and
+    ``offset_after`` are the UTC offsets in force before and after the
+    transition; otherwise both are the offset in force. ``instant`` is
+    the moment the wall time denotes, in UTC, read as :mod:`datetime`
+    reads it: with ``offset_before`` when its ``fold`` is 0 and
+    ``offset_after`` when it is 1.
+    """
+
+    kind: str
+    offset_before: dt.timedelta
+    offset_after: dt.timedelta
+    instant: dt.datetime
+
+
 class ZoneSource:
     """The time zone data zoned draws are generated against: which zones
     exist, and their transitions and rules, so that the gaps and folds the
@@ -629,8 +696,9 @@ class ZoneSource:
 
     By default every draw uses :meth:`zoneinfo`, :mod:`zoneinfo`'s own
     database; :func:`set_default_zone_source` changes that, and
-    :func:`zones` and :func:`zone_names` take a ``source`` for one
-    generator. :meth:`bundled` is the engine's own database.
+    :func:`zones`, :func:`zone_names`, :func:`datetimes` and
+    :func:`zoned_datetimes` take a ``source`` for one generator.
+    :meth:`bundled` is the engine's own database.
 
     ``ZoneSource()`` is an empty source, for an integration with another
     date and time library to fill: with :meth:`add_tzif`,
@@ -638,9 +706,15 @@ class ZoneSource:
     by declaring the names it knows with :meth:`declare` and supplying each
     zone's data when a draw first needs it through :meth:`set_loader`.
     Whatever its shape, the engine checks the data, and an error in it
-    raises :class:`~hegel.InvalidArgument`. A source may be filled while
-    it is in use, but a generator reads the names a source knows when it
-    is built.
+    raises :class:`~hegel.InvalidArgument`. :meth:`info`, :meth:`resolve`
+    and :meth:`offset_at` report what the source holds, and
+    ``name in source`` whether it knows a name.
+
+    Build a source once, at module level or in a fixture, rather than in
+    a test body, and fill it before building generators from it: a source
+    may be filled while it is in use, but a generator reads the names its
+    source knows when the generator is built, so a name added afterwards
+    is drawn only by generators built after that.
     """
 
     def __init__(self) -> None:
@@ -678,6 +752,11 @@ class ZoneSource:
         files when each zone is, so a source made before
         :func:`zoneinfo.reset_tzpath` changes the search path reads its
         zones from the new one.
+
+        Where :mod:`zoneinfo` finds no database (Windows without the
+        ``tzdata`` package, say) the source has no names, and building a
+        generator that draws its zones is an
+        :class:`~hegel.InvalidArgument`.
         """
         source = ZoneSource._of(_native.ZoneSource(), "ZoneSource.zoneinfo()")
         source._source.set_loader(lambda name: _loader_entry(name, _zoneinfo_tzif(name)))
@@ -753,12 +832,21 @@ class ZoneSource:
         """Supply a zone's data the first time a draw or query needs it:
         ``loader(name)`` returns the zone's TZif bytes, a :class:`ZoneData`,
         a :class:`ZoneOracle`, the name of the zone it is a link to, or
-        ``None`` for a name it does not know. It is asked once per name,
-        for declared names and any other name a generator names, and may be
-        called from any thread that draws, but must not draw itself. An
-        exception it raises fails the draw with
-        :class:`~hegel.InvalidArgument`, whose ``__cause__`` is that
-        exception. ``None`` removes the loader."""
+        ``None`` for a name it does not know.
+
+        The loader is asked for declared names and for any other name a
+        generator or query names. What it returns for a name is kept, so
+        it is normally asked once per name, but it may be asked for the
+        same name again: from two threads that need it at once, and after
+        a call that raised. It may be called from any thread that draws,
+        several at once, and must not draw itself. An exception it raises
+        fails the draw or query with :class:`~hegel.InvalidArgument`, whose
+        ``__cause__`` is that exception.
+
+        A new loader replaces the previous one, and ``None`` removes it.
+        The source holds the loader until then, or until nothing uses the
+        source any more.
+        """
         if loader is None:
             self._handle().set_loader(None)
             return
@@ -766,28 +854,97 @@ class ZoneSource:
             raise InvalidArgument(f"loader={loader!r} must be callable")
         self._handle().set_loader(lambda name: _loader_entry(name, loader(name)))
 
+    def info(self, name: str) -> ZoneNameInfo | None:
+        """What the source knows about the name ``name``, or ``None`` for a
+        name it does not know. A name the source has declared but not yet
+        loaded is loaded through the loader when describing it needs its
+        data."""
+        _check_type("name", name, str)
+        info = _native.timezone_info(name, self._handle())
+        if info is None:
+            return None
+        primary_name, is_link, rank, tags = info
+        return ZoneNameInfo(primary_name, is_link, bool(tags & _native.TIMEZONE_TAG_LEGACY), rank)
+
+    def __contains__(self, name: object) -> bool:
+        """Whether the source knows the time zone name ``name``."""
+        return isinstance(name, str) and self.info(name) is not None
+
+    def resolve(self, name: str, wall_time: dt.datetime) -> ZoneResolution:
+        """Read the naive datetime ``wall_time`` as a wall-clock time in
+        the zone ``name``: whether the zone's clocks showed it once, never
+        or twice, the offsets around it, and the moment it denotes given
+        its ``fold``. An integration checks the data it loaded with this,
+        by comparing a sample of wall times with its library's answers.
+
+        A name the source does not know, an aware ``wall_time``, or a
+        moment outside the range :mod:`datetime` represents is an
+        :class:`~hegel.InvalidArgument`.
+        """
+        _check_type("name", name, str)
+        _check_type("wall_time", wall_time, dt.datetime)
+        if wall_time.tzinfo is not None:
+            raise InvalidArgument(f"wall_time={wall_time!r} must be naive")
+        kind, before, after, _, _, (seconds, nanoseconds) = _native.timezone_resolve(
+            name, _components(wall_time), self._handle()
+        )
+        if wall_time.fold:
+            seconds += before - after
+        return ZoneResolution(
+            _KINDS[kind],
+            dt.timedelta(seconds=before),
+            dt.timedelta(seconds=after),
+            _moment("wall_time", wall_time, seconds, nanoseconds),
+        )
+
+    def offset_at(self, name: str, instant: dt.datetime) -> ZoneType:
+        """The :class:`ZoneType` (UTC offset, daylight-saving flag and
+        abbreviation) the zone ``name`` has in force at the aware datetime
+        ``instant``. A name the source does not know or a naive
+        ``instant`` is an :class:`~hegel.InvalidArgument`."""
+        _check_type("name", name, str)
+        _check_type("instant", instant, dt.datetime)
+        if instant.tzinfo is None:
+            raise InvalidArgument(f"instant={instant!r} must be aware")
+        offset, _, is_dst, abbreviation = _native.timezone_offset_at(
+            name, _timestamp(instant), self._handle()
+        )
+        return ZoneType(dt.timedelta(seconds=offset), is_dst, abbreviation)
+
     def __repr__(self) -> str:
         return self._name
 
 
 _default_source = ZoneSource.zoneinfo()
+_default_lock = threading.Lock()
 _native.set_default_zone_source(_default_source._source)
 
 
 def default_zone_source() -> ZoneSource:
     """The zone source a generator uses when not given one:
     :meth:`ZoneSource.zoneinfo` unless :func:`set_default_zone_source`
-    set another."""
+    set another. A generator reads it once, when it is built."""
     return _default_source
 
 
-def set_default_zone_source(source: ZoneSource) -> None:
+def set_default_zone_source(source: ZoneSource) -> ZoneSource:
     """Make ``source`` the zone source of every generator built from now on
-    without one of its own; generators built earlier keep theirs."""
+    without one of its own, and return the source it replaces, to restore
+    afterwards.
+
+    A generator reads the default when it is built and keeps what it
+    read, so set it before building generators: at the top of
+    ``conftest.py``, say, before test modules that build generators at
+    import time are loaded. It is one setting for the whole process, all
+    threads included.
+    """
     global _default_source
     _check_type("source", source, ZoneSource)
-    _default_source = source
-    _native.set_default_zone_source(source._source)
+    with _default_lock:
+        previous = _default_source
+        _default_source = source
+        _native.set_default_zone_source(source._source)
+    return previous
 
 
 def _check_source(source: Any) -> ZoneSource:
@@ -797,53 +954,13 @@ def _check_source(source: Any) -> ZoneSource:
     return source
 
 
-@cache
-def _source_spec(source: ZoneSource, links: bool, legacy: bool) -> _native.TimeZoneSpec:
-    handle = source._handle()
-    if source._empty:
-        raise InvalidArgument(
-            "zoneinfo finds no time zones on this system. On a system without a time zone "
-            "database (Windows, say) install the tzdata package."
-        )
-    return _native.TimeZoneSpec(None, links, legacy, False, False, handle)
-
-
-@cache
-def _single_zone_spec(source: ZoneSource, key: str) -> _native.TimeZoneSpec | None:
-    handle = source._handle()
-    if _native.timezone_info(key, handle) is None:
-        return None
-    return _native.TimeZoneSpec([key], True, True, False, False, handle)
-
-
-def _engine_spec(tz: dt.tzinfo) -> _native.TimeZoneSpec | None:
-    """The spec drawing only ``tz`` from the default zone source, when that
-    source knows it: a :class:`zoneinfo.ZoneInfo` built from a key the
-    source has."""
-    key = getattr(tz, "key", None)
-    if isinstance(tz, zoneinfo.ZoneInfo) and isinstance(key, str):
-        return _single_zone_spec(default_zone_source(), key)
-    return None
-
-
-def _check_names(names: Any, source: ZoneSource, *, loadable: bool) -> tuple[str, ...]:
+def _check_names(names: Any) -> tuple[str, ...]:
     if isinstance(names, (str, bytes)) or not isinstance(names, Iterable):
         raise InvalidArgument(f"names={names!r} must be an iterable of IANA time zone names")
     checked = tuple(names)
-    if not checked:
-        raise InvalidArgument("names must not be empty")
     for name in checked:
         if not isinstance(name, str):
             raise InvalidArgument(f"names={names!r} must contain strings, not {name!r}")
-        if _native.timezone_info(name, source._handle()) is None:
-            raise InvalidArgument(f"{name!r} is not a time zone name {source!r} knows")
-        if loadable:
-            try:
-                zoneinfo.ZoneInfo(name)
-            except (zoneinfo.ZoneInfoNotFoundError, ValueError) as error:
-                raise InvalidArgument(
-                    f"{name!r} is not a time zone this Python can load: {error}"
-                ) from None
     return checked
 
 
@@ -851,40 +968,60 @@ class ZoneNames(_PrintsValue[str]):
     def __init__(
         self,
         names: tuple[str, ...] | None,
-        links: bool,
-        legacy: bool,
-        source: ZoneSource,
-        given_source: bool,
+        allow_links: bool,
+        allow_legacy: bool,
+        source: ZoneSource | None,
     ) -> None:
         self.names = names
-        self.links = links
-        self.legacy = legacy
-        self.source = source
-        self.given_source = given_source
-        self.spec = (
-            _source_spec(source, links, legacy)
-            if names is None
-            else _native.TimeZoneSpec(list(names), links, legacy, False, False, source._handle())
+        self.allow_links = allow_links
+        self.allow_legacy = allow_legacy
+        self.given_source = source
+        self.source = _check_source(source)
+        handle = self.source._handle()
+        if self.source._empty:
+            raise InvalidArgument(
+                "zoneinfo finds no time zones on this system. On a system without a time zone "
+                "database (Windows, say) install the tzdata package."
+            )
+        self.spec = _native.TimeZoneSpec(
+            None if names is None else list(names), allow_links, allow_legacy, handle
         )
         self.label = ZONE_NAME_LABEL
 
     def do_draw(self, tc: TestCase) -> str:
         return tc._generate_timezone(self.spec)
 
-    def arguments(self) -> str:
-        names = "" if self.names is None else f"names={list(self.names)!r}, "
-        source = f", source={self.source!r}" if self.given_source else ""
-        return f"{names}links={self.links!r}, legacy={self.legacy!r}{source}"
+    def arguments(self, **more: Any) -> str:
+        return _arguments(
+            names=None if self.names is None else list(self.names),
+            **more,
+            allow_links=_unless(self.allow_links, True),
+            allow_legacy=_unless(self.allow_legacy, False),
+            source=self.given_source,
+        )
 
     def __repr__(self) -> str:
         return f"temporal.zone_names({self.arguments()})"
 
 
+def _zone_names(names: Any, allow_links: Any, allow_legacy: Any, source: Any) -> ZoneNames:
+    _check_type("allow_links", allow_links, bool)
+    _check_type("allow_legacy", allow_legacy, bool)
+    if names is None:
+        return ZoneNames(None, allow_links, allow_legacy, source)
+    if not allow_links or allow_legacy:
+        raise InvalidArgument(
+            "allow_links and allow_legacy choose among all the names of the source: "
+            "they do not apply to an explicit names list, so pass one or the other"
+        )
+    return ZoneNames(_check_names(names), True, False, source)
+
+
 def zone_names(
     *,
     names: Iterable[str] | None = None,
-    links: bool = True,
-    legacy: bool = False,
+    allow_links: bool = True,
+    allow_legacy: bool = False,
     source: ZoneSource | None = None,
 ) -> Generator[str]:
     """Generate IANA time zone names, such as ``"America/New_York"``,
@@ -895,14 +1032,20 @@ def zone_names(
     unless changed: the names :func:`zoneinfo.available_timezones` lists,
     so every name generated can be loaded with :class:`zoneinfo.ZoneInfo`.
     On a system without a time zone database (Windows, say) install the
-    ``tzdata`` package. The ``posix/`` and ``right/`` variants some
-    systems carry are never generated. By default link names such as
-    ``"Asia/Calcutta"`` are included and legacy names such as
-    ``"EST5EDT"`` and ``"US/Eastern"`` are excluded; ``links`` and
-    ``legacy`` switch each.
+    ``tzdata`` package, or pass ``source=ZoneSource.bundled()`` for the
+    names of the engine's own database. The ``posix/`` and ``right/``
+    variants some systems carry are never generated. By default link
+    names such as ``"Asia/Calcutta"`` are included and legacy names such
+    as ``"EST5EDT"`` and ``"US/Eastern"`` are excluded; ``allow_links``
+    and ``allow_legacy`` switch each.
 
     ``names`` restricts the draw to those names, each of which the source
-    must know; ``links`` and ``legacy`` do not apply to an explicit list.
+    must know. ``allow_links`` and ``allow_legacy`` do not apply to an
+    explicit list, and passing either with one is an error.
+
+    The generator reads the default source, and the names its source
+    knows, when it is built: a source changed afterwards does not change
+    what it draws.
 
     Half the draws are uniform over the names and half weighted toward
     zones with a rare feature (a fractional offset, negative daylight
@@ -914,12 +1057,12 @@ def zone_names(
     Hegel's bundled database, so they are the same on every machine; a
     name it lacks comes last, with the features of the source's data for
     it.
+
+    A ``names`` list that is empty or holds a name the source does not
+    know, or a source with no name the flags allow, is an
+    :class:`~hegel.InvalidArgument`.
     """
-    _check_type("links", links, bool)
-    _check_type("legacy", legacy, bool)
-    checked_source = _check_source(source)
-    checked = None if names is None else _check_names(names, checked_source, loadable=False)
-    return ZoneNames(checked, links, legacy, checked_source, source is not None)
+    return _zone_names(names, allow_links, allow_legacy, source)
 
 
 class Zones(_PrintsValue[zoneinfo.ZoneInfo]):
@@ -928,7 +1071,7 @@ class Zones(_PrintsValue[zoneinfo.ZoneInfo]):
         self.no_cache = no_cache
         self.label = ZONE_LABEL
 
-    def resolve(self, key: str) -> zoneinfo.ZoneInfo:
+    def load(self, key: str) -> zoneinfo.ZoneInfo:
         try:
             return zoneinfo.ZoneInfo.no_cache(key) if self.no_cache else zoneinfo.ZoneInfo(key)
         except (zoneinfo.ZoneInfoNotFoundError, ValueError):
@@ -938,28 +1081,29 @@ class Zones(_PrintsValue[zoneinfo.ZoneInfo]):
             ) from None
 
     def do_draw(self, tc: TestCase) -> zoneinfo.ZoneInfo:
-        return self.resolve(tc._generate_timezone(self.keys.spec))
+        return self.load(tc._generate_timezone(self.keys.spec))
 
     def __repr__(self) -> str:
-        return f"temporal.zones({self.keys.arguments()}, no_cache={self.no_cache!r})"
+        return f"temporal.zones({self.keys.arguments(no_cache=_unless(self.no_cache, False))})"
 
 
 def zones(
     *,
     names: Iterable[str] | None = None,
     no_cache: bool = False,
-    links: bool = True,
-    legacy: bool = False,
+    allow_links: bool = True,
+    allow_legacy: bool = False,
     source: ZoneSource | None = None,
 ) -> Generator[zoneinfo.ZoneInfo]:
     """Generate IANA time zones, as :class:`zoneinfo.ZoneInfo` objects,
     shrinking toward UTC.
 
     The zones are those :func:`zone_names` names, with the same
-    ``names``, ``links``, ``legacy`` and ``source`` arguments; a name in
-    ``names`` must also be one this Python can load. With ``no_cache=True``
-    each zone is built with :meth:`zoneinfo.ZoneInfo.no_cache`, so it is
-    not the same object as ``ZoneInfo(key)``.
+    ``names``, ``allow_links``, ``allow_legacy`` and ``source`` arguments;
+    a name in ``names`` must also be one this Python can load. With
+    ``no_cache=True`` each zone is built with
+    :meth:`zoneinfo.ZoneInfo.no_cache`, so it is not the same object as
+    ``ZoneInfo(key)``.
 
     :func:`datetimes` and :func:`zoned_datetimes` draw their wall times
     against the source's data for the zone, so a source other than
@@ -969,11 +1113,15 @@ def zones(
     :class:`~hegel.InvalidArgument`.
     """
     _check_type("no_cache", no_cache, bool)
-    _check_type("links", links, bool)
-    _check_type("legacy", legacy, bool)
-    checked_source = _check_source(source)
-    checked = None if names is None else _check_names(names, checked_source, loadable=True)
-    return Zones(ZoneNames(checked, links, legacy, checked_source, source is not None), no_cache)
+    keys = _zone_names(names, allow_links, allow_legacy, source)
+    for name in keys.names or ():
+        try:
+            zoneinfo.ZoneInfo(name)
+        except (zoneinfo.ZoneInfoNotFoundError, ValueError) as error:
+            raise InvalidArgument(
+                f"{name!r} is not a time zone this Python can load: {error}"
+            ) from None
+    return Zones(keys, no_cache)
 
 
 def _instant(value: dt.datetime) -> dt.timedelta:
@@ -988,13 +1136,16 @@ def _timestamp(value: dt.datetime) -> tuple[int, int]:
     return seconds, remainder * 1000
 
 
-def _local_wall(value: dt.datetime, tz: dt.tzinfo) -> dt.datetime:
-    """The naive wall time of an aware datetime in ``tz``, clamped into the
-    range :class:`datetime.datetime` represents."""
+def _moment(name: str, value: Any, seconds: int, nanoseconds: int) -> dt.datetime:
+    """The engine's ``(seconds, nanoseconds)`` as a UTC datetime, which
+    the argument ``name=value`` it was computed from must leave in
+    range."""
     try:
-        return value.astimezone(tz).replace(tzinfo=None)
+        return _EPOCH + dt.timedelta(seconds=seconds, microseconds=nanoseconds // 1000)
     except OverflowError:
-        return dt.datetime.max if value.year > 5000 else dt.datetime.min
+        raise InvalidArgument(
+            f"{name}={value!r} denotes a moment outside the range datetime represents"
+        ) from None
 
 
 def _is_imaginary(value: dt.datetime) -> bool:
@@ -1002,8 +1153,27 @@ def _is_imaginary(value: dt.datetime) -> bool:
         return value.astimezone(dt.UTC).astimezone(value.tzinfo).replace(tzinfo=None) != (
             value.replace(tzinfo=None)
         )
-    except (OverflowError, ValueError):  # nocov
+    except (OverflowError, ValueError):
         return False
+
+
+def _is_repeated(value: dt.datetime) -> bool:
+    """Whether the wall time of ``value`` happened twice in its zone, as
+    far as the zone's ``tzinfo`` says: its offset depends on ``fold``,
+    and the wall time is not one the clocks skipped."""
+    return value.replace(fold=0).utcoffset() != value.replace(fold=1).utcoffset() and (
+        not _is_imaginary(value)
+    )
+
+
+def _in_tzinfo(tc: TestCase, moment: dt.datetime, tz: dt.tzinfo) -> dt.datetime:
+    """``moment`` in the zone ``tz``, rejecting the test case when its
+    wall time there is outside the years :mod:`datetime` represents."""
+    try:
+        value = moment.astimezone(tz)
+    except OverflowError:
+        tc.reject()
+    return value
 
 
 def _components(value: dt.datetime) -> tuple[int, int, int, int, int, int, int]:
@@ -1021,48 +1191,54 @@ def _components(value: dt.datetime) -> tuple[int, int, int, int, int, int, int]:
 class Datetimes(_PrintsValue[dt.datetime]):
     def __init__(
         self,
-        min_value: dt.datetime,
-        max_value: dt.datetime,
+        name: str,
+        min_value: dt.datetime | None,
+        max_value: dt.datetime | None,
+        bounds: tuple[dt.datetime, dt.datetime],
+        given_zones: Generator[Any] | None,
         zones: Generator[Any] | None,
+        given_source: ZoneSource | None,
         allow_imaginary: bool,
         ambiguous: str,
         precision: str,
-        name: str,
     ) -> None:
         self.name = name
         self.min_value = min_value
         self.max_value = max_value
+        self.bounds = bounds
+        self.given_zones = given_zones
         self.zones = zones
+        self.given_source = given_source
+        self.source = _check_source(given_source)
         self.allow_imaginary = allow_imaginary
         self.ambiguous = ambiguous
         self.precision = precision
-        self.engine_precision = _PRECISIONS[precision][0]
-        self.aware = min_value.tzinfo is not None
+        self.engine_precision, unit = _PRECISIONS[precision]
+        self.unit = dt.timedelta(microseconds=unit)
+        self.aware = bounds[0].tzinfo is not None
         self.require_zone = self.aware or name == "zoned_datetimes"
-        if self.aware:
-            self.zoned_spec = _native.ZonedSpec(
-                None,
-                (_timestamp(min_value), _timestamp(max_value)),
+        low, high = bounds
+        self.zoned_spec = (
+            None
+            if zones is None
+            else _native.ZonedSpec(
+                None if self.aware else (_components(low), _components(high)),
+                (_timestamp(low), _timestamp(high)) if self.aware else None,
                 self.engine_precision,
                 allow_imaginary,
                 _AMBIGUOUS[ambiguous],
             )
-        else:
-            self.zoned_spec = _native.ZonedSpec(
-                (_components(min_value), _components(max_value)),
-                None,
-                self.engine_precision,
-                allow_imaginary,
-                _AMBIGUOUS[ambiguous],
-            )
+        )
         own_label = ZONED_DATETIME_LABEL if name == "zoned_datetimes" else DATETIME_LABEL
         self.label = own_label if zones is None else combine_labels([own_label, zones.label])
 
     def do_draw(self, tc: TestCase) -> dt.datetime:
+        if self.zones is None or self.zoned_spec is None:
+            return tc._generate_datetime(*self.bounds, self.engine_precision)
         if isinstance(self.zones, Zones):
             key, value = tc._generate_zoned_datetime(self.zones.keys.spec, self.zoned_spec)
-            return value.replace(tzinfo=self.zones.resolve(key))
-        tz = None if self.zones is None else tc.draw_silent(self.zones)
+            return value.replace(tzinfo=self.zones.load(key))
+        tz = tc.draw_silent(self.zones)
         if tz is None:
             if self.require_zone:
                 reason = "with aware bounds" if self.aware else f"from {self.name}()"
@@ -1070,42 +1246,95 @@ class Datetimes(_PrintsValue[dt.datetime]):
                     f"zones={self.zones!r} generated None, but {reason} every datetime "
                     "needs a tzinfo"
                 )
-            return tc._generate_datetime(self.min_value, self.max_value, self.engine_precision)
+            return tc._generate_datetime(*self.bounds, self.engine_precision)
         if not isinstance(tz, dt.tzinfo):
             raise InvalidArgument(f"zones must generate tzinfo objects, got {tz!r}")
-        spec = _engine_spec(tz)
-        if spec is not None:
-            return tc._generate_zoned_datetime(spec, self.zoned_spec)[1].replace(tzinfo=tz)
+        name = getattr(tz, "key", None)
+        if isinstance(tz, zoneinfo.ZoneInfo) and isinstance(name, str):
+            return self.draw_in_zone(tc, tz, name, self.zoned_spec)
         if self.aware:
-            lo, hi = _local_wall(self.min_value, tz), _local_wall(self.max_value, tz)
-            if lo > hi:
-                tc.reject()
-        else:
-            lo, hi = self.min_value, self.max_value
-        value = tc._generate_datetime(lo, hi, self.engine_precision).replace(tzinfo=tz)
+            return self.draw_moment_in_tzinfo(tc, tz)
+        return self.draw_wall_time_in_tzinfo(tc, tz)
+
+    def draw_in_zone(
+        self, tc: TestCase, tz: zoneinfo.ZoneInfo, key: str, zoned_spec: _native.ZonedSpec
+    ) -> dt.datetime:
+        """Draw in a :class:`zoneinfo.ZoneInfo` that came from a generator
+        other than :func:`zones`, against the source's data for its key."""
+        try:
+            value = tc._generate_zoned_datetime_for_zone(self.source._handle(), key, zoned_spec)
+        except InvalidArgument:
+            if key in self.source:
+                raise
+            raise InvalidArgument(
+                f"zones generated {tz!r}, but {self.source!r} has no time zone named {key!r}; "
+                f"pass the zone source that has it as source= to {self.name}()"
+            ) from None
+        return value.replace(tzinfo=tz)
+
+    def draw_wall_time_in_tzinfo(self, tc: TestCase, tz: dt.tzinfo) -> dt.datetime:
+        """Draw a wall time within naive bounds in a ``tzinfo`` the zone
+        source has no data for, going by what the ``tzinfo`` itself says
+        of it."""
+        value = tc._generate_datetime(*self.bounds, self.engine_precision).replace(tzinfo=tz)
         if not self.allow_imaginary and _is_imaginary(value):
             tc.reject()
-        if self.aware:
-            instant = _instant(value)
-            if (lo != dt.datetime.min and instant < _instant(self.min_value)) or (
-                hi != dt.datetime.max and instant > _instant(self.max_value)
-            ):
+        if not _is_repeated(value):
+            return value
+        if self.ambiguous == "both":
+            return value.replace(fold=int(tc._generate_boolean()))
+        return value.replace(fold=int(self.ambiguous == "later"))
+
+    def draw_moment_in_tzinfo(self, tc: TestCase, tz: dt.tzinfo) -> dt.datetime:
+        """Draw a moment within aware bounds and express it in a ``tzinfo``
+        the zone source has no data for. The moment is drawn as a whole
+        number of the precision's unit in UTC and moved forward to the
+        next wall time in ``tz`` that is one, which is a different moment
+        only where the zone's offset is not a whole number of the unit.
+        The test case is rejected when that passes ``max_value`` or
+        crosses a change of the zone's offset, and when ``ambiguous``
+        asks for a reading of a repeated wall time that is outside the
+        bounds."""
+        low, high = max(self.bounds[0], _MIN_INSTANT), min(self.bounds[1], _MAX_INSTANT)
+        if low > high:
+            tc.reject()
+        first = low - (low - _EPOCH) % self.unit
+        seconds, nanoseconds = tc._generate_instant(
+            _timestamp(first), _timestamp(high), self.engine_precision
+        )
+        moment = _EPOCH + dt.timedelta(seconds=seconds, microseconds=nanoseconds // 1000)
+        value = _in_tzinfo(tc, moment, tz)
+        shift = -self.excess(value) % self.unit
+        if shift < low - moment:
+            shift += self.unit
+        if shift > high - moment:
+            tc.reject()
+        if shift:
+            value = _in_tzinfo(tc, moment + shift, tz)
+            if self.excess(value):
+                tc.reject()
+        if self.ambiguous != "both" and _is_repeated(value):
+            value = value.replace(fold=int(self.ambiguous == "later"))
+            if not low <= value <= high:
                 tc.reject()
         return value
 
+    def excess(self, value: dt.datetime) -> dt.timedelta:
+        """How far the wall time of ``value`` is past a whole number of
+        the precision's unit."""
+        return (value.replace(tzinfo=None) - dt.datetime.min) % self.unit
+
     def __repr__(self) -> str:
-        keywords = _keywords(
-            zones=self.zones,
-            allow_imaginary=None if self.allow_imaginary else False,
-            ambiguous=None if self.ambiguous == "both" else self.ambiguous,
-            precision=None if self.precision == "microseconds" else self.precision,
+        arguments = _arguments(
+            min_value=self.min_value,
+            max_value=self.max_value,
+            zones=self.given_zones,
+            source=self.given_source,
+            allow_imaginary=_unless(self.allow_imaginary, True),
+            ambiguous=_unless(self.ambiguous, "both"),
+            precision=_unless(self.precision, "microseconds"),
         )
-        bounds = f"min_value={self.min_value!r}, max_value={self.max_value!r}"
-        return f"temporal.{self.name}({bounds}{keywords})"
-
-
-def _default_zones() -> Zones:
-    return Zones(ZoneNames(None, True, False, default_zone_source(), False), False)
+        return f"temporal.{self.name}({arguments})"
 
 
 def _datetimes(
@@ -1113,54 +1342,67 @@ def _datetimes(
     min_value: dt.datetime | None,
     max_value: dt.datetime | None,
     zones: Generator[Any] | None,
+    source: ZoneSource | None,
     allow_imaginary: bool,
     ambiguous: str,
     precision: str,
 ) -> Datetimes:
     _check_type("allow_imaginary", allow_imaginary, bool)
     _check_choice("ambiguous", ambiguous, _AMBIGUOUS)
-    _, unit = _precision(precision)
-    bounds = (("min_value", min_value), ("max_value", max_value))
-    for bound, value in bounds:
+    engine_precision, _ = _precision(precision)
+    if source is not None:
+        _check_type("source", source, ZoneSource)
+    given = (("min_value", min_value), ("max_value", max_value))
+    for bound, value in given:
         if value is not None:
             _check_type(bound, value, dt.datetime)
-    aware = any(value is not None and value.tzinfo is not None for _, value in bounds)
+    aware = any(value is not None and value.tzinfo is not None for _, value in given)
     if aware:
-        for bound, value in bounds:
+        for bound, value in given:
             if value is not None and value.tzinfo is None:
                 raise InvalidArgument(
                     f"{bound}={value!r} is naive, but the other bound is timezone-aware; "
                     "the bounds must be both naive or both aware"
                 )
-        if min_value is None:
-            min_value = dt.datetime.min.replace(tzinfo=dt.UTC)
-        if max_value is None:
-            max_value = dt.datetime.max.replace(tzinfo=dt.UTC)
-        if _instant(max_value) < _instant(min_value):
-            raise InvalidArgument(
-                f"Cannot have max_value={max_value!r} < min_value={min_value!r}, "
-                "comparing as moments in time"
-            )
-    else:
-        if min_value is None:
-            min_value = dt.datetime.min
-        if max_value is None:
-            max_value = dt.datetime.max
-        if min_value > max_value:
-            raise InvalidArgument(f"Cannot have max_value={max_value!r} < min_value={min_value!r}")
-        _check_fits(
-            precision,
-            (min_value - dt.datetime.min) // _MICROSECOND,
-            (max_value - dt.datetime.min) // _MICROSECOND,
-            unit,
-            "datetime",
+    low = (_MIN_INSTANT if aware else dt.datetime.min) if min_value is None else min_value
+    high = (_MAX_INSTANT if aware else dt.datetime.max) if max_value is None else max_value
+    if aware and _instant(high) < _instant(low):
+        raise InvalidArgument(
+            f"Cannot have max_value={max_value!r} < min_value={min_value!r}, "
+            "comparing as moments in time"
         )
-    source: Generator[Any] | None = None
-    if zones is not None:
-        source = as_generator(zones)
-    elif aware or name == "zoned_datetimes":
-        source = _default_zones()
-    return Datetimes(min_value, max_value, source, allow_imaginary, ambiguous, precision, name)
+    if not aware:
+        _check_order(low, high)
+    given_zones = None if zones is None else as_generator(zones)
+    drawn_zones = given_zones
+    if isinstance(given_zones, Zones):
+        if source is not None:
+            raise InvalidArgument(
+                f"source={source!r} cannot be given with zones={given_zones!r}, which draws "
+                "from its own zone source: pass source to zones() instead"
+            )
+    elif given_zones is None:
+        if aware or name == "zoned_datetimes":
+            drawn_zones = Zones(ZoneNames(None, True, False, source), False)
+        elif source is not None:
+            raise InvalidArgument(
+                f"source={source!r} has no effect: {name}() draws naive datetimes unless "
+                "given zones or aware bounds"
+            )
+        else:
+            _native.validate_datetime(_components(low), _components(high), engine_precision)
+    return Datetimes(
+        name,
+        min_value,
+        max_value,
+        (low, high),
+        given_zones,
+        drawn_zones,
+        source,
+        allow_imaginary,
+        ambiguous,
+        precision,
+    )
 
 
 def datetimes(
@@ -1168,6 +1410,7 @@ def datetimes(
     max_value: dt.datetime | None = None,
     *,
     zones: Generator[Any] | None = None,
+    source: ZoneSource | None = None,
     allow_imaginary: bool = True,
     ambiguous: str = "both",
     precision: str = "microseconds",
@@ -1176,8 +1419,8 @@ def datetimes(
     ``[min_value, max_value]``, shrinking toward 2000-01-01 00:00 (or the
     bound nearest it).
 
-    **Naive bounds.** With naive bounds, or none (the defaults are
-    :attr:`datetime.min <datetime.datetime.min>` and
+    **Naive bounds.** With naive bounds, or none (a missing bound is
+    :attr:`datetime.min <datetime.datetime.min>` or
     :attr:`datetime.max <datetime.datetime.max>`), the bounds limit the
     wall-clock time. The datetimes are naive unless ``zones`` is
     given: a generator of :class:`datetime.tzinfo` objects (or ``None``),
@@ -1198,28 +1441,53 @@ def datetimes(
     One bound may be omitted; passing one naive and one aware bound is an
     error.
 
-    **Transitions.** A zone from :func:`zones`, or a
-    :class:`zoneinfo.ZoneInfo` from any other generator, is drawn in by
-    the engine, which knows its daylight-saving and offset transitions
-    from the zone source's data (that of the ``source`` given to
-    :func:`zones`, or for a zone from another generator that of
-    :func:`default_zone_source`, by default :mod:`zoneinfo`'s own):
-    one draw in twenty on average lands within a second, an hour or a day
-    of one, or of a well-known instant such as the Unix epoch or the end
-    of the signed 32-bit epoch, so the skipped and repeated wall times
-    where date bugs live are generated deliberately. A repeated wall time
-    is drawn with either value of ``fold`` by default; ``ambiguous``
-    chooses ``"earlier"`` (``fold=0``) or ``"later"`` (``fold=1``)
-    instead of ``"both"``. A skipped wall time (one the clocks jumped
-    over, which :mod:`datetime` represents but which never occurred) is
-    drawn by default, because malformed timestamps are a common source of
-    bugs; with ``allow_imaginary=False`` the engine draws a real wall time
-    instead. Fixed offsets (:class:`datetime.timezone`) and other
-    ``tzinfo`` implementations have no transitions the engine can see:
-    the drawn wall-clock time is attached to them as is, with ``fold`` 0
-    whatever ``ambiguous`` says, and an imaginary one rejects the test
-    case under ``allow_imaginary=False``; with aware bounds a wall time
-    whose instant falls outside them rejects the test case too.
+    **Zones and their data.** The engine draws the wall time in a zone
+    against a :class:`ZoneSource`'s data for it, and which source that is
+    depends on ``zones``:
+
+    - With no ``zones`` (and aware bounds), the zones are
+      ``zones(source=source)``.
+    - With a :func:`zones` generator, its own source is used; set it with
+      ``zones(source=...)``. Passing ``source`` here as well is an error.
+    - With any other generator (``zones().filter(...)``,
+      ``gs.sampled_from([...])``, ``gs.just(...)``), a
+      :class:`zoneinfo.ZoneInfo` it generates is looked up by its key in
+      ``source``, by default :func:`default_zone_source` as it was when
+      this generator was built. A key that source does not know is an
+      :class:`~hegel.InvalidArgument` naming the zone, so pass the source
+      that has it.
+
+    ``source`` without ``zones`` or aware bounds, when the datetimes are
+    naive, is an error.
+
+    **Transitions.** In a zone drawn against a source, one draw in twenty
+    on average lands within a second, an hour or a day of one of the
+    zone's daylight-saving or offset transitions, or of a well-known
+    instant such as the Unix epoch or the end of the signed 32-bit epoch,
+    so the skipped and repeated wall times where date bugs live are
+    generated deliberately. A repeated wall time is drawn with either
+    value of ``fold`` by default; ``ambiguous`` chooses ``"earlier"``
+    (``fold=0``) or ``"later"`` (``fold=1``) instead of ``"both"``. A
+    skipped wall time (one the clocks jumped over, which :mod:`datetime`
+    represents but which never occurred) is drawn by default, because
+    malformed timestamps are a common source of bugs; with
+    ``allow_imaginary=False`` the engine draws a real wall time instead.
+    With aware bounds, a zone that has no wall time between them at the
+    precision rejects the test case.
+
+    **Other tzinfo objects.** A fixed offset (:class:`datetime.timezone`)
+    or any other ``tzinfo`` that is not a :class:`zoneinfo.ZoneInfo` with
+    a key has no data in a zone source, so nothing aims at its
+    transitions and Hegel goes by what the ``tzinfo`` itself reports.
+    With naive bounds the drawn wall time is attached to it: a repeated
+    one gets the ``fold`` that ``ambiguous`` asks for, and a skipped one
+    rejects the test case under ``allow_imaginary=False``. With aware
+    bounds a moment between them is drawn and converted to the zone, so
+    it is never a skipped wall time, and a repeated one is given the
+    reading ``ambiguous`` asks for; the test case is rejected when that
+    reading, or the nearest wall time at the precision, lies outside the
+    bounds. A ``tzinfo`` that ignores ``fold``, as ``pytz``'s do, never
+    reports a repeated wall time.
 
     **Precision.** ``precision`` names the unit every drawn time of day
     is a whole number of, as the ``timespec`` argument of
@@ -1229,12 +1497,12 @@ def datetimes(
 
     Bounds that are not datetimes, a mix of a naive and an aware bound,
     ``min_value > max_value``, bounds holding no wall time at the
-    precision, or a ``zones`` generator producing something other
-    than ``tzinfo`` objects (or ``None`` with aware bounds) are an
-    :class:`~hegel.InvalidArgument`.
+    precision, a misplaced ``source``, or a ``zones`` generator producing
+    something other than ``tzinfo`` objects (or ``None`` with aware
+    bounds) are an :class:`~hegel.InvalidArgument`.
     """
     return _datetimes(
-        "datetimes", min_value, max_value, zones, allow_imaginary, ambiguous, precision
+        "datetimes", min_value, max_value, zones, source, allow_imaginary, ambiguous, precision
     )
 
 
@@ -1243,6 +1511,7 @@ def zoned_datetimes(
     max_value: dt.datetime | None = None,
     *,
     zones: Generator[Any] | None = None,
+    source: ZoneSource | None = None,
     allow_imaginary: bool = True,
     ambiguous: str = "both",
     precision: str = "microseconds",
@@ -1252,49 +1521,65 @@ def zoned_datetimes(
     shrinking toward 2000-01-01 00:00 (or the bound nearest it) in UTC.
 
     This is :func:`datetimes` for a test that wants only aware datetimes,
-    and takes the same arguments: ``zones`` defaults to :func:`zones` and
-    must not generate ``None``, naive bounds (or none) limit the
-    wall-clock time in the drawn zone, and aware bounds are moments in
-    time. The engine draws the zone and the wall time together, so one
-    draw in twenty on average lands near one of the zone's transitions::
+    and takes the same arguments: ``zones`` defaults to
+    ``zones(source=source)`` and must not generate ``None``, naive bounds
+    (or none) limit the wall-clock time in the drawn zone, and aware
+    bounds are moments in time. The engine draws the zone and the wall
+    time together, so one draw in twenty on average lands near one of the
+    zone's transitions::
 
         meeting = tc.draw(gs.temporal.zoned_datetimes(dt.datetime(2026, 1, 1)))
 
-    Invalid arguments are those of :func:`datetimes`.
+    ``source`` is the :class:`ZoneSource` whose data the zones are drawn
+    against, as for :func:`datetimes`: that of the default ``zones``, or
+    the one a :class:`zoneinfo.ZoneInfo` from a generator other than
+    :func:`zones` is looked up in. Invalid arguments are those of
+    :func:`datetimes`.
     """
     return _datetimes(
-        "zoned_datetimes", min_value, max_value, zones, allow_imaginary, ambiguous, precision
+        "zoned_datetimes",
+        min_value,
+        max_value,
+        zones,
+        source,
+        allow_imaginary,
+        ambiguous,
+        precision,
     )
 
 
-_MIN_INSTANT = dt.datetime.min.replace(tzinfo=dt.UTC)
-_MAX_INSTANT = dt.datetime.max.replace(tzinfo=dt.UTC)
-
-
 class Instants(_PrintsValue[dt.datetime]):
-    def __init__(self, min_value: dt.datetime, max_value: dt.datetime, precision: str) -> None:
+    def __init__(
+        self, min_value: dt.datetime | None, max_value: dt.datetime | None, precision: str
+    ) -> None:
         self.min_value = min_value
         self.max_value = max_value
         self.precision = precision
         self.bounds = (
-            _timestamp(max(min_value, _MIN_INSTANT)),
-            _timestamp(min(max_value, _MAX_INSTANT)),
+            _MIN_INSTANT if min_value is None else max(min_value, _MIN_INSTANT),
+            _MAX_INSTANT if max_value is None else min(max_value, _MAX_INSTANT),
         )
         self.label = INSTANT_LABEL
 
     def do_draw(self, tc: TestCase) -> dt.datetime:
-        seconds, nanoseconds = tc._generate_instant(*self.bounds, _PRECISIONS[self.precision][0])
+        low, high = self.bounds
+        seconds, nanoseconds = tc._generate_instant(
+            _timestamp(low), _timestamp(high), _PRECISIONS[self.precision][0]
+        )
         return _EPOCH + dt.timedelta(seconds=seconds, microseconds=nanoseconds // 1000)
 
     def __repr__(self) -> str:
-        keywords = _keywords(precision=None if self.precision == "microseconds" else self.precision)
-        bounds = f"min_value={self.min_value!r}, max_value={self.max_value!r}"
-        return f"temporal.instants({bounds}{keywords})"
+        arguments = _arguments(
+            min_value=self.min_value,
+            max_value=self.max_value,
+            precision=_unless(self.precision, "microseconds"),
+        )
+        return f"temporal.instants({arguments})"
 
 
 def instants(
-    min_value: dt.datetime = _MIN_INSTANT,
-    max_value: dt.datetime = _MAX_INSTANT,
+    min_value: dt.datetime | None = None,
+    max_value: dt.datetime | None = None,
     *,
     precision: str = "microseconds",
 ) -> Generator[dt.datetime]:
@@ -1302,13 +1587,14 @@ def instants(
     UTC (``tzinfo`` is :data:`datetime.UTC`), in ``[min_value, max_value]``,
     shrinking toward 2000-01-01 00:00 UTC (or the bound nearest it).
 
-    The bounds must be aware, and are compared as moments in time however
-    their time zones differ; they default to the whole range a UTC
-    :class:`~datetime.datetime` represents, and a bound beyond it is
-    clamped to it. One draw in twenty on average targets an instant tests
-    tend to get wrong: the Unix epoch and its neighbours, the 32-bit and
-    64-bit second boundaries, leap days, or a transition of any time zone
-    in Hegel's database.
+    Either bound may be omitted. A bound given must be aware, and bounds
+    are compared as moments in time however their time zones differ; a
+    missing bound is the end of the range a UTC
+    :class:`~datetime.datetime` represents, and a bound beyond that range
+    is clamped to it. One draw in twenty on average targets an instant
+    tests tend to get wrong: the Unix epoch and its neighbours, the 32-bit
+    and 64-bit second boundaries, leap days, or a transition of any time
+    zone in Hegel's database.
 
     ``precision`` names the unit every drawn instant is a whole number of
     since the Unix epoch: ``"microseconds"`` (the default),
@@ -1318,96 +1604,124 @@ def instants(
     bounds holding no instant at the precision in the UTC range are an
     :class:`~hegel.InvalidArgument`.
     """
-    _check_type("min_value", min_value, dt.datetime)
-    _check_type("max_value", max_value, dt.datetime)
     for name, value in (("min_value", min_value), ("max_value", max_value)):
-        if value.tzinfo is None:
-            raise InvalidArgument(f"{name}={value!r} must be aware: instants() bounds are moments")
-    if _instant(max_value) < _instant(min_value):
+        if value is not None:
+            _check_type(name, value, dt.datetime)
+            if value.tzinfo is None:
+                raise InvalidArgument(
+                    f"{name}={value!r} must be aware: instants() bounds are moments"
+                )
+    if (
+        min_value is not None
+        and max_value is not None
+        and _instant(max_value) < _instant(min_value)
+    ):
         raise InvalidArgument(
             f"Cannot have max_value={max_value!r} < min_value={min_value!r}, "
             "comparing as moments in time"
         )
-    _, unit = _precision(precision)
-    _check_fits(
-        precision,
-        _instant(max(min_value, _MIN_INSTANT)) // _MICROSECOND,
-        _instant(min(max_value, _MAX_INSTANT)) // _MICROSECOND,
-        unit,
-        "instant",
-    )
-    return Instants(min_value, max_value, precision)
+    engine_precision, _ = _precision(precision)
+    result = Instants(min_value, max_value, precision)
+    low, high = result.bounds
+    if low > high:
+        raise InvalidArgument(
+            f"no moment between min_value={min_value!r} and max_value={max_value!r} is in "
+            "the range a UTC datetime represents"
+        )
+    _native.validate_timestamp(_timestamp(low), _timestamp(high), engine_precision)
+    return result
 
 
 class Durations(_PrintsValue[dt.timedelta]):
-    def __init__(self, min_value: dt.timedelta, max_value: dt.timedelta, precision: str) -> None:
+    def __init__(
+        self, min_value: dt.timedelta | None, max_value: dt.timedelta | None, precision: str
+    ) -> None:
         self.min_value = min_value
         self.max_value = max_value
+        self.bounds = (
+            dt.timedelta.min if min_value is None else min_value,
+            dt.timedelta.max if max_value is None else max_value,
+        )
         self.precision = precision
         self.label = DURATION_LABEL
 
     def do_draw(self, tc: TestCase) -> dt.timedelta:
-        return tc._generate_timedelta(
-            self.min_value, self.max_value, _PRECISIONS[self.precision][0]
-        )
+        return tc._generate_duration(*self.bounds, _PRECISIONS[self.precision][0])
 
     def __repr__(self) -> str:
-        keywords = _keywords(precision=None if self.precision == "microseconds" else self.precision)
-        bounds = f"min_value={self.min_value!r}, max_value={self.max_value!r}"
-        return f"temporal.durations({bounds}{keywords})"
+        arguments = _arguments(
+            min_value=self.min_value,
+            max_value=self.max_value,
+            precision=_unless(self.precision, "microseconds"),
+        )
+        return f"temporal.durations({arguments})"
 
 
 def durations(
-    min_value: dt.timedelta = dt.timedelta.min,
-    max_value: dt.timedelta = dt.timedelta.max,
+    min_value: dt.timedelta | None = None,
+    max_value: dt.timedelta | None = None,
     *,
     precision: str = "microseconds",
 ) -> Generator[dt.timedelta]:
     """Generate :class:`datetime.timedelta` objects in
-    ``[min_value, max_value]``, inclusive, shrinking toward zero. The
-    bounds default to the whole range :mod:`datetime` supports. One draw
-    in twenty on average targets a round duration, such as a second, an
-    hour, a day, 25 hours or a week, of either sign.
+    ``[min_value, max_value]``, inclusive, shrinking toward zero. Either
+    bound may be omitted: a missing bound is the end of the range
+    :mod:`datetime` supports. One draw in twenty on average targets a
+    round duration, such as a second, an hour, a day, 25 hours or a week,
+    of either sign.
 
     ``precision`` names the unit every drawn delta is a whole number of:
     ``"microseconds"`` (the default), ``"milliseconds"``, ``"seconds"``,
-    ``"minutes"`` or ``"hours"``. Bounds holding no delta at the
-    precision are an :class:`~hegel.InvalidArgument`.
+    ``"minutes"`` or ``"hours"``.
+
+    Bounds that are not ``timedelta`` objects, ``min_value > max_value``,
+    or bounds holding no delta at the precision are an
+    :class:`~hegel.InvalidArgument`.
     """
-    _check_type("min_value", min_value, dt.timedelta)
-    _check_type("max_value", max_value, dt.timedelta)
-    if min_value > max_value:
-        raise InvalidArgument(f"Cannot have max_value={max_value!r} < min_value={min_value!r}")
-    _, unit = _precision(precision)
-    _check_fits(precision, min_value // _MICROSECOND, max_value // _MICROSECOND, unit, "timedelta")
-    return Durations(min_value, max_value, precision)
+    if min_value is not None:
+        _check_type("min_value", min_value, dt.timedelta)
+    if max_value is not None:
+        _check_type("max_value", max_value, dt.timedelta)
+    engine_precision, _ = _precision(precision)
+    result = Durations(min_value, max_value, precision)
+    low, high = result.bounds
+    _check_order(low, high)
+    _native.validate_duration(_duration_of(low), _duration_of(high), engine_precision)
+    return result
 
 
 class Offsets(_PrintsValue[dt.timezone]):
-    def __init__(self, min_value: dt.timedelta, max_value: dt.timedelta, granularity: str) -> None:
+    def __init__(
+        self, min_value: dt.timedelta | None, max_value: dt.timedelta | None, granularity: str
+    ) -> None:
         self.min_value = min_value
         self.max_value = max_value
+        self.bounds = (
+            -_MAX_OFFSET if min_value is None else min_value,
+            _MAX_OFFSET if max_value is None else max_value,
+        )
         self.granularity = granularity
         self.label = OFFSET_LABEL
 
     def do_draw(self, tc: TestCase) -> dt.timezone:
+        low, high = self.bounds
         seconds = tc._generate_offset(
-            self.min_value // _SECOND,
-            self.max_value // _SECOND,
-            _GRANULARITIES[self.granularity][0],
+            low // _SECOND, high // _SECOND, _GRANULARITIES[self.granularity][0]
         )
         return dt.timezone(dt.timedelta(seconds=seconds))
 
     def __repr__(self) -> str:
-        return (
-            f"temporal.offsets(min_value={self.min_value!r}, max_value={self.max_value!r}, "
-            f"granularity={self.granularity!r})"
+        arguments = _arguments(
+            min_value=self.min_value,
+            max_value=self.max_value,
+            granularity=_unless(self.granularity, "seconds"),
         )
+        return f"temporal.offsets({arguments})"
 
 
 def offsets(
-    min_value: dt.timedelta = -_MAX_OFFSET,
-    max_value: dt.timedelta = _MAX_OFFSET,
+    min_value: dt.timedelta | None = None,
+    max_value: dt.timedelta | None = None,
     *,
     granularity: str = "seconds",
 ) -> Generator[dt.timezone]:
@@ -1415,21 +1729,23 @@ def offsets(
     with an offset in ``[min_value, max_value]``, shrinking toward
     :attr:`datetime.timezone.utc`.
 
-    The bounds are whole seconds within the day :class:`datetime.timezone`
-    allows, from -23:59:59 to +23:59:59 (the defaults). ``granularity``
-    names the unit every drawn offset is a whole number of:
-    ``"hours"``, ``"quarter_hours"``, ``"minutes"`` or ``"seconds"`` (the
-    default). One draw in twenty on average targets an offset some IANA
-    zone has used, or a limit such as ±18:00 or ±00:00:01, when it lies in
-    the bounds at the granularity.
+    Either bound may be omitted. The bounds are whole seconds within the
+    day :class:`datetime.timezone` allows, from -23:59:59 to +23:59:59,
+    which a missing bound is the end of. ``granularity`` names the unit
+    every drawn offset is a whole number of: ``"hours"``,
+    ``"quarter_hours"``, ``"minutes"`` or ``"seconds"`` (the default).
+    One draw in twenty on average targets an offset some IANA zone has
+    used, or a limit such as ±18:00 or ±00:00:01, when it lies in the
+    bounds at the granularity.
 
     Bounds that are not whole-second ``timedelta`` objects within the
     range, ``min_value > max_value``, or bounds holding no offset at the
     granularity are an :class:`~hegel.InvalidArgument`.
     """
-    _check_type("min_value", min_value, dt.timedelta)
-    _check_type("max_value", max_value, dt.timedelta)
     for name, value in (("min_value", min_value), ("max_value", max_value)):
+        if value is None:
+            continue
+        _check_type(name, value, dt.timedelta)
         if value.microseconds:
             raise InvalidArgument(f"{name}={value!r} must be a whole number of seconds")
         if not -_MAX_OFFSET <= value <= _MAX_OFFSET:
@@ -1437,51 +1753,47 @@ def offsets(
                 f"{name}={value!r} must be between -23:59:59 and +23:59:59, the offsets "
                 "datetime.timezone allows"
             )
-    if min_value > max_value:
-        raise InvalidArgument(f"Cannot have max_value={max_value!r} < min_value={min_value!r}")
     _check_choice("granularity", granularity, _GRANULARITIES)
-    _check_fits(
-        granularity,
-        min_value // _SECOND,
-        max_value // _SECOND,
-        _GRANULARITIES[granularity][1],
-        "offset",
-    )
-    return Offsets(min_value, max_value, granularity)
+    result = Offsets(min_value, max_value, granularity)
+    low, high = result.bounds
+    _check_order(low, high)
+    _native.validate_offset(low // _SECOND, high // _SECOND, _GRANULARITIES[granularity][0])
+    return result
 
 
-_SPAN_UNITS = (
-    "years",
-    "months",
-    "weeks",
-    "days",
-    "hours",
-    "minutes",
-    "seconds",
-    "milliseconds",
-    "microseconds",
-    "nanoseconds",
-)
-_SPAN_SUFFIXES = ("y", "mo", "w", "d", "h", "m", "s", "ms", "µs", "ns")
+_SPAN_UNITS: dict[str, int] = {
+    "years": _native.SPAN_UNIT_YEARS,
+    "months": _native.SPAN_UNIT_MONTHS,
+    "weeks": _native.SPAN_UNIT_WEEKS,
+    "days": _native.SPAN_UNIT_DAYS,
+    "hours": _native.SPAN_UNIT_HOURS,
+    "minutes": _native.SPAN_UNIT_MINUTES,
+    "seconds": _native.SPAN_UNIT_SECONDS,
+    "milliseconds": _native.SPAN_UNIT_MILLISECONDS,
+    "microseconds": _native.SPAN_UNIT_MICROSECONDS,
+    "nanoseconds": _native.SPAN_UNIT_NANOSECONDS,
+}
 _SPAN_SIGNS: dict[str, int] = {
     "uniform": _native.SPAN_SIGN_UNIFORM,
     "mixed": _native.SPAN_SIGN_MIXED,
     "non_negative": _native.SPAN_SIGN_NONNEGATIVE,
 }
-_I64_MIN = -(2**63)
-_I64_MAX = 2**63 - 1
 
 
 @dataclass(frozen=True)
 class Span:
     """A calendar span: a count of each unit from years to nanoseconds,
     such as "1 month and 2 days", which :class:`datetime.timedelta` cannot
-    represent because a month or a day has no fixed length.
+    represent because a month or a day has no fixed length. Each count is
+    an int in the 64-bit signed range.
 
-    ``str(span)`` is the form every Hegel frontend prints a span in, the
-    nonzero units with their suffixes (``"1y 2mo"``, ``"-3d 4h"`` when
-    every unit is negative or zero, ``"0s"`` for the zero span); the
-    ``repr`` names the nonzero units as keyword arguments.
+    ``str(span)`` is the form every Hegel frontend prints a span in: the
+    nonzero units, largest first, with their suffixes, and ``"0s"`` for
+    the zero span. A span with no negative unit has no signs
+    (``"1y 2mo"``), one with no positive unit has one leading ``-``
+    (``"-3d 4h"`` is minus three days and minus four hours), and one with
+    both signs each unit (``"-3d +4h"``). The ``repr`` names the nonzero
+    units as keyword arguments.
     """
 
     years: int = 0
@@ -1495,17 +1807,12 @@ class Span:
     microseconds: int = 0
     nanoseconds: int = 0
 
+    def __post_init__(self) -> None:
+        for unit in _SPAN_UNITS:
+            _check_int(unit, getattr(self, unit), _I64_MIN, _I64_MAX)
+
     def __str__(self) -> str:
-        values = [getattr(self, unit) for unit in _SPAN_UNITS]
-        negative = any(value < 0 for value in values) and all(value <= 0 for value in values)
-        text = " ".join(
-            f"{abs(value) if negative else value}{suffix}"
-            for value, suffix in zip(values, _SPAN_SUFFIXES, strict=True)
-            if value
-        )
-        if negative:
-            return f"-{text}"
-        return text or "0s"
+        return _native.format_span(astuple(self))
 
     def __repr__(self) -> str:
         units = ", ".join(
@@ -1522,10 +1829,8 @@ def _span_bounds(unit: str, value: Any) -> tuple[int, int]:
     ):
         raise InvalidArgument(f"{unit}={value!r} must be a (min, max) tuple of ints")
     low, high = value
-    if not _I64_MIN <= low <= high <= _I64_MAX:
-        raise InvalidArgument(
-            f"{unit}={value!r} must have min <= max, both within the 64-bit signed range"
-        )
+    if not (_I64_MIN <= low <= _I64_MAX and _I64_MIN <= high <= _I64_MAX):
+        raise InvalidArgument(f"{unit}={value!r} must be within the 64-bit signed range")
     return low, high
 
 
@@ -1539,7 +1844,7 @@ class Spans(_PrintsValue[Span]):
             low = 0 if sign == "non_negative" else -_I64_MAX
             bounds = dict.fromkeys(_SPAN_UNITS, (low, _I64_MAX))
         self.spec = _native.SpanSpec(
-            [(index, *bounds[unit]) for index, unit in enumerate(_SPAN_UNITS) if unit in bounds],
+            [(_SPAN_UNITS[unit], low, high) for unit, (low, high) in bounds.items()],
             _SPAN_SIGNS[sign],
         )
         self.label = SPAN_LABEL
@@ -1548,10 +1853,7 @@ class Spans(_PrintsValue[Span]):
         return Span(*tc._generate_span(self.spec))
 
     def __repr__(self) -> str:
-        arguments = [f"{unit}={value!r}" for unit, value in self.named.items()]
-        if self.sign != "uniform":
-            arguments.append(f"sign={self.sign!r}")
-        return f"temporal.spans({', '.join(arguments)})"
+        return f"temporal.spans({_arguments(**self.named, sign=_unless(self.sign, 'uniform'))})"
 
 
 def spans(
@@ -1607,18 +1909,4 @@ def spans(
         for unit, value in zip(_SPAN_UNITS, arguments, strict=True)
         if value is not None
     }
-    if sign == "non_negative":
-        for unit, (low, _) in named.items():
-            if low < 0:
-                raise InvalidArgument(
-                    f"{unit}={named[unit]!r} has a negative min, which sign='non_negative' "
-                    "does not allow"
-                )
-    if sign == "uniform" and not (
-        all(high >= 0 for _, high in named.values()) or all(low <= 0 for low, _ in named.values())
-    ):
-        raise InvalidArgument(
-            f"no sign is one every unit of {_keywords(**named)[2:]} can take, which "
-            "sign='uniform' needs; pass sign='mixed' to sign each unit on its own"
-        )
     return Spans(named, sign)

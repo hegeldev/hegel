@@ -137,26 +137,42 @@ need the same time zone data as the code under test. They draw against a
 :class:`ZoneSource`: by default :meth:`ZoneSource.zoneinfo`, the database
 :mod:`zoneinfo` itself reads (the system's zone files, or the ``tzdata``
 package), so a zone has exactly the transitions its
-:class:`~zoneinfo.ZoneInfo` has. Pass ``source`` to :func:`zones` or
-:func:`zone_names` to draw one generator against another source, or call
-:func:`set_default_zone_source` to change it for every generator built
-afterwards:
+:class:`~zoneinfo.ZoneInfo` has. Where :mod:`zoneinfo` finds no database
+at all (Windows without the ``tzdata`` package), a generator that needs
+the default source's zones raises :class:`~hegel.InvalidArgument` when it
+is built, saying to install ``tzdata``.
+
+:func:`zones`, :func:`zone_names`, :func:`datetimes` and
+:func:`zoned_datetimes` take a ``source`` to draw against another one, and
+:func:`set_default_zone_source` changes the default. A generator reads its
+source, and the names the source knows, when it is built, so build a
+source once, outside the test body, and set the default before building
+generators:
 
 .. code-block:: python
 
-   bundled = gs.temporal.zones(source=gs.temporal.ZoneSource.bundled())
+   BUNDLED = gs.temporal.ZoneSource.bundled()
+   zoned = gs.temporal.zoned_datetimes(source=BUNDLED)
+   zones = gs.temporal.zones(source=BUNDLED)
 
 An integration with another date and time library fills a ``ZoneSource()``
 with that library's data: TZif files, :class:`ZoneData` given as fields,
 or a :class:`ZoneOracle` it answers lookups for, added up front or loaded
-the first time a draw needs a zone.
+the first time a draw needs a zone. :meth:`ZoneSource.info`,
+:meth:`ZoneSource.resolve` and :meth:`ZoneSource.offset_at` read back what
+the engine made of it.
 
 .. autoclass:: ZoneSource
    :members:
+   :special-members: __contains__
 
 .. autofunction:: default_zone_source
 
 .. autofunction:: set_default_zone_source
+
+.. autoclass:: ZoneNameInfo
+
+.. autoclass:: ZoneResolution
 
 .. autoclass:: ZoneType
 
@@ -173,8 +189,9 @@ the first time a draw needs a zone.
 
 The top-level names the date and time generators had before they moved,
 ``gs.dates``, ``gs.times``, ``gs.datetimes`` (with its ``timezones=``
-argument), ``gs.timedeltas`` and ``gs.timezones``, still work but emit a
-:class:`DeprecationWarning`; use the ``gs.temporal`` names instead.
+argument), ``gs.timedeltas`` and ``gs.timezones``, still work, with the
+arguments they were released with, but emit a :class:`DeprecationWarning`;
+use the ``gs.temporal`` names instead.
 
 Identifiers and network values
 ------------------------------

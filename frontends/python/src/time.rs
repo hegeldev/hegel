@@ -144,36 +144,31 @@ impl Drop for TimeZoneSpec {
 
 #[pymethods]
 impl TimeZoneSpec {
-    /// The names of `source` (the process's default when `None`) with
-    /// the link, legacy, `Etc/Unknown` and opaque-name switches applied,
-    /// or the explicit list `names`. Building it may run the source's
-    /// loader, so the GIL is released meanwhile.
+    /// The names of `source` that the link and legacy switches admit, or
+    /// the explicit list `names`, checked against the source as they are
+    /// now. The check may run the source's loader, so the GIL is released
+    /// meanwhile.
     #[new]
-    #[pyo3(signature = (names, links, legacy, unknown, opaque, source=None))]
+    #[pyo3(signature = (names, allow_links, allow_legacy, source))]
     fn new(
         py: Python<'_>,
         names: Option<Vec<String>>,
-        links: bool,
-        legacy: bool,
-        unknown: bool,
-        opaque: bool,
-        source: Option<&ZoneSource>,
+        allow_links: bool,
+        allow_legacy: bool,
+        source: &ZoneSource,
     ) -> PyResult<Self> {
         let mut raw: *mut c::HegelTimezoneSpec = ptr::null_mut();
         with_ctx(|ctx| check(unsafe { c::hegel_timezone_spec_new(ctx, &mut raw) }))?;
         let spec = TimeZoneSpec { raw: SendPtr(raw) };
         let raw = SendPtr(raw);
-        let source =
-            SendPtr(source.map_or(ptr::null(), ZoneSource::raw) as *mut c::HegelZoneSource);
+        let source = SendPtr(source.raw() as *mut c::HegelZoneSource);
         let rc = py.detach(move || {
             with_ctx(|ctx| unsafe {
                 let raw = raw.get();
-                let steps: [&dyn Fn() -> c::hegel_result_t; 6] = [
+                let steps: [&dyn Fn() -> c::hegel_result_t; 5] = [
                     &|| c::hegel_timezone_spec_set_source(ctx, raw, source.get()),
-                    &|| c::hegel_timezone_spec_set_links(ctx, raw, links),
-                    &|| c::hegel_timezone_spec_set_legacy(ctx, raw, legacy),
-                    &|| c::hegel_timezone_spec_set_unknown(ctx, raw, unknown),
-                    &|| c::hegel_timezone_spec_set_opaque(ctx, raw, opaque),
+                    &|| c::hegel_timezone_spec_set_links(ctx, raw, allow_links),
+                    &|| c::hegel_timezone_spec_set_legacy(ctx, raw, allow_legacy),
                     &|| match &names {
                         Some(names) => {
                             let views = hstrs(names);
@@ -181,6 +176,7 @@ impl TimeZoneSpec {
                         }
                         None => c::hegel_result_t::HEGEL_OK,
                     },
+                    &|| c::hegel_timezone_spec_validate(ctx, raw),
                 ];
                 steps
                     .into_iter()
@@ -262,7 +258,7 @@ impl ZonedSpec {
                     )
                 })?;
             }
-            Ok::<(), PyErr>(())
+            check(unsafe { c::hegel_zoned_spec_validate(ctx, raw) })
         })?;
         Ok(spec)
     }
@@ -305,7 +301,7 @@ impl SpanSpec {
             for (unit, min, max) in bounds {
                 check(unsafe { c::hegel_span_spec_set_unit_bounds(ctx, raw, unit, min, max) })?;
             }
-            Ok::<(), PyErr>(())
+            check(unsafe { c::hegel_span_spec_validate(ctx, raw) })
         })?;
         Ok(spec)
     }
@@ -317,6 +313,137 @@ pub(crate) fn tzdb_version() -> PyResult<String> {
     let mut out = c::hegel_string_t::default();
     with_ctx(|ctx| check(unsafe { c::hegel_tzdb_version(ctx, &mut out) }))?;
     Ok(string_from(out))
+}
+
+/// Check the arguments of a `TestCase.generate_date` call without drawing:
+/// an `InvalidArgument` with the message the draw would give.
+#[pyfunction]
+#[pyo3(signature = (min_value, max_value, options))]
+pub(crate) fn validate_date(
+    min_value: PyDate,
+    max_value: PyDate,
+    options: Option<&DateOptions>,
+) -> PyResult<()> {
+    with_ctx(|ctx| {
+        check(unsafe {
+            c::hegel_validate_date(
+                ctx,
+                date_to_c(min_value),
+                date_to_c(max_value),
+                options.map_or(ptr::null(), DateOptions::raw),
+            )
+        })
+    })
+}
+
+/// Check the arguments of a `TestCase.generate_time` call without drawing.
+#[pyfunction]
+pub(crate) fn validate_time(min_value: PyTime, max_value: PyTime, precision: u32) -> PyResult<()> {
+    with_ctx(|ctx| {
+        check(unsafe {
+            c::hegel_validate_time(ctx, time_to_c(min_value), time_to_c(max_value), precision)
+        })
+    })
+}
+
+/// Check the arguments of a `TestCase.generate_datetime` call without
+/// drawing.
+#[pyfunction]
+pub(crate) fn validate_datetime(
+    min_value: PyDateTime,
+    max_value: PyDateTime,
+    precision: u32,
+) -> PyResult<()> {
+    with_ctx(|ctx| {
+        check(unsafe {
+            c::hegel_validate_datetime(
+                ctx,
+                datetime_to_c(min_value),
+                datetime_to_c(max_value),
+                precision,
+            )
+        })
+    })
+}
+
+/// Check the arguments of a `TestCase.generate_timestamp` call without
+/// drawing.
+#[pyfunction]
+pub(crate) fn validate_timestamp(
+    min_value: PyTimestamp,
+    max_value: PyTimestamp,
+    precision: u32,
+) -> PyResult<()> {
+    with_ctx(|ctx| {
+        check(unsafe {
+            c::hegel_validate_timestamp(
+                ctx,
+                timestamp_to_c(min_value),
+                timestamp_to_c(max_value),
+                precision,
+            )
+        })
+    })
+}
+
+/// Check the arguments of a `TestCase.generate_offset` call without
+/// drawing.
+#[pyfunction]
+pub(crate) fn validate_offset(
+    min_seconds: i32,
+    max_seconds: i32,
+    granularity: u32,
+) -> PyResult<()> {
+    with_ctx(|ctx| {
+        check(unsafe {
+            c::hegel_validate_offset(ctx, min_seconds, max_seconds, granularity, false)
+        })
+    })
+}
+
+/// Check the arguments of a `TestCase.generate_duration` call without
+/// drawing.
+#[pyfunction]
+pub(crate) fn validate_duration(
+    min_value: PyDuration,
+    max_value: PyDuration,
+    precision: u32,
+) -> PyResult<()> {
+    with_ctx(|ctx| {
+        check(unsafe {
+            c::hegel_validate_duration(
+                ctx,
+                duration_to_c(min_value),
+                duration_to_c(max_value),
+                precision,
+            )
+        })
+    })
+}
+
+/// The canonical text of a calendar span, given as its ten unit values
+/// from years to nanoseconds.
+#[pyfunction]
+pub(crate) fn format_span(span: PySpan) -> PyResult<String> {
+    let value = c::hegel_span_t {
+        years: span.0,
+        months: span.1,
+        weeks: span.2,
+        days: span.3,
+        hours: span.4,
+        minutes: span.5,
+        seconds: span.6,
+        milliseconds: span.7,
+        microseconds: span.8,
+        nanoseconds: span.9,
+    };
+    let mut out = c::hegel_owned_string_t::default();
+    with_ctx(|ctx| {
+        check(unsafe { c::hegel_format_span(ctx, &value, &mut out) })?;
+        let text = string_from(out);
+        let _ = unsafe { c::hegel_owned_string_free(ctx, &mut out) };
+        Ok(text)
+    })
 }
 
 /// What `source` (the process's default when `None`) knows about the
@@ -398,4 +525,46 @@ pub(crate) fn timezone_resolve(
         out.offset_known,
         timestamp_from_c(out.timestamp),
     ))
+}
+
+/// The offset the zone `name` of `source` (the process's default when
+/// `None`) has in force at the instant `timestamp`, as `(offset_seconds,
+/// offset_known, is_dst, abbreviation)`.
+#[pyfunction]
+#[pyo3(signature = (name, timestamp, source=None))]
+pub(crate) fn timezone_offset_at(
+    py: Python<'_>,
+    name: &str,
+    timestamp: PyTimestamp,
+    source: Option<&ZoneSource>,
+) -> PyResult<(i32, bool, bool, String)> {
+    let source = SendPtr(source.map_or(ptr::null(), ZoneSource::raw) as *mut c::HegelZoneSource);
+    let (rc, out) = py.detach(move || {
+        let mut out = c::hegel_timezone_offset_t {
+            offset_seconds: 0,
+            offset_known: false,
+            is_dst: false,
+            abbreviation: c::hegel_string_t::default(),
+        };
+        let rc = with_ctx(|ctx| unsafe {
+            c::hegel_timezone_offset_at_in(
+                ctx,
+                source.get(),
+                hstr(name),
+                timestamp_to_c(timestamp),
+                &mut out,
+            )
+        });
+        (
+            rc,
+            (
+                out.offset_seconds,
+                out.offset_known,
+                out.is_dst,
+                string_from(out.abbreviation),
+            ),
+        )
+    });
+    check(rc)?;
+    Ok(out)
 }

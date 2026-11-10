@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import datetime as dt
+import gc
 import os
 import struct
 import sys
 import threading
 import time
+import weakref
 import zoneinfo
 from importlib.resources import files
 
@@ -17,6 +19,7 @@ from hegel import generators as gs
 from hegel.generators.temporal import (
     RuleDate,
     ZoneData,
+    ZoneNameInfo,
     ZoneOracle,
     ZoneRule,
     ZoneSource,
@@ -87,17 +90,12 @@ def tzpath(tmp_path):
 @pytest.fixture
 def default_source():
     previous = gs.temporal.default_zone_source()
-    yield
+    yield previous
     gs.temporal.set_default_zone_source(previous)
 
 
-def resolve(source, name, civil):
-    """The engine's ``(kind, offset)`` for the naive datetime ``civil`` in
-    the zone ``name`` of ``source``."""
-    kind, _, _, offset, _, _ = _native.timezone_resolve(
-        name, (*civil.timetuple()[:6], civil.microsecond * 1000), source._handle()
-    )
-    return kind, offset
+def kind_of(source, name, wall_time):
+    return source.resolve(name, wall_time).kind
 
 
 def check_all(generator, predicate, *, test_cases=50):
@@ -109,14 +107,8 @@ def check_all(generator, predicate, *, test_cases=50):
 
 
 def agrees_with_zoneinfo(value, source):
-    kind, before, after, offset, _, _ = _native.timezone_resolve(
-        value.tzinfo.key, (*value.timetuple()[:6], value.microsecond * 1000), source._handle()
-    )
-    if kind == _native.TIMEZONE_KIND_FOLD:
-        offset = after if value.fold else before
-    elif kind == _native.TIMEZONE_KIND_GAP:
-        offset = before
-    return value.utcoffset() == dt.timedelta(seconds=offset)
+    resolution = source.resolve(value.tzinfo.key, value.replace(tzinfo=None))
+    return resolution.instant == value.astimezone(UTC)
 
 
 def test_the_default_source_is_zoneinfo():
@@ -137,16 +129,10 @@ def test_the_zoneinfo_source_follows_zoneinfo_search_path(tzpath, monkeypatch):
     source = ZoneSource.zoneinfo()
     london = zoneinfo.ZoneInfo.no_cache("Europe/London")
     assert london.utcoffset(dt.datetime(2020, 4, 1)) == dt.timedelta(0)
-    assert resolve(source, "Europe/London", dt.datetime(2020, 6, 15, 12, 30))[0] == (
-        _native.TIMEZONE_KIND_GAP
-    )
-    assert resolve(source, "Europe/London", dt.datetime(2020, 3, 29, 1, 30))[0] == (
-        _native.TIMEZONE_KIND_UNIQUE
-    )
+    assert kind_of(source, "Europe/London", dt.datetime(2020, 6, 15, 12, 30)) == "gap"
+    assert kind_of(source, "Europe/London", dt.datetime(2020, 3, 29, 1, 30)) == "unique"
     real = ZoneSource.bundled()
-    assert resolve(real, "Europe/London", dt.datetime(2020, 6, 15, 12, 30))[0] == (
-        _native.TIMEZONE_KIND_UNIQUE
-    )
+    assert kind_of(real, "Europe/London", dt.datetime(2020, 6, 15, 12, 30)) == "unique"
     in_london = gs.temporal.zones(source=source, no_cache=True)
     june = gs.temporal.zoned_datetimes(
         dt.datetime(2020, 6, 15, 11, 30), dt.datetime(2020, 6, 15, 12, 30), zones=in_london
@@ -187,12 +173,10 @@ def test_the_zoneinfo_source_names_and_version(tzpath, monkeypatch):
     names = gs.temporal.zone_names(source=source)
     check_all(names, lambda name: name in ("Europe/London", "Europe/Olympus_Mons"))
     assert find_example(names, lambda name: name != "Europe/London") == "Europe/Olympus_Mons"
-    assert (
-        repr(names) == "temporal.zone_names(links=True, legacy=False, source=ZoneSource.zoneinfo())"
-    )
-    with pytest.raises(hegel.InvalidArgument, match="'zone.tab' is not a time zone name"):
+    assert repr(names) == "temporal.zone_names(source=ZoneSource.zoneinfo())"
+    with pytest.raises(hegel.InvalidArgument, match='unknown time zone "zone.tab"'):
         gs.temporal.zone_names(names=["zone.tab"], source=source)
-    with pytest.raises(hegel.InvalidArgument, match="'Europe' is not a time zone name"):
+    with pytest.raises(hegel.InvalidArgument, match='unknown time zone "Europe"'):
         gs.temporal.zone_names(names=["Europe"], source=source)
     assert _zoneinfo_tzif("../Europe/London") is None
     assert _zoneinfo_tzif("Europe/London") == FAKE_LONDON
@@ -276,8 +260,25 @@ def test_no_zoneinfo_database(tzpath, monkeypatch):
     assert _zoneinfo_version() == ""
     zoneinfo.reset_tzpath([str(tzpath / "missing")])
     assert _zoneinfo_version() == ""
+    source = ZoneSource.zoneinfo()
     with pytest.raises(hegel.InvalidArgument, match="install the tzdata package"):
-        gs.temporal.zone_names(source=ZoneSource.zoneinfo())
+        gs.temporal.zone_names(source=source)
+    with pytest.raises(hegel.InvalidArgument, match="install the tzdata package"):
+        gs.temporal.zoned_datetimes(source=source)
+    # The bundled database needs nothing from the system.
+    check_all(
+        gs.temporal.zone_names(source=ZoneSource.bundled()),
+        lambda name: name in ZoneSource.bundled(),
+    )
+
+
+def test_the_deprecated_timezones_draws_utc_without_a_zoneinfo_database(tzpath, monkeypatch):
+    monkeypatch.setitem(sys.modules, "tzdata", None)
+    with pytest.warns(DeprecationWarning, match="use gs.temporal.zones"):
+        zones = gs.timezones()
+    check_all(zones, lambda zone: zone is UTC)
+    with pytest.warns(DeprecationWarning):
+        check_all(gs.datetimes(timezones=gs.timezones()), lambda value: value.tzinfo is UTC)
 
 
 def test_the_bundled_source():
@@ -285,9 +286,7 @@ def test_the_bundled_source():
     assert repr(source) == "ZoneSource.bundled()"
     assert source.version == gs.temporal.tzdb_version()
     zones = gs.temporal.zones(source=source)
-    assert repr(zones) == (
-        "temporal.zones(links=True, legacy=False, source=ZoneSource.bundled(), no_cache=False)"
-    )
+    assert repr(zones) == "temporal.zones(source=ZoneSource.bundled())"
     check_all(zones, lambda zone: isinstance(zone, zoneinfo.ZoneInfo))
     with pytest.raises(hegel.InvalidArgument):
         source.version = "2000a"
@@ -298,26 +297,157 @@ def test_the_bundled_source():
 def test_setting_the_default_source(default_source):
     custom = ZoneSource()
     custom.add_tzif("Europe/Olympus_Mons", FAKE_LONDON)
-    gs.temporal.set_default_zone_source(custom)
+    assert gs.temporal.set_default_zone_source(custom) is default_source
     assert gs.temporal.default_zone_source() is custom
     check_all(gs.temporal.zone_names(), lambda name: name == "Europe/Olympus_Mons")
-    assert repr(gs.temporal.zone_names()) == "temporal.zone_names(links=True, legacy=False)"
+    assert repr(gs.temporal.zone_names()) == "temporal.zone_names()"
+    assert gs.temporal.set_default_zone_source(default_source) is custom
+    assert gs.temporal.default_zone_source() is default_source
     with pytest.raises(hegel.InvalidArgument, match="source=None must be a ZoneSource"):
         gs.temporal.set_default_zone_source(None)
     with pytest.raises(hegel.InvalidArgument, match="source='bundled' must be a ZoneSource"):
         gs.temporal.zone_names(source="bundled")
+    with pytest.raises(hegel.InvalidArgument, match="source='bundled' must be a ZoneSource"):
+        gs.temporal.zoned_datetimes(source="bundled")
 
 
-def test_a_zoneinfo_zone_from_another_generator_uses_the_default_source(default_source):
+# 12:00 to 12:59 on 2020-06-15 was skipped in FAKE_LONDON and is an ordinary
+# hour in the real London, so only a draw against the fake data finds no
+# real wall time in it.
+IN_THE_FAKE_GAP = (dt.datetime(2020, 6, 15, 12, 10), dt.datetime(2020, 6, 15, 12, 50))
+
+
+def rejects_every_test_case(generator):
+    def body(tc):
+        tc.draw(generator)
+
+    failing(body, hegel.FailedHealthCheck, test_cases=5)
+
+
+def test_a_generator_keeps_the_default_source_it_was_built_with(default_source):
+    london = zoneinfo.ZoneInfo("Europe/London")
+    custom = ZoneSource()
+    custom.add_tzif("Europe/London", FAKE_LONDON)
+
+    def build():
+        return (
+            gs.temporal.zone_names(),
+            gs.temporal.zoned_datetimes(),
+            gs.temporal.datetimes(*IN_THE_FAKE_GAP, zones=gs.just(london), allow_imaginary=False),
+        )
+
+    before = build()
+    assert gs.temporal.set_default_zone_source(custom) is default_source
+    after = build()
+    names, zoned, in_london = before
+    for _ in range(2):
+        assert find_example(names, lambda name: name != "Europe/London") != "Europe/London"
+        assert find_example(zoned, lambda value: value.tzinfo is not london).tzinfo is not london
+        check_all(in_london, lambda value: value.tzinfo is london)
+        gs.temporal.set_default_zone_source(default_source)
+    names, zoned, in_london = after
+    check_all(names, lambda name: name == "Europe/London")
+    check_all(zoned, lambda value: value.tzinfo is london)
+    rejects_every_test_case(in_london)
+
+
+def test_a_generator_reads_its_sources_names_when_it_is_built():
+    source = ZoneSource()
+    source.add_tzif("Europe/Olympus_Mons", FAKE_LONDON)
+    before = gs.temporal.zone_names(source=source)
+    source.add_tzif("Europe/Pavonis_Mons", FAKE_LONDON)
+    after = gs.temporal.zone_names(source=source)
+    check_all(before, lambda name: name == "Europe/Olympus_Mons")
+    assert find_example(after, lambda name: name != "Europe/Olympus_Mons") == "Europe/Pavonis_Mons"
+    with pytest.raises(hegel.InvalidArgument, match="no allowed name"):
+        gs.temporal.zone_names(source=ZoneSource())
+
+
+def test_zones_from_another_generator_are_drawn_against_the_given_source():
+    london, utc = zoneinfo.ZoneInfo("Europe/London"), zoneinfo.ZoneInfo("UTC")
+    custom = ZoneSource()
+    custom.add_tzif("Europe/London", FAKE_LONDON)
+    custom.add_tzif("UTC", (files("tzdata.zoneinfo") / "UTC").read_bytes())
+    wrapped = [
+        gs.temporal.zones(source=custom).filter(lambda zone: True),
+        gs.temporal.zones(source=custom).map(lambda zone: zone),
+        gs.one_of(gs.temporal.zones(source=custom), gs.just(utc)),
+        gs.sampled_from([london, utc]),
+    ]
+    for zones in wrapped:
+        for generator in (gs.temporal.datetimes, gs.temporal.zoned_datetimes):
+            against_custom = generator(
+                *IN_THE_FAKE_GAP, zones=zones, source=custom, allow_imaginary=False
+            )
+            # London has no real wall time in the bounds in the fake data,
+            # which rejects the test case, so only UTC is ever drawn.
+            check_all(against_custom, lambda value: value.tzinfo is utc)
+            against_default = generator(*IN_THE_FAKE_GAP, zones=zones, allow_imaginary=False)
+            assert find_example(against_default, lambda value: value.tzinfo is london)
+    assert repr(gs.temporal.zoned_datetimes(zones=wrapped[3], source=custom)) == (
+        f"temporal.zoned_datetimes(zones={wrapped[3]!r}, source=ZoneSource())"
+    )
+
+
+def test_the_default_zones_are_those_of_the_given_source():
     london = zoneinfo.ZoneInfo("Europe/London")
     lo, hi = dt.datetime(2020, 6, 15, 11, 30), dt.datetime(2020, 6, 15, 12, 30)
     custom = ZoneSource()
     custom.add_tzif("Europe/London", FAKE_LONDON)
-    gs.temporal.set_default_zone_source(custom)
-    gap = find_example(gs.temporal.datetimes(lo, hi, zones=gs.just(london)), lambda d: d.hour == 12)
-    assert resolve(custom, "Europe/London", gap.replace(tzinfo=None))[0] == (
-        _native.TIMEZONE_KIND_GAP
+    zoned = gs.temporal.zoned_datetimes(lo, hi, source=custom)
+    check_all(zoned, lambda value: value.tzinfo is london)
+    assert repr(zoned) == (
+        f"temporal.zoned_datetimes(min_value={lo!r}, max_value={hi!r}, source=ZoneSource())"
     )
+
+    def body(tc):
+        tc.draw(gs.temporal.zoned_datetimes(*IN_THE_FAKE_GAP, source=custom, allow_imaginary=False))
+
+    assert "in any allowed zone" in str(failing(body, hegel.InvalidArgument))
+    aware = gs.temporal.datetimes(lo.replace(tzinfo=UTC), hi.replace(tzinfo=UTC), source=custom)
+    check_all(aware, lambda value: value.tzinfo is london)
+
+
+def test_a_zone_the_source_lacks_is_an_error():
+    custom = ZoneSource()
+    custom.add_tzif("Europe/London", FAKE_LONDON)
+    paris = zoneinfo.ZoneInfo("Europe/Paris")
+
+    def body(tc):
+        tc.draw(gs.temporal.zoned_datetimes(zones=gs.just(paris), source=custom))
+
+    message = str(failing(body, hegel.InvalidArgument))
+    assert "ZoneSource() has no time zone named 'Europe/Paris'" in message
+    assert "source= to zoned_datetimes()" in message
+    mars = zoneinfo.ZoneInfo.from_file(
+        (files("tzdata.zoneinfo") / "UTC").open("rb"), key="Mars/Olympus_Mons"
+    )
+
+    def default_body(tc):
+        tc.draw(gs.temporal.datetimes(zones=gs.just(mars)))
+
+    message = str(failing(default_body, hegel.InvalidArgument))
+    assert "ZoneSource.zoneinfo() has no time zone named 'Mars/Olympus_Mons'" in message
+    # A name the source knows but cannot supply the data of is the
+    # engine's error, not a missing name.
+    declared = ZoneSource()
+    declared.declare(["Europe/Paris"])
+
+    def declared_body(tc):
+        tc.draw(gs.temporal.datetimes(zones=gs.just(paris), source=declared))
+
+    assert "has no time zone named" not in str(failing(declared_body, hegel.InvalidArgument))
+
+
+def test_source_is_rejected_where_it_would_be_ignored():
+    custom = ZoneSource()
+    custom.add_tzif("Europe/London", FAKE_LONDON)
+    with pytest.raises(hegel.InvalidArgument, match="pass source to zones\\(\\) instead"):
+        gs.temporal.zoned_datetimes(zones=gs.temporal.zones(), source=custom)
+    with pytest.raises(hegel.InvalidArgument, match="pass source to zones\\(\\) instead"):
+        gs.temporal.datetimes(zones=gs.temporal.zones(source=custom), source=custom)
+    with pytest.raises(hegel.InvalidArgument, match="draws naive datetimes unless"):
+        gs.temporal.datetimes(source=custom)
 
 
 def test_zones_from_a_source_zoneinfo_cannot_load():
@@ -344,13 +474,21 @@ def test_a_source_from_tzif_bytes():
     names = gs.temporal.zone_names(source=source)
     check_all(names, lambda name: name in ("Europe/Olympus_Mons", "Europe/Alias"))
     assert find_example(names, lambda name: name == "Europe/Alias") == "Europe/Alias"
-    assert _native.timezone_info("Europe/Alias", source._handle())[:2] == (
-        "Europe/Olympus_Mons",
-        True,
+    alias = source.info("Europe/Alias")
+    assert alias == ZoneNameInfo("Europe/Olympus_Mons", True, False, alias.rank)
+    bundled = ZoneSource.bundled()
+    assert alias.rank == source.info("Europe/Olympus_Mons").rank > bundled.info("UTC").rank == 0
+    assert bundled.info("EST5EDT").is_legacy
+    assert bundled.info("Asia/Calcutta") == ZoneNameInfo(
+        "Asia/Kolkata", True, False, bundled.info("Asia/Calcutta").rank
     )
-    assert resolve(source, "Europe/Alias", dt.datetime(2020, 6, 15, 12, 30))[0] == (
-        _native.TIMEZONE_KIND_GAP
-    )
+    assert source.info("Europe/Nowhere") is None
+    assert "Europe/Alias" in source
+    assert "Europe/Nowhere" not in source
+    assert 5 not in source
+    with pytest.raises(hegel.InvalidArgument, match="name=5 must be a str"):
+        source.info(5)
+    assert kind_of(source, "Europe/Alias", dt.datetime(2020, 6, 15, 12, 30)) == "gap"
     with pytest.raises(hegel.InvalidArgument, match="TZif"):
         source.add_tzif("Europe/Broken", b"not a TZif file")
     with pytest.raises(hegel.InvalidArgument, match="version=1 must be a str"):
@@ -397,13 +535,13 @@ def test_a_source_from_structured_data():
     )
     source.add_zone("Europe/Rule_Fixed", ZoneData(GMT, rule=ZoneRule(BST)))
     gap = dt.datetime(2030, 3, 31, 1, 30)
-    assert resolve(source, "Europe/Rule_EU", gap)[0] == _native.TIMEZONE_KIND_GAP
-    assert resolve(source, "Europe/Rule_Inferred", gap)[0] == _native.TIMEZONE_KIND_GAP
-    assert resolve(source, "Europe/Rule_Held", gap) == (_native.TIMEZONE_KIND_UNIQUE, 3600)
-    assert resolve(source, "Europe/Rule_Days", dt.datetime(2030, 3, 1, 2, 30))[0] == (
-        _native.TIMEZONE_KIND_GAP
-    )
-    assert resolve(source, "Europe/Rule_Fixed", gap) == (_native.TIMEZONE_KIND_UNIQUE, 3600)
+    assert kind_of(source, "Europe/Rule_EU", gap) == "gap"
+    assert kind_of(source, "Europe/Rule_Inferred", gap) == "gap"
+    assert source.resolve("Europe/Rule_Held", gap).offset_after == HOUR
+    assert kind_of(source, "Europe/Rule_Held", gap) == "unique"
+    assert kind_of(source, "Europe/Rule_Days", dt.datetime(2030, 3, 1, 2, 30)) == "gap"
+    assert source.resolve("Europe/Rule_Fixed", gap).offset_before == HOUR
+    assert kind_of(source, "Europe/Rule_Fixed", gap) == "unique"
     check_all(
         gs.temporal.zone_names(source=source),
         lambda name: name.startswith("Europe/Rule_"),
@@ -419,7 +557,8 @@ def test_a_source_from_structured_data():
     [
         (lambda: ZoneType(1), "offset=1 must be a timedelta"),
         (lambda: ZoneType(dt.timedelta(microseconds=1)), "whole number of seconds"),
-        (lambda: ZoneType(dt.timedelta(days=2)), "whole number of seconds"),
+        (lambda: ZoneType(dt.timedelta(days=2)), "at most 1 day, 23:59:59 from zero"),
+        (lambda: ZoneType(dt.timedelta(days=-2)), "at most 1 day, 23:59:59 from zero"),
         (lambda: ZoneType(HOUR, 1), "is_dst=1 must be a bool"),
         (lambda: ZoneType(HOUR, False, 1), "abbreviation=1 must be a str"),
         (lambda: RuleDate("weekly"), "kind='weekly' must be one of"),
@@ -428,7 +567,9 @@ def test_a_source_from_structured_data():
         (lambda: RuleDate.month_week_day(1, 1, 7), "weekday=7 must be an int from 0 to 6"),
         (lambda: RuleDate.julian(0), "day=0 must be an int from 1 to 365"),
         (lambda: RuleDate.zero_based(366), "day=366 must be an int from 0 to 365"),
-        (lambda: RuleDate.julian(1, time=dt.timedelta(hours=167)), "time="),
+        (lambda: RuleDate.julian(1, time=dt.timedelta(hours=167, seconds=1)), "time="),
+        (lambda: RuleDate.julian(1, time=dt.timedelta(hours=-168)), "time="),
+        (lambda: RuleDate.julian(1, time=dt.timedelta(microseconds=1)), "time="),
         (lambda: ZoneRule(1), "standard=1 must be a ZoneType"),
         (lambda: ZoneRule(GMT, dst_start=RuleDate.julian(1)), "need a dst type"),
         (lambda: ZoneRule(GMT, dst_end=RuleDate.julian(1)), "need a dst type"),
@@ -461,6 +602,87 @@ def test_structured_data_validation(build, message):
         build()
 
 
+def test_rule_times_reach_the_limits_a_tzif_file_allows():
+    # RFC 9636 allows a rule's time from -167 to 167 hours, both included.
+    source = ZoneSource()
+    limit = dt.timedelta(hours=167)
+    rule = ZoneRule(GMT, BST, RuleDate.julian(60, time=limit), RuleDate.julian(300, time=-limit))
+    source.add_zone("Europe/Rule_Limits", ZoneData(GMT, rule=rule))
+    # Day 60 is March 1st, and 167 hours after its midnight is 23:00 on
+    # March 7th, when the clocks go forward an hour.
+    assert kind_of(source, "Europe/Rule_Limits", dt.datetime(2030, 3, 7, 23, 30)) == "gap"
+    assert kind_of(source, "Europe/Rule_Limits", dt.datetime(2030, 3, 7, 22, 30)) == "unique"
+    edge = ZoneType(dt.timedelta(days=2) - dt.timedelta(seconds=1))
+    source.add_zone("Europe/Rule_Edge", ZoneData(edge))
+    assert source.resolve("Europe/Rule_Edge", dt.datetime(2030, 1, 1)).offset_before == edge.offset
+
+
+def test_source_queries():
+    source = ZoneSource()
+    source.add_tzif("Europe/Olympus_Mons", FAKE_LONDON)
+    forward = dt.datetime(2020, 6, 15, 12, tzinfo=UTC)
+    back = dt.datetime(2020, 9, 1, 11, tzinfo=UTC)
+    assert source.offset_at("Europe/Olympus_Mons", forward - HOUR) == ZoneType(
+        dt.timedelta(0), False, "XMT"
+    )
+    assert source.offset_at("Europe/Olympus_Mons", forward) == ZoneType(HOUR, True, "XST")
+    in_new_york = (back - HOUR).astimezone(zoneinfo.ZoneInfo("America/New_York"))
+    assert source.offset_at("Europe/Olympus_Mons", in_new_york).abbreviation == "XST"
+
+    unique = source.resolve("Europe/Olympus_Mons", dt.datetime(2020, 7, 1, 9))
+    assert (unique.kind, unique.offset_before, unique.offset_after) == ("unique", HOUR, HOUR)
+    assert unique.instant == dt.datetime(2020, 7, 1, 8, tzinfo=UTC)
+    # 12:00 to 12:59 was skipped: read with the offset before the change
+    # it is an hour later on the clock, and with the one after it an hour
+    # earlier, as datetime reads fold 0 and fold 1.
+    skipped = dt.datetime(2020, 6, 15, 12, 30)
+    gap = source.resolve("Europe/Olympus_Mons", skipped)
+    assert (gap.kind, gap.offset_before, gap.offset_after) == ("gap", dt.timedelta(0), HOUR)
+    assert gap.instant == forward + dt.timedelta(minutes=30)
+    assert source.resolve("Europe/Olympus_Mons", skipped.replace(fold=1)).instant == (
+        forward - dt.timedelta(minutes=30)
+    )
+    # 11:00 to 11:59 on September 1st happened twice.
+    repeated = dt.datetime(2020, 9, 1, 11, 30)
+    fold = source.resolve("Europe/Olympus_Mons", repeated)
+    assert (fold.kind, fold.offset_before, fold.offset_after) == ("fold", HOUR, dt.timedelta(0))
+    assert fold.instant == back - dt.timedelta(minutes=30)
+    assert source.resolve("Europe/Olympus_Mons", repeated.replace(fold=1)).instant == (
+        back + dt.timedelta(minutes=30)
+    )
+
+    with pytest.raises(hegel.InvalidArgument, match='unknown time zone "Europe/Nowhere"'):
+        source.resolve("Europe/Nowhere", skipped)
+    with pytest.raises(hegel.InvalidArgument, match='unknown time zone "Europe/Nowhere"'):
+        source.offset_at("Europe/Nowhere", forward)
+    with pytest.raises(hegel.InvalidArgument, match="wall_time=.* must be naive"):
+        source.resolve("Europe/Olympus_Mons", forward)
+    with pytest.raises(hegel.InvalidArgument, match="wall_time=.* must be a datetime"):
+        source.resolve("Europe/Olympus_Mons", dt.date(2020, 1, 1))
+    with pytest.raises(hegel.InvalidArgument, match="instant=.* must be aware"):
+        source.offset_at("Europe/Olympus_Mons", skipped)
+    with pytest.raises(hegel.InvalidArgument, match="instant=5 must be a datetime"):
+        source.offset_at("Europe/Olympus_Mons", 5)
+    with pytest.raises(hegel.InvalidArgument, match="name=5 must be a str"):
+        source.resolve(5, skipped)
+    with pytest.raises(hegel.InvalidArgument, match="name=5 must be a str"):
+        source.offset_at(5, forward)
+    # The first wall times of year 1 in a zone ahead of UTC are moments in
+    # the year before, which datetime cannot hold.
+    tokyo = ZoneSource.bundled()
+    with pytest.raises(hegel.InvalidArgument, match="outside the range datetime represents"):
+        tokyo.resolve("Asia/Tokyo", dt.datetime.min)
+    check_all(
+        gs.temporal.zoned_datetimes(dt.datetime(1990, 1, 1), dt.datetime(2030, 1, 1)),
+        lambda value: (
+            gs.temporal.default_zone_source().offset_at(value.tzinfo.key, value).offset
+            == value.utcoffset()
+            or _is_imaginary(value)
+        ),
+        test_cases=100,
+    )
+
+
 def offset_at_of(zone):
     def offset_at(instant):
         moment = dt.datetime.fromtimestamp(instant, UTC).astimezone(zone)
@@ -491,16 +713,10 @@ def test_a_source_from_an_oracle():
             next_transition=next_transition,
         ),
     )
-    assert resolve(source, "Europe/Oracle_Sampled", dt.datetime(2030, 3, 31, 1, 30))[0] == (
-        _native.TIMEZONE_KIND_GAP
-    )
-    assert resolve(source, "Europe/Oracle_Walked", dt.datetime(2019, 3, 31, 1, 30))[0] == (
-        _native.TIMEZONE_KIND_GAP
-    )
-    assert resolve(source, "Europe/Oracle_Walked", dt.datetime(2030, 3, 31, 1, 30)) == (
-        _native.TIMEZONE_KIND_UNIQUE,
-        0,
-    )
+    assert kind_of(source, "Europe/Oracle_Sampled", dt.datetime(2030, 3, 31, 1, 30)) == "gap"
+    assert kind_of(source, "Europe/Oracle_Walked", dt.datetime(2019, 3, 31, 1, 30)) == "gap"
+    held = source.resolve("Europe/Oracle_Walked", dt.datetime(2030, 3, 31, 1, 30))
+    assert (held.kind, held.offset_before) == ("unique", dt.timedelta(0))
     with pytest.raises(hegel.InvalidArgument, match="oracle=1 must be a ZoneOracle"):
         source.add_oracle("Europe/Oracle_Bad", 1)
 
@@ -565,20 +781,14 @@ def test_a_lazily_loaded_source():
     names = gs.temporal.zone_names(source=source)
     check_all(names, lambda name: name in entries)
     assert calls == []
-    assert resolve(source, "Europe/Belfast", dt.datetime(2020, 6, 15, 12, 30))[0] == (
-        _native.TIMEZONE_KIND_GAP
-    )
+    assert kind_of(source, "Europe/Belfast", dt.datetime(2020, 6, 15, 12, 30)) == "gap"
     assert calls == ["Europe/Belfast", "Europe/London"]
     for name in ("Europe/Paris", "Europe/Berlin"):
-        assert resolve(source, name, dt.datetime(2030, 3, 31, 1, 30))[0] == (
-            _native.TIMEZONE_KIND_GAP
-        )
-        assert resolve(source, name, dt.datetime(2030, 3, 31, 3, 30))[0] == (
-            _native.TIMEZONE_KIND_UNIQUE
-        )
+        assert kind_of(source, name, dt.datetime(2030, 3, 31, 1, 30)) == "gap"
+        assert kind_of(source, name, dt.datetime(2030, 3, 31, 3, 30)) == "unique"
     assert calls == ["Europe/Belfast", "Europe/London", "Europe/Paris", "Europe/Berlin"]
-    assert _native.timezone_info("Europe/Lazy_Missing", source._handle()) is None
-    assert _native.timezone_info("Europe/Lazy_Missing", source._handle()) is None
+    assert "Europe/Lazy_Missing" not in source
+    assert "Europe/Lazy_Missing" not in source
     assert calls.count("Europe/Lazy_Missing") == 1
     source.set_loader(None)
     with pytest.raises(hegel.InvalidArgument, match="loader=1 must be callable"):
@@ -587,6 +797,77 @@ def test_a_lazily_loaded_source():
         source.declare("Europe/London")
     with pytest.raises(hegel.InvalidArgument, match="name=1 must be a str"):
         source.declare([1])
+
+
+class CountingLoader:
+    def __init__(self, entries):
+        self.entries = entries
+
+    def __call__(self, name):
+        return self.entries.get(name)
+
+
+def test_a_loader_is_released_when_the_source_drops_it():
+    def loader_of(source):
+        loader = CountingLoader({"Europe/London": FAKE_LONDON})
+        source.set_loader(loader)
+        return weakref.ref(loader)
+
+    source = ZoneSource()
+    first = loader_of(source)
+    assert kind_of(source, "Europe/London", dt.datetime(2020, 6, 15, 12, 30)) == "gap"
+    gc.collect()
+    assert first() is not None
+    second = loader_of(source)
+    gc.collect()
+    assert first() is None
+    assert second() is not None
+    source.set_loader(None)
+    gc.collect()
+    assert second() is None
+
+    third = loader_of(source)
+    names = gs.temporal.zone_names(names=["Europe/London"], source=source)
+    del source
+    gc.collect()
+    # The generator still draws from the source, which keeps its loader.
+    assert third() is not None
+    del names
+    gc.collect()
+    assert third() is None
+
+    # A source the engine refuses a loader for releases it at once.
+    refused = loader_of_refused()
+    gc.collect()
+    assert refused() is None
+
+
+def loader_of_refused():
+    loader = CountingLoader({})
+    with pytest.raises(hegel.InvalidArgument):
+        ZoneSource.bundled().set_loader(loader)
+    return weakref.ref(loader)
+
+
+def test_a_loader_may_fill_the_source_it_is_loading_for():
+    source = ZoneSource()
+
+    def loader(name):
+        if name == "Europe/London":
+            source.add_tzif("Europe/Olympus_Mons", FAKE_LONDON)
+            source.add_link("Europe/Belfast", "Europe/London")
+            assert "Europe/Olympus_Mons" in source
+            return FAKE_LONDON
+        return None
+
+    source.declare(["Europe/London"])
+    source.set_loader(loader)
+    assert kind_of(source, "Europe/London", dt.datetime(2020, 6, 15, 12, 30)) == "gap"
+    assert kind_of(source, "Europe/Belfast", dt.datetime(2020, 6, 15, 12, 30)) == "gap"
+    check_all(
+        gs.temporal.zone_names(source=source),
+        lambda name: name in ("Europe/London", "Europe/Olympus_Mons", "Europe/Belfast"),
+    )
 
 
 def test_a_loader_that_fails_fails_the_draw():
@@ -607,7 +888,7 @@ def test_a_loader_that_fails_fails_the_draw():
 
     source.set_loader(lambda name: 42)
     with pytest.raises(hegel.InvalidArgument, match="the loader returned 42") as info:
-        resolve(source, "Europe/Lazy_Other", dt.datetime(2020, 1, 1))
+        source.resolve("Europe/Lazy_Other", dt.datetime(2020, 1, 1))
     assert isinstance(info.value.__cause__, hegel.InvalidArgument)
 
     def interrupted(name):

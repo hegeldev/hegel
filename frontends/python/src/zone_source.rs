@@ -25,26 +25,30 @@ thread_local! {
 }
 
 /// The exception a Python callback raised during the engine call that
-/// just failed on this thread, if one did.
+/// just returned on this thread, if one did. Taking it empties the slot,
+/// so an exception never outlives the call it was raised in.
 pub(crate) fn take_callback_error() -> Option<PyErr> {
     CALLBACK_ERROR.with(|cell| cell.borrow_mut().take())
 }
 
+/// The value a callback returns to the engine for a failure.
+const CALLBACK_FAILED: i32 = 1;
+
 /// Record a callback's exception for the engine call it fails, and set
 /// its message on the callback's context.
-fn fail_callback(ctx: *mut c::HegelContext, error: PyErr) -> Rc {
+fn fail_callback(ctx: *mut c::HegelContext, error: PyErr) -> i32 {
     let message = error.to_string();
     let _ = unsafe { c::hegel_context_set_error(ctx, hstr(&message)) };
     CALLBACK_ERROR.with(|cell| *cell.borrow_mut() = Some(error));
-    Rc::HEGEL_E_INVALID_ARG
+    CALLBACK_FAILED
 }
 
-/// `error`, the engine's error for a failed engine call, with the
-/// exception a Python callback raised during that call as its cause. An
-/// exception that is not an `Exception` (a `KeyboardInterrupt`, say) is
-/// raised as it is.
-pub(crate) fn with_callback_cause(error: PyErr) -> PyErr {
-    let Some(cause) = take_callback_error() else {
+/// `error`, the engine's error for a failed engine call, with `cause`,
+/// the exception a Python callback raised during that call, as its
+/// cause. An exception that is not an `Exception` (a `KeyboardInterrupt`,
+/// say) is raised as it is.
+pub(crate) fn with_callback_cause(error: PyErr, cause: Option<PyErr>) -> PyErr {
+    let Some(cause) = cause else {
         return error;
     };
     Python::attach(|py| {
@@ -127,7 +131,7 @@ unsafe extern "C" fn oracle_offset_at(
     ctx: *mut c::HegelContext,
     instant: i64,
     out_type: *mut c::hegel_zone_type_t,
-) -> Rc {
+) -> i32 {
     // SAFETY: user_data is the Oracle add_oracle holds for this call.
     let oracle = unsafe { &*(user_data as *const Oracle) };
     Python::attach(|py| {
@@ -146,7 +150,7 @@ unsafe extern "C" fn oracle_offset_at(
                         abbreviation: hstr(&stored),
                     };
                 }
-                Rc::HEGEL_OK
+                0
             }
             Err(error) => fail_callback(ctx, error),
         }
@@ -159,7 +163,7 @@ unsafe extern "C" fn oracle_next_transition(
     after: i64,
     out_found: *mut bool,
     out_instant: *mut i64,
-) -> Rc {
+) -> i32 {
     // SAFETY: as for oracle_offset_at; this is only registered when the
     // oracle has a next_transition.
     let oracle = unsafe { &*(user_data as *const Oracle) };
@@ -174,7 +178,7 @@ unsafe extern "C" fn oracle_next_transition(
                     *out_found = found.is_some();
                     *out_instant = found.unwrap_or(0);
                 }
-                Rc::HEGEL_OK
+                0
             }
             Err(error) => fail_callback(ctx, error),
         }
@@ -265,9 +269,9 @@ unsafe extern "C" fn loader_trampoline(
     ctx: *mut c::HegelContext,
     source: *mut c::HegelZoneSource,
     name: c::hegel_string_t,
-) -> Rc {
-    // SAFETY: user_data is a leaked Py<PyAny> that set_loader registered,
-    // valid for the life of the process.
+) -> i32 {
+    // SAFETY: user_data is the boxed Py<PyAny> set_loader registered,
+    // which the engine keeps until it calls loader_release.
     let loader = unsafe { &*(user_data as *const Py<PyAny>) };
     let name = string_from(name);
     Python::attach(|py| {
@@ -275,10 +279,19 @@ unsafe extern "C" fn loader_trampoline(
             .call1(py, (name.as_str(),))
             .and_then(|entry| unsafe { add_entry(ctx, source, &name, entry.bind(py)) });
         match result {
-            Ok(rc) => rc,
+            Ok(rc) => rc as i32,
             Err(error) => fail_callback(ctx, error),
         }
     })
+}
+
+/// Free the loader `set_loader` boxed, when the engine drops it. This may
+/// run on a thread that does not hold the GIL, where pyo3 defers the
+/// decref until one that does next runs.
+unsafe extern "C" fn loader_release(user_data: *mut c_void) {
+    // SAFETY: user_data came from Box::into_raw in set_loader, and the
+    // engine calls this exactly once.
+    drop(unsafe { Box::from_raw(user_data as *mut Py<PyAny>) });
 }
 
 /// An owned libhegel zone-source handle: the zone data time zone draws
@@ -379,8 +392,8 @@ impl ZoneSource {
 
     /// Ask `loader(name)` for the data of a name the source lacks; it
     /// returns `None` or a `(kind, value)` pair, as `add_entry` reads it.
-    /// The loader is kept for the life of the process, since the source
-    /// may outlive this handle.
+    /// The engine owns the loader from here on, whether or not the call
+    /// succeeds, and frees it through `loader_release` when it drops it.
     #[pyo3(signature = (loader))]
     fn set_loader(&self, loader: Option<Py<PyAny>>) -> PyResult<()> {
         let (callback, user_data): (c::hegel_zone_loader_t, *mut c_void) = match loader {
@@ -391,7 +404,13 @@ impl ZoneSource {
             None => (None, ptr::null_mut()),
         };
         self.change(|ctx| unsafe {
-            c::hegel_zone_source_set_loader(ctx, self.raw.0, callback, user_data)
+            c::hegel_zone_source_set_loader(
+                ctx,
+                self.raw.0,
+                callback,
+                user_data,
+                Some(loader_release),
+            )
         })
     }
 

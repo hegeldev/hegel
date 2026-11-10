@@ -50,7 +50,8 @@ does, with a note per file of what was dropped.
   `gs.temporal`: `dates()` takes `weekdays` and `months`, `times()`,
   `datetimes()` and `durations()` a `precision` (the `timespec` names of
   `isoformat`), `datetimes()` an `ambiguous` policy for repeated wall times,
-  and `zone_names()` and `zones()` a `names` list. `zoned_datetimes()` draws
+  `zone_names()` and `zones()` a `names` list, and all four zoned
+  generators a `source` of time zone data. `zoned_datetimes()` draws
   only aware datetimes, `instants()` moments in time as UTC datetimes,
   `offsets()` fixed `datetime.timezone` offsets at a `granularity`, and
   `spans()` calendar spans (`gs.temporal.Span`, such as "1 month and 2
@@ -137,7 +138,7 @@ does, with a note per file of what was dropped.
 - `zone_names()` and `zones()` draw the names `zoneinfo` can load, as
   Hypothesis does, but the `posix/` and `right/` variants are never
   generated (there is no `allow_prefix`), and legacy names such as
-  `EST5EDT` are excluded unless `legacy=True`. A name shrinks down a ladder
+  `EST5EDT` are excluded unless `allow_legacy=True`. A name shrinks down a ladder
   from `UTC` through the zones with a whole-hour offset and a simple
   daylight-saving rule, not alphabetically; the ladder comes from Hegel's
   own copy of the IANA database, so it is the same on every machine.
@@ -145,9 +146,12 @@ does, with a note per file of what was dropped.
   draw, against the transitions `zoneinfo` itself reads (see
   `ZoneSource`), so `fold` is set only when the wall time is repeated and a
   skipped wall time is drawn deliberately rather than by luck; `times()` never sets
-  `fold`. A `tzinfo` that is not a `zoneinfo.ZoneInfo` (pytz, dateutil, a
-  fixed `datetime.timezone`) gets the drawn wall-clock time attached as
-  Hypothesis attaches it, without the targeting of its transitions.
+  `fold`. A `tzinfo` that is not a `zoneinfo.ZoneInfo` with a key (pytz,
+  dateutil, a fixed `datetime.timezone`) is drawn without the targeting of
+  its transitions: with naive bounds it gets the drawn wall-clock time
+  attached, as Hypothesis attaches it, and `fold` set where the `tzinfo`
+  says the wall time is repeated; with aware bounds a moment is drawn and
+  converted to it.
 - `durations()` shrink toward zero as a whole, so the simplest negative
   delta is a microsecond below zero rather than a whole day.
 - `from_regex` depends on the engine's regex generator rather than Python's

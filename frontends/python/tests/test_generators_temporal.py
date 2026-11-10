@@ -12,7 +12,7 @@ import pytest
 import hegel
 from hegel import _native
 from hegel import generators as gs
-from hegel.generators.temporal import _is_imaginary, _local_wall
+from hegel.generators.temporal import _is_imaginary, _is_repeated
 from tests.helpers import failing, find_example, run_test
 
 UTC = dt.UTC
@@ -44,6 +44,10 @@ def test_dates():
     assert find_example(gs.temporal.dates()) == dt.date(2000, 1, 1)
     assert find_example(gs.temporal.dates(min_value=dt.date(2021, 5, 5))) == dt.date(2021, 5, 5)
     assert repr(gs.temporal.dates(lo, hi)) == f"temporal.dates(min_value={lo!r}, max_value={hi!r})"
+    assert repr(gs.temporal.dates()) == "temporal.dates()"
+    assert repr(gs.temporal.dates(max_value=hi)) == f"temporal.dates(max_value={hi!r})"
+    check_all(gs.temporal.dates(None, hi), lambda d: d <= hi)
+    check_all(gs.temporal.dates(lo, None), lambda d: d >= lo)
     assert repr(gs.temporal.dates(lo, hi, weekdays=[6, 5], months=[2, 3])) == (
         f"temporal.dates(min_value={lo!r}, max_value={hi!r}, weekdays=[5, 6], months=[2, 3])"
     )
@@ -51,8 +55,10 @@ def test_dates():
         gs.temporal.dates(hi, lo)
     with pytest.raises(hegel.InvalidArgument):
         gs.temporal.dates("2020-01-01")
-    with pytest.raises(hegel.InvalidArgument):
+    with pytest.raises(hegel.InvalidArgument, match="min_value=.* must be a date"):
         gs.temporal.dates(dt.datetime(2020, 1, 1))
+    with pytest.raises(hegel.InvalidArgument, match="max_value=.* must be a date"):
+        gs.temporal.dates(max_value=dt.datetime(2020, 1, 1))
 
 
 def test_times():
@@ -63,18 +69,30 @@ def test_times():
     assert find_example(gs.temporal.times()) == dt.time(0, 0)
     assert find_example(gs.temporal.times(), lambda t: t > dt.time(0, 0)) == dt.time(0, 0, 0, 1)
     assert repr(gs.temporal.times(lo, hi)) == f"temporal.times(min_value={lo!r}, max_value={hi!r})"
+    assert repr(gs.temporal.times()) == "temporal.times()"
     assert repr(gs.temporal.times(zones=gs.none(), precision="seconds")) == (
-        f"temporal.times(min_value={dt.time.min!r}, max_value={dt.time.max!r}, "
-        "zones=none(), precision='seconds')"
+        "temporal.times(zones=none(), precision='seconds')"
     )
+    check_all(gs.temporal.times(None, hi), lambda t: t <= hi)
+    check_all(gs.temporal.times(lo, None), lambda t: t >= lo)
+    check_all(gs.temporal.times(zones=gs.none()), lambda t: t.tzinfo is None)
     with pytest.raises(hegel.InvalidArgument):
         gs.temporal.times(hi, lo)
-    with pytest.raises(hegel.InvalidArgument):
+    with pytest.raises(hegel.InvalidArgument, match="min_value=.* must be naive"):
         gs.temporal.times(dt.time(1, tzinfo=UTC))
+    with pytest.raises(hegel.InvalidArgument, match="max_value=.* must be naive"):
+        gs.temporal.times(max_value=dt.time(1, tzinfo=UTC))
     with pytest.raises(hegel.InvalidArgument):
         gs.temporal.times(5)
     with pytest.raises(hegel.InvalidArgument):
         gs.temporal.times(zones=5)
+
+    def bad_tz(tc):
+        tc.draw(gs.temporal.times(zones=gs.just("UTC")))
+
+    assert "zones must generate tzinfo objects, got 'UTC'" in str(
+        failing(bad_tz, hegel.InvalidArgument)
+    )
 
 
 def test_datetimes():
@@ -102,9 +120,10 @@ def test_datetimes():
             precision="seconds",
         )
     ) == (
-        f"temporal.datetimes(min_value={dt.datetime.min!r}, max_value={dt.datetime.max!r}, "
-        "zones=none(), allow_imaginary=False, ambiguous='later', precision='seconds')"
+        "temporal.datetimes(zones=none(), allow_imaginary=False, ambiguous='later', "
+        "precision='seconds')"
     )
+    assert repr(gs.temporal.datetimes()) == "temporal.datetimes()"
     with pytest.raises(hegel.InvalidArgument):
         gs.temporal.datetimes(hi, lo)
     with pytest.raises(hegel.InvalidArgument):
@@ -254,17 +273,23 @@ class Shifted(dt.tzinfo):
         return "SHIFT"
 
 
+def unkeyed_zone(*parts: str) -> zoneinfo.ZoneInfo:
+    """A ZoneInfo with real rules and no key, which no zone source can
+    look up."""
+    tzif = files("tzdata.zoneinfo").joinpath(*parts).read_bytes()
+    zone = zoneinfo.ZoneInfo.from_file(io.BytesIO(tzif))
+    assert zone.key is None
+    return zone
+
+
 def test_datetimes_in_zones_the_engine_cannot_see():
-    tzif = (files("tzdata.zoneinfo") / "UTC").read_bytes()
-    foreign = zoneinfo.ZoneInfo.from_file(io.BytesIO(tzif), key="Mars/Olympus_Mons")
-    anonymous = zoneinfo.ZoneInfo.from_file(io.BytesIO(tzif))
-    assert anonymous.key is None
+    anonymous = unkeyed_zone("UTC")
     shifted = Shifted()
-    zones = gs.sampled_from([foreign, anonymous, shifted])
+    zones = gs.sampled_from([anonymous, shifted])
     lo, hi = dt.datetime(2020, 1, 1), dt.datetime(2020, 1, 2)
     check_all(
         gs.temporal.datetimes(lo, hi, zones=zones),
-        lambda d: d.tzinfo in (foreign, anonymous, shifted) and lo <= d.replace(tzinfo=None) <= hi,
+        lambda d: d.tzinfo in (anonymous, shifted) and lo <= d.replace(tzinfo=None) <= hi,
     )
     check_all(
         gs.temporal.datetimes(lo, hi, zones=zones, allow_imaginary=False),
@@ -277,19 +302,58 @@ def test_datetimes_in_zones_the_engine_cannot_see():
     )
     # The engine cannot see this zone's gap, so an imaginary wall time is
     # detected after the draw and rejects the test case.
-    london_tzif = (files("tzdata.zoneinfo") / "Europe" / "London").read_bytes()
-    foreign_london = zoneinfo.ZoneInfo.from_file(io.BytesIO(london_tzif), key="Mars/London")
+    london = unkeyed_zone("Europe", "London")
     gap_lo, gap_hi = dt.datetime(2020, 3, 29, 1, 0), dt.datetime(2020, 3, 29, 1, 59)
-    check_all(gs.temporal.datetimes(gap_lo, gap_hi, zones=gs.just(foreign_london)), _is_imaginary)
+    check_all(gs.temporal.datetimes(gap_lo, gap_hi, zones=gs.just(london)), _is_imaginary)
 
     def body(tc):
-        tc.draw(
-            gs.temporal.datetimes(
-                gap_lo, gap_hi, zones=gs.just(foreign_london), allow_imaginary=False
-            )
-        )
+        tc.draw(gs.temporal.datetimes(gap_lo, gap_hi, zones=gs.just(london), allow_imaginary=False))
 
     failing(body, hegel.FailedHealthCheck, test_cases=5)
+
+
+def test_wall_times_repeated_in_a_zone_the_engine_cannot_see():
+    # The clocks went back from 02:00 BST to 01:00 GMT on 2020-10-25, so the
+    # wall times from 01:00 to 01:59 happened twice.
+    london = unkeyed_zone("Europe", "London")
+    lo, hi = dt.datetime(2020, 10, 25, 0, 30), dt.datetime(2020, 10, 25, 2, 30)
+
+    def repeated(value):
+        return value.hour == 1
+
+    both = gs.temporal.datetimes(lo, hi, zones=gs.just(london))
+    check_all(both, lambda d: d.fold == 0 or repeated(d), test_cases=100)
+    for fold, offset in ((0, 1), (1, 0)):
+        value = find_example(both, lambda d: d.fold == fold and repeated(d))
+        assert value.utcoffset() == dt.timedelta(hours=offset)
+    assert find_example(both, repeated).fold == 0
+    earlier = gs.temporal.datetimes(lo, hi, zones=gs.just(london), ambiguous="earlier")
+    check_all(earlier, lambda d: d.fold == 0, test_cases=100)
+    later = gs.temporal.datetimes(lo, hi, zones=gs.just(london), ambiguous="later")
+    check_all(later, lambda d: d.fold == repeated(d), test_cases=100)
+    assert find_example(later, repeated).utcoffset() == dt.timedelta(0)
+    assert _is_repeated(dt.datetime(2020, 10, 25, 1, 30, tzinfo=london))
+    assert _is_repeated(dt.datetime(2020, 10, 25, 1, 30, tzinfo=london, fold=1))
+    assert not _is_repeated(dt.datetime(2020, 10, 25, 2, 30, tzinfo=london))
+    # A skipped wall time also reads differently by fold, and is not a
+    # repeated one.
+    assert not _is_repeated(dt.datetime(2020, 3, 29, 1, 30, tzinfo=london))
+
+
+def test_is_imaginary_at_the_limits_of_the_type():
+    # Neither wall time can be converted to UTC, which overflows.
+    west = dt.timezone(dt.timedelta(hours=-1))
+    assert not _is_imaginary(dt.datetime.max.replace(tzinfo=west))
+    east = dt.timezone(dt.timedelta(hours=1))
+    assert not _is_imaginary(dt.datetime.min.replace(tzinfo=east))
+    check_all(
+        gs.temporal.datetimes(
+            dt.datetime.max - dt.timedelta(minutes=30),
+            zones=gs.just(west),
+            allow_imaginary=False,
+        ),
+        lambda d: d.tzinfo is west,
+    )
 
 
 def test_datetimes_near_the_limits_of_the_type():
@@ -309,8 +373,9 @@ def test_datetimes_near_the_limits_of_the_type():
         )
 
     failing(fixed_body, hegel.FailedHealthCheck, test_cases=5)
-    # Instants that no wall time of a zone the engine cannot see represents
-    # reject every test case too.
+    # Moments outside the range a UTC datetime represents are never drawn
+    # in a zone the engine cannot see, so bounds wholly outside it reject
+    # every test case.
     behind_lo = dt.datetime.max.replace(tzinfo=dt.timezone(dt.timedelta(hours=-4)))
     behind_hi = dt.datetime.max.replace(tzinfo=dt.timezone(dt.timedelta(hours=-5)))
     assert instant(behind_lo) < instant(behind_hi)
@@ -319,7 +384,7 @@ def test_datetimes_near_the_limits_of_the_type():
     def behind_body(tc):
         tc.draw(gs.temporal.datetimes(behind_lo, behind_hi, zones=gs.just(west)))
 
-    failing(behind_body, hegel.FailedHealthCheck, test_cases=5)
+    failing(behind_body, hegel.Unsatisfiable, test_cases=5)
     ahead_lo = dt.datetime.min.replace(tzinfo=dt.timezone(dt.timedelta(hours=5)))
     ahead_hi = dt.datetime.min.replace(tzinfo=dt.timezone(dt.timedelta(hours=4)))
     shifted = Shifted()
@@ -327,11 +392,11 @@ def test_datetimes_near_the_limits_of_the_type():
     def ahead_body(tc):
         tc.draw(gs.temporal.datetimes(ahead_lo, ahead_hi, zones=gs.just(shifted)))
 
-    failing(ahead_body, hegel.FailedHealthCheck, test_cases=5)
-    # A bound beyond the wall times the zone represents is clamped to them.
+    failing(ahead_body, hegel.Unsatisfiable, test_cases=5)
+    # A bound beyond that range is clamped to it.
     check_all(
         gs.temporal.datetimes(behind_lo.replace(day=30), behind_hi, zones=gs.just(west)),
-        lambda d: d.tzinfo is west and d.replace(tzinfo=None) >= dt.datetime(9999, 12, 30, 3),
+        lambda d: d.tzinfo is west and d.replace(tzinfo=None) >= dt.datetime(9999, 12, 31, 2),
     )
     first_days = gs.temporal.datetimes(
         ahead_lo, dt.datetime(1, 1, 2, tzinfo=UTC), zones=gs.just(shifted)
@@ -390,26 +455,20 @@ def test_zone_names():
     check_all(gs.temporal.zone_names(), lambda key: zoneinfo.ZoneInfo(key).key == key)
     assert find_example(gs.temporal.zone_names()) == "UTC"
     assert find_example(gs.temporal.zone_names(), lambda key: key != "UTC") != "UTC"
-    assert repr(gs.temporal.zone_names()) == "temporal.zone_names(links=True, legacy=False)"
-
-    def tags_of(key):
-        info = _native.timezone_info(key)
-        assert info is not None
-        return info
-
-    check_all(
-        gs.temporal.zone_names(), lambda key: not tags_of(key)[3] & _native.TIMEZONE_TAG_LEGACY
+    assert repr(gs.temporal.zone_names()) == "temporal.zone_names()"
+    assert repr(gs.temporal.zone_names(allow_links=False, allow_legacy=True)) == (
+        "temporal.zone_names(allow_links=False, allow_legacy=True)"
     )
-    check_all(gs.temporal.zone_names(links=False), lambda key: not tags_of(key)[1])
-    find_example(gs.temporal.zone_names(), lambda key: tags_of(key)[1])
-    assert find_example(
-        gs.temporal.zone_names(legacy=True),
-        lambda key: tags_of(key)[3] & _native.TIMEZONE_TAG_LEGACY,
-    )
-    with pytest.raises(hegel.InvalidArgument, match="links=1 must be a bool"):
-        gs.temporal.zone_names(links=1)
-    with pytest.raises(hegel.InvalidArgument, match="legacy=1 must be a bool"):
-        gs.temporal.zone_names(legacy=1)
+    info = gs.temporal.default_zone_source().info
+
+    check_all(gs.temporal.zone_names(), lambda key: not info(key).is_legacy)
+    check_all(gs.temporal.zone_names(allow_links=False), lambda key: not info(key).is_link)
+    find_example(gs.temporal.zone_names(), lambda key: info(key).is_link)
+    assert find_example(gs.temporal.zone_names(allow_legacy=True), lambda key: info(key).is_legacy)
+    with pytest.raises(hegel.InvalidArgument, match="allow_links=1 must be a bool"):
+        gs.temporal.zone_names(allow_links=1)
+    with pytest.raises(hegel.InvalidArgument, match="allow_legacy=1 must be a bool"):
+        gs.temporal.zone_names(allow_legacy=1)
 
 
 def test_zone_names_are_the_hosts():
@@ -422,17 +481,14 @@ def test_zones():
     check_all(gs.temporal.zones(no_cache=True), lambda z: z is not zoneinfo.ZoneInfo(z.key))
     check_all(gs.temporal.zones(), lambda z: z is zoneinfo.ZoneInfo(z.key))
     assert find_example(gs.temporal.zones()) is zoneinfo.ZoneInfo("UTC")
-    assert repr(gs.temporal.zones()) == "temporal.zones(links=True, legacy=False, no_cache=False)"
+    assert repr(gs.temporal.zones()) == "temporal.zones()"
+    assert repr(gs.temporal.zones(no_cache=True, allow_legacy=True)) == (
+        "temporal.zones(no_cache=True, allow_legacy=True)"
+    )
     with pytest.raises(hegel.InvalidArgument, match="no_cache=1 must be a bool"):
         gs.temporal.zones(no_cache=1)
-    with pytest.raises(hegel.InvalidArgument, match="legacy=1 must be a bool"):
-        gs.temporal.zones(legacy=1)
-
-
-def foreign_zone(key: str, *parts: str) -> zoneinfo.ZoneInfo:
-    """A ZoneInfo with real rules under a key the engine does not know."""
-    tzif = files("tzdata.zoneinfo").joinpath(*parts).read_bytes()
-    return zoneinfo.ZoneInfo.from_file(io.BytesIO(tzif), key=key)
+    with pytest.raises(hegel.InvalidArgument, match="allow_legacy=1 must be a bool"):
+        gs.temporal.zones(allow_legacy=1)
 
 
 def test_dates_on_chosen_weekdays_and_months():
@@ -449,8 +505,10 @@ def test_dates_on_chosen_weekdays_and_months():
         lambda d: d.weekday() == 4 and d.month in (6, 7) and d.year == 2024,
     )
     check_all(gs.temporal.dates(weekdays=range(7), months=range(1, 13)), lambda d: True)
-    with pytest.raises(hegel.InvalidArgument, match="must not be empty"):
+    with pytest.raises(hegel.InvalidArgument, match="must name at least one weekday"):
         gs.temporal.dates(weekdays=[])
+    with pytest.raises(hegel.InvalidArgument, match="must name at least one month"):
+        gs.temporal.dates(months=())
     with pytest.raises(hegel.InvalidArgument, match="ints from 0 to 6, not 7"):
         gs.temporal.dates(weekdays=[7])
     with pytest.raises(hegel.InvalidArgument, match="ints from 1 to 12, not 0"):
@@ -461,9 +519,9 @@ def test_dates_on_chosen_weekdays_and_months():
         gs.temporal.dates(weekdays=5)
     with pytest.raises(hegel.InvalidArgument, match="must be an iterable of ints"):
         gs.temporal.dates(months="2")
-    with pytest.raises(hegel.InvalidArgument, match="no date between"):
+    with pytest.raises(hegel.InvalidArgument, match="falls on an allowed weekday and month"):
         gs.temporal.dates(dt.date(2024, 6, 1), dt.date(2024, 6, 30), months=[2])
-    with pytest.raises(hegel.InvalidArgument, match="no date between"):
+    with pytest.raises(hegel.InvalidArgument, match="falls on an allowed weekday and month"):
         gs.temporal.dates(dt.date(2024, 6, 1), dt.date(2024, 6, 1), weekdays=[0])
     gs.temporal.dates(dt.date(2024, 3, 1), dt.date(2025, 2, 28), weekdays=[0], months=[2])
 
@@ -481,7 +539,7 @@ def test_times_at_a_precision():
         gs.temporal.times(dt.time(1, 30), dt.time(1, 59), precision="minutes"),
         lambda t: t.second == 0,
     )
-    with pytest.raises(hegel.InvalidArgument, match="whole number of hours"):
+    with pytest.raises(hegel.InvalidArgument, match="no value at precision hours"):
         gs.temporal.times(dt.time(1, 1), dt.time(1, 59), precision="hours")
     with pytest.raises(hegel.InvalidArgument, match="precision='nanoseconds' must be one of"):
         gs.temporal.times(precision="nanoseconds")
@@ -508,7 +566,7 @@ def test_datetimes_at_a_precision():
     check_all(
         gs.temporal.datetimes(lo, lo + dt.timedelta(minutes=1), precision="hours"), lambda d: True
     )
-    with pytest.raises(hegel.InvalidArgument, match="whole number of minutes"):
+    with pytest.raises(hegel.InvalidArgument, match="no value at precision minutes"):
         gs.temporal.datetimes(lo, lo + dt.timedelta(seconds=10), precision="minutes")
     with pytest.raises(hegel.InvalidArgument, match="precision='days' must be one of"):
         gs.temporal.datetimes(precision="days")
@@ -536,39 +594,168 @@ def test_datetimes_choose_the_fold():
         gs.temporal.datetimes(lo, hi, zones=gs.just(NEW_YORK), ambiguous="later"),
         lambda d: d.fold == 1 and d.utcoffset() == dt.timedelta(hours=-5),
     )
+    # Both readings of those wall times lie in these aware bounds, the
+    # earlier in the first hour and the later in the second.
     alo, ahi = dt.datetime(2020, 11, 1, 5, tzinfo=UTC), dt.datetime(2020, 11, 1, 6, 59, tzinfo=UTC)
-    check_all(gs.temporal.datetimes(alo, ahi, ambiguous="later"), lambda d: d.fold in (0, 1))
+    middle = dt.datetime(2020, 11, 1, 6, tzinfo=UTC)
+    # The engine rejects the keyed zone before drawing anything, where the
+    # zone it cannot see is found out after the draw.
+    for zones, rejection in (
+        (gs.just(NEW_YORK), hegel.Unsatisfiable),
+        (gs.just(unkeyed_zone("America", "New_York")), hegel.FailedHealthCheck),
+    ):
+        check_all(
+            gs.temporal.datetimes(alo, ahi, zones=zones, ambiguous="earlier"),
+            lambda d: d.fold == 0 and alo <= d < middle,
+        )
+        check_all(
+            gs.temporal.datetimes(alo, ahi, zones=zones, ambiguous="later"),
+            lambda d: d.fold == 1 and middle <= d <= ahi,
+        )
+        both = gs.temporal.datetimes(alo, ahi, zones=zones)
+        check_all(both, lambda d: d.fold == (d >= middle) and alo <= d <= ahi)
+        for fold in (0, 1):
+            assert find_example(both, lambda d: d.fold == fold).fold == fold
+
+        # Every wall time in the later hour has its earlier reading
+        # before these bounds.
+        def body(tc, zones=zones):
+            tc.draw(gs.temporal.datetimes(middle, ahi, zones=zones, ambiguous="earlier"))
+
+        failing(body, rejection, test_cases=5)
+    check_all(
+        gs.temporal.datetimes(alo, ahi, ambiguous="later"),
+        lambda d: d.fold == 1 or d.replace(fold=1).utcoffset() == d.utcoffset(),
+        test_cases=200,
+    )
     with pytest.raises(hegel.InvalidArgument, match="ambiguous='both_folds' must be one of"):
         gs.temporal.datetimes(ambiguous="both_folds")
 
 
 def test_datetimes_with_aware_bounds_in_a_zone_the_engine_cannot_see():
-    london = foreign_zone("Mars/London", "Europe", "London")
+    london = unkeyed_zone("Europe", "London")
     # The clocks went forward from 01:00 GMT to 02:00 BST at 01:00Z on
-    # 2020-03-29, so the wall times from 01:00 to 01:59 never happened and
-    # read, with fold 0, as instants past the upper bound.
+    # 2020-03-29, so the wall times from 01:00 to 01:59 never happened.
     lo = dt.datetime(2020, 3, 29, 0, 59, 30, tzinfo=UTC)
     hi = dt.datetime(2020, 3, 29, 1, 0, 30, tzinfo=UTC)
     in_bounds = gs.temporal.datetimes(lo, hi, zones=gs.just(london))
-    check_all(in_bounds, lambda d: instant(lo) <= instant(d) <= instant(hi), test_cases=100)
+    check_all(
+        in_bounds,
+        lambda d: d.tzinfo is london and lo <= d <= hi and not _is_imaginary(d),
+        test_cases=100,
+    )
     assert find_example(in_bounds, lambda d: d.hour == 2).replace(tzinfo=None) == dt.datetime(
         2020, 3, 29, 2
     )
-    check_all(
-        gs.temporal.datetimes(lo, hi, zones=gs.just(london), allow_imaginary=False),
-        lambda d: not _is_imaginary(d),
-    )
+    assert find_example(in_bounds, lambda d: d.hour == 0).hour == 0
     # The clocks went back from 02:00 BST to 01:00 GMT at 01:00Z on
     # 2020-10-25, so these bounds are in order as instants but not as wall
-    # times in London.
+    # times in London: they run from 01:59 BST to 01:00:30 GMT.
     lo = dt.datetime(2020, 10, 25, 0, 59, tzinfo=UTC)
     hi = dt.datetime(2020, 10, 25, 1, 0, 30, tzinfo=UTC)
-    assert _local_wall(lo, london) > _local_wall(hi, london)
+    assert lo.astimezone(london).replace(tzinfo=None) > hi.astimezone(london).replace(tzinfo=None)
+    across = gs.temporal.datetimes(lo, hi, zones=gs.just(london))
+    check_all(across, lambda d: lo <= d <= hi and d.fold == (d.minute < 30), test_cases=100)
+    for fold in (0, 1):
+        assert find_example(across, lambda d: d.fold == fold).fold == fold
+
+
+class HalfHour(dt.tzinfo):
+    """A tzinfo the engine knows nothing about, half an hour ahead of UTC
+    until 2020-06-01T00:15Z and a whole hour ahead from then on."""
+
+    CHANGE = dt.datetime(2020, 6, 1, 0, 15)
+
+    def utcoffset(self, value):
+        after = value.replace(tzinfo=None) >= self.CHANGE + dt.timedelta(minutes=30)
+        return dt.timedelta(minutes=60 if after else 30)
+
+    def fromutc(self, value):
+        after = value.replace(tzinfo=None) >= self.CHANGE
+        return value + dt.timedelta(minutes=60 if after else 30)
+
+    def dst(self, value):
+        return dt.timedelta(0)
+
+    def tzname(self, value):
+        return "HALF"
+
+
+def test_precision_with_aware_bounds_in_a_zone_the_engine_cannot_see():
+    half = HalfHour()
+    lo, hi = dt.datetime(2020, 1, 1, tzinfo=UTC), dt.datetime(2020, 1, 3, tzinfo=UTC)
+
+    def whole_hours_within(lo, hi):
+        return lambda d: d.tzinfo is half and d.time() == dt.time(d.hour) and lo <= d <= hi
+
+    hours = gs.temporal.datetimes(lo, hi, zones=gs.just(half), precision="hours")
+    check_all(hours, whole_hours_within(lo, hi), test_cases=100)
+    # The first whole hour on this zone's clock is half past midnight UTC.
+    assert find_example(hours) == dt.datetime(2020, 1, 1, 0, 30, tzinfo=UTC)
+    # A lower bound past that one starts at the next.
+    later = lo + dt.timedelta(minutes=45)
+    from_later = gs.temporal.datetimes(later, hi, zones=gs.just(half), precision="hours")
+    check_all(from_later, whole_hours_within(later, hi), test_cases=100)
+    assert find_example(from_later) == dt.datetime(2020, 1, 1, 1, 30, tzinfo=UTC)
+    # Bounds holding a whole hour on its clock and none on UTC's.
+    between = gs.temporal.datetimes(
+        lo + dt.timedelta(minutes=20),
+        lo + dt.timedelta(minutes=40),
+        zones=gs.just(half),
+        precision="hours",
+    )
+    check_all(between, lambda d: d == dt.datetime(2020, 1, 1, 0, 30, tzinfo=UTC))
+    check_all(
+        gs.temporal.datetimes(lo, hi, zones=gs.just(half), precision="seconds"),
+        lambda d: d.microsecond == 0 and lo <= d <= hi,
+    )
+    # No whole hour on its clock lies in these ten minutes.
+    narrow = gs.temporal.datetimes(
+        lo, lo + dt.timedelta(minutes=10), zones=gs.just(half), precision="hours"
+    )
 
     def body(tc):
-        tc.draw(gs.temporal.datetimes(lo, hi, zones=gs.just(london)))
+        tc.draw(narrow)
 
-    failing(body, hegel.Unsatisfiable, test_cases=5)
+    failing(body, hegel.FailedHealthCheck, test_cases=5)
+    # The offset changes between midnight UTC and the whole hour on the
+    # zone's clock that would have followed it, so no value comes of
+    # midnight.
+    change = HalfHour.CHANGE.replace(tzinfo=UTC)
+    alo, ahi = change - dt.timedelta(hours=3), change + dt.timedelta(hours=3)
+    around = gs.temporal.datetimes(alo, ahi, zones=gs.just(half), precision="hours")
+    check_all(around, whole_hours_within(alo, ahi), test_cases=200)
+    assert find_example(around, lambda d: d >= change) == dt.datetime(2020, 6, 1, 1, tzinfo=UTC)
+    before = find_example(around, lambda d: d < change and d.day == 1)
+    assert before == dt.datetime(2020, 5, 31, 23, 30, tzinfo=UTC)
+
+    def crossing(tc):
+        tc.draw(
+            gs.temporal.datetimes(
+                change - dt.timedelta(minutes=15),
+                change + dt.timedelta(minutes=40),
+                zones=gs.just(half),
+                precision="hours",
+            )
+        )
+
+    failing(crossing, hegel.FailedHealthCheck, test_cases=5)
+
+
+def test_a_zone_with_no_value_in_aware_bounds_rejects_the_test_case():
+    # Asia/Kolkata is five and a half hours ahead of UTC, so no whole hour
+    # on its clock lies in these ten seconds, while one does on UTC's.
+    kolkata, utc = zoneinfo.ZoneInfo("Asia/Kolkata"), zoneinfo.ZoneInfo("UTC")
+    lo = dt.datetime(2020, 1, 1, 12, tzinfo=UTC)
+    hi = lo + dt.timedelta(seconds=10)
+    for zones in (
+        gs.sampled_from([kolkata, utc]),
+        gs.temporal.zones(names=["Asia/Kolkata", "UTC"]),
+    ):
+        check_all(
+            gs.temporal.datetimes(lo, hi, zones=zones, precision="hours"),
+            lambda d: d.tzinfo is utc and d == lo,
+        )
 
 
 def test_durations_at_a_precision():
@@ -583,7 +770,7 @@ def test_durations_at_a_precision():
         ),
         lambda d: d == dt.timedelta(minutes=-1),
     )
-    with pytest.raises(hegel.InvalidArgument, match="whole number of minutes"):
+    with pytest.raises(hegel.InvalidArgument, match="no value at precision minutes"):
         gs.temporal.durations(
             dt.timedelta(seconds=1), dt.timedelta(seconds=59), precision="minutes"
         )
@@ -619,10 +806,12 @@ def test_offsets():
         lambda z: offset(z) % dt.timedelta(minutes=1) == dt.timedelta(0),
     )
     check_all(gs.temporal.offsets(lo, lo), lambda z: offset(z) == lo)
-    assert (
-        repr(gs.temporal.offsets(lo, hi))
-        == f"temporal.offsets(min_value={lo!r}, max_value={hi!r}, granularity='seconds')"
+    assert repr(gs.temporal.offsets()) == "temporal.offsets()"
+    assert repr(gs.temporal.offsets(lo, hi, granularity="minutes")) == (
+        f"temporal.offsets(min_value={lo!r}, max_value={hi!r}, granularity='minutes')"
     )
+    check_all(gs.temporal.offsets(None, hi), lambda z: -limit <= offset(z) <= hi)
+    check_all(gs.temporal.offsets(lo, None), lambda z: lo <= offset(z) <= limit)
     with pytest.raises(hegel.InvalidArgument):
         gs.temporal.offsets(hi, lo)
     with pytest.raises(hegel.InvalidArgument, match="must be a timedelta"):
@@ -635,7 +824,7 @@ def test_offsets():
         gs.temporal.offsets(max_value=dt.timedelta(hours=24))
     with pytest.raises(hegel.InvalidArgument, match="granularity='days' must be one of"):
         gs.temporal.offsets(granularity="days")
-    with pytest.raises(hegel.InvalidArgument, match="whole number of hours"):
+    with pytest.raises(hegel.InvalidArgument, match="no offset at granularity hours"):
         gs.temporal.offsets(dt.timedelta(minutes=1), dt.timedelta(minutes=59), granularity="hours")
 
 
@@ -647,18 +836,22 @@ def test_zone_names_from_a_list_of_names():
         assert find_example(keys, lambda key: key == name) == name
     assert find_example(keys) == "UTC"
     assert repr(keys) == (
-        "temporal.zone_names(names=['Europe/London', 'Asia/Calcutta', 'EST5EDT', 'UTC'], "
-        "links=True, legacy=False)"
+        "temporal.zone_names(names=['Europe/London', 'Asia/Calcutta', 'EST5EDT', 'UTC'])"
     )
     check_all(gs.temporal.zone_names(names=("UTC",)), lambda key: key == "UTC")
     with pytest.raises(hegel.InvalidArgument, match="must be an iterable of IANA"):
         gs.temporal.zone_names(names="Europe/London")
-    with pytest.raises(hegel.InvalidArgument, match="must not be empty"):
+    with pytest.raises(hegel.InvalidArgument, match="needs at least one allowed name"):
         gs.temporal.zone_names(names=[])
     with pytest.raises(hegel.InvalidArgument, match="must contain strings, not 5"):
         gs.temporal.zone_names(names=[5])
-    with pytest.raises(hegel.InvalidArgument, match="'Mars/Olympus_Mons' is not a time zone name"):
+    with pytest.raises(hegel.InvalidArgument, match='unknown time zone "Mars/Olympus_Mons"'):
         gs.temporal.zone_names(names=["UTC", "Mars/Olympus_Mons"])
+    for flags in ({"allow_links": False}, {"allow_legacy": True}):
+        with pytest.raises(hegel.InvalidArgument, match="do not apply to an explicit names list"):
+            gs.temporal.zone_names(names=["UTC"], **flags)
+        with pytest.raises(hegel.InvalidArgument, match="do not apply to an explicit names list"):
+            gs.temporal.zones(names=["UTC"], **flags)
 
 
 def test_zones_from_a_list_of_names(monkeypatch):
@@ -666,11 +859,8 @@ def test_zones_from_a_list_of_names(monkeypatch):
     check_all(zones, lambda z: z in (LONDON, NEW_YORK, zoneinfo.ZoneInfo("UTC")))
     assert find_example(zones) is zoneinfo.ZoneInfo("UTC")
     assert find_example(zones, lambda z: z is not zoneinfo.ZoneInfo("UTC")) in (LONDON, NEW_YORK)
-    assert repr(zones) == (
-        "temporal.zones(names=['Europe/London', 'America/New_York', 'UTC'], "
-        "links=True, legacy=False, no_cache=False)"
-    )
-    with pytest.raises(hegel.InvalidArgument, match="'Mars/Olympus_Mons' is not a time zone name"):
+    assert repr(zones) == "temporal.zones(names=['Europe/London', 'America/New_York', 'UTC'])"
+    with pytest.raises(hegel.InvalidArgument, match='unknown time zone "Mars/Olympus_Mons"'):
         gs.temporal.zones(names=["Mars/Olympus_Mons"])
 
     def missing(key):
@@ -709,11 +899,16 @@ def test_from_type_uses_the_temporal_generators(typ, new):
 @pytest.mark.parametrize(
     "old, new, args, kwargs",
     [
-        ("dates", "dates", (dt.date(2020, 1, 1), dt.date(2021, 1, 1)), {"months": [2]}),
-        ("times", "times", (dt.time(1), dt.time(2)), {"precision": "seconds"}),
-        ("datetimes", "datetimes", (), {"allow_imaginary": False, "ambiguous": "earlier"}),
-        ("timedeltas", "durations", (dt.timedelta(0), dt.timedelta(1)), {"precision": "hours"}),
-        ("timezones", "zones", (), {"names": ["UTC", "Asia/Tokyo"], "links": False}),
+        ("dates", "dates", (dt.date(2020, 1, 1), dt.date(2021, 1, 1)), {}),
+        ("dates", "dates", (), {}),
+        ("times", "times", (dt.time(1), dt.time(2)), {}),
+        ("times", "times", (), {}),
+        ("datetimes", "datetimes", (dt.datetime(2020, 1, 1),), {"allow_imaginary": False}),
+        ("datetimes", "datetimes", (), {}),
+        ("timedeltas", "durations", (dt.timedelta(0), dt.timedelta(1)), {}),
+        ("timedeltas", "durations", (), {}),
+        ("timezones", "zones", (), {"no_cache": True}),
+        ("timezones", "zones", (), {}),
     ],
 )
 def test_deprecated_aliases(old, new, args, kwargs):
@@ -723,7 +918,7 @@ def test_deprecated_aliases(old, new, args, kwargs):
     assert record[0].filename == __file__
     current = getattr(gs.temporal, new)(*args, **kwargs)
     assert repr(alias) == repr(current)
-    assert find_example(alias) == find_example(current)
+    assert repr(find_example(alias)) == repr(find_example(current))
 
 
 @pytest.mark.parametrize("old", ["times", "datetimes"])
@@ -732,6 +927,24 @@ def test_deprecated_aliases_accept_timezones(old):
         alias = getattr(gs, old)(timezones=gs.just(NEW_YORK))
     assert repr(alias) == repr(getattr(gs.temporal, old)(zones=gs.just(NEW_YORK)))
     check_all(alias, lambda value: value.tzinfo is NEW_YORK)
+
+
+@pytest.mark.parametrize(
+    "old, kwargs",
+    [
+        ("dates", {"weekdays": [0]}),
+        ("times", {"precision": "seconds"}),
+        ("times", {"zones": gs.just(NEW_YORK)}),
+        ("datetimes", {"ambiguous": "earlier"}),
+        ("datetimes", {"source": gs.temporal.ZoneSource.bundled()}),
+        ("timedeltas", {"precision": "seconds"}),
+        ("timezones", {"names": ["UTC"]}),
+        ("timezones", {"allow_legacy": True}),
+    ],
+)
+def test_deprecated_aliases_take_only_their_released_arguments(old, kwargs):
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        getattr(gs, old)(**kwargs)
 
 
 def test_temporal_replaces_the_deprecated_names_in_all():
@@ -758,8 +971,9 @@ def test_zoned_datetimes():
     assert repr(gs.temporal.zoned_datetimes(lo, hi, zones=gs.just(LONDON))) == (
         f"temporal.zoned_datetimes(min_value={lo!r}, max_value={hi!r}, zones=just({LONDON!r}))"
     )
-    assert repr(gs.temporal.zoned_datetimes()).endswith(
-        "zones=temporal.zones(links=True, legacy=False, no_cache=False))"
+    assert repr(gs.temporal.zoned_datetimes()) == "temporal.zoned_datetimes()"
+    assert repr(gs.temporal.zoned_datetimes(zones=gs.temporal.zones())) == (
+        "temporal.zoned_datetimes(zones=temporal.zones())"
     )
     with pytest.raises(hegel.InvalidArgument, match="both naive or both aware"):
         gs.temporal.zoned_datetimes(lo, ahi)
@@ -792,6 +1006,9 @@ def test_instants():
     assert repr(gs.temporal.instants(lo, hi)) == (
         f"temporal.instants(min_value={lo!r}, max_value={hi!r})"
     )
+    assert repr(gs.temporal.instants()) == "temporal.instants()"
+    check_all(gs.temporal.instants(None, hi), lambda d: d <= hi)
+    check_all(gs.temporal.instants(lo, None), lambda d: d >= lo)
     assert repr(gs.temporal.instants(lo, hi, precision="seconds")) == (
         f"temporal.instants(min_value={lo!r}, max_value={hi!r}, precision='seconds')"
     )
@@ -801,11 +1018,11 @@ def test_instants():
         gs.temporal.instants(max_value=dt.datetime(2000, 1, 1))
     with pytest.raises(hegel.InvalidArgument, match="moments in time"):
         gs.temporal.instants(hi, lo)
-    with pytest.raises(hegel.InvalidArgument, match="whole number of hours"):
+    with pytest.raises(hegel.InvalidArgument, match="no value at precision hours"):
         gs.temporal.instants(
             EPOCH + dt.timedelta(minutes=1), EPOCH + dt.timedelta(minutes=2), precision="hours"
         )
-    with pytest.raises(hegel.InvalidArgument, match="whole number of microseconds"):
+    with pytest.raises(hegel.InvalidArgument, match="the range a UTC datetime represents"):
         gs.temporal.instants(early, early)
 
 
@@ -814,9 +1031,30 @@ def test_span_printing():
     assert repr(gs.temporal.Span()) == "Span()"
     assert str(gs.temporal.Span(years=1, months=2)) == "1y 2mo"
     assert str(gs.temporal.Span(days=-3, hours=-4)) == "-3d 4h"
-    assert str(gs.temporal.Span(weeks=1, microseconds=-5, nanoseconds=6)) == "1w -5µs 6ns"
+    assert str(gs.temporal.Span(days=-3, hours=4)) == "-3d +4h"
+    assert str(gs.temporal.Span(weeks=1, microseconds=-5, nanoseconds=6)) == "+1w -5µs +6ns"
     assert str(gs.temporal.Span(minutes=7, seconds=8, milliseconds=9)) == "7m 8s 9ms"
+    assert str(gs.temporal.Span(years=-(2**63), nanoseconds=2**63 - 1)) == (
+        "-9223372036854775808y +9223372036854775807ns"
+    )
     assert repr(gs.temporal.Span(days=-3, hours=4)) == "Span(days=-3, hours=4)"
+    with pytest.raises(hegel.InvalidArgument, match="days=1.5 must be an int"):
+        gs.temporal.Span(days=1.5)
+    with pytest.raises(hegel.InvalidArgument, match="years=9223372036854775808 must be an int"):
+        gs.temporal.Span(years=2**63)
+
+    def body(tc):
+        span = tc.draw(gs.temporal.spans(sign="mixed"))
+        units = [value for value in vars(span).values() if value]
+        signs = {value > 0 for value in units}
+        text = str(span)
+        assert len(text.split()) == max(len(units), 1)
+        assert text.count("+") == (sum(value > 0 for value in units) if len(signs) == 2 else 0)
+        assert text.count("-") == (
+            sum(value < 0 for value in units) if len(signs) == 2 else int(signs == {False})
+        )
+
+    run_test(body, test_cases=100)
 
 
 def test_spans():
@@ -862,11 +1100,11 @@ def test_spans():
         ({"days": (0, 1, 2)}, "must be a \\(min, max\\) tuple of ints"),
         ({"days": (0, True)}, "must be a \\(min, max\\) tuple of ints"),
         ({"days": (0, 1.5)}, "must be a \\(min, max\\) tuple of ints"),
-        ({"days": (2, 1)}, "must have min <= max"),
-        ({"days": (0, 2**63)}, "must have min <= max"),
-        ({"days": (-(2**63) - 1, 0)}, "must have min <= max"),
-        ({"days": (-1, 1), "sign": "non_negative"}, "negative min"),
-        ({"years": (1, 2), "days": (-2, -1)}, "no sign is one every unit"),
+        ({"days": (2, 1)}, "min_value <= max_value is required for days"),
+        ({"days": (0, 2**63)}, "must be within the 64-bit signed range"),
+        ({"days": (-(2**63) - 1, 0)}, "must be within the 64-bit signed range"),
+        ({"days": (-1, 1), "sign": "non_negative"}, "requires min >= 0 for days"),
+        ({"years": (1, 2), "days": (-2, -1)}, "needs every unit to admit one sign"),
         ({"sign": "positive"}, "sign='positive' must be one of"),
     ],
 )

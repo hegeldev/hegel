@@ -100,6 +100,30 @@ def timezone_resolve(
     civil: tuple[int, int, int, int, int, int, int],
     source: ZoneSource | None = None,
 ) -> tuple[int, int, int, int, bool, tuple[int, int]]: ...
+def timezone_offset_at(
+    name: str, timestamp: tuple[int, int], source: ZoneSource | None = None
+) -> tuple[int, bool, bool, str]: ...
+def format_span(span: tuple[int, int, int, int, int, int, int, int, int, int]) -> str: ...
+def validate_date(
+    min_value: tuple[int, int, int],
+    max_value: tuple[int, int, int],
+    options: DateOptions | None,
+) -> None: ...
+def validate_time(
+    min_value: tuple[int, int, int, int], max_value: tuple[int, int, int, int], precision: int
+) -> None: ...
+def validate_datetime(
+    min_value: tuple[int, int, int, int, int, int, int],
+    max_value: tuple[int, int, int, int, int, int, int],
+    precision: int,
+) -> None: ...
+def validate_timestamp(
+    min_value: tuple[int, int], max_value: tuple[int, int], precision: int
+) -> None: ...
+def validate_offset(min_seconds: int, max_seconds: int, granularity: int) -> None: ...
+def validate_duration(
+    min_value: tuple[int, int], max_value: tuple[int, int], precision: int
+) -> None: ...
 def set_default_zone_source(source: ZoneSource | None) -> None: ...
 
 # -- classes ------------------------------------------------------------------
@@ -280,6 +304,9 @@ class TestCase:
     ) -> tuple[
         str, tuple[int, int, int, int, int, int, int], bool, int, int, bool, tuple[int, int]
     ]: ...
+    def generate_zoned_datetime_for_zone(
+        self, source: ZoneSource, name: str, zoned_spec: ZonedSpec
+    ) -> tuple[tuple[int, int, int, int, int, int, int], bool, int, int, bool, tuple[int, int]]: ...
     def generate_uuid(self, version: int | None) -> bytes: ...
     def generate_ipv4(self) -> bytes: ...
     def generate_ipv6(self) -> bytes: ...
@@ -305,11 +332,9 @@ class TimeZoneSpec:
     def __init__(
         self,
         names: Sequence[str] | None,
-        links: bool,
-        legacy: bool,
-        unknown: bool,
-        opaque: bool,
-        source: ZoneSource | None = None,
+        allow_links: bool,
+        allow_legacy: bool,
+        source: ZoneSource,
     ) -> None: ...
 
 _ZoneType = tuple[int, bool, str]

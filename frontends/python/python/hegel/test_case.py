@@ -682,7 +682,7 @@ class TestCase:
         year, month, day, hour, minute, second, nanosecond = result
         return _dt.datetime(year, month, day, hour, minute, second, nanosecond // 1000)
 
-    def _generate_timedelta(
+    def _generate_duration(
         self, min_value: _dt.timedelta, max_value: _dt.timedelta, precision: int
     ) -> _dt.timedelta:
         seconds, nanoseconds = self._handle.generate_duration(
@@ -716,11 +716,29 @@ class TestCase:
         :mod:`datetime` represents, which instant bounds near its limits can
         reach in a zone with a large offset, rejects the test case."""
         key, civil, fold, _, _, _, _ = self._handle.generate_zoned_datetime(tz_spec, zoned_spec)
+        return key, self._wall_time(civil, fold)
+
+    def _generate_zoned_datetime_for_zone(
+        self, source: _native.ZoneSource, name: str, zoned_spec: _native.ZonedSpec
+    ) -> _dt.datetime:
+        """Draw a wall-clock time in the zone ``name`` of ``source``, as a
+        naive datetime carrying the fold. The zone was chosen by the
+        caller, so the draw records no zone choice, and a zone with no
+        value in the spec's bounds rejects the test case, as does a wall
+        time outside the years :mod:`datetime` represents."""
+        civil, fold, _, _, _, _ = self._handle.generate_zoned_datetime_for_zone(
+            source, name, zoned_spec
+        )
+        return self._wall_time(civil, fold)
+
+    def _wall_time(
+        self, civil: tuple[int, int, int, int, int, int, int], fold: bool
+    ) -> _dt.datetime:
         year, month, day, hour, minute, second, nanosecond = civil
         if not _dt.MINYEAR <= year <= _dt.MAXYEAR:
             self.reject()
         value = _dt.datetime(year, month, day, hour, minute, second, nanosecond // 1000)
-        return key, value.replace(fold=int(fold))
+        return value.replace(fold=int(fold))
 
     def _generate_uuid(self, version: int | None = None) -> bytes:
         return self._handle.generate_uuid(version)

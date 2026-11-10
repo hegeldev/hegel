@@ -5,9 +5,9 @@ use crate::time::{
     duration_from_c, duration_to_c, time_from_c, time_to_c, timestamp_from_c, timestamp_to_c,
 };
 use crate::{
-    InternalError, OutputBuffer, SendPtr, Settings, StringGenerator, big_from_le, big_to_le, check,
-    hstr, hstr_bytes, max_size_arg, opt_string_from, output_trampoline, output_user_data,
-    string_from, with_ctx,
+    InternalError, OutputBuffer, SendPtr, Settings, StringGenerator, ZoneSource, big_from_le,
+    big_to_le, check, hstr, hstr_bytes, max_size_arg, opt_string_from, output_trampoline,
+    output_user_data, string_from, with_ctx,
 };
 use hegel_c as c;
 use hegel_c::hegel_result_t as Rc;
@@ -222,6 +222,23 @@ impl Drop for TestCase {
 impl TestCase {
     pub(crate) fn tc(&self) -> *mut c::HegelTestCase {
         self.raw.0
+    }
+}
+
+/// A zoned datetime for a draw to write its result over.
+fn empty_zoned_datetime() -> c::hegel_zoned_datetime_t {
+    c::hegel_zoned_datetime_t {
+        civil: datetime_to_c((2000, 1, 1, 0, 0, 0, 0)),
+        offset_seconds: 0,
+        offset_known: false,
+        fold: false,
+        kind: c::hegel_timezone_kind_t::HEGEL_TIMEZONE_KIND_UNIQUE,
+        offset_before: 0,
+        offset_after: 0,
+        timestamp: c::hegel_timestamp_t {
+            second: 0,
+            nanosecond: 0,
+        },
     }
 }
 
@@ -627,19 +644,7 @@ impl TestCase {
         let zoned_spec = SendPtr(zoned_spec.raw() as *mut c::HegelZonedSpec);
         let (rc, name, out) = py.detach(move || {
             let mut zone = c::hegel_owned_string_t::default();
-            let mut out = c::hegel_zoned_datetime_t {
-                civil: datetime_to_c((2000, 1, 1, 0, 0, 0, 0)),
-                offset_seconds: 0,
-                offset_known: false,
-                fold: false,
-                kind: c::hegel_timezone_kind_t::HEGEL_TIMEZONE_KIND_UNIQUE,
-                offset_before: 0,
-                offset_after: 0,
-                timestamp: c::hegel_timestamp_t {
-                    second: 0,
-                    nanosecond: 0,
-                },
-            };
+            let mut out = empty_zoned_datetime();
             with_ctx(|ctx| unsafe {
                 let rc = c::hegel_generate_zoned_datetime(
                     ctx,
@@ -660,6 +665,46 @@ impl TestCase {
         check(rc)?;
         Ok((
             name,
+            datetime_from_c(out.civil),
+            out.fold,
+            out.kind as u32,
+            out.offset_seconds,
+            out.offset_known,
+            timestamp_from_c(out.timestamp),
+        ))
+    }
+
+    /// Draw a zoned datetime in the zone `name` of `source`, as `(civil,
+    /// fold, kind, offset_seconds, offset_known, timestamp)`, recording no
+    /// zone choice. The draw may run the source's loader, so the GIL is
+    /// released meanwhile.
+    #[allow(clippy::type_complexity)]
+    fn generate_zoned_datetime_for_zone(
+        &self,
+        py: Python<'_>,
+        source: &ZoneSource,
+        name: &str,
+        zoned_spec: &ZonedSpec,
+    ) -> PyResult<(PyDateTime, bool, u32, i32, bool, (i64, u32))> {
+        let tc = SendPtr(self.tc());
+        let source = SendPtr(source.raw() as *mut c::HegelZoneSource);
+        let zoned_spec = SendPtr(zoned_spec.raw() as *mut c::HegelZonedSpec);
+        let (rc, out) = py.detach(move || {
+            let mut out = empty_zoned_datetime();
+            let rc = with_ctx(|ctx| unsafe {
+                c::hegel_generate_zoned_datetime_for_zone(
+                    ctx,
+                    tc.get(),
+                    source.get(),
+                    hstr(name),
+                    zoned_spec.get(),
+                    &mut out,
+                )
+            });
+            (rc, out)
+        });
+        check(rc)?;
+        Ok((
             datetime_from_c(out.civil),
             out.fold,
             out.kind as u32,
