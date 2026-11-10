@@ -162,6 +162,13 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   (`StopTest` → OVERRUN, `AssumeRejected` → INVALID, `INVALID_ARG` →
   `IllegalArgumentException` with the engine's diagnostic, other negatives →
   `HegelException`) and short-circuiting once a case is aborted.
+- **Standalone programs** — `Hegel.main` is `Main.run` plus the process exit,
+  which tests replace through `Main.exit`. `Main` parses the command line and
+  passes each setting option to the engine by name
+  (`hegel_settings_set_from_string`), through the hook `Runner.run` offers after
+  `applySettings`, so options win over `Settings`. Whatever changes the exit
+  status or the default profile for real is tested in a child JVM
+  (`MainProcessTest`, `MainFixture`).
 - **Run loop** — `Runner` builds the settings handle and drives
   `hegel_run_start` → `hegel_next_test_case` → `hegel_mark_complete`. The
   engine owns the *whole* run — generation, shrinking, the replays that confirm

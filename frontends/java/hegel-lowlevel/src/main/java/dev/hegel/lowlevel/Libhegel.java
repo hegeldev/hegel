@@ -114,6 +114,18 @@ public interface Libhegel {
     boolean settingsGetPrintBlob(long s);
 
     /**
+     * {@code hegel_settings_get_verbosity}: the resolved verbosity, one of the {@code VERBOSITY_*}
+     * values of {@link Abi}.
+     */
+    int settingsGetVerbosity(long s);
+
+    /**
+     * {@code hegel_settings_get_suppress_health_check}: the resolved mask of suppressed health
+     * checks, a union of the {@code HC_*} values of {@link Abi}.
+     */
+    int settingsGetSuppressHealthCheck(long s);
+
+    /**
      * {@code hegel_settings_get_nondeterminism_strictness}: the resolved reaction to a
      * nondeterministic test ({@link Abi#NONDETERMINISM_QUIET}, {@link Abi#NONDETERMINISM_WARN} or
      * {@link Abi#NONDETERMINISM_ERROR}).
@@ -152,6 +164,22 @@ public interface Libhegel {
      * Abi#NONDETERMINISM_QUIET}, {@link Abi#NONDETERMINISM_WARN} or {@link Abi#NONDETERMINISM_ERROR}.
      */
     void settingsNondeterminismStrictness(long s, int strictness);
+
+    /**
+     * {@code hegel_settings_set_from_string}: set one setting from text, under its {@code
+     * hegel.toml} key and in that key's vocabulary, as a command line gives it. Returns {@link
+     * Abi#E_INVALID_ARG} (with the message in {@link #lastErrorMessage()}) for an unknown key or a
+     * value outside its vocabulary, and leaves the settings unchanged.
+     */
+    int settingsFromString(long s, String key, String value);
+
+    /**
+     * {@code hegel_set_default_profile}: set the default settings profile for the whole process,
+     * over {@code HEGEL_DEFAULT_PROFILE}, or clear an earlier call with {@code ""}. The name need not
+     * exist yet: a handle from {@link #settingsNew} reports one that does not. Returns {@link
+     * Abi#E_INVALID_ARG} (with the message in {@link #lastErrorMessage()}) for an invalid name.
+     */
+    int setDefaultProfile(String name);
 
     // Run lifecycle.
 
