@@ -175,15 +175,20 @@ fn structured_data_is_checked() {
         after: After::Rule(rule),
         ..fixed(vec![])
     };
-    assert!(bad("Test/Zone", ruled).contains("out of range"));
-    for day in [RuleDay::Julian(0), RuleDay::ZeroBased(366)] {
+    let e = bad("Test/Zone", ruled);
+    assert!(e.contains("weekday 0, at 720000s) is out of range"), "{e}");
+    for (day, text) in [
+        (RuleDay::Julian(0), "(Julian day 0, at "),
+        (RuleDay::ZeroBased(366), "(zero-based day 366, at "),
+    ] {
         let mut rule = london_rule();
         rule.dst.as_mut().unwrap().2.day = day;
         let ruled = ZoneData {
             after: After::Rule(rule),
             ..fixed(vec![])
         };
-        assert!(bad("Test/Zone", ruled).contains("out of range"));
+        let e = bad("Test/Zone", ruled);
+        assert!(e.contains(text) && e.contains("out of range"), "{e}");
     }
     for name in ["", UNKNOWN_NAME, "A\0B"] {
         assert!(bad(name, fixed(vec![])).contains("cannot name a zone"));

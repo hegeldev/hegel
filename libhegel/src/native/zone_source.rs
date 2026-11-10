@@ -294,8 +294,18 @@ fn check_rule_date(name: &str, rule: &RuleDate) -> Result<(), EngineError> {
         } => (1..=12).contains(&month) && (1..=5).contains(&week) && weekday <= 6,
     };
     if !valid || !(-167 * HOUR..=167 * HOUR).contains(&rule.time) {
+        let day = match rule.day {
+            RuleDay::Julian(n) => format!("Julian day {n}"),
+            RuleDay::ZeroBased(n) => format!("zero-based day {n}"),
+            RuleDay::MonthWeekDay {
+                month,
+                week,
+                weekday,
+            } => format!("month {month}, week {week}, weekday {weekday}"),
+        };
         return Err(invalid(format!(
-            "zone {name}: the rule date {rule:?} is out of range (RFC 9636 §3.3.1)"
+            "zone {name}: the rule date ({day}, at {}s) is out of range (RFC 9636 §3.3.1)",
+            rule.time
         )));
     }
     Ok(())

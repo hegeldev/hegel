@@ -735,9 +735,11 @@ public fields (`UtcOffset` is the enum `Known(i32) | Unknown`) deriving
 string, `PartialEq`, `Eq`, `Hash`, and `Ord` where the order is total,
 with `Display` printing the engine's RFC 9557 form of §6.5 so a
 counterexample reads the same from every frontend. Nothing else: no
-arithmetic, no parsing, no conversions and no constructors beyond `new`
-functions that check the §4 ranges, so a user of any date library wraps
-the struct with `map` and nothing here competes with their library. The
+arithmetic, no parsing, no conversions and no constructors beyond `const`
+`new` functions that check nothing (a value outside the §4 ranges is a
+usage error when a generator is given it as a bound), so a user of any
+date library wraps the struct with `map` and nothing here competes with
+their library. The
 option enums of §6 (`Precision`, `Granularity`, `Weekday`, `Month`,
 `Ambiguous`, `SpanSign`, `SpanUnit`, `Tag`) and the query
 functions `tzdb_version`, `resolve`, `offset_at` and `info` live in the
@@ -747,7 +749,10 @@ every frontend shares (`dates`, `times`, `datetimes`, `instants`,
 `offsets`, `zones`, `zoned_datetimes`, `durations`, `spans`), each with
 the builder options of §6 (`min_value`/`max_value`, `precision`,
 `weekdays`/`months`, `allow_imaginary` as a `bool` like Hypothesis,
-`ambiguous`, `unknown`, and `opaque` on `zones`); `spans()` enables every
+`ambiguous`, `allow_unknown`, and `allow_links`, `allow_legacy` and
+`allow_opaque` on `zones`); `zoned_datetimes()` takes any generator of
+`TimeZone` as its `zones` and a `source` to resolve their names against
+(`zone-sources.md` §3.3); `spans()` enables every
 unit by default, and the first `unit_bounds` call replaces that default.
 The released `hegel::generators::durations()` over `std::time::Duration`
 becomes `temporal::std_durations()` on the engine draw, gaining
@@ -756,13 +761,15 @@ becomes `temporal::std_durations()` on the engine draw, gaining
 thin maps over these.
 
 `extras::jiff` becomes complete: `dates`, `times`, `datetimes`,
-`timestamps`, `offsets`, `timezones()` (IANA, from the engine, resolved
-with `TimeZone::get`; the spec is restricted to `tz::db().available()`,
-and `Etc/Unknown` maps to `TimeZone::unknown()`, so today's default zone
-generator of UTC, unknown or a fixed offset is reproduced by composition),
-`zoneds()` built on `generate_zoned_datetime` with wall-clock or instant
-bounds and `.allow_imaginary(false)` by default since `Zoned` cannot hold
-a gap time; both folds via `to_ambiguous_zoned` + `earlier()`/`later()`;
+`timestamps`, `offsets`, `zones()` (the names of jiff's own database,
+drawn against the jiff zone source of `zone-sources.md` §4 and resolved
+with `TimeZone::get`; `Etc/Unknown` maps to `TimeZone::unknown()`, so
+today's default zone generator of UTC, unknown or a fixed offset is
+reproduced by composition), `zoneds()` built on `generate_zoned_datetime`
+with wall-clock or instant bounds and `.allow_imaginary(false)` by default
+since `Zoned` cannot hold a gap time, its `zones(...)` taking any
+generator of IANA-named or fixed-offset `jiff::tz::TimeZone`; both folds
+via `to_ambiguous_zoned` + `earlier()`/`later()`;
 `spans()` over the span draw with per-unit builders and a `non_negative`
 switch (a jiff `Span` is single-signed, so there is no `mixed` policy);
 `signed_durations`; `iso_week_dates`, `weekdays`, `eras` as mappings.
@@ -774,11 +781,12 @@ every public jiff value type; enum-only types whose generator would be
 and the borrowed types get none.
 
 `extras::chrono`: `datetimes::<Tz>()` reworked on the engine draw, with
-`timezones()` taking a sealed `TimeZones` trait implemented for every
-generator of `Utc` or `FixedOffset` and for the IANA generator, since
-the engine must be able to classify wall times in the zone;
-`chrono-tz` behind a feature, so `DateTime<Tz>` for IANA `Tz` uses
-`LocalResult` with the engine's fold; naive generators gain precision and
+`zones(...)` taking a sealed `TimeZones` trait implemented for every
+generator of `Utc`, `FixedOffset` or `chrono_tz::Tz`, since the engine
+must be able to classify wall times in the zone; `chrono-tz` behind a
+feature, with its own `zones()` generator, so `DateTime<Tz>` for IANA
+`Tz` is built from the engine's instant and rejected if chrono-tz reads
+it back at another wall time; naive generators gain precision and
 masks, and a bound in chrono's leap-second representation is a usage
 error, since the engine's time draw cannot hold a 60th second (Q6).
 
