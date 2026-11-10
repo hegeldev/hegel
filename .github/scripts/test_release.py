@@ -454,7 +454,7 @@ class PlanReleaseTest(unittest.TestCase):
         plan = release.plan_release(CURRENT, {PYTHON: PATCH})
         self.assertEqual(plan, {PYTHON: ("0.1.1", "This patch does a thing.")})
 
-    def test_c_only_patch_bumps_every_frontend_with_an_engine_entry(self) -> None:
+    def test_c_only_patch_bumps_every_push_released_frontend_with_an_engine_entry(self) -> None:
         plan = release.plan_release(CURRENT, {LIBHEGEL: ("patch", "This patch tweaks the C ABI.")})
         self.assertEqual(
             plan,
@@ -471,7 +471,6 @@ class PlanReleaseTest(unittest.TestCase):
                     "This release updates the bundled libhegel engine to 0.5.1.",
                 ),
                 JAVA: ("0.10.3", "This release updates the bundled libhegel engine to 0.5.1."),
-                OCAML: ("0.26.4", "This release updates the bundled libhegel engine to 0.5.1."),
                 GO: ("0.9.29", "This release updates the bundled libhegel engine to 0.5.1."),
             },
         )
@@ -486,7 +485,7 @@ class PlanReleaseTest(unittest.TestCase):
         self.assertEqual(plan[TYPESCRIPT][0], "0.4.11")
         self.assertEqual(plan[CPP][0], "0.13.2")
         self.assertEqual(plan[JAVA][0], "0.10.3")
-        self.assertEqual(plan[OCAML][0], "0.26.4")
+        self.assertNotIn(OCAML, plan)
 
     def test_a_frontend_release_file_overrides_the_engine_entry(self) -> None:
         plan = release.plan_release(CURRENT, {RUST: PATCH, LIBHEGEL: MINOR})
@@ -715,6 +714,43 @@ class ReleaseFilesTest(unittest.TestCase):
         self.assertEqual(
             release.pending_release_files(self.root),
             {LIBHEGEL: ["libhegel/RELEASE/abi.md"]},
+        )
+
+    def test_pending_splits_the_weekly_components_from_the_rest(self) -> None:
+        write(self.root, "libhegel/RELEASE/abi.md", C_ENTRY)
+        write(self.root, "frontends/ocaml/RELEASE/printer.md", RUST_ENTRY)
+        self.assertEqual(
+            release.pending_release_files(self.root),
+            {LIBHEGEL: ["libhegel/RELEASE/abi.md"]},
+        )
+        self.assertEqual(
+            release.pending_release_files(self.root, weekly=True),
+            {OCAML: ["frontends/ocaml/RELEASE/printer.md"]},
+        )
+
+    def test_a_libhegel_release_leaves_weekly_frontends_an_engine_release_file(self) -> None:
+        write(self.root, "frontends/ocaml/RELEASE/printer.md", C_ENTRY)
+        self.assertEqual(
+            release.defer_engine_bumps(self.root, "0.5.1"), ["frontends/ocaml/RELEASE/libhegel.md"]
+        )
+        self.assertEqual(
+            release.defer_engine_bumps(self.root, "0.5.2"), ["frontends/ocaml/RELEASE/libhegel.md"]
+        )
+        files = release.pending_release_files(self.root, weekly=True)
+        self.assertEqual(
+            files,
+            {OCAML: ["frontends/ocaml/RELEASE/libhegel.md", "frontends/ocaml/RELEASE/printer.md"]},
+        )
+        entries = [release.parse_release_file(self.root / f) for f in files[OCAML]]
+        self.assertEqual(
+            release.plan_release(CURRENT, {OCAML: release.combine_entries(entries)}),
+            {
+                OCAML: (
+                    "0.27.0",
+                    "This release updates the bundled libhegel engine to 0.5.2."
+                    "\n\nThis release breaks the C ABI.",
+                )
+            },
         )
 
     def test_combining_entries_takes_the_largest_bump_and_keeps_every_entry(self) -> None:

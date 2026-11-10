@@ -1,6 +1,6 @@
 """Publish the OCaml frontend's API reference to hegel.dev/ocaml.
 
-Run by the `release-ocaml-docs` job of ci.yml with the docs built
+Run by the `docs` job of ocaml-release.yml with the docs built
 (`just ocaml::check-docs` has filled frontends/ocaml/_build/default/_doc/_html/)
 and a shallow checkout of main at `publish/` that can push (the site lives in
 its `website/`).

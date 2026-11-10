@@ -55,6 +55,12 @@ class ConformanceTest {
     }
 
     @Test
+    void booleansRespectProbabilities() {
+        assertAllExamples(booleans(1.0), b -> b == true);
+        assertAllExamples(booleans(0.0), b -> b == false);
+    }
+
+    @Test
     void integersRespectBounds() {
         assertAllExamples(integers().min(-5).max(5), x -> x >= -5 && x <= 5);
         assertAllExamples(integers(), x -> x >= Integer.MIN_VALUE);

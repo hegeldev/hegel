@@ -2023,6 +2023,10 @@ pub struct NativeTestCase {
     /// whose drop frees nothing, and running the glue over those is the
     /// bulk of what emptying a finished test case's choice sequence costs.
     plain: bool,
+    /// Whether this test case keeps no record of itself (see
+    /// [`Self::new_unrecorded`]): `nodes`, `spans` and `clone_children`
+    /// stay empty however long it runs. Copied into every cloned stream.
+    unrecorded: bool,
     /// Set to `true` by [`Self::freeze`] on the first call; subsequent calls
     /// are no-ops. A dedicated boolean (rather than checking the family's
     /// status) lets `conclude_test` conclude before calling `freeze()`
@@ -2126,6 +2130,19 @@ impl NativeTestCase {
     ) -> Self {
         Self::for_choices_and_template(&[], None, None, max_size, None)
             .with_random_and_params(rng, params)
+    }
+
+    /// Like [`Self::new_random_with_params`], but keeping no record of the
+    /// choices it makes, the spans it opens or the streams cloned from it,
+    /// so that its memory does not grow with the length of the run. Nothing
+    /// can be read back from it but its conclusion, which leaves nothing to
+    /// shrink, replay or encode as a blob: it is for a run whose one test
+    /// case is reported as it happened. `max_size` bounds the draws of the
+    /// whole family, through its draw budget.
+    pub fn new_unrecorded(rng: EngineRng, params: GenerationParameters, max_size: usize) -> Self {
+        let mut ntc = Self::new_random_with_params(rng, params, max_size);
+        ntc.unrecorded = true;
+        ntc
     }
 
     /// Replay `choices` in order, then for every further draw resolve via
@@ -2298,6 +2315,7 @@ impl NativeTestCase {
             max_size,
             nodes: spare.nodes,
             plain: true,
+            unrecorded: false,
             frozen: false,
             should_capture,
             family,
@@ -2508,7 +2526,7 @@ impl NativeTestCase {
         child_id.push(self.clone_counter);
         self.clone_counter += 1;
 
-        let child = Self::new_stream(
+        let mut child = Self::new_stream(
             child_replay,
             child_rng,
             child_template,
@@ -2518,12 +2536,15 @@ impl NativeTestCase {
             Arc::clone(&self.family),
             child_id,
         );
+        child.unrecorded = self.unrecorded;
         let handle = Arc::new(Mutex::new(child));
-        self.record(ChoiceNode::clone_stream(
-            Arc::new(RealizedStream::empty()),
-            false,
-        ));
-        self.clone_children.push((idx, Arc::clone(&handle)));
+        if !self.unrecorded {
+            self.record(ChoiceNode::clone_stream(
+                Arc::new(RealizedStream::empty()),
+                false,
+            ));
+            self.clone_children.push((idx, Arc::clone(&handle)));
+        }
         Ok(handle)
     }
 
@@ -2551,25 +2572,54 @@ impl NativeTestCase {
 
     /// Append `node` to the choice sequence, noting when it owns heap
     /// memory. The draws that record only booleans, floats and native-width
-    /// integers push straight onto `nodes` instead.
+    /// integers go through [`Self::record_plain`] instead.
     fn record(&mut self, node: ChoiceNode) {
+        if self.unrecorded {
+            return;
+        }
         self.plain &= node.owns_no_heap();
         self.nodes.push(node);
+    }
+
+    /// Append to the choice sequence a `node` that owns no heap memory, or
+    /// one whose draw has already noted that it does.
+    #[inline]
+    fn record_plain(&mut self, node: ChoiceNode) {
+        if !self.unrecorded {
+            self.nodes.push(node);
+        }
     }
 
     /// Open a new span at the current choice position, labelled with `label`.
     ///
     /// Returns the index assigned to the span in `self.spans`.  The span's
     /// `end` is set to `self.nodes.len()` as a placeholder and overwritten
-    /// when [`Self::stop_span`] is called.
+    /// when [`Self::stop_span`] is called. An unrecorded test case (see
+    /// [`Self::new_unrecorded`]) only counts the span's depth.
     ///
     /// If opening this span would push depth past [`MAX_DEPTH`], the test
     /// case is marked invalid and `start_span` returns the assigned index
     /// without further bookkeeping; subsequent draws on a frozen test case
     /// will trip the existing freeze guard.
     pub fn start_span(&mut self, label: u64) -> usize {
-        let parent = self.span_stack.last().copied();
         let depth = self.span_stack.len() as u32;
+        let idx = if self.unrecorded {
+            0
+        } else {
+            self.record_span(label, depth)
+        };
+        self.span_stack.push(idx);
+        if depth + 1 > MAX_DEPTH {
+            self.span_overflow();
+        }
+        idx
+    }
+
+    /// Record a span opening at the current choice position, `depth` spans
+    /// deep, and return its index in `self.spans`.
+    #[inline]
+    fn record_span(&mut self, label: u64, depth: u32) -> usize {
+        let parent = self.span_stack.last().copied();
         let idx = self.spans.len();
         let start = self.nodes.len();
         self.spans.push(Span {
@@ -2582,10 +2632,6 @@ impl NativeTestCase {
         });
         if self.addressed {
             self.address_span(parent, label);
-        }
-        self.span_stack.push(idx);
-        if depth + 1 > MAX_DEPTH {
-            self.span_overflow();
         }
         idx
     }
@@ -2689,6 +2735,9 @@ impl NativeTestCase {
     /// Set the span's end and credit its draws to its parent's closed
     /// children, for [`Self::draw_address`].
     fn close_span(&mut self, idx: usize, end: usize) {
+        if self.unrecorded {
+            return;
+        }
         let span = &mut self.spans[idx];
         span.end = end;
         let inside = end - span.start;
@@ -2938,8 +2987,7 @@ impl NativeTestCase {
         }
 
         self.plain &= plain(&kind, &recorded);
-        self.nodes
-            .push(ChoiceNode::integer(kind, recorded, was_forced));
+        self.record_plain(ChoiceNode::integer(kind, recorded, was_forced));
 
         Ok(v)
     }
@@ -3135,7 +3183,7 @@ impl NativeTestCase {
             |rng| biased_float_sample(&kind, width, rng, params),
         )?;
 
-        self.nodes.push(ChoiceNode::float(kind, v, was_forced));
+        self.record_plain(ChoiceNode::float(kind, v, was_forced));
 
         if let Some(ref mut obs) = self.observer {
             obs.draw_float(v, was_forced);
@@ -3338,7 +3386,7 @@ impl NativeTestCase {
             )?
         };
 
-        self.nodes.push(ChoiceNode::boolean(kind, v, was_forced));
+        self.record_plain(ChoiceNode::boolean(kind, v, was_forced));
 
         if let Some(ref mut obs) = self.observer {
             obs.draw_boolean(v, was_forced);

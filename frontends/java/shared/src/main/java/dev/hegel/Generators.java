@@ -106,12 +106,21 @@ public final class Generators {
     // --- booleans ---
 
     /**
-     * Generates {@code true} or {@code false}.
+     * Generates {@code true} or {@code false} with equal probability.
      *
      * @return a boolean generator
      */
     public static Generator<Boolean> booleans() {
         return new BooleanGenerator();
+    }
+
+    /**
+     * Generates {@code true} with probability p or {@code false} with probability 1-p.
+     *
+     * @return a boolean generator
+     */
+    public static Generator<Boolean> booleans(double p) {
+        return new BooleanGenerator(p);
     }
 
     // --- strings & bytes ---
