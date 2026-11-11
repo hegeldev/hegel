@@ -417,6 +417,8 @@ type symbols struct {
 	ZoneSourceBundled   func(ctxT, out[zoneSourceT]) Error
 	ZoneSourceFree      func(ctxT, zoneSourceT) Error
 	ZoneSourceDeclare   func(ctxT, zoneSourceT, *stringT, uint64) Error
+	ZoneSourceNameCount func(ctxT, zoneSourceT, out[uint64]) Error
+	ZoneSourceName      func(ctxT, zoneSourceT, uint64, out[stringT]) Error
 	ZoneSourceAddOracle func(ctxT, zoneSourceT, stringT, *zoneOracleT) Error
 	ZoneSourceSetLoader func(ctxT, zoneSourceT, zoneLoaderT, uintptr, zoneLoaderReleaseT) Error
 	ContextSetError     func(ctxT, stringT) Error
@@ -905,6 +907,8 @@ func tryOpen(path string) (syms *symbols, err error) {
 		{"hegel_zone_source_bundled", &syms.ZoneSourceBundled},
 		{"hegel_zone_source_free", &syms.ZoneSourceFree},
 		{"hegel_zone_source_declare", &syms.ZoneSourceDeclare},
+		{"hegel_zone_source_name_count", &syms.ZoneSourceNameCount},
+		{"hegel_zone_source_name", &syms.ZoneSourceName},
 		{"hegel_zone_source_add_oracle", &syms.ZoneSourceAddOracle},
 		{"hegel_zone_source_set_loader", &syms.ZoneSourceSetLoader},
 		{"hegel_context_set_error", &syms.ContextSetError},

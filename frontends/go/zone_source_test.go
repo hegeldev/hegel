@@ -13,36 +13,6 @@ import (
 	"hegel.dev/go/hegel/internal/libhegel"
 )
 
-// TestZoneCatalogueMatchesTheEngine checks zone_catalogue.go against the
-// engine the tests run on: every name has the rank that is its index, and a
-// name outside the catalogue has the rank after all of them. A failure means
-// the engine's database changed: run `go generate .`.
-func TestZoneCatalogueMatchesTheEngine(t *testing.T) {
-	t.Parallel()
-	ctx := libhegel.NewContext()
-	bundled, err := ctx.ZoneSourceBundled()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for rank, name := range zoneCatalogue {
-		info, err := ctx.TimezoneInfoIn(bundled, name)
-		if err != nil || !info.Known || int(info.Rank) != rank {
-			t.Fatalf("%s: info %+v, %v; want a known name of rank %d", name, info, err, rank)
-		}
-	}
-	source, err := ctx.ZoneSourceNew()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := source.Declare(ctx, []string{"Test/Uncatalogued"}); err != nil {
-		t.Fatal(err)
-	}
-	info, err := ctx.TimezoneInfoIn(source, "Test/Uncatalogued")
-	if err != nil || int(info.Rank) != len(zoneCatalogue) {
-		t.Fatalf("an uncatalogued name has rank %d, %v; the catalogue has %d names", info.Rank, err, len(zoneCatalogue))
-	}
-}
-
 // TestDefaultZoneSource is not parallel: it changes the process-wide default.
 func TestDefaultZoneSource(t *testing.T) {
 	host, bundled := HostZoneSource(), BundledZoneSource()
@@ -179,8 +149,14 @@ func noZones() *goZones {
 func TestHostZoneSourceLeavesOutWhatGoCannotLoad(t *testing.T) {
 	t.Parallel()
 	zones := partialZones("Europe/Paris", "Asia/Tokyo")
-	if got, want := len(zones.loadable()), len(zoneCatalogue)-2; got != want {
-		t.Fatalf("%d loadable names, want %d", got, want)
+	ctx := libhegel.NewContext()
+	all, err := bundledZoneNames(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loadable, err := zones.names(ctx)
+	if err != nil || len(loadable) != len(all)-2 || slices.Contains(loadable, "Europe/Paris") || !slices.Contains(loadable, "Europe/Berlin") {
+		t.Fatalf("%d loadable names of %d, %v", len(loadable), len(all), err)
 	}
 	host := ZoneSource{zones.hostSource()}
 	names := map[string]bool{}
@@ -190,7 +166,7 @@ func TestHostZoneSourceLeavesOutWhatGoCannotLoad(t *testing.T) {
 	if !names["Europe/Berlin"] || !names["Asia/Seoul"] {
 		t.Fatalf("drew %v", names)
 	}
-	_, err := Zones().Source(host).Names("Europe/Paris").draw(newRealTestCase(t))
+	_, err = Zones().Source(host).Names("Europe/Paris").draw(newRealTestCase(t))
 	assertErrorContains(t, "Europe/Paris", err)
 	_, err = ZonedDatetimes().Zones(Just(time.FixedZone("Asia/Tokyo", 9*3600))).Source(host).draw(newRealTestCase(t))
 	assertErrorContains(t, `does not know the zone "Asia/Tokyo"`, err)
@@ -213,8 +189,8 @@ func TestHostZoneSourceLeavesOutWhatGoCannotLoad(t *testing.T) {
 func TestZoneSourcesWithoutATimeZoneDatabase(t *testing.T) {
 	t.Parallel()
 	zones := noZones()
-	if got := zones.loadable(); !slices.Equal(got, []string{"UTC"}) {
-		t.Fatalf("loadable names = %v", got)
+	if got, err := zones.names(libhegel.NewContext()); err != nil || !slices.Equal(got, []string{"UTC"}) {
+		t.Fatalf("loadable names = %v, %v", got, err)
 	}
 	host, bundled := ZoneSource{zones.hostSource()}, ZoneSource{zones.bundledSource()}
 	for label, g := range map[string]interface {

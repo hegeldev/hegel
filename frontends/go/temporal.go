@@ -322,7 +322,7 @@ func (g ZoneGenerator) draw(tc TestCase) (*time.Location, error) {
 	if err != nil {
 		return nil, err
 	}
-	return g.source.locate(name)
+	return g.source.locate(ctx, name)
 }
 
 // ZonedDatetimeGenerator generates times in generated time zones.
@@ -526,7 +526,7 @@ func (g ZonedDatetimeGenerator) draw(tc TestCase) (time.Time, error) {
 		if err != nil {
 			return time.Time{}, err
 		}
-		loc, err := zones.source.locate(name)
+		loc, err := zones.source.locate(ctx, name)
 		if err != nil {
 			return time.Time{}, err
 		}

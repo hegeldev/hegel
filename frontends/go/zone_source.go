@@ -11,8 +11,6 @@ import (
 	"hegel.dev/go/hegel/internal/libhegel"
 )
 
-//go:generate go run scripts/gen-zone-catalogue.go
-
 // ZoneSource is a time zone database that zone generators draw from.
 //
 // It decides which names [Zones] draws and which daylight-saving and offset
@@ -34,7 +32,7 @@ type zoneSource struct {
 	// open creates the engine's handle on the source.
 	open func(ctx *libhegel.Context) (*libhegel.ZoneSource, error)
 	// locate returns the location to hand out for a name the engine drew.
-	locate func(name string) (*time.Location, error)
+	locate func(ctx *libhegel.Context, name string) (*time.Location, error)
 
 	once   sync.Once
 	handle *libhegel.ZoneSource
@@ -44,7 +42,7 @@ type zoneSource struct {
 	specs map[[2]bool]*libhegel.TimezoneSpec
 }
 
-func newZoneSource(open func(ctx *libhegel.Context) (*libhegel.ZoneSource, error), locate func(name string) (*time.Location, error)) *zoneSource {
+func newZoneSource(open func(ctx *libhegel.Context) (*libhegel.ZoneSource, error), locate func(ctx *libhegel.Context, name string) (*time.Location, error)) *zoneSource {
 	return &zoneSource{open: open, locate: locate, specs: make(map[[2]bool]*libhegel.TimezoneSpec)}
 }
 
@@ -123,26 +121,19 @@ func firstError(steps ...func() error) error {
 }
 
 // goZones is the time zone database behind a location loader such as
-// [time.LoadLocation]: the engine's catalogue names the loader can load, and
-// every location loaded so far.
+// [time.LoadLocation]: the names it can load, and every location loaded so
+// far.
 type goZones struct {
-	load     func(name string) (*time.Location, error)
-	cache    sync.Map
-	loadable func() []string
+	load  func(name string) (*time.Location, error)
+	cache sync.Map
+
+	once     sync.Once
+	loadable []string
+	err      error
 }
 
 func newGoZones(load func(name string) (*time.Location, error)) *goZones {
-	z := &goZones{load: load}
-	z.loadable = sync.OnceValue(func() []string {
-		var names []string
-		for _, name := range zoneCatalogue {
-			if _, err := z.lookup(name); err == nil {
-				names = append(names, name)
-			}
-		}
-		return names
-	})
-	return z
+	return &goZones{load: load}
 }
 
 func (z *goZones) lookup(name string) (*time.Location, error) {
@@ -157,31 +148,78 @@ func (z *goZones) lookup(name string) (*time.Location, error) {
 	return loc, nil
 }
 
-// hasDatabase reports whether the loader has a time zone database at all.
-// UTC does not count: Go loads it without one.
-func (z *goZones) hasDatabase() bool {
-	return slices.ContainsFunc(z.loadable(), func(name string) bool { return name != "UTC" })
+// names returns the names the loader can load, found on first use. A loader
+// cannot list its names, so they are the names of the engine's bundled
+// database that it loads.
+func (z *goZones) names(ctx *libhegel.Context) ([]string, error) {
+	z.once.Do(func() {
+		var bundled []string
+		bundled, z.err = bundledZoneNames(ctx)
+		for _, name := range bundled {
+			if _, err := z.lookup(name); err == nil {
+				z.loadable = append(z.loadable, name)
+			}
+		}
+	})
+	return z.loadable, z.err
+}
+
+// bundledZoneNames returns every name of the engine's bundled database.
+func bundledZoneNames(ctx *libhegel.Context) ([]string, error) {
+	bundled, err := ctx.ZoneSourceBundled()
+	if err != nil {
+		return nil, err
+	}
+	defer bundled.Free()
+	count, err := bundled.NameCount(ctx)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, count)
+	for index := range count {
+		name, err := bundled.Name(ctx, index)
+		if err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+	}
+	return names, nil
+}
+
+// database returns the names the loader can load, or [errNoZoneDatabase]
+// when it has no time zone database at all. UTC does not count: Go loads it
+// without one.
+func (z *goZones) database(ctx *libhegel.Context) ([]string, error) {
+	names, err := z.names(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !slices.ContainsFunc(names, func(name string) bool { return name != "UTC" }) {
+		return nil, errNoZoneDatabase
+	}
+	return names, nil
 }
 
 // locate loads the location for a name the engine drew. A name the loader
 // lacks rejects the test case, since a location that cannot be loaded cannot
 // be handed out.
-func (z *goZones) locate(name string) (*time.Location, error) {
+func (z *goZones) locate(ctx *libhegel.Context, name string) (*time.Location, error) {
 	loc, err := z.lookup(name)
 	if err == nil {
 		return loc, nil
 	}
-	if !z.hasDatabase() {
-		return nil, errNoZoneDatabase
+	if _, err := z.database(ctx); err != nil {
+		return nil, err
 	}
 	return nil, libhegel.E_ASSUME
 }
 
 func (z *goZones) open(ctx *libhegel.Context) (*libhegel.ZoneSource, error) {
-	if !z.hasDatabase() {
-		return nil, errNoZoneDatabase
+	names, err := z.database(ctx)
+	if err != nil {
+		return nil, err
 	}
-	return openLocationSource(ctx, z.loadable(), func(name string) *time.Location {
+	return openLocationSource(ctx, names, func(name string) *time.Location {
 		loc, _ := z.lookup(name)
 		return loc
 	})
@@ -345,7 +383,7 @@ func ZoneSourceFromLocations(locations ...*time.Location) ZoneSource {
 		func(ctx *libhegel.Context) (*libhegel.ZoneSource, error) {
 			return openLocationSource(ctx, names, func(name string) *time.Location { return byName[name] })
 		},
-		func(name string) (*time.Location, error) { return byName[name], nil },
+		func(_ *libhegel.Context, name string) (*time.Location, error) { return byName[name], nil },
 	)}
 }
 

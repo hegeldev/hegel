@@ -148,3 +148,21 @@ func TestZonedDatetimesStubbedDraw(t *testing.T) {
 		}
 	}
 }
+
+// TestHostZoneNamesEngineFailures fails each call that lists the bundled
+// database's names, which is how the host zone source finds its own.
+func TestHostZoneNamesEngineFailures(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		op     string
+		script []any
+	}{
+		{"hegel_zone_source_bundled", stubFailure(uintptr(0))},
+		{"hegel_zone_source_name_count", script(stubHandle, stubFailure(uint64(0)))},
+		{"hegel_zone_source_name", script(stubHandle, []any{uint64(1), libhegel.OK}, stubFailure(""))},
+	} {
+		zones := newGoZones(time.LoadLocation)
+		_, err := Zones().Source(ZoneSource{zones.hostSource()}).draw(newStubTestCase(t, tt.script...))
+		assertErrorContains(t, tt.op+": E_BACKEND: boom", err)
+	}
+}

@@ -288,6 +288,17 @@ func TestZoneSourceLoaderSuppliesDeclaredNames(t *testing.T) {
 	if err != nil || !utc.Known || utc.Rank != 0 {
 		t.Fatalf("default source UTC = %+v, %v", utc, err)
 	}
+	count, err := source.NameCount(ctx)
+	if err != nil || count != 2 {
+		t.Fatalf("NameCount = %d, %v", count, err)
+	}
+	for index, want := range []string{"Test/Broken", "Test/Step"} {
+		if name, err := source.Name(ctx, uint64(index)); err != nil || name != want {
+			t.Fatalf("Name(%d) = %q, %v; want %q", index, name, err, want)
+		}
+	}
+	_, err = source.Name(ctx, count)
+	wantErrorContaining(t, err, "hegel_zone_source_name: index 2 is past the last of the source's 2 names")
 	missing, err := ctx.TimezoneInfoIn(source, "Test/Missing")
 	if err != nil || missing.Known {
 		t.Fatalf("info for a name the loader lacks = %+v, %v", missing, err)

@@ -113,6 +113,29 @@ func (s *ZoneSource) Declare(ctx *Context, names []string) error {
 	})
 }
 
+// NameCount returns how many names the source knows.
+func (s *ZoneSource) NameCount(ctx *Context) (uint64, error) {
+	var count uint64
+	err := ctx.invoke("hegel_zone_source_name_count", func(ctx ctxT) Error {
+		e := s.syms.ZoneSourceNameCount(ctx, s.raw, &count)
+		runtime.KeepAlive(s)
+		return e
+	})
+	return count, err
+}
+
+// Name returns the name at index of the source's names, which are in
+// ascending byte order.
+func (s *ZoneSource) Name(ctx *Context, index uint64) (string, error) {
+	var name stringT
+	err := ctx.invoke("hegel_zone_source_name", func(ctx ctxT) Error {
+		e := s.syms.ZoneSourceName(ctx, s.raw, index, &name)
+		runtime.KeepAlive(s)
+		return e
+	})
+	return goString(name), err
+}
+
 // AddOracle adds the zone name to the source by probing oracle, whose
 // functions are called during this call only.
 func (s *ZoneSource) AddOracle(ctx *Context, name string, oracle ZoneOracle) error {
