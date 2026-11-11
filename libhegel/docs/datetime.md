@@ -1,9 +1,9 @@
 # Dates, times and time zones
 
 **Status:** Implemented in the engine, the C ABI and every frontend
-except Go (Rust with its `jiff`, `chrono` and `time` extras, Python,
-TypeScript, C++, Java and OCaml; each frontend's own documentation
-describes its API, of which §8.3 is the original sketch). Written 2026-10-16 from a survey of the engine, the seven
+(Rust with its `jiff`, `chrono` and `time` extras, Python, TypeScript,
+C++, Java, OCaml and Go; each frontend's own documentation describes its
+API, of which §8.3 is the original sketch). Written 2026-10-16 from a survey of the engine, the seven
 frontends, the property-based testing libraries in Appendix A and the
 date/time libraries in Appendix B. The open questions were decided on
 2026-10-17; §10 records the outcome. §4–§8 describe what was built, with
@@ -720,9 +720,7 @@ Zone sources (`zone-sources.md`) replace this contract: a frontend whose
 host database the engine can read sets it as the process-wide default
 source, or attaches it to the draws of the library it belongs to, and the
 engine then targets and classifies against the host's own data. Every
-frontend except Go now does so; Go has no temporal generators yet, and
-when it gains them it starts from zone sources rather than from this
-contract.
+frontend now does so.
 
 ### 8.2 Rust
 
@@ -798,9 +796,9 @@ since an `OffsetDateTime` holds a civil time and one offset),
 
 ### 8.3 Other frontends (mapping only)
 
-This is the mapping each frontend started from. All of them but Go have
-since been built, and each one's own documentation is the reference for
-what it exposes.
+This is the mapping each frontend started from. All of them have since
+been built, and each one's own documentation is the reference for what it
+exposes.
 
 - **Python:** the generators move to `gs.temporal` under the shared
   names (the released `gs.dates`, `gs.times`, `gs.datetimes`,
@@ -832,7 +830,7 @@ what it exposes.
 
 ## 9. Delivery
 
-Phases 1 and 2 are delivered, apart from the Go mapping. Of phase 3, the
+Phases 1 and 2 are delivered. Of phase 3, the
 engine's parts (synthetic time zones and the string generator) are not
 started.
 

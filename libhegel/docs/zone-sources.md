@@ -1,9 +1,8 @@
 # Zone sources: generating against the time zone data the code under test uses
 
 Status: implemented in the engine (2026-10-23) and adopted by every
-frontend except Go, which has no temporal generators yet. Supersedes the
-version-skew contract of `datetime.md` §8.1. The Summary and §1 describe
-the problem as it stood before zone sources.
+frontend. Supersedes the version-skew contract of `datetime.md` §8.1. The
+Summary and §1 describe the problem as it stood before zone sources.
 
 ## Summary
 
@@ -374,6 +373,7 @@ generators built on a library default to that library's source.
 | C++, Boost.DateTime | structured | `boost::local_time::time_zone_ptr` (`tz_database` CSV or a POSIX string) | Footer-only zones. A Boost zone has the name its database gives it, and names the catalogue lacks get computed tags. |
 | TypeScript, Temporal present | oracle (next transition) | `Temporal.ZonedDateTime#getTimeZoneTransition` | The process default where `Temporal` exists. Exact transitions within the probe range; footer inferred beyond it. |
 | TypeScript, `Intl` only | oracle (offset at t) | `Intl.DateTimeFormat` with `timeZoneName: "longOffset"` | The process default otherwise. Slower probing; lazy, per drawn zone. Keep today's reject on disagreement as a safety net for anything beyond the probe range. |
+| Go, `time` | oracle (next transition), lazy | `time.LoadLocation`: each zone's offsets and transitions (`Time.ZoneBounds`) probed through the loaded `*time.Location` | The frontend's default. Go cannot list its zone names, so the source declares the names of the engine's catalogue that `time.LoadLocation` loads (the frontend carries a generated copy of the catalogue's names, checked against the engine by a test). The frontend keeps the default itself and attaches the source to each spec. `ZoneSourceFromLocations` builds a source the same way from given locations. |
 
 Wherever a source is exact (TZif, `java.time`, Boost), the
 reject-on-disagreement checks in Java, Python and TypeScript become dead
@@ -382,8 +382,8 @@ beyond the probe range.
 
 ## 5. Phasing
 
-All five phases are delivered, and the OCaml frontend, which the plan
-below does not list, has zone sources too. Each frontend's own
+All five phases are delivered, and the OCaml and Go frontends, which the
+plan below does not list, have zone sources too. Each frontend's own
 documentation is the reference for what it built.
 
 1. **Engine:** zone sources, a TZif parser, structured upload, the loader
