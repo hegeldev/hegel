@@ -217,6 +217,15 @@ pub fn uncatalogued_rank() -> Result<u16, InternalError> {
     ))
 }
 
+/// The names of a custom source's table that the source knows, sorted:
+/// all but the ones its loader was asked for and did not have.
+fn known_names(names: &BTreeMap<String, Slot>) -> impl Iterator<Item = &String> {
+    names
+        .iter()
+        .filter(|(_, slot)| !matches!(slot, Slot::Missing))
+        .map(|(name, _)| name)
+}
+
 fn invalid(message: String) -> EngineError {
     EngineError::InvalidArgument(message)
 }
@@ -817,13 +826,32 @@ impl ZoneSource {
     pub fn names(&self) -> Result<Vec<String>, InternalError> {
         match &self.custom {
             None => Ok(tzdata::names()?.iter().map(|n| n.name.clone()).collect()),
-            Some(custom) => Ok(custom
-                .names
-                .lock()
-                .iter()
-                .filter(|(_, slot)| !matches!(slot, Slot::Missing))
-                .map(|(name, _)| name.clone())
-                .collect()),
+            Some(custom) => Ok(known_names(&custom.names.lock()).cloned().collect()),
+        }
+    }
+
+    /// How many names [`names`](Self::names) holds.
+    pub fn name_count(&self) -> Result<usize, InternalError> {
+        match &self.custom {
+            None => Ok(tzdata::names()?.len()),
+            Some(custom) => Ok(known_names(&custom.names.lock()).count()),
+        }
+    }
+
+    /// The name at `index` of [`names`](Self::names), as a string valid
+    /// for the life of the process; an argument error for an index past
+    /// the last name.
+    pub fn name_at(&self, index: usize) -> Result<&'static CStr, EngineError> {
+        let name = match &self.custom {
+            None => tzdata::names()?.get(index).map(|n| n.name.clone()),
+            Some(custom) => known_names(&custom.names.lock()).nth(index).cloned(),
+        };
+        match name {
+            Some(name) => intern_c_string("name", &name),
+            None => Err(invalid(format!(
+                "index {index} is past the last of the source's {} names",
+                self.name_count()?
+            ))),
         }
     }
 

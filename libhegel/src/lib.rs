@@ -9822,17 +9822,90 @@ pub unsafe extern "C" fn hegel_zone_source_version(
     source: *const HegelZoneSource,
     out_version: *mut hegel_string_t,
 ) -> hegel_result_t {
+    unsafe {
+        zone_source_read(ctx, "hegel_zone_source_version", source, out_version, |s| {
+            Ok(static_c_string(s.version()))
+        })
+    }
+}
+
+/// Shared body of the `hegel_zone_source_*` readers: resolve the handle,
+/// require a non-null `out`, and write what `read` returns to `*out`,
+/// reporting what it rejects as `HEGEL_E_INVALID_ARG`.
+unsafe fn zone_source_read<T>(
+    ctx: *mut HegelContext,
+    fn_name: &str,
+    source: *const HegelZoneSource,
+    out: *mut T,
+    read: impl FnOnce(&ZoneSource) -> Result<T, EngineError>,
+) -> hegel_result_t {
     clear_last_error(ctx);
     let Some(handle) = (unsafe { source.as_ref() }) else {
-        set_last_error(ctx, "hegel_zone_source_version: source pointer is null");
+        set_last_error(ctx, &format!("{fn_name}: source pointer is null"));
         return HEGEL_E_INVALID_HANDLE;
     };
-    if out_version.is_null() {
-        set_last_error(ctx, "hegel_zone_source_version: out parameter is null");
+    if out.is_null() {
+        set_last_error(ctx, &format!("{fn_name}: out parameter is null"));
         return HEGEL_E_INVALID_ARG;
     }
-    unsafe { *out_version = static_c_string(handle.source.version()) };
-    HEGEL_OK
+    match read(&handle.source) {
+        Ok(value) => {
+            unsafe { *out = value };
+            HEGEL_OK
+        }
+        Err(e) => translate_construct_error(ctx, named(fn_name, e)),
+    }
+}
+
+/// Parameters:
+/// `out_count`: Receives how many names the source knows: for the bundled
+///   source every name of the bundled database, links and legacy names
+///   included; for another every name it was given data for or had
+///   declared. Read the names with `hegel_zone_source_name`, and what each
+///   is with `hegel_timezone_info_in`.
+///
+/// Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `source`, or
+/// `HEGEL_E_INVALID_ARG` for a NULL `out_count`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_zone_source_name_count(
+    ctx: *mut HegelContext,
+    source: *const HegelZoneSource,
+    out_count: *mut usize,
+) -> hegel_result_t {
+    unsafe {
+        zone_source_read(
+            ctx,
+            "hegel_zone_source_name_count",
+            source,
+            out_count,
+            |s| Ok(s.name_count()?),
+        )
+    }
+}
+
+/// Parameters:
+/// `index`: Which of the source's names, from 0 to one less than
+///   `hegel_zone_source_name_count` reports. The names are in ascending
+///   byte order, so an index stands for the same name until the source's
+///   names change.
+/// `out_name`: Receives the name, as a string valid for the program's
+///   lifetime.
+///
+/// Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `source`, or
+/// `HEGEL_E_INVALID_ARG` for a NULL `out_name` or an `index` past the
+/// source's last name.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_zone_source_name(
+    ctx: *mut HegelContext,
+    source: *const HegelZoneSource,
+    index: usize,
+    out_name: *mut hegel_string_t,
+) -> hegel_result_t {
+    unsafe {
+        zone_source_read(ctx, "hegel_zone_source_name", source, out_name, |s| {
+            Ok(static_c_string(s.name_at(index)?))
+        })
+    }
 }
 
 /// Set the process-wide default zone source: the one a time zone spec

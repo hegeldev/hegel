@@ -169,6 +169,12 @@ hegel_result_t hegel_zone_source_set_loader(hegel_context_t*, hegel_zone_source_
                                             hegel_zone_loader_t, void* user_data,
                                             hegel_zone_loader_release_t release);
 
+/* the names a source knows, in ascending byte order */
+hegel_result_t hegel_zone_source_name_count(hegel_context_t*, const hegel_zone_source_t*,
+                                            size_t* out_count);
+hegel_result_t hegel_zone_source_name(hegel_context_t*, const hegel_zone_source_t*,
+                                      size_t index, hegel_string_t* out_name);
+
 hegel_result_t hegel_zone_source_set_version(hegel_context_t*, hegel_zone_source_t*,
                                              hegel_string_t version);
 hegel_result_t hegel_zone_source_version(hegel_context_t*, const hegel_zone_source_t*,
@@ -293,6 +299,12 @@ hegel_result_t hegel_timezone_info_in(hegel_context_t*, const hegel_zone_source_
   catalogued names by rank, then the rest by name, then opaque names, then
   `Etc/Unknown`. `classify_tests.rs` checks the classifier against every
   bundled name's tags.
+- **Listing.** `hegel_zone_source_name_count` and `hegel_zone_source_name`
+  read the names a source knows, the bundled one included, in ascending
+  byte order: its zones, links and declared names, but not a name its
+  loader was asked for and did not have. A host library that can load a
+  zone by name but cannot list its names (Go's `time`) lists the bundled
+  source's and declares the ones it loads.
 - **The spec.** Without an explicit list a spec draws the source's names
   the link and legacy flags allow. An explicit list must name names the
   source knows, unless opaque names are accepted. Neither is checked by a
@@ -373,7 +385,7 @@ generators built on a library default to that library's source.
 | C++, Boost.DateTime | structured | `boost::local_time::time_zone_ptr` (`tz_database` CSV or a POSIX string) | Footer-only zones. A Boost zone has the name its database gives it, and names the catalogue lacks get computed tags. |
 | TypeScript, Temporal present | oracle (next transition) | `Temporal.ZonedDateTime#getTimeZoneTransition` | The process default where `Temporal` exists. Exact transitions within the probe range; footer inferred beyond it. |
 | TypeScript, `Intl` only | oracle (offset at t) | `Intl.DateTimeFormat` with `timeZoneName: "longOffset"` | The process default otherwise. Slower probing; lazy, per drawn zone. Keep today's reject on disagreement as a safety net for anything beyond the probe range. |
-| Go, `time` | oracle (next transition), lazy | `time.LoadLocation`: each zone's offsets and transitions (`Time.ZoneBounds`) probed through the loaded `*time.Location` | The frontend's default. Go cannot list its zone names, so the source declares the names of the engine's catalogue that `time.LoadLocation` loads (the frontend carries a generated copy of the catalogue's names, checked against the engine by a test). The frontend keeps the default itself and attaches the source to each spec. `ZoneSourceFromLocations` builds a source the same way from given locations. |
+| Go, `time` | oracle (next transition), lazy | `time.LoadLocation`: each zone's offsets and transitions (`Time.ZoneBounds`) probed through the loaded `*time.Location` | The frontend's default. Go cannot list its zone names, so the source declares the names of the bundled source (`hegel_zone_source_name`) that `time.LoadLocation` loads. The frontend keeps the default itself and attaches the source to each spec. `ZoneSourceFromLocations` builds a source the same way from given locations. |
 
 Wherever a source is exact (TZif, `java.time`, Boost), the
 reject-on-disagreement checks in Java, Python and TypeScript become dead

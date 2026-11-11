@@ -219,6 +219,8 @@ macro_rules! for_each_hegel_fn {
             fn hegel_zone_source_bundled(ctx: *mut HegelContext, out_source: *mut *mut HegelZoneSource) -> hegel_result_t;
             fn hegel_zone_source_declare(ctx: *mut HegelContext, source: *mut HegelZoneSource, names: *const hegel_string_t, len: usize) -> hegel_result_t;
             fn hegel_zone_source_free(ctx: *mut HegelContext, source: *mut HegelZoneSource) -> hegel_result_t;
+            fn hegel_zone_source_name(ctx: *mut HegelContext, source: *const HegelZoneSource, index: usize, out_name: *mut hegel_string_t) -> hegel_result_t;
+            fn hegel_zone_source_name_count(ctx: *mut HegelContext, source: *const HegelZoneSource, out_count: *mut usize) -> hegel_result_t;
             fn hegel_zone_source_new(ctx: *mut HegelContext, out_source: *mut *mut HegelZoneSource) -> hegel_result_t;
             fn hegel_zone_source_set_loader(ctx: *mut HegelContext, source: *mut HegelZoneSource, loader: hegel_zone_loader_t, user_data: *mut c_void, release: hegel_zone_loader_release_t) -> hegel_result_t;
             fn hegel_zone_source_set_version(ctx: *mut HegelContext, source: *mut HegelZoneSource, version: hegel_string_t) -> hegel_result_t;

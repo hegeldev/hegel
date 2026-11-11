@@ -685,6 +685,10 @@ fn an_undeclared_name_is_asked_of_the_loader_once() {
     assert!(source.timezone("Mars/Base").unwrap().is_none());
     assert_eq!(counting.calls.load(Ordering::SeqCst), 2);
     assert_eq!(source.names().unwrap(), vec!["Asia/Tokyo".to_string()]);
+    assert_eq!(source.name_count().unwrap(), 1);
+    assert_eq!(source.name_at(0).unwrap(), c"Asia/Tokyo");
+    let e = message(source.name_at(1).unwrap_err());
+    assert_eq!(e, "index 1 is past the last of the source's 1 names");
     source.declare(["Mars/Base"]).unwrap();
     let e = message(source.timezone("Mars/Base").unwrap_err());
     assert!(e.contains("supplied no data"), "{e}");
@@ -872,8 +876,12 @@ fn the_classifier_describes_the_names_the_catalogue_lacks() {
     let alias = source.describe("Mars/Alias").unwrap().unwrap();
     assert_eq!(alias.primary, "Mars/Base");
     assert!(alias.is_link);
-    assert_eq!(
-        ZoneSource::bundled().names().unwrap().len(),
-        tzdata::names().unwrap().len()
-    );
+    let bundled = ZoneSource::bundled();
+    let names = bundled.names().unwrap();
+    assert_eq!(names.len(), tzdata::names().unwrap().len());
+    assert_eq!(bundled.name_count().unwrap(), names.len());
+    for (index, name) in names.iter().enumerate() {
+        assert_eq!(bundled.name_at(index).unwrap().to_str().unwrap(), name);
+    }
+    assert!(bundled.name_at(names.len()).is_err());
 }

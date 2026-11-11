@@ -4892,6 +4892,39 @@ hegel_result_t hegel_zone_source_version(hegel_context_t *ctx,
                                          hegel_string_t *out_version);
 
 /*
+ Parameters:
+ `out_count`: Receives how many names the source knows: for the bundled
+   source every name of the bundled database, links and legacy names
+   included; for another every name it was given data for or had
+   declared. Read the names with `hegel_zone_source_name`, and what each
+   is with `hegel_timezone_info_in`.
+
+ Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `source`, or
+ `HEGEL_E_INVALID_ARG` for a NULL `out_count`.
+ */
+hegel_result_t hegel_zone_source_name_count(hegel_context_t *ctx,
+                                            const hegel_zone_source_t *source,
+                                            size_t *out_count);
+
+/*
+ Parameters:
+ `index`: Which of the source's names, from 0 to one less than
+   `hegel_zone_source_name_count` reports. The names are in ascending
+   byte order, so an index stands for the same name until the source's
+   names change.
+ `out_name`: Receives the name, as a string valid for the program's
+   lifetime.
+
+ Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `source`, or
+ `HEGEL_E_INVALID_ARG` for a NULL `out_name` or an `index` past the
+ source's last name.
+ */
+hegel_result_t hegel_zone_source_name(hegel_context_t *ctx,
+                                      const hegel_zone_source_t *source,
+                                      size_t index,
+                                      hegel_string_t *out_name);
+
+/*
  Set the process-wide default zone source: the one a time zone spec
  reads when `hegel_timezone_spec_new` creates it or
  `hegel_timezone_spec_set_source` resets it to NULL, and the one

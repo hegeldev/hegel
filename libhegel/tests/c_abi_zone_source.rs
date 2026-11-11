@@ -21,8 +21,9 @@ use hegel_c::{
     hegel_zone_data_t, hegel_zone_oracle_t, hegel_zone_rule_date_t, hegel_zone_source_add_link,
     hegel_zone_source_add_oracle, hegel_zone_source_add_tzif, hegel_zone_source_add_zone,
     hegel_zone_source_bundled, hegel_zone_source_declare, hegel_zone_source_free,
-    hegel_zone_source_new, hegel_zone_source_set_loader, hegel_zone_source_set_version,
-    hegel_zone_source_version, hegel_zone_transition_t, hegel_zone_type_t,
+    hegel_zone_source_name, hegel_zone_source_name_count, hegel_zone_source_new,
+    hegel_zone_source_set_loader, hegel_zone_source_set_version, hegel_zone_source_version,
+    hegel_zone_transition_t, hegel_zone_type_t,
 };
 use hegel_c::{
     hegel_generate_zoned_datetime, hegel_generate_zoned_datetime_for_zone, hegel_mark_complete,
@@ -702,6 +703,90 @@ fn links_names_and_versions_go_through_the_c_abi() {
         );
         assert!(last_error(ctx).contains("hegel_context_set_error: message is null"));
         ok(hegel_zone_source_free(ctx, source));
+        ok(hegel_context_free(ctx));
+    }
+}
+
+unsafe fn names_of(ctx: *mut HegelContext, source: *const HegelZoneSource) -> Vec<&'static str> {
+    unsafe {
+        let mut count = usize::MAX;
+        ok(hegel_zone_source_name_count(ctx, source, &mut count));
+        (0..count)
+            .map(|index| {
+                let mut name = hegel_string_t::default();
+                ok(hegel_zone_source_name(ctx, source, index, &mut name));
+                string(name)
+            })
+            .collect()
+    }
+}
+
+#[test]
+fn a_source_lists_its_names_through_the_c_abi() {
+    let ctx = hegel_context_new();
+    unsafe {
+        let source = new_source(ctx);
+        assert!(names_of(ctx, source).is_empty());
+        add_tzif(ctx, source, "Asia/Kolkata", "Asia/Kolkata");
+        ok(hegel_zone_source_add_link(
+            ctx,
+            source,
+            s("Asia/Calcutta"),
+            s("Asia/Kolkata"),
+        ));
+        let declared = [s("Mars/Base")];
+        ok(hegel_zone_source_declare(ctx, source, declared.as_ptr(), 1));
+        assert_eq!(
+            names_of(ctx, source),
+            ["Asia/Calcutta", "Asia/Kolkata", "Mars/Base"]
+        );
+
+        let mut name = hegel_string_t::default();
+        assert_eq!(
+            hegel_zone_source_name(ctx, source, 3, &mut name),
+            HEGEL_E_INVALID_ARG
+        );
+        assert!(
+            last_error(ctx).contains(
+                "hegel_zone_source_name: index 3 is past the last of the source's 3 names"
+            )
+        );
+        assert_eq!(
+            hegel_zone_source_name(ctx, source, 0, ptr::null_mut()),
+            HEGEL_E_INVALID_ARG
+        );
+        assert!(last_error(ctx).contains("hegel_zone_source_name: out parameter is null"));
+        assert_eq!(
+            hegel_zone_source_name(ctx, ptr::null(), 0, &mut name),
+            HEGEL_E_INVALID_HANDLE
+        );
+        assert!(last_error(ctx).contains("hegel_zone_source_name: source pointer is null"));
+        let mut count = 0;
+        assert_eq!(
+            hegel_zone_source_name_count(ctx, ptr::null(), &mut count),
+            HEGEL_E_INVALID_HANDLE
+        );
+        assert_eq!(
+            hegel_zone_source_name_count(ctx, source, ptr::null_mut()),
+            HEGEL_E_INVALID_ARG
+        );
+        ok(hegel_zone_source_free(ctx, source));
+
+        let mut bundled = ptr::null_mut();
+        ok(hegel_zone_source_bundled(ctx, &mut bundled));
+        let names = names_of(ctx, bundled);
+        assert!(names.is_sorted());
+        for name in ["UTC", "Europe/London", "Asia/Calcutta", "EST5EDT"] {
+            assert!(names.contains(&name), "{name}");
+        }
+        for name in &names {
+            assert!(info_in(ctx, bundled, name).known, "{name}");
+        }
+        assert_eq!(
+            hegel_zone_source_name(ctx, bundled, names.len(), &mut name),
+            HEGEL_E_INVALID_ARG
+        );
+        ok(hegel_zone_source_free(ctx, bundled));
         ok(hegel_context_free(ctx));
     }
 }
