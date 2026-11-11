@@ -11,8 +11,16 @@ import (
 
 // Exact types use their domain generator before structural reflection.
 var defaultKnownTypes = map[reflect.Type]defaultDraw{
-	reflect.TypeFor[time.Time]():  defaultFromGenerator[time.Time](reflect.TypeFor[time.Time](), Datetimes()),
-	reflect.TypeFor[netip.Addr](): defaultFromGenerator[netip.Addr](reflect.TypeFor[netip.Addr](), IPAddresses()),
+	reflect.TypeFor[time.Time]():     defaultFromGenerator[time.Time](reflect.TypeFor[time.Time](), Datetimes()),
+	reflect.TypeFor[time.Duration](): defaultFromGenerator[time.Duration](reflect.TypeFor[time.Duration](), Durations()),
+	reflect.TypeFor[netip.Addr]():    defaultFromGenerator[netip.Addr](reflect.TypeFor[netip.Addr](), IPAddresses()),
+	// Default generators are cached for the life of the process, so this one
+	// builds its Zones generator at each draw: one built here would keep the
+	// zone source that was the default when the package was initialized.
+	reflect.TypeFor[*time.Location](): func(tc TestCase) (reflect.Value, error) {
+		loc, err := draw(tc, Zones())
+		return reflect.ValueOf(loc), err
+	},
 }
 
 var defaultGenerators = struct {
@@ -76,7 +84,9 @@ func WithFieldGenerator[S, T any](field string, g Generator[T]) DefaultOption {
 // type of a zero-length array is not inspected. Integers use the full range of
 // their type. Slices and maps may be empty, and pointers may be nil.
 // Well-known types use their specialized generators: time.Time uses Datetimes,
-// netip.Addr uses IPAddresses, and uuid.UUID uses UUIDs (Go 1.27 and later).
+// time.Duration uses Durations, *time.Location uses Zones (with the zone
+// source that is the default at each draw, and never nil), netip.Addr uses
+// IPAddresses, and uuid.UUID uses UUIDs (Go 1.27 and later).
 //
 // Options override generators for exact types or struct fields; the last option
 // for a type or field wins.

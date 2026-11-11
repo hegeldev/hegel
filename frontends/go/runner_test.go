@@ -708,6 +708,8 @@ func newRealTestCase(t testing.TB) *testCase {
 	if err != nil {
 		t.Fatalf("NextTestCase: %v", err)
 	}
+	// A collected run completes its test cases, so it has to outlive the test.
+	t.Cleanup(func() { runtime.KeepAlive(run) })
 	state, _ := newTestCase(ctx, tc, nil, false)
 	return state
 }

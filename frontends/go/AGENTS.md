@@ -101,6 +101,11 @@ take a while, and let it run in the background while doing independent review wo
   that type to the `defaultKnownTypes` map so `Default()` uses its specialized
   generator. Keep registrations for version-specific types in files with the
   corresponding Go build tags.
+- **Zone catalogue**: `zone_catalogue.go` is generated from the engine's
+  `libhegel/src/tzdata/tzdata.txt` by `go generate .` (it lists the IANA names
+  in shrink order, which the host zone source declares to the engine, since
+  the C ABI has no function that lists them). Regenerate it when the engine's
+  bundled tzdata changes; `TestZoneCatalogueMatchesTheEngine` fails until then.
 - **Module path**: `hegel.dev/go/hegel`
 - **Package name**: `hegel` — single package for the library, users import `hegel.dev/go/hegel`
 - **File naming**: lowercase, multi-word files use underscores (e.g., `project_root.go`)

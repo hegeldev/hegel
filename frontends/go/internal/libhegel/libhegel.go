@@ -42,7 +42,7 @@ import (
 	"unsafe"
 )
 
-//go:generate go tool stringer -type=Error,Status,Backend,Verbosity,RunStatus,RunErrorKind,HealthCheck,Phase,NondeterminismStrictness,Precision -linecomment -output=libhegel_string.go
+//go:generate go tool stringer -type=Error,Status,Backend,Verbosity,RunStatus,RunErrorKind,HealthCheck,Phase,NondeterminismStrictness,Precision,OffsetGranularity,Ambiguous,Imaginary,ZoneAfter,TimezoneKind -linecomment -output=libhegel_string.go
 
 // LibraryPathEnv names the env var that pins libhegel to an explicit path.
 // When set, that path is loaded directly with no fallback; when unset, the
@@ -235,6 +235,9 @@ type resultT uintptr         // Equivalent of hegel_run_result_t
 type failureT uintptr        // Equivalent of hegel_failure_t
 type stringGenT uintptr      // Equivalent of hegel_string_generator_t
 type dateOptionsT uintptr    // Equivalent of hegel_date_options_t
+type timezoneSpecT uintptr   // Equivalent of hegel_timezone_spec_t
+type zonedSpecT uintptr      // Equivalent of hegel_zoned_spec_t
+type zoneSourceT uintptr     // Equivalent of hegel_zone_source_t
 type collectionT uintptr     // Equivalent of hegel_collection_t
 type recursionT uintptr      // Equivalent of hegel_recursion_t
 type repeatT uintptr         // Equivalent of hegel_repeat_t
@@ -399,9 +402,46 @@ type symbols struct {
 	GenerateDate       func(ctxT, testCaseT, Date, Date, dateOptionsT, out[Date]) Error
 	GenerateTime       func(ctxT, testCaseT, Time, Time, Precision, out[Time]) Error
 	GenerateDatetime   func(ctxT, testCaseT, Datetime, Datetime, Precision, out[Datetime]) Error
-	GenerateUUID       func(ctxT, testCaseT, uint8, bool, out[byte]) Error
-	GenerateIPv4       func(ctxT, testCaseT, out[byte]) Error
-	GenerateIPv6       func(ctxT, testCaseT, out[byte]) Error
+	GenerateDuration   func(ctxT, testCaseT, Duration, Duration, Precision, out[Duration]) Error
+	GenerateOffset     func(ctxT, testCaseT, int32, int32, OffsetGranularity, bool, out[Offset]) Error
+	FormatOffset       func(ctxT, Offset, out[ownedStringT]) Error
+
+	// Date options: the weekday and month masks of hegel_generate_date.
+	DateOptionsNew         func(ctxT, out[dateOptionsT]) Error
+	DateOptionsFree        func(ctxT, dateOptionsT) Error
+	DateOptionsSetWeekdays func(ctxT, dateOptionsT, uint32) Error
+	DateOptionsSetMonths   func(ctxT, dateOptionsT, uint32) Error
+
+	// Zone sources: where time zone names and their data come from.
+	ZoneSourceNew       func(ctxT, out[zoneSourceT]) Error
+	ZoneSourceBundled   func(ctxT, out[zoneSourceT]) Error
+	ZoneSourceFree      func(ctxT, zoneSourceT) Error
+	ZoneSourceDeclare   func(ctxT, zoneSourceT, *stringT, uint64) Error
+	ZoneSourceAddOracle func(ctxT, zoneSourceT, stringT, *zoneOracleT) Error
+	ZoneSourceSetLoader func(ctxT, zoneSourceT, zoneLoaderT, uintptr, zoneLoaderReleaseT) Error
+	ContextSetError     func(ctxT, stringT) Error
+	TimezoneInfoIn      func(ctxT, zoneSourceT, stringT, out[timezoneInfoT]) Error
+
+	// Time zone and zoned datetime specs and the draws that take them.
+	TimezoneSpecNew              func(ctxT, out[timezoneSpecT]) Error
+	TimezoneSpecFree             func(ctxT, timezoneSpecT) Error
+	TimezoneSpecSetNames         func(ctxT, timezoneSpecT, *stringT, uint64) Error
+	TimezoneSpecSetLinks         func(ctxT, timezoneSpecT, bool) Error
+	TimezoneSpecSetLegacy        func(ctxT, timezoneSpecT, bool) Error
+	TimezoneSpecSetSource        func(ctxT, timezoneSpecT, zoneSourceT) Error
+	GenerateTimezone             func(ctxT, testCaseT, timezoneSpecT, out[ownedStringT]) Error
+	ZonedSpecNew                 func(ctxT, out[zonedSpecT]) Error
+	ZonedSpecFree                func(ctxT, zonedSpecT) Error
+	ZonedSpecSetCivilBounds      func(ctxT, zonedSpecT, Datetime, Datetime) Error
+	ZonedSpecSetInstantBounds    func(ctxT, zonedSpecT, Timestamp, Timestamp) Error
+	ZonedSpecSetPrecision        func(ctxT, zonedSpecT, Precision) Error
+	ZonedSpecSetImaginary        func(ctxT, zonedSpecT, Imaginary) Error
+	ZonedSpecSetAmbiguous        func(ctxT, zonedSpecT, Ambiguous) Error
+	GenerateZonedDatetime        func(ctxT, testCaseT, timezoneSpecT, zonedSpecT, out[ZonedDatetime], out[ownedStringT]) Error
+	GenerateZonedDatetimeForZone func(ctxT, testCaseT, zoneSourceT, stringT, zonedSpecT, out[ZonedDatetime]) Error
+	GenerateUUID                 func(ctxT, testCaseT, uint8, bool, out[byte]) Error
+	GenerateIPv4                 func(ctxT, testCaseT, out[byte]) Error
+	GenerateIPv6                 func(ctxT, testCaseT, out[byte]) Error
 
 	// String-generator constructors (build the alphabet-and-shape spec passed
 	// to hegel_generate_string) and their shared free.
@@ -854,6 +894,37 @@ func tryOpen(path string) (syms *symbols, err error) {
 		{"hegel_generate_date", &syms.GenerateDate},
 		{"hegel_generate_time", &syms.GenerateTime},
 		{"hegel_generate_datetime", &syms.GenerateDatetime},
+		{"hegel_generate_duration", &syms.GenerateDuration},
+		{"hegel_generate_offset", &syms.GenerateOffset},
+		{"hegel_format_offset", &syms.FormatOffset},
+		{"hegel_date_options_new", &syms.DateOptionsNew},
+		{"hegel_date_options_free", &syms.DateOptionsFree},
+		{"hegel_date_options_set_weekdays", &syms.DateOptionsSetWeekdays},
+		{"hegel_date_options_set_months", &syms.DateOptionsSetMonths},
+		{"hegel_zone_source_new", &syms.ZoneSourceNew},
+		{"hegel_zone_source_bundled", &syms.ZoneSourceBundled},
+		{"hegel_zone_source_free", &syms.ZoneSourceFree},
+		{"hegel_zone_source_declare", &syms.ZoneSourceDeclare},
+		{"hegel_zone_source_add_oracle", &syms.ZoneSourceAddOracle},
+		{"hegel_zone_source_set_loader", &syms.ZoneSourceSetLoader},
+		{"hegel_context_set_error", &syms.ContextSetError},
+		{"hegel_timezone_info_in", &syms.TimezoneInfoIn},
+		{"hegel_timezone_spec_new", &syms.TimezoneSpecNew},
+		{"hegel_timezone_spec_free", &syms.TimezoneSpecFree},
+		{"hegel_timezone_spec_set_names", &syms.TimezoneSpecSetNames},
+		{"hegel_timezone_spec_set_links", &syms.TimezoneSpecSetLinks},
+		{"hegel_timezone_spec_set_legacy", &syms.TimezoneSpecSetLegacy},
+		{"hegel_timezone_spec_set_source", &syms.TimezoneSpecSetSource},
+		{"hegel_generate_timezone", &syms.GenerateTimezone},
+		{"hegel_zoned_spec_new", &syms.ZonedSpecNew},
+		{"hegel_zoned_spec_free", &syms.ZonedSpecFree},
+		{"hegel_zoned_spec_set_civil_bounds", &syms.ZonedSpecSetCivilBounds},
+		{"hegel_zoned_spec_set_instant_bounds", &syms.ZonedSpecSetInstantBounds},
+		{"hegel_zoned_spec_set_precision", &syms.ZonedSpecSetPrecision},
+		{"hegel_zoned_spec_set_imaginary", &syms.ZonedSpecSetImaginary},
+		{"hegel_zoned_spec_set_ambiguous", &syms.ZonedSpecSetAmbiguous},
+		{"hegel_generate_zoned_datetime", &syms.GenerateZonedDatetime},
+		{"hegel_generate_zoned_datetime_for_zone", &syms.GenerateZonedDatetimeForZone},
 		{"hegel_generate_uuid", &syms.GenerateUUID},
 		{"hegel_generate_ipv4", &syms.GenerateIPv4},
 		{"hegel_generate_ipv6", &syms.GenerateIPv6},
@@ -1320,6 +1391,9 @@ type TestCase struct {
 	outDate      Date
 	outTime      Time
 	outDatetime  Datetime
+	outDuration  Duration
+	outOffset    Offset
+	outZoned     ZonedDatetime
 	outBytesRes  bytesResult
 	outStringRes ownedStringT
 	outLen       uint64
@@ -1541,12 +1615,17 @@ func (tc *TestCase) GenerateString(ctx *Context, gen *StringGenerator) (string, 
 }
 
 // GenerateDate draws a Gregorian calendar date in [minValue, maxValue].
-// options is a hegel_date_options_t handle restricting the weekdays and
-// months, or 0 for every weekday and month.
-func (tc *TestCase) GenerateDate(ctx *Context, minValue, maxValue Date, options dateOptionsT) (Date, error) {
+// options restricts the weekdays and months; nil allows every weekday and
+// month.
+func (tc *TestCase) GenerateDate(ctx *Context, minValue, maxValue Date, options *DateOptions) (Date, error) {
+	var optionsRaw dateOptionsT
+	if options != nil {
+		optionsRaw = options.raw
+	}
 	err := ctx.invoke("hegel_generate_date", func(ctx ctxT) Error {
-		e := tc.syms.GenerateDate(ctx, tc.raw, minValue, maxValue, options, &tc.outDate)
+		e := tc.syms.GenerateDate(ctx, tc.raw, minValue, maxValue, optionsRaw, &tc.outDate)
 		runtime.KeepAlive(tc)
+		runtime.KeepAlive(options)
 		return e
 	})
 	return tc.outDate, err
