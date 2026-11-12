@@ -511,7 +511,9 @@ pub(crate) fn settings_with_strings(
                     view(value.as_bytes()),
                 )
             };
-            if rc == hegel_result_t::HEGEL_E_INVALID_ARG {
+            if rc == hegel_result_t::HEGEL_E_INVALID_ARG
+                || rc == hegel_result_t::HEGEL_E_UNKNOWN_SETTING
+            {
                 return Err((index, last_error_string()));
             }
             require_ok(rc);

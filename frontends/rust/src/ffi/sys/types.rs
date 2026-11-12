@@ -78,6 +78,7 @@ pub(crate) enum hegel_result_t {
     HEGEL_E_CONCURRENT_USE = -9,
     HEGEL_E_RETRY = -10,
     HEGEL_E_NOT_FOUND = -11,
+    HEGEL_E_UNKNOWN_SETTING = -12,
 }
 
 #[repr(C)]
