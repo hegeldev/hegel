@@ -4,8 +4,8 @@ sidebar:
   label: OCaml
 ---
 
-This is a simple test workload we call the bank test, which checks ACID compliance 
-in a SQLite database and a functional correctness property.
+This is a simple test workload we call the bank test, which checks atomicity and isolation in a SQLite database and a functional correctness property
+on a model of a bank. Note that some code is omitted for brevity. See [Further reading](#further-reading) for the full code.
 
 ## Bank state
 
@@ -43,6 +43,24 @@ type t =
   }
 ```
 
+`busy_timeout_ms` is how long a connection waits on a locked database before it fails with `SQLITE_BUSY`.
+
+The database has one `accounts` table with an `account_id`, a `balance` and an `opCount` for each account.
+
+The database runs in WAL mode, which allows non-blocking reads while transfers are executing, and each read sees a consistent snapshot. Since writers are serialized, transfers must take the write lock first with `BEGIN IMMEDIATE`.
+
+`config` sets the number of accounts, the starting balance of each account, and the largest transfer amount.
+
+Transfers can have one of the following outcomes (`transfer_outcome`):
+
+- `Committed`: `COMMIT` returned successfully.
+- `Insufficient_funds`: the transaction was rolled back because the source balance was too low.
+- `Unknown`: SQLite returned an error, such as `SQLITE_BUSY`. The client does not know if the transaction committed.
+
+The test state `t` consists of the database path, a pool of idle connections, counts of attempted and committed transfers, and the total balance. Mutable fields of `t` are
+atomic or guarded by a mutex since they may be modified
+concurrently.
+
 ## Database helpers
 
 ```ocaml
@@ -60,9 +78,9 @@ let with_db path f =
     ignore (Sqlite3.db_close db)) (fun () -> f db)
 ;;
 ```
+ `step` prepares a SQL statement, binds its parameters, runs it, and returns the first column of the first row or `None` if there is no row. `select_int` returns the integer from a query. `execute` executes a statement and throws away the resulting value. `open_db` opens a connection with the busy timeout set, and `with_db` opens a connection, runs a function on it, and closes the connection.
 
-## Setting up the bank
-
+## Setup
 
 ```ocaml
 let init config =
@@ -112,6 +130,10 @@ let with_conn t f = ...
 ;;
 ```
 
+`init` creates the database in a temporary directory, switches it to WAL mode, and creates the `accounts` table with one row per account. Each account starts with the initial balance and an `opCount` of 0. `init` also records the expected total `accounts * initial_balance`. `close` closes the connections in the connection pool and deletes the database files. 
+
+`with_bank` wraps a function in `init` and `close`. `with_conn` takes an idle connection from the pool or opens a new one if the pool is empty, and returns it to the pool when the function returns.
+
 ## Transfers
 
 ```ocaml
@@ -160,8 +182,11 @@ let transfer t ~source ~dest ~amount =
 ;;
 ```
 
-## Properties to check
+`transfer` increments `attempted`, then runs one transaction. If the source balance is less than the transfer amount, the transaction is rolled back. Otherwise, `transfer` subtracts the amount from the source, adds the amount to the destination, and increments `opCount` on both accounts. If a statement raises an exception, the transaction is rolled back and the exception is propagated.
 
+If the transaction commits, `transfer` increments `committed`. Any SQLite error becomes `Unknown`.
+
+## Properties
 
 ```ocaml
 let verify_total_balance t =
@@ -211,6 +236,13 @@ let verify_no_negative t =
   then Printf.ksprintf failwith "%d account(s) have a negative balance" negative
 ;;
 ```
+
+`verify_total_balance` checks that `SUM(balance)` equals the starting total (i.e. no money was created or destroyed).
+
+`verify_ops_not_lost` checks `SUM(opCount)`. Each transfer increments two counts, so the sum must be even. The sum must be at least `2 * committed`, or a committed transfer was lost. It can be higher because some transfers can commit without the client knowing, but it cannot exceed `2 * attempted`.
+
+`verify_no_negative` checks that no account has a balance below zero. If two transfers
+both read the old balance before either withdraws, the account can be overdrawn.
 
 ## Rules and invariants
 
