@@ -16,6 +16,7 @@ jobs:
   test:
     name: test
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -63,6 +64,7 @@ jobs:
   compat:
     name: compat (ocaml ${{ matrix.ocaml }})
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     strategy:
@@ -108,6 +110,7 @@ jobs:
   docs:
     name: docs
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     permissions:
       contents: read
     steps:
@@ -136,6 +139,7 @@ jobs:
     name: smoke (macos)
     if: github.event_name != 'pull_request'
     runs-on: macos-latest
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
@@ -164,6 +168,7 @@ jobs:
   oxcaml:
     name: test (oxcaml)
     runs-on: ubuntu-latest
+    timeout-minutes: 150
     permissions:
       contents: read
     steps:

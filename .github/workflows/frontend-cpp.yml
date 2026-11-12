@@ -17,6 +17,7 @@ jobs:
   test:
     name: test (${{ matrix.compiler }}${{ matrix.stdlib && format(' with {0}', matrix.stdlib) || '' }})
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     permissions:
       contents: read
     strategy:
@@ -68,6 +69,7 @@ jobs:
     name: test (macos)
     if: github.event_name != 'pull_request'
     runs-on: macos-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -88,6 +90,7 @@ jobs:
   consumer:
     name: consumer
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -103,6 +106,7 @@ jobs:
   cxx17:
     name: cxx17
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -119,6 +123,7 @@ jobs:
   coverage:
     name: coverage
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -140,6 +145,7 @@ jobs:
   sanitizers:
     name: sanitizers
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     permissions:
       contents: read
     steps:
@@ -164,6 +170,7 @@ jobs:
   docs:
     name: docs
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -182,6 +189,7 @@ jobs:
   nix:
     name: nix
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:

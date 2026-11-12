@@ -43,6 +43,7 @@ jobs:
     name: release
     if: ${{ github.repository == 'hegeldev/hegel' && !inputs.tag }}
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     # The pushes to main use the app token below, not GITHUB_TOKEN.
     permissions:
       contents: read
@@ -124,6 +125,7 @@ jobs:
     if: ${{ needs.release.outputs.tag != '' }}
     needs: release
     runs-on: ubuntu-latest
+    timeout-minutes: 150
     permissions:
       contents: write
     env:
@@ -222,6 +224,7 @@ jobs:
     if: ${{ needs.release.outputs.tag != '' }}
     needs: release
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # The push to main uses the app token below, not GITHUB_TOKEN.
     permissions:
       contents: read
@@ -272,6 +275,7 @@ jobs:
     if: ${{ !cancelled() && github.repository == 'hegeldev/hegel' && (inputs.tag || needs.archive.result == 'success') }}
     needs: [release, archive]
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
     env:
