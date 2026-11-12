@@ -18,7 +18,8 @@ def pytest_configure(config):
 @pytest.fixture(autouse=True)
 def _port_default_profile(_quiet_default_profile) -> Iterator[None]:
     """Hypothesis's defaults, as far as Hegel has them: 100 test cases, no
-    example database, and no reproduce blobs in the output."""
+    example database, and no reproduce blobs in the output. ``too_slow`` is
+    suppressed, as in the suite's own profile (``tests/conftest.py``)."""
     hegel.Settings.register_profile(
         "hypothesis-port",
         hegel.Settings.from_profile("development"),
@@ -28,6 +29,7 @@ def _port_default_profile(_quiet_default_profile) -> Iterator[None]:
         verbosity=hegel.Verbosity.normal,
         seed=None,
         derandomize=False,
+        suppress_health_check=[hegel.HealthCheck.too_slow],
     )
     hegel.Settings.set_default_profile("hypothesis-port")
     yield
