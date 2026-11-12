@@ -12,6 +12,7 @@ jobs:
   test:
     name: test (${{ matrix.rust }}${{ startsWith(matrix.os, 'windows') && ', windows' || '' }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     permissions:
       contents: read
     strategy:
@@ -39,6 +40,7 @@ jobs:
   test-all-features:
     name: test-all-features (${{ matrix.rust }}${{ startsWith(matrix.os, 'windows') && ', windows' || '' }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     permissions:
       contents: read
     strategy:
@@ -59,6 +61,7 @@ jobs:
   compile-examples:
     name: compile-examples (${{ matrix.rust }})
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     strategy:
@@ -80,6 +83,7 @@ jobs:
   docs:
     name: docs
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -100,6 +104,7 @@ jobs:
   miri:
     name: miri
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
