@@ -154,7 +154,9 @@ pub(crate) fn check(rc: Rc) -> PyResult<()> {
         Rc::HEGEL_E_STOP_TEST => Err(StopTest::new_err(())),
         Rc::HEGEL_E_ASSUME => Err(AssumeFailed::new_err(())),
         Rc::HEGEL_E_RETRY => Err(RetrySignal::new_err(())),
-        Rc::HEGEL_E_INVALID_ARG => Err(InvalidArgument::new_err(last_error())),
+        Rc::HEGEL_E_INVALID_ARG | Rc::HEGEL_E_UNKNOWN_SETTING => {
+            Err(InvalidArgument::new_err(last_error()))
+        }
         Rc::HEGEL_E_BACKEND => Err(BackendError::new_err(last_error())),
         // A test body can't see its own test case finish, so this means a
         // TestCase (or a pool or collection holding one) outlived its test.
