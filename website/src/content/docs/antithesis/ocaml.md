@@ -255,14 +255,43 @@ module%hegel_concurrent_state_machine Machine = struct
 end
 ```
 
+We can now define the actions and invariants in our workload. In Hegel, actions on the system
+are called rules. 
 
+
+<figure class="diagram">
+<svg viewBox="0 0 724 200" width="100%" role="img" aria-label="Two rounds of the bank workload with three workers. Each round runs rules from the group bank. Workers run transfer and the verify rules concurrently, and the invariants run after every worker finishes the round.">
+<text x="0" y="65" style="font-family:var(--__sl-font);font-size:15px;fill:var(--sl-color-gray-3)">Worker 1</text>
+<text x="0" y="109" style="font-family:var(--__sl-font);font-size:15px;fill:var(--sl-color-gray-3)">Worker 2</text>
+<text x="0" y="153" style="font-family:var(--__sl-font);font-size:15px;fill:var(--sl-color-gray-3)">Worker 3</text>
+<text x="92" y="20" style="font-family:var(--__sl-font);font-size:15px;fill:var(--sl-color-white)">Round 1: group “bank”</text>
+<rect x="92" y="44" width="248" height="32" rx="6" style="fill:var(--sl-color-accent-low);stroke:var(--sl-color-accent);stroke-width:1"/>
+<text x="104" y="65" style="font-family:var(--__sl-font-mono);font-size:13px;fill:var(--sl-color-white)">transfer, transfer, transfer</text>
+<rect x="92" y="88" width="248" height="32" rx="6" style="fill:var(--sl-color-accent-low);stroke:var(--sl-color-accent);stroke-width:1"/>
+<text x="104" y="109" style="font-family:var(--__sl-font-mono);font-size:13px;fill:var(--sl-color-white)">transfer, verify_no_negative</text>
+<rect x="92" y="132" width="264" height="32" rx="6" style="fill:var(--sl-color-accent-low);stroke:var(--sl-color-accent);stroke-width:1"/>
+<text x="104" y="153" style="font-family:var(--__sl-font-mono);font-size:13px;fill:var(--sl-color-white)">verify_total_balance, transfer</text>
+<line x1="372" y1="36" x2="372" y2="174" style="stroke:var(--sl-color-accent-high);stroke-width:2"/>
+<text x="372" y="194" text-anchor="middle" style="font-family:var(--__sl-font);font-size:15px;fill:var(--sl-color-gray-3)">invariants</text>
+<text x="402" y="20" style="font-family:var(--__sl-font);font-size:15px;fill:var(--sl-color-white)">Round 2: group “bank”</text>
+<rect x="402" y="44" width="256" height="32" rx="6" style="fill:var(--sl-color-accent-low);stroke:var(--sl-color-accent);stroke-width:1"/>
+<text x="414" y="65" style="font-family:var(--__sl-font-mono);font-size:13px;fill:var(--sl-color-white)">transfer, verify_ops_not_lost</text>
+<rect x="402" y="88" width="168" height="32" rx="6" style="fill:var(--sl-color-accent-low);stroke:var(--sl-color-accent);stroke-width:1"/>
+<text x="414" y="109" style="font-family:var(--__sl-font-mono);font-size:13px;fill:var(--sl-color-white)">transfer, transfer</text>
+<rect x="402" y="132" width="248" height="32" rx="6" style="fill:var(--sl-color-accent-low);stroke:var(--sl-color-accent);stroke-width:1"/>
+<text x="414" y="153" style="font-family:var(--__sl-font-mono);font-size:13px;fill:var(--sl-color-white)">transfer, transfer, transfer</text>
+<line x1="674" y1="36" x2="674" y2="174" style="stroke:var(--sl-color-accent-high);stroke-width:2"/>
+<text x="674" y="194" text-anchor="middle" style="font-family:var(--__sl-font);font-size:15px;fill:var(--sl-color-gray-3)">invariants</text>
+<text x="704" y="109" style="font-family:var(--__sl-font);font-size:15px;fill:var(--sl-color-gray-3)">…</text>
+</svg>
+</figure>
 
 ```ocaml
 let%hegel_main workload tc =
-  with_bank workload.bank (fun bank ->
+  with_bank { accounts = 16; initial_balance = 1_000; max_amount = 10_000 } (fun bank ->
     Machine.run
       tc
-      ~init:{ accounts = 16; initial_balance = 1_000; max_amount = 10_000 }
+      ~init:bank
       ~step_count:Int.max_int
       ~min_concurrency:2
       ~max_concurrency:8)
@@ -271,11 +300,11 @@ let%hegel_main workload tc =
 let () = workload ()
 ```
 
-We can now use `let%hegel_main` to turn the workload into an standalone program, which allows us to pass test settings at command line options,
+`let%hegel_main` to turns the workload into a standalone program, which allows us to pass test settings as command line options,
 such as `dune exec workload.exe -- --seed 1 --verbosity verbose`.
 
-`init` represents the initial state of the stateful test, but since all of the state is stored in the database, we use it to store the bank
-configuration instead. `step_count` sets how many rounds execute within a test. Inside of Antithesis, this number should be very high to allow
+`init` represents the initial state of the workload. Since the account balances are stored in the database, we only pass the bank handle,
+which holds the database path, the connection pool, the transfer counters, and the configuration. `step_count` sets how many rounds execute within a test. Inside of Antithesis, this number should be very high to allow
 the fuzzer ample time to explore a branch. Finally, `min_concurrency` and `max_concurrency` set the bounds for the number of concurrent workers,
 which can be threads, domains, or any other unit of concurrency. Hegel spawns some number of workers within those bounds.
 
