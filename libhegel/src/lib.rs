@@ -1885,7 +1885,10 @@ pub unsafe extern "C" fn hegel_settings_set_from_string(
             handle.database_key = Some(database_key);
             HEGEL_OK
         }
-        Err(message) => {
+        Err(
+            crate::config::SettingError::UnknownSetting(message)
+            | crate::config::SettingError::InvalidValue(message),
+        ) => {
             set_last_error(ctx, &format!("{FN}: {message}"));
             HEGEL_E_INVALID_ARG
         }
