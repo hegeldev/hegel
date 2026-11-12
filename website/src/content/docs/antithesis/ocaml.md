@@ -15,13 +15,6 @@ type config =
   ; max_amount : int
   }
 
-type workload =
-  { bank : config
-  ; steps : int
-  ; min_concurrency : int
-  ; max_concurrency : int
-  }
-
 type transfer_outcome =
   | Committed
   | Insufficient_funds
@@ -246,7 +239,6 @@ module%hegel_concurrent_state_machine Machine = struct
     let dest = draw tc (integers ~min_value:0 ~max_value:(n - 1) ()) in
     let amount = draw tc (integers ~min_value:0 ~max_value:bank.config.max_amount ()) in
     let outcome = string_of_outcome (transfer bank ~source ~dest ~amount) in
-    event tc ~label:("transfer: " ^ outcome);
     note tc (Printf.sprintf "transfer %d from %d to %d: %s" amount source dest outcome)
   [@@rule { group = "bank"; weight = 6 }]
   ;;
@@ -263,28 +255,30 @@ module%hegel_concurrent_state_machine Machine = struct
 end
 ```
 
+
+
 ```ocaml
-let run tc workload =
+let%hegel_main workload tc =
   with_bank workload.bank (fun bank ->
     Machine.run
       tc
-      ~init:bank
-      ~step_count:workload.steps
-      ~min_concurrency:workload.min_concurrency
-      ~max_concurrency:workload.max_concurrency)
-;;
-
-let%hegel_main workload tc =
-  run
-    tc
-    { bank = { accounts = 16; initial_balance = 1_000; max_amount = 10_000 }
-    ; steps = Int.max_int
-    ; min_concurrency = 2
-    ; max_concurrency = 8
-    }
+      ~init:{ accounts = 16; initial_balance = 1_000; max_amount = 10_000 }
+      ~step_count:Int.max_int
+      ~min_concurrency:2
+      ~max_concurrency:8)
 ;;
 
 let () = workload ()
 ```
 
-For the full runnable workload, see [the Github repository](https://github.com/hegeldev/hegel/tree/main/frontends/ocaml/examples/sqlite_bank).
+We can now use `let%hegel_main` to turn the workload into an standalone program, which allows us to pass test settings at command line options,
+such as `dune exec workload.exe -- --seed 1 --verbosity verbose`.
+
+`init` represents the initial state of the stateful test, but since all of the state is stored in the database, we use it to store the bank
+configuration instead. `step_count` sets how many rounds execute within a test. Inside of Antithesis, this number should be very high to allow
+the fuzzer ample time to explore a branch. Finally, `min_concurrency` and `max_concurrency` set the bounds for the number of concurrent workers,
+which can be threads, domains, or any other unit of concurrency. Hegel spawns some number of workers within those bounds.
+
+For the full runnable workload, see [the GitHub repository](https://github.com/hegeldev/hegel/tree/main/frontends/ocaml/examples/sqlite_bank).
+
+For more information on concurrent stateful testing, see the [documentation](/ocaml/hegel/Hegel/Stateful/index.html#concurrent-stateful-testing).
