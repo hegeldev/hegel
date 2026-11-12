@@ -246,6 +246,11 @@ typedef enum {
      supply.
      */
     HEGEL_E_NOT_FOUND = -11,
+    /*
+     `hegel_settings_set_from_string` was given a key that names no
+     setting.
+     */
+    HEGEL_E_UNKNOWN_SETTING = -12,
 } hegel_result_t;
 
 /*
@@ -1340,9 +1345,10 @@ hegel_result_t hegel_settings_set_print_blob(hegel_context_t *ctx, hegel_setting
      string for none; `suppress_health_check`
      also takes `all`.
 
- Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown key or a
- value outside its vocabulary, with a message naming the key and what
- it accepts. On error the settings are unchanged.
+ Returns `HEGEL_OK`, `HEGEL_E_UNKNOWN_SETTING` for a key that names no
+ setting, or `HEGEL_E_INVALID_ARG` for a value outside its key's
+ vocabulary, with a message naming the key and what it accepts. On
+ error the settings are unchanged.
  */
 hegel_result_t hegel_settings_set_from_string(hegel_context_t *ctx,
                                               hegel_settings_t *s,

@@ -4224,9 +4224,16 @@ fn settings_set_from_string_rejects_bad_keys_and_values() {
     unsafe {
         let s = settings_for_profile(ctx, "base");
         ok(set_from_string(ctx, s, "test_cases", "7"));
+        for (key, value) in [("tests", "7"), ("extends", "ci")] {
+            assert_eq!(set_from_string(ctx, s, key, value), HEGEL_E_UNKNOWN_SETTING);
+            let error = last_error(ctx);
+            assert!(error.starts_with("hegel_settings_set_from_string: "));
+            assert!(
+                error.contains(&format!("unknown setting `{key}`")),
+                "{error}"
+            );
+        }
         for (key, value, message) in [
-            ("tests", "7", "unknown setting `tests`"),
-            ("extends", "ci", "unknown setting `extends`"),
             ("test_cases", "0", "`test_cases` expects an integer"),
             ("test_cases", "many", "`test_cases` expects an integer"),
             ("test_cases", "1_000", "`test_cases` expects an integer"),

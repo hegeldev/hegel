@@ -572,7 +572,7 @@ fn settings_set_from_string_sets_the_database_key() {
         assert_eq!((&*s).database_key.as_deref(), Some("my_test"));
         assert_eq!(
             hegel_settings_set_from_string(ctx, s, "test_location".into(), "x".into()),
-            HEGEL_E_INVALID_ARG
+            HEGEL_E_UNKNOWN_SETTING
         );
         ok(hegel_settings_free(ctx, s));
         ok(hegel_context_free(ctx));
