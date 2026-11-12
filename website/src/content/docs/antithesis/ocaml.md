@@ -39,32 +39,18 @@ type t =
 ```
 
 ```ocaml
-let step db sql ?(params = []) () =
-  let stmt = Sqlite3.prepare db sql in
-  Fun.protect
-    ~finally:(fun () -> ignore (Sqlite3.finalize stmt))
-    (fun () ->
-       Sqlite3.Rc.check (Sqlite3.bind_values stmt params);
-       match Sqlite3.step stmt with
-       | Sqlite3.Rc.ROW -> Some (Sqlite3.column_int stmt 0)
-       | rc ->
-         Sqlite3.Rc.check rc;
-         None)
-;;
+let step db sql ?(params = []) () = ...
 
 let int n = Sqlite3.Data.INT (Int64.of_int n)
 let select_int db sql ?params () = Option.get (step db sql ?params ())
 let execute db sql ?params () = ignore (step db sql ?params ())
 
-let open_db path =
-  let db = Sqlite3.db_open ~mutex:`NO path in
-  Sqlite3.busy_timeout db busy_timeout_ms;
-  db
-;;
+let open_db path = ...
 
 let with_db path f =
   let db = open_db path in
-  Fun.protect ~finally:(fun () -> ignore (Sqlite3.db_close db)) (fun () -> f db)
+  Fun.protect ~finally:(fun () -> 
+    ignore (Sqlite3.db_close db)) (fun () -> f db)
 ;;
 ```
 
@@ -229,10 +215,6 @@ let verify_no_negative t =
 
 ```ocaml
 module%hegel_concurrent_state_machine Machine = struct
-  let total_balance_preserved _tc bank = verify_total_balance bank [@@invariant]
-  let no_committed_transfer_lost _tc bank = verify_ops_not_lost bank [@@invariant]
-  let no_negative_balance _tc bank = verify_no_negative bank [@@invariant]
-
   let transfer tc () bank =
     let n = bank.config.accounts in
     let source = draw tc (integers ~min_value:0 ~max_value:(n - 1) ()) in
@@ -252,11 +234,56 @@ module%hegel_concurrent_state_machine Machine = struct
   ;;
 
   let verify_no_negative _tc () bank = verify_no_negative bank [@@rule { group = "bank" }]
+
+  let total_balance_preserved _tc bank = verify_total_balance bank [@@invariant]
+  let no_committed_transfer_lost _tc bank = verify_ops_not_lost bank [@@invariant { always_check = true }]
+  let no_negative_balance _tc bank = verify_no_negative bank [@@invariant]
 end
 ```
 
-We can now define the actions and invariants in our workload. In Hegel, actions on the system
-are called rules. 
+We can now define our workload. 
+
+We first define actions on the state, which are called rules in Hegel. Rules can belong to
+one or more groups. Only rules in the same group may execute concurrently. If no group is provided,
+the rule belongs to a default group. In this case, all the rules belong to the `bank` group for
+demonstration, but the group could have been omitted. Rules also have a weight, which gives Hegel
+a hint of how frequently a rule should run relative to other rules in its group(s). The default
+weight is 1.
+
+Invariants are statements about the system that should always be true. By default, invariants 
+are sampled for performance. For example, if we had 1 million accounts instead of 16, we might 
+not want check `no_negative_balance` after every single round because it requires checking all 
+accounts. Setting `always_check = true` forces the invariant to always be checked between rounds.
+
+Notice that we define the verification functions both as invariants and rules. Invariants check
+the state of the system at some settled state when no actions are running. When we define the 
+verification function as a rule, they can run while other actions are mutating the state.
+
+For example, the invariant `total_balance_preserved` checks that after all transfers are done,
+the total amount of money has not changed. The rule `verify_total_balance` checks that while
+transfers are executing, we never see a state in which the total amount of money has changed.
+
+```ocaml
+let%hegel_main workload tc =
+  with_bank { accounts = 16; initial_balance = 1_000; max_amount = 10_000 } (fun bank ->
+    Machine.run
+      tc
+      ~init:bank
+      ~step_count:Int.max_int
+      ~min_concurrency:2
+      ~max_concurrency:8)
+;;
+
+let () = workload ()
+```
+
+`let%hegel_main` to turns the workload into a standalone program, which allows us to pass test settings as command line options,
+such as `dune exec workload.exe -- --seed 1 --verbosity verbose`.
+
+`init` represents the initial state of the workload. Since the account balances are stored in the database, we only pass the bank handle,
+which holds the database path, the connection pool, the transfer counters, and the configuration. `step_count` sets how many rounds execute within a test. Inside of Antithesis, this number should be very high to allow
+the fuzzer ample time to explore a branch. Finally, `min_concurrency` and `max_concurrency` set the bounds for the number of concurrent workers,
+which can be threads, domains, or any other unit of concurrency. Hegel spawns some number of workers within those bounds.
 
 
 <figure class="diagram">
@@ -286,27 +313,9 @@ are called rules.
 </svg>
 </figure>
 
-```ocaml
-let%hegel_main workload tc =
-  with_bank { accounts = 16; initial_balance = 1_000; max_amount = 10_000 } (fun bank ->
-    Machine.run
-      tc
-      ~init:bank
-      ~step_count:Int.max_int
-      ~min_concurrency:2
-      ~max_concurrency:8)
-;;
-
-let () = workload ()
-```
-
-`let%hegel_main` to turns the workload into a standalone program, which allows us to pass test settings as command line options,
-such as `dune exec workload.exe -- --seed 1 --verbosity verbose`.
-
-`init` represents the initial state of the workload. Since the account balances are stored in the database, we only pass the bank handle,
-which holds the database path, the connection pool, the transfer counters, and the configuration. `step_count` sets how many rounds execute within a test. Inside of Antithesis, this number should be very high to allow
-the fuzzer ample time to explore a branch. Finally, `min_concurrency` and `max_concurrency` set the bounds for the number of concurrent workers,
-which can be threads, domains, or any other unit of concurrency. Hegel spawns some number of workers within those bounds.
+The diagram above shows how the workload is executed. In each round, Hegel chooses a group, then gives each worker a set of rules to run. 
+Each worker executes its rules concurrently with other workers. Once all workers have finished executing their rules in a round, Hegel runs
+the invariants.
 
 For the full runnable workload, see [the GitHub repository](https://github.com/hegeldev/hegel/tree/main/frontends/ocaml/examples/sqlite_bank).
 
