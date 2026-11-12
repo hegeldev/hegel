@@ -167,9 +167,10 @@ public interface Libhegel {
 
     /**
      * {@code hegel_settings_set_from_string}: set one setting from text, using its {@code
-     * hegel.toml} key and the value syntax of that key. Returns {@link
-     * Abi#E_INVALID_ARG} (with the message in {@link #lastErrorMessage()}) for an unknown key or a
-     * value outside its vocabulary, and leaves the settings unchanged.
+     * hegel.toml} key and the value syntax of that key. Returns {@link Abi#E_UNKNOWN_SETTING} for a
+     * key that names no setting, or {@link Abi#E_INVALID_ARG} for a value outside its key's
+     * vocabulary, with the message in {@link #lastErrorMessage()}, and leaves the settings
+     * unchanged.
      */
     int settingsFromString(long s, String key, String value);
 
