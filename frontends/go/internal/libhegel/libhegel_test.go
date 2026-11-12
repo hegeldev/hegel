@@ -146,9 +146,13 @@ func TestSettingsSetFromString(t *testing.T) {
 	if got, err := s.GetTestCases(ctx); got != 50 || err != nil {
 		t.Fatalf("test cases = %v, %v", got, err)
 	}
-	// An unknown key is rejected with E_INVALID_ARG and leaves settings unchanged.
-	if err := s.SetFromString(ctx, "bogus_key", "x"); !errors.Is(err, E_INVALID_ARG) {
+	// An unknown key and an invalid value are rejected with their own codes and
+	// leave settings unchanged.
+	if err := s.SetFromString(ctx, "bogus_key", "x"); !errors.Is(err, E_UNKNOWN_SETTING) {
 		t.Fatalf("unknown key = %v", err)
+	}
+	if err := s.SetFromString(ctx, "test_cases", "many"); !errors.Is(err, E_INVALID_ARG) {
+		t.Fatalf("invalid value = %v", err)
 	}
 	if got, err := s.GetTestCases(ctx); got != 50 || err != nil {
 		t.Fatalf("test cases after failed set = %v, %v", got, err)
