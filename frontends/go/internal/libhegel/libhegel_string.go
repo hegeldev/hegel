@@ -20,15 +20,16 @@ func _() {
 	_ = x[E_CONCURRENT_USE - -9]
 	_ = x[E_RETRY - -10]
 	_ = x[E_NOT_FOUND - -11]
+	_ = x[E_UNKNOWN_SETTING - -12]
 }
 
-const _Error_name = "E_NOT_FOUNDE_RETRYE_CONCURRENT_USEE_INTERNALE_NOT_COMPLETEE_ALREADY_COMPLETEE_INVALID_ARGE_INVALID_HANDLEE_BACKENDE_ASSUMEE_STOP_TESTOK"
+const _Error_name = "E_UNKNOWN_SETTINGE_NOT_FOUNDE_RETRYE_CONCURRENT_USEE_INTERNALE_NOT_COMPLETEE_ALREADY_COMPLETEE_INVALID_ARGE_INVALID_HANDLEE_BACKENDE_ASSUMEE_STOP_TESTOK"
 
-var _Error_index = [...]uint8{0, 11, 18, 34, 44, 58, 76, 89, 105, 114, 122, 133, 135}
+var _Error_index = [...]uint8{0, 17, 28, 35, 51, 61, 75, 93, 106, 122, 131, 139, 150, 152}
 
 func (i Error) String() string {
-	idx := int(i) - -11
-	if i < -11 || idx >= len(_Error_index)-1 {
+	idx := int(i) - -12
+	if i < -12 || idx >= len(_Error_index)-1 {
 		return "Error(" + strconv.FormatInt(int64(i), 10) + ")"
 	}
 	return _Error_name[_Error_index[idx]:_Error_index[idx+1]]
