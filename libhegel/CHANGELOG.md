@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.51.3 - 2026-11-13
+
+Internal refactoring of two error paths, with no change in behavior.
+
 ## 0.51.2 - 2026-11-13
 
 Internal refactoring.

@@ -49,6 +49,7 @@ BUILDS: dict[str, list[list[str]]] = {
         ["{scratch}/consumer"],
     ],
     "java": [["just", "build"]],
+    "csharp": [["just", "build"]],
     "ocaml": [["just", "build-libhegel"], ["opam", "exec", "--", "dune", "build", "@install"]],
     "go": [["go", "build", "./..."], ["go", "vet", "./..."]],
 }

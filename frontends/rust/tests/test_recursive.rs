@@ -1,11 +1,12 @@
 mod common;
 
 use common::utils::{
-    assert_all_examples, assert_simple_property, check_can_generate_examples, expect_panic,
-    find_any, minimal,
+    Minimal, assert_all_examples, assert_simple_property, check_can_generate_examples,
+    expect_panic, find_any, minimal,
 };
 use hegel::generators::{self as gs, Generator};
 use hegel::{Hegel, Settings, TestCase};
+use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, PartialEq)]
 enum Tree {
@@ -221,6 +222,59 @@ fn test_recursive_minimal_binary_branch_is_two_leaves() {
         minimal(bin_trees!(), |t| matches!(t, BinTree::Branch(_, _))),
         BinTree::Branch(Box::new(BinTree::Leaf), Box::new(BinTree::Leaf))
     );
+}
+
+#[test]
+fn test_recursive_minimal_branch_of_one_or_two_children_has_one() {
+    for seed in 1..=60 {
+        let chains = gs::recursive(gs::just(Tree::Leaf(0)), |subtrees| {
+            gs::vecs(subtrees).min_size(1).max_size(2).map(Tree::Branch)
+        });
+        assert_eq!(
+            Minimal::new(chains, |t| matches!(t, Tree::Branch(_)))
+                .seed(seed)
+                .run(),
+            Tree::Branch(vec![Tree::Leaf(0)]),
+            "seed {seed}"
+        );
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct Tagged {
+    tags: BTreeSet<i32>,
+    pairs: Vec<(i32, Tagged)>,
+}
+
+#[test]
+fn test_recursive_shrinks_a_value_found_after_abandoned_attempts() {
+    for seed in [5, 118, 125, 128, 155, 232] {
+        let untagged = gs::btree_sets(gs::integers::<i32>()).map(|tags| Tagged {
+            tags,
+            pairs: vec![],
+        });
+        let tagged = gs::recursive(untagged, |nested| {
+            hegel::tuples!(
+                gs::btree_sets(gs::integers::<i32>()),
+                gs::vecs(hegel::tuples!(gs::integers::<i32>(), nested))
+            )
+            .map(|(tags, pairs)| Tagged { tags, pairs })
+        });
+        let empty = Tagged {
+            tags: BTreeSet::new(),
+            pairs: vec![],
+        };
+        assert_eq!(
+            Minimal::new(tagged, |t| !t.pairs.is_empty())
+                .seed(seed)
+                .run(),
+            Tagged {
+                tags: BTreeSet::new(),
+                pairs: vec![(0, empty)],
+            },
+            "seed {seed}"
+        );
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
