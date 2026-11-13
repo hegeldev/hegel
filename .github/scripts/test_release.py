@@ -23,7 +23,7 @@ import json
 import re
 import subprocess
 import release
-from release import CPP, GO, JAVA, LIBHEGEL, OCAML, PYTHON, RUST, TYPESCRIPT
+from release import CPP, CSHARP, GO, JAVA, LIBHEGEL, OCAML, PYTHON, RUST, TYPESCRIPT
 
 RUST_CARGO = """\
 [package]
@@ -145,6 +145,28 @@ JAVA_MODULE_POM = """\
 </project>
 """
 
+# The C# frontend's version is the <Version> of Directory.Build.props; the
+# package references below carry versions of their own that must not move.
+CSHARP_PROPS = """\
+<Project>
+  <PropertyGroup>
+    <Version>0.1.0</Version>
+    <LangVersion>13</LangVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageVersion Include="xunit" Version="2.9.3" />
+  </ItemGroup>
+</Project>
+"""
+
+CSHARP_README = """\
+<PackageReference Include="Hegel" Version="0.1.0" />
+
+dotnet add package Hegel --version 0.1.0
+
+Requires .NET 8.0.1.0 or 10.1.0.
+"""
+
 # The OCaml frontend's version is the dune-project `(version ...)`, which
 # dune copies into each generated .opam file.
 OCAML_DUNE_PROJECT = """\
@@ -238,6 +260,8 @@ class ApplyVersionBumpTest(unittest.TestCase):
             ("frontends/java/hegel/pom.xml", JAVA_MODULE_POM),
             ("frontends/java/hegel-jna/pom.xml", JAVA_MODULE_POM),
             ("frontends/java/README.md", JAVA_README),
+            ("frontends/csharp/Directory.Build.props", CSHARP_PROPS),
+            ("frontends/csharp/README.md", CSHARP_README),
             ("frontends/ocaml/dune-project", OCAML_DUNE_PROJECT),
             *((f"frontends/ocaml/{name}.opam", ocaml_opam(name)) for name in OCAML.crates),
         ]:
@@ -290,6 +314,20 @@ class ApplyVersionBumpTest(unittest.TestCase):
         )
         for rel in JAVA.manifests[1:]:
             self.assertEqual(self.read(rel), JAVA_MODULE_POM.replace("0.10.2", "0.10.3"), rel)
+
+    def test_bumps_the_msbuild_props_version_and_nothing_else(self) -> None:
+        # Only the <Version> element moves: package reference versions stay.
+        release.apply_version_bump(self.root, {CSHARP: "0.1.1"})
+        self.assertEqual(
+            self.read("frontends/csharp/Directory.Build.props"),
+            CSHARP_PROPS.replace("<Version>0.1.0</Version>", "<Version>0.1.1</Version>"),
+        )
+        self.assertEqual(
+            self.read("frontends/csharp/README.md"),
+            CSHARP_README.replace('Version="0.1.0"', 'Version="0.1.1"').replace(
+                "--version 0.1.0", "--version 0.1.1"
+            ),
+        )
 
     def test_rewrites_the_version_in_install_docs(self) -> None:
         # Only whole mentions of the old version move, not longer numbers
@@ -440,6 +478,7 @@ CURRENT = {
     TYPESCRIPT: "0.4.10",
     CPP: "0.13.1",
     JAVA: "0.10.2",
+    CSHARP: "0.1.0",
     OCAML: "0.26.3",
     GO: "0.9.28",
 }
@@ -471,6 +510,7 @@ class PlanReleaseTest(unittest.TestCase):
                     "This release updates the bundled libhegel engine to 0.5.1.",
                 ),
                 JAVA: ("0.10.3", "This release updates the bundled libhegel engine to 0.5.1."),
+                CSHARP: ("0.1.1", "This release updates the bundled libhegel engine to 0.5.1."),
                 GO: ("0.9.29", "This release updates the bundled libhegel engine to 0.5.1."),
             },
         )
@@ -555,6 +595,17 @@ class CurrentVersionTest(unittest.TestCase):
             manifest.write_text(JAVA_MODULE_POM)
             self.assertEqual(release.current_version(manifest), "0.10.2")
 
+    def test_reads_an_msbuild_props_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = Path(tmp) / "Directory.Build.props"
+            manifest.write_text(CSHARP_PROPS)
+            self.assertEqual(release.current_version(manifest), "0.1.0")
+            manifest.write_text("<Project />\n")
+            with self.assertRaises(ValueError):
+                release.current_version(manifest)
+            with self.assertRaises(ValueError):
+                release.set_version(manifest, "0.1.1")
+
     def test_reads_a_dune_project_and_an_opam_version(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             dune_project = Path(tmp) / "dune-project"
@@ -573,6 +624,7 @@ class ComponentTest(unittest.TestCase):
         self.assertEqual(TYPESCRIPT.tag("0.4.11"), "frontends/typescript/0.4.11")
         self.assertEqual(CPP.tag("0.13.2"), "frontends/cpp/0.13.2")
         self.assertEqual(JAVA.tag("0.10.3"), "frontends/java/0.10.3")
+        self.assertEqual(CSHARP.tag("0.1.1"), "frontends/csharp/0.1.1")
         self.assertEqual(OCAML.tag("0.26.4"), "frontends/ocaml/0.26.4")
 
     def test_go_tags_carry_the_v_a_go_module_version_needs(self) -> None:
@@ -616,10 +668,22 @@ class ComponentTest(unittest.TestCase):
 
     def test_crates_match_the_manifests(self) -> None:
         for component in release.COMPONENTS:
-            names = {
-                release_name(release.ROOT / manifest) for manifest in component.manifests
-            }
+            names = set().union(
+                *(release_names(release.ROOT / manifest) for manifest in component.manifests)
+            )
             self.assertEqual(names, set(component.crates), component.path)
+
+
+def release_names(manifest: Path) -> set[str]:
+    if manifest.suffix == ".props":
+        # Directory.Build.props carries the version; the package ids are the
+        # <PackageId>s of the packable projects under src/.
+        projects = [*manifest.parent.glob("src/*/*.csproj"), *manifest.parent.glob("src/*/*.fsproj")]
+        return {
+            re.search(r"<PackageId>([^<]+)</PackageId>", project.read_text()).group(1)
+            for project in projects
+        }
+    return {release_name(manifest)}
 
 
 def release_name(manifest: Path) -> str:

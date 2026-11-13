@@ -170,6 +170,11 @@ pub struct RecursionState {
     pub attempt: u64,
     pub leaves: u64,
     pub base_span_depth: usize,
+    /// How many spans the test case had recorded when the current attempt
+    /// began. The attempt's own top-level spans are the ones recorded from
+    /// here on at `base_span_depth`: `draws::recursion_retry` and
+    /// `draws::recursion_finish` discard them all when they abandon it.
+    pub attempt_spans: usize,
     /// The leaf count this draw aims for, drawn once at creation (see
     /// `draws::new_recursion_state`): 1 to aim for a minimal value, or a
     /// uniform sample from `[2, max_leaves]` to aim for a value of that
@@ -2659,6 +2664,21 @@ impl NativeTestCase {
         }
     }
 
+    /// Mark as discarded every span opened `depth` deep since the span at
+    /// index `first`: the top-level spans of an attempt the caller has
+    /// abandoned, whichever of them were closed normally at the time, so
+    /// that the shrinker can delete the attempt as a whole.
+    pub(crate) fn discard_spans_since(&mut self, first: usize, depth: usize) {
+        for idx in first..self.spans.len() {
+            if let Some(span) = self.spans.get_mut(idx) {
+                if span.depth as usize == depth {
+                    span.discarded = true;
+                    self.has_discards = true;
+                }
+            }
+        }
+    }
+
     /// Set the span's end and credit its draws to its parent's closed
     /// children, for [`Self::draw_address`].
     fn close_span(&mut self, idx: usize, end: usize) {
@@ -3277,6 +3297,19 @@ impl NativeTestCase {
     /// `p = 1 - 2^-32`) are honored. Routed here from `generate_boolean`.
     pub fn weighted_precise(&mut self, p: f64, forced: Option<bool>) -> Result<bool, EngineError> {
         self.weighted_with(p, forced, weighted_boolean_sample_precise)
+    }
+
+    /// Record `decision`, a boolean the engine worked out for itself, as a
+    /// choice: generation takes the decision as given, while a replay may
+    /// hold a different value for the draw and overrules it. That hands the
+    /// shrinker a decision that would otherwise be a fixed consequence of
+    /// the choices before it.
+    pub(crate) fn decided(
+        &mut self,
+        decision: bool,
+        forced: Option<bool>,
+    ) -> Result<bool, EngineError> {
+        self.weighted_with(0.5, forced, move |_, _| decision)
     }
 
     fn weighted_with(

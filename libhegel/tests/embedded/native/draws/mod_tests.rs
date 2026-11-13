@@ -1,6 +1,6 @@
 use super::*;
 use crate::native::core::state::{boolean_threshold, length_p_continue};
-use crate::native::core::{ManyState, NativeTestCase, RecursionState};
+use crate::native::core::{ChoiceValue, ManyState, NativeTestCase, RecursionState};
 use crate::native::rng::EngineRng;
 
 fn float_spec(width: u32, min_value: f64, max_value: f64) -> FloatSpec {
@@ -227,6 +227,7 @@ fn recursion_state(
         attempt: 0,
         leaves: 0,
         base_span_depth: ntc.span_depth(),
+        attempt_spans: ntc.spans.len(),
         target,
         branch_probability: 0.0,
         closed_children: 0,
@@ -536,6 +537,106 @@ fn recursion_retry_discards_partial_observations_and_halves_the_target() {
         state.branch_probability,
         recursion_branch_probability(3.0, 20)
     );
+}
+
+/// Draw a chain of `branches` one-child branches ending in a leaf, the
+/// way a frontend walks the recursion protocol, each node in a span.
+fn draw_chain(ntc: &mut NativeTestCase, state: &mut RecursionState, branches: u64) {
+    for depth in 0..=branches {
+        ntc.start_span(17);
+        state.observe_decision(depth);
+        if depth < branches {
+            state.observe_branch(depth);
+        }
+    }
+    state.leaves = 1;
+    ntc.weighted(0.5, None).unwrap();
+    for _ in 0..=branches {
+        ntc.stop_span(false);
+    }
+}
+
+fn discarded_ranges(ntc: &NativeTestCase) -> Vec<(usize, usize)> {
+    ntc.spans
+        .iter()
+        .filter(|span| span.discarded)
+        .map(|span| (span.start, span.end))
+        .collect()
+}
+
+#[test]
+fn recursion_finish_records_its_verdict_and_discards_the_whole_repriced_attempt() {
+    let mut ntc = NativeTestCase::new_random(EngineRng::seeded(41)).unwrap();
+    let mut state = recursion_state(32, 100, 1, &ntc);
+
+    draw_chain(&mut ntc, &mut state, 6);
+    assert!(!recursion_finish(&mut ntc, &mut state).unwrap());
+    assert_eq!(ntc.nodes.len(), 2);
+    assert!(!ntc.nodes[1].was_forced);
+    assert!(ntc.has_discards);
+    assert_eq!(discarded_ranges(&ntc), [(0, 1), (1, 2)]);
+
+    draw_chain(&mut ntc, &mut state, 0);
+    assert!(recursion_finish(&mut ntc, &mut state).unwrap());
+    assert_eq!(ntc.nodes.len(), 4);
+    assert!(!ntc.nodes[3].was_forced);
+    assert_eq!(discarded_ranges(&ntc), [(0, 1), (1, 2)]);
+}
+
+#[test]
+fn recursion_finish_forces_its_verdict_once_repricing_is_exhausted() {
+    let mut ntc = NativeTestCase::new_random(EngineRng::seeded(43)).unwrap();
+    let mut state = recursion_state(32, 100, 1, &ntc);
+    for _ in 0..RECURSION_MAX_REPRICES {
+        draw_chain(&mut ntc, &mut state, 1);
+        assert!(!recursion_finish(&mut ntc, &mut state).unwrap());
+    }
+    draw_chain(&mut ntc, &mut state, 1);
+    assert!(recursion_finish(&mut ntc, &mut state).unwrap());
+    let verdict = ntc.nodes.last().unwrap();
+    assert!(verdict.was_forced);
+    assert_eq!(verdict.value(), ChoiceValue::Boolean(false));
+}
+
+#[test]
+fn a_replay_overrules_the_verdict_of_recursion_finish() {
+    let accept = [ChoiceValue::Boolean(true), ChoiceValue::Boolean(false)];
+    let mut ntc = NativeTestCase::for_choices(&accept, None, None);
+    let mut state = recursion_state(32, 100, 1, &ntc);
+    draw_chain(&mut ntc, &mut state, 6);
+    assert!(recursion_finish(&mut ntc, &mut state).unwrap());
+    assert_eq!(state.reprices, 0);
+
+    let redraw = [ChoiceValue::Boolean(true), ChoiceValue::Boolean(true)];
+    let mut ntc = NativeTestCase::for_choices(&redraw, None, None);
+    let mut state = recursion_state(32, 100, 1, &ntc);
+    draw_chain(&mut ntc, &mut state, 0);
+    assert!(!recursion_finish(&mut ntc, &mut state).unwrap());
+    assert_eq!(state.reprices, 1);
+}
+
+#[test]
+fn recursion_retry_discards_every_span_of_the_abandoned_attempt() {
+    let mut ntc = NativeTestCase::new_random(EngineRng::seeded(47)).unwrap();
+    let mut state = recursion_state(32, 100, 40, &ntc);
+    ntc.start_span(17);
+    ntc.weighted(0.5, None).unwrap();
+    ntc.stop_span(false);
+    ntc.start_span(17);
+    ntc.start_span(17);
+    ntc.weighted(0.5, None).unwrap();
+
+    recursion_retry(&mut ntc, &mut state).unwrap();
+    assert!(ntc.has_discards);
+    assert_eq!(discarded_ranges(&ntc), [(0, 1), (1, 2), (1, 2)]);
+
+    ntc.start_span(17);
+    ntc.weighted(0.5, None).unwrap();
+    ntc.stop_span(false);
+    state.observe_decision(0);
+    state.leaves = 20;
+    assert!(recursion_finish(&mut ntc, &mut state).unwrap());
+    assert_eq!(discarded_ranges(&ntc), [(0, 1), (1, 2), (1, 2)]);
 }
 
 #[test]
