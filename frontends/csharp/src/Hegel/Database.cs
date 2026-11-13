@@ -28,7 +28,11 @@ public sealed class Database : IEquatable<Database>
     public static Database Disabled { get; } = new(Kind.Disabled, null);
 
     /// <summary>A database in the directory at <paramref name="path"/>.</summary>
-    public static Database At(string path) => new(Kind.Path, path ?? throw new ArgumentNullException(nameof(path)));
+    public static Database At(string path)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(path);
+        return new(Kind.Path, path);
+    }
 
     /// <summary>The directory, when this is a <see cref="At"/> database.</summary>
     public string? Path { get; }
