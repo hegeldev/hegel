@@ -37,6 +37,20 @@ API references are stored in Git LFS. `GIT_CONFIG lfs.fetchexclude=website`
 stops a machine with git-lfs installed from downloading them; the build never
 needs them.
 
+To fetch a release without git, use its source archive, which holds only the
+library and libhegel. The declaration is otherwise the same:
+
+```cmake
+FetchContent_Declare(
+    hegel
+    URL https://github.com/hegeldev/hegel/releases/download/frontends/cpp/0.17.1/hegel-cpp-0.17.1.tar.gz
+    SOURCE_SUBDIR frontends/cpp
+)
+```
+
+The archive's SHA-256, for `URL_HASH`, is in the `.sha256` file beside it on
+the [release](https://github.com/hegeldev/hegel/releases).
+
 The library lives in the [hegeldev/hegel](https://github.com/hegeldev/hegel)
 repository next to [libhegel](https://github.com/hegeldev/hegel/tree/main/libhegel),
 Hegel's native engine, which the build compiles with `cargo` (a Rust

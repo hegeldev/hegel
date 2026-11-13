@@ -117,3 +117,19 @@ jobs:
           components: miri
       - name: Run miri
         run: just rust::check-miri
+
+  # The frontend built from the source archive its release attaches to
+  # GitHub (scripts/check-source-archive.py), with nothing of the checkout.
+  source-archive:
+    name: source-archive
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - name: Build from the source archive
+        run: just check-source-archive rust
