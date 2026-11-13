@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.1 - 2026-11-13
+
+This patch adds `PauseFaults` to `[Invariant]`. An invariant declared with `[Invariant(PauseFaults = true)]` runs every check (on the initial state, at the sampled join points and on the final state, sequentially or with `MaxConcurrency` above one) with fault injection paused: inside [Antithesis](https://antithesis.com/) the engine runs the fault-control program before the invariant and again after it, even when the invariant throws, so no fault lands in the middle of the check. It combines with `AlwaysRun`, and outside Antithesis it has no effect.
+
+```csharp
+[Invariant(PauseFaults = true)]
+internal void ReplicasAgree(TestCase tc) => Assert.Single(nodes.Select(n => n.State).Distinct());
+```
+
 ## 0.2.0 - 2026-11-13
 
 Hegel for .NET is now the Hegel project's own frontend, continuing the `Hegel` package's version numbering with a rewrite against the current libhegel engine. The package is driven through the engine's C ABI, with the API the other Hegel frontends share.

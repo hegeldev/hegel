@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.51.5 - 2026-11-13
+
+This patch adds `hegel_pause_faults` and `hegel_unpause_faults` to the C ABI. A frontend brackets each stateful invariant declared with `pause_faults` with this pair, so that inside [Antithesis](https://antithesis.com/) no fault lands in the middle of the check. Antithesis names its fault-control program in the `ANTITHESIS_FAULT_CONTROL` environment variable: `hegel_pause_faults` runs that program with `--pause`, `hegel_unpause_faults` runs it with `--unpause`, and each waits for it to exit. When the variable is unset, or names nothing that exists, both calls do nothing, so a test declaring `pause_faults` runs the same outside Antithesis. A program that exists but cannot be run, or exits with a non-zero status, fails the call with `HEGEL_E_INVALID_ARG`, and `hegel_context_last_error` names the program and what went wrong.
+
 ## 0.51.4 - 2026-11-13
 
 This patch fixes two cases where a failing test reported a recursive value that was not fully shrunk.
