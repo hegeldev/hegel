@@ -1089,6 +1089,31 @@ namespace hegel::internal {
                            "hegel_stop_span");
     }
 
+    void pause_faults(const TestCase& tc) {
+        impl::DrawScope scope(tc);
+        scope.raise_for_rc(hegel_pause_faults(scope.ctx, scope.tc),
+                           "hegel_pause_faults");
+    }
+
+    void unpause_faults(const TestCase& tc) {
+        impl::DrawScope scope(tc);
+        scope.raise_for_rc(hegel_unpause_faults(scope.ctx, scope.tc),
+                           "hegel_unpause_faults");
+    }
+
+    PauseFaultsScope::PauseFaultsScope(const TestCase& tc, bool enabled)
+        : tc_(tc), enabled_(enabled) {
+        if (enabled_) {
+            pause_faults(tc_);
+        }
+    }
+
+    PauseFaultsScope::~PauseFaultsScope() {
+        if (enabled_) {
+            unpause_faults(tc_);
+        }
+    }
+
     int64_t draw_integer(const TestCase& tc, int64_t min_value,
                          int64_t max_value) {
         impl::DrawScope scope(tc);

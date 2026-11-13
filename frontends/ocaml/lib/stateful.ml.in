@@ -87,10 +87,16 @@ module Invariant = struct
     { name : string
     ; inv : Internal.test_case -> 'state -> unit
     ; always_check : bool
+    ; pause_faults : bool
     }
 
-  let create ~name ~inv ?(always_check = false) () = { name; inv; always_check }
+  let create ~name ~inv ?(always_check = false) ?(pause_faults = false) () =
+    { name; inv; always_check; pause_faults }
+  ;;
+
   let name invariant = invariant.name
+  let always_check invariant = invariant.always_check
+  let pause_faults invariant = invariant.pause_faults
 end
 
 let run_rules tc ~state_machine ~worker_index LOCAL_CTX ~heading ~rule =
@@ -123,6 +129,7 @@ type rule_info =
 type invariant_info = Internal.invariant_info =
   { name : string
   ; always_check : bool
+  ; pause_faults : bool
   }
 
 let unique_groups rules =
@@ -149,7 +156,10 @@ let to_engine_rules rules names =
 let to_inv_record invariants =
   List.map
     (fun (inv : _ Invariant.t) : invariant_info ->
-       { name = inv.name; always_check = inv.always_check })
+       { name = inv.name
+       ; always_check = inv.always_check
+       ; pause_faults = inv.pause_faults
+       })
     invariants
 ;;
 
@@ -269,13 +279,15 @@ let run_machine
                 ~state_machine
                 ~invariant_index:i
          then (
+           if invariant.pause_faults then Internal.pause_faults tc;
            match
              if Internal.should_print tc
              then Internal.with_block tc ~indent:2 (fun tc -> check_invariant i tc)
              else check_invariant i tc
            with
-           | () -> ()
+           | () -> if invariant.pause_faults then Internal.unpause_faults tc
            | exception e ->
+             if invariant.pause_faults then Internal.unpause_faults tc;
              Internal.note tc (Printf.sprintf "Invariant %s violated %s." invariant.name where);
              raise e))
       0

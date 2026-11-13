@@ -66,6 +66,8 @@ internal interface IDataSource
     bool OwnsGrammar(GrammarHandle grammar);
     void StartSpan(ulong label);
     void StopSpan(bool discard);
+    void PauseFaults();
+    void UnpauseFaults();
     nint NewCollection(ulong minSize, ulong maxSize);
     bool CollectionMore(nint id);
     void CollectionReject(nint id, string? why);

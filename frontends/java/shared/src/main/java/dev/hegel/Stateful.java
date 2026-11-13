@@ -52,10 +52,12 @@ import java.util.concurrent.LinkedBlockingQueue;
  * given rule each invariant runs with probability {@code 1 / stepCount}, so its expected cost per
  * test case stays constant as the step count grows. The step count is the target number of rules
  * per test case, {@link #DEFAULT_STEP_COUNT} unless {@link Options#stepCount} sets another. Mark
- * an invariant {@code @Invariant(alwaysRun = true)} to check it after every rule instead. Give a
- * rule that should run more often than the others a {@link Rule#weight() weight}: {@code
- * @Rule(weight = 5)} is offered about five times as often as a plain {@code @Rule}. Use a {@link
- * Pool} to act on previously generated values.
+ * an invariant {@code @Invariant(alwaysRun = true)} to check it after every rule instead, and
+ * {@code @Invariant(pauseFaults = true)} to pause fault injection while it runs when the test
+ * executes inside <a href="https://antithesis.com/">Antithesis</a> (see {@link
+ * Invariant#pauseFaults}). Give a rule that should run more often than the others a {@link
+ * Rule#weight() weight}: {@code @Rule(weight = 5)} is offered about five times as often as a plain
+ * {@code @Rule}. Use a {@link Pool} to act on previously generated values.
  *
  * <h2>Concurrent machines</h2>
  *
@@ -652,14 +654,29 @@ public final class Stateful {
         }
     }
 
-    /** Run the invariants at a join point: all of them, or only those the engine samples in. */
+    /**
+     * Run the invariants at a join point: all of them, or only those the engine samples in. An
+     * invariant declared with {@link Invariant#pauseFaults} is bracketed by {@code
+     * hegel_pause_faults} / {@code hegel_unpause_faults}, the unpause in a {@code finally} so a
+     * failing invariant resumes fault injection too.
+     */
     private static void checkInvariants(
             Object machine, List<Method> invariants, TestCase tc, long machineId, boolean sampled) {
         for (int i = 0; i < invariants.size(); i++) {
             if (sampled && !tc.stateMachineShouldCheckInvariant(machineId, i)) {
                 continue;
             }
-            invokeMachineMethod(machine, invariants.get(i), tc);
+            Method invariant = invariants.get(i);
+            if (!invariant.getAnnotation(Invariant.class).pauseFaults()) {
+                invokeMachineMethod(machine, invariant, tc);
+                continue;
+            }
+            tc.pauseFaults();
+            try {
+                invokeMachineMethod(machine, invariant, tc);
+            } finally {
+                tc.unpauseFaults();
+            }
         }
     }
 

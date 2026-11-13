@@ -27,10 +27,10 @@ use hegel_c::{
     hegel_failure_reproduction_blob, hegel_generate_boolean, hegel_generate_integer,
     hegel_label_combine, hegel_label_from_name, hegel_mark_complete, hegel_new_collection,
     hegel_new_pool, hegel_new_recursion, hegel_new_repeat, hegel_new_state_machine,
-    hegel_next_test_case, hegel_pool_add, hegel_pool_free, hegel_pool_generate, hegel_pool_restore,
-    hegel_recursion_branch, hegel_recursion_finish, hegel_recursion_free, hegel_recursion_leaf,
-    hegel_recursion_retry, hegel_repeat_failed, hegel_repeat_free, hegel_repeat_more,
-    hegel_result_t, hegel_run_error_kind_t, hegel_run_free, hegel_run_result,
+    hegel_next_test_case, hegel_pause_faults, hegel_pool_add, hegel_pool_free, hegel_pool_generate,
+    hegel_pool_restore, hegel_recursion_branch, hegel_recursion_finish, hegel_recursion_free,
+    hegel_recursion_leaf, hegel_recursion_retry, hegel_repeat_failed, hegel_repeat_free,
+    hegel_repeat_more, hegel_result_t, hegel_run_error_kind_t, hegel_run_free, hegel_run_result,
     hegel_run_result_error, hegel_run_result_error_kind, hegel_run_result_failure,
     hegel_run_result_failure_count, hegel_run_result_free, hegel_run_result_status,
     hegel_run_start, hegel_run_start_blob, hegel_run_status_t, hegel_settings_free,
@@ -42,7 +42,7 @@ use hegel_c::{
     hegel_state_machine_next_rule, hegel_state_machine_rule_rejected,
     hegel_state_machine_should_check_invariant, hegel_state_machine_start, hegel_status_t,
     hegel_stop_span, hegel_string_t, hegel_target, hegel_test_case_clone, hegel_test_case_free,
-    hegel_test_case_from_blob, hegel_test_case_should_capture, hegel_version,
+    hegel_test_case_from_blob, hegel_test_case_should_capture, hegel_unpause_faults, hegel_version,
 };
 use std::ffi::{CString, c_void};
 use std::os::raw::c_char;
@@ -2637,6 +2637,12 @@ fn state_machine_and_primitive_boolean_paths() {
             ),
             HEGEL_OK
         );
+        assert_eq!(hegel_pause_faults(ctx, null_tc), HEGEL_E_INVALID_HANDLE);
+        assert!(last_error(ctx).contains("hegel_pause_faults: test case pointer is null"));
+        assert_eq!(hegel_unpause_faults(ctx, null_tc), HEGEL_E_INVALID_HANDLE);
+        assert!(last_error(ctx).contains("hegel_unpause_faults: test case pointer is null"));
+        assert_eq!(hegel_pause_faults(ctx, tc), HEGEL_OK);
+        assert_eq!(hegel_unpause_faults(ctx, tc), HEGEL_OK);
         let mut should_check = false;
         assert_eq!(
             hegel_state_machine_should_check_invariant(ctx, null_tc, checked, 0, &mut should_check),

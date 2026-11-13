@@ -2,6 +2,7 @@ import { describe, test, expect, vi } from "vitest";
 import * as hegel from "@hegeldev/hegel";
 import * as gs from "@hegeldev/hegel/generators";
 import { Pool, run, runAsync, DEFAULT_STEP_COUNT, type StateMachine } from "../src/stateful.js";
+import { getLibhegel } from "../src/session.js";
 
 /**
  * Run `body` as a Hegel test with deterministic settings and return the
@@ -455,6 +456,170 @@ describe("stateful.run", () => {
     // Every rule plus the initial and final states.
     expect(alwaysRuns).toBeGreaterThan(rulesRun);
     expect(sampledRuns).toBeLessThan(rulesRun / 4);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pausing faults
+// ---------------------------------------------------------------------------
+
+describe("pauseFaults invariants", () => {
+  /** Spies on the engine's pause and unpause calls, which pass through to the real library. */
+  function spyOnFaults() {
+    const lib = getLibhegel();
+    return { pause: vi.spyOn(lib, "pauseFaults"), unpause: vi.spyOn(lib, "unpauseFaults") };
+  }
+
+  /** `true` while a pause is outstanding on the spied engine. */
+  const paused = (spies: ReturnType<typeof spyOnFaults>) =>
+    spies.pause.mock.calls.length === spies.unpause.mock.calls.length + 1;
+
+  test("a pauseFaults invariant runs between pause and unpause; the others do not", () => {
+    const spies = spyOnFaults();
+    let pausedRuns = 0;
+    let plainRuns = 0;
+    try {
+      hegel.test(
+        (tc) => {
+          run(
+            tc,
+            {
+              rules: { noop: () => {} },
+              invariants: {
+                paused: {
+                  pauseFaults: true,
+                  alwaysCheck: true,
+                  check: () => {
+                    expect(paused(spies)).toBe(true);
+                    pausedRuns++;
+                  },
+                },
+                explicitlyUnpaused: {
+                  pauseFaults: false,
+                  check: () => {
+                    expect(paused(spies)).toBe(false);
+                    plainRuns++;
+                  },
+                },
+                plain: () => {
+                  expect(paused(spies)).toBe(false);
+                  plainRuns++;
+                },
+              },
+            },
+            {},
+          );
+        },
+        { testCases: 10, ...deterministic },
+      );
+      expect(pausedRuns).toBeGreaterThan(0);
+      expect(plainRuns).toBeGreaterThan(0);
+      expect(spies.pause).toHaveBeenCalledTimes(pausedRuns);
+      expect(spies.unpause).toHaveBeenCalledTimes(pausedRuns);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  test("invariants without the flag never pause", () => {
+    const spies = spyOnFaults();
+    try {
+      hegel.test(
+        (tc) => {
+          run(
+            tc,
+            {
+              rules: { noop: () => {} },
+              invariants: { sampled: () => {}, always: { alwaysCheck: true, check: () => {} } },
+            },
+            {},
+          );
+        },
+        { testCases: 10, ...deterministic },
+      );
+      expect(spies.pause).not.toHaveBeenCalled();
+      expect(spies.unpause).not.toHaveBeenCalled();
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  test("a throwing pauseFaults invariant still unpauses", () => {
+    const spies = spyOnFaults();
+    try {
+      expect(() =>
+        hegel.test((tc) => {
+          run(
+            tc,
+            {
+              rules: {
+                increment: (_tc, s) => {
+                  s.value += 1;
+                },
+              },
+              invariants: {
+                belowThree: {
+                  pauseFaults: true,
+                  check: (_tc, s) => {
+                    expect(paused(spies)).toBe(true);
+                    if (s.value >= 3) throw new Error(`value is ${s.value}`);
+                  },
+                },
+              },
+            },
+            { value: 0 },
+          );
+        }, deterministic),
+      ).toThrow(/value is 3/);
+      expect(spies.pause.mock.calls.length).toBeGreaterThan(0);
+      expect(spies.unpause).toHaveBeenCalledTimes(spies.pause.mock.calls.length);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  test("an asynchronous pauseFaults invariant is unpaused once it settles", async () => {
+    const spies = spyOnFaults();
+    let pausedRuns = 0;
+    try {
+      await expect(
+        hegel.testAsync(async (tc) => {
+          await runAsync(
+            tc,
+            {
+              rules: {
+                increment: async (_tc, s) => {
+                  await Promise.resolve();
+                  s.value += 1;
+                },
+              },
+              invariants: {
+                belowThree: {
+                  pauseFaults: true,
+                  check: async (_tc, s) => {
+                    expect(paused(spies)).toBe(true);
+                    await Promise.resolve();
+                    expect(paused(spies)).toBe(true);
+                    pausedRuns++;
+                    if (s.value >= 3) throw new Error(`value is ${s.value}`);
+                  },
+                },
+                plain: async () => {
+                  await Promise.resolve();
+                  expect(paused(spies)).toBe(false);
+                },
+              },
+            },
+            { value: 0 },
+          );
+        }, deterministic),
+      ).rejects.toThrow(/value is 3/);
+      expect(pausedRuns).toBeGreaterThan(0);
+      expect(spies.pause).toHaveBeenCalledTimes(pausedRuns);
+      expect(spies.unpause).toHaveBeenCalledTimes(pausedRuns);
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 });
 

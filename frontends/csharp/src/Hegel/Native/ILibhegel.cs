@@ -119,6 +119,8 @@ internal interface ILibhegel
 
     int StartSpan(nint testCase, ulong label);
     int StopSpan(nint testCase, bool discard);
+    int PauseFaults(nint testCase);
+    int UnpauseFaults(nint testCase);
     int NewCollection(nint testCase, ulong minSize, ulong maxSize, out nint collection);
     int CollectionMore(nint testCase, nint collection, out bool more);
     int CollectionReject(nint testCase, nint collection, string? why);

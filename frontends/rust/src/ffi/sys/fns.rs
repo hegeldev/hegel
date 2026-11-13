@@ -56,6 +56,7 @@ macro_rules! for_each_hegel_fn {
             fn hegel_next_test_case(ctx: *mut HegelContext, run: *mut HegelRun, out_test_case: *mut *mut HegelTestCase) -> hegel_result_t;
             fn hegel_note(ctx: *mut HegelContext, tc: *mut HegelTestCase, text: hegel_string_t) -> hegel_result_t;
             fn hegel_owned_string_free(ctx: *mut HegelContext, result: *mut hegel_owned_string_t) -> hegel_result_t;
+            fn hegel_pause_faults(ctx: *mut HegelContext, tc: *mut HegelTestCase) -> hegel_result_t;
             fn hegel_pool_add(ctx: *mut HegelContext, tc: *mut HegelTestCase, pool: *mut HegelPool, out_variable_id: *mut i64) -> hegel_result_t;
             fn hegel_pool_free(ctx: *mut HegelContext, pool: *mut HegelPool) -> hegel_result_t;
             fn hegel_pool_generate(ctx: *mut HegelContext, tc: *mut HegelTestCase, pool: *mut HegelPool, consume: bool, out_variable_id: *mut i64) -> hegel_result_t;
@@ -163,6 +164,7 @@ macro_rules! for_each_hegel_fn {
             fn hegel_test_case_printer(ctx: *mut HegelContext, tc: *mut HegelTestCase, options: *const HegelPrinterOptions, out_printer: *mut *mut HegelPrinter) -> hegel_result_t;
             fn hegel_test_case_set_worker(ctx: *mut HegelContext, tc: *const HegelTestCase, worker_index: i64) -> hegel_result_t;
             fn hegel_test_case_should_capture(ctx: *mut HegelContext, tc: *const HegelTestCase, out_should_capture: *mut bool) -> hegel_result_t;
+            fn hegel_unpause_faults(ctx: *mut HegelContext, tc: *mut HegelTestCase) -> hegel_result_t;
             fn hegel_version(ctx: *mut HegelContext, out_version: *mut hegel_string_t) -> hegel_result_t;
         }
     };

@@ -106,6 +106,11 @@ methods are the properties, with the engine choosing and shrinking the action se
 Stateful.run(new IntegerStack(), tc);
 ```
 
+Invariants are checked on the initial and final state and sampled after rules in between;
+`@Invariant(alwaysRun = true)` checks one after every rule, and `@Invariant(pauseFaults = true)`
+pauses fault injection while it runs when the test executes inside
+[Antithesis](https://antithesis.com/).
+
 Run the same machine with a concurrency bound to look for races: the engine draws how many worker
 threads apply the rules at once, `@Rule(groups = "...")` says which rules may overlap (a rule may
 list several groups and then runs in the rounds of each), and a `ConcurrentPool` passes generated

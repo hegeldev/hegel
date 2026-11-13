@@ -316,4 +316,5 @@ and so sees them whenever they are made before it runs.
 | `HEGEL_REPORT_MULTIPLE_FAILURES` | Sets `report_multiple_failures` over the resolved profile. |
 | `HEGEL_BACKEND` | Sets `backend` over the resolved profile. |
 | `ANTITHESIS_OUTPUT_DIR` | Selects the `workload` profile, and each test's verdict is reported to Antithesis. Must name an existing directory. |
+| `ANTITHESIS_FAULT_CONTROL` | The fault-control program a stateful invariant declared with `pause_faults=True` runs with `--pause` before each check and `--unpause` after it. Ignored unless it names an existing file. |
 | `CI`, `GITHUB_ACTIONS`, ... | Selects the `ci` profile. |

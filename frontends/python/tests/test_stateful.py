@@ -7,12 +7,14 @@ import time
 import pytest
 
 import hegel
+from hegel import _native
 from hegel import generators as gs
 from hegel.errors import AssumeFailed, InternalError, InvalidArgument, LoopDone, StopTest
 from hegel.stateful import (
     ANONYMOUS_GROUP,
     DEFAULT_STEP_COUNT,
     ConcurrentPool,
+    Invariant,
     Machine,
     Pool,
     _Event,
@@ -116,6 +118,7 @@ def test_class_based_machine_discovery_and_overrides():
     assert [spec["groups"] for _, spec in Counter._rules()] == [None, ("decr",)]
     assert [name for name, _ in Counter._invariants()] == ["non_negative", "is_int"]
     assert Counter._invariants()[1][1]["always_run"] is True
+    assert [spec["pause_faults"] for _, spec in Counter._invariants()] == [False, False]
 
     class Renamed(hegel.StateMachine):
         @hegel.rule(name="custom")
@@ -201,6 +204,130 @@ def test_machine_builder_api():
         Machine(tc).run()
 
     failing(no_rules, InvalidArgument, test_cases=1)
+
+
+@pytest.fixture
+def fault_calls(monkeypatch):
+    """Records every pause/unpause on a native handle, in order with the
+    ``inv`` entries the invariants below append, while still calling
+    through to the engine."""
+    calls = []
+    original_pause = _native.TestCase.pause_faults
+    original_unpause = _native.TestCase.unpause_faults
+
+    def pause(handle):
+        calls.append("pause")
+        original_pause(handle)
+
+    def unpause(handle):
+        calls.append("unpause")
+        original_unpause(handle)
+
+    monkeypatch.setattr(_native.TestCase, "pause_faults", pause)
+    monkeypatch.setattr(_native.TestCase, "unpause_faults", unpause)
+    return calls
+
+
+def test_invariant_dataclass_defaults():
+    inv = Invariant("inv", lambda tc: None)
+    assert inv.always_run is False
+    assert inv.pause_faults is False
+    assert Invariant("inv", lambda tc: None, pause_faults=True).pause_faults is True
+
+
+def test_pause_faults_brackets_each_sequential_check(fault_calls):
+    def body(tc):
+        machine = Machine(tc)
+        machine.rule("step", lambda tc: None)
+
+        @machine.invariant("paused", always_run=True, pause_faults=True)
+        def paused(tc):
+            fault_calls.append("inv")
+
+        @machine.invariant("plain", always_run=True)
+        def plain(tc):
+            fault_calls.append("plain")
+
+        machine.steps(3)
+        machine.run()
+
+    run_test(body, test_cases=2)
+    assert fault_calls.count("inv") >= 2 * 2
+    without_plain = [c for c in fault_calls if c != "plain"]
+    assert without_plain == ["pause", "inv", "unpause"] * fault_calls.count("inv")
+    assert fault_calls.count("plain") == fault_calls.count("inv")
+
+
+def test_pause_faults_off_never_pauses(fault_calls):
+    hegel.state_machine_test(Counter, test_cases=3)()
+
+    def body(tc):
+        machine = Machine(tc)
+        machine.rule("step", lambda tc: None)
+        machine.invariant("plain", lambda tc: None, always_run=True, pause_faults=False)
+        machine.run()
+
+    run_test(body, test_cases=3)
+    assert fault_calls == []
+
+
+def test_pause_faults_brackets_each_concurrent_check(fault_calls):
+    class Paused(hegel.StateMachine):
+        max_concurrency = 2
+        steps = 4
+
+        @hegel.rule()
+        def step(self, tc):
+            pass
+
+        @hegel.invariant(always_run=True, pause_faults=True)
+        def paused(self, tc):
+            fault_calls.append("inv")
+
+        @hegel.invariant(always_run=True)
+        def plain(self, tc):
+            fault_calls.append("plain")
+
+    assert [spec["pause_faults"] for _, spec in Paused._invariants()] == [True, False]
+    hegel.state_machine_test(Paused, test_cases=2)()
+    assert fault_calls.count("inv") >= 2 * 2
+    without_plain = [c for c in fault_calls if c != "plain"]
+    assert without_plain == ["pause", "inv", "unpause"] * fault_calls.count("inv")
+    assert fault_calls.count("plain") == fault_calls.count("inv")
+
+
+def test_concurrent_machine_without_pause_faults_never_pauses(fault_calls):
+    class Plain(hegel.StateMachine):
+        max_concurrency = 2
+        steps = 4
+
+        @hegel.rule()
+        def step(self, tc):
+            pass
+
+        @hegel.invariant(always_run=True)
+        def plain(self, tc):
+            pass
+
+    hegel.state_machine_test(Plain, test_cases=3)()
+    assert fault_calls == []
+
+
+def test_failing_paused_invariant_still_unpauses(fault_calls):
+    class Broken(hegel.StateMachine):
+        @hegel.rule()
+        def step(self, tc):
+            pass
+
+        @hegel.invariant(pause_faults=True)
+        def broken(self, tc):
+            fault_calls.append("inv")
+            raise AssertionError("broken")
+
+    with pytest.raises(AssertionError, match="broken"):
+        hegel.state_machine_test(Broken, test_cases=5)()
+    assert fault_calls[:3] == ["pause", "inv", "unpause"]
+    assert fault_calls == ["pause", "inv", "unpause"] * fault_calls.count("inv")
 
 
 def test_invariant_failure_is_reported():

@@ -96,6 +96,43 @@ module%hegel_state_machine Stack = struct
   ;;
 end
 
+(* [pause_faults] brackets the invariant with the engine's pause/unpause pair,
+   which prints nothing: the trace reads the same as an unpaused invariant. *)
+module%hegel_state_machine Paused_counter = struct
+  type state = int ref
+
+  let sexp_of_state n = sexp_of_int !n
+  let inc _tc n = incr n [@@rule]
+
+  let at_most_one tc n =
+    Hegel.note tc (sprintf "checking n = %d with faults paused" !n);
+    if !n > 1 then failwith "too many"
+  [@@invariant { always_check = true; pause_faults = true }]
+  ;;
+end
+
+let%expect_test "pause_faults invariant traces like any other" =
+  run_failing (fun tc -> Paused_counter.run tc ~init:(ref 0));
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    --- Failure --------------------------------------------------------------------
+
+    state = 0
+      checking n = 0 with faults paused
+    Step 1: inc
+    state = 1
+      checking n = 1 with faults paused
+    Step 2: inc
+    state = 2
+      checking n = 2 with faults paused
+    Invariant at_most_one violated after step 2.
+
+    Exception: Failure("too many")
+    rerun with: ~failure_blobs:[ "<BLOB>" ]
+    |}]
+;;
+
 let%expect_test "state trace across multiple rules" =
   run_failing (fun tc -> Stack.run tc ~init:(ref []));
   print_string (Expect_scrub.scrub_report [%expect.output]);

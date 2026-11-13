@@ -146,6 +146,15 @@ interface DataSource {
     /** Release the machine handle. Safe once the case is aborted. */
     void stateMachineFree(long stateMachineId);
 
+    /** Pause fault injection on this case until {@link #unpauseFaults} ({@code hegel_pause_faults}). */
+    void pauseFaults();
+
+    /**
+     * Resume fault injection paused by {@link #pauseFaults}. A no-op once the case is aborted, so
+     * the unpausing {@code finally} of an invariant that overran is safe.
+     */
+    void unpauseFaults();
+
     /** Whether the case has been concluded (overrun or invalid) and its primitives now short-circuit. */
     boolean isAborted();
 

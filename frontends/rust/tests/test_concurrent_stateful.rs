@@ -105,6 +105,209 @@ fn always_run_invariants_run_at_every_join_point() {
     );
 }
 
+struct PausedInvariantCounts {
+    rules_run: Arc<AtomicI64>,
+    paused_runs: Arc<AtomicI64>,
+    paused_always_runs: Arc<AtomicI64>,
+    unpaused_runs: Arc<AtomicI64>,
+}
+
+#[hegel::concurrent_state_machine]
+impl PausedInvariantCounts {
+    #[rule]
+    fn step(&self, _: TestCase) {
+        self.rules_run.fetch_add(1, Ordering::SeqCst);
+    }
+
+    #[invariant(pause_faults = true)]
+    fn paused(&self, _: TestCase) {
+        self.paused_runs.fetch_add(1, Ordering::SeqCst);
+    }
+
+    #[invariant(pause_faults = true, always_run)]
+    fn paused_always(&self, _: TestCase) {
+        self.paused_always_runs.fetch_add(1, Ordering::SeqCst);
+    }
+
+    #[invariant(pause_faults = false)]
+    fn unpaused(&self, _: TestCase) {
+        self.unpaused_runs.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+fn paused_invariant_counts() -> PausedInvariantCounts {
+    PausedInvariantCounts {
+        rules_run: Arc::default(),
+        paused_runs: Arc::default(),
+        paused_always_runs: Arc::default(),
+        unpaused_runs: Arc::default(),
+    }
+}
+
+#[test]
+fn concurrent_invariant_attribute_sets_the_pause_faults_flag() {
+    use hegel::stateful::ConcurrentStateMachine;
+    let flags: Vec<(String, bool, bool)> = paused_invariant_counts()
+        .invariants()
+        .iter()
+        .map(|i| (i.name.clone(), i.always_run, i.pause_faults))
+        .collect();
+    assert_eq!(
+        flags,
+        vec![
+            ("paused".to_string(), false, true),
+            ("paused_always".to_string(), true, true),
+            ("unpaused".to_string(), false, false),
+        ]
+    );
+}
+
+#[test]
+fn pause_faults_invariants_run_at_the_same_join_points_as_the_others() {
+    let cases = 20;
+    let m = paused_invariant_counts();
+    let rules_run = Arc::clone(&m.rules_run);
+    let paused_runs = Arc::clone(&m.paused_runs);
+    let paused_always_runs = Arc::clone(&m.paused_always_runs);
+    let unpaused_runs = Arc::clone(&m.unpaused_runs);
+    Hegel::new(move |tc: TestCase| {
+        let m = PausedInvariantCounts {
+            rules_run: Arc::clone(&m.rules_run),
+            paused_runs: Arc::clone(&m.paused_runs),
+            paused_always_runs: Arc::clone(&m.paused_always_runs),
+            unpaused_runs: Arc::clone(&m.unpaused_runs),
+        };
+        machine(m).run_concurrent(tc);
+    })
+    .settings(Settings::new().test_cases(cases).database(None))
+    .run();
+    let rules_run = rules_run.load(Ordering::SeqCst);
+    let paused_runs = paused_runs.load(Ordering::SeqCst);
+    let paused_always_runs = paused_always_runs.load(Ordering::SeqCst);
+    let unpaused_runs = unpaused_runs.load(Ordering::SeqCst);
+    assert!(
+        paused_always_runs > rules_run,
+        "expected the always-run paused invariant ({paused_always_runs} runs) to check every \
+         join point ({rules_run} rules) plus the initial and final states"
+    );
+    for runs in [paused_runs, unpaused_runs] {
+        assert!(
+            runs >= 2 * cases as i64,
+            "expected a sampled invariant ({runs} runs) to check the initial and final state \
+             of each of the {cases} cases"
+        );
+        assert!(
+            runs < rules_run / 4,
+            "expected sampled invariant runs ({runs}) to stay far below rule runs ({rules_run})"
+        );
+    }
+}
+
+struct BrokenPausedModel {
+    value: AtomicI64,
+}
+
+#[hegel::concurrent_state_machine]
+impl BrokenPausedModel {
+    #[rule]
+    fn bump(&self, _: TestCase) {
+        self.value.fetch_add(1, Ordering::SeqCst);
+    }
+
+    #[invariant(pause_faults = true)]
+    fn stays_zero(&self, _: TestCase) {
+        assert_eq!(
+            self.value.load(Ordering::SeqCst),
+            0,
+            "paused invariant fails"
+        );
+    }
+}
+
+#[test]
+fn a_failing_pause_faults_invariant_is_reported_like_any_other() {
+    let (lines, result) = capture_hegel_output(|| {
+        Hegel::new(|tc| {
+            let m = BrokenPausedModel {
+                value: AtomicI64::new(0),
+            };
+            machine(m).run_concurrent(tc);
+        })
+        .settings(Settings::new().database(None))
+        .run();
+    });
+    let payload = result.unwrap_err();
+    assert_matches_regex(&panic_message(&payload), "paused invariant fails");
+    let text = lines.join("\n");
+    assert!(text.contains("Invariant stays_zero failed:"), "{text}");
+}
+
+struct BuiltPausedModel {
+    checks: Arc<Mutex<Vec<&'static str>>>,
+}
+
+impl hegel::stateful::ConcurrentStateMachine for BuiltPausedModel {
+    fn rules(&self) -> Vec<hegel::stateful::ConcurrentRule<Self>> {
+        vec![hegel::stateful::ConcurrentRule::new(
+            "step",
+            &[hegel::stateful::ANONYMOUS_GROUP],
+            1.0,
+            |_, _| {},
+        )]
+    }
+    fn invariants(&self) -> Vec<hegel::stateful::ConcurrentInvariant<Self>> {
+        use hegel::stateful::ConcurrentInvariant;
+        vec![
+            ConcurrentInvariant::new("paused", |m: &BuiltPausedModel, _| {
+                m.checks.lock().unwrap().push("paused");
+            })
+            .pause_faults(true),
+            ConcurrentInvariant::new_always_run("paused_always", |m: &BuiltPausedModel, _| {
+                m.checks.lock().unwrap().push("paused_always");
+            })
+            .pause_faults(true),
+            ConcurrentInvariant::new_always_run("unpaused_always", |m: &BuiltPausedModel, _| {
+                m.checks.lock().unwrap().push("unpaused_always");
+            })
+            .pause_faults(false),
+        ]
+    }
+}
+
+#[test]
+fn concurrent_pause_faults_builder_composes_with_the_constructors() {
+    use hegel::stateful::ConcurrentStateMachine;
+    let m = BuiltPausedModel {
+        checks: Arc::default(),
+    };
+    let flags: Vec<(String, bool, bool)> = m
+        .invariants()
+        .iter()
+        .map(|i| (i.name.clone(), i.always_run, i.pause_faults))
+        .collect();
+    assert_eq!(
+        flags,
+        vec![
+            ("paused".to_string(), false, true),
+            ("paused_always".to_string(), true, true),
+            ("unpaused_always".to_string(), true, false),
+        ]
+    );
+    let checks = Arc::clone(&m.checks);
+    Hegel::new(move |tc: TestCase| {
+        let m = BuiltPausedModel {
+            checks: Arc::clone(&m.checks),
+        };
+        machine(m).steps(5).run_concurrent(tc);
+    })
+    .settings(Settings::new().test_cases(5).database(None))
+    .run();
+    let checks = checks.lock().unwrap();
+    let count = |name| checks.iter().filter(|c| **c == name).count();
+    assert_eq!(count("paused_always"), count("unpaused_always"));
+    assert!(count("paused") >= 10, "{checks:?}");
+}
+
 struct Grouped {
     log: Mutex<Vec<&'static str>>,
 }

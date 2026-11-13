@@ -906,6 +906,9 @@ namespace hegel::stateful {
         /// If true, check the invariant after every step or round instead of
         /// sampling it.
         bool always_check = false;
+        /// If true, fault injection is paused for the duration of each check
+        /// of the invariant.
+        bool pause_faults = false;
         /// The predicate. It throws when the invariant is violated.
         std::function<void(const T&)> invariant;
     };
@@ -915,6 +918,21 @@ namespace hegel::stateful {
      * stateful test. They are evaluated in full on the initial and final state
      * and sampled at intermediate join points, unless declared always checked.
      * The invariant function should throw when the invariant is violated.
+     *
+     * An invariant declared with @c pause_faults asks the engine to pause
+     * fault injection for the duration of each of its checks, so that inside
+     * [Antithesis](https://antithesis.com/) no fault lands in the middle of
+     * the check. Fault injection resumes when the check returns or throws.
+     * Outside Antithesis the flag has no effect.
+     *
+     * @code{.cpp}
+        std::vector<hegel::stateful::Invariant<Bank>> invariants() const {
+            return {hegel::stateful::Invariant<Bank>(
+                {.name = "balances_sum_to_total",
+                 .pause_faults = true,
+                 .invariant = [](const Bank& m) { m.verify_total(); }})};
+        }
+     * @endcode
      *
      * @tparam T The state-machine type the invariant checks
      */
@@ -939,19 +957,20 @@ namespace hegel::stateful {
          */
         Invariant(std::string name, bool always_check,
                   std::function<void(const T&)> invariant)
-            : Invariant(InvariantParams<T>{std::move(name), always_check,
+            : Invariant(InvariantParams<T>{std::move(name), always_check, false,
                                            std::move(invariant)}) {}
 
         /**
          * @brief Declare a new invariant from named arguments.
          *
-         * @param params The name, always_check flag and predicate of the
-         * invariant
+         * @param params The name, always_check and pause_faults flags and
+         * predicate of the invariant
          */
         explicit Invariant(InvariantParams<T> params)
             : name_(std::move(params.name)),
               invariant_(std::move(params.invariant)),
-              always_check_(params.always_check) {}
+              always_check_(params.always_check),
+              pause_faults_(params.pause_faults) {}
 
         /**
          * @brief Returns the name of the invariant.
@@ -968,6 +987,13 @@ namespace hegel::stateful {
         const std::function<void(const T&)>& invariant() const {
             return invariant_;
         }
+        /**
+         * @brief Returns true if fault injection is paused while this
+         * invariant is checked.
+         *
+         * @return bool
+         */
+        bool pause_faults() const { return pause_faults_; }
 
         /**
          * @brief Returns whether the invariant is checked after every step or
@@ -981,6 +1007,7 @@ namespace hegel::stateful {
         std::string name_;
         std::function<void(const T&)> invariant_;
         bool always_check_;
+        bool pause_faults_;
     };
 
     /**
@@ -1084,6 +1111,7 @@ namespace hegel::stateful {
             }
             const Invariant<T>& inv = invariants[index];
             try {
+                internal::PauseFaultsScope pause(tc, inv.pause_faults());
                 inv.invariant()(state);
             } catch (...) {
                 tc.note("Invariant " + inv.name() + " failed:");

@@ -2470,6 +2470,40 @@ hegel_result_t hegel_state_machine_should_check_invariant(hegel_context_t *ctx,
                                                           bool *out_should_check);
 
 /*
+ Pause fault injection for the duration of a check on this test case:
+ inside [Antithesis](https://antithesis.com/), ask the fuzzer to stop
+ injecting faults until the matching `hegel_unpause_faults` on the same
+ handle. Frontends bracket each stateful invariant declared with
+ `pause_faults` with this pair, so the invariant observes the system under
+ test without a fault landing in the middle of the check.
+
+ Antithesis names its fault-control program in the
+ `ANTITHESIS_FAULT_CONTROL` environment variable; this runs that program
+ with `--pause` and waits for it. When the variable is unset, or names
+ nothing that exists, nothing happens and the call succeeds, so a test
+ declaring `pause_faults` runs the same outside Antithesis.
+
+ Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `tc`, or
+ `HEGEL_E_INVALID_ARG` when the program exists but could not be run or
+ exited with a non-zero status; `hegel_context_last_error` then names the
+ program and what went wrong.
+ */
+hegel_result_t hegel_pause_faults(hegel_context_t *ctx, hegel_test_case_t *tc);
+
+/*
+ Resume fault injection paused by `hegel_pause_faults` on this test case,
+ by running the `ANTITHESIS_FAULT_CONTROL` program with `--unpause`. Like
+ pausing, does nothing when the variable is unset or names nothing that
+ exists.
+
+ Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `tc`, or
+ `HEGEL_E_INVALID_ARG` when the program exists but could not be run or
+ exited with a non-zero status; `hegel_context_last_error` then names the
+ program and what went wrong.
+ */
+hegel_result_t hegel_unpause_faults(hegel_context_t *ctx, hegel_test_case_t *tc);
+
+/*
  Release a state-machine handle from `hegel_new_state_machine`. Safe to
  call with NULL (a no-op that returns `HEGEL_OK`), and safe at any point
  in any order relative to freeing the test case or the run. Each handle

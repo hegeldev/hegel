@@ -115,6 +115,8 @@ internal class DelegatingLibhegel : ILibhegel
     public virtual void GrammarDrawFree(nint draw) => Inner.GrammarDrawFree(draw);
     public virtual int StartSpan(nint testCase, ulong label) => Inner.StartSpan(testCase, label);
     public virtual int StopSpan(nint testCase, bool discard) => Inner.StopSpan(testCase, discard);
+    public virtual int PauseFaults(nint testCase) => Inner.PauseFaults(testCase);
+    public virtual int UnpauseFaults(nint testCase) => Inner.UnpauseFaults(testCase);
     public virtual int NewCollection(nint testCase, ulong minSize, ulong maxSize, out nint collection) => Inner.NewCollection(testCase, minSize, maxSize, out collection);
     public virtual int CollectionMore(nint testCase, nint collection, out bool more) => Inner.CollectionMore(testCase, collection, out more);
     public virtual int CollectionReject(nint testCase, nint collection, string? why) => Inner.CollectionReject(testCase, collection, why);

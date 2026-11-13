@@ -104,6 +104,28 @@ namespace hegel::internal {
     void start_span(const TestCase& tc, uint64_t label);
     void stop_span(const TestCase& tc, bool discard = false);
 
+    // Pause / resume fault injection on the test case for the duration of
+    // a check (a stateful invariant declared with pause_faults). Inside
+    // Antithesis the engine asks the fault injector to hold off between the
+    // two; elsewhere both do nothing.
+    void pause_faults(const TestCase& tc);
+    void unpause_faults(const TestCase& tc);
+
+    // Brackets a check with pause_faults / unpause_faults when enabled, so a
+    // check that throws still resumes fault injection. Does nothing when
+    // enabled is false.
+    class PauseFaultsScope {
+      public:
+        PauseFaultsScope(const TestCase& tc, bool enabled);
+        ~PauseFaultsScope();
+        PauseFaultsScope(const PauseFaultsScope&) = delete;
+        PauseFaultsScope& operator=(const PauseFaultsScope&) = delete;
+
+      private:
+        const TestCase& tc_;
+        bool enabled_;
+    };
+
     int64_t draw_integer(const TestCase& tc, int64_t min_value,
                          int64_t max_value);
     // Uses the engine's big-integer draw when the range exceeds int64_t.

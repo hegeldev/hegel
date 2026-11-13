@@ -116,6 +116,8 @@ internal sealed class ExplicitDataSource : IDataSource
     public bool OwnsGrammar(GrammarHandle grammar) => throw Unsupported();
     public void StartSpan(ulong label) => throw Unsupported();
     public void StopSpan(bool discard) => throw Unsupported();
+    public void PauseFaults() => throw Unsupported();
+    public void UnpauseFaults() => throw Unsupported();
     public nint NewCollection(ulong minSize, ulong maxSize) => throw Unsupported();
     public bool CollectionMore(nint id) => throw Unsupported();
     public void CollectionReject(nint id, string? why) => throw Unsupported();

@@ -386,6 +386,16 @@ public interface Libhegel {
     /** {@code hegel_state_machine_free}: the handle is independent of its test case and run. */
     void stateMachineFree(long stateMachineId);
 
+    /**
+     * {@code hegel_pause_faults}: pause fault injection on this test case until the matching
+     * {@link #unpauseFaults}. Inside Antithesis this asks the fuzzer to stop injecting faults for
+     * the duration of a stateful invariant; elsewhere it only validates the handle.
+     */
+    int pauseFaults(long tc);
+
+    /** {@code hegel_unpause_faults}: resume fault injection paused by {@link #pauseFaults}. */
+    int unpauseFaults(long tc);
+
     int target(long tc, double value, String label);
 
     int markComplete(long tc, int status, String origin);
