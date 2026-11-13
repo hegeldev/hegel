@@ -452,7 +452,8 @@ jobs:
     # commit, so a frontend dragged along by a libhegel release counts too.
     # The Go frontend is tagged on a commit of its own (release-go), so
     # release.py reports `go_tag` instead, and `commit` is the release commit
-    # that commit builds on.
+    # that commit builds on. `source_tags` are the frontend tags on the
+    # release commit, separated by spaces, for release-source-archives.
     outputs:
       c_released: ${{ steps.released.outputs.libhegel_tag != '' }}
       version: ${{ steps.released.outputs.libhegel_version }}
@@ -468,6 +469,7 @@ jobs:
       go_released: ${{ steps.released.outputs.go_tag != '' }}
       go_tag: ${{ steps.released.outputs.go_tag }}
       commit: ${{ steps.release.outputs.commit }}
+      source_tags: ${{ steps.released.outputs.source_tags }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -548,6 +550,7 @@ jobs:
             echo "cpp_tag=$cpp_tag"
             echo "java_tag=$java_tag"
             echo "go_tag=$GO_TAG"
+            echo "source_tags=$(xargs <<< "$rust_tag $python_tag $typescript_tag $cpp_tag $java_tag")"
           } >> "$GITHUB_OUTPUT"
 
       - name: Authenticate with crates.io
@@ -612,6 +615,40 @@ jobs:
           HEGEL_C_LIB_DIR="$PWD/target/debug" cargo publish -p hegeltest
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
+
+  # A GitHub release on the tag of each frontend released, holding its source
+  # archive: `hegel-<frontend>-<version>.tar.gz`, the frontend's directory at
+  # the tag and nothing else, with a `.sha256` beside it. GitHub's own archive
+  # of a tag is the whole monorepo with the website's Git LFS objects, which
+  # it generates on demand and often fails to finish serving; a release asset
+  # is a stored file with a stable checksum, which is what a package registry
+  # wants to point at. The archive is source only, so it waits for no publish
+  # job. The Go and OCaml frontends, whose tags are not on the release
+  # commit of a push, attach theirs in release-go and ocaml-release.yml.
+  release-source-archives:
+    name: release-source-archives
+    if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.source_tags != '' }}
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ needs.release.outputs.commit }}
+      - name: Publish the source archives
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAGS: ${{ needs.release.outputs.source_tags }}
+        run: |
+          set -euo pipefail
+          for tag in $TAGS; do
+            git fetch --quiet --depth=1 origin "refs/tags/$tag:refs/tags/$tag"
+            python .github/scripts/release.py publish-source-archive "$tag" "${RUNNER_TEMP}/source-archives"
+          done
 
   # Cross-platform shared and static library builds for libhegel. Triggers
   # after the `release` job has tagged a new version; each matrix entry builds
@@ -1168,7 +1205,8 @@ jobs:
   # commit with internal/libhegel/libs/ filled in, never pushed to a branch.
   # First the suite runs against those embedded binaries on each OS with a
   # runner; then release-go makes the commit, pushes its LFS objects and the
-  # tag, and creates the GitHub release with the changelog entry as notes.
+  # tag, and creates the GitHub release with the changelog entry as notes and
+  # the module's source archive attached.
   release-go-verify:
     name: release-go-verify (${{ matrix.os }})
     if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.go_released == 'true' && (needs.release.outputs.c_released != 'true' || needs.release-binaries-verify.result == 'success') }}
@@ -1275,18 +1313,19 @@ jobs:
           { printf 'Release %s\n\n' "$TAG"; cat "$NOTES"; } | git commit --quiet --file=-
           git tag "$TAG"
           git push origin "refs/tags/$TAG"
+      # The release carries the module's source archive (see
+      # release-source-archives), embedded binaries included: they are Git
+      # LFS files, so the tag's objects must be here for `git archive` to
+      # write their contents, which on a re-run means fetching them.
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.notes.outputs.version }}
-          NOTES: ${{ steps.notes.outputs.notes }}
         run: |
           set -euo pipefail
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --verify-tag \
-              --title "Hegel for Go v${VERSION}" \
-              --notes-file "$NOTES"
-          fi
+          git lfs install --local
+          git fetch --quiet --depth=1 origin "refs/tags/$TAG:refs/tags/$TAG"
+          git lfs fetch origin "refs/tags/$TAG"
+          python .github/scripts/release.py publish-source-archive "$TAG" "${RUNNER_TEMP}/source-archives"
       # Ask the public module proxy for the new version so it indexes it
       # (https://go.dev/doc/modules/publishing), once the GitHub release exists.
       - name: Update the Go module proxy

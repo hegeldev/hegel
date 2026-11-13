@@ -192,6 +192,10 @@ jobs:
             printing { print }
           ' frontends/ocaml/CHANGELOG.md > "${RUNNER_TEMP}/notes.md"
 
+          # The plain source archive every frontend release carries (see
+          # release-source-archives in ci.yml): the subtree alone.
+          python .github/scripts/release.py source-archive "$TAG" "${RUNNER_TEMP}/source-archives"
+
           {
             echo "version=$VERSION"
             echo "tarball=$TARBALL"
@@ -214,7 +218,7 @@ jobs:
               --title "Hegel for OCaml v${VERSION}" \
               --notes-file "$NOTES"
           fi
-          gh release upload "$TAG" "$TARBALL" --clobber
+          gh release upload "$TAG" "$TARBALL" "${RUNNER_TEMP}"/source-archives/*.tar.gz* --clobber
           gh release edit "$TAG" --draft=false
 
   # The OCaml API reference, committed to website/public/ocaml on main

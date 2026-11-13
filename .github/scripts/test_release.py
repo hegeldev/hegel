@@ -19,9 +19,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import hashlib
 import json
 import re
 import subprocess
+import tarfile
 import release
 from release import CPP, GO, JAVA, LIBHEGEL, OCAML, PYTHON, RUST, TYPESCRIPT
 
@@ -790,6 +792,132 @@ class TaggedVersionTest(unittest.TestCase):
     def test_no_tag_is_an_error(self) -> None:
         with self.assertRaises(ValueError):
             release.tagged_version(self.root, GO)
+
+
+class SourceArchiveTest(unittest.TestCase):
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name) / "repo"
+        self.out = Path(tmp.name) / "out"
+        self.root.mkdir()
+        self.git("init", "--quiet")
+        self.write("libhegel/Cargo.toml", '[package]\nname = "hegeltest-c"\nversion = "0.51.1"\n')
+        self.write("website/big.png", "not part of any frontend\n")
+        self.write("frontends/cpp/CMakeLists.txt", "project(hegel VERSION 0.17.2)\n")
+        self.write("frontends/cpp/include/hegel/hegel.h", "#pragma once\n")
+        self.write(
+            "frontends/cpp/CHANGELOG.md",
+            "# Changelog\n\n## 0.17.2 - 2026-11-13\n\nFixes a thing.\n\nAnd another.\n\n"
+            "## 0.17.1 - 2026-11-10\n\nAn older fix.\n",
+        )
+        self.commit("Release frontends/cpp/0.17.2")
+        self.git("tag", "frontends/cpp/0.17.2")
+        self.git("tag", "libhegel/0.51.1")
+
+    def git(self, *args: str) -> None:
+        subprocess.run(["git", *args], cwd=self.root, check=True)
+
+    def write(self, rel: str, text: str) -> None:
+        path = self.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def commit(self, message: str) -> None:
+        self.git("add", "-A")
+        self.git(
+            "-c", "user.name=t", "-c", "user.email=t@example.com",
+            "commit", "--quiet", "--no-gpg-sign", "-m", message,
+        )
+
+    def build(self, tag: str) -> dict[str, str]:
+        return release.build_source_archive(self.root, tag, self.out)
+
+    def test_the_archive_holds_only_the_frontend_under_one_directory(self) -> None:
+        result = self.build("frontends/cpp/0.17.2")
+        archive = Path(result["archive"])
+        self.assertEqual(archive.name, "hegel-cpp-0.17.2.tar.gz")
+        with tarfile.open(archive) as tar:
+            files = sorted(m.name for m in tar if m.isfile())
+            header = tar.extractfile("hegel-cpp-0.17.2/include/hegel/hegel.h").read()
+        self.assertEqual(
+            files,
+            [
+                "hegel-cpp-0.17.2/CHANGELOG.md",
+                "hegel-cpp-0.17.2/CMakeLists.txt",
+                "hegel-cpp-0.17.2/include/hegel/hegel.h",
+            ],
+        )
+        self.assertEqual(header, b"#pragma once\n")
+
+    def test_the_checksum_file_is_the_archives_sha256(self) -> None:
+        result = self.build("frontends/cpp/0.17.2")
+        digest = hashlib.sha256(Path(result["archive"]).read_bytes()).hexdigest()
+        self.assertEqual(
+            Path(result["checksum"]).read_text(), f"{digest}  hegel-cpp-0.17.2.tar.gz\n"
+        )
+
+    def test_building_the_archive_again_gives_the_same_bytes(self) -> None:
+        first = Path(self.build("frontends/cpp/0.17.2")["archive"]).read_bytes()
+        self.git("clone", "--quiet", str(self.root), str(self.root.parent / "clone"))
+        second = release.build_source_archive(
+            self.root.parent / "clone", "frontends/cpp/0.17.2", self.root.parent / "out2"
+        )
+        self.assertEqual(Path(second["archive"]).read_bytes(), first)
+
+    def test_the_release_is_titled_and_annotated_from_the_changelog(self) -> None:
+        result = self.build("frontends/cpp/0.17.2")
+        self.assertEqual(result["title"], "Hegel for C++ v0.17.2")
+        notes = Path(result["notes"]).read_text()
+        self.assertTrue(notes.startswith("Fixes a thing.\n\nAnd another.\n\n"), notes)
+        self.assertNotIn("An older fix.", notes)
+        self.assertIn("`hegel-cpp-0.17.2.tar.gz`", notes)
+        self.assertIn("libhegel 0.51.1", notes)
+
+    def test_the_archive_is_of_the_tag_not_of_the_checkout(self) -> None:
+        self.write("frontends/cpp/later.txt", "after the release\n")
+        self.commit("Later")
+        with tarfile.open(self.build("frontends/cpp/0.17.2")["archive"]) as tar:
+            self.assertNotIn("hegel-cpp-0.17.2/later.txt", tar.getnames())
+
+    def test_a_go_tag_drops_its_v_from_the_archive_name(self) -> None:
+        self.write("frontends/go/go.mod", "module hegel.dev/go/hegel\n")
+        self.write("frontends/go/CHANGELOG.md", "# Changelog\n\n## 0.9.33 - 2026-11-13\n\nGo fix.\n")
+        self.commit("Release frontends/go/v0.9.33")
+        self.git("tag", "frontends/go/v0.9.33")
+        result = self.build("frontends/go/v0.9.33")
+        self.assertEqual(Path(result["archive"]).name, "hegel-go-0.9.33.tar.gz")
+        self.assertEqual(result["title"], "Hegel for Go v0.9.33")
+
+    def test_a_git_lfs_pointer_in_the_archive_is_an_error(self) -> None:
+        self.write(
+            "frontends/cpp/lib.so",
+            "version https://git-lfs.github.com/spec/v1\noid sha256:abc\nsize 3\n",
+        )
+        self.commit("Release frontends/cpp/0.17.3")
+        self.git("tag", "frontends/cpp/0.17.3")
+        with self.assertRaisesRegex(ValueError, "lib.so is a Git LFS pointer"):
+            self.build("frontends/cpp/0.17.3")
+
+    def test_a_version_missing_from_the_changelog_is_an_error(self) -> None:
+        self.git("tag", "frontends/cpp/0.18.0")
+        with self.assertRaisesRegex(ValueError, "no 0.18.0 entry"):
+            self.build("frontends/cpp/0.18.0")
+
+    def test_libhegel_and_unknown_tags_are_errors(self) -> None:
+        with self.assertRaisesRegex(ValueError, "libhegel releases no source archive"):
+            self.build("libhegel/0.51.1")
+        with self.assertRaisesRegex(ValueError, "not the release tag of any component"):
+            self.build("frontends/cobol/1.0.0")
+        with self.assertRaisesRegex(ValueError, "not the release tag of any component"):
+            self.build("frontends/go/0.9.33")
+
+    def test_every_frontend_has_a_name_for_its_release_title(self) -> None:
+        self.assertEqual(
+            [c.name for c in release.FRONTENDS],
+            ["Rust", "Python", "TypeScript", "C++", "Java", "OCaml", "Go"],
+        )
+        self.assertIsNone(LIBHEGEL.name)
 
 
 class CheckReleaseFilesTest(unittest.TestCase):
