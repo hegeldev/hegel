@@ -192,8 +192,10 @@ jobs:
             printing { print }
           ' frontends/ocaml/CHANGELOG.md > "${RUNNER_TEMP}/notes.md"
 
-          # The plain source archive every frontend release carries (see
-          # release-source-archives in ci.yml): the subtree alone.
+          # The source archive every frontend release carries (see
+          # release-source-archives in ci.yml), which builds its own engine.
+          rustup toolchain install stable --profile minimal
+          rustup default stable
           python .github/scripts/release.py source-archive "$TAG" "${RUNNER_TEMP}/source-archives"
 
           {

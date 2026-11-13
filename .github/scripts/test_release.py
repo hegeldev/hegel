@@ -795,6 +795,11 @@ class TaggedVersionTest(unittest.TestCase):
 
 
 class SourceArchiveTest(unittest.TestCase):
+    """Builds archives of a small repository shaped like this one: a Cargo
+    workspace of libhegel and two frontend crates, and a C++ frontend that
+    is no crate. Needs cargo, which prunes the lockfile, but no network: the
+    workspace has no registry dependencies."""
+
     def setUp(self) -> None:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -802,7 +807,25 @@ class SourceArchiveTest(unittest.TestCase):
         self.out = Path(tmp.name) / "out"
         self.root.mkdir()
         self.git("init", "--quiet")
-        self.write("libhegel/Cargo.toml", '[package]\nname = "hegeltest-c"\nversion = "0.51.1"\n')
+        self.write(
+            "Cargo.toml",
+            '[workspace]\nresolver = "3"\n'
+            'members = ["libhegel", "frontends/rust", "frontends/rust/macros", "frontends/python"]\n'
+            "\n[profile.dev]\nopt-level = 1\n",
+        )
+        self.crate("libhegel", "hegeltest-c", "0.51.1")
+        self.crate("frontends/rust/macros", "hegeltest-macros", "0.52.1")
+        self.crate(
+            "frontends/rust",
+            "hegeltest",
+            "0.52.1",
+            'hegeltest-macros = { version = "=0.52.1", path = "macros" }\n',
+        )
+        self.crate(
+            "frontends/python", "hegel-python", "0.4.2", 'hegeltest-c = { path = "../../libhegel" }\n'
+        )
+        subprocess.run(["cargo", "generate-lockfile", "--offline"], cwd=self.root, check=True)
+        self.write("LICENSE", "MIT\n")
         self.write("website/big.png", "not part of any frontend\n")
         self.write("frontends/cpp/CMakeLists.txt", "project(hegel VERSION 0.17.2)\n")
         self.write("frontends/cpp/include/hegel/hegel.h", "#pragma once\n")
@@ -811,8 +834,10 @@ class SourceArchiveTest(unittest.TestCase):
             "# Changelog\n\n## 0.17.2 - 2026-11-13\n\nFixes a thing.\n\nAnd another.\n\n"
             "## 0.17.1 - 2026-11-10\n\nAn older fix.\n",
         )
+        self.write("frontends/rust/CHANGELOG.md", "# Changelog\n\n## 0.52.1 - 2026-11-13\n\nRust fix.\n")
         self.commit("Release frontends/cpp/0.17.2")
         self.git("tag", "frontends/cpp/0.17.2")
+        self.git("tag", "frontends/rust/0.52.1")
         self.git("tag", "libhegel/0.51.1")
 
     def git(self, *args: str) -> None:
@@ -823,6 +848,14 @@ class SourceArchiveTest(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
 
+    def crate(self, rel: str, name: str, version: str, dependencies: str = "") -> None:
+        self.write(
+            f"{rel}/Cargo.toml",
+            f'[package]\nname = "{name}"\nversion = "{version}"\nedition = "2021"\n'
+            f"\n[dependencies]\n{dependencies}",
+        )
+        self.write(f"{rel}/src/lib.rs", "")
+
     def commit(self, message: str) -> None:
         self.git("add", "-A")
         self.git(
@@ -831,24 +864,65 @@ class SourceArchiveTest(unittest.TestCase):
         )
 
     def build(self, tag: str) -> dict[str, str]:
-        return release.build_source_archive(self.root, tag, self.out)
+        return release.build_source_release(self.root, tag, self.out)
 
-    def test_the_archive_holds_only_the_frontend_under_one_directory(self) -> None:
+    def contents(self, tag: str) -> dict[str, str]:
+        with tarfile.open(self.build(tag)["archive"]) as tar:
+            return {m.name: tar.extractfile(m).read().decode() for m in tar if m.isfile()}
+
+    def locked_packages(self, lockfile: str) -> list[str]:
+        return re.findall(r'^name = "([^"]+)"$', lockfile, re.MULTILINE)
+
+    def test_the_archive_holds_the_frontend_and_the_engine_it_builds(self) -> None:
         result = self.build("frontends/cpp/0.17.2")
-        archive = Path(result["archive"])
-        self.assertEqual(archive.name, "hegel-cpp-0.17.2.tar.gz")
-        with tarfile.open(archive) as tar:
-            files = sorted(m.name for m in tar if m.isfile())
-            header = tar.extractfile("hegel-cpp-0.17.2/include/hegel/hegel.h").read()
+        self.assertEqual(Path(result["archive"]).name, "hegel-cpp-0.17.2.tar.gz")
+        contents = self.contents("frontends/cpp/0.17.2")
         self.assertEqual(
-            files,
+            sorted(contents),
             [
-                "hegel-cpp-0.17.2/CHANGELOG.md",
-                "hegel-cpp-0.17.2/CMakeLists.txt",
-                "hegel-cpp-0.17.2/include/hegel/hegel.h",
+                "hegel-cpp-0.17.2/Cargo.lock",
+                "hegel-cpp-0.17.2/Cargo.toml",
+                "hegel-cpp-0.17.2/LICENSE",
+                "hegel-cpp-0.17.2/frontends/cpp/CHANGELOG.md",
+                "hegel-cpp-0.17.2/frontends/cpp/CMakeLists.txt",
+                "hegel-cpp-0.17.2/frontends/cpp/include/hegel/hegel.h",
+                "hegel-cpp-0.17.2/libhegel/Cargo.toml",
+                "hegel-cpp-0.17.2/libhegel/src/lib.rs",
             ],
         )
-        self.assertEqual(header, b"#pragma once\n")
+        self.assertEqual(
+            contents["hegel-cpp-0.17.2/frontends/cpp/include/hegel/hegel.h"], "#pragma once\n"
+        )
+
+    def test_the_workspace_is_pruned_to_the_crates_in_the_archive(self) -> None:
+        cpp = self.contents("frontends/cpp/0.17.2")
+        self.assertIn('\nmembers = ["libhegel"]\n', cpp["hegel-cpp-0.17.2/Cargo.toml"])
+        self.assertIn("[profile.dev]\nopt-level = 1\n", cpp["hegel-cpp-0.17.2/Cargo.toml"])
+        self.assertEqual(self.locked_packages(cpp["hegel-cpp-0.17.2/Cargo.lock"]), ["hegeltest-c"])
+
+        rust = self.contents("frontends/rust/0.52.1")
+        self.assertIn(
+            '\nmembers = ["libhegel", "frontends/rust", "frontends/rust/macros"]\n',
+            rust["hegel-rust-0.52.1/Cargo.toml"],
+        )
+        self.assertEqual(
+            self.locked_packages(rust["hegel-rust-0.52.1/Cargo.lock"]),
+            ["hegeltest", "hegeltest-c", "hegeltest-macros"],
+        )
+
+    def test_cargo_accepts_the_archives_lockfile(self) -> None:
+        with tarfile.open(self.build("frontends/rust/0.52.1")["archive"]) as tar:
+            tar.extractall(self.out / "unpacked")
+        subprocess.run(
+            ["cargo", "metadata", "--locked", "--offline", "--format-version", "1"],
+            cwd=self.out / "unpacked" / "hegel-rust-0.52.1",
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
+
+    def test_a_manifest_without_a_members_line_is_an_error(self) -> None:
+        with self.assertRaisesRegex(ValueError, "no `members"):
+            release.prune_workspace_members('[workspace]\nresolver = "3"\n', ["libhegel"])
 
     def test_the_checksum_file_is_the_archives_sha256(self) -> None:
         result = self.build("frontends/cpp/0.17.2")
@@ -860,7 +934,7 @@ class SourceArchiveTest(unittest.TestCase):
     def test_building_the_archive_again_gives_the_same_bytes(self) -> None:
         first = Path(self.build("frontends/cpp/0.17.2")["archive"]).read_bytes()
         self.git("clone", "--quiet", str(self.root), str(self.root.parent / "clone"))
-        second = release.build_source_archive(
+        second = release.build_source_release(
             self.root.parent / "clone", "frontends/cpp/0.17.2", self.root.parent / "out2"
         )
         self.assertEqual(Path(second["archive"]).read_bytes(), first)
@@ -877,8 +951,16 @@ class SourceArchiveTest(unittest.TestCase):
     def test_the_archive_is_of_the_tag_not_of_the_checkout(self) -> None:
         self.write("frontends/cpp/later.txt", "after the release\n")
         self.commit("Later")
-        with tarfile.open(self.build("frontends/cpp/0.17.2")["archive"]) as tar:
-            self.assertNotIn("hegel-cpp-0.17.2/later.txt", tar.getnames())
+        self.assertNotIn(
+            "hegel-cpp-0.17.2/frontends/cpp/later.txt", self.contents("frontends/cpp/0.17.2")
+        )
+
+    def test_an_archive_of_another_commit_takes_the_version_it_is_given(self) -> None:
+        self.write("frontends/cpp/later.txt", "after the release\n")
+        self.commit("Later")
+        archive, _ = release.build_source_archive(self.root, CPP, "0.0.0", "HEAD", self.out)
+        with tarfile.open(archive) as tar:
+            self.assertIn("hegel-cpp-0.0.0/frontends/cpp/later.txt", tar.getnames())
 
     def test_a_go_tag_drops_its_v_from_the_archive_name(self) -> None:
         self.write("frontends/go/go.mod", "module hegel.dev/go/hegel\n")

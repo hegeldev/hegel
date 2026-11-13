@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import tarfile
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -634,72 +635,150 @@ def changelog_entry(changelog: str, version: str) -> str:
 
 LFS_POINTER = b"version https://git-lfs.github.com/spec/"
 
+# What a source archive holds beside the frontend's own directory: the
+# engine, and the Cargo workspace it is built in.
+SOURCE_ARCHIVE_SHARED = ("Cargo.toml", "Cargo.lock", "LICENSE", LIBHEGEL.path)
 
-def build_source_archive(root: Path, tag: str, output_dir: Path) -> dict[str, str]:
-    """Write the source archive of the frontend release `tag` names into
-    `output_dir`, with its SHA-256 sidecar and the notes of the GitHub
-    release it is attached to. Returns what the workflow needs to make that
-    release: the paths of the three files, and the release's title.
 
-    The archive is `hegel-<frontend>-<version>.tar.gz`, holding the
-    frontend's directory at the tag (and nothing else of the monorepo) under
-    one top-level directory of the same name. GitHub's own archive of a tag
-    is the whole monorepo, website and its Git LFS objects included, which
-    GitHub generates on demand, slowly enough that the download is often cut
-    short, and with no promise that its bytes stay the same. A release asset
-    is stored once and served as it was uploaded.
+def prune_workspace_members(manifest: str, kept: list[str]) -> str:
+    """The workspace manifest with its `members` cut down to those under one
+    of the `kept` directories. A member whose directory is missing is an
+    error to cargo, and a source archive holds only some."""
+    match = re.search(r"^members = \[([^\]]*)\]$", manifest, re.MULTILINE)
+    if match is None:
+        raise ValueError("no `members = [...]` in the workspace manifest")
+    members = [
+        member
+        for member in re.findall(r'"([^"]+)"', match.group(1))
+        if any(member == d or member.startswith(d + "/") for d in kept)
+    ]
+    line = "members = [" + ", ".join(f'"{member}"' for member in members) + "]"
+    return manifest[: match.start()] + line + manifest[match.end() :]
 
-    The bytes depend only on the tagged commit (its files, and its commit
-    time as every file's modification time), so that building the archive
-    again gives the same file. A Git LFS file is archived with its contents,
-    which takes git-lfs installed and the objects fetched; a pointer file in
-    the archive is an error.
+
+def pruned_lockfile(files: dict[str, bytes]) -> bytes:
+    """The `Cargo.lock` cargo writes for the tree `files` holds (paths to
+    contents, under one top-level directory with the workspace manifest),
+    whose own is that of a larger workspace. cargo keeps every version the
+    lockfile already pins and drops what the smaller workspace has no use
+    for, which depends on the features its crates turn on and so is cargo's
+    to work out. With the lockfile as cargo wants it, `cargo build --locked`
+    accepts the archive and no build rewrites it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        for name, content in files.items():
+            path = Path(tmp) / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        (workspace,) = Path(tmp).iterdir()
+        subprocess.run(
+            ["cargo", "metadata", "--format-version", "1"],
+            check=True,
+            cwd=workspace,
+            stdout=subprocess.DEVNULL,
+        )
+        return (workspace / "Cargo.lock").read_bytes()
+
+
+def build_source_archive(
+    root: Path, component: Component, version: str, rev: str, output_dir: Path
+) -> tuple[Path, Path]:
+    """Write the source archive of a frontend as of the commit `rev` into
+    `output_dir`, with its SHA-256 sidecar, and return the two paths.
+
+    The archive is `hegel-<frontend>-<version>.tar.gz`, one top-level
+    directory of the same name holding the monorepo cut down to what building
+    the frontend takes: the frontend's own directory, `libhegel/` (every
+    frontend builds the engine in the tree it is in), the licence, and the
+    Cargo workspace manifest and lockfile, pruned to the crates that are
+    there. The layout is the repository's, so the frontend builds from the
+    archive exactly as from a checkout, and a consumer that fetched the tag
+    with `SOURCE_SUBDIR frontends/cpp` fetches the archive the same way.
+
+    GitHub's own archive of a tag is the whole monorepo, website and its Git
+    LFS objects included, which GitHub generates on demand, slowly enough
+    that the download is often cut short, and with no promise that its bytes
+    stay the same. A release asset is stored once and served as uploaded.
+
+    The bytes depend only on the commit (its files, and its commit time as
+    every file's modification time), so that building the archive again
+    gives the same file. Pruning the lockfile takes cargo, and the crates.io
+    index when the workspace has dependencies. A Git LFS file is archived with its contents, which
+    takes git-lfs installed and the objects fetched; a pointer file in the
+    archive is an error.
     """
-    component, version = component_of_tag(tag)
     if component.name is None:
         raise ValueError(f"{component.path} releases no source archive")
 
-    def git_output(*args: str) -> bytes:
-        return subprocess.check_output(["git", *args], cwd=root)
-
     stem = component.source_archive_stem(version)
-    commit_time = git_output("log", "-1", "--format=%cI", tag).decode().strip()
-    tar = git_output(
-        "archive",
-        "--format=tar",
-        f"--prefix={stem}/",
-        f"--mtime={commit_time}",
-        f"{tag}:{component.path}",
+    source = subprocess.check_output(
+        [
+            "git",
+            "archive",
+            "--format=tar",
+            f"--prefix={stem}/",
+            f"{rev}^{{commit}}",
+            "--",
+            *SOURCE_ARCHIVE_SHARED,
+            component.path,
+        ],
+        cwd=root,
     )
-    with tarfile.open(fileobj=io.BytesIO(tar)) as members:
-        for member in members:
-            if member.isfile() and members.extractfile(member).read(len(LFS_POINTER)) == LFS_POINTER:
-                raise ValueError(
-                    f"{member.name} is a Git LFS pointer: install git-lfs and "
-                    f"fetch the objects of {tag} before archiving it"
-                )
+
+    files: dict[str, bytes] = {}
+    with tarfile.open(fileobj=io.BytesIO(source)) as tar:
+        entries = tar.getmembers()
+        for entry in entries:
+            if entry.isfile():
+                files[entry.name] = tar.extractfile(entry).read()
+    for name, content in files.items():
+        if content.startswith(LFS_POINTER):
+            raise ValueError(
+                f"{name} is a Git LFS pointer: install git-lfs and fetch the "
+                f"objects of {rev} before archiving it"
+            )
+
+    manifest = prune_workspace_members(
+        files[f"{stem}/Cargo.toml"].decode(), [LIBHEGEL.path, component.path]
+    )
+    files[f"{stem}/Cargo.toml"] = manifest.encode()
+    files[f"{stem}/Cargo.lock"] = pruned_lockfile(files)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     archive = output_dir / f"{stem}.tar.gz"
     with open(archive, "wb") as f:
         with gzip.GzipFile(filename="", mode="wb", fileobj=f, mtime=0) as gz:
-            gz.write(tar)
+            with tarfile.open(fileobj=gz, mode="w", format=tarfile.PAX_FORMAT) as tar:
+                for entry in entries:
+                    entry.pax_headers = {}
+                    if entry.isfile():
+                        entry.size = len(files[entry.name])
+                        tar.addfile(entry, io.BytesIO(files[entry.name]))
+                    else:
+                        tar.addfile(entry)
     checksum = output_dir / f"{archive.name}.sha256"
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
     checksum.write_text(f"{digest}  {archive.name}\n")
+    return archive, checksum
 
-    entry = changelog_entry(git_output("show", f"{tag}:{component.changelog}").decode(), version)
-    engine = re.search(
-        r'^version = "([^"]+)"',
-        git_output("show", f"{tag}:{LIBHEGEL.manifests[0]}").decode(),
-        re.MULTILINE,
-    ).group(1)
-    notes = output_dir / f"{stem}.md"
+
+def build_source_release(root: Path, tag: str, output_dir: Path) -> dict[str, str]:
+    """Write what the GitHub release of the frontend release `tag` names
+    holds into `output_dir`: its source archive and checksum (see
+    `build_source_archive`) and its notes. Returns the paths of the three
+    files, and the release's title."""
+    component, version = component_of_tag(tag)
+    archive, checksum = build_source_archive(root, component, version, tag, output_dir)
+
+    def show(rel: str) -> str:
+        return subprocess.check_output(["git", "show", f"{tag}:{rel}"], text=True, cwd=root)
+
+    engine = re.search(r'^version = "([^"]+)"', show(LIBHEGEL.manifests[0]), re.MULTILINE).group(1)
+    notes = output_dir / f"{archive.name.removesuffix('.tar.gz')}.md"
     notes.write_text(
-        f"{entry}\n\n"
+        f"{changelog_entry(show(component.changelog), version)}\n\n"
         f"`{archive.name}` is the source of this release: `{component.path}` at "
-        f"this tag, without the rest of the repository. It was released with "
-        f"libhegel {engine}.\n"
+        f"this tag with libhegel {engine}, the engine it builds, and none of "
+        "the rest of the repository.\n"
     )
     return {
         "archive": str(archive),
@@ -710,7 +789,7 @@ def build_source_archive(root: Path, tag: str, output_dir: Path) -> dict[str, st
 
 
 def source_archive(tag: str, output_dir: Path) -> None:
-    for name, value in build_source_archive(ROOT, tag, output_dir).items():
+    for name, value in build_source_release(ROOT, tag, output_dir).items():
         print(f"{name}: {value}")
         set_output(name, value)
 
@@ -724,7 +803,7 @@ def publish_source_archive(tag: str, output_dir: Path) -> None:
     release that is already published is left alone for the same reason,
     which is what makes running this again harmless.
     """
-    files = build_source_archive(ROOT, tag, output_dir)
+    files = build_source_release(ROOT, tag, output_dir)
     view = subprocess.run(
         ["gh", "release", "view", tag, "--json", "isDraft", "--jq", ".isDraft"],
         capture_output=True,

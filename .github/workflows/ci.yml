@@ -617,14 +617,17 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
 
   # A GitHub release on the tag of each frontend released, holding its source
-  # archive: `hegel-<frontend>-<version>.tar.gz`, the frontend's directory at
-  # the tag and nothing else, with a `.sha256` beside it. GitHub's own archive
-  # of a tag is the whole monorepo with the website's Git LFS objects, which
-  # it generates on demand and often fails to finish serving; a release asset
-  # is a stored file with a stable checksum, which is what a package registry
-  # wants to point at. The archive is source only, so it waits for no publish
-  # job. The Go and OCaml frontends, whose tags are not on the release
-  # commit of a push, attach theirs in release-go and ocaml-release.yml.
+  # archive: `hegel-<frontend>-<version>.tar.gz`, the monorepo at the tag cut
+  # down to the frontend, libhegel and the Cargo workspace the engine builds
+  # in, with a `.sha256` beside it. The frontend builds from it as from a
+  # checkout, which each frontend workflow's `source-archive` job tests on
+  # every change. GitHub's own archive of a tag is the whole monorepo with the
+  # website's Git LFS objects, which it generates on demand and often fails
+  # to finish serving; a release asset is a stored file with a stable
+  # checksum, which is what a package registry wants to point at. The archive
+  # is source only, so it waits for no publish job. The Go and OCaml
+  # frontends, whose tags are not on the release commit of a push, attach
+  # theirs in release-go and ocaml-release.yml.
   release-source-archives:
     name: release-source-archives
     if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.source_tags != '' }}
@@ -639,6 +642,11 @@ jobs:
         with:
           persist-credentials: false
           ref: ${{ needs.release.outputs.commit }}
+      # cargo prunes the archive's Cargo.lock.
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
       - name: Publish the source archives
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -1313,6 +1321,11 @@ jobs:
           { printf 'Release %s\n\n' "$TAG"; cat "$NOTES"; } | git commit --quiet --file=-
           git tag "$TAG"
           git push origin "refs/tags/$TAG"
+      # cargo prunes the archive's Cargo.lock.
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
       # The release carries the module's source archive (see
       # release-source-archives), embedded binaries included: they are Git
       # LFS files, so the tag's objects must be here for `git archive` to
