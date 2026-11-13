@@ -789,6 +789,23 @@ class TaggedVersionTest(unittest.TestCase):
         self.assertEqual(release.tagged_version(self.root, GO), "0.9.28")
         self.assertEqual(release.component_version(self.root, GO), "0.9.28")
 
+    def test_the_latest_frontend_tags_are_each_frontends_highest(self) -> None:
+        for frontend in release.FRONTENDS:
+            self.git("tag", frontend.tag("1.2.3"))
+            self.git("tag", frontend.tag("1.10.0"))
+        self.assertEqual(
+            release.latest_frontend_tags(self.root),
+            [
+                "frontends/rust/1.10.0",
+                "frontends/python/1.10.0",
+                "frontends/typescript/1.10.0",
+                "frontends/cpp/1.10.0",
+                "frontends/java/1.10.0",
+                "frontends/ocaml/1.10.0",
+                "frontends/go/v1.10.0",
+            ],
+        )
+
     def test_no_tag_is_an_error(self) -> None:
         with self.assertRaises(ValueError):
             release.tagged_version(self.root, GO)

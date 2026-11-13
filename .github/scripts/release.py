@@ -794,6 +794,12 @@ def source_archive(tag: str, output_dir: Path) -> None:
         set_output(name, value)
 
 
+def latest_frontend_tags(root: Path) -> list[str]:
+    """The highest release tag of each frontend in the repository at `root`,
+    in `FRONTENDS` order, read off its tags as `tagged_version` does."""
+    return [frontend.tag(tagged_version(root, frontend)) for frontend in FRONTENDS]
+
+
 def publish_source_archive(tag: str, output_dir: Path) -> None:
     """Attach the source archive of the frontend release `tag` names to the
     GitHub release on that tag, creating the release if there is none.
@@ -803,7 +809,6 @@ def publish_source_archive(tag: str, output_dir: Path) -> None:
     release that is already published is left alone for the same reason,
     which is what makes running this again harmless.
     """
-    files = build_source_release(ROOT, tag, output_dir)
     view = subprocess.run(
         ["gh", "release", "view", tag, "--json", "isDraft", "--jq", ".isDraft"],
         capture_output=True,
@@ -813,6 +818,7 @@ def publish_source_archive(tag: str, output_dir: Path) -> None:
     if view.returncode == 0 and view.stdout.strip() == "false":
         print(f"The release of {tag} is already published.")
         return
+    files = build_source_release(ROOT, tag, output_dir)
     if view.returncode != 0:
         subprocess.run(
             [
@@ -1109,8 +1115,12 @@ if __name__ == "__main__":
         archive_parser.add_argument("tag", help="The release tag of a frontend.")
         archive_parser.add_argument("output_dir", type=Path, help="Where to write the archive.")
 
+    subparsers.add_parser("latest-frontend-tags")
+
     args = parser.parse_args()
-    if args.command == "source-archive":
+    if args.command == "latest-frontend-tags":
+        print("\n".join(latest_frontend_tags(ROOT)))
+    elif args.command == "source-archive":
         source_archive(args.tag, args.output_dir)
     elif args.command == "publish-source-archive":
         publish_source_archive(args.tag, args.output_dir)
