@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.52.3 - 2026-11-13
+
+This release updates the `hegeltest-c` dependency to 0.51.2.
+
 ## 0.52.2 - 2026-11-10
 
 This patch fixes the unbounded memory growth of a long-running `#[hegel::main]` binary under Antithesis. A run of a single test case inside Antithesis, with the database disabled as the `workload` profile has it, no longer records the choices its test case makes.

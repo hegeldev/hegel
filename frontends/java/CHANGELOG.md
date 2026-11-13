@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.12.1 - 2026-11-13
+
+This release updates the bundled libhegel engine to 0.51.2.
+
 ## 0.12.0 - 2026-11-10
 
 This release adds `Hegel.main`, for writing a test as a standalone program. A program runs one test case and takes its settings from the command line. `--help` lists the options.
