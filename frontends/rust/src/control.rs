@@ -99,6 +99,20 @@ macro_rules! hegel_internal_error {
 }
 pub(crate) use hegel_internal_error;
 
+/// Unwrap an `Option` an internal invariant of Hegel says is `Some`,
+/// raising an internal error formatted like [`format!`] when it is `None`.
+macro_rules! hegel_internal_unwrap {
+    ($option:expr, $($arg:tt)+) => {
+        match $option {
+            ::std::option::Option::Some(value) => value,
+            ::std::option::Option::None => {
+                $crate::control::raise_internal_error(::std::format_args!($($arg)+))
+            }
+        }
+    };
+}
+pub(crate) use hegel_internal_unwrap;
+
 thread_local! {
     static IN_TEST_CONTEXT: Cell<bool> = const { Cell::new(false) };
 }

@@ -18,7 +18,6 @@ pub(crate) mod sys;
 
 use self::sys as hegel_c;
 
-use crate::control::hegel_internal_error;
 use crate::runner::{
     Backend, Database, HealthCheck, NondeterminismStrictness, Phase, Settings, TestLocation,
     Verbosity,
@@ -96,7 +95,7 @@ pub(crate) fn engine_version() -> String {
         // SAFETY: ctx is this thread's live context and `version` is a valid
         // out-parameter; the engine's pointer is static.
         require_ok(unsafe { hegel_c::hegel_version(ctx, &mut version) });
-        string_opt(version).unwrap_or_default()
+        string_value(version)
     })
 }
 
@@ -1782,7 +1781,7 @@ impl GrammarBuilder {
             return None;
         }
         require_ok(rc);
-        Some(string_opt(path).unwrap_or_default())
+        Some(string_value(path))
     }
 }
 
@@ -2217,14 +2216,13 @@ impl RunResult {
         let mut blob = ptr::null();
         let mut caveat = ptr::null();
         // SAFETY: f is the failure snapshot allocated above; it is freed
-        // exactly once, after the strings have been copied out by string_opt.
+        // exactly once, after the strings have been copied out by string_value.
         with_context(|ctx| unsafe {
             require_ok(hegel_c::hegel_failure_origin(ctx, f, &mut origin));
             require_ok(hegel_c::hegel_failure_reproduction_blob(ctx, f, &mut blob));
             require_ok(hegel_c::hegel_failure_caveat(ctx, f, &mut caveat));
             let failure = Failure {
-                origin: string_opt(origin)
-                    .unwrap_or_else(|| hegel_internal_error!("failure {index} has no origin")),
+                origin: string_value(origin),
                 reproduce_blob: optional_string(blob),
                 caveat: optional_string(caveat),
             };
@@ -2279,16 +2277,12 @@ fn rc_to_value<T>(rc: hegel_result_t, value: T) -> Result<T, hegel_result_t> {
     }
 }
 
-fn string_opt(p: hegel_c::hegel_string_t) -> Option<String> {
+fn string_value(p: hegel_c::hegel_string_t) -> String {
     if p.len == 0 {
-        Some(String::new())
+        String::new()
     } else {
-        Some(
-            String::from_utf8_lossy(unsafe {
-                std::slice::from_raw_parts(p.data.cast::<u8>(), p.len)
-            })
-            .into_owned(),
-        )
+        String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(p.data.cast::<u8>(), p.len) })
+            .into_owned()
     }
 }
 
@@ -2445,5 +2439,5 @@ fn health_checks_from_bitmask(mask: u32) -> Vec<HealthCheck> {
 mod tests;
 
 fn optional_string(p: *const hegel_c::hegel_string_t) -> Option<String> {
-    unsafe { p.as_ref() }.and_then(|s| string_opt(*s))
+    unsafe { p.as_ref() }.map(|s| string_value(*s))
 }

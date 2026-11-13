@@ -7732,6 +7732,46 @@ fn nd_targeting_races_adopt_improvements_onto_a_fresh_reference() {
     );
 }
 
+/// With a failure already found, a perturbation that would run a
+/// prefix-cut probe gives no candidate and runs nothing.
+#[test]
+fn nd_target_perturb_runs_no_probe_once_a_failure_is_live() {
+    let execs = Rc::new(Cell::new(0u64));
+    let counter = execs.clone();
+    with_engine(
+        nd_settings(),
+        None,
+        move |_ds| {
+            counter.set(counter.get() + 1);
+            TestCaseResult::Valid
+        },
+        async |ctx| {
+            let timeline = [ChoiceValue::Boolean(true)];
+            assert!(
+                ctx.nd_target_perturb(&[], &timeline)
+                    .await
+                    .unwrap()
+                    .is_some()
+            );
+            assert_eq!(execs.get(), 1);
+            ctx.record_run(
+                &interesting_at("Panic: a", vec![bool_node(true)]),
+                Duration::ZERO,
+                false,
+            )
+            .unwrap();
+            assert!(ctx.origins.any_live());
+            assert!(
+                ctx.nd_target_perturb(&[], &timeline)
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            assert_eq!(execs.get(), 1);
+        },
+    );
+}
+
 /// A label whose body never reports it: the reference batch observes no
 /// score, the label is marked dead, and later firings spend nothing on it.
 #[test]

@@ -28,8 +28,17 @@ ALLOWED UNCOVERED PATTERNS:
    paths that should never be reached.
 
 4. Multi-line macro continuations
-   Continuation lines inside multi-line unreachable!() or todo!()
-   calls (e.g. format string arguments).
+   Continuation lines inside multi-line unreachable!(), todo!() or assert!()
+   calls (e.g. format string arguments), and inside the internal-assertion
+   macros of libhegel/src/control.rs and frontends/rust/src/control.rs:
+   hegel_internal_assert!() (and its _eq / _ne / debug_ variants),
+   hegel_internal_unwrap!() and hegel_internal_error!(). Each of those
+   reports an engine bug, so the lines holding its message and arguments only
+   run when an invariant is already broken. From Rust 1.100 on, coverage is
+   reported for each line of a statement, so those lines show as uncovered.
+   The line that opens the call is not exempt: the check itself must run.
+   invalid_argument!() is deliberately not on this list. It reports a user
+   error, which a test can and must trigger.
 
 5. #[ignore]d test bodies
    LLVM-cov marks the body of #[ignore]d tests as uncovered because
@@ -75,6 +84,12 @@ SOURCE_DIRS = [
     Path("frontends/rust/macros/src"),
     Path("libhegel/src"),
 ]
+
+EXCLUDED_MACRO_START = re.compile(
+    r"\b(unreachable|todo|assert"
+    r"|hegel_internal_(debug_)?assert(_eq|_ne)?"
+    r"|hegel_internal_unwrap|hegel_internal_error)!\s*\("
+)
 
 # ──────────────────────────────────────────────────────────────────────
 # nocov block cache
@@ -220,7 +235,8 @@ class UncoveredLine:
 
     def is_inside_excluded_macro(self) -> bool:
         """
-        Check if this line is a continuation of a multi-line unreachable!/todo!()/assert!().
+        Check if this line is a continuation of a multi-line call to one of
+        the macros in EXCLUDED_MACRO_START.
 
         Looks backward for an unclosed macro call that spans multiple lines.
         """
@@ -237,7 +253,7 @@ class UncoveredLine:
             if start < 0 or start >= len(lines):
                 continue
             line = lines[start].strip()
-            if re.search(r"\b(unreachable|todo|assert)!\s*\(", line):
+            if EXCLUDED_MACRO_START.search(line):
                 # Count parens from macro start to line BEFORE current
                 paren_depth = 0
                 for check_idx in range(start, idx):
