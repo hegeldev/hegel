@@ -269,18 +269,6 @@ let run_machine
       (fun sexp_of -> Internal.print_line tc [ Text "state = "; Value (sexp_of init) ])
       sexp_of_state
   in
-  (* Not Fun.protect: [check_invariant] is a local closure. *)
-  let with_faults_paused ~pause_faults LOCAL(f) =
-    if pause_faults
-    then (
-      Internal.pause_faults tc;
-      match f () with
-      | () -> Internal.unpause_faults tc
-      | exception e ->
-        Internal.unpause_faults tc;
-        raise e)
-    else f ()
-  in
   let check_invariants ~where ~sample =
     iteri_local
       (fun i (invariant : invariant_info) ->
@@ -291,14 +279,15 @@ let run_machine
                 ~state_machine
                 ~invariant_index:i
          then (
+           if invariant.pause_faults then Internal.pause_faults tc;
            match
-             with_faults_paused ~pause_faults:invariant.pause_faults (fun () ->
-               if Internal.should_print tc
-               then Internal.with_block tc ~indent:2 (fun tc -> check_invariant i tc)
-               else check_invariant i tc)
+             if Internal.should_print tc
+             then Internal.with_block tc ~indent:2 (fun tc -> check_invariant i tc)
+             else check_invariant i tc
            with
-           | () -> ()
+           | () -> if invariant.pause_faults then Internal.unpause_faults tc
            | exception e ->
+             if invariant.pause_faults then Internal.unpause_faults tc;
              Internal.note tc (Printf.sprintf "Invariant %s violated %s." invariant.name where);
              raise e))
       0
