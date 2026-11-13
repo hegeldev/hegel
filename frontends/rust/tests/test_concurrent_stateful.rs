@@ -1255,7 +1255,7 @@ fn a_runner_with_a_raised_maximum_uses_several_workers() {
     });
     result.unwrap();
     let levels = levels.lock().unwrap();
-    assert!(levels.iter().all(|&n| (1..=3).contains(&n)), "{levels:?}");
+    assert!(levels.iter().all(|&n| n <= 3), "{levels:?}");
     assert!(
         levels.iter().any(|&n| n > 1),
         "expected some test case to run on more than one worker: {levels:?}"

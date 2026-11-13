@@ -506,6 +506,49 @@ fn declared_terminal_without_a_generator_is_an_error() {
 }
 
 #[test]
+fn a_terminal_whose_regex_does_not_compile_is_an_error() {
+    let mut grammar = compile(
+        &load_grammar("start: A\nA: /a+/\n", &NoImports).unwrap(),
+        &["start"],
+    )
+    .unwrap();
+    grammar.terminals[0].regexp = Some(String::from("("));
+    let err = GrammarSpec::new(grammar, GrammarOptions::default())
+        .err()
+        .unwrap();
+    assert!(
+        err.message.contains("missing ), unterminated subpattern"),
+        "{}",
+        err.message
+    );
+}
+
+#[test]
+fn an_alphabet_whose_intervals_are_inverted_is_an_internal_error() {
+    let mut intervals = IntervalSet::new(vec![('0' as u32, '9' as u32)]).unwrap();
+    intervals.intervals = vec![('9' as u32, '0' as u32)];
+    let err = spec_with(
+        "start: X\n%declare X\n",
+        GrammarOptions {
+            explicit: explicit(&["X"]),
+            alphabet: Some(Arc::new(StringSpec::Text {
+                intervals: Arc::new(intervals),
+                min_size: 0,
+                max_size: 10,
+            })),
+            ..GrammarOptions::default()
+        },
+    )
+    .err()
+    .unwrap();
+    assert!(
+        err.message.contains("invalid interval (57, 48)"),
+        "{}",
+        err.message
+    );
+}
+
+#[test]
 fn alphabet_must_be_a_text_generator() {
     for text in ["start: A\nA: /a+/\n", "start: \"a\"\n"] {
         let err = spec_with(
@@ -1666,6 +1709,28 @@ fn a_chained_ignorable_the_one_before_it_swallows_the_next_token_through_is_not_
         Drawn::Fits(_)
     ));
     assert_eq!(text(&generation), "1#  ");
+}
+
+#[test]
+fn one_draw_finding_more_texts_than_the_readings_have_room_for_keeps_them_all() {
+    let spec = grammar("start: NAME+\nNAME: /[a-z]+/\n");
+    let name = tid(&spec, "NAME");
+    let text = |n: usize| -> Vec<char> {
+        format!("x{n}")
+            .chars()
+            .map(|c| c.to_digit(10).map_or(c, |d| (b'a' + d as u8) as char))
+            .collect()
+    };
+    let mut readings = ReadingsCache::new();
+    let room = readings.table.capacity();
+    let found: Vec<usize> = (0..=room)
+        .map(|n| readings.read_token(&spec, name, &text(n), None))
+        .collect();
+    assert!(readings.table.capacity() > room);
+    assert_eq!(found, (0..=room).collect::<Vec<_>>());
+    for n in 0..=room {
+        assert_eq!(readings.recall(name, &text(n)), Ok(n));
+    }
 }
 
 #[test]
