@@ -14,6 +14,12 @@ profile. The `workload` profile:
 Each test's outcome is reported as an Antithesis assertion, so failures appear 
 in the Antithesis triage report.
 
+A stateful invariant declared with `pause_faults=True` (see
+{doc}`../tutorial/stateful`) runs with fault injection paused: before each
+check Hegel runs the program named by `ANTITHESIS_FAULT_CONTROL` with
+`--pause`, and after it with `--unpause`, so no fault lands in the middle of
+the check.
+
 ## Write a workload program
 
 {func}`hegel.main` turns a function that takes a test case into a program.

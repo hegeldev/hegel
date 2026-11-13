@@ -408,6 +408,8 @@ final class RealLibhegel implements Libhegel {
     private final MethodHandle stateMachineRuleRejected;
     private final MethodHandle stateMachineShouldCheckInvariant;
     private final MethodHandle stateMachineFree;
+    private final MethodHandle pauseFaults;
+    private final MethodHandle unpauseFaults;
     private final MethodHandle target;
     private final MethodHandle markComplete;
     private final MethodHandle runResultStatus;
@@ -959,6 +961,9 @@ final class RealLibhegel implements Libhegel {
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_LONG, JAVA_LONG, ADDRESS));
         this.stateMachineFree =
                 h(linker, lookup, "hegel_state_machine_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, JAVA_LONG));
+        this.pauseFaults = h(linker, lookup, "hegel_pause_faults", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
+        this.unpauseFaults =
+                h(linker, lookup, "hegel_unpause_faults", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
         this.target = h(
                 linker,
                 lookup,
@@ -2388,6 +2393,16 @@ final class RealLibhegel implements Libhegel {
     @Override
     public void stateMachineFree(long stateMachineId) {
         check("hegel_state_machine_free", rc(stateMachineFree, stateMachineId));
+    }
+
+    @Override
+    public int pauseFaults(long tc) {
+        return rc(pauseFaults, segment(tc));
+    }
+
+    @Override
+    public int unpauseFaults(long tc) {
+        return rc(unpauseFaults, segment(tc));
     }
 
     @Override

@@ -291,6 +291,72 @@ class CoverageTest {
         assertEquals(5, machine.sampledChecks);
         assertEquals(5, machine.alwaysChecks);
         assertEquals(List.of(0L, 1L, 0L, 1L, 0L, 1L), fake.invariantChecksAsked);
+        // Neither invariant asks to pause faults, so the engine is never asked to.
+        assertEquals(List.of(), fake.faultEvents);
+    }
+
+    /** One plain invariant and one that pauses faults; each marks the fake's event log when it runs. */
+    static final class PausingMachine {
+        private final FakeLibhegel fake;
+        boolean explode;
+
+        PausingMachine(FakeLibhegel fake) {
+            this.fake = fake;
+        }
+
+        @Rule
+        void step(TestCase tc) {}
+
+        @Invariant
+        void plain(TestCase tc) {
+            fake.faultEvents.add("plain");
+        }
+
+        @Invariant(pauseFaults = true)
+        void protectedCheck(TestCase tc) {
+            fake.faultEvents.add("protected");
+            if (explode) {
+                throw new AssertionError("protected invariant failed");
+            }
+        }
+    }
+
+    @Test
+    void pauseFaultsInvariantsAreBracketedByPauseAndUnpause() {
+        // Initial state, one sampled join point (the fake samples everything in) and the final
+        // state: every run of the flagged invariant is paused immediately before and unpaused
+        // immediately after; the plain invariant runs unbracketed.
+        FakeLibhegel fake = new FakeLibhegel();
+        fake.ruleSequence = new long[] {0};
+        Stateful.run(new PausingMachine(fake), fakeTestCase(fake));
+        List<String> joinPoint = List.of("plain", "pause", "protected", "unpause");
+        List<String> expected = new java.util.ArrayList<>();
+        for (int i = 0; i < 3; i++) {
+            expected.addAll(joinPoint);
+        }
+        assertEquals(expected, fake.faultEvents);
+    }
+
+    @Test
+    void aThrowingPauseFaultsInvariantStillUnpauses() {
+        FakeLibhegel fake = new FakeLibhegel();
+        PausingMachine machine = new PausingMachine(fake);
+        machine.explode = true;
+        AssertionError e = assertThrows(AssertionError.class, () -> Stateful.run(machine, fakeTestCase(fake)));
+        assertEquals("protected invariant failed", e.getMessage());
+        assertEquals(List.of("plain", "pause", "protected", "unpause"), fake.faultEvents);
+        assertEquals(1, fake.freedStateMachines);
+    }
+
+    @Test
+    void aPauseFaultsEngineErrorSurfacesFromTheDriver() {
+        FakeLibhegel fake = new FakeLibhegel();
+        fake.pauseFaultsRc = Abi.E_INVALID_HANDLE;
+        PausingMachine machine = new PausingMachine(fake);
+        assertThrows(HegelException.class, () -> Stateful.run(machine, fakeTestCase(fake)));
+        // The failed pause never ran the invariant, and nothing was unpaused for it.
+        assertEquals(List.of("plain"), fake.faultEvents);
+        assertEquals(1, fake.freedStateMachines);
     }
 
     static final class WeightedRules {

@@ -183,6 +183,8 @@ export const signatures = {
   state_machine_next_rule: "IIILI",
   state_machine_rule_rejected: "IIIL",
   state_machine_should_check_invariant: "IIILI",
+  pause_faults: "II",
+  unpause_faults: "II",
   state_machine_free: "II",
   run_result_status: "III",
   run_result_error: "III",

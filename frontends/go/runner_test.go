@@ -1676,6 +1676,29 @@ func TestStatefulInitialInvariantError(t *testing.T) {
 	sm.Run(tc)
 }
 
+// TestStatefulPauseFaultsErrorsSurface covers the runner's pause and unpause
+// hooks forwarding the engine's error rather than swallowing it.
+func TestStatefulPauseFaultsErrorsSurface(t *testing.T) {
+	t.Parallel()
+	tc := newStubTestCase(t,
+		libhegel.OK, libhegel.OK, // pause_faults, unpause_faults
+		libhegel.E_INVALID_HANDLE, "pause on a dead case",
+		libhegel.E_INVALID_HANDLE, "unpause on a dead case",
+	)
+	if err := tc.pauseFaults(); err != nil {
+		t.Fatalf("pause = %v", err)
+	}
+	if err := tc.unpauseFaults(); err != nil {
+		t.Fatalf("unpause = %v", err)
+	}
+	if err := tc.pauseFaults(); !errors.Is(err, libhegel.E_INVALID_HANDLE) || !strings.Contains(err.Error(), "pause on a dead case") {
+		t.Fatalf("pause = %v, want the engine's error", err)
+	}
+	if err := tc.unpauseFaults(); !errors.Is(err, libhegel.E_INVALID_HANDLE) || !strings.Contains(err.Error(), "unpause on a dead case") {
+		t.Fatalf("unpause = %v, want the engine's error", err)
+	}
+}
+
 func TestStatefulFinalInvariantError(t *testing.T) {
 	t.Parallel()
 	tc := newStubTestCase(t,

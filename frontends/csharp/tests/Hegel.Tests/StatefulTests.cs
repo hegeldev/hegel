@@ -255,6 +255,107 @@ public class StatefulTests
         Assert.True(report.Passed);
     }
 
+    private sealed class FaultControlCounting(ILibhegel inner) : DelegatingLibhegel(inner)
+    {
+        internal int Pauses;
+        internal int Unpauses;
+        internal int PauseRc { get; set; } = Abi.Ok;
+        internal int UnpauseRc { get; set; } = Abi.Ok;
+
+        public override string LastErrorMessage() => "fake fault-control error";
+
+        public override int PauseFaults(nint testCase)
+        {
+            Interlocked.Increment(ref Pauses);
+            return PauseRc == Abi.Ok ? base.PauseFaults(testCase) : PauseRc;
+        }
+
+        public override int UnpauseFaults(nint testCase)
+        {
+            Interlocked.Increment(ref Unpauses);
+            return UnpauseRc == Abi.Ok ? base.UnpauseFaults(testCase) : UnpauseRc;
+        }
+    }
+
+    private sealed class Pausing
+    {
+        internal static int PausedRuns;
+        internal static int PlainRuns;
+
+        [Rule]
+        internal void Step(TestCase tc) { }
+
+        [Invariant(PauseFaults = true)]
+        internal void Paused(TestCase tc) => Interlocked.Increment(ref PausedRuns);
+
+        [Invariant(AlwaysRun = true, PauseFaults = true)]
+        internal void PausedEveryStep(TestCase tc) => Interlocked.Increment(ref PausedRuns);
+
+        [Invariant(AlwaysRun = true)]
+        internal void Plain(TestCase tc) => Interlocked.Increment(ref PlainRuns);
+    }
+
+    [Fact]
+    public void PausingInvariantsBracketEachOfTheirRunsWithPauseAndUnpause()
+    {
+        foreach (var options in new[] { new StatefulOptions(), new StatefulOptions { MinConcurrency = 2, MaxConcurrency = 2, StepCount = 4 } })
+        {
+            var lib = new FaultControlCounting(Engines.Real);
+            using var _ = Engines.Override(lib);
+            Pausing.PausedRuns = 0;
+            Pausing.PlainRuns = 0;
+            var report = Property.Test(tc => Stateful.Run(new Pausing(), tc, options), Quick);
+            Assert.True(report.Passed);
+            Assert.True(Pausing.PausedRuns > 0);
+            Assert.True(Pausing.PlainRuns > 0);
+            Assert.Equal(Pausing.PausedRuns, lib.Pauses);
+            Assert.Equal(Pausing.PausedRuns, lib.Unpauses);
+        }
+    }
+
+    private sealed class PausingBreakOnce
+    {
+        private int _n;
+
+        [Rule]
+        internal void Step(TestCase tc) => _n++;
+
+        [Invariant(PauseFaults = true)]
+        internal void NotBroken(TestCase tc) => Assert.True(_n == 0, "machine is broken");
+    }
+
+    [Fact]
+    public void AFailingPausingInvariantStillUnpausesAndIsNoted()
+    {
+        var lib = new FaultControlCounting(Engines.Real);
+        using var _ = Engines.Override(lib);
+        var report = Property.Run(tc => Stateful.Run(new PausingBreakOnce(), tc), Quick);
+        Assert.Equal(RunStatus.Failed, report.Status);
+        var failure = Assert.Single(report.Failures);
+        Assert.Equal("Invariant NotBroken failed:", failure.Output[^1]);
+        Assert.True(lib.Pauses > 0);
+        Assert.Equal(lib.Pauses, lib.Unpauses);
+    }
+
+    [Fact]
+    public void FaultControlErrorsSurfaceFromEitherCall()
+    {
+        var lib = new FaultControlCounting(Engines.Real) { PauseRc = Abi.EInvalidArg };
+        using (Engines.Override(lib))
+        {
+            var e = Assert.Throws<HegelUsageException>(() => Property.Test(tc => Stateful.Run(new Pausing(), tc), Quick));
+            Assert.Equal("fake fault-control error", e.Message);
+            Assert.Equal(0, lib.Unpauses);
+        }
+        lib = new FaultControlCounting(Engines.Real) { UnpauseRc = Abi.EInvalidArg };
+        using (Engines.Override(lib))
+        {
+            var e = Assert.Throws<HegelUsageException>(() => Property.Test(tc => Stateful.Run(new Pausing(), tc), Quick));
+            Assert.Equal("fake fault-control error", e.Message);
+            Assert.Equal(1, lib.Pauses);
+        }
+    }
+
     private sealed class Sampled
     {
         internal int Steps;

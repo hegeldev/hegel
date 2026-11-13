@@ -1,0 +1,5 @@
+error: expected boolean literal
+  --> tests/ui/concurrent_state_machine_bad_pause_faults_value.rs:10:44
+   |
+10 |     #[invariant(always_run, pause_faults = 1)]
+   |                                            ^

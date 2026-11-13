@@ -261,6 +261,10 @@ final class FakeLibhegel implements Libhegel {
     boolean shouldCheckInvariant = true; // the sampling decision for every invariant
     final List<Long> invariantChecksAsked = new ArrayList<>();
     int freedStateMachines;
+    int pauseFaultsRc = Abi.OK;
+    int unpauseFaultsRc = Abi.OK;
+    /** Every successful pause/unpause call in order, so tests can assert how an invariant is bracketed. */
+    final List<String> faultEvents = new ArrayList<>();
 
     // What hegel_settings_new hands back: the resolved profile's values, as the getters report them.
     int settingsNewRc = Abi.OK;
@@ -1137,6 +1141,22 @@ final class FakeLibhegel implements Libhegel {
     @Override
     public void stateMachineFree(long stateMachineId) {
         freedStateMachines++;
+    }
+
+    @Override
+    public int pauseFaults(long tc) {
+        if (pauseFaultsRc == Abi.OK) {
+            faultEvents.add("pause");
+        }
+        return pauseFaultsRc;
+    }
+
+    @Override
+    public int unpauseFaults(long tc) {
+        if (unpauseFaultsRc == Abi.OK) {
+            faultEvents.add("unpause");
+        }
+        return unpauseFaultsRc;
     }
 
     @Override

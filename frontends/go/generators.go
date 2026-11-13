@@ -108,6 +108,14 @@ type TestCase interface {
 	// should run at the current join point.
 	stateMachineShouldCheckInvariant(machine *libhegel.StateMachine, invariant int64) (bool, error)
 
+	// pauseFaults asks the engine to stop injecting faults until the matching
+	// unpauseFaults, for the duration of an invariant configured with
+	// [WithPauseFaultsInvariants].
+	pauseFaults() error
+
+	// unpauseFaults resumes fault injection paused by pauseFaults.
+	unpauseFaults() error
+
 	// reportDraw emits one draw-report line for value through the
 	// implementation's note channel, or no-ops when notes are suppressed.
 	// skip is the number of stack frames to skip when resolving the source

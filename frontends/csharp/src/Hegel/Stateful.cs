@@ -26,6 +26,14 @@ public sealed class InvariantAttribute : Attribute
 {
     /// <summary>Check after every step, rather than when the engine chooses to.</summary>
     public bool AlwaysRun { get; init; }
+
+    /// <summary>
+    /// Pause fault injection while the invariant runs: inside <see href="https://antithesis.com/">Antithesis</see>,
+    /// the fault injector is asked to stand down from just before the invariant is invoked until it returns or
+    /// throws, so the invariant observes the system under test without a fault landing in the middle of the
+    /// check. Elsewhere it has no effect.
+    /// </summary>
+    public bool PauseFaults { get; init; }
 }
 
 /// <summary>How <see cref="Stateful.Run(object, TestCase, StatefulOptions)"/> drives a state machine.</summary>
@@ -449,6 +457,11 @@ public static class Stateful
                 continue;
             }
             var invariant = invariants[i];
+            var pauseFaults = invariant.GetCustomAttribute<InvariantAttribute>()!.PauseFaults;
+            if (pauseFaults)
+            {
+                tc.PauseFaults();
+            }
             var invariantTc = tc.Block(2);
             Exception? failure = null;
             try
@@ -463,6 +476,10 @@ public static class Stateful
             finally
             {
                 invariantTc.EndBlock();
+                if (pauseFaults)
+                {
+                    tc.UnpauseFaults();
+                }
                 NoteFailure(tc, $"Invariant {invariant.Name} failed:", failure);
             }
         }

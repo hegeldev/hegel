@@ -429,6 +429,10 @@ final class JnaLibhegel implements Libhegel {
 
         int hegel_state_machine_free(Pointer ctx, long stateMachineId);
 
+        int hegel_pause_faults(Pointer ctx, Pointer tc);
+
+        int hegel_unpause_faults(Pointer ctx, Pointer tc);
+
         int hegel_target(Pointer ctx, Pointer tc, double value, HegelString.ByValue label);
 
         int hegel_mark_complete(Pointer ctx, Pointer tc, int status, HegelString origin);
@@ -2033,6 +2037,16 @@ final class JnaLibhegel implements Libhegel {
     @Override
     public void stateMachineFree(long stateMachineId) {
         check("hegel_state_machine_free", lib.hegel_state_machine_free(ctx(), stateMachineId));
+    }
+
+    @Override
+    public int pauseFaults(long tc) {
+        return lib.hegel_pause_faults(ctx(), pointer(tc));
+    }
+
+    @Override
+    public int unpauseFaults(long tc) {
+        return lib.hegel_unpause_faults(ctx(), pointer(tc));
     }
 
     @Override

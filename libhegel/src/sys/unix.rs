@@ -291,6 +291,81 @@ pub(super) fn pid() -> u32 {
     rustix::process::getpid().as_raw_nonzero().get() as u32
 }
 
+unsafe extern "C" {
+    fn posix_spawn(
+        pid: *mut rustix::process::RawPid,
+        path: *const core::ffi::c_char,
+        file_actions: *const core::ffi::c_void,
+        attrp: *const core::ffi::c_void,
+        argv: *const *const core::ffi::c_char,
+        envp: *const *const core::ffi::c_char,
+    ) -> core::ffi::c_int;
+}
+
+#[cfg(not(target_vendor = "apple"))]
+unsafe extern "C" {
+    static environ: *const *const core::ffi::c_char;
+}
+
+#[cfg(target_vendor = "apple")]
+unsafe extern "C" {
+    fn _NSGetEnviron() -> *mut *const *const core::ffi::c_char;
+}
+
+/// This process's environment, for a child to inherit. Apple does not
+/// export `environ` to shared libraries, which reach it through
+/// `_NSGetEnviron` instead.
+fn environment() -> *const *const core::ffi::c_char {
+    #[cfg(not(target_vendor = "apple"))]
+    // SAFETY: `environ` is valid for the life of the process.
+    unsafe {
+        environ
+    }
+    #[cfg(target_vendor = "apple")]
+    // SAFETY: `_NSGetEnviron` always returns a valid pointer.
+    unsafe {
+        *_NSGetEnviron()
+    }
+}
+
+/// Run `program` with `args` (the program's path is passed as its own
+/// first argument) and wait for it, inheriting this process's environment
+/// and standard streams. `Ok` with the exit status once the program has
+/// exited; `Err` if it could not be started (no file at `program`, not
+/// executable, an interior NUL in a string) or was killed by a signal.
+pub(super) fn run_process(program: &str, args: &[&str]) -> Result<i32, Error> {
+    let strings: Vec<Vec<u8>> = core::iter::once(program)
+        .chain(args.iter().copied())
+        .map(c_string)
+        .collect::<Option<_>>()
+        .ok_or(Error)?;
+    let mut argv: Vec<*const core::ffi::c_char> =
+        strings.iter().map(|s| s.as_ptr().cast()).collect();
+    argv.push(core::ptr::null());
+    let mut pid: rustix::process::RawPid = 0;
+    // SAFETY: every string and `argv` itself are NUL-terminated and outlive
+    // the call; null file actions and attributes ask for the defaults.
+    let rc = unsafe {
+        posix_spawn(
+            &mut pid,
+            argv[0],
+            core::ptr::null(),
+            core::ptr::null(),
+            argv.as_ptr(),
+            environment(),
+        )
+    };
+    if rc != 0 {
+        return Err(Error);
+    }
+    let pid = rustix::process::Pid::from_raw(pid).ok_or(Error)?;
+    let status =
+        retry_intr(|| rustix::process::waitpid(Some(pid), rustix::process::WaitOptions::empty()))?;
+    status
+        .and_then(|(_, status)| status.exit_status())
+        .ok_or(Error)
+}
+
 /// The current working directory, decoded lossily. `None` if the OS cannot
 /// report one.
 pub(super) fn cwd() -> Option<String> {

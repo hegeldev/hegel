@@ -1535,6 +1535,28 @@ impl CTestCase {
         rc_to_value(rc, out)
     }
 
+    /// Pause fault injection on this test case until [`unpause_faults`]
+    /// (`hegel_pause_faults`): inside Antithesis, a stateful invariant
+    /// declared with `pause_faults` runs between the pair, so no fault
+    /// lands in the middle of the check; outside Antithesis nothing happens.
+    ///
+    /// [`unpause_faults`]: CTestCase::unpause_faults
+    pub(crate) fn pause_faults(&self) -> Result<(), hegel_result_t> {
+        rc_to_unit(with_context(|ctx| unsafe {
+            hegel_c::hegel_pause_faults(ctx, self.raw)
+        }))
+    }
+
+    /// Resume fault injection paused by [`pause_faults`]
+    /// (`hegel_unpause_faults`).
+    ///
+    /// [`pause_faults`]: CTestCase::pause_faults
+    pub(crate) fn unpause_faults(&self) -> Result<(), hegel_result_t> {
+        rc_to_unit(with_context(|ctx| unsafe {
+            hegel_c::hegel_unpause_faults(ctx, self.raw)
+        }))
+    }
+
     pub(crate) fn target(&self, score: f64, label: &str) -> Result<(), hegel_result_t> {
         rc_to_unit(with_context(|ctx| unsafe {
             hegel_c::hegel_target(ctx, self.raw, score, view(label.as_bytes()))

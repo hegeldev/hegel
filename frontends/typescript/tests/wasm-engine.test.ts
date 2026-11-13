@@ -575,7 +575,9 @@ describe("WasmEngine pinned raw ABI", () => {
               if (rule === 1) engine.stateMachineRuleRejected(ctx, tc, machine, 0);
             }
             expect(engine.stateMachineShouldCheckInvariant(ctx, tc, machine, 0)).toBe(true);
+            engine.pauseFaults(ctx, tc);
             trace.push(engine.stateMachineShouldCheckInvariant(ctx, tc, machine, 1));
+            engine.unpauseFaults(ctx, tc);
           }
           expect(rounds).toBeGreaterThan(0);
           expect(rounds).toBeLessThanOrEqual(1000);
@@ -668,6 +670,40 @@ describe("WasmEngine pinned raw ABI", () => {
       },
       { testCases: 50, database: Database.disabled },
     );
+  });
+
+  it("brackets a pauseFaults invariant with pause and unpause in the browser runner", () => {
+    const engine = wasmFixture().engine;
+    const pause = vi.spyOn(engine, "pauseFaults");
+    const unpause = vi.spyOn(engine, "unpauseFaults");
+    let pausedRuns = 0;
+    createRunner(browserRuntime(engine)).test(
+      (tc) => {
+        stateful.run(
+          tc,
+          {
+            rules: { noop: () => {} },
+            invariants: {
+              paused: {
+                pauseFaults: true,
+                check: () => {
+                  expect(pause).toHaveBeenCalledTimes(unpause.mock.calls.length + 1);
+                  pausedRuns++;
+                },
+              },
+              plain: () => {
+                expect(pause).toHaveBeenCalledTimes(unpause.mock.calls.length);
+              },
+            },
+          },
+          {},
+        );
+      },
+      { seed: 42, testCases: 5 },
+    );
+    expect(pausedRuns).toBeGreaterThan(0);
+    expect(pause).toHaveBeenCalledTimes(pausedRuns);
+    expect(unpause).toHaveBeenCalledTimes(pausedRuns);
   });
 
   it("runs a stateful test with a pool in the browser runner", () => {

@@ -649,6 +649,14 @@ public final class TestCase {
         source.stateMachineFree(stateMachineId);
     }
 
+    void pauseFaults() {
+        source.pauseFaults();
+    }
+
+    void unpauseFaults() {
+        source.unpauseFaults();
+    }
+
     /** Whether the engine has concluded this case (overrun or invalid), so its body must unwind. */
     boolean isAborted() {
         return source.isAborted();

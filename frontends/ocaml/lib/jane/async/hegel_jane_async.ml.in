@@ -101,7 +101,10 @@ module Stateful = struct
         ~invariants:
           (List.map
              (fun (inv : _ Invariant.t) : Hegel.Stateful.invariant_info ->
-                { name = inv.name; always_check = inv.always_check })
+                { name = inv.name
+                ; always_check = inv.always_check
+                ; pause_faults = inv.pause_faults
+                })
              invariants)
         ~check_invariant:(fun i tc ->
           let inv = List.nth invariants i in

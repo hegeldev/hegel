@@ -41,11 +41,17 @@
     let rules = [ Hegel.Stateful.Rule.create ~name:"add" ~weight:1.0 ~step:add () ]
 
     let invariants =
-      [ Hegel.Stateful.Invariant.create ~name:"small" ~inv:small ~always_check:false ()
+      [ Hegel.Stateful.Invariant.create
+          ~name:"small"
+          ~inv:small
+          ~always_check:false
+          ~pause_faults:false
+          ()
       ; Hegel.Stateful.Invariant.create
           ~name:"positive"
           ~inv:positive
           ~always_check:true
+          ~pause_faults:false
           ()
       ]
     ;;
@@ -57,8 +63,11 @@
 
     A marker's options are written as a record, whose fields may be given in
     any order and any of which may be left out: [[@@rule { weight = 2.5 }]],
-    [[@@invariant { always_check = true }]]. A rule's [weight] tells the engine
-    how often to pick that rule relative to the others, and defaults to [1.0].
+    [[@@invariant { always_check = true; pause_faults = true }]]. A rule's
+    [weight] tells the engine how often to pick that rule relative to the
+    others, and defaults to [1.0]. An invariant's [always_check] checks it
+    after every step instead of sampling it, and [pause_faults] pauses fault
+    injection while it runs; both default to [false].
     A rule in a [module%hegel_concurrent_state_machine] also takes its
     [groups], as [[@@rule { groups = [ "io"; "flush" ]; weight = 2.5 }]]: the
     concurrency groups the rule belongs to, in each of whose rounds it may
@@ -133,12 +142,36 @@ let rule_attribute =
     (fun ~attr_loc payload -> attr_loc, payload)
 ;;
 
+type invariant_payload =
+  { always_check : bool option
+  ; pause_faults : bool option
+  }
+
+let always_check_field () = field "always_check" Ast_pattern.(ebool __)
+let pause_faults_field () = field "pause_faults" Ast_pattern.(ebool __)
+
 let invariant_attribute =
   Attribute.declare
     "hegel.invariant"
     Attribute.Context.value_binding
     Ast_pattern.(
-      map0 (pstr nil) ~f:false ||| record_payload (field "always_check" (ebool __) ^:: nil))
+      map0 (pstr nil) ~f:{ always_check = None; pause_faults = None }
+      ||| map1
+            (record_payload (always_check_field () ^:: nil))
+            ~f:(fun always_check ->
+              { always_check = Some always_check; pause_faults = None })
+      ||| map1
+            (record_payload (pause_faults_field () ^:: nil))
+            ~f:(fun pause_faults ->
+              { always_check = None; pause_faults = Some pause_faults })
+      ||| map2
+            (record_payload (always_check_field () ^:: pause_faults_field () ^:: nil))
+            ~f:(fun always_check pause_faults ->
+              { always_check = Some always_check; pause_faults = Some pause_faults })
+      ||| map2
+            (record_payload (pause_faults_field () ^:: always_check_field () ^:: nil))
+            ~f:(fun pause_faults always_check ->
+              { always_check = Some always_check; pause_faults = Some pause_faults }))
     Fun.id
 ;;
 
@@ -484,7 +517,17 @@ type marker =
       { groups : string list option
       ; weight : string
       }
-  | Invariant of { always_check : bool }
+  | Invariant of
+      { always_check : bool
+      ; pause_faults : bool
+      }
+
+let invariant_marker { always_check; pause_faults } =
+  Invariant
+    { always_check = Option.value always_check ~default:false
+    ; pause_faults = Option.value pause_faults ~default:false
+    }
+;;
 
 let rule_marker ~concurrent ~attr_loc { groups; weight } =
   if Option.is_some groups && not concurrent
@@ -514,7 +557,7 @@ let marker_of_binding ~concurrent (vb : value_binding) : value_binding * marker 
   | vb, None ->
     (match consume invariant_attribute vb with
      | vb, None -> vb, None
-     | vb, Some always_check -> vb, Some (Invariant { always_check }))
+     | vb, Some payload -> vb, Some (invariant_marker payload))
 ;;
 
 (** [expand_machine_item item] returns [item] with its marker attributes
@@ -624,7 +667,8 @@ let expand_state_machine ~concurrent ~loc (mb : module_binding) : structure_item
       (fun (name, marker) (rules, invariants) ->
          match marker with
          | Rule { groups; weight } -> (name, groups, weight) :: rules, invariants
-         | Invariant { always_check } -> rules, (name, always_check) :: invariants)
+         | Invariant { always_check; pause_faults } ->
+           rules, (name, always_check, pause_faults) :: invariants)
       marked
       ([], [])
   in
@@ -664,12 +708,13 @@ let expand_state_machine ~concurrent ~loc (mb : module_binding) : structure_item
   in
   let invariant_exprs =
     List.map
-      (fun (name, always_check) ->
+      (fun (name, always_check, pause_faults) ->
          [%expr
            [%e stateful "Invariant.create"]
              ~name:[%e estring ~loc name]
              ~inv:[%e evar ~loc name]
              ~always_check:[%e ebool ~loc always_check]
+             ~pause_faults:[%e ebool ~loc pause_faults]
              ()])
       invariants
   in

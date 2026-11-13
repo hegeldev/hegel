@@ -485,6 +485,8 @@ type symbols struct {
 	SettingsSetUnboundedChoices      func(ctxT, settingsT, bool) Error
 	RecursionFinish                  func(ctxT, testCaseT, recursionT) Error
 	StateMachineShouldCheckInvariant func(ctxT, testCaseT, stateMachineT, int64, out[bool]) Error
+	PauseFaults                      func(ctxT, testCaseT) Error
+	UnpauseFaults                    func(ctxT, testCaseT) Error
 	Event                            func(ctxT, testCaseT, stringT) Error
 	EventValue                       func(ctxT, testCaseT, float64, stringT) Error
 	Note                             func(ctxT, testCaseT, stringT) Error
@@ -794,6 +796,8 @@ func tryOpen(path string) (syms *symbols, err error) {
 		{"hegel_settings_set_unbounded_choices", &syms.SettingsSetUnboundedChoices},
 		{"hegel_recursion_finish", &syms.RecursionFinish},
 		{"hegel_state_machine_should_check_invariant", &syms.StateMachineShouldCheckInvariant},
+		{"hegel_pause_faults", &syms.PauseFaults},
+		{"hegel_unpause_faults", &syms.UnpauseFaults},
 		{"hegel_event", &syms.Event},
 		{"hegel_event_value", &syms.EventValue},
 		{"hegel_note", &syms.Note},
@@ -2403,6 +2407,27 @@ func (tc *TestCase) StateMachineShouldCheckInvariant(ctx *Context, machine *Stat
 		return e
 	})
 	return tc.outBool, err
+}
+
+// PauseFaults asks the engine to stop injecting faults until [TestCase.UnpauseFaults].
+//
+// Inside Antithesis this pauses the fault injector for the duration of a
+// check; everywhere else it does nothing.
+func (tc *TestCase) PauseFaults(ctx *Context) error {
+	return ctx.invoke("hegel_pause_faults", func(ctx ctxT) Error {
+		e := tc.syms.PauseFaults(ctx, tc.raw)
+		runtime.KeepAlive(tc)
+		return e
+	})
+}
+
+// UnpauseFaults resumes fault injection paused by [TestCase.PauseFaults].
+func (tc *TestCase) UnpauseFaults(ctx *Context) error {
+	return ctx.invoke("hegel_unpause_faults", func(ctx ctxT) Error {
+		e := tc.syms.UnpauseFaults(ctx, tc.raw)
+		runtime.KeepAlive(tc)
+		return e
+	})
 }
 
 // Note appends UTF-8 text, which may include newlines, to the test case's print region.

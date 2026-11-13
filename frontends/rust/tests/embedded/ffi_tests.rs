@@ -88,6 +88,9 @@ fn ffi_drives_a_passing_run_exercising_every_primitive() {
 
         tc.target(0.0, "score").unwrap();
 
+        tc.pause_faults().unwrap();
+        tc.unpause_faults().unwrap();
+
         let n = tc.generate_integer(0, 100)?;
         assert!((0..=100).contains(&n));
 
@@ -199,6 +202,24 @@ fn ffi_spec_handles_debug_is_opaque() {
     assert_eq!(format!("{:?}", SpanSpec::new()), "SpanSpec { .. }");
     assert_eq!(format!("{:?}", TimeZoneSpec::new()), "TimeZoneSpec { .. }");
     assert_eq!(format!("{:?}", ZonedSpec::new()), "ZonedSpec { .. }");
+}
+
+#[test]
+fn ffi_fault_pausing_rejects_a_null_test_case() {
+    use hegel_c::hegel_result_t::HEGEL_E_INVALID_HANDLE;
+    let null = ptr::null_mut();
+    let rc = with_context(|ctx| unsafe { hegel_c::hegel_pause_faults(ctx, null) });
+    assert_eq!(rc, HEGEL_E_INVALID_HANDLE);
+    assert_eq!(
+        last_error_string(),
+        "hegel_pause_faults: test case pointer is null"
+    );
+    let rc = with_context(|ctx| unsafe { hegel_c::hegel_unpause_faults(ctx, null) });
+    assert_eq!(rc, HEGEL_E_INVALID_HANDLE);
+    assert_eq!(
+        last_error_string(),
+        "hegel_unpause_faults: test case pointer is null"
+    );
 }
 
 #[test]

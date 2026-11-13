@@ -1,0 +1,54 @@
+name: Source archives
+
+# Attaches the source archive a frontend release carries (see
+# release-source-archives in ci.yml) to releases that were cut without one:
+# those from before the archives existed, or one whose archive job failed.
+# Run by hand, with the tags to publish for or none for the latest tag of
+# every frontend. A tag whose GitHub release is already published is left
+# alone, because the repository's releases are immutable: that is every Go
+# and OCaml release from before the archives. The archive is built by the
+# release.py on main, from the tree at the tag.
+on:
+  workflow_dispatch:
+    inputs:
+      tags:
+        description: Frontend release tags, separated by spaces (default, the latest of every frontend)
+        required: false
+        default: ""
+
+permissions: {}
+
+jobs:
+  publish:
+    name: publish
+    if: ${{ github.repository == 'hegeldev/hegel' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      # Every tag: the default is each frontend's highest one.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      # cargo prunes the archive's Cargo.lock.
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      # A Go tag's embedded libhegel binaries are Git LFS files.
+      - name: Publish the source archives
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAGS: ${{ inputs.tags }}
+        run: |
+          set -euo pipefail
+          git lfs install --local
+          if [ -z "$TAGS" ]; then
+            TAGS=$(python .github/scripts/release.py latest-frontend-tags)
+          fi
+          for tag in $TAGS; do
+            git lfs fetch origin "refs/tags/$tag" --include "frontends/go/**"
+            python .github/scripts/release.py publish-source-archive "$tag" "${RUNNER_TEMP}/source-archives"
+          done

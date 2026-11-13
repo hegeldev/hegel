@@ -186,6 +186,10 @@ type concurrentTestCaseShared struct {
 	invariantAlwaysCheck    []bool
 	invariantChecks         []int64
 	shouldCheckInvariant    func(int64) (bool, error)
+	faultEvents             []string
+	pauseFaults             func() error
+	unpauseFaults           func() error
+	failuresAsErrors        bool
 	cloneCount              int64
 	freedClones             int64
 	cloneErr                error
@@ -249,6 +253,10 @@ func (tc *concurrentTestCase) invoke(fn testBody) (err error) {
 		if recovered := recover(); recovered != nil {
 			if recovered == libhegel.E_ASSUME {
 				err = libhegel.E_ASSUME
+				return
+			}
+			if failure, ok := recovered.(error); ok && tc.shared.failuresAsErrors {
+				err = failure
 				return
 			}
 			panic(recovered)
@@ -350,6 +358,57 @@ func (tc *concurrentTestCase) stateMachineShouldCheckInvariant(_ *libhegel.State
 		return true, nil
 	}
 	return tc.shared.shouldCheckInvariant(invariant)
+}
+
+func (tc *concurrentTestCase) pauseFaults() error {
+	tc.shared.faultEvents = append(tc.shared.faultEvents, "pause")
+	if tc.shared.pauseFaults == nil {
+		return nil
+	}
+	return tc.shared.pauseFaults()
+}
+
+func (tc *concurrentTestCase) unpauseFaults() error {
+	tc.shared.faultEvents = append(tc.shared.faultEvents, "unpause")
+	if tc.shared.unpauseFaults == nil {
+		return nil
+	}
+	return tc.shared.unpauseFaults()
+}
+
+// pauseFaultsMachine reports each invariant run into the same event trace
+// the test double records pause and unpause calls in, so a test can check
+// their relative order.
+// fail, when set, is raised by InvariantPaused: on every run when failOnRun
+// is zero, otherwise only on its failOnRun'th run.
+type pauseFaultsMachine struct {
+	observe   func(string)
+	fail      error
+	failOnRun int
+	runs      int
+}
+
+func (*pauseFaultsMachine) RulePause(TestCase) {}
+func (m *pauseFaultsMachine) InvariantPaused(TestCase) {
+	m.observe("InvariantPaused")
+	m.runs++
+	if m.fail != nil && (m.failOnRun == 0 || m.failOnRun == m.runs) {
+		panic(m.fail)
+	}
+}
+func (m *pauseFaultsMachine) InvariantPlain(TestCase) { m.observe("InvariantPlain") }
+
+func newPauseFaultsRun(t *testing.T, concurrency int64, opts ...StateMachineOption) (*stateMachine, *concurrentTestCaseShared, *pauseFaultsMachine) {
+	t.Helper()
+	shared := &concurrentTestCaseShared{selectedConcurrency: concurrency, selectedRounds: 2}
+	machine := &pauseFaultsMachine{observe: func(event string) {
+		shared.faultEvents = append(shared.faultEvents, event)
+	}}
+	sm, err := newStateMachine(machine, opts...)
+	if err != nil {
+		t.Fatalf("newStateMachine: %v", err)
+	}
+	return sm, shared, machine
 }
 
 func TestNewStateMachineNilPointer(t *testing.T) {
@@ -559,6 +618,212 @@ func TestNewStateMachineAlwaysCheckInvariantValidation(t *testing.T) {
 			)
 			assertErrorContains(t, fmt.Sprintf("unknown invariant %q", name), err)
 		})
+	}
+}
+
+func TestNewStateMachinePauseFaultsInvariants(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name string
+		opts []StateMachineOption
+		want []bool
+	}{
+		{"default", nil, []bool{false, false}},
+		{"one", []StateMachineOption{WithPauseFaultsInvariants("InvariantPlain")}, []bool{false, true}},
+		{"additive", []StateMachineOption{WithPauseFaultsInvariants("InvariantPaused"), WithPauseFaultsInvariants("InvariantPlain")}, []bool{true, true}},
+		{"with always-check", []StateMachineOption{WithPauseFaultsInvariants("InvariantPaused"), WithAlwaysCheckInvariants("InvariantPlain")}, []bool{true, false}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			sm, err := newStateMachine(&pauseFaultsMachine{}, test.opts...)
+			if err != nil {
+				t.Fatalf("newStateMachine: %v", err)
+			}
+			got := make([]bool, len(sm.invariants))
+			for i, inv := range sm.invariants {
+				got[i] = inv.pauseFaults
+			}
+			if !slices.Equal(got, test.want) {
+				t.Errorf("pause-faults flags = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestNewStateMachinePauseFaultsInvariantValidation(t *testing.T) {
+	t.Parallel()
+
+	for _, name := range []string{"RulePause", "InvariantMissing"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, err := newStateMachine(
+				&pauseFaultsMachine{},
+				WithPauseFaultsInvariants(name),
+			)
+			assertErrorContains(t, fmt.Sprintf("pause-faults configuration references unknown invariant %q", name), err)
+			assertErrorContains(t, "available invariants: InvariantPaused, InvariantPlain", err)
+		})
+	}
+}
+
+func TestStateMachinePausesFaultsAroundInvariants(t *testing.T) {
+	t.Parallel()
+
+	for _, concurrency := range []int64{1, 2} {
+		t.Run(fmt.Sprintf("concurrency %d", concurrency), func(t *testing.T) {
+			t.Parallel()
+			sm, shared, _ := newPauseFaultsRun(t, concurrency, WithPauseFaultsInvariants("InvariantPaused"))
+			sm.Run(&concurrentTestCase{shared: shared})
+
+			check := []string{"pause", "InvariantPaused", "unpause", "InvariantPlain"}
+			var want []string
+			for range 4 {
+				want = append(want, check...)
+			}
+			if !slices.Equal(shared.faultEvents, want) {
+				t.Errorf("events = %v, want %v (initial, two join points, final)", shared.faultEvents, want)
+			}
+		})
+	}
+}
+
+func TestStateMachineSampledPauseFaultsInvariantSkipsPause(t *testing.T) {
+	t.Parallel()
+
+	sm, shared, _ := newPauseFaultsRun(t, 1, WithPauseFaultsInvariants("InvariantPaused"))
+	shared.shouldCheckInvariant = func(invariant int64) (bool, error) { return invariant == 1, nil }
+	sm.Run(&concurrentTestCase{shared: shared})
+
+	want := []string{
+		"pause", "InvariantPaused", "unpause", "InvariantPlain",
+		"InvariantPlain",
+		"InvariantPlain",
+		"pause", "InvariantPaused", "unpause", "InvariantPlain",
+	}
+	if !slices.Equal(shared.faultEvents, want) {
+		t.Errorf("events = %v, want %v", shared.faultEvents, want)
+	}
+}
+
+func TestStateMachineWithoutPauseFaultsNeverPauses(t *testing.T) {
+	t.Parallel()
+
+	sm, shared, _ := newPauseFaultsRun(t, 1)
+	sm.Run(&concurrentTestCase{shared: shared})
+
+	if slices.Contains(shared.faultEvents, "pause") || slices.Contains(shared.faultEvents, "unpause") {
+		t.Errorf("events = %v, want no pause or unpause", shared.faultEvents)
+	}
+	if got := len(shared.faultEvents); got != 8 {
+		t.Errorf("invariant runs = %d, want 8", got)
+	}
+}
+
+func TestStateMachinePanickingInvariantStillUnpausesFaults(t *testing.T) {
+	t.Parallel()
+
+	want := errors.New("invariant panicked")
+	sm, shared, machine := newPauseFaultsRun(t, 1, WithPauseFaultsInvariants("InvariantPaused"))
+	machine.fail = want
+	defer func() {
+		recovered, ok := recover().(error)
+		if !ok || !errors.Is(recovered, want) {
+			t.Fatalf("panic = %v, want %v", recovered, want)
+		}
+		if got := []string{"pause", "InvariantPaused", "unpause"}; !slices.Equal(shared.faultEvents, got) {
+			t.Errorf("events = %v, want %v", shared.faultEvents, got)
+		}
+	}()
+	sm.Run(&concurrentTestCase{shared: shared})
+}
+
+func TestStateMachineFailingInvariantStillUnpausesFaults(t *testing.T) {
+	t.Parallel()
+
+	want := errors.New("invariant failed")
+	sm, shared, machine := newPauseFaultsRun(t, 1, WithPauseFaultsInvariants("InvariantPaused"))
+	shared.failuresAsErrors = true
+	shared.unpauseFaults = func() error { return errors.New("unpause failed") }
+	machine.fail = want
+	defer func() {
+		if got := []string{"pause", "InvariantPaused", "unpause"}; !slices.Equal(shared.faultEvents, got) {
+			t.Errorf("events = %v, want %v", shared.faultEvents, got)
+		}
+	}()
+	defer expectErrorPanic(t, want)
+	sm.Run(&concurrentTestCase{shared: shared})
+}
+
+func TestStateMachineJoinPointInvariantFailureAborts(t *testing.T) {
+	t.Parallel()
+
+	want := errors.New("invariant failed at a join point")
+	sm, shared, machine := newPauseFaultsRun(t, 1, WithPauseFaultsInvariants("InvariantPaused"))
+	shared.failuresAsErrors = true
+	machine.fail = want
+	machine.failOnRun = 2
+	defer func() {
+		want := []string{
+			"pause", "InvariantPaused", "unpause", "InvariantPlain",
+			"pause", "InvariantPaused", "unpause",
+		}
+		if !slices.Equal(shared.faultEvents, want) {
+			t.Errorf("events = %v, want the initial check and the aborted join point %v", shared.faultEvents, want)
+		}
+	}()
+	defer expectErrorPanic(t, want)
+	sm.Run(&concurrentTestCase{shared: shared})
+}
+
+func TestStateMachinePauseFaultsErrorAborts(t *testing.T) {
+	t.Parallel()
+
+	want := errors.New("pause failed")
+	sm, shared, _ := newPauseFaultsRun(t, 1, WithPauseFaultsInvariants("InvariantPaused"))
+	shared.pauseFaults = func() error { return want }
+	defer func() {
+		if got := []string{"pause"}; !slices.Equal(shared.faultEvents, got) {
+			t.Errorf("events = %v, want %v", shared.faultEvents, got)
+		}
+	}()
+	defer expectErrorPanic(t, want)
+	sm.Run(&concurrentTestCase{shared: shared})
+}
+
+func TestStateMachineUnpauseFaultsErrorAborts(t *testing.T) {
+	t.Parallel()
+
+	want := errors.New("unpause failed")
+	sm, shared, _ := newPauseFaultsRun(t, 1, WithPauseFaultsInvariants("InvariantPaused"))
+	shared.unpauseFaults = func() error { return want }
+	defer func() {
+		if got := []string{"pause", "InvariantPaused", "unpause"}; !slices.Equal(shared.faultEvents, got) {
+			t.Errorf("events = %v, want %v", shared.faultEvents, got)
+		}
+	}()
+	defer expectErrorPanic(t, want)
+	sm.Run(&concurrentTestCase{shared: shared})
+}
+
+func TestRunStatefulPauseFaultsInvariantsWithEngine(t *testing.T) {
+	t.Parallel()
+	Test(t, func(ht *T) {
+		machine := &invariantSelectionMachine{}
+		RunStateful(ht, machine, WithPauseFaultsInvariants("InvariantAlways", "InvariantSampled"), WithBoundedConcurrency(2))
+		if machine.alwaysCalls < 2 || machine.sampledCalls < 2 {
+			ht.Fatalf("invariant runs = %d, %d; want at least the initial and final checks", machine.alwaysCalls, machine.sampledCalls)
+		}
+	}, WithDatabase(""), WithTestCases(5))
+}
+
+func TestRunStatefulPauseFaultsInvariantViolationFails(t *testing.T) {
+	t.Parallel()
+	err := run(1, func(tc TestCase) {
+		RunStateful(tc, &invariantViolator{}, WithPauseFaultsInvariants("InvariantSmall"))
+	}, WithTestCases(10))
+	if err == nil {
+		t.Fatal("Expected error")
 	}
 }
 

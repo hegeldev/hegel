@@ -661,6 +661,10 @@ public sealed class TestCase
 
     internal void StateMachineFree(nint stateMachineId) => _source.StateMachineFree(stateMachineId);
 
+    internal void PauseFaults() => _source.PauseFaults();
+
+    internal void UnpauseFaults() => _source.UnpauseFaults();
+
     internal void ReleaseThreadContext() => _source.ReleaseThreadContext();
 
     internal bool IsAborted => _source.IsAborted;

@@ -609,6 +609,20 @@ final class LiveDataSource implements DataSource {
     }
 
     @Override
+    public void pauseFaults() {
+        checkLive();
+        translate(lib.pauseFaults(tc), "pause_faults");
+    }
+
+    @Override
+    public void unpauseFaults() {
+        if (aborted) {
+            return;
+        }
+        translate(lib.unpauseFaults(tc), "unpause_faults");
+    }
+
+    @Override
     public void target(double value, String label) {
         checkLive();
         translate(lib.target(tc, value, label), "target");

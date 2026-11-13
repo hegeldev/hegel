@@ -809,6 +809,10 @@ internal sealed unsafe class Libhegel : ILibhegel
 
     public int StopSpan(nint testCase, bool discard) => NativeMethods.hegel_stop_span(Ctx, testCase, discard);
 
+    public int PauseFaults(nint testCase) => NativeMethods.hegel_pause_faults(Ctx, testCase);
+
+    public int UnpauseFaults(nint testCase) => NativeMethods.hegel_unpause_faults(Ctx, testCase);
+
     public int NewCollection(nint testCase, ulong minSize, ulong maxSize, out nint collection)
     {
         nint o;

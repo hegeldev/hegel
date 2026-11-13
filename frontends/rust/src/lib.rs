@@ -614,7 +614,8 @@ pub use hegel_macros::state_machine;
 /// the named concurrency groups; methods annotated `#[invariant]` become
 /// invariants, checked in full on the machine's initial and final state and
 /// sampled at the join points between rounds (`#[invariant(always_run)]`
-/// runs at every join point instead). Rules in the same
+/// runs at every join point instead, and `#[invariant(pause_faults = true)]`
+/// pauses fault injection while the invariant runs). Rules in the same
 /// group may run concurrently with each other; rules in different groups
 /// never overlap. A rule in several groups, `#[rule(groups = ["a", "b"])]`,
 /// runs whenever any of them is current, so it may overlap the rules of

@@ -328,6 +328,14 @@ export class EngineDataSource implements DataSource {
     );
   }
 
+  pauseFaults(): void {
+    this.call(() => this.lib.pauseFaults(this.ctx, this.tc));
+  }
+
+  unpauseFaults(): void {
+    this.call(() => this.lib.unpauseFaults(this.ctx, this.tc));
+  }
+
   note(message: string): void {
     this.call(() => this.lib.note(this.ctx, this.tc, message));
   }

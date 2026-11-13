@@ -19,15 +19,15 @@ Instead of writing tests with hand-picked example inputs, you describe a *proper
 Hegel ships as the `Hegel` package, for .NET 8 and later; xUnit projects add `Hegel.Xunit` on top of it for the `[HegelTest]` attribute, and F# projects `Hegel.FSharp` (see [F#](#f) below):
 
 ```bash
-dotnet add package Hegel --version 0.1.4
-dotnet add package Hegel.Xunit --version 0.1.4
+dotnet add package Hegel --version 0.2.0
+dotnet add package Hegel.Xunit --version 0.2.0
 ```
 
 or in your test project:
 
 ```xml
-<PackageReference Include="Hegel" Version="0.1.4" />
-<PackageReference Include="Hegel.Xunit" Version="0.1.4" />
+<PackageReference Include="Hegel" Version="0.2.0" />
+<PackageReference Include="Hegel.Xunit" Version="0.2.0" />
 ```
 
 The engine is bundled in the `Hegel` package for Linux (x86-64 and arm64), macOS (Apple Silicon), and Windows (x86-64 and arm64); nothing is downloaded at runtime. Hegel works with any test framework: `Property.Test` runs inside your test method and throws the failing assertion, so xUnit, NUnit, MSTest and TUnit all report a property failure the way they report any other. Under xUnit, `Hegel.Xunit` lets you write the property as the test method itself.
@@ -199,14 +199,14 @@ class CounterMachine
 public void CounterIsConsistent() => Property.Test(tc => Stateful.Run(new CounterMachine(), tc));
 ```
 
-Hegel chooses which rules to run and in what order, and shrinks a failing sequence to the fewest steps that still fail. `[Rule(Groups = ["..."], Weight = ...)]` puts a rule in concurrency groups (rules sharing a group may run at once, rules with no group in common never overlap; a rule may be in several) and biases the choice; `[Invariant(AlwaysRun = true)]` keeps an invariant in the run even when the engine would skip it. `StatefulOptions` sets the step count and, with `MaxConcurrency` above one, runs rules on several threads at once to find races. A `Pool<T>` (or `ConcurrentPool<T>` for concurrent machines) remembers the values rules produce, so later rules can draw from them with `pool.Reusable()` or take them with `pool.Consuming()`.
+Hegel chooses which rules to run and in what order, and shrinks a failing sequence to the fewest steps that still fail. `[Rule(Groups = ["..."], Weight = ...)]` puts a rule in concurrency groups (rules sharing a group may run at once, rules with no group in common never overlap; a rule may be in several) and biases the choice; `[Invariant(AlwaysRun = true)]` keeps an invariant in the run even when the engine would skip it, and `[Invariant(PauseFaults = true)]` pauses fault injection while the invariant runs when the test executes inside [Antithesis](https://antithesis.com/). `StatefulOptions` sets the step count and, with `MaxConcurrency` above one, runs rules on several threads at once to find races. A `Pool<T>` (or `ConcurrentPool<T>` for concurrent machines) remembers the values rules produce, so later rules can draw from them with `pool.Reusable()` or take them with `pool.Consuming()`.
 
 ## F#
 
 `Hegel.FSharp` adds an F# surface over the same engine: the `Hegel` entry type, the `Gen` catalogue, the `gen { }` builder and automatic generators for F# types. A failing test case prints as the F# you would type to reproduce it, whichever generators it drew from.
 
 ```bash
-dotnet add package Hegel.FSharp --version 0.1.4
+dotnet add package Hegel.FSharp --version 0.2.0
 ```
 
 ```fsharp

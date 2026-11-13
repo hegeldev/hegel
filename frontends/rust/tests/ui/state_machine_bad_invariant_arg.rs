@@ -1,4 +1,5 @@
-// A parenthesized #[invariant(...)] accepts only `always_run`.
+// A parenthesized #[invariant(...)] accepts only `always_run` and
+// `pause_faults = <bool>`.
 
 struct Machine;
 
