@@ -1167,15 +1167,18 @@ impl<G: Generator<chrono_tz::Tz> + 'static> zoned::Zones<chrono_tz::Tz> for G {
                 .get_or_init(|| config.generator().zones(zones.zone_generator()))
                 .do_draw(tc),
             None => {
-                let name = tc.draw_silent(self).name().to_string();
+                let name = tc.draw_silent(self).name();
                 let zone = hd::TimeZone {
-                    name: name.clone(),
-                    primary_name: name,
+                    name: name.to_string(),
+                    primary_name: name.to_string(),
                 };
-                zoned
+                let drawn = zoned
                     .get_or_init(|| config.generator().source(super::zone_source()))
-                    .draw_in_zone(tc, zone)
-                    .unwrap_or_else(|message| invalid_argument!("{message}"))
+                    .draw_in_zone(tc, zone);
+                crate::control::hegel_internal_unwrap!(
+                    drawn.ok(),
+                    "chrono-tz's zone source does not know {name:?}, one of chrono-tz's own zones"
+                )
             }
         };
         chrono_tz_datetime(&z).unwrap_or_else(|| tc.reject())
