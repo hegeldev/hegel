@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.3 - 2026-11-10
+
+This release updates the bundled libhegel engine to 0.51.1.
+
+## 0.5.2 - 2026-11-09
+
+This patch lets a long state-machine run explore more than one configuration. Between steps, a state machine now occasionally redraws its value distribution and which of its rules are enabled. Previously these were fixed for the whole test case, so a single long-running test case kept one configuration for its whole run.
+
 ## 0.5.1 - 2026-11-03
 
 This release updates the bundled libhegel engine to 0.50.0.

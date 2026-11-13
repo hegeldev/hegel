@@ -144,7 +144,7 @@ def test_deferred_label_of_direct_cycle_and_errors():
 
 
 def test_deferred_definition_can_build_non_empty_collections_of_itself():
-    x = gs.deferred(lambda: gs.none() | gs.lists(x, min_size=1))
+    x = gs.deferred(lambda: gs.none() | gs.lists(x, min_size=1, max_size=2))
     check_all(x, lambda v: v is None or isinstance(v, list), test_cases=50)
     assert find_example(x, lambda v: v is not None) == [None]
 

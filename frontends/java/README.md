@@ -31,7 +31,7 @@ Add the dependency with Maven:
 <dependency>
   <groupId>dev.hegel</groupId>
   <artifactId>hegel</artifactId> <!-- or "hegel-jna" for Java 17-21 -->
-  <version>0.11.0</version>
+  <version>0.12.0</version>
   <scope>test</scope>
 </dependency>
 ```
@@ -39,7 +39,7 @@ Add the dependency with Maven:
 or with Gradle:
 
 ```kotlin
-testImplementation("dev.hegel:hegel:0.11.0") // or "dev.hegel:hegel-jna:0.11.0"
+testImplementation("dev.hegel:hegel:0.12.0") // or "dev.hegel:hegel-jna:0.12.0"
 ```
 
 Depend on exactly one of the two — they contain the same classes and differ only in how they call
@@ -130,6 +130,21 @@ mvn test -pl hegel -am -Dtest=ConcurrentCounterExample -Dhegel.examples=true -Ds
 
 (or `-pl hegel-jna -am` for the JNA frontend) and it fails with a report of the rounds and the
 worker-stamped rule and draw lines that led to the lost update.
+
+## Standalone programs
+
+`Hegel.main` turns a test into a program that runs one test case:
+
+```java
+public static void main(String[] args) {
+    Hegel.main(args, tc -> {
+        int x = tc.draw(integers());
+        assertEquals(x + 0, x);
+    });
+}
+```
+
+Test settings are passed in as command line options. `--help` lists the settings. The process exits with status 0 if the test case passes, 1 if it fails or the run ends in an error, and 2 if the command line is invalid.
 
 ## Using Hegel as a library
 

@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.51.1 - 2026-11-10
+
+This patch stops a run of a single test case inside Antithesis (detected from `ANTITHESIS_OUTPUT_DIR`), with no database to save a failure to, from recording the choices its test case makes. This is the configuration of a long-running workload, where the record of an hours-long test case grew without bound.
+
+A failure of such a run is now reported from its one execution: it is not shrunk or replayed, the test case is not stamped for capture, and the failure has no reproduce blob.
+
+## 0.51.0 - 2026-11-09
+
+This release lets a long state-machine run explore more than one configuration. Until now a test case drew its value distribution, each worker's set of enabled rules, and its concurrency level once, at the start. A `#[hegel::main]` binary, which runs a single test case, kept that configuration for its whole life. At the start of each round, a state machine now redraws all three with probability 1/50.
+
+To let the concurrency level change between rounds without starting or stopping threads, the meaning of the concurrency values in the C ABI changes:
+
+* `hegel_state_machine_start` now writes `max_concurrency` into `*out_concurrency`. The caller runs that many workers for the whole test case.
+* `hegel_state_machine_next_group` takes a new `out_concurrency` parameter, which receives the round's concurrency level. That many workers, chosen by the engine, are handed rules. The others get `HEGEL_STATE_MACHINE_DONE` from `hegel_state_machine_next_rule`.
+
+Before:
+
+```c
+hegel_state_machine_next_group(ctx, tc, machine, &group);
+```
+
+After:
+
+```c
+hegel_state_machine_next_group(ctx, tc, machine, &group, &concurrency);
+```
+
 ## 0.50.0 - 2026-11-03
 
 This release changes how a state machine is declared through the C ABI to allow rules to belong to multiple concurrency groups.

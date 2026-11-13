@@ -596,9 +596,11 @@ def test_concurrent_machine_finds_race(output):
     with pytest.raises(AssertionError) as info:
         hegel.state_machine_test(Bank, test_cases=300)()
     text = notes(info.value)[0]
-    assert text.startswith("Concurrency level: ")
     assert re.search(
-        r'^---------------- Round 1: group "(deposit|withdraw)" ----------------$', text, re.M
+        r'^Concurrency level: \d+\n---------------- Round 1: group "(deposit|withdraw)" '
+        r"----------------$",
+        text,
+        re.M,
     )
     assert "[worker " in text
     assert "Invariant non_negative failed:" in text
@@ -823,6 +825,20 @@ def test_concurrent_rule_failure_is_reported():
         hegel.state_machine_test(Boom, test_cases=100)()
     text = notes(info.value)[0]
     assert "Rule boom failed:" in text
+
+
+def test_the_failure_report_notes_the_rounds_concurrency_level():
+    class Boom(hegel.StateMachine):
+        max_concurrency = 3
+
+        @hegel.rule()
+        def boom(self, tc):
+            raise ValueError
+
+    with pytest.raises(ValueError) as info:
+        hegel.state_machine_test(Boom, database=None)()
+    text = notes(info.value)[0]
+    assert "Concurrency level: 1" in text and "Concurrency level: 3" not in text, text
 
 
 def test_concurrent_control_errors_propagate():

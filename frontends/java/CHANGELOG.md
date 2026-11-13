@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.12.0 - 2026-11-10
+
+This release adds `Hegel.main`, for writing a test as a standalone program. A program runs one test case and takes its settings from the command line. `--help` lists the options.
+
+```java
+public static void main(String[] args) {
+    Hegel.main(args, tc -> {
+        int x = tc.draw(integers());
+        assertEquals(x + 0, x);
+    });
+}
+```
+
+The process exits with status 0 if the test case passes, 1 if it fails or the run ends in an error, and 2 if the command line is invalid.
+
+In `dev.hegel:hegel-lowlevel`, `Libhegel` gains `settingsFromString` (`hegel_settings_set_from_string`), `setDefaultProfile` (`hegel_set_default_profile`), `settingsGetVerbosity` (`hegel_settings_get_verbosity`) and `settingsGetSuppressHealthCheck` (`hegel_settings_get_suppress_health_check`).
+
+## 0.11.2 - 2026-11-10
+
+This patch adds a weighted generator for booleans, `booleans(double p)`.
+
+```java
+booleans(1.0) // always true
+booleans(0.7) // 70% probability of true
+booleans(0.0) // always false
+```
+
+## 0.11.1 - 2026-11-09
+
+This patch lets a long state-machine run explore more than one configuration. Between rounds, a state machine now occasionally redraws its value distribution, the rules each worker has enabled, and the concurrency level. Previously these were fixed for the whole test case, so a single long-running test case kept one configuration for its whole run.
+
+A concurrent machine now always starts `maxConcurrency` worker threads, and only the current concurrency level's worth of them run rules in a round. A failure report notes `Concurrency level: n` at the first round and whenever the level changes.
+
 ## 0.11.0 - 2026-11-03
 
 This release lets a rule of a concurrent state machine belong to several concurrency groups, and renames `@Rule(group = ...)` to `@Rule(groups = ...)`. A rule in several groups runs in the rounds of each of them, so it can overlap the rules of every group it names. A bare `@Rule` still indicates the anonymous group. The groups of one rule must be distinct; the engine rejects a repeated group with an `IllegalArgumentException`.

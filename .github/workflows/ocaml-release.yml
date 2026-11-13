@@ -1,0 +1,342 @@
+# The OCaml frontend's weekly release. Every release of it is a pull request
+# to ocaml/opam-repository that a maintainer there reviews, so it is not
+# released on every push to main the way the other components are: its
+# release files (frontends/ocaml/RELEASE/<slug>.md, plus the libhegel.md a
+# libhegel release leaves there) stay on main, and each Monday this workflow
+# folds whatever is pending into one release, changelog entries and all. A
+# week with nothing pending releases nothing.
+#
+# A release is: the version bump, changelog and frontends/ocaml/<version> tag
+# (release.py), the opam source tarball attached to a GitHub release on that
+# tag, the API reference at hegel.dev/ocaml, and the opam-repository pull
+# request (`opam publish`).
+#
+# Run manually (Actions -> "ocaml release" -> Run workflow) it does the same
+# out of schedule. Given the `frontends/ocaml/<version>` tag of an existing
+# release, it only opens the opam-repository pull request for that release.
+#
+# Prerequisites (one-time setup):
+#   * A repository secret `OPAM_PUBLISH_TOKEN`: a GitHub personal access token
+#     (classic) with the `public_repo` and `workflow` scopes, owned by the
+#     account that should appear as the author of the opam-repository PR. opam
+#     publish forks ocaml/opam-repository under that account and opens the PR
+#     from the fork.
+name: ocaml release
+
+on:
+  schedule:
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Only publish this existing release to opam-repository (e.g. frontends/ocaml/0.26.4). Leave empty to cut a release.
+        required: false
+
+permissions: {}
+
+concurrency:
+  group: ocaml-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: release
+    if: ${{ github.repository == 'hegeldev/hegel' && !inputs.tag }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    # The pushes to main use the app token below, not GITHUB_TOKEN.
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.released.outputs.tag }}
+    steps:
+      - name: Generate app token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        id: app-token
+        with:
+          app-id: ${{ vars.HEGEL_RELEASE_APP_ID }}
+          private-key: ${{ secrets.HEGEL_RELEASE_APP_PRIVATE_KEY }}
+          repositories: hegel
+
+      # Every tag, because release.py reads the Go frontend's version off its
+      # highest tag.
+      - name: Checkout main with app token # zizmor: ignore[artipacked]
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: main
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-tags: true
+
+      # The tarball bundles the binaries of the libhegel version on main, so
+      # a libhegel release that is still building them finishes first. Leaves
+      # the head of main checked out; release.py follows main if it moves again.
+      - name: Wait for the libhegel release on main to be published
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          for _ in $(seq 45); do
+            git fetch --quiet origin main
+            git checkout --quiet --detach FETCH_HEAD
+            version=$(grep '^version' libhegel/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+            draft=$(gh release view "libhegel/${version}" --json isDraft --jq .isDraft || echo missing)
+            if [ "$draft" = "false" ]; then
+              exit 0
+            fi
+            echo "libhegel/${version} is not published yet (isDraft: ${draft})"
+            sleep 60
+          done
+          exit 1
+
+      # `skip=true` when the OCaml frontend has no release file pending.
+      - name: Check for release files
+        id: check
+        run: python .github/scripts/release.py pending --weekly
+
+      - name: Release
+        if: steps.check.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          HEGEL_RELEASE_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: python .github/scripts/release.py release --weekly
+
+      - name: Capture the released tag
+        id: released
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          tag=$(git tag --points-at HEAD --list 'frontends/ocaml/*')
+          if [ -z "$tag" ]; then
+            echo "release.py left no frontends/ocaml tag on the release commit" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  # The opam source tarball: the frontends/ocaml subtree plus a `prebuilt/`
+  # directory holding the Linux amd64/arm64 and macOS arm64 libhegel
+  # libraries of the engine version in libhegel/Cargo.toml (from that
+  # libhegel GitHub release, sha256-verified) and the dune rules
+  # (.github/ocaml/prebuilt.dune) that install the host's one into the
+  # package's `libhegel` dune-site, so `opam install hegel` ships its engine.
+  # The tarball is attached to a GitHub release on the frontends/ocaml tag,
+  # which is where opam-repository fetches it from.
+  archive:
+    name: archive
+    if: ${{ needs.release.outputs.tag != '' }}
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.release.outputs.tag }}
+      PREBUILT_ASSETS: libhegel-linux-amd64.so libhegel-linux-arm64.so libhegel-darwin-arm64.dylib
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: refs/tags/${{ needs.release.outputs.tag }}
+      # The release can land on a libhegel release commit that reached main
+      # while it was being cut, whose binaries are still being built.
+      - name: Wait for the libhegel release at the tag to be published
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          version=$(grep '^version' libhegel/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          for _ in $(seq 90); do
+            draft=$(gh release view "libhegel/${version}" --json isDraft --jq .isDraft || echo missing)
+            if [ "$draft" = "false" ]; then
+              exit 0
+            fi
+            echo "libhegel/${version} is not published yet (isDraft: ${draft})"
+            sleep 60
+          done
+          exit 1
+      - name: Build the bundled source archive
+        id: archive
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#frontends/ocaml/}"
+          LIBHEGEL_VERSION=$(grep '^version' libhegel/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          URL_BASE="https://github.com/${REPOSITORY}/releases/download/libhegel/${LIBHEGEL_VERSION}"
+          STAGE_DIR="hegel-${VERSION}"
+          STAGE="${RUNNER_TEMP}/${STAGE_DIR}"
+
+          # The frontend's clean source tree at the tag (tracked files only).
+          mkdir -p "$STAGE"
+          git archive --format=tar "HEAD:frontends/ocaml" | tar -x -C "$STAGE"
+
+          # Download + checksum-verify each platform's libhegel into prebuilt/,
+          # then drop in the dune rules that select & install the matching one.
+          mkdir -p "$STAGE/prebuilt"
+          for asset in $PREBUILT_ASSETS; do
+            curl -fsSL -o "$STAGE/prebuilt/$asset" "$URL_BASE/$asset"
+            curl -fsSL -o "${RUNNER_TEMP}/$asset.sha256" "$URL_BASE/$asset.sha256"
+            WANT=$(awk '{print $1}' "${RUNNER_TEMP}/$asset.sha256")
+            echo "${WANT}  $STAGE/prebuilt/$asset" | sha256sum -c -
+          done
+          cp .github/ocaml/prebuilt.dune "$STAGE/prebuilt/dune"
+
+          ASSET_NAME="hegel-${VERSION}-opam.tar.gz"
+          TARBALL="${RUNNER_TEMP}/${ASSET_NAME}"
+          tar -C "${RUNNER_TEMP}" -czf "$TARBALL" "$STAGE_DIR"
+
+          # The release notes are the version's changelog entry.
+          awk -v version="$VERSION" '
+            /^## / { printing = ($2 == version) ; next }
+            printing { print }
+          ' frontends/ocaml/CHANGELOG.md > "${RUNNER_TEMP}/notes.md"
+
+          {
+            echo "version=$VERSION"
+            echo "tarball=$TARBALL"
+            echo "notes=${RUNNER_TEMP}/notes.md"
+          } >> "$GITHUB_OUTPUT"
+      - name: Create the GitHub release with the archive attached
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.archive.outputs.version }}
+          TARBALL: ${{ steps.archive.outputs.tarball }}
+          NOTES: ${{ steps.archive.outputs.notes }}
+        run: |
+          set -euo pipefail
+          # Assets must land in a *draft* release: GitHub's immutable releases
+          # lock a release's assets once it is published. `--clobber` makes
+          # re-runs idempotent.
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --draft \
+              --title "Hegel for OCaml v${VERSION}" \
+              --notes-file "$NOTES"
+          fi
+          gh release upload "$TAG" "$TARBALL" --clobber
+          gh release edit "$TAG" --draft=false
+
+  # The OCaml API reference, committed to website/public/ocaml on main
+  # (served at hegel.dev/ocaml).
+  docs:
+    name: docs
+    if: ${{ needs.release.outputs.tag != '' }}
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The push to main uses the app token below, not GITHUB_TOKEN.
+    permissions:
+      contents: read
+    steps:
+      - name: Generate app token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        id: app-token
+        with:
+          app-id: ${{ vars.HEGEL_RELEASE_APP_ID }}
+          private-key: ${{ secrets.HEGEL_RELEASE_APP_PRIVATE_KEY }}
+          repositories: hegel
+      - name: Checkout release commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: refs/tags/${{ needs.release.outputs.tag }}
+      - uses: ./.github/actions/install-tools
+        with:
+          tools: just
+      - uses: ./.github/actions/setup-opam
+        with:
+          cache-key: opam-${{ runner.os }}-5.2.1-with-doc-${{ hashFiles('frontends/ocaml/*.opam') }}
+          cache-restore-keys: |
+            opam-${{ runner.os }}-5.2.1-with-doc-
+          deps-flags: --with-doc
+          packages: core async
+      - name: Build the documentation
+        run: just ocaml::check-docs
+      # Checked out only now so that no build above sees a second copy of
+      # the repository.
+      - name: Checkout main to publish into # zizmor: ignore[artipacked]
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: main
+          token: ${{ steps.app-token.outputs.token }}
+          path: publish
+      - name: Push the documentation to main
+        env:
+          HEGEL_RELEASE_APP_ID: ${{ vars.HEGEL_RELEASE_APP_ID }}
+          HEGEL_RELEASE_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: python3 .github/scripts/push_ocaml_docs.py
+
+  # The pull request to ocaml/opam-repository, for the release just cut or
+  # for the existing one named by the `tag` input.
+  opam-publish:
+    name: publish to opam-repository
+    if: ${{ !cancelled() && github.repository == 'hegeldev/hegel' && (inputs.tag || needs.archive.result == 'success') }}
+    needs: [release, archive]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ inputs.tag || needs.release.outputs.tag }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: refs/tags/${{ inputs.tag || needs.release.outputs.tag }}
+          persist-credentials: false
+
+      - name: Install opam
+        run: |
+          OPAM_VERSION="2.2.1"
+          curl -fsSL \
+            "https://github.com/ocaml/opam/releases/download/${OPAM_VERSION}/opam-${OPAM_VERSION}-x86_64-linux" \
+            -o /usr/local/bin/opam
+          chmod +x /usr/local/bin/opam
+          opam --version
+
+      - name: Cache opam
+        id: cache-opam
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.opam
+          key: opam-publish-${{ runner.os }}-5.2.1
+          restore-keys: |
+            opam-publish-${{ runner.os }}-
+
+      - name: Set up switch and opam-publish
+        run: |
+          # Idempotent: a restored cache may already have the switch.
+          if [ ! -d "$HOME/.opam" ]; then
+            opam init --bare --disable-sandboxing --yes
+          fi
+          if ! opam switch list --short 2>/dev/null | grep -q '^5.2.1$'; then
+            opam switch create 5.2.1 --yes
+          fi
+          eval $(opam env --switch=5.2.1)
+          opam install opam-publish --yes
+
+      - name: Publish to opam-repository
+        working-directory: frontends/ocaml
+        env:
+          # opam publish reads the token from this env var; it forks
+          # ocaml/opam-repository and opens the PR as the token owner.
+          OPAM_PUBLISH_GH_TOKEN: ${{ secrets.OPAM_PUBLISH_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          eval $(opam env --switch=5.2.1)
+          VERSION="${TAG#frontends/ocaml/}"
+          ASSET_URL="https://github.com/${REPOSITORY}/releases/download/${TAG}/hegel-${VERSION}-opam.tar.gz"
+          # Submits every opam package found in the checkout (hegel,
+          # ppx_hegel_compat, ppx_hegel_generator, ppx_hegel_test) in a single
+          # opam-repository PR. The positional URL is the bundled tarball
+          # (libhegel baked in) the archive job attached to the GitHub
+          # release; "." supplies the opam files. opam computes the archive
+          # checksum by downloading ASSET_URL.
+          opam publish \
+            --repo ocaml/opam-repository \
+            -v "$VERSION" \
+            --no-browser \
+            --no-confirmation \
+            "$ASSET_URL" .

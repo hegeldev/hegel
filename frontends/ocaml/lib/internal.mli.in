@@ -331,8 +331,8 @@ type invariant_info =
 
 (** Builds and starts a sequential or concurrent engine-owned state machine
     (one engine call per rule and invariant, in list order, then the start
-    call) and returns its handle with the concurrency level selected by
-    libhegel. A rule is handed out in the rounds of every group in its
+    call) and returns its handle with the number of workers to run
+    ([max_concurrency]). A rule is handed out in the rounds of every group in its
     [groups]. Raises {!Usage_error} if there are no rules, a weight is not
     finite and positive, a rule's group list is empty or repeats an id,
     [step_count < 1], or the bounds do not satisfy
@@ -347,9 +347,12 @@ val new_state_machine_with_concurrency
   -> max_concurrency:int
   -> state_machine * int
 
-(** Starts the next state-machine round and returns its group id, or [None]
-    when the state machine is complete. *)
-val state_machine_next_group : test_case -> state_machine:state_machine -> int option
+(** Starts the next state-machine round and returns its group id and
+    concurrency level, or [None] when the state machine is complete. *)
+val state_machine_next_group
+  :  test_case
+  -> state_machine:state_machine
+  -> (int * int) option
 
 (** Draw the next rule for a worker, or [None] when its round ends. *)
 val state_machine_next_rule_for_worker

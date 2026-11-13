@@ -8,8 +8,6 @@ use alloc::vec::Vec;
 use core::fmt::Debug;
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
-use once_cell::race::OnceBox;
-
 use rand::{Rng, RngExt};
 
 use crate::native::rng::EngineRng;
@@ -1861,11 +1859,17 @@ pub struct FamilyCore {
     /// Identifiers handed out by [`NativeTestCase::draw_fresh_id`], family-wide
     /// so an identifier is unique across every stream of the test case.
     fresh_ids: Mutex<FreshIds>,
-    /// This test case's swarm [`GenerationParameters`], drawn once when the
-    /// root stream's RNG is attached (see [`NativeTestCase::with_random`]) and
-    /// shared by every clone-stream so the whole case has one consistent
-    /// distribution. Unset for replay-only families, which never sample.
-    generation_parameters: OnceBox<GenerationParameters>,
+    /// This test case's swarm [`GenerationParameters`], drawn when the
+    /// root stream's RNG is attached (see [`NativeTestCase::with_random`]),
+    /// possibly redrawn by a state machine between rounds, and shared by
+    /// every clone-stream. Unset for replay-only families, which never sample.
+    /// Draws read a per-stream copy (see [`NativeTestCase::generation_parameters`])
+    /// rather than take this lock.
+    generation_parameters: Mutex<Option<GenerationParameters>>,
+    /// Bumped under the `generation_parameters` lock on every write, so a
+    /// stream can tell with one atomic load whether its copy is current.
+    /// 0 means never set.
+    generation_parameters_version: AtomicUsize,
 }
 
 impl FamilyCore {
@@ -1878,24 +1882,27 @@ impl FamilyCore {
             target_observations: Mutex::new(HashMap::default()),
             events: Mutex::new(Vec::new()),
             fresh_ids: Mutex::new(FreshIds::default()),
-            generation_parameters: OnceBox::new(),
+            generation_parameters: Mutex::new(None),
+            generation_parameters_version: AtomicUsize::new(0),
         }
     }
 
-    /// Record this test case's swarm parameters. Called once when the root
-    /// stream's RNG is attached; later calls (there are none in practice) are
-    /// ignored by the `OnceBox`.
+    /// Record this test case's swarm parameters, replacing any earlier ones.
     fn set_generation_parameters(&self, params: GenerationParameters) {
-        let _ = self.generation_parameters.set(Box::new(params));
+        let mut guard = self.generation_parameters.lock();
+        *guard = Some(params);
+        self.generation_parameters_version
+            .fetch_add(1, Ordering::Release);
     }
 
     /// This test case's swarm parameters, or [`GenerationParameters::default`]
-    /// if none were drawn (a replay-only family, which never samples).
-    pub(crate) fn generation_parameters(&self) -> GenerationParameters {
-        self.generation_parameters
-            .get()
-            .copied()
-            .unwrap_or_default()
+    /// if none were drawn (a replay-only family, which never samples),
+    /// together with the version they were read at, taken under the lock so
+    /// the pair is consistent.
+    fn generation_parameters_snapshot(&self) -> (usize, GenerationParameters) {
+        let guard = self.generation_parameters.lock();
+        let version = self.generation_parameters_version.load(Ordering::Relaxed);
+        (version, guard.unwrap_or_default())
     }
 
     /// The family's concluded status, or `None` while still running.
@@ -1965,6 +1972,10 @@ pub struct NativeTestCase {
     /// whose drop frees nothing, and running the glue over those is the
     /// bulk of what emptying a finished test case's choice sequence costs.
     plain: bool,
+    /// Whether this test case keeps no record of itself (see
+    /// [`Self::new_unrecorded`]): `nodes`, `spans` and `clone_children`
+    /// stay empty however long it runs. Copied into every cloned stream.
+    unrecorded: bool,
     /// Set to `true` by [`Self::freeze`] on the first call; subsequent calls
     /// are no-ops. A dedicated boolean (rather than checking the family's
     /// status) lets `conclude_test` conclude before calling `freeze()`
@@ -2015,6 +2026,11 @@ pub struct NativeTestCase {
     /// Set by [`Self::for_choices`] and called by each draw method and
     /// by [`Self::freeze`].
     observer: Option<Box<dyn DataObserver>>,
+    /// This stream's copy of the family's [`GenerationParameters`] and the
+    /// [`FamilyCore::generation_parameters_version`] it was taken at, so a
+    /// draw reads them without taking the family lock (see
+    /// [`Self::generation_parameters`]).
+    generation_parameters: (usize, GenerationParameters),
     /// Optional template applied to every draw past the explicit `prefix`.
     /// `count` is mutated in-place as draws consume the template; when
     /// `count` reaches zero the next draw is overrun
@@ -2063,6 +2079,19 @@ impl NativeTestCase {
     ) -> Self {
         Self::for_choices_and_template(&[], None, None, max_size, None)
             .with_random_and_params(rng, params)
+    }
+
+    /// Like [`Self::new_random_with_params`], but keeping no record of the
+    /// choices it makes, the spans it opens or the streams cloned from it,
+    /// so that its memory does not grow with the length of the run. Nothing
+    /// can be read back from it but its conclusion, which leaves nothing to
+    /// shrink, replay or encode as a blob: it is for a run whose one test
+    /// case is reported as it happened. `max_size` bounds the draws of the
+    /// whole family, through its draw budget.
+    pub fn new_unrecorded(rng: EngineRng, params: GenerationParameters, max_size: usize) -> Self {
+        let mut ntc = Self::new_random_with_params(rng, params, max_size);
+        ntc.unrecorded = true;
+        ntc
     }
 
     /// Replay `choices` in order, then for every further draw resolve via
@@ -2235,6 +2264,7 @@ impl NativeTestCase {
             max_size,
             nodes: spare.nodes,
             plain: true,
+            unrecorded: false,
             frozen: false,
             should_capture,
             family,
@@ -2250,6 +2280,7 @@ impl NativeTestCase {
             top_child_nodes: 0,
             has_discards: false,
             observer,
+            generation_parameters: (0, GenerationParameters::default()),
             trailing_template,
             narrow_ranges: NarrowRanges::default(),
         }
@@ -2313,6 +2344,32 @@ impl NativeTestCase {
         self.rng = Some(rng);
         self.family.set_budget(self.max_size);
         self
+    }
+
+    /// The family's swarm [`GenerationParameters`] as of this draw: the
+    /// stream's copy, refreshed under the family lock only when the family's
+    /// version has moved since the copy was taken. The parameters change
+    /// only at a state machine's join points, so every worker's draws read
+    /// them lock-free, as a single atomic load.
+    pub(crate) fn generation_parameters(&mut self) -> GenerationParameters {
+        let version = self
+            .family
+            .generation_parameters_version
+            .load(Ordering::Acquire);
+        if version != self.generation_parameters.0 {
+            self.generation_parameters = self.family.generation_parameters_snapshot();
+        }
+        self.generation_parameters.1
+    }
+
+    /// Redraw the family's [`GenerationParameters`] from this stream's RNG.
+    /// A no-op without an RNG (a bare replay), which never samples.
+    pub(crate) fn redraw_generation_parameters(&mut self) -> Result<(), InternalError> {
+        if let Some(rng) = self.rng.as_mut() {
+            let params = GenerationParameters::draw(rng)?;
+            self.family.set_generation_parameters(params);
+        }
+        Ok(())
     }
 
     /// The family state shared by every stream of this test case.
@@ -2396,7 +2453,7 @@ impl NativeTestCase {
         child_id.push(self.clone_counter);
         self.clone_counter += 1;
 
-        let child = Self::new_stream(
+        let mut child = Self::new_stream(
             child_replay,
             child_rng,
             child_template,
@@ -2406,12 +2463,15 @@ impl NativeTestCase {
             Arc::clone(&self.family),
             child_id,
         );
+        child.unrecorded = self.unrecorded;
         let handle = Arc::new(Mutex::new(child));
-        self.record(ChoiceNode::clone_stream(
-            Arc::new(RealizedStream::empty()),
-            false,
-        ));
-        self.clone_children.push((idx, Arc::clone(&handle)));
+        if !self.unrecorded {
+            self.record(ChoiceNode::clone_stream(
+                Arc::new(RealizedStream::empty()),
+                false,
+            ));
+            self.clone_children.push((idx, Arc::clone(&handle)));
+        }
         Ok(handle)
     }
 
@@ -2439,25 +2499,54 @@ impl NativeTestCase {
 
     /// Append `node` to the choice sequence, noting when it owns heap
     /// memory. The draws that record only booleans, floats and native-width
-    /// integers push straight onto `nodes` instead.
+    /// integers go through [`Self::record_plain`] instead.
     fn record(&mut self, node: ChoiceNode) {
+        if self.unrecorded {
+            return;
+        }
         self.plain &= node.owns_no_heap();
         self.nodes.push(node);
+    }
+
+    /// Append to the choice sequence a `node` that owns no heap memory, or
+    /// one whose draw has already noted that it does.
+    #[inline]
+    fn record_plain(&mut self, node: ChoiceNode) {
+        if !self.unrecorded {
+            self.nodes.push(node);
+        }
     }
 
     /// Open a new span at the current choice position, labelled with `label`.
     ///
     /// Returns the index assigned to the span in `self.spans`.  The span's
     /// `end` is set to `self.nodes.len()` as a placeholder and overwritten
-    /// when [`Self::stop_span`] is called.
+    /// when [`Self::stop_span`] is called. An unrecorded test case (see
+    /// [`Self::new_unrecorded`]) only counts the span's depth.
     ///
     /// If opening this span would push depth past [`MAX_DEPTH`], the test
     /// case is marked invalid and `start_span` returns the assigned index
     /// without further bookkeeping; subsequent draws on a frozen test case
     /// will trip the existing freeze guard.
     pub fn start_span(&mut self, label: u64) -> usize {
-        let parent = self.span_stack.last().copied();
         let depth = self.span_stack.len() as u32;
+        let idx = if self.unrecorded {
+            0
+        } else {
+            self.record_span(label, depth)
+        };
+        self.span_stack.push(idx);
+        if depth + 1 > MAX_DEPTH {
+            self.span_overflow();
+        }
+        idx
+    }
+
+    /// Record a span opening at the current choice position, `depth` spans
+    /// deep, and return its index in `self.spans`.
+    #[inline]
+    fn record_span(&mut self, label: u64, depth: u32) -> usize {
+        let parent = self.span_stack.last().copied();
         let idx = self.spans.len();
         let start = self.nodes.len();
         self.spans.push(Span {
@@ -2470,10 +2559,6 @@ impl NativeTestCase {
         });
         if self.addressed {
             self.address_span(parent, label);
-        }
-        self.span_stack.push(idx);
-        if depth + 1 > MAX_DEPTH {
-            self.span_overflow();
         }
         idx
     }
@@ -2577,6 +2662,9 @@ impl NativeTestCase {
     /// Set the span's end and credit its draws to its parent's closed
     /// children, for [`Self::draw_address`].
     fn close_span(&mut self, idx: usize, end: usize) {
+        if self.unrecorded {
+            return;
+        }
         let span = &mut self.spans[idx];
         span.end = end;
         let inside = end - span.start;
@@ -2653,7 +2741,7 @@ impl NativeTestCase {
 
         let kind = IntegerChoice::new(min_value, max_value, BigInt::zero());
 
-        let params = self.family.generation_parameters().integer;
+        let params = self.generation_parameters().integer;
         let v =
             self.draw_integer_from(kind, |kind, rng| biased_integer_sample(kind, rng, params))?;
 
@@ -2676,7 +2764,7 @@ impl NativeTestCase {
 
         let kind = IntegerChoice::small(min_value, max_value, 0);
 
-        let params = self.family.generation_parameters().integer;
+        let params = self.generation_parameters().integer;
         let narrow = if is_narrow(i128::from(min_value), i128::from(max_value)) {
             Some(
                 self.narrow_ranges
@@ -2826,8 +2914,7 @@ impl NativeTestCase {
         }
 
         self.plain &= plain(&kind, &recorded);
-        self.nodes
-            .push(ChoiceNode::integer(kind, recorded, was_forced));
+        self.record_plain(ChoiceNode::integer(kind, recorded, was_forced));
 
         Ok(v)
     }
@@ -3012,7 +3099,7 @@ impl NativeTestCase {
             smallest_nonzero_magnitude,
         };
 
-        let params = self.family.generation_parameters().float;
+        let params = self.generation_parameters().float;
         let (v, was_forced) = self.resolve_choice(
             || kind.simplest(),
             || kind.unit(),
@@ -3023,7 +3110,7 @@ impl NativeTestCase {
             |rng| biased_float_sample(&kind, width, rng, params),
         )?;
 
-        self.nodes.push(ChoiceNode::float(kind, v, was_forced));
+        self.record_plain(ChoiceNode::float(kind, v, was_forced));
 
         if let Some(ref mut obs) = self.observer {
             obs.draw_float(v, was_forced);
@@ -3132,7 +3219,7 @@ impl NativeTestCase {
         let (v, was_forced) = match replayed {
             Some(decided) => decided,
             None => {
-                let params = self.family.generation_parameters().integer;
+                let params = self.generation_parameters().integer;
                 let rng = hegel_internal_unwrap!(
                     self.rng.as_mut(),
                     "draw_string_from: no RNG available for random generation"
@@ -3215,7 +3302,7 @@ impl NativeTestCase {
             )?
         };
 
-        self.nodes.push(ChoiceNode::boolean(kind, v, was_forced));
+        self.record_plain(ChoiceNode::boolean(kind, v, was_forced));
 
         if let Some(ref mut obs) = self.observer {
             obs.draw_boolean(v, was_forced);

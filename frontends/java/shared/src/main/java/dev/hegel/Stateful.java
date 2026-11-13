@@ -105,15 +105,16 @@ import java.util.concurrent.LinkedBlockingQueue;
  * }
  * }</pre>
  *
- * <p>For each test case the engine draws a concurrency level between {@link
- * Options#minConcurrency} and {@link Options#maxConcurrency} (weighted toward the maximum) and the
- * driver runs that many worker threads. Execution proceeds in <em>rounds</em>: the engine picks one
- * {@linkplain Rule#groups() concurrency group} per round, every worker pulls and applies a few of
- * the rules belonging to that group concurrently, and once every worker has finished the round the
- * sampled invariants run on the driving thread. Rules sharing a group may therefore overlap in
- * time; rules with no group in common never do, and invariants never overlap a rule. A rule listed
- * in several groups takes part in the rounds of each of them. The step count bounds the number of
- * rounds.
+ * <p>For each test case the driver runs {@link Options#maxConcurrency} worker threads, and the
+ * engine draws a concurrency level between {@link Options#minConcurrency} and {@link
+ * Options#maxConcurrency} (weighted toward the maximum): how many of them apply rules. The engine
+ * occasionally redraws the level between rounds. Execution proceeds in <em>rounds</em>: the engine
+ * picks one {@linkplain Rule#groups() concurrency group} per round, every active worker pulls and
+ * applies a few of the rules belonging to that group concurrently, and once every worker has
+ * finished the round the sampled invariants run on the driving thread. Rules sharing a group may
+ * therefore overlap in time; rules with no group in common never do, and invariants never overlap
+ * a rule. A rule listed in several groups takes part in the rounds of each of them. The step count
+ * bounds the number of rounds.
  *
  * <p>Rules run concurrently on the same machine object, so any state a rule reads or writes must
  * be safe for concurrent access (atomics, {@code synchronized}, concurrent collections). Each rule
@@ -178,7 +179,7 @@ public final class Stateful {
         }
 
         /**
-         * The fewest worker threads a test case runs. Defaults to 1.
+         * The fewest worker threads that apply rules in a round. Defaults to 1.
          *
          * @param minConcurrency the lower concurrency bound, at least 1
          * @return options with the bound set
@@ -194,7 +195,7 @@ public final class Stateful {
         /**
          * The most worker threads a test case runs. Defaults to 1, which runs the machine
          * sequentially on the calling thread; any higher value runs it concurrently (see {@link
-         * Stateful}), with the engine drawing each test case's level between the bounds.
+         * Stateful}), with the engine drawing the level between the bounds.
          *
          * @param maxConcurrency the upper concurrency bound, at least 1
          * @return options with the bound set
@@ -330,7 +331,7 @@ public final class Stateful {
         int step = 0;
         while (true) {
             tc.startSpan(Label.STATEFUL_RULE);
-            if (tc.stateMachineNextGroup(machineId) == Abi.STATE_MACHINE_DONE) {
+            if (tc.stateMachineNextGroup(machineId, new long[1]) == Abi.STATE_MACHINE_DONE) {
                 tc.stopSpan(false);
                 break;
             }
@@ -396,7 +397,6 @@ public final class Stateful {
             long machineId,
             int concurrency) {
         long startNanos = System.nanoTime();
-        tc.note("Concurrency level: " + concurrency);
         if (!invariants.isEmpty()) {
             tc.note("Checking invariants on the initial state.");
         }
@@ -412,12 +412,18 @@ public final class Stateful {
                 worker.thread.start();
             }
             int round = 0;
+            long notedLevel = 0;
+            long[] level = new long[1];
             while (true) {
-                long group = tc.stateMachineNextGroup(machineId);
+                long group = tc.stateMachineNextGroup(machineId, level);
                 if (group == Abi.STATE_MACHINE_DONE) {
                     break;
                 }
                 round++;
+                if (level[0] != notedLevel) {
+                    tc.note("Concurrency level: " + level[0]);
+                    notedLevel = level[0];
+                }
                 tc.note("---------------- Round " + round + ": group \"" + groupNames.get((int) group)
                         + "\" ----------------");
                 for (Worker worker : workers) {

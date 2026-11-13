@@ -804,7 +804,7 @@ fn check_invariants<M: StateMachine>(
 }
 
 /// Ask the engine whether the machine should run another round, and which
-/// concurrency group is current for it.
+/// concurrency group and concurrency level are current for it.
 ///
 /// The start of the test case counts as a join point, so both runners call
 /// this *before* running any rules: the machine has no current group until
@@ -812,9 +812,9 @@ fn check_invariants<M: StateMachine>(
 /// it), and the first call is also what draws the test case's round cap.
 /// Since the cap is at least 1, the first call of a fresh machine always
 /// starts a round; `None` only ever follows earlier rounds.
-fn machine_next_group(tc: &TestCase, machine: &StateMachineHandle) -> Option<usize> {
+fn machine_next_group(tc: &TestCase, machine: &StateMachineHandle) -> Option<(usize, i64)> {
     match tc.with_ctc(|ctc| ctc.state_machine_next_group(machine)) {
-        Ok(group) => group.map(|g| g as usize),
+        Ok(round) => round.map(|(group, concurrency)| (group as usize, concurrency)),
         Err(rc) => raise_for_rc(rc),
     }
 }
@@ -998,11 +998,13 @@ impl<M: ConcurrentStateMachine + Sync> Machine<M> {
     /// injection paused. Each test case runs at most this machine's step count
     /// ([`Self::steps`]) rounds.
     ///
-    /// The number of worker threads is drawn per test case, when the state
-    /// machine is created, within this machine's concurrency bounds
+    /// Each test case runs [`Self::max_concurrency`] worker threads. The
+    /// concurrency level, how many of them run rules, is drawn when the
+    /// state machine is created, within this machine's concurrency bounds
     /// ([`Self::min_concurrency`] and [`Self::max_concurrency`], both 1 by
     /// default) and weighted toward the maximum (concurrency bugs need
-    /// concurrency); set equal bounds for a fixed level.
+    /// concurrency), and may be redrawn between rounds; set equal bounds for
+    /// a fixed level.
     ///
     /// # Nondeterminism
     ///
@@ -1080,8 +1082,7 @@ struct RuleSpec<'a> {
 /// Build and start an engine state machine: create it with the bounds and
 /// step count, declare every rule and invariant in order (so the engine's
 /// rule and invariant indices are positions in `rules` and `invariants`),
-/// and start it. Returns the machine and the concurrency level the engine
-/// drew.
+/// and start it. Returns the machine and the number of workers to run.
 fn register_machine(
     tc: &TestCase,
     rules: &[RuleSpec<'_>],
@@ -1553,8 +1554,6 @@ fn run_concurrent_machine<M: ConcurrentStateMachine + Sync>(
         max_concurrency,
         step_count,
     );
-    tc.note(&format!("Concurrency level: {concurrency}"));
-
     if !invariants.is_empty() {
         tc.note("Checking invariants on the initial state.");
     }
@@ -1588,12 +1587,17 @@ fn run_concurrent_machine<M: ConcurrentStateMachine + Sync>(
         }
 
         let mut round = 0u64;
-        while let Some(group) = machine_next_group(&tc, machine) {
+        let mut noted_level = None;
+        while let Some((group, level)) = machine_next_group(&tc, machine) {
             hegel_internal_assert!(
                 group < group_names.len(),
                 "state_machine_next_group returned unknown group id {group}"
             );
             round += 1;
+            if noted_level != Some(level) {
+                tc.note(&format!("Concurrency level: {level}"));
+                noted_level = Some(level);
+            }
             tc.note(&format!(
                 "---------------- Round {round}: group {:?} ----------------",
                 group_names[group]

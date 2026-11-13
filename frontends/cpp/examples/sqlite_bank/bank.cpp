@@ -114,9 +114,11 @@ namespace {
         int64_t max_concurrency =
             env_int("BANK_MAX_CONCURRENCY", min_concurrency)
                 .value_or(std::max<int64_t>(8, min_concurrency));
-        return {{accounts, initial_balance, max_amount},
-                min_concurrency,
-                max_concurrency};
+        return {.bank = {.accounts = accounts,
+                         .initial_balance = initial_balance,
+                         .max_amount = max_amount},
+                .min_concurrency = min_concurrency,
+                .max_concurrency = max_concurrency};
     }
 
     /// What the client observed for a transfer attempt.
@@ -277,39 +279,42 @@ namespace {
         }
 
         std::vector<hegel::stateful::ConcurrentRule<Bank>> rules() {
+            using Rule = hegel::stateful::ConcurrentRule<Bank>;
             return {
-                {"transfer_rule",
-                 {"bank"},
-                 [](hegel::TestCase& tc, Bank& bank) {
-                     int64_t n = bank.config_.accounts;
-                     auto account = gs::integers<int64_t>(
-                         {.min_value = 0, .max_value = n - 1});
-                     int64_t source = tc.draw("source", account);
-                     int64_t dest = tc.draw("dest", account);
-                     int64_t amount = tc.draw(
-                         "amount", gs::integers<int64_t>(
-                                       {.min_value = 0,
-                                        .max_value = bank.config_.max_amount}));
-                     Outcome outcome = bank.transfer(source, dest, amount);
-                     tc.note("transfer " + std::to_string(amount) + " from " +
-                             std::to_string(source) + " to " +
-                             std::to_string(dest) + ": " + to_string(outcome));
-                 }},
-                {"verify_total_balance_rule",
-                 {"bank"},
-                 [](hegel::TestCase&, Bank& bank) {
-                     bank.verify_total_balance();
-                 }},
-                {"verify_ops_not_lost_rule",
-                 {"bank"},
-                 [](hegel::TestCase&, Bank& bank) {
-                     bank.verify_ops_not_lost();
-                 }},
-                {"verify_no_negative_rule",
-                 {"bank"},
-                 [](hegel::TestCase&, Bank& bank) {
-                     bank.verify_no_negative();
-                 }},
+                Rule({.name = "transfer_rule",
+                      .groups = {"bank"},
+                      .weight = 6.0,
+                      .step =
+                          [](hegel::TestCase& tc, Bank& bank) {
+                              int64_t n = bank.config_.accounts;
+                              auto account = gs::integers<int64_t>(
+                                  {.min_value = 0, .max_value = n - 1});
+                              int64_t source = tc.draw("source", account);
+                              int64_t dest = tc.draw("dest", account);
+                              int64_t amount = tc.draw(
+                                  "amount",
+                                  gs::integers<int64_t>(
+                                      {.min_value = 0,
+                                       .max_value = bank.config_.max_amount}));
+                              Outcome outcome =
+                                  bank.transfer(source, dest, amount);
+                              tc.note("transfer " + std::to_string(amount) +
+                                      " from " + std::to_string(source) +
+                                      " to " + std::to_string(dest) + ": " +
+                                      to_string(outcome));
+                          }}),
+                Rule({.name = "verify_total_balance_rule",
+                      .groups = {"bank"},
+                      .step = [](hegel::TestCase&,
+                                 Bank& bank) { bank.verify_total_balance(); }}),
+                Rule({.name = "verify_ops_not_lost_rule",
+                      .groups = {"bank"},
+                      .step = [](hegel::TestCase&,
+                                 Bank& bank) { bank.verify_ops_not_lost(); }}),
+                Rule({.name = "verify_no_negative_rule",
+                      .groups = {"bank"},
+                      .step = [](hegel::TestCase&,
+                                 Bank& bank) { bank.verify_no_negative(); }}),
             };
         }
 
@@ -387,12 +392,10 @@ namespace {
             ", " + std::to_string(workload.max_concurrency) + "]");
         Bank bank(workload.bank);
         hegel::stateful::run_concurrent(bank, tc, workload.min_concurrency,
-                                        workload.max_concurrency);
+                                        workload.max_concurrency,
+                                        {.step_count = steps_from_env()});
     }
 
 } // namespace
 
-HEGEL_MAIN(workload,
-           {.stateful_step_count = steps_from_env()})(hegel::TestCase& tc) {
-    run(tc, workload(tc));
-}
+HEGEL_MAIN(workload)(hegel::TestCase& tc) { run(tc, workload(tc)); }

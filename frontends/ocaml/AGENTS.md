@@ -50,13 +50,18 @@ just ocaml::check            # lint + docs + test — what CI runs, less the com
   `template/` or `dune-project`. See the root
   `CONTRIBUTING.md` for the format and the semver rules (on 0.x, breaking
   changes are `minor`, everything else `patch`). CI checks this
-  (`.github/scripts/release.py check`); on merge to main the release job
-  bumps `(version ...)` in `dune-project` and the generated `*.opam` files,
-  moves the text into `CHANGELOG.md` and tags `frontends/ocaml/<version>`.
+  (`.github/scripts/release.py check`). Unlike the other components this
+  frontend does not release on merge: every release is a pull request to
+  opam-repository that a maintainer there reviews, so the release files stay
+  in `RELEASE/` on main and `.github/workflows/ocaml-release.yml` folds them
+  into one release each Monday (or when run by hand: Actions -> "ocaml
+  release" -> Run workflow). Its `release` job bumps `(version ...)` in
+  `dune-project` and the generated `*.opam` files, moves every pending entry
+  into `CHANGELOG.md` and tags `frontends/ocaml/<version>`.
   `Hegel.version` is generated from the dune-project version
   (`lib/dune`'s `hegel_version.ml` rule), never edited. Never edit
   `CHANGELOG.md` by hand.
-- The `release-ocaml` job of `.github/workflows/ci.yml` then builds the opam
+- The `archive` job of that workflow then builds the opam
   source tarball from the tag — the `frontends/ocaml` subtree plus a
   `prebuilt/` directory holding the Linux amd64/arm64 and macOS arm64
   libhegel libraries of the engine version in `libhegel/Cargo.toml`
@@ -64,12 +69,13 @@ just ocaml::check            # lint + docs + test — what CI runs, less the com
   `.github/ocaml/prebuilt.dune`, whose rules install the host's library into
   the `libhegel` dune-site — creates a GitHub release on the
   `frontends/ocaml/<version>` tag and attaches the tarball there, and
-  `release-ocaml-docs` pushes the odoc output to hegel.dev/ocaml. Publishing
-  to opam-repository stays a manual step, as it was before the monorepo:
-  `.github/workflows/ocaml-opam-release.yml` (Actions -> "ocaml opam release"
-  -> Run workflow with the tag) runs `opam publish` with that tarball.
-- A libhegel release re-releases this frontend too, with an auto-generated
-  engine-bump entry unless the PR writes a release file here. There is no
+  `docs` pushes the odoc output to hegel.dev/ocaml. `opam-publish` then runs
+  `opam publish` with that tarball, which opens the opam-repository pull
+  request. Running the workflow by hand with the tag of an existing release
+  only does that last step.
+- A libhegel release does not re-release this frontend. It writes
+  `RELEASE/libhegel.md` (an engine-bump entry, overwritten by each libhegel
+  release), so the next weekly release ships and names the new engine. There is no
   engine version pin in this frontend: the engine it ships is whatever
   `libhegel/Cargo.toml` says at the tag.
 
@@ -270,7 +276,8 @@ collections, pools, state machines (`new_state_machine` takes the per-machine
 `~step_count` since libhegel 0.38.0; there is no settings-level step count;
 rules and invariants are declared one call at a time with
 `state_machine_add_rule` / `state_machine_add_invariant` and sealed with
-`state_machine_start`, which returns the drawn concurrency),
+`state_machine_start`, which returns `max_concurrency`, the worker count;
+`state_machine_next_group` returns each round's group and concurrency level),
 `target`, `event`/`event_value`, derived handles (`test_case_clone`,
 `test_case_block`), the pretty-printer document (`printer_*`,
 `test_case_printer`, `note` — see Pretty printing below), `mark_complete`. Strings cross the ABI as `hegel_string_t`
@@ -834,8 +841,9 @@ round inline on `tc` inside a `stateful_rule` span (`stop_span
 headings and no worker stamps; its rule bodies are ordinary functions, so on
 OxCaml they see the state uncontended and plain refs work. The concurrent
 `run_concurrent` (`Concurrent_rule` with `?groups`, `?min_concurrency` default
-1, `?max_concurrency` default `min_concurrency`; the engine draws the worker
-count when it creates the machine) never runs a rule inline, even at one
+1, `?max_concurrency` default `min_concurrency`; it runs `max_concurrency`
+workers, and the engine draws how many are active, possibly redrawing it
+between rounds) never runs a rule inline, even at one
 worker: each round notes a `Round N: group` header, clones the test case once
 per worker, tags the clone with `set_worker_index`, and makes one call to
 `concurrency.spawn_join_n ~n ~f`, where `f i` runs `run_rules` for worker

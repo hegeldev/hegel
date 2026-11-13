@@ -20,8 +20,8 @@
  * @endcode
  *
  * The integration raises hegel::GTestFailure for the assertions a test case
- * fails and it names the enclosing test, which heads the failure report and
- * scopes the example database, so counterexamples persist and replay per test.
+ * fails and it names the enclosing test, which scopes the example database,
+ * so counterexamples persist and replay per test.
  *
  * A failed `ASSERT_*` ends the whole test case. `EXPECT_*` continues as usual.
  *

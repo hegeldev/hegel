@@ -519,8 +519,8 @@ public final class TestCase {
         return source.stateMachineStart(stateMachineId);
     }
 
-    long stateMachineNextGroup(long stateMachineId) {
-        return source.stateMachineNextGroup(stateMachineId);
+    long stateMachineNextGroup(long stateMachineId, long[] outConcurrency) {
+        return source.stateMachineNextGroup(stateMachineId, outConcurrency);
     }
 
     long stateMachineNextRule(long stateMachineId, long workerIndex) {

@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.9.32 - 2026-11-10
+
+This release updates the bundled libhegel engine to 0.51.1.
+
+## 0.9.31 - 2026-11-09
+
+This patch lets a long state-machine run explore more than one configuration. Between rounds, a state machine now occasionally redraws its value distribution, the rules each worker has enabled, and the concurrency level. Previously these were fixed for the whole test case, so a single long-running test case kept one configuration for its whole run.
+
+A concurrent machine now always starts as many workers as its maximum concurrency, and only the current concurrency level's worth of them run rules in a round. A failure report notes `Concurrency level: n` at the first round and whenever the level changes.
+
+## 0.9.30 - 2026-11-06
+
+This patch allows a state machine rule to belong to several concurrency groups. Naming a rule in more than one `WithRuleGroup` option used to make `RunStateful` panic; it now puts the rule in each of those groups, so the rule runs in the rounds of every group it belongs to and may overlap the rules of each, while those groups' other rules still never overlap each other.
+
+```go
+hegel.RunStateful(tc, machine,
+    hegel.WithConcurrency(),
+    hegel.WithRuleGroup("operations", "RuleRegister", "RuleIncrement", "RuleRead"),
+    hegel.WithRuleGroup("snapshot", "RuleRead", "RuleSnapshot"),
+)
+```
+
+Here reads overlap registrations and increments in the rounds of `operations`, and overlap snapshots in the rounds of `snapshot`, but a snapshot never overlaps a registration or an increment.
+
 ## 0.9.29 - 2026-11-03
 
 This patch moves the Go frontend into the [hegeldev/hegel](https://github.com/hegeldev/hegel) monorepo, where it is now released and tested together with libhegel. The module path stays `hegel.dev/go/hegel`, and tagged releases still embed libhegel, so `go get` works as before. This release also updates the bundled libhegel engine to 0.50.0.

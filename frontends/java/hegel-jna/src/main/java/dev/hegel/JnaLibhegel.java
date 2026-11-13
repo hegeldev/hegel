@@ -88,6 +88,14 @@ final class JnaLibhegel implements Libhegel {
 
         int hegel_settings_get_print_blob(Pointer ctx, Pointer s, ByteByReference out);
 
+        int hegel_settings_get_verbosity(Pointer ctx, Pointer s, IntByReference out);
+
+        int hegel_settings_get_suppress_health_check(Pointer ctx, Pointer s, IntByReference out);
+
+        int hegel_settings_set_from_string(Pointer ctx, Pointer s, HegelString.ByValue key, HegelString.ByValue value);
+
+        int hegel_set_default_profile(Pointer ctx, HegelString.ByValue name);
+
         int hegel_settings_set_nondeterminism_strictness(Pointer ctx, Pointer s, int strictness);
 
         int hegel_settings_get_nondeterminism_strictness(Pointer ctx, Pointer s, IntByReference out);
@@ -230,7 +238,8 @@ final class JnaLibhegel implements Libhegel {
 
         int hegel_state_machine_start(Pointer ctx, Pointer tc, long stateMachineId, LongByReference outConcurrency);
 
-        int hegel_state_machine_next_group(Pointer ctx, Pointer tc, long stateMachineId, LongByReference out);
+        int hegel_state_machine_next_group(
+                Pointer ctx, Pointer tc, long stateMachineId, LongByReference out, LongByReference outConcurrency);
 
         int hegel_state_machine_next_rule(
                 Pointer ctx, Pointer tc, long stateMachineId, long workerIndex, LongByReference out);
@@ -535,6 +544,32 @@ final class JnaLibhegel implements Libhegel {
         ByteByReference out = new ByteByReference();
         check("hegel_settings_get_print_blob", lib.hegel_settings_get_print_blob(ctx(), pointer(s), out));
         return out.getValue() != 0;
+    }
+
+    @Override
+    public int settingsGetVerbosity(long s) {
+        IntByReference out = new IntByReference();
+        check("hegel_settings_get_verbosity", lib.hegel_settings_get_verbosity(ctx(), pointer(s), out));
+        return out.getValue();
+    }
+
+    @Override
+    public int settingsGetSuppressHealthCheck(long s) {
+        IntByReference out = new IntByReference();
+        check(
+                "hegel_settings_get_suppress_health_check",
+                lib.hegel_settings_get_suppress_health_check(ctx(), pointer(s), out));
+        return out.getValue();
+    }
+
+    @Override
+    public int settingsFromString(long s, String key, String value) {
+        return lib.hegel_settings_set_from_string(ctx(), pointer(s), str(key), str(value));
+    }
+
+    @Override
+    public int setDefaultProfile(String name) {
+        return lib.hegel_set_default_profile(ctx(), str(name));
     }
 
     @Override
@@ -1006,11 +1041,13 @@ final class JnaLibhegel implements Libhegel {
     }
 
     @Override
-    public int stateMachineNextGroup(long tc, long stateMachineId, long[] outGroupId) {
+    public int stateMachineNextGroup(long tc, long stateMachineId, long[] outGroupId, long[] outConcurrency) {
         LongByReference ref = new LongByReference();
-        int code = lib.hegel_state_machine_next_group(ctx(), pointer(tc), stateMachineId, ref);
+        LongByReference concurrency = new LongByReference();
+        int code = lib.hegel_state_machine_next_group(ctx(), pointer(tc), stateMachineId, ref, concurrency);
         if (code == Abi.OK) {
             outGroupId[0] = ref.getValue();
+            outConcurrency[0] = concurrency.getValue();
         }
         return code;
     }

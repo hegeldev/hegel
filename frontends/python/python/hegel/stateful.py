@@ -124,9 +124,10 @@ class Machine:
     :meth:`max_concurrency` return the machine, so calls chain.
 
     With ``max_concurrency`` above 1 the machine runs concurrently, in
-    rounds. The engine draws a number of worker threads for the test case
-    in ``[min_concurrency, max_concurrency]``, weighted toward the maximum.
-    Each round, it picks one group of rules, every worker runs a short
+    rounds, on ``max_concurrency`` worker threads. The engine draws how
+    many of them run rules in ``[min_concurrency, max_concurrency]``,
+    weighted toward the maximum, and may redraw it between rounds.
+    Each round, it picks one group of rules, every active worker runs a short
     sequence of that group's rules against the shared model, and the
     invariants then run on the main thread. Rules in the same group may
     overlap; rules in different groups never do; a rule in several groups
@@ -507,7 +508,6 @@ def _run_concurrent(
         tc, rule_specs, invariants, min_concurrency, max_concurrency, step_count
     )
     concurrency = machine.start(tc._handle)
-    tc.note(f"Concurrency level: {concurrency}")
     if invariants:
         tc.note("Checking invariants on the initial state.")
     _check_invariants(tc, invariants, None)
@@ -530,10 +530,15 @@ def _run_concurrent(
         thread.start()
     try:
         round_number = 0
-        while (group := machine.next_group(tc._handle)) is not None:
+        noted_level = None
+        while (round_ := machine.next_group(tc._handle)) is not None:
+            group, level = round_
             if not 0 <= group < len(group_names):  # nocov
                 raise InternalError(f"state_machine_next_group returned unknown group id {group}")
             round_number += 1
+            if level != noted_level:
+                tc.note(f"Concurrency level: {level}")
+                noted_level = level
             name = group_names[group]
             tc.note(f'---------------- Round {round_number}: group "{name}" ----------------')
             for worker, rounds in enumerate(round_queues):

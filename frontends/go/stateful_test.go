@@ -111,6 +111,14 @@ func (*groupedMachine) RuleDelta(TestCase)   {}
 func (*groupedMachine) RuleGamma(TestCase)   {}
 func (*groupedMachine) InvariantOK(TestCase) {}
 
+type sharedRuleMachine struct {
+	shared atomic.Int64
+	only   atomic.Int64
+}
+
+func (m *sharedRuleMachine) RuleShared(TestCase) { m.shared.Add(1) }
+func (m *sharedRuleMachine) RuleOnly(TestCase)   { m.only.Add(1) }
+
 type invariantSelectionMachine struct {
 	alwaysCalls  int
 	sampledCalls int
@@ -174,7 +182,7 @@ type concurrentTestCaseShared struct {
 	selectedGroup           libhegel.StateMachineGroup
 	requestedMaxConcurrency int
 	requestedStepCount      int
-	ruleGroups              []int64
+	ruleGroups              [][]int64
 	invariantAlwaysCheck    []bool
 	invariantChecks         []int64
 	shouldCheckInvariant    func(int64) (bool, error)
@@ -187,6 +195,7 @@ type concurrentTestCaseShared struct {
 	cloneErr                error
 	workerErr               error
 	selectedRounds          int
+	roundLevels             []int64
 	ranGroups               int
 	spanStarts              atomic.Int64
 	spanStops               atomic.Int64
@@ -293,7 +302,7 @@ func (tc *concurrentTestCase) free() {
 	}
 }
 
-func (tc *concurrentTestCase) stateMachineNew(_ []string, ruleGroups []int64, _ []string, invariantAlwaysCheck []bool, maxConcurrency, stepCount int) (*libhegel.StateMachine, int64, error) {
+func (tc *concurrentTestCase) stateMachineNew(_ []string, ruleGroups [][]int64, _ []string, invariantAlwaysCheck []bool, maxConcurrency, stepCount int) (*libhegel.StateMachine, int64, error) {
 	tc.shared.requestedMaxConcurrency = maxConcurrency
 	tc.shared.requestedStepCount = stepCount
 	tc.shared.ruleGroups = slices.Clone(ruleGroups)
@@ -301,7 +310,7 @@ func (tc *concurrentTestCase) stateMachineNew(_ []string, ruleGroups []int64, _ 
 	return new(libhegel.StateMachine), tc.shared.selectedConcurrency, nil
 }
 
-func (tc *concurrentTestCase) stateMachineNextGroup(*libhegel.StateMachine) (libhegel.StateMachineGroup, error) {
+func (tc *concurrentTestCase) stateMachineNextGroup(*libhegel.StateMachine) (libhegel.StateMachineGroup, int64, error) {
 	rounds := tc.shared.selectedRounds
 	if rounds == 0 {
 		rounds = 1
@@ -311,9 +320,13 @@ func (tc *concurrentTestCase) stateMachineNextGroup(*libhegel.StateMachine) (lib
 		if tc.shared.reverseWorkerOrder {
 			tc.shared.workerOrderGate = make(chan struct{})
 		}
-		return tc.shared.selectedGroup, nil
+		level := tc.shared.selectedConcurrency
+		if tc.shared.roundLevels != nil {
+			level = tc.shared.roundLevels[tc.shared.ranGroups-1]
+		}
+		return tc.shared.selectedGroup, level, nil
 	}
-	return libhegel.StateMachineDone, nil
+	return libhegel.StateMachineDone, 0, nil
 }
 
 func (tc *concurrentTestCase) stateMachineNextRule(_ *libhegel.StateMachine, worker int64) (int64, error) {
@@ -524,16 +537,36 @@ func TestNewStateMachineRuleGroups(t *testing.T) {
 		&groupedMachine{},
 		WithRuleGroup("alpha", "RuleAlpha"),
 		WithRuleGroup("alpha", "RuleGamma"),
-		WithRuleGroup("beta", "RuleBeta"),
+		WithRuleGroup("beta", "RuleBeta", "RuleGamma"),
+		WithRuleGroup("alpha", "RuleGamma"),
 	)
 	if err != nil {
 		t.Fatalf("newStateMachine: %v", err)
 	}
 
 	// Reflection discovers methods alphabetically. Explicit groups are numbered
-	// in option order; the unmentioned RuleDelta remains in default group zero.
-	if want := []int64{1, 2, 0, 1}; !slices.Equal(sm.ruleGroups, want) {
+	// in option order; the unmentioned RuleDelta remains in default group zero,
+	// and RuleGamma, named by both groups (and by alpha twice), is in each once.
+	if want := [][]int64{{1}, {2}, {0}, {1, 2}}; !slices.EqualFunc(sm.ruleGroups, want, slices.Equal) {
 		t.Errorf("rule groups = %v, want %v", sm.ruleGroups, want)
+	}
+}
+
+func TestRunStatefulRuleInSeveralGroups(t *testing.T) {
+	t.Parallel()
+	machine := &sharedRuleMachine{}
+	err := Run(func(tc TestCase) {
+		RunStateful(tc, machine,
+			WithBoundedConcurrency(2),
+			WithRuleGroup("left", "RuleShared"),
+			WithRuleGroup("right", "RuleShared", "RuleOnly"),
+		)
+	}, WithTestCases(20), WithDatabase(""))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if machine.shared.Load() == 0 || machine.only.Load() == 0 {
+		t.Errorf("rule calls: shared=%d only=%d, want both to run", machine.shared.Load(), machine.only.Load())
 	}
 }
 
@@ -548,7 +581,6 @@ func TestNewStateMachineRuleGroupValidation(t *testing.T) {
 		{name: "Empty", opts: []StateMachineOption{WithRuleGroup("empty")}, want: "group 1 is empty"},
 		{name: "Unknown", opts: []StateMachineOption{WithRuleGroup("missing", "RuleMissing")}, want: `unknown rule "RuleMissing"`},
 		{name: "Invariant", opts: []StateMachineOption{WithRuleGroup("invariant", "InvariantOK")}, want: `names invariant "InvariantOK"`},
-		{name: "Duplicate", opts: []StateMachineOption{WithRuleGroup("alpha", "RuleAlpha"), WithRuleGroup("beta", "RuleAlpha")}, want: `belongs to both group 1 and group 2`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -934,7 +966,7 @@ func TestStateMachineRunsEngineSelectedWorkersConcurrently(t *testing.T) {
 	if shared.requestedMaxConcurrency != 4 {
 		t.Errorf("requested maximum concurrency = %d, want 4", shared.requestedMaxConcurrency)
 	}
-	if want := []int64{1}; !slices.Equal(shared.ruleGroups, want) {
+	if want := [][]int64{{1}}; !slices.EqualFunc(shared.ruleGroups, want, slices.Equal) {
 		t.Errorf("rule groups passed to engine = %v, want %v", shared.ruleGroups, want)
 	}
 	if shared.cloneCount != selectedConcurrency {
@@ -1039,6 +1071,44 @@ func TestStateMachineOmitsWorkerMetadataAtConcurrencyOne(t *testing.T) {
 	sm.Run(&concurrentTestCase{shared: shared, out: &out})
 	if got := out.String(); strings.Contains(got, "Concurrency level:") || strings.Contains(got, "[worker") {
 		t.Fatalf("sequential output contains concurrency metadata:\n%s", got)
+	}
+}
+
+func TestStateMachineNotesConcurrencyLevelWhenItChanges(t *testing.T) {
+	t.Parallel()
+
+	sm, err := newStateMachine(&outputRuleMachine{}, WithBoundedConcurrency(2))
+	if err != nil {
+		t.Fatalf("newStateMachine: %v", err)
+	}
+	var out strings.Builder
+	shared := &concurrentTestCaseShared{selectedConcurrency: 2, selectedRounds: 3, roundLevels: []int64{2, 2, 1}}
+	sm.Run(&concurrentTestCase{shared: shared, out: &out})
+	output := out.String()
+	positions := []int{
+		strings.Index(output, "Concurrency level: 2"),
+		strings.Index(output, "Round 1:"),
+		strings.Index(output, "Round 2:"),
+		strings.Index(output, "Concurrency level: 1"),
+		strings.Index(output, "Round 3:"),
+	}
+	if slices.Contains(positions, -1) || !slices.IsSorted(positions) || strings.Count(output, "Concurrency level:") != 2 {
+		t.Fatalf("want one level note before round 1 and one before round 3:\n%s", output)
+	}
+}
+
+func TestConcurrentFailureNotesShrunkConcurrencyLevel(t *testing.T) {
+	t.Parallel()
+
+	var out strings.Builder
+	err := run(1, func(tc TestCase) {
+		RunStateful(tc, &ruleFailer{}, WithBoundedConcurrency(3))
+	}, WithDatabase(""), withOutput(&out))
+	if err == nil {
+		t.Fatal("expected failure")
+	}
+	if output := out.String(); !strings.Contains(output, "Concurrency level: 1") || strings.Contains(output, "Concurrency level: 3") {
+		t.Fatalf("the shrunk failure runs a single worker of three:\n%s", output)
 	}
 }
 
@@ -1197,7 +1267,7 @@ func TestRunStatefulNextRuleErrorAborts(t *testing.T) {
 		uintptr(2), libhegel.OK, // new_state_machine
 		libhegel.OK,           // state_machine_add_rule
 		int64(1), libhegel.OK, // state_machine_start
-		libhegel.StateMachineGroup(0), libhegel.OK, // state_machine_next_group
+		libhegel.StateMachineGroup(0), int64(1), libhegel.OK, // state_machine_next_group
 		uintptr(3), libhegel.OK, // test_case_clone
 		uintptr(4),                                // context_new for the cloned test case
 		int64(0), libhegel.E_STOP_TEST, "overrun", // state_machine_next_rule + last-error message

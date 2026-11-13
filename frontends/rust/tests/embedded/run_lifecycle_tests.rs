@@ -279,6 +279,15 @@ fn drive_single_failure_reraises_the_tests_own_panic() {
 }
 
 #[test]
+fn a_bare_diagnostic_is_the_origin_and_the_panic_message() {
+    let payload: Box<dyn std::any::Any + Send> = Box::new("boom".to_string());
+    assert_eq!(
+        bare_diagnostic("Panic at a.rs:1:1", &payload),
+        "Panic at a.rs:1:1:\nboom\n"
+    );
+}
+
+#[test]
 fn drive_multiple_failures_panics_with_the_count() {
     let msg = drive_panic_message(
         |tc| {

@@ -114,6 +114,18 @@ public interface Libhegel {
     boolean settingsGetPrintBlob(long s);
 
     /**
+     * {@code hegel_settings_get_verbosity}: the resolved verbosity, one of the {@code VERBOSITY_*}
+     * values of {@link Abi}.
+     */
+    int settingsGetVerbosity(long s);
+
+    /**
+     * {@code hegel_settings_get_suppress_health_check}: the resolved mask of suppressed health
+     * checks, a union of the {@code HC_*} values of {@link Abi}.
+     */
+    int settingsGetSuppressHealthCheck(long s);
+
+    /**
      * {@code hegel_settings_get_nondeterminism_strictness}: the resolved reaction to a
      * nondeterministic test ({@link Abi#NONDETERMINISM_QUIET}, {@link Abi#NONDETERMINISM_WARN} or
      * {@link Abi#NONDETERMINISM_ERROR}).
@@ -152,6 +164,22 @@ public interface Libhegel {
      * Abi#NONDETERMINISM_QUIET}, {@link Abi#NONDETERMINISM_WARN} or {@link Abi#NONDETERMINISM_ERROR}.
      */
     void settingsNondeterminismStrictness(long s, int strictness);
+
+    /**
+     * {@code hegel_settings_set_from_string}: set one setting from text, using its {@code
+     * hegel.toml} key and the value syntax of that key. Returns {@link
+     * Abi#E_INVALID_ARG} (with the message in {@link #lastErrorMessage()}) for an unknown key or a
+     * value outside its vocabulary, and leaves the settings unchanged.
+     */
+    int settingsFromString(long s, String key, String value);
+
+    /**
+     * {@code hegel_set_default_profile}: set the default settings profile for the whole process,
+     * overriding {@code HEGEL_DEFAULT_PROFILE}, or clear an earlier call with {@code ""}.
+     * {@link #settingsNew} fails if it does not exist. Returns {@link Abi#E_INVALID_ARG} (with
+     * the message in {@link #lastErrorMessage()}) for an invalid name.
+     */
+    int setDefaultProfile(String name);
 
     // Run lifecycle.
 
@@ -311,10 +339,10 @@ public interface Libhegel {
      * {@code hegel_new_state_machine}: an empty machine with its concurrency bounds and step count.
      * Declare its rules and invariants with {@link #stateMachineAddRule} and {@link
      * #stateMachineAddInvariant}, then seal them with {@link #stateMachineStart}. The engine draws
-     * the concurrency level in {@code [minConcurrency, maxConcurrency]} when the machine starts;
-     * pass {@code 1, 1} for a sequential machine. {@code stepCount} is the target number of
-     * counted rounds per test case (at least 1; the engine has no default, and 50 is the
-     * conventional choice).
+     * the concurrency level in {@code [minConcurrency, maxConcurrency]} when the machine starts and
+     * may redraw it between rounds; pass {@code 1, 1} for a sequential machine. {@code stepCount}
+     * is the target number of counted rounds per test case (at least 1; the engine has no default,
+     * and 50 is the conventional choice).
      */
     int newStateMachine(long tc, long minConcurrency, long maxConcurrency, long stepCount, long[] outId);
 
@@ -335,13 +363,18 @@ public interface Libhegel {
     int stateMachineAddInvariant(long tc, long stateMachineId, String name, boolean alwaysCheck);
 
     /**
-     * {@code hegel_state_machine_start}: seals the declared rules and invariants and draws the
-     * concurrency level into {@code outConcurrency}.
+     * {@code hegel_state_machine_start}: seals the declared rules and invariants and writes {@code
+     * maxConcurrency}, the number of workers to run for the whole test case, into {@code
+     * outConcurrency}.
      */
     int stateMachineStart(long tc, long stateMachineId, long[] outConcurrency);
 
-    /** The id of the group current for the new round, or {@link Abi#STATE_MACHINE_DONE}. */
-    int stateMachineNextGroup(long tc, long stateMachineId, long[] outGroupId);
+    /**
+     * The id of the group current for the new round, or {@link Abi#STATE_MACHINE_DONE}. On a new
+     * round {@code outConcurrency[0]} receives the round's concurrency level: how many workers the
+     * engine hands rules to.
+     */
+    int stateMachineNextGroup(long tc, long stateMachineId, long[] outGroupId, long[] outConcurrency);
 
     /** {@code outRuleIndex[0]} receives the rule index, or {@link Abi#STATE_MACHINE_DONE}. */
     int stateMachineNextRule(long tc, long stateMachineId, long workerIndex, long[] outRuleIndex);

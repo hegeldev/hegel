@@ -16,6 +16,7 @@ jobs:
   test:
     name: test
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     permissions:
       contents: read
     steps:
@@ -48,6 +49,7 @@ jobs:
       # `--only-shell`: tests/browser/run.mjs launches Chromium headless.
       - name: Install Chromium
         working-directory: frontends/typescript/tests/browser
+        timeout-minutes: 25
         run: npx playwright install --with-deps --only-shell chromium
       - name: Test the packed package in four browser bundlers
         run: just typescript::check-browser
@@ -56,6 +58,7 @@ jobs:
   smoke:
     name: smoke (${{ matrix.runtime }} ${{ matrix.version }})
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     strategy:
@@ -116,6 +119,7 @@ jobs:
   docs:
     name: docs
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:

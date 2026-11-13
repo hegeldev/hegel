@@ -144,7 +144,7 @@ macro_rules! for_each_hegel_fn {
             fn hegel_state_machine_add_invariant(ctx: *mut HegelContext, tc: *mut HegelTestCase, state_machine: *mut HegelStateMachine, name: hegel_string_t, always_check: bool) -> hegel_result_t;
             fn hegel_state_machine_add_rule(ctx: *mut HegelContext, tc: *mut HegelTestCase, state_machine: *mut HegelStateMachine, name: hegel_string_t, weight: f64, groups: *const i64, num_groups: usize) -> hegel_result_t;
             fn hegel_state_machine_free(ctx: *mut HegelContext, state_machine: *mut HegelStateMachine) -> hegel_result_t;
-            fn hegel_state_machine_next_group(ctx: *mut HegelContext, tc: *mut HegelTestCase, state_machine: *mut HegelStateMachine, out_group_id: *mut i64) -> hegel_result_t;
+            fn hegel_state_machine_next_group(ctx: *mut HegelContext, tc: *mut HegelTestCase, state_machine: *mut HegelStateMachine, out_group_id: *mut i64, out_concurrency: *mut i64) -> hegel_result_t;
             fn hegel_state_machine_next_rule(ctx: *mut HegelContext, tc: *mut HegelTestCase, state_machine: *mut HegelStateMachine, worker_index: i64, out_rule_index: *mut i64) -> hegel_result_t;
             fn hegel_state_machine_rule_rejected(ctx: *mut HegelContext, tc: *mut HegelTestCase, state_machine: *mut HegelStateMachine, worker_index: i64) -> hegel_result_t;
             fn hegel_state_machine_should_check_invariant(ctx: *mut HegelContext, tc: *mut HegelTestCase, state_machine: *mut HegelStateMachine, invariant_index: i64, out_should_check: *mut bool) -> hegel_result_t;

@@ -1579,7 +1579,7 @@ func TestStatefulNewStateMachineError(t *testing.T) {
 	// new_state_machine writes its *StateMachine out-param (a placeholder)
 	// before returning the failing Error.
 	tc := newStubTestCase(t, uintptr(0), libhegel.E_BACKEND, "boom")
-	sm := &stateMachine{rules: []stateMachineRule{{name: "Rule", fn: func(TestCase) {}}}, ruleGroups: []int64{0}}
+	sm := &stateMachine{rules: []stateMachineRule{{name: "Rule", fn: func(TestCase) {}}}, ruleGroups: [][]int64{{0}}}
 	defer func() {
 		err, ok := recover().(error)
 		if !ok || !errors.Is(err, libhegel.E_BACKEND) {
@@ -1619,7 +1619,7 @@ func TestStatefulStateMachineDeclarationErrors(t *testing.T) {
 			tc := newStubTestCase(t, tt.returns...)
 			sm := &stateMachine{
 				rules:                []stateMachineRule{{name: "Rule", fn: func(TestCase) {}}},
-				ruleGroups:           []int64{0},
+				ruleGroups:           [][]int64{{0}},
 				invariants:           []stateMachineRule{{name: "Inv", fn: func(TestCase) {}}},
 				invariantAlwaysCheck: []bool{false},
 			}
@@ -1642,9 +1642,9 @@ func TestStatefulNextGroupError(t *testing.T) {
 		uintptr(1), libhegel.OK, // new_state_machine
 		libhegel.OK,           // state_machine_add_rule
 		int64(1), libhegel.OK, // state_machine_start
-		int64(0), libhegel.E_BACKEND, "boom", // next_group fails
+		int64(0), int64(0), libhegel.E_BACKEND, "boom", // next_group fails
 	)
-	sm := &stateMachine{rules: []stateMachineRule{{name: "Rule", fn: func(TestCase) {}}}, ruleGroups: []int64{0}}
+	sm := &stateMachine{rules: []stateMachineRule{{name: "Rule", fn: func(TestCase) {}}}, ruleGroups: [][]int64{{0}}}
 	defer func() {
 		err, ok := recover().(error)
 		if !ok || !errors.Is(err, libhegel.E_BACKEND) {
@@ -1703,7 +1703,7 @@ func TestStatefulFinalInvariantError(t *testing.T) {
 		uintptr(1), libhegel.OK, // new_state_machine
 		libhegel.OK,           // state_machine_add_invariant
 		int64(1), libhegel.OK, // state_machine_start
-		libhegel.StateMachineDone, libhegel.OK, // state_machine_next_group
+		libhegel.StateMachineDone, int64(0), libhegel.OK, // state_machine_next_group
 	)
 	calls := 0
 	sm := &stateMachine{invariants: []stateMachineRule{{name: "Inv", fn: func(tc TestCase) {

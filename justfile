@@ -37,7 +37,7 @@ mod website
 check: check-lint libhegel::check rust::check python::check typescript::check cpp::check java::check ocaml::check go::check
 
 # Lints spanning the Cargo workspace, plus each component's own.
-check-lint: check-format check-clippy check-nocov-style check-test-modules check-internal-asserts check-settings-env check-release-script libhegel::check-lint rust::check-lint python::check-lint typescript::check-lint cpp::check-lint java::check-lint ocaml::check-lint go::check-lint
+check-lint: check-format check-clippy check-nocov-style check-test-modules check-internal-asserts check-settings-env check-workflow-timeouts check-release-script libhegel::check-lint rust::check-lint python::check-lint typescript::check-lint cpp::check-lint java::check-lint ocaml::check-lint go::check-lint
 
 format:
     cargo fmt --all
@@ -75,6 +75,9 @@ check-internal-asserts:
 
 check-settings-env:
     scripts/check-settings-env.py
+
+check-workflow-timeouts:
+    scripts/check-workflow-timeouts.py
 
 check-release-script:
     .github/scripts/test_release.py

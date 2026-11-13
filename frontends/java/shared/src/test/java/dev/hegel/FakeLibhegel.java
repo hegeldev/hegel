@@ -146,9 +146,10 @@ final class FakeLibhegel implements Libhegel {
     // (next_group) hands out exactly one rule from `ruleSequence` (next_rule), then the join
     // point; once the sequence is exhausted next_group reports DONE. Concurrently, set
     // `concurrentRounds`: round r hands worker w the rules `concurrentRounds[r][w]` (a missing or
-    // empty worker entry means that worker's round is over at once), and `stateMachineConcurrency`
-    // says how many workers state_machine_start reports. The protocol methods are synchronized
-    // because concurrent workers call them at the same time.
+    // empty worker entry means that worker's round is over at once), `stateMachineConcurrency`
+    // says how many workers state_machine_start reports, and `roundConcurrency` (if set) is the
+    // level next_group reports for each round, defaulting to `stateMachineConcurrency`. The
+    // protocol methods are synchronized because concurrent workers call them at the same time.
     int newStateMachineRc = Abi.OK;
     long stateMachineId = 5;
     int stateMachineAddRuleRc = Abi.OK;
@@ -165,6 +166,7 @@ final class FakeLibhegel implements Libhegel {
     long stateMachineMaxConcurrency = -1;
     long stateMachineStepCount = -1;
     long stateMachineConcurrency = 1; // what state_machine_start writes to out_concurrency
+    long[] roundConcurrency; // null = every round reports stateMachineConcurrency
     int startedStateMachines;
     int stateMachineNextGroupRc = Abi.OK;
     long stateMachineGroupId = 0;
@@ -198,14 +200,23 @@ final class FakeLibhegel implements Libhegel {
     boolean resolvedPrintBlob = false;
     int resolvedStrictness = Abi.NONDETERMINISM_QUIET;
     Boolean printBlob; // what the setter received; null = never set
+    int verbosity = Abi.VERBOSITY_NORMAL;
+    int settingsFromStringRc = Abi.OK;
+    final List<String> settingsFromStringCalls = new ArrayList<>();
+    int setDefaultProfileRc = Abi.OK;
+    String defaultProfile; // what the setter received last; null = never set
+    String unresolvableProfile; // settingsNew fails while this is the default profile
     Integer strictness; // what the setter received; null = never set
 
     @Override
     public int settingsNew(long[] out) {
-        if (settingsNewRc == Abi.OK) {
+        int rc = unresolvableProfile != null && unresolvableProfile.equals(defaultProfile)
+                ? Abi.E_INVALID_ARG
+                : settingsNewRc;
+        if (rc == Abi.OK) {
             out[0] = SETTINGS;
         }
-        return settingsNewRc;
+        return rc;
     }
 
     @Override
@@ -216,6 +227,28 @@ final class FakeLibhegel implements Libhegel {
     @Override
     public void settingsPrintBlob(long s, boolean yes) {
         printBlob = yes;
+    }
+
+    @Override
+    public int settingsGetVerbosity(long s) {
+        return verbosity;
+    }
+
+    @Override
+    public int settingsGetSuppressHealthCheck(long s) {
+        return suppressMask == -1 ? 0 : suppressMask;
+    }
+
+    @Override
+    public int settingsFromString(long s, String key, String value) {
+        settingsFromStringCalls.add(key + "=" + value);
+        return settingsFromStringRc;
+    }
+
+    @Override
+    public int setDefaultProfile(String name) {
+        defaultProfile = name;
+        return setDefaultProfileRc;
     }
 
     @Override
@@ -249,7 +282,9 @@ final class FakeLibhegel implements Libhegel {
     }
 
     @Override
-    public void settingsVerbosity(long s, int v) {}
+    public void settingsVerbosity(long s, int v) {
+        verbosity = v;
+    }
 
     @Override
     public void settingsSeed(long s, long seed, boolean hasSeed) {}
@@ -638,8 +673,10 @@ final class FakeLibhegel implements Libhegel {
     }
 
     @Override
-    public synchronized int stateMachineNextGroup(long tc, long stateMachineId, long[] outGroupId) {
+    public synchronized int stateMachineNextGroup(
+            long tc, long stateMachineId, long[] outGroupId, long[] outConcurrency) {
         if (stateMachineNextGroupRc == Abi.OK) {
+            int round = roundsServed;
             if (concurrentRounds != null) {
                 currentRound = roundsServed < concurrentRounds.length ? concurrentRounds[roundsServed++] : null;
             } else {
@@ -647,7 +684,12 @@ final class FakeLibhegel implements Libhegel {
                 currentRound = ruleIndex < ruleSequence.length ? new long[][] {{ruleSequence[ruleIndex++]}} : null;
             }
             positions = new int[(int) stateMachineConcurrency];
-            outGroupId[0] = currentRound != null ? stateMachineGroupId : Abi.STATE_MACHINE_DONE;
+            if (currentRound != null) {
+                outGroupId[0] = stateMachineGroupId;
+                outConcurrency[0] = roundConcurrency != null ? roundConcurrency[round] : stateMachineConcurrency;
+            } else {
+                outGroupId[0] = Abi.STATE_MACHINE_DONE;
+            }
         }
         return stateMachineNextGroupRc;
     }

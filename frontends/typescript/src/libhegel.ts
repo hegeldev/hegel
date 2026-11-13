@@ -375,7 +375,13 @@ export interface Bindings {
     machine: Ptr,
     outConcurrency: (number | bigint)[],
   ) => number;
-  stateMachineNextGroup: (ctx: Ptr, tc: Ptr, machine: Ptr, out: (number | bigint)[]) => number;
+  stateMachineNextGroup: (
+    ctx: Ptr,
+    tc: Ptr,
+    machine: Ptr,
+    out: (number | bigint)[],
+    outConcurrency: (number | bigint)[],
+  ) => number;
   stateMachineNextRule: (
     ctx: Ptr,
     tc: Ptr,
@@ -830,7 +836,7 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     "int hegel_state_machine_start(void* ctx, void* tc, void* state_machine, _Out_ int64_t* out_concurrency)",
   );
   const stateMachineNextGroup = f(
-    "int hegel_state_machine_next_group(void* ctx, void* tc, void* state_machine, _Out_ int64_t* out_group_id)",
+    "int hegel_state_machine_next_group(void* ctx, void* tc, void* state_machine, _Out_ int64_t* out_group_id, _Out_ int64_t* out_concurrency)",
   );
   const stateMachineNextRule = f(
     "int hegel_state_machine_next_rule(void* ctx, void* tc, void* state_machine, int64_t worker_index, _Out_ int64_t* out_rule_index)",
@@ -1180,7 +1186,8 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
       stateMachineAddInvariant(ctx, tc, machine, nativeString(name), alwaysCheck),
     stateMachineStart: (ctx, tc, machine, outConcurrency) =>
       stateMachineStart(ctx, tc, machine, outConcurrency),
-    stateMachineNextGroup: (ctx, tc, machine, out) => stateMachineNextGroup(ctx, tc, machine, out),
+    stateMachineNextGroup: (ctx, tc, machine, out, outConcurrency) =>
+      stateMachineNextGroup(ctx, tc, machine, out, outConcurrency),
     stateMachineNextRule: (ctx, tc, machine, workerIndex, out) =>
       stateMachineNextRule(ctx, tc, machine, workerIndex, out),
     stateMachineRuleRejected: (ctx, tc, machine, workerIndex) =>
@@ -2389,7 +2396,8 @@ export class Libhegel implements Engine {
 
   /**
    * Seal the machine's rules and invariants and draw its concurrency level,
-   * returning it (a small integer, whichever shape koffi hands it back in).
+   * returning `maxConcurrency` (a small integer, whichever shape koffi hands
+   * it back in).
    */
   stateMachineStart(ctx: Ptr, tc: Ptr, machine: Ptr): number {
     const out: (number | bigint)[] = [0];
@@ -2402,19 +2410,31 @@ export class Libhegel implements Engine {
   }
 
   /**
-   * Start the machine's next round, returning the round's group id, or `null`
-   * once the machine is finished. koffi hands the `int64_t` back as a `number`
-   * when it is safe and a `bigint` only beyond that — which the
-   * `HEGEL_STATE_MACHINE_DONE` sentinel always is.
+   * Start the machine's next round, returning the round's group id and
+   * concurrency level, or `null` once the machine is finished. koffi hands the
+   * `int64_t` back as a `number` when it is safe and a `bigint` only beyond
+   * that — which the `HEGEL_STATE_MACHINE_DONE` sentinel always is.
    */
-  stateMachineNextGroup(ctx: Ptr, tc: Ptr, machine: Ptr): number | null {
+  stateMachineNextGroup(
+    ctx: Ptr,
+    tc: Ptr,
+    machine: Ptr,
+  ): { group: number; concurrency: number } | null {
     const out: (number | bigint)[] = [0];
+    const outConcurrency: (number | bigint)[] = [0];
     this.check(
       ctx,
-      this.fns.stateMachineNextGroup(this.ptr(ctx), this.ptr(tc), this.ptr(machine), out),
+      this.fns.stateMachineNextGroup(
+        this.ptr(ctx),
+        this.ptr(tc),
+        this.ptr(machine),
+        out,
+        outConcurrency,
+      ),
       "hegel_state_machine_next_group",
     );
-    return doneOrIndex(out[0]);
+    const group = doneOrIndex(out[0]);
+    return group === null ? null : { group, concurrency: Number(outConcurrency[0]) };
   }
 
   /**

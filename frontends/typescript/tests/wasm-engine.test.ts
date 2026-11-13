@@ -203,7 +203,11 @@ describe("WasmEngine pinned raw ABI", () => {
           trace.push(engine.poolGenerate(ctx, tc, pool, true));
           expect(() => engine.poolGenerate(ctx, tc, pool, true)).toThrow(AssumeError);
           let rounds = 0;
-          while (engine.stateMachineNextGroup(ctx, tc, machine) !== null) {
+          for (;;) {
+            const round = engine.stateMachineNextGroup(ctx, tc, machine);
+            if (round === null) break;
+            expect(round.concurrency).toBe(1);
+            trace.push(round.group);
             rounds++;
             for (;;) {
               const rule = engine.stateMachineNextRule(ctx, tc, machine, 0);

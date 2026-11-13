@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.52.2 - 2026-11-10
+
+This patch fixes the unbounded memory growth of a long-running `#[hegel::main]` binary under Antithesis. A run of a single test case inside Antithesis, with the database disabled as the `workload` profile has it, no longer records the choices its test case makes.
+
+A failure of such a run is now reported as it happened, as the panic's location and message. It is not shrunk or replayed, the values it drew are not printed, and it has no `reproduce_failure` blob.
+
+## 0.52.1 - 2026-11-09
+
+This patch lets a long state-machine run explore more than one configuration. Between rounds, a state machine now occasionally redraws its value distribution, the rules each worker has enabled, and the concurrency level. Previously these were fixed for the whole test case, so a `#[hegel::main]` binary kept one configuration for its whole run.
+
+A concurrent machine now always starts `max_concurrency` worker threads, and only the current concurrency level's worth of them run rules in a round. A failure report notes `Concurrency level: n` at the first round and whenever the level changes.
+
 ## 0.52.0 - 2026-11-03
 
 This release lets a rule of a concurrent state machine belong to several concurrency groups: the rule runs in the rounds of each of them. The list must name at least one group and must not repeat one; the engine reports either as an invalid argument when the machine runs. A bare `#[rule]` still indicates the anonymous group.
