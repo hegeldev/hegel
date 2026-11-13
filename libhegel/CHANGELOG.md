@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.51.2 - 2026-11-13
+
+Internal refactoring.
+
 ## 0.51.1 - 2026-11-10
 
 This patch stops a run of a single test case inside Antithesis (detected from `ANTITHESIS_OUTPUT_DIR`), with no database to save a failure to, from recording the choices its test case makes. This is the configuration of a long-running workload, where the record of an hours-long test case grew without bound.
