@@ -39,6 +39,7 @@ jobs:
   changes:
     name: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
@@ -151,6 +152,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -298,11 +300,15 @@ jobs:
     uses: ./.github/workflows/website.yml
 
   # Test with the minimal versions of every dependency in the workspace.
+  # `ubuntu-8-core` is an org larger runner (Settings → Actions → Runners):
+  # this and `coverage` are the longest jobs in a run, and larger runners
+  # don't count against the plan's cap on concurrent standard-runner jobs.
   test-minimal-versions:
     name: test-minimal-versions
     needs: changes
     if: needs.changes.outputs.rust == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-8-core
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -322,7 +328,8 @@ jobs:
     name: coverage
     needs: changes
     if: needs.changes.outputs.rust == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-8-core
+    timeout-minutes: 45
     permissions:
       contents: write  # needed for ratchet auto-update
       pull-requests: write  # needed for creating PRs on main
@@ -400,6 +407,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.cpp == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -422,6 +430,7 @@ jobs:
     if: always()
     needs: [changes, lint, libhegel, rust, python, typescript, cpp, java, csharp, ocaml, go, website, test-minimal-versions, coverage, nix]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions: {}
     steps:
       - name: Check dependency results
@@ -442,6 +451,7 @@ jobs:
     if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.changes.outputs.code == 'true' }}
     needs: [changes, lint, libhegel, rust, python, typescript, cpp, java, csharp, ocaml, go, website, test-minimal-versions, coverage, nix]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: write
       # id-token: "enables the workflow to request and use an OIDC token from GitHub's OIDC provider".
@@ -667,6 +677,7 @@ jobs:
           # windows-latest ships the toolchain.
           - { platform: windows-arm64, runner: windows-latest,   target: aarch64-pc-windows-msvc,     goos: windows, goarch: arm64, shared_ext: dll,   static_ext: lib }
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     env:
       VERSION: ${{ needs.release.outputs.version }}
       TAG: ${{ needs.release.outputs.libhegel_tag }}
@@ -774,6 +785,7 @@ jobs:
     if: github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.outputs.c_released == 'true'
     needs: release
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: write
     env:
@@ -821,6 +833,7 @@ jobs:
     if: github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.outputs.c_released == 'true'
     needs: [release, release-binaries, release-wasm]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # `contents: write` (not just read) so this job can both view the draft
     # release — drafts are invisible to read-only tokens — and publish it
     # once every expected asset is present.
@@ -898,6 +911,7 @@ jobs:
           - { platform: darwin-arm64,  runner: macos-latest }
           - { platform: windows-amd64, runner: windows-latest }
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     steps:
       - name: Checkout release commit
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -920,6 +934,7 @@ jobs:
     if: github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.outputs.python_released == 'true'
     needs: release
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -951,6 +966,7 @@ jobs:
     if: github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.outputs.python_released == 'true'
     needs: [release, release-python-wheels, release-python-sdist]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       id-token: write
     steps:
@@ -979,6 +995,7 @@ jobs:
     if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.typescript_released == 'true' && (needs.release.outputs.c_released != 'true' || needs.release-binaries-verify.result == 'success') }}
     needs: [release, release-binaries-verify]
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
       id-token: write
@@ -1011,6 +1028,7 @@ jobs:
     if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.typescript_released == 'true' }}
     needs: release
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # The push to main uses the app token below, not GITHUB_TOKEN.
     permissions:
       contents: read
@@ -1062,6 +1080,7 @@ jobs:
     if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.cpp_released == 'true' }}
     needs: release
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # The push to main uses the app token below, not GITHUB_TOKEN.
     permissions:
       contents: read
@@ -1112,6 +1131,7 @@ jobs:
     if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.java_released == 'true' && (needs.release.outputs.c_released != 'true' || needs.release-binaries-verify.result == 'success') }}
     needs: [release, release-binaries-verify]
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     permissions:
       contents: read
     steps:
@@ -1176,6 +1196,7 @@ jobs:
     if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.csharp_released == 'true' && (needs.release.outputs.c_released != 'true' || needs.release-binaries-verify.result == 'success') }}
     needs: [release, release-binaries-verify]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       # NuGet trusted publishing exchanges the workflow's OIDC token for a
@@ -1216,6 +1237,7 @@ jobs:
     if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.go_released == 'true' && (needs.release.outputs.c_released != 'true' || needs.release-binaries-verify.result == 'success') }}
     needs: [release, release-binaries-verify]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     permissions:
       contents: read
     strategy:
@@ -1252,6 +1274,7 @@ jobs:
     if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.go_released == 'true' && needs.release-go-verify.result == 'success' }}
     needs: [release, release-go-verify]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: write
     env:

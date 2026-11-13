@@ -12,6 +12,7 @@ jobs:
   test-wasm:
     name: test-wasm
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -52,15 +53,17 @@ jobs:
     # binary; symbol-visibility, libloading behavior, and Windows-specific
     # calling conventions only get exercised by actually running the smoke
     # tests on each OS. The example C programs are bash-driven and only run
-    # on Unix runners.
+    # on Unix runners. macOS runs only in the merge queue and on main, since
+    # the org's macOS runners are scarce.
     name: test-c-bindings (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest", "windows-latest"]' || '["ubuntu-latest", "macos-latest", "windows-latest"]') }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -86,6 +89,7 @@ jobs:
     # the dlopen/dlclose replay test, against that build.
     name: test-c-runtime
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -101,6 +105,7 @@ jobs:
   lark:
     name: lark
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -120,6 +125,7 @@ jobs:
   miri:
     name: miri
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:

@@ -16,6 +16,7 @@ jobs:
   test:
     name: test (${{ matrix.framework }})
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     strategy:
@@ -44,6 +45,7 @@ jobs:
   test-os:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     permissions:
       contents: read
     strategy:
@@ -66,6 +68,7 @@ jobs:
   pack:
     name: pack
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:

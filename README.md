@@ -3,7 +3,7 @@
 > [!IMPORTANT]
 > Hegel is in beta, and we'd love for you to try it and [report any feedback](https://github.com/hegeldev/hegel/issues/new). See https://hegel.dev/compatibility for details on what may still change.
 
-[Hegel](https://hegel.dev) is property-based testing, based on [Hypothesis](https://github.com/hypothesisworks/hypothesis): a native engine that does the generating, shrinking and bookkeeping, and thin frontends that give it an idiomatic surface in each language.
+[Hegel](https://hegel.dev) is a family of property-based testing libraries inspired by [Hypothesis](https://github.com/hypothesisworks/hypothesis). It provides a core library, libhegel, that implements the property-based testing engine, and frontends that use that library to provide high quality and idiomatic property-based testing libraries for a variety of languages.
 
 This is the Hegel monorepo that includes the engine and (currently only some of) our officially supported frontends.
 Specifically, right now it contains:

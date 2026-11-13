@@ -16,7 +16,8 @@ jobs:
   # compiler and standard library.
   test:
     name: test (${{ matrix.compiler }}${{ matrix.stdlib && format(' with {0}', matrix.stdlib) || '' }})
-    runs-on: ${{ matrix.os || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     permissions:
       contents: read
     strategy:
@@ -43,11 +44,6 @@ jobs:
             stdlib: libc++
             packages: clang-18 libc++-18-dev libc++abi-18-dev
             cmake_flags: -DCMAKE_CXX_FLAGS="-stdlib=libc++"
-
-          - compiler: macos
-            cc: cc
-            cxx: c++
-            os: macos-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -67,6 +63,26 @@ jobs:
           CMAKE_FLAGS: ${{ matrix.cmake_flags }}
         run: just cpp::check-tests
 
+  # Apple clang and libc++, only in the merge queue and on main since macOS
+  # runners are scarce.
+  test-macos:
+    name: test (macos)
+    if: github.event_name != 'pull_request'
+    runs-on: macos-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - name: Run tests
+        env:
+          CC: cc
+          CXX: c++
+        run: just cpp::check-tests
+
   # The library consumed the ways a downstream project would: as a
   # subdirectory, through FetchContent (of the monorepo, with the frontend
   # as its source subdirectory), from an installed package, and with its own
@@ -74,6 +90,7 @@ jobs:
   consumer:
     name: consumer
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -89,6 +106,7 @@ jobs:
   cxx17:
     name: cxx17
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -105,6 +123,7 @@ jobs:
   coverage:
     name: coverage
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -126,6 +145,7 @@ jobs:
   sanitizers:
     name: sanitizers
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     permissions:
       contents: read
     steps:
@@ -150,6 +170,7 @@ jobs:
   docs:
     name: docs
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -168,6 +189,7 @@ jobs:
   nix:
     name: nix
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
