@@ -42,6 +42,33 @@ public record Mixed(int Id)
 
 public record struct Empty;
 
+public record Cyclic(Via<int> Next);
+
+public record Via<T>(Cyclic Back);
+
+public record Person
+{
+    public Person(string name)
+    {
+        Name = name;
+    }
+
+    public string Name { get; init; }
+}
+
+public record Money(int Amount)
+{
+    public Money(int amount, int scale) : this(amount * scale)
+    {
+    }
+
+    private Money(int amount, int scale, int shift) : this(amount * scale + shift)
+    {
+    }
+
+    public static Money Shifted(int amount) => new(amount, 1, 1);
+}
+
 public abstract record Animal(int Legs);
 
 public record Dog(int Legs) : Animal(Legs);
@@ -238,6 +265,7 @@ public class DeriveTests
         Assert.Contains("Tree -> Tree", Assert.Throws<HegelUsageException>(() => Generators.ForType<Tree>()).Message);
         Assert.Contains("Forest -> Forest", Assert.Throws<HegelUsageException>(() => Generators.ForType<Forest>()).Message);
         Assert.Contains("Wrapped -> Loop -> Loop", Assert.Throws<HegelUsageException>(() => Generators.ForType<Wrapped>()).Message);
+        Assert.Contains("Cyclic -> Via`1 -> Cyclic", Assert.Throws<HegelUsageException>(() => Generators.ForType<Cyclic>()).Message);
     }
 
     [Fact]
@@ -246,6 +274,20 @@ public class DeriveTests
         var g = Generators.Records<Loop>().With("Next", Generators.Nulls<Loop>());
         Gen.All(g, l => l.Next == null, 5);
         Assert.Equal("var x_1 = new Loop(null, 0);", Gen.MinimalOutput(g));
+    }
+
+    [Fact]
+    public void AConstructorParameterAndThePropertyItSetsAreOneComponent()
+    {
+        var g = Generators.Records<Person>().With("name", Generators.Just("fixed"));
+        Assert.Equal("var x_1 = new Person(\"fixed\");", Gen.MinimalOutput(g));
+    }
+
+    [Fact]
+    public void ThePrimaryConstructorIsChosenOverLongerOnes()
+    {
+        Assert.Equal(new Money(1, 2), Money.Shifted(1));
+        Assert.Equal("var x_1 = new Money(0);", Gen.MinimalOutput(Generators.ForType<Money>()));
     }
 }
 

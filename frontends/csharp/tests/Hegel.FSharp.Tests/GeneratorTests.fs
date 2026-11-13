@@ -11,6 +11,13 @@ open Hegel.FSharp.Tests.Support
 
 type Point = { X: int; Y: int }
 
+type Spaced = { ``two words``: int }
+
+[<RequireQualifiedAccess>]
+type Strict =
+    | Empty
+    | Full of int
+
 type Colour =
     | Red
     | Green
@@ -172,6 +179,11 @@ let ``tuples print in call style`` () =
 let ``records derive their fields and take overrides`` () =
     Assert.Equal("let x_1 = { X = 0; Y = 0 }", printed Gen.record<Point>)
     Assert.Equal("let x_1 = { X = 7; Y = 0 }", printed (Gen.record<Point>.With("X", Gen.constant 7)))
+    Assert.Equal("let x_1 = {| A = 0; B = \"\" |}", printed Gen.auto<{| A: int; B: string |}>)
+    Assert.Equal("let x_1 = struct {| A = 0 |}", printed Gen.auto<struct {| A: int |}>)
+    Assert.Equal("let x_1 = { ``two words`` = 0 }", printed Gen.auto<Spaced>)
+    Assert.Equal("let x_1 = Strict.Empty", printed Gen.auto<Strict>)
+    Assert.Equal("let x_1 = Strict.Full(0)", minimal Gen.auto<Strict> (fun s -> s <> Strict.Empty))
 
     Assert.Equal(
         "let x_1 = { X = 7; Y = 9 }",

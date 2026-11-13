@@ -461,6 +461,7 @@ public sealed class Printer
         DateTime dateTime => $"DateTime.Parse(\"{dateTime.ToString("yyyy-MM-ddTHH:mm:ss.FFFFFFF", CultureInfo.InvariantCulture)}\")",
         DateTimeOffset offset => $"DateTimeOffset.Parse(\"{offset.ToString("yyyy-MM-ddTHH:mm:ss.FFFFFFFzzz", CultureInfo.InvariantCulture)}\")",
         TimeSpan span => $"TimeSpan.Parse(\"{span.ToString("c", CultureInfo.InvariantCulture)}\")",
+        BigInteger big => $"BigInteger.Parse(\"{big.ToString(CultureInfo.InvariantCulture)}\")",
         TimeZoneInfo zone => $"TimeZoneInfo.FindSystemTimeZoneById({Quote(zone.Id, '"')})",
         _ => null,
     };
@@ -480,7 +481,11 @@ public sealed class Printer
     {
         var type = TypeName(value.GetType());
         var text = value.ToString();
-        if (char.IsAsciiDigit(text[0]) || text[0] == '-')
+        if (text[0] == '-')
+        {
+            return $"({type})({text})";
+        }
+        if (char.IsAsciiDigit(text[0]))
         {
             return $"({type}){text}";
         }

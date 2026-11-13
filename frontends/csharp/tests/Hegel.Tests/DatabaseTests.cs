@@ -39,6 +39,12 @@ public class DatabaseTests
     }
 
     [Fact]
+    public void AtRejectsAnEmptyPath()
+    {
+        Assert.Throws<ArgumentException>(() => Database.At(""));
+    }
+
+    [Fact]
     public void EqualityComparesKindAndPath()
     {
         Assert.Equal(Database.At("a"), Database.At("a"));

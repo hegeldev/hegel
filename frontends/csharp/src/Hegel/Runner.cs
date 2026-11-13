@@ -22,7 +22,7 @@ internal static class Runner
         var report = WithSettings(lib, settings, s =>
         {
             var effective = settings.Effective(
-                checked((long)lib.SettingsGetTestCases(s)),
+                Settings.TestCasesFrom(lib.SettingsGetTestCases(s)),
                 lib.SettingsGetPrintBlob(s),
                 EnumCodes.StrictnessFrom(lib.SettingsGetNondeterminismStrictness(s)),
                 EnumCodes.VerbosityFrom(lib.SettingsGetVerbosity(s)));
