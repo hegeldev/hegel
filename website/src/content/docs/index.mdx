@@ -171,6 +171,53 @@ let () =
 ;;
 ```
   </TabItem>
+  <TabItem label="C#">
+```csharp
+using Hegel;
+using Hegel.Xunit;
+using Xunit;
+
+public class LruCacheTests
+{
+	[HegelTest]
+	public void RespectsLruCapacity(TestCase tc)
+	{
+		var capacity = tc.Draw(Generators.Integers().Min(0), "capacity");
+		var cache = new MyLruCache<string, int>(capacity);
+
+		var entries = tc.Draw(
+			Generators.Lists(Generators.Tuples(Generators.Text(), Generators.Integers())),
+			"entries");
+		foreach (var (key, value) in entries)
+		{
+			cache.Put(key, value);
+		}
+
+		Assert.True(cache.Size <= capacity);
+	}
+}
+```
+  </TabItem>
+  <TabItem label="F#">
+{/* spaces here, unlike the other tabs: F# rejects tab characters */}
+```fsharp
+open Hegel.FSharp
+open Xunit
+
+[<Fact>]
+let ``respects LRU capacity`` () =
+    Hegel.test (fun tc ->
+        let capacity = tc.Draw(Gen.int.Min 0, "capacity")
+        let cache = MyLruCache<string, int>(capacity)
+
+        let entries = tc.Draw(Gen.list (Gen.tuple2 Gen.string Gen.int), "entries")
+
+        for key, value in entries do
+            cache.Put(key, value)
+
+        Assert.True(cache.Size <= capacity))
+```
+  </TabItem>
 </Tabs>
 
 <CardGrid>

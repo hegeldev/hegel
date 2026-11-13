@@ -4,3 +4,5 @@
 *.png filter=lfs diff=lfs merge=lfs -text
 public/cpp/** filter=lfs diff=lfs merge=lfs -text
 public/typescript/** filter=lfs diff=lfs merge=lfs -text
+public/csharp/** filter=lfs diff=lfs merge=lfs -text
+public/fsharp/** filter=lfs diff=lfs merge=lfs -text

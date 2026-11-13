@@ -1,0 +1,39 @@
+{
+  "metadata": [
+    {
+      "src": [
+        {
+          "src": "../../src",
+          "files": ["Hegel/Hegel.csproj", "Hegel.Xunit/Hegel.Xunit.csproj"]
+        }
+      ],
+      "dest": "api",
+      "properties": {
+        "Configuration": "Release",
+        "HegelNativesSource": "skip"
+      }
+    }
+  ],
+  "build": {
+    "content": [
+      {
+        "files": ["api/**.yml", "index.md", "toc.yml"]
+      }
+    ],
+    "dest": "../_site/csharp",
+    "template": ["default", "modern", "template"],
+    "globalMetadata": {
+      "_appTitle": "Hegel for C#",
+      "_appName": "Hegel for C#",
+      "_appLogoPath": "../favicon-96x96.png",
+      "_appFaviconPath": "../favicon.ico",
+      "_appFooter": "Hegel for C#, part of <a href=\"https://hegel.dev\">Hegel</a>.",
+      "_enableSearch": true,
+      "_disableContribution": true,
+      "_gitContribute": {
+        "repo": "https://github.com/hegeldev/hegel",
+        "branch": "main"
+      }
+    }
+  }
+}

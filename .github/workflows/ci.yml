@@ -466,7 +466,8 @@ jobs:
     # builds, `typescript_released` / `typescript_tag` for the npm
     # publish, `cpp_released` / `cpp_tag` for the C++ docs push,
     # `java_released` / `java_tag` for the Maven Central publish and
-    # `csharp_released` / `csharp_tag` for the NuGet publish. Each
+    # `csharp_released` / `csharp_tag` for the NuGet publish and the
+    # .NET docs push. Each
     # is read off the tags release.py left on the release
     # commit, so a frontend dragged along by a libhegel release counts too.
     # The Go frontend is tagged on a commit of its own (release-go), so
@@ -1267,6 +1268,56 @@ jobs:
         env:
           NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
         run: python3 .github/scripts/publish_csharp.py
+
+  # The .NET API references (DocFX for `Hegel` and `Hegel.Xunit`, fsdocs for
+  # `Hegel.FSharp`), committed to website/public/csharp and
+  # website/public/fsharp on main (served at hegel.dev/csharp and
+  # hegel.dev/fsharp) for every .NET release. nuget.org hosts no API
+  # reference, so the site does.
+  release-csharp-docs:
+    name: release-csharp-docs
+    if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.csharp_released == 'true' }}
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The push to main uses the app token below, not GITHUB_TOKEN.
+    permissions:
+      contents: read
+    steps:
+      - name: Generate app token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859 # v3.0.0
+        id: app-token
+        with:
+          app-id: ${{ vars.HEGEL_RELEASE_APP_ID }}
+          private-key: ${{ secrets.HEGEL_RELEASE_APP_PRIVATE_KEY }}
+          repositories: hegel
+      - name: Checkout release commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: refs/tags/${{ needs.release.outputs.csharp_tag }}
+      - uses: ./.github/actions/install-tools
+        with:
+          tools: just
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: "10.0.x"
+      - name: Build the documentation
+        run: just csharp::check-docs
+      # Checked out only now so that no build above sees a second copy of
+      # the repository.
+      - name: Checkout main to publish into # zizmor: ignore[artipacked]
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: main
+          token: ${{ steps.app-token.outputs.token }}
+          path: publish
+      - name: Push the documentation to main
+        env:
+          HEGEL_RELEASE_APP_ID: ${{ vars.HEGEL_RELEASE_APP_ID }}
+          HEGEL_RELEASE_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: python3 .github/scripts/push_csharp_docs.py
 
   # The Go frontend's release. A Go module version is the tree its tag names,
   # and the module embeds the libhegel binaries, which only exist once

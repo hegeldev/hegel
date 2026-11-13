@@ -24,15 +24,23 @@ just csharp::uncovered        # the library lines the last check-test left uncov
 just csharp::check-lint       # dotnet format + fantomas --check, then a build with -warnaserror
 just csharp::format           # dotnet format (C#) and fantomas (F#)
 just csharp::pack             # both NuGet packages into dist/, with the local engine
-just csharp::check            # lint + test — what CI runs, less the other-OS and net8.0 jobs
+just csharp::check-docs       # the API references (DocFX and fsdocs) into docs/_site/, warnings as errors
+just csharp::check            # lint + docs + test — what CI runs, less the other-OS and net8.0 jobs
 ```
 
 - The recipes build libhegel first (incremental, so cheap once built). Plain
   `dotnet test Hegel.sln` works from this directory after
   `just csharp::build-libhegel`. The test projects' `HegelTargetFramework`
-  property picks their target framework. fantomas comes from the tool
-  manifest (`.config/dotnet-tools.json`; the recipes run `dotnet tool
-  restore`).
+  property picks their target framework. fantomas, docfx and fsdocs come
+  from the tool manifest (`.config/dotnet-tools.json`; the recipes run
+  `dotnet tool restore`).
+- `docs/` holds the API references' sources: `docs/csharp/` is the DocFX
+  project for `Hegel` and `Hegel.Xunit` (served at hegel.dev/csharp) and
+  `docs/fsharp/` the fsdocs input for `Hegel.FSharp` (hegel.dev/fsharp).
+  Their pages are the XML documentation comments, so a public member
+  without one fails `check-lint` first. The `release-csharp-docs` job of
+  `ci.yml` commits the built sites to `website/public/` on every release
+  (`.github/scripts/push_csharp_docs.py`).
 - `scripts/engine.py` is the one place that knows where the engine is
   (`target/release/libhegel_c.{dylib,so}` or `hegel_c.dll` under the
   workspace's `target/` or `CARGO_TARGET_DIR`; `HEGEL_LIBHEGEL_PATH` overrides

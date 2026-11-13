@@ -1,0 +1,8 @@
+- name: API reference
+  href: api/
+- name: Guide
+  href: https://github.com/hegeldev/hegel/tree/main/frontends/csharp#readme
+- name: F#
+  href: https://hegel.dev/fsharp
+- name: hegel.dev
+  href: https://hegel.dev
