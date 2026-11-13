@@ -16,4 +16,4 @@ const machine: hegel.stateful.StateMachine<Cluster> = {
 };
 ```
 
-The option is accepted on every host and is currently a no-op: a later engine release will act on it to pause Antithesis fault injection for the duration of the check.
+The option is accepted on every host; outside Antithesis it has no effect.

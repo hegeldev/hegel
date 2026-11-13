@@ -1381,7 +1381,7 @@ impl CTestCase {
     /// Pause fault injection on this test case until [`unpause_faults`]
     /// (`hegel_pause_faults`): inside Antithesis, a stateful invariant
     /// declared with `pause_faults` runs between the pair, so no fault
-    /// lands in the middle of the check. Currently a no-op in the engine.
+    /// lands in the middle of the check; outside Antithesis nothing happens.
     ///
     /// [`unpause_faults`]: CTestCase::unpause_faults
     pub(crate) fn pause_faults(&self) -> Result<(), hegel_result_t> {
@@ -1391,7 +1391,7 @@ impl CTestCase {
     }
 
     /// Resume fault injection paused by [`pause_faults`]
-    /// (`hegel_unpause_faults`). Currently a no-op in the engine.
+    /// (`hegel_unpause_faults`).
     ///
     /// [`pause_faults`]: CTestCase::pause_faults
     pub(crate) fn unpause_faults(&self) -> Result<(), hegel_result_t> {

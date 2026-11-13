@@ -78,8 +78,7 @@
  * no fault lands in the middle of the check, so the invariant observes the
  * system under test as it is rather than as a fault left it. Faults resume
  * as soon as the check returns or throws. The option is accepted on every
- * host and currently does nothing; a later engine release acts on it inside
- * Antithesis.
+ * host; outside Antithesis it has no effect.
  *
  * # Assumptions in rules
  *

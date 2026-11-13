@@ -9,4 +9,4 @@ hegel.RunStateful(tc, &machine,
 )
 ```
 
-Pausing is currently a no-op: the bundled engine accepts the calls but does not act on them yet. A later libhegel release will pause the Antithesis fault injector for the duration of each such invariant when the test runs inside Antithesis.
+Outside Antithesis the option has no effect.

@@ -1,5 +1,6 @@
 use super::*;
 use alloc::string::ToString;
+use alloc::vec;
 use alloc::vec::Vec;
 use std::sync::{Arc, Mutex};
 
@@ -208,4 +209,142 @@ fn a_reporter_outside_antithesis_is_silent() {
     let (output, lines) = capturing_output();
     Reporter::new(location(), output).report(false);
     assert!(lines.lock().unwrap().is_empty());
+}
+
+#[test]
+fn pausing_does_nothing_outside_antithesis() {
+    if crate::sys::env_var(FAULT_CONTROL_VAR).is_none() {
+        pause_faults().unwrap();
+        unpause_faults().unwrap();
+    }
+}
+
+/// A fake environment holding only `ANTITHESIS_FAULT_CONTROL`.
+#[cfg(unix)]
+fn env_with_fault_control(program: &str) -> impl Fn(&str) -> Option<String> {
+    let program = program.to_string();
+    move |key| (key == "ANTITHESIS_FAULT_CONTROL").then(|| program.clone())
+}
+
+/// A runner that must not be called.
+#[cfg(unix)]
+fn never_run(program: &str, args: &[&str]) -> Result<i32, crate::sys::Error> {
+    panic!("ran {program} {args:?}");
+}
+
+/// The calls a [`recording_run`] runner has seen: the program and its
+/// arguments.
+#[cfg(unix)]
+type CallLog = Arc<Mutex<Vec<(String, Vec<String>)>>>;
+
+/// A runner recording each call into the returned log and answering with
+/// `result`.
+#[cfg(unix)]
+fn recording_run(
+    result: Result<i32, crate::sys::Error>,
+) -> (
+    impl Fn(&str, &[&str]) -> Result<i32, crate::sys::Error>,
+    CallLog,
+) {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let log = Arc::clone(&calls);
+    let run = move |program: &str, args: &[&str]| {
+        let args = args.iter().map(|a| a.to_string()).collect();
+        log.lock().unwrap().push((program.to_string(), args));
+        result
+    };
+    (run, calls)
+}
+
+/// An empty file standing in for the fault-control program, in `dir`.
+#[cfg(unix)]
+fn fake_program(dir: &tempfile::TempDir) -> String {
+    let program = dir.path().join("fault-control");
+    std::fs::write(&program, b"").unwrap();
+    program.to_str().unwrap().to_string()
+}
+
+#[cfg(unix)]
+#[test]
+fn fault_control_is_skipped_when_the_variable_is_unset() {
+    fault_control_from(|_| None, never_run, PAUSE_FLAG).unwrap();
+    fault_control_from(|_| None, never_run, UNPAUSE_FLAG).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn fault_control_is_skipped_when_the_program_does_not_exist() {
+    let env = env_with_fault_control("/no/such/antithesis/fault/control/for/hegel/tests");
+    fault_control_from(&env, never_run, PAUSE_FLAG).unwrap();
+    fault_control_from(&env, never_run, UNPAUSE_FLAG).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn fault_control_runs_the_program_with_the_pause_or_unpause_flag() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let program = fake_program(&dir);
+    let env = env_with_fault_control(&program);
+    let (run, calls) = recording_run(Ok(0));
+    fault_control_from(&env, &run, PAUSE_FLAG).unwrap();
+    fault_control_from(&env, &run, UNPAUSE_FLAG).unwrap();
+    assert_eq!(
+        *calls.lock().unwrap(),
+        [
+            (program.clone(), vec!["--pause".to_string()]),
+            (program.clone(), vec!["--unpause".to_string()]),
+        ]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_non_zero_exit_from_the_program_is_an_error_naming_it() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let program = fake_program(&dir);
+    let (run, _) = recording_run(Ok(3));
+    let message =
+        fault_control_from(env_with_fault_control(&program), run, PAUSE_FLAG).unwrap_err();
+    assert_eq!(
+        message,
+        format!("ANTITHESIS_FAULT_CONTROL={program} --pause exited with status 3")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_program_that_cannot_run_is_an_error_naming_it() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let program = fake_program(&dir);
+    let (run, _) = recording_run(Err(crate::sys::Error));
+    let message =
+        fault_control_from(env_with_fault_control(&program), run, UNPAUSE_FLAG).unwrap_err();
+    assert_eq!(
+        message,
+        format!(
+            "ANTITHESIS_FAULT_CONTROL={program} --unpause could not be run, or did not exit normally"
+        )
+    );
+}
+
+/// A child shell writes the script: a file this process wrote could still
+/// be open for writing in a sibling test's child between its fork and
+/// exec, and executing it would then fail with `ETXTBSY`.
+#[cfg(unix)]
+#[test]
+fn fault_control_really_runs_the_program() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let program = dir.path().join("fault-control");
+    let log = dir.path().join("log");
+    let script = format!("#!/bin/sh\nprintf '%s\\n' \"$1\" >> {}", log.display());
+    let write = "printf '%s\\n' \"$2\" > \"$1\" && chmod 755 \"$1\"";
+    let args = ["-c", write, "sh", program.to_str().unwrap(), &script];
+    assert_eq!(crate::sys::process::run("/bin/sh", &args).unwrap(), 0);
+    let env = env_with_fault_control(program.to_str().unwrap());
+    fault_control_from(&env, crate::sys::process::run, PAUSE_FLAG).unwrap();
+    fault_control_from(&env, crate::sys::process::run, UNPAUSE_FLAG).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap(),
+        "--pause\n--unpause\n"
+    );
 }

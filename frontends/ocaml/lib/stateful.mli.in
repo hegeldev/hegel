@@ -437,7 +437,7 @@ module Invariant : sig PORTABLE
         [Internal.unpause_faults] on the test case (the unpause runs even
         when the invariant raises), so that inside
         {{:https://antithesis.com/}Antithesis} fault injection is paused for
-        the duration of the check. Pausing is currently a no-op in the engine.
+        the duration of the check; elsewhere the flag has no effect.
 
       Every invariant is checked on the initial and final states.
 

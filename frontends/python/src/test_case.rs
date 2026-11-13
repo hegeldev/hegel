@@ -575,8 +575,8 @@ impl TestCase {
 
     /// Pause fault injection on this test case until `unpause_faults`:
     /// inside Antithesis, a stateful invariant declared with
-    /// `pause_faults` runs between the pair. Currently a no-op in the
-    /// engine.
+    /// `pause_faults` runs between the pair; outside Antithesis nothing
+    /// happens.
     fn pause_faults(&self) -> PyResult<()> {
         with_ctx(|ctx| check(unsafe { c::hegel_pause_faults(ctx, self.tc()) }))
     }

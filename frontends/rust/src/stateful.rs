@@ -9,7 +9,7 @@
 //! pauses fault injection while the invariant runs: inside
 //! [Antithesis](https://antithesis.com/), the fault injector stands down from just before
 //! the invariant's body until just after it, so the check observes the system under test
-//! without a fault landing in the middle of it (the engine does not act on this yet). The
+//! without a fault landing in the middle of it. Outside Antithesis the flag has no effect. The
 //! two combine as `#[invariant(always_run, pause_faults = true)]`. `#[rule(weight = w)]`
 //! also hints how often a rule should be chosen compared to other rules in its group.
 //! This is not a distributional guarantee.
@@ -236,9 +236,8 @@ impl<M> Invariant<M> {
     /// inside [Antithesis](https://antithesis.com/), the fault injector is
     /// asked to stand down from just before the invariant's body runs until
     /// just after it returns (or unwinds), so the check observes the system
-    /// under test without a fault landing in the middle of it. The engine
-    /// does not yet act on this outside or inside Antithesis; the flag fixes
-    /// the interface ahead of that. Composes with
+    /// under test without a fault landing in the middle of it. Outside
+    /// Antithesis the flag has no effect. Composes with
     /// [`new_always_run`](Invariant::new_always_run):
     ///
     /// ```rust
@@ -1268,9 +1267,8 @@ impl<M> ConcurrentInvariant<M> {
     /// inside [Antithesis](https://antithesis.com/), the fault injector is
     /// asked to stand down from just before the invariant's body runs until
     /// just after it returns (or unwinds), so the check observes the system
-    /// under test without a fault landing in the middle of it. The engine
-    /// does not yet act on this outside or inside Antithesis; the flag fixes
-    /// the interface ahead of that. Composes with
+    /// under test without a fault landing in the middle of it. Outside
+    /// Antithesis the flag has no effect. Composes with
     /// [`new_always_run`](ConcurrentInvariant::new_always_run):
     ///
     /// ```rust

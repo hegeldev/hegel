@@ -389,8 +389,7 @@ public interface Libhegel {
     /**
      * {@code hegel_pause_faults}: pause fault injection on this test case until the matching
      * {@link #unpauseFaults}. Inside Antithesis this asks the fuzzer to stop injecting faults for
-     * the duration of a stateful invariant; it is currently a no-op everywhere that only validates
-     * the handle.
+     * the duration of a stateful invariant; elsewhere it only validates the handle.
      */
     int pauseFaults(long tc);
 

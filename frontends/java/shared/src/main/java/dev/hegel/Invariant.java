@@ -33,8 +33,7 @@ public @interface Invariant {
      * href="https://antithesis.com/">Antithesis</a> the fault injector is asked to hold off from
      * immediately before the invariant is invoked until it returns or throws, so the invariant
      * observes the system under test without a fault landing in the middle of the check. Elsewhere
-     * it has no effect, and the engine currently treats it as a no-op everywhere: this release
-     * fixes the interface, and a later engine release acts on it.
+     * it has no effect.
      *
      * @return whether fault injection is paused around every check of this invariant
      */

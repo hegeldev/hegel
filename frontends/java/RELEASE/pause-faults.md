@@ -14,6 +14,6 @@ class IntegerStack {
 }
 ```
 
-The flag is meant for tests that run inside [Antithesis](https://antithesis.com/), where it will pause fault injection for the duration of the invariant so a fault cannot land in the middle of the check. It is currently a no-op: this release fixes the interface, and a later engine release acts on it.
+The flag is meant for tests that run inside [Antithesis](https://antithesis.com/), where it pauses fault injection for the duration of the invariant so a fault cannot land in the middle of the check. Outside Antithesis the flag has no effect.
 
 The `dev.hegel:hegel-lowlevel` binding contract gains the matching `Libhegel.pauseFaults` and `Libhegel.unpauseFaults` methods.

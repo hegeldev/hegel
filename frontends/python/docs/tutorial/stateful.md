@@ -67,8 +67,7 @@ Pass `pause_faults=True` for an invariant that should run with fault
 injection paused: inside [Antithesis](https://antithesis.com/) the fault
 injector stops for the duration of each check, so the invariant observes the
 system under test without a fault landing in the middle of it. Outside
-Antithesis the flag has no effect, and it is currently a no-op everywhere;
-a later engine release will act on it.
+Antithesis the flag has no effect.
 
 ```python
 @hegel.invariant(pause_faults=True)

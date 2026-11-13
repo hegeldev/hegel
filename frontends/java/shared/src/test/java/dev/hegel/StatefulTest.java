@@ -125,7 +125,7 @@ class StatefulTest {
 
     @HegelTest(database = Database.DISABLED)
     void pauseFaultsInvariantsRunAgainstTheEngine(TestCase tc) {
-        // Pausing is a no-op in the engine today, but the live handle must accept the pair
+        // Outside Antithesis pausing does nothing, but the live handle must accept the pair
         // around every check: initial state, after every rule, final state.
         PausedCounter machine = new PausedCounter();
         Stateful.run(machine, tc);

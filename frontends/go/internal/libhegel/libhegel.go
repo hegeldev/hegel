@@ -2313,7 +2313,7 @@ func (tc *TestCase) StateMachineShouldCheckInvariant(ctx *Context, machine *Stat
 // PauseFaults asks the engine to stop injecting faults until [TestCase.UnpauseFaults].
 //
 // Inside Antithesis this pauses the fault injector for the duration of a
-// check; everywhere else, and in the current engine, it is a no-op.
+// check; everywhere else it does nothing.
 func (tc *TestCase) PauseFaults(ctx *Context) error {
 	return ctx.invoke("hegel_pause_faults", func(ctx ctxT) Error {
 		e := tc.syms.PauseFaults(ctx, tc.raw)

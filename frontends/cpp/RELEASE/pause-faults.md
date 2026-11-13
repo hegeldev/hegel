@@ -11,4 +11,4 @@ std::vector<hegel::stateful::Invariant<Bank>> invariants() const {
 }
 ```
 
-The flag defaults to `false`, combines with `always_check`, and `Invariant::pause_faults()` reads it back. Pausing is currently a no-op: a later engine release will act on it to pause Antithesis fault injection.
+The flag defaults to `false`, combines with `always_check`, and `Invariant::pause_faults()` reads it back. Outside Antithesis the flag has no effect.

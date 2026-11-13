@@ -107,7 +107,7 @@ namespace hegel::internal {
     // Pause / resume fault injection on the test case for the duration of
     // a check (a stateful invariant declared with pause_faults). Inside
     // Antithesis the engine asks the fault injector to hold off between the
-    // two; elsewhere both are no-ops.
+    // two; elsewhere both do nothing.
     void pause_faults(const TestCase& tc);
     void unpause_faults(const TestCase& tc);
 

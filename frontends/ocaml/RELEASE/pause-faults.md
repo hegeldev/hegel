@@ -16,4 +16,4 @@ module%hegel_state_machine Stack = struct
 end
 ```
 
-Pausing is currently a no-op: a later engine release will make it pause [Antithesis](https://antithesis.com/) fault injection for the duration of the invariant. `Stateful.Invariant.always_check` and `Stateful.Invariant.pause_faults` read the two flags back.
+Outside [Antithesis](https://antithesis.com/) the option has no effect. `Stateful.Invariant.always_check` and `Stateful.Invariant.pause_faults` read the two flags back.

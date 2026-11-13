@@ -283,8 +283,8 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   `@Invariant(pauseFaults = true)` is bracketed by `hegel_pause_faults` /
   `hegel_unpause_faults` on the driving handle every time it runs (the
   unpause in a `finally`, and a no-op once the case is aborted, like
-  `stopSpan`); both are engine no-ops today, reserved for pausing
-  Antithesis fault injection:
+  `stopSpan`); inside Antithesis the engine runs the fault-control program
+  for each, elsewhere both do nothing:
   - `maxConcurrency == 1` → the **sequential** driver: everything on the
     calling thread and the root handle as worker 0, one `STATEFUL_RULE` span
     per round (discarded on rejection), `Step N: rule` notes.

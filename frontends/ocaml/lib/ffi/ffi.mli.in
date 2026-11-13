@@ -655,13 +655,12 @@ val state_machine_free : context -> state_machine -> unit
 
 (** [pause_faults ctx tc] asks the fault injector to stop injecting faults on
     [tc] until the matching {!unpause_faults}: inside Antithesis, the pair
-    brackets an invariant declared with [pause_faults]. Currently a no-op in
-    the engine. Raises {!Internal_error} on an invalid handle. *)
+    brackets an invariant declared with [pause_faults]; elsewhere nothing
+    happens. Raises {!Internal_error} on an invalid handle. *)
 val pause_faults : context -> test_case -> unit
 
 (** [unpause_faults ctx tc] resumes the fault injection {!pause_faults} paused
-    on [tc]. Currently a no-op in the engine. Raises {!Internal_error} on an
-    invalid handle. *)
+    on [tc]. Raises {!Internal_error} on an invalid handle. *)
 val unpause_faults : context -> test_case -> unit
 
 (** [target ctx tc value label] records a targeting observation. *)

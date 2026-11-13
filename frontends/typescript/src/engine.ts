@@ -336,7 +336,8 @@ export interface Engine {
   /**
    * Pause fault injection on `tc` until the matching {@link unpauseFaults}:
    * inside Antithesis, the fuzzer stops injecting faults for the duration
-   * of a stateful invariant declared with `pauseFaults`. Currently a no-op.
+   * of a stateful invariant declared with `pauseFaults`; elsewhere nothing
+   * happens.
    */
   pauseFaults(ctx: ContextHandle, tc: TestCaseHandle): void;
   /** Resume fault injection paused by {@link pauseFaults} on `tc`. */

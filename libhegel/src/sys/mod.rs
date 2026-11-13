@@ -302,6 +302,23 @@ pub fn pid() -> u32 {
     imp::pid()
 }
 
+/// Running another program and waiting for it, as the Antithesis
+/// fault-control hook does. Unix only: Antithesis runs nowhere else.
+#[cfg(unix)]
+pub mod process {
+    use super::{Error, imp};
+
+    /// Run `program` with `args` (the program's path is passed as its own
+    /// first argument) and wait for it, inheriting this process's
+    /// environment and standard streams. `Ok` with the exit status once
+    /// the program has exited; `Err` if it could not be started (no file
+    /// at `program`, not executable, an interior NUL in a string) or was
+    /// killed by a signal.
+    pub fn run(program: &str, args: &[&str]) -> Result<i32, Error> {
+        imp::run_process(program, args)
+    }
+}
+
 #[cfg(all(test, not(target_family = "wasm")))]
 #[path = "../../tests/embedded/sys_tests.rs"]
 mod tests;

@@ -346,7 +346,8 @@ let test_always_check_invariant () =
 ;;
 
 (* [pause_faults] brackets every run of the invariant (initial state, sampled
-   steps, final state) with the engine's pause/unpause pair, a no-op today, so
+   steps, final state) with the engine's pause/unpause pair, which does nothing
+   outside Antithesis, so
    the invariant runs exactly as often as it would without the flag. *)
 let test_pause_faults_invariant () =
   let module S = Hegel.Stateful in

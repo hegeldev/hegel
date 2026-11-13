@@ -12,4 +12,4 @@ fn ledger_balances(&self, _: TestCase) { /* ... */ }
 
 For hand-written `StateMachine` and `ConcurrentStateMachine` implementations, `Invariant` and `ConcurrentInvariant` gain a `pause_faults` field and a `.pause_faults(true)` builder method that composes with `new` and `new_always_run`.
 
-The flag is currently a no-op: the engine fixes the interface now and will pause Antithesis fault injection in a later release.
+Outside Antithesis the flag has no effect.

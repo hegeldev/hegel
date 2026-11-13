@@ -384,12 +384,12 @@ val state_machine_free : test_case -> state_machine:state_machine -> unit
 
 (** [pause_faults tc] asks the fault injector to stop injecting faults on [tc]
     until the matching {!unpause_faults}: inside Antithesis, the runners
-    bracket an invariant declared with [pause_faults] with this pair.
-    Currently a no-op in the engine. *)
+    bracket an invariant declared with [pause_faults] with this pair;
+    elsewhere nothing happens. *)
 val pause_faults : test_case -> unit
 
 (** [unpause_faults tc] resumes the fault injection {!pause_faults} paused on
-    [tc]. Currently a no-op in the engine. *)
+    [tc]. *)
 val unpause_faults : test_case -> unit
 
 (**/**)

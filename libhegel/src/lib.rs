@@ -4834,11 +4834,18 @@ pub unsafe extern "C" fn hegel_state_machine_should_check_invariant(
 /// injecting faults until the matching `hegel_unpause_faults` on the same
 /// handle. Frontends bracket each stateful invariant declared with
 /// `pause_faults` with this pair, so the invariant observes the system under
-/// test without a fault landing in the middle of the check. Pausing is
-/// currently a no-op everywhere, inside Antithesis and out: the pair fixes
-/// the interface so frontends can adopt it before the engine acts on it.
+/// test without a fault landing in the middle of the check.
 ///
-/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_HANDLE` for a NULL `tc`.
+/// Antithesis names its fault-control program in the
+/// `ANTITHESIS_FAULT_CONTROL` environment variable; this runs that program
+/// with `--pause` and waits for it. When the variable is unset, or names
+/// nothing that exists, nothing happens and the call succeeds, so a test
+/// declaring `pause_faults` runs the same outside Antithesis.
+///
+/// Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `tc`, or
+/// `HEGEL_E_INVALID_ARG` when the program exists but could not be run or
+/// exited with a non-zero status; `hegel_context_last_error` then names the
+/// program and what went wrong.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_pause_faults(
     ctx: *mut HegelContext,
@@ -4849,13 +4856,24 @@ pub unsafe extern "C" fn hegel_pause_faults(
         set_last_error(ctx, "hegel_pause_faults: test case pointer is null");
         return HEGEL_E_INVALID_HANDLE;
     }
-    HEGEL_OK
+    match crate::antithesis::pause_faults() {
+        Ok(()) => HEGEL_OK,
+        Err(message) => {
+            set_last_error(ctx, &format!("hegel_pause_faults: {message}"));
+            HEGEL_E_INVALID_ARG
+        }
+    }
 }
 
-/// Resume fault injection paused by `hegel_pause_faults` on this test case.
-/// Like pausing, currently a no-op.
+/// Resume fault injection paused by `hegel_pause_faults` on this test case,
+/// by running the `ANTITHESIS_FAULT_CONTROL` program with `--unpause`. Like
+/// pausing, does nothing when the variable is unset or names nothing that
+/// exists.
 ///
-/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_HANDLE` for a NULL `tc`.
+/// Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `tc`, or
+/// `HEGEL_E_INVALID_ARG` when the program exists but could not be run or
+/// exited with a non-zero status; `hegel_context_last_error` then names the
+/// program and what went wrong.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_unpause_faults(
     ctx: *mut HegelContext,
@@ -4866,7 +4884,13 @@ pub unsafe extern "C" fn hegel_unpause_faults(
         set_last_error(ctx, "hegel_unpause_faults: test case pointer is null");
         return HEGEL_E_INVALID_HANDLE;
     }
-    HEGEL_OK
+    match crate::antithesis::unpause_faults() {
+        Ok(()) => HEGEL_OK,
+        Err(message) => {
+            set_last_error(ctx, &format!("hegel_unpause_faults: {message}"));
+            HEGEL_E_INVALID_ARG
+        }
+    }
 }
 
 /// Release a state-machine handle from `hegel_new_state_machine`. Safe to

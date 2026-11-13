@@ -67,8 +67,8 @@ class Invariant:
     samples when to check it (it always runs on the initial and final
     state). With ``pause_faults`` set, fault injection is paused around
     each check: inside `Antithesis <https://antithesis.com/>`_ the fuzzer
-    stops injecting faults while the invariant runs. Pausing is currently
-    a no-op in the engine."""
+    stops injecting faults while the invariant runs; elsewhere the flag
+    has no effect."""
 
     name: str
     apply: Callable[[TestCase], Any]
@@ -209,8 +209,8 @@ class Machine:
         inside `Antithesis <https://antithesis.com/>`_ the fuzzer stops
         injecting faults while the invariant runs, so it observes the
         system under test without a fault landing in the middle of the
-        check. Pausing is currently a no-op in the engine. A duplicate name
-        is an :class:`~hegel.InvalidArgument`.
+        check; elsewhere the flag has no effect. A duplicate name is an
+        :class:`~hegel.InvalidArgument`.
         """
 
         def add(fn: Callable[[TestCase], Any]) -> Callable[[TestCase], Any]:
@@ -634,8 +634,8 @@ def invariant(
     ``always_run=True``, in which case it runs after every step. With
     ``pause_faults=True``, fault injection is paused for the duration of
     each check: inside `Antithesis <https://antithesis.com/>`_ the fuzzer
-    stops injecting faults while the invariant runs. Pausing is currently
-    a no-op in the engine. Usable as ``@hegel.invariant`` or
+    stops injecting faults while the invariant runs; elsewhere the flag
+    has no effect. Usable as ``@hegel.invariant`` or
     ``@hegel.invariant(...)``; ``name`` replaces the method name in the
     failure report.
     """

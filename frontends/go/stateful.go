@@ -96,9 +96,8 @@ func WithAlwaysCheckInvariants(invariants ...string) StateMachineOption {
 // paused. Inside Antithesis the engine pauses the fault injector immediately
 // before each such invariant runs and resumes it immediately after, even when
 // the invariant fails, so the invariant observes the system under test without
-// a fault landing in the middle of the check. The current engine treats
-// pausing as a no-op everywhere; a later engine release will act on it inside
-// Antithesis. Invariants not named here never pause fault injection.
+// a fault landing in the middle of the check. Outside Antithesis the option
+// has no effect. Invariants not named here never pause fault injection.
 //
 // Pass the full method names, including the Invariant prefix. Calls are
 // additive, and combine with [WithAlwaysCheckInvariants]. RunStateful panics

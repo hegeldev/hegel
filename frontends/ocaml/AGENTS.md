@@ -377,8 +377,7 @@ error. An invariant's `pause_faults` (`Invariant.create ?pause_faults`) makes
 `Stateful.run_machine` bracket every run of it with `Internal.pause_faults` /
 `Internal.unpause_faults` (`hegel_pause_faults` / `hegel_unpause_faults`, a
 hand-written match rather than `Fun.protect` because the invariant callback
-is a local closure, so a raising invariant still unpauses); the engine
-currently no-ops both. A weight is carried
+is a local closure, so a raising invariant still unpauses). A weight is carried
 as the text of a float literal (an int payload gains a `.`) and defaults to
 `1.0`. `module%hegel_concurrent_state_machine` does the same with
 `Concurrent_rule.create ?groups ~weight ~name ~step ()`, whose `[@@rule]` record

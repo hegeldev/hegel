@@ -9,4 +9,4 @@ class Cluster(hegel.StateMachine):
         assert len({node.state() for node in self.nodes}) == 1
 ```
 
-Pausing is currently a no-op: the engine's new `pause_faults` / `unpause_faults` calls only validate their handle, and a later libhegel release will make them pause Antithesis fault injection. Declaring the flag now means tests pick that up without changes.
+Outside Antithesis the flag has no effect.
