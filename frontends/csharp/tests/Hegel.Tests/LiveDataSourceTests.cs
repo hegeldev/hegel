@@ -18,6 +18,8 @@ public class LiveDataSourceTests
         internal int RetryRc { get; set; } = Abi.Ok;
         internal int DrawNextRc { get; set; } = Abi.Ok;
         internal int StopSpans { get; private set; }
+        internal int Pauses { get; private set; }
+        internal int Unpauses { get; private set; }
         internal List<(double Value, string Label)> EventValues { get; } = [];
 
         public override string LastErrorMessage() => "fake error";
@@ -33,6 +35,18 @@ public class LiveDataSourceTests
         }
 
         public override int Note(nint testCase, string text) => NoteRc == Abi.Ok ? base.Note(testCase, text) : NoteRc;
+
+        public override int PauseFaults(nint testCase)
+        {
+            Pauses++;
+            return base.PauseFaults(testCase);
+        }
+
+        public override int UnpauseFaults(nint testCase)
+        {
+            Unpauses++;
+            return base.UnpauseFaults(testCase);
+        }
 
         public override int StopSpan(nint testCase, bool discard)
         {
@@ -77,6 +91,22 @@ public class LiveDataSourceTests
         source.StopSpan(false);
         source.PoolRestore(0, 0);
         Assert.Equal(0, lib.StopSpans);
+    }
+
+    [Fact]
+    public void FaultControlFollowsTheCase()
+    {
+        var lib = new RcLib();
+        using var run = new RawRun();
+        var source = run.Source(lib);
+        source.PauseFaults();
+        source.UnpauseFaults();
+        Assert.Equal((1, 1), (lib.Pauses, lib.Unpauses));
+        lib.IntegerRc = Abi.EStopTest;
+        Assert.Throws<StopTest>(() => source.GenerateInteger(0, 1));
+        Assert.Throws<StopTest>(source.PauseFaults);
+        source.UnpauseFaults();
+        Assert.Equal((1, 1), (lib.Pauses, lib.Unpauses));
     }
 
     [Fact]

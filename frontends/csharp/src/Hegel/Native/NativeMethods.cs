@@ -100,6 +100,8 @@ internal static unsafe partial class NativeMethods
     [LibraryImport(Library)] internal static partial int hegel_test_case_set_worker(nint ctx, nint tc, long workerIndex);
     [LibraryImport(Library)] internal static partial int hegel_start_span(nint ctx, nint tc, ulong label);
     [LibraryImport(Library)] internal static partial int hegel_stop_span(nint ctx, nint tc, [MarshalAs(UnmanagedType.U1)] bool discard);
+    [LibraryImport(Library)] internal static partial int hegel_pause_faults(nint ctx, nint tc);
+    [LibraryImport(Library)] internal static partial int hegel_unpause_faults(nint ctx, nint tc);
     [LibraryImport(Library)] internal static partial int hegel_label_from_name(nint ctx, HegelString name, ulong* o);
     [LibraryImport(Library)] internal static partial int hegel_label_combine(nint ctx, ulong* labels, nuint len, ulong* o);
 

@@ -302,6 +302,21 @@ internal sealed class LiveDataSource : IDataSource
         Translate(_lib.StopSpan(_tc, discard), "stop_span");
     }
 
+    public void PauseFaults()
+    {
+        CheckLive();
+        Translate(_lib.PauseFaults(_tc), "pause_faults");
+    }
+
+    public void UnpauseFaults()
+    {
+        if (_aborted.Value || _unwinding.Value)
+        {
+            return;
+        }
+        Translate(_lib.UnpauseFaults(_tc), "unpause_faults");
+    }
+
     public nint NewCollection(ulong minSize, ulong maxSize)
     {
         CheckLive();

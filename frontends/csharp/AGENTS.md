@@ -155,8 +155,12 @@ There is no engine version pin to keep in step in this directory.
   `[Invariant]` methods (each taking one `TestCase`) through the engine's
   state machine primitives, sequentially or with worker threads for
   `MaxConcurrency > 1`, noting steps, rules and invariants with the same
-  strings as the Java frontend; `Pool<T>`/`ConcurrentPool<T>` track values
-  over the engine's pool primitives.
+  strings as the Java frontend. An `[Invariant(PauseFaults = true)]` is
+  bracketed by `PauseFaults`/`UnpauseFaults` (`hegel_pause_faults` /
+  `hegel_unpause_faults`) every time it runs, the unpause in a `finally` and
+  a no-op once the case is aborted, like `StopSpan`.
+  `Pool<T>`/`ConcurrentPool<T>` track values over the engine's pool
+  primitives.
 
 - `src/Hegel.FSharp/` — the F# package, compiled in this order: `Types.fs`
   (abbreviations for every public type of `Hegel`, so F# code opens
