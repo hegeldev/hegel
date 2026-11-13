@@ -15,12 +15,12 @@ use std::backtrace::{Backtrace, BacktraceStatus};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::panic::{self, AssertUnwindSafe, catch_unwind};
-use std::sync::{Arc, Once};
+use std::sync::{Arc, Once, PoisonError};
 
 use crate::backend::{Failure, TestCaseResult};
 use crate::control::{
     AssumeFailed, InternalError, InvalidArgument, LoopDone, StopTest, currently_in_test_context,
-    hegel_internal_error, with_test_context,
+    hegel_internal_error, hegel_internal_unwrap, with_test_context,
 };
 use crate::explicit_test_case::ExplicitTestCase;
 use crate::ffi::{CTestCase, RunErrorKind, RunHandle, SettingsHandle};
@@ -104,10 +104,7 @@ pub(crate) fn init_panic_hook() {
                 .trim_start_matches("ThreadId(")
                 .trim_end_matches(')')
                 .to_string();
-            let location = info
-                .location()
-                .map(|loc| format!("{}:{}:{}", loc.file(), loc.line(), loc.column()))
-                .unwrap_or_else(|| "<unknown>".to_string());
+            let location = panic_location(info.location());
             let backtrace = if CAPTURE_BACKTRACE.get() {
                 Backtrace::capture()
             } else {
@@ -118,6 +115,14 @@ pub(crate) fn init_panic_hook() {
                 .with(|l| *l.borrow_mut() = Some((thread_name, thread_id, location, backtrace)));
         }));
     });
+}
+
+/// Where a panic was raised, as `file:line:column`.
+fn panic_location(location: Option<&panic::Location<'_>>) -> String {
+    match location {
+        Some(loc) => format!("{}:{}:{}", loc.file(), loc.line(), loc.column()),
+        None => "<unknown>".to_string(),
+    }
 }
 
 /// Format a backtrace, optionally filtering to the "short" format that the
@@ -775,14 +780,15 @@ fn drive_run<F: FnMut(TestCase)>(
                 }
                 buffer
                     .lock()
-                    .unwrap_or_else(|e| e.into_inner())
+                    .unwrap_or_else(PoisonError::into_inner)
                     .push(line.to_string());
             }))
         };
         let (tc_result, payload, diagnostic) =
             run_test_case(c_tc, test_fn, false, verbosity, output, case_sink);
         if let TestCaseResult::Interesting(failure) = &tc_result {
-            let records = std::mem::take(&mut *buffer.lock().unwrap_or_else(|e| e.into_inner()));
+            let records =
+                std::mem::take(&mut *buffer.lock().unwrap_or_else(PoisonError::into_inner));
             store_capture(
                 &mut captured,
                 failure.origin.clone(),
@@ -800,17 +806,15 @@ fn drive_run<F: FnMut(TestCase)>(
     match result.status() {
         RunStatus::HEGEL_RUN_STATUS_PASSED => Ok(Vec::new()),
         RunStatus::HEGEL_RUN_STATUS_ERROR => {
-            let message = result
-                .error()
-                .unwrap_or_else(|| "the run failed with an unknown error".to_string());
-            Err(run_error_message(result.error_kind(), message))
+            Err(run_error_message(result.error_kind(), result.error()))
         }
         RunStatus::HEGEL_RUN_STATUS_FAILED => Ok((0..result.failure_count())
             .map(|index| {
                 let failure = result.failure(index);
-                let mut report = captured
-                    .remove(&failure.origin)
-                    .unwrap_or_else(|| hegel_internal_error!("failure {index} has no capture"));
+                let mut report = hegel_internal_unwrap!(
+                    captured.remove(&failure.origin),
+                    "failure {index} has no capture"
+                );
                 if report.diagnostic.is_none() && !quiet {
                     report.diagnostic = Some(bare_diagnostic(&failure.origin, &report.payload));
                 }
@@ -877,8 +881,10 @@ pub(crate) fn raise_failures(failures: Vec<ReportedFailure>, quiet: bool, output
 /// [`Hegel::run`](crate::Hegel::run) documents for its kind —
 /// `FailedHealthCheck: <check>`, `Flaky`, `Unsatisfiable` or `RunError`.
 /// The engine's own wording usually starts that way already; when it does
-/// not, the prefix is added in front of it.
-fn run_error_message(kind: RunErrorKind, message: String) -> String {
+/// not, the prefix is added in front of it. A run that errored without a
+/// diagnostic gets a placeholder message.
+fn run_error_message(kind: RunErrorKind, message: Option<String>) -> String {
+    let message = message.unwrap_or_else(|| "the run failed with an unknown error".to_string());
     let prefix = match kind {
         RunErrorKind::HealthCheck(check) => format!("FailedHealthCheck: {check:?}"),
         RunErrorKind::Flaky => "Flaky".to_string(),

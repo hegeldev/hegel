@@ -361,6 +361,28 @@ fn terminal_errors() {
 }
 
 #[test]
+fn a_terminal_alternative_may_be_empty() {
+    let grammar = compiled("start: A\nA: \"a\" (\"b\" | )");
+    let a = &grammar.terminals[grammar.terminal_id("A").unwrap()];
+    assert_eq!(a.regexp.as_deref(), Some("a(?:b|)"));
+}
+
+#[test]
+fn compile_reports_a_terminal_body_the_builder_would_have_rejected() {
+    let mut built = load_grammar("start: A\nA: \"a\"", &NoImports).unwrap();
+    let (_, body, _) = &mut built.term_defs[0];
+    let Some(Expr::Alternatives(alts)) = body else {
+        panic!("{body:?}")
+    };
+    alts[0].alias = Some("b".to_string());
+    let err = compile(&built, &["start"]).unwrap_err();
+    assert_eq!(
+        err.message,
+        "Aliasing not allowed in terminals (You used -> in the wrong place)"
+    );
+}
+
+#[test]
 fn missing_start_rule() {
     assert!(compile_err("other: \"a\"").contains("Start rule 'start' is not defined"));
 }
@@ -385,6 +407,53 @@ fn anonymous_terminal_naming() {
             "IF", "PLUS", "__ANON_0", "__ANON_1", "__ANON_2", "É", "__ANON_3"
         ]
     );
+}
+
+#[test]
+fn anonymous_punctuation_terminals_take_larks_names() {
+    let named = [
+        (r#"".""#, "DOT"),
+        (r#"",""#, "COMMA"),
+        (r#"":""#, "COLON"),
+        (r#"";""#, "SEMICOLON"),
+        (r#""+""#, "PLUS"),
+        (r#""-""#, "MINUS"),
+        (r#""*""#, "STAR"),
+        (r#""/""#, "SLASH"),
+        (r#""\\""#, "BACKSLASH"),
+        (r#""|""#, "VBAR"),
+        (r#""?""#, "QMARK"),
+        (r#""!""#, "BANG"),
+        (r#""@""#, "AT"),
+        (r##""#""##, "HASH"),
+        (r#""$""#, "DOLLAR"),
+        (r#""%""#, "PERCENT"),
+        (r#""^""#, "CIRCUMFLEX"),
+        (r#""&""#, "AMPERSAND"),
+        (r#""_""#, "UNDERSCORE"),
+        (r#""<""#, "LESSTHAN"),
+        (r#"">""#, "MORETHAN"),
+        (r#""=""#, "EQUAL"),
+        (r#""\"""#, "DBLQUOTE"),
+        (r#""'""#, "QUOTE"),
+        (r#""`""#, "BACKQUOTE"),
+        (r#""~""#, "TILDE"),
+        (r#""(""#, "LPAR"),
+        (r#"")""#, "RPAR"),
+        (r#""{""#, "LBRACE"),
+        (r#""}""#, "RBRACE"),
+        (r#""[""#, "LSQB"),
+        (r#""]""#, "RSQB"),
+        (r#""\n""#, "NEWLINE"),
+        (r#""\r\n""#, "CRLF"),
+        (r#""\t""#, "TAB"),
+        (r#"" ""#, "SPACE"),
+    ];
+    let literals: Vec<&str> = named.iter().map(|(literal, _)| *literal).collect();
+    let grammar = compiled(&format!("start: {}", literals.join(" ")));
+    let names: Vec<&str> = grammar.terminals.iter().map(|t| t.name.as_str()).collect();
+    let expected: Vec<&str> = named.iter().map(|(_, name)| *name).collect();
+    assert_eq!(names, expected);
 }
 
 #[test]

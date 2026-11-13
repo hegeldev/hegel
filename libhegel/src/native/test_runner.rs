@@ -759,13 +759,11 @@ impl<'a> Engine<'a> {
                         .map(|db| db.fetch(&secondary_key))
                         .unwrap_or_default();
                     entries.sort_by(|a, b| shortlex(a, b));
-                    let primary_max: Option<Vec<u8>> = self
-                        .origins
-                        .live()
-                        .map(|(_, nodes)| serialize_executed_nodes(nodes))
-                        .collect::<Result<Vec<_>, _>>()?
-                        .into_iter()
-                        .max_by(|a, b| shortlex(a, b));
+                    let mut primaries: Vec<Vec<u8>> = Vec::new();
+                    for (_, nodes) in self.origins.live() {
+                        primaries.push(serialize_executed_nodes(nodes)?);
+                    }
+                    let primary_max = primaries.into_iter().max_by(|a, b| shortlex(a, b));
                     for raw in entries {
                         if primary_max
                             .as_ref()
