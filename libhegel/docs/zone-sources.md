@@ -1,8 +1,9 @@
 # Zone sources: generating against the time zone data the code under test uses
 
 Status: implemented in the engine (2026-10-23) and adopted by every
-frontend. Supersedes the version-skew contract of `datetime.md` §8.1. The
-Summary and §1 describe the problem as it stood before zone sources.
+frontend except C#, which has no zoned draws yet. Supersedes the
+version-skew contract of `datetime.md` §8.1. The Summary and §1 describe
+the problem as it stood before zone sources.
 
 ## Summary
 
@@ -367,7 +368,7 @@ hegel_result_t hegel_timezone_info_in(hegel_context_t*, const hegel_zone_source_
 
 ## 4. Per frontend
 
-Every frontend exposes a zone-source abstraction in its own idiom, so that
+Every frontend but C# exposes a zone-source abstraction in its own idiom, so that
 an integration with any date/time library can supply one, not just the
 built-ins below. Each one says which database it draws against, and
 generators built on a library default to that library's source.

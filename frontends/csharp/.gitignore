@@ -1,0 +1,8 @@
+bin/
+obj/
+/native/
+coverage/
+dist/
+TestResults/
+.hegel/
+*.pyc

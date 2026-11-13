@@ -724,6 +724,7 @@ pub(crate) fn new_recursion_state(
         attempt: 0,
         leaves: 0,
         base_span_depth,
+        attempt_spans: ntc.spans.len(),
         target,
         branch_probability: 0.0,
         closed_children: 0,
@@ -773,6 +774,8 @@ pub(crate) fn recursion_retry(
     while ntc.span_depth() > state.base_span_depth {
         ntc.stop_span(true);
     }
+    ntc.discard_spans_since(state.attempt_spans, state.base_span_depth);
+    state.attempt_spans = ntc.spans.len();
     state.discard_open_branches();
     state.leaves = 0;
     state.attempt += 1;
@@ -782,6 +785,24 @@ pub(crate) fn recursion_retry(
     }
     state.branch_probability = recursion_priced_probability(state);
     Ok(())
+}
+
+/// Whether the completed attempt landed far enough from its target that
+/// the pricing it started from was wrong.
+fn recursion_mispriced(state: &RecursionState) -> bool {
+    let target = recursion_effective_target(state);
+    if target == 1 {
+        recursion_priced_probability(state) - state.branch_probability > RECURSION_REPRICE_THRESHOLD
+    } else {
+        let reachable = recursion_profile(
+            target as f64,
+            recursion_arity_estimate(state),
+            0.0,
+            state.max_depth,
+        )
+        .expected_leaves;
+        state.leaves.saturating_mul(2) < target && 2.0 * reachable >= target as f64
+    }
 }
 
 /// Decide whether a completed generation attempt landed close enough to
@@ -814,28 +835,17 @@ pub(crate) fn recursion_finish(
     state: &mut RecursionState,
 ) -> Result<bool, EngineError> {
     state.close_remaining_branches();
-    if state.reprices >= RECURSION_MAX_REPRICES {
-        return Ok(true);
-    }
-    let target = recursion_effective_target(state);
-    let mispriced = if target == 1 {
-        recursion_priced_probability(state) - state.branch_probability > RECURSION_REPRICE_THRESHOLD
-    } else {
-        let reachable = recursion_profile(
-            target as f64,
-            recursion_arity_estimate(state),
-            0.0,
-            state.max_depth,
-        )
-        .expected_leaves;
-        state.leaves.saturating_mul(2) < target && 2.0 * reachable >= target as f64
-    };
-    if !mispriced {
+    let settled = state.reprices >= RECURSION_MAX_REPRICES;
+    let mispriced = !settled && recursion_mispriced(state);
+    let forced = settled.then_some(false);
+    if !spanned(ntc, LABEL_BOOLEAN, |ntc| ntc.decided(mispriced, forced))? {
         return Ok(true);
     }
     while ntc.span_depth() > state.base_span_depth {
         ntc.stop_span(true);
     }
+    ntc.discard_spans_since(state.attempt_spans, state.base_span_depth);
+    state.attempt_spans = ntc.spans.len();
     state.leaves = 0;
     state.reprices += 1;
     state.branch_probability = recursion_priced_probability(state);

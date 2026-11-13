@@ -45,3 +45,17 @@ fn internal_assert_passes_silently() {
     hegel_internal_assert!(1 + 1 == 2);
     hegel_internal_assert!(1 + 1 == 2, "with a message {}", "argument");
 }
+
+#[test]
+fn internal_unwrap_returns_the_value_of_a_some() {
+    assert_eq!(hegel_internal_unwrap!(Some(3), "missing {}", "value"), 3);
+}
+
+#[test]
+fn internal_unwrap_raises_an_internal_error_for_a_none() {
+    let payload =
+        catch_unwind(|| hegel_internal_unwrap!(None::<u8>, "missing {}", "value")).unwrap_err();
+    let msg = panic_message(payload);
+    assert!(msg.contains("Internal error in hegel at "), "{msg}");
+    assert!(msg.contains("missing value"), "{msg}");
+}

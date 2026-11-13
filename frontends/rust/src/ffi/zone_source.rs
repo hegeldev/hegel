@@ -3,7 +3,7 @@
 
 use super::hegel_c::{self, hegel_result_t};
 use super::{free_on_drop, rc_to_unit, require_ok, static_string, view};
-use super::{string_opt, with_context};
+use super::{string_value, with_context};
 use std::ffi::c_void;
 use std::ptr;
 
@@ -13,7 +13,7 @@ fn context_error(ctx: *mut hegel_c::HegelContext) -> String {
     // SAFETY: ctx is a live context handle; its message is copied out
     // before any later call taking it can invalidate the buffer.
     let p = unsafe { hegel_c::hegel_context_last_error(ctx) };
-    string_opt(p).unwrap_or_default()
+    string_value(p)
 }
 
 /// A local time type an oracle answers, the Rust side of
@@ -133,7 +133,7 @@ unsafe extern "C" fn loader_trampoline(
     // keeps it alive until it calls `loader_release`, never during a call
     // of the loader, and it is only ever shared.
     let loader = unsafe { &*user_data.cast::<Box<ZoneLoaderFn>>() };
-    let name = string_opt(name).unwrap_or_default();
+    let name = string_value(name);
     callback_result(ctx, &format!("zone loader for {name:?}"), || {
         loader(ZoneTarget { ctx, source }, &name)
     })

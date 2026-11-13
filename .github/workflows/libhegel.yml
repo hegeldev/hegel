@@ -12,6 +12,7 @@ jobs:
   test-wasm:
     name: test-wasm
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -56,6 +57,7 @@ jobs:
     # the org's macOS runners are scarce.
     name: test-c-bindings (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     permissions:
       contents: read
     strategy:
@@ -87,6 +89,7 @@ jobs:
     # the dlopen/dlclose replay test, against that build.
     name: test-c-runtime
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -102,6 +105,7 @@ jobs:
   lark:
     name: lark
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -123,6 +127,7 @@ jobs:
   miri:
     name: miri
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:

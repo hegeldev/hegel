@@ -1,9 +1,11 @@
 # Dates, times and time zones
 
 **Status:** Implemented in the engine, the C ABI and every frontend
-(Rust with its `jiff`, `chrono` and `time` extras, Python, TypeScript,
-C++, Java, OCaml and Go; each frontend's own documentation describes its
-API, of which §8.3 is the original sketch). Written 2026-10-16 from a survey of the engine, the seven
+except C# (Rust with its `jiff`, `chrono` and `time` extras, Python,
+TypeScript, C++, Java, OCaml and Go; each frontend's own documentation
+describes its API, of which §8.3 is the original sketch). The C#
+frontend, which joined the repository after this work, has the date, time
+and naive datetime draws only. Written 2026-10-16 from a survey of the engine, the seven
 frontends, the property-based testing libraries in Appendix A and the
 date/time libraries in Appendix B. The open questions were decided on
 2026-10-17; §10 records the outcome. §4–§8 describe what was built, with
@@ -720,7 +722,8 @@ Zone sources (`zone-sources.md`) replace this contract: a frontend whose
 host database the engine can read sets it as the process-wide default
 source, or attaches it to the draws of the library it belongs to, and the
 engine then targets and classifies against the host's own data. Every
-frontend now does so.
+frontend except C# now does so; C# has no zoned draws yet, and when it
+gains them it starts from zone sources rather than from this contract.
 
 ### 8.2 Rust
 
@@ -798,7 +801,9 @@ since an `OffsetDateTime` holds a civil time and one offset),
 
 This is the mapping each frontend started from. All of them have since
 been built, and each one's own documentation is the reference for what it
-exposes.
+exposes. The C# frontend is not in the list: it was written against the
+engine as it stood before this API, and draws `DateOnly`, `TimeOnly` and
+`DateTime` values only.
 
 - **Python:** the generators move to `gs.temporal` under the shared
   names (the released `gs.dates`, `gs.times`, `gs.datetimes`,

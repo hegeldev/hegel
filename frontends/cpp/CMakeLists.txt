@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14)
-project(hegel-cpp VERSION 0.17.1 LANGUAGES CXX)
+project(hegel-cpp VERSION 0.17.3 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)

@@ -20,6 +20,7 @@ jobs:
   test:
     name: test (go ${{ matrix.go-version }})
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     strategy:
@@ -49,6 +50,7 @@ jobs:
   test-os:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     permissions:
       contents: read
     strategy:
@@ -74,6 +76,7 @@ jobs:
   cross-build:
     name: cross-build (${{ matrix.target }})
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     strategy:
@@ -110,6 +113,7 @@ jobs:
   docs:
     name: docs
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:

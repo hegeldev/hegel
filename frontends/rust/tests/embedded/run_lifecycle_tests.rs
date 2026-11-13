@@ -558,12 +558,15 @@ fn run_error_message_keeps_an_engine_message_that_already_names_its_kind() {
     assert_eq!(
         run_error_message(
             RunErrorKind::HealthCheck(crate::HealthCheck::TooSlow),
-            message.clone()
+            Some(message.clone())
         ),
         message
     );
     assert_eq!(
-        run_error_message(RunErrorKind::Unsatisfiable, "Unsatisfiable: no".to_string()),
+        run_error_message(
+            RunErrorKind::Unsatisfiable,
+            Some("Unsatisfiable: no".to_string())
+        ),
         "Unsatisfiable: no"
     );
 }
@@ -573,23 +576,61 @@ fn run_error_message_prefixes_an_engine_message_with_its_kind() {
     assert_eq!(
         run_error_message(
             RunErrorKind::HealthCheck(crate::HealthCheck::FilterTooMuch),
-            "too many rejections".to_string()
+            Some("too many rejections".to_string())
         ),
         "FailedHealthCheck: FilterTooMuch: too many rejections"
     );
     assert_eq!(
         run_error_message(
             RunErrorKind::Flaky,
-            "Your test is non-deterministic".to_string()
+            Some("Your test is non-deterministic".to_string())
         ),
         "Flaky: Your test is non-deterministic"
     );
     assert_eq!(
-        run_error_message(RunErrorKind::Unsatisfiable, "no valid input".to_string()),
+        run_error_message(
+            RunErrorKind::Unsatisfiable,
+            Some("no valid input".to_string())
+        ),
         "Unsatisfiable: no valid input"
     );
     assert_eq!(
-        run_error_message(RunErrorKind::Other, "misuse".to_string()),
+        run_error_message(RunErrorKind::Other, Some("misuse".to_string())),
         "RunError: misuse"
+    );
+}
+
+#[test]
+fn run_error_message_has_a_placeholder_for_a_run_without_a_diagnostic() {
+    assert_eq!(
+        run_error_message(RunErrorKind::Other, None),
+        "RunError: the run failed with an unknown error"
+    );
+}
+
+#[test]
+fn panic_location_names_the_file_line_and_column() {
+    let here = std::panic::Location::caller();
+    assert_eq!(
+        panic_location(Some(here)),
+        format!("{}:{}:{}", file!(), here.line(), here.column())
+    );
+    assert_eq!(panic_location(None), "<unknown>");
+}
+
+#[test]
+fn reporting_an_outcome_for_a_completed_case_panics() {
+    let c_settings = SettingsHandle::build(&test_settings(), None, None);
+    let run = RunHandle::start(&c_settings, None).unwrap();
+    let c_tc = run.next_test_case().unwrap();
+    report_outcome(&c_tc, &TestCaseResult::Valid);
+    let payload = catch_unwind(AssertUnwindSafe(|| {
+        report_outcome(&c_tc, &TestCaseResult::Valid)
+    }))
+    .unwrap_err();
+    assert!(
+        panic_message(&payload).contains("this test case has already finished"),
+        "{}",
+        panic_message(&payload)
     );
 }
