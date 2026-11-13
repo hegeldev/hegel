@@ -129,3 +129,23 @@ jobs:
           cache-dependency-path: frontends/go/go.sum
       - name: Check docs
         run: just go::check-docs
+
+  # The frontend built from the source archive its release attaches to
+  # GitHub (scripts/check-source-archive.py), with nothing of the checkout.
+  source-archive:
+    name: source-archive
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: stable
+          cache-dependency-path: frontends/go/go.sum
+      - name: Build from the source archive
+        run: just check-source-archive go

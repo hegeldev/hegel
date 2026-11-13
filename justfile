@@ -86,6 +86,12 @@ check-workflow-timeouts:
 check-release-script:
     .github/scripts/test_release.py
 
+# Build a frontend (rust, python, typescript, cpp, java, csharp, ocaml or go) from
+# the source archive its release attaches to GitHub. Archives HEAD, so commit
+# first; needs the frontend's toolchain. Not part of `just check`.
+check-source-archive FRONTEND:
+    scripts/check-source-archive.py {{FRONTEND}}
+
 # Coverage is measured over the whole workspace: the engine is covered both
 # by its own tests and by the Rust frontend driving it over the C ABI.
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.6 - 2026-11-13
+
+This release updates the bundled libhegel engine to 0.51.4.
+
 ## 0.5.5 - 2026-11-13
 
 This release updates the bundled libhegel engine to 0.51.3.
