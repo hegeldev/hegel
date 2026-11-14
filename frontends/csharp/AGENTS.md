@@ -37,6 +37,9 @@ just csharp::check            # lint + docs + test — what CI runs, less the ot
 - `docs/` holds the API references' sources: `docs/csharp/` is the DocFX
   project for `Hegel` and `Hegel.Xunit` (served at hegel.dev/csharp) and
   `docs/fsharp/` the fsdocs input for `Hegel.FSharp` (hegel.dev/fsharp).
+  `scripts/group_api_toc.py` runs between `docfx metadata` and `docfx
+  build` and groups the C# sidebar by role (core, generators, enums,
+  exceptions, attributes), read off each type's kind and base classes.
   Their pages are the XML documentation comments, so a public member
   without one fails `check-lint` first. The `release-csharp-docs` job of
   `ci.yml` commits the built sites to `website/public/` on every release

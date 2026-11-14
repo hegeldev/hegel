@@ -27,6 +27,16 @@ PUBLIC = PUBLISH / "website" / "public"
 # correctly without a <base> tag. The F# reference (fsdocs) is built with
 # absolute /fsharp/ links and needs none.
 CSHARP_BASE_HREF = "/csharp/"
+# DocFX's script does not go through <base>: it resolves the navigation bar,
+# the table of contents and the search index against the page's own URL, from
+# the relative paths in these <meta> tags. On the root page they point at /
+# for the same reason, which leaves it with no navigation bar, so there they
+# are made absolute too.
+CSHARP_ROOT_META = {
+    '<meta name="docfx:navrel" content="toc.html">': '<meta name="docfx:navrel" content="/csharp/toc.html">',
+    '<meta name="docfx:tocrel" content="toc.html">': '<meta name="docfx:tocrel" content="/csharp/toc.html">',
+    '<meta name="docfx:rel" content="">': '<meta name="docfx:rel" content="/csharp/">',
+}
 # What the generators emit that the site does not serve: DocFX's source maps
 # (most of its output by size) and the files fsdocs copies next to its pages.
 UNSERVED = ["csharp/**/*.map", "fsharp/NuGet.config", "fsharp/index.md"]
@@ -47,6 +57,10 @@ def inject_base_href(root: Path, href: str) -> None:
     tag = f'<base href="{href}">'
     content = index.read_text(encoding="utf-8")
     content = content.replace("<head>", f"<head>\n{tag}", 1)
+    for relative, absolute in CSHARP_ROOT_META.items():
+        if relative not in content:
+            raise RuntimeError(f"{index} has no {relative}")
+        content = content.replace(relative, absolute)
     index.write_text(content, encoding="utf-8")
 
 

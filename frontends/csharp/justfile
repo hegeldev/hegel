@@ -67,12 +67,15 @@ check-lint: check-format build-libhegel
 # The API references: DocFX for `Hegel` and `Hegel.Xunit` (docs/_site/csharp,
 # served at hegel.dev/csharp) and fsdocs for `Hegel.FSharp` (docs/_site/fsharp,
 # served at hegel.dev/fsharp, the root its links are built for), both with
-# warnings as errors. Neither needs the engine. fsdocs titles its pages after
+# warnings as errors. Neither needs the engine. DocFX lists a namespace's
+# types alphabetically; scripts/group_api_toc.py groups them by role first. fsdocs titles its pages after
 # the directory it runs in, hence docs/fsharp.
 check-docs:
     dotnet tool restore
     rm -rf docs/_site docs/csharp/api
-    dotnet docfx docs/csharp/docfx.json --warningsAsErrors
+    dotnet docfx metadata docs/csharp/docfx.json --warningsAsErrors
+    python3 scripts/group_api_toc.py docs/csharp/api/toc.yml
+    dotnet docfx build docs/csharp/docfx.json --warningsAsErrors
     dotnet build src/Hegel.FSharp/Hegel.FSharp.fsproj -c Release -p:HegelNativesSource=skip
     cd docs/fsharp && dotnet fsdocs build --projects ../../src/Hegel.FSharp/Hegel.FSharp.fsproj --input . --output ../_site/fsharp --properties Configuration=Release HegelNativesSource=skip --parameters root /fsharp/ fsdocs-collection-name "Hegel for F#" fsdocs-logo-src ../favicon-96x96.png fsdocs-favicon-src ../favicon.ico fsdocs-logo-link /fsharp fsdocs-repository-link https://github.com/hegeldev/hegel/tree/main/frontends/csharp fsdocs-license-link https://github.com/hegeldev/hegel/blob/main/frontends/csharp/LICENSE fsdocs-release-notes-link https://github.com/hegeldev/hegel/blob/main/frontends/csharp/CHANGELOG.md --strict
 

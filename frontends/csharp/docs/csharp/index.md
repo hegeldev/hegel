@@ -1,3 +1,7 @@
+---
+_layout: landing
+---
+
 # Hegel for C#
 
 The API reference of the [`Hegel`](https://www.nuget.org/packages/Hegel) and
