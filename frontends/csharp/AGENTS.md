@@ -1,15 +1,16 @@
 # .NET frontend
 
-Hegel for C# and F#: the `Hegel`, `Hegel.FSharp` and `Hegel.Xunit` NuGet
-packages. The bindings drive libhegel, the engine in `../../libhegel`, in-process through
+Hegel for C# and F#: the `Hegel`, `Hegel.FSharp`, `Hegel.Xunit` and
+`Hegel.NUnit` NuGet packages. The bindings drive libhegel, the engine in `../../libhegel`, in-process through
 its C ABI (`../../libhegel/include/hegel.h`) with source-generated P/Invoke
 (`LibraryImport`). Two library projects, both targeting .NET 8: `src/Hegel/`
 (C#, everything the engine offers) and `src/Hegel.FSharp/` (F#, a surface
 over `Hegel` that draws and prints F# values), each with an xunit test
 project (`tests/Hegel.Tests/`, `tests/Hegel.FSharp.Tests/`; .NET 10 by
 default, .NET 8 with `HEGEL_TEST_FRAMEWORK=net8.0`), plus `src/Hegel.Xunit/`
-(C#, the `[HegelTest]` attribute for xUnit.net v2, tested by the C# suite).
-The three packages share one version (`Directory.Build.props`) and release
+(C#, the `[HegelTest]` attribute for xUnit.net v2) and `src/Hegel.NUnit/`
+(C#, the same attribute for NUnit 4), both tested by the C# suite.
+The four packages share one version (`Directory.Build.props`) and release
 together. Repo-wide
 conventions are in the root `AGENTS.md`.
 
@@ -151,6 +152,20 @@ There is no engine version pin to keep in step in this directory.
   never count as a failure's origin. The package depends on
   `xunit.extensibility.execution` and on `Hegel`; the core package keeps no
   test-framework dependency.
+- `src/Hegel.NUnit/` — the `Hegel.NUnit` package, for NUnit 4:
+  `HegelTestAttribute` has the same constructor and `Profile`/`TestCases`
+  as the xunit one and is NUnit's test builder for its method
+  (`ISimpleTestBuilder`, `IImplyFixture`): `BuildFrom` makes a plain
+  `TestMethod`, applies the method's other NUnit attributes, and marks it
+  not runnable with the problem when the shape is wrong. As an
+  `IWrapTestMethod` it replaces NUnit's call of the method with
+  `HegelTestCommand`, which runs `Property.Test` over the method as an
+  `Action<TestCase>` delegate inside NUnit's own command chain, so
+  `[SetUp]`/`[TearDown]` run once around the property and the engine's
+  report goes to the test's output. Each test case runs in a
+  `TestExecutionContext.IsolatedContext`: NUnit records a failed assertion
+  on the current result as well as throwing it, and the cases the engine
+  tries while shrinking would otherwise all end up in the test's result.
 - `Stateful`, `Pool` — `Stateful.Run` drives a machine's `[Rule]` and
   `[Invariant]` methods (each taking one `TestCase`) through the engine's
   state machine primitives, sequentially or with worker threads for
@@ -188,8 +203,8 @@ There is no engine version pin to keep in step in this directory.
 
 ## Rules
 
-- **Coverage is 100%** line coverage of `src/Hegel`, `src/Hegel.Xunit` and
-  `src/Hegel.FSharp`, each enforced by coverlet in `just csharp::check-test`
+- **Coverage is 100%** line coverage of `src/Hegel`, `src/Hegel.Xunit`,
+  `src/Hegel.NUnit` and `src/Hegel.FSharp`, each enforced by coverlet in `just csharp::check-test`
   (generated `*.g.cs` files are excluded). Everything is covered by real-engine tests plus
   `DelegatingLibhegel`-driven error-path tests (`tests/Hegel.Tests/Support/`):
   a fake subclasses the forwarding wrapper, overrides one method to return
@@ -252,6 +267,12 @@ There is no engine version pin to keep in step in this directory.
 - The test suites are the `Hegel.Tests` and `Hegel.FSharp.Tests`
   assemblies, which `Runner.OriginOf` treats as user code, so origin
   assertions can name a test file.
+- `Hegel.NUnit` is tested in `NUnitTests.cs` by running a private nested
+  sample fixture through NUnit's own `NUnitTestAssemblyRunner`, in-process
+  and one method at a time (the project has no NUnit test adapter, so
+  `dotnet test` never runs the failing and malformed samples itself). Files
+  under `namespace Hegel.*` reach NUnit through a top-level `using` alias:
+  inside that namespace a bare `NUnit` means `Hegel.NUnit`.
 - `Hegel.Xunit` is tested in `XunitTests.cs` by driving `HegelTestDiscoverer`
   and the test case's `RunAsync` by hand over a private nested sample class
   (xunit discovers only public classes, so its failing and malformed samples
