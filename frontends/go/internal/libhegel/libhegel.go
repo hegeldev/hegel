@@ -78,6 +78,9 @@ const (
 	// discard the attempt and try again.
 	E_RETRY
 	E_NOT_FOUND
+
+	// hegel_settings_set_from_string was given a key that names no setting.
+	E_UNKNOWN_SETTING
 )
 
 type Status uint32 // Equivalent of hegel_status_t (passed as a uint32_t param)
@@ -1192,8 +1195,9 @@ func (s *Settings) NondeterminismStrictness(ctx *Context, strictness Nondetermin
 // and the value in that key's vocabulary. The test location is the one setting
 // it cannot reach; use [Settings.TestLocation] for that.
 //
-// An unknown key or a value outside its vocabulary returns an error wrapping
-// [E_INVALID_ARG], leaving the settings unchanged.
+// An unknown key returns an error wrapping [E_UNKNOWN_SETTING], and a value
+// outside its key's vocabulary one wrapping [E_INVALID_ARG], leaving the
+// settings unchanged.
 func (s *Settings) SetFromString(ctx *Context, key, value string) error {
 	return ctx.invoke("hegel_settings_set_from_string", func(ctx ctxT) Error {
 		e := s.syms.SettingsSetFromString(ctx, s.raw, cString(key), cString(value))

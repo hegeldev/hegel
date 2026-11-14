@@ -321,6 +321,10 @@ pub enum hegel_result_t {
     /// `hegel_grammar_draw_next` once no explicit terminal is left to
     /// supply.
     HEGEL_E_NOT_FOUND = -11,
+
+    /// `hegel_settings_set_from_string` was given a key that names no
+    /// setting.
+    HEGEL_E_UNKNOWN_SETTING = -12,
 }
 
 use hegel_result_t::*;
@@ -1849,9 +1853,10 @@ pub unsafe extern "C" fn hegel_settings_set_print_blob(
 ///     string for none; `suppress_health_check`
 ///     also takes `all`.
 ///
-/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for an unknown key or a
-/// value outside its vocabulary, with a message naming the key and what
-/// it accepts. On error the settings are unchanged.
+/// Returns `HEGEL_OK`, `HEGEL_E_UNKNOWN_SETTING` for a key that names no
+/// setting, or `HEGEL_E_INVALID_ARG` for a value outside its key's
+/// vocabulary, with a message naming the key and what it accepts. On
+/// error the settings are unchanged.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_settings_set_from_string(
     ctx: *mut HegelContext,
@@ -1885,7 +1890,11 @@ pub unsafe extern "C" fn hegel_settings_set_from_string(
             handle.database_key = Some(database_key);
             HEGEL_OK
         }
-        Err(message) => {
+        Err(crate::config::SettingError::UnknownSetting(message)) => {
+            set_last_error(ctx, &format!("{FN}: {message}"));
+            HEGEL_E_UNKNOWN_SETTING
+        }
+        Err(crate::config::SettingError::InvalidValue(message)) => {
             set_last_error(ctx, &format!("{FN}: {message}"));
             HEGEL_E_INVALID_ARG
         }

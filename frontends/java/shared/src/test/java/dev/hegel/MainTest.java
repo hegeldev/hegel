@@ -258,8 +258,11 @@ class MainTest {
             assertEquals(Abi.VERBOSITY_DEBUG, lib.settingsGetVerbosity(s));
             assertEquals(Abi.OK, lib.settingsFromString(s, "suppress_health_check", "too_slow"));
             assertEquals(Abi.HC_TOO_SLOW, lib.settingsGetSuppressHealthCheck(s));
-            assertEquals(Abi.E_INVALID_ARG, lib.settingsFromString(s, "no_such_setting", "1"));
+            assertEquals(Abi.E_UNKNOWN_SETTING, lib.settingsFromString(s, "no_such_setting", "1"));
             assertTrue(lib.lastErrorMessage().contains("unknown setting"), lib.lastErrorMessage());
+            assertEquals(Abi.E_INVALID_ARG, lib.settingsFromString(s, "verbosity", "loud"));
+            assertTrue(lib.lastErrorMessage().contains("`verbosity` expects"), lib.lastErrorMessage());
+            assertEquals(Abi.VERBOSITY_DEBUG, lib.settingsGetVerbosity(s));
         } finally {
             lib.settingsFree(s);
         }

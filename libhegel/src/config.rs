@@ -419,6 +419,21 @@ pub(crate) enum ParsedSetting {
     DatabaseKey(String),
 }
 
+/// Why [`parse_setting`] rejected a setting. Each variant carries the
+/// diagnostic, which names the key and what it accepts.
+pub(crate) enum SettingError {
+    /// The key names no setting.
+    UnknownSetting(String),
+    /// The key names a setting, but the value is outside its vocabulary.
+    InvalidValue(String),
+}
+
+impl From<String> for SettingError {
+    fn from(message: String) -> Self {
+        SettingError::InvalidValue(message)
+    }
+}
+
 /// Parse one setting given as text, as a command line passes it, into a
 /// delta that sets just that setting. `key` is the setting's `hegel.toml`
 /// name, and `value` uses that key's vocabulary in `hegel.toml`, with these
@@ -427,7 +442,7 @@ pub(crate) enum ParsedSetting {
 /// `HEGEL_*` variables take it; and a list as its elements separated by
 /// commas, with the empty string for the empty list. `database_key`, which
 /// `hegel.toml` has no key for, takes the key itself.
-pub(crate) fn parse_setting(key: &str, value: &str) -> Result<ParsedSetting, String> {
+pub(crate) fn parse_setting(key: &str, value: &str) -> Result<ParsedSetting, SettingError> {
     let integer = |min: u64| match value.parse::<u64>() {
         Ok(n) if n >= min => Ok(n),
         _ => Err(format!(
@@ -477,9 +492,9 @@ pub(crate) fn parse_setting(key: &str, value: &str) -> Result<ParsedSetting, Str
         "phases" => delta.phases = Some(parse_phases(&list())?),
         "database_key" => return Ok(ParsedSetting::DatabaseKey(value.to_string())),
         other => {
-            return Err(format!(
+            return Err(SettingError::UnknownSetting(format!(
                 "unknown setting `{other}`. Known settings: {SETTING_KEYS}"
-            ));
+            )));
         }
     }
     Ok(ParsedSetting::Profile(delta))

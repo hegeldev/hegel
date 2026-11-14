@@ -20,6 +20,7 @@ public final class Abi {
     public static final int E_INTERNAL = -8;
     public static final int E_CONCURRENT_USE = -9;
     public static final int E_RETRY = -10;
+    public static final int E_UNKNOWN_SETTING = -12;
 
     // Aggregate run outcome (hegel_run_status_t). Value 3 (FAILED_NONDETERMINISTIC, retired in the
     // 0.44 ABI) is never reported and must not be reused: a failing nondeterministic run reports
