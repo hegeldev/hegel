@@ -16,7 +16,7 @@ Instead of writing tests with hand-picked example inputs, you describe a *proper
 
 ## Installation
 
-Hegel ships as the `Hegel` package, for .NET 8 and later; xUnit projects add `Hegel.Xunit` on top of it for the `[HegelTest]` attribute, and F# projects `Hegel.FSharp` (see [F#](#f) below):
+Hegel ships as the `Hegel` package, for .NET 8 and later; xUnit projects add `Hegel.Xunit` on top of it for the `[HegelTest]` attribute, NUnit projects `Hegel.NUnit` (see [NUnit](#nunit) below), and F# projects `Hegel.FSharp` (see [F#](#f) below):
 
 ```bash
 dotnet add package Hegel --version 0.2.2
@@ -30,7 +30,7 @@ or in your test project:
 <PackageReference Include="Hegel.Xunit" Version="0.2.2" />
 ```
 
-The engine is bundled in the `Hegel` package for Linux (x86-64 and arm64), macOS (Apple Silicon), and Windows (x86-64 and arm64); nothing is downloaded at runtime. Hegel works with any test framework: `Property.Test` runs inside your test method and throws the failing assertion, so xUnit, NUnit, MSTest and TUnit all report a property failure the way they report any other. Under xUnit, `Hegel.Xunit` lets you write the property as the test method itself.
+The engine is bundled in the `Hegel` package for Linux (x86-64 and arm64), macOS (Apple Silicon), and Windows (x86-64 and arm64); nothing is downloaded at runtime. Hegel works with any test framework: `Property.Test` runs inside your test method and throws the failing assertion, so xUnit, NUnit, MSTest and TUnit all report a property failure the way they report any other. Under xUnit and NUnit, `Hegel.Xunit` and `Hegel.NUnit` let you write the property as the test method itself.
 
 ## Quickstart
 
@@ -84,6 +84,32 @@ public void SortPreservesLength() => Property.Test(tc =>
     Assert.Equal(xs.Count, MySort(xs).Count);
 });
 ```
+
+## NUnit
+
+`Hegel.NUnit` is the same `[HegelTest]` attribute for NUnit 4:
+
+```bash
+dotnet add package Hegel.NUnit --version 0.2.2
+```
+
+```csharp
+using Hegel;
+using Hegel.NUnit;
+using NUnit.Framework;
+
+public class SortTests
+{
+    [HegelTest]
+    public void SortPreservesLength(TestCase tc)
+    {
+        var xs = tc.Draw(Generators.Lists(Generators.Integers()), "xs");
+        Assert.That(MySort(xs), Has.Count.EqualTo(xs.Count));
+    }
+}
+```
+
+The property is one test in NUnit's test tree, and the class needs no `[TestFixture]`. `[SetUp]` and `[TearDown]` run once around the whole property, not around each generated test case, and `[Ignore]`, `[Category]` and `[Description]` work as on a `[Test]`. The attribute takes the same `Profile` and `TestCases` as the xUnit one, the minimal failing test case is in the test's output, and the test fails with NUnit's own assertion message.
 
 ## Writing properties
 
