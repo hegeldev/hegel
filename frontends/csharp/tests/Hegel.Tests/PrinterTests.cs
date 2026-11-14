@@ -49,7 +49,9 @@ public class PrinterTests
         Assert.Equal("(Colour)42", Runs.Render((Colour)42));
         Assert.Equal("Bits.A | Bits.B", Runs.Render(Bits.A | Bits.B));
         Assert.Equal("TimeZoneInfo.FindSystemTimeZoneById(\"UTC\")", Runs.Render(TimeZoneInfo.Utc));
-        Assert.Equal("340282366920938463463374607431768211456", Runs.Render(BigInteger.Pow(2, 128)));
+        Assert.Equal("(Colour)(-1)", Runs.Render((Colour)(-1)));
+        Assert.Equal("BigInteger.Parse(\"340282366920938463463374607431768211456\")", Runs.Render(BigInteger.Pow(2, 128)));
+        Assert.Equal("BigInteger.Parse(\"-1\")", Runs.Render(BigInteger.MinusOne));
     }
 
     [Fact]

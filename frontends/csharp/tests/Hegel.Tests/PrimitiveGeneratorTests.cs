@@ -193,7 +193,7 @@ public class PrimitiveGeneratorTests
     {
         Assert.Equal("var x_1 = 0;", Gen.MinimalOutput(Generators.Integers()));
         Assert.Equal("var x_1 = 0;", Gen.MinimalOutput(Generators.Longs()));
-        Assert.Equal("var x_1 = 0;", Gen.MinimalOutput(Generators.BigIntegers()));
+        Assert.Equal("var x_1 = BigInteger.Parse(\"0\");", Gen.MinimalOutput(Generators.BigIntegers()));
         Assert.Equal("var x_1 = false;", Gen.MinimalOutput(Generators.Booleans()));
         Assert.Equal("var x_1 = 0.0;", Gen.MinimalOutput(Generators.Doubles().Min(0.0).Max(1.0)));
         Assert.Equal("var x_1 = 0.0f;", Gen.MinimalOutput(Generators.Floats().Min(0f).Max(1f)));
