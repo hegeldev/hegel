@@ -52,5 +52,3 @@ Finally, the key disadvantage, which we hope to fix in the near future, is
 the lack of shrinking. Since Hegel tests in Antithesis often run for a very long
 time before finding a bug, a failing test case is too large to shrink (sequentially) 
 in a reasonable amount of time, so shrinking is disabled by default. 
-
-**Language-specific Antithesis workload examples are coming soon!**
