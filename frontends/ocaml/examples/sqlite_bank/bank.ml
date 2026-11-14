@@ -314,11 +314,16 @@ let verify_no_negative t =
     other. Each verify_* is both a rule and an invariant on purpose. As rules
     they run while transfers are in flight, testing what a reader sees
     mid-write. As invariants they are checked on the final state and sampled
-    between rounds, so a lost commit is always caught by the end of the run. *)
+    between rounds, so a lost commit is always caught by the end of the run.
+    [no_committed_transfer_lost] is checked after every round. *)
 module%hegel_concurrent_state_machine Machine = struct
   (* Before the rules, which shadow the functions these call. *)
   let total_balance_preserved _tc bank = verify_total_balance bank [@@invariant]
-  let no_committed_transfer_lost _tc bank = verify_ops_not_lost bank [@@invariant]
+
+  let no_committed_transfer_lost _tc bank = verify_ops_not_lost bank
+  [@@invariant { always_check = true }]
+  ;;
+
   let no_negative_balance _tc bank = verify_no_negative bank [@@invariant]
 
   let transfer tc () bank =
@@ -327,20 +332,21 @@ module%hegel_concurrent_state_machine Machine = struct
     let dest = draw tc (integers ~min_value:0 ~max_value:(n - 1) ()) in
     let amount = draw tc (integers ~min_value:0 ~max_value:bank.config.max_amount ()) in
     let outcome = string_of_outcome (transfer bank ~source ~dest ~amount) in
-    event tc ~label:("transfer: " ^ outcome);
     note tc (Printf.sprintf "transfer %d from %d to %d: %s" amount source dest outcome)
-  [@@rule { group = "bank"; weight = 6 }]
+  [@@rule { groups = [ "bank" ]; weight = 6 }]
   ;;
 
   let verify_total_balance _tc () bank = verify_total_balance bank
-  [@@rule { group = "bank" }]
+  [@@rule { groups = [ "bank" ] }]
   ;;
 
   let verify_ops_not_lost _tc () bank = verify_ops_not_lost bank
-  [@@rule { group = "bank" }]
+  [@@rule { groups = [ "bank" ] }]
   ;;
 
-  let verify_no_negative _tc () bank = verify_no_negative bank [@@rule { group = "bank" }]
+  let verify_no_negative _tc () bank = verify_no_negative bank
+  [@@rule { groups = [ "bank" ] }]
+  ;;
 end
 
 let run tc workload =

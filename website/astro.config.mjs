@@ -86,6 +86,19 @@ export default defineConfig({
 					],
 				},
 				{
+					label: 'Antithesis',
+					items: [
+						{ slug: 'antithesis/hegel-antithesis'},
+						{ slug: 'antithesis/rust' },
+						{ slug: 'antithesis/python' },
+						{ slug: 'antithesis/go' },
+						{ slug: 'antithesis/cpp' },
+						{ slug: 'antithesis/typescript' },
+						{ slug: 'antithesis/java' },
+						{ slug: 'antithesis/ocaml' },
+					],
+				},
+				{
 					label: 'API documentation',
 					items: [
 						{ label: 'hegel-rust', link: 'https://docs.rs/hegeltest', attrs: { target: '_blank', class: 'external-link' } },
