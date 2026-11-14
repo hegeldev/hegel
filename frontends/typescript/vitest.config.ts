@@ -6,7 +6,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@hegeldev/hegel/generators": fileURLToPath(
-        new URL("./src/generators/index.ts", import.meta.url),
+        new URL("./src/generators/node.ts", import.meta.url),
       ),
       "@hegeldev/hegel": fileURLToPath(new URL("./src/index.ts", import.meta.url)),
     },

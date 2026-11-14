@@ -8,6 +8,8 @@ use alloc::vec::Vec;
 use core::fmt::Debug;
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
+use once_cell::race::OnceBox;
+
 use rand::{Rng, RngExt};
 
 use crate::native::rng::EngineRng;
@@ -32,6 +34,7 @@ use super::{
     DIRICHLET_ALPHA_FLOAT_NEAR_SQRT_MIN_POSITIVE, DIRICHLET_ALPHA_FLOAT_NEAR_ZERO,
     DIRICHLET_ALPHA_FLOAT_NON_DYADIC, DIRICHLET_ALPHA_FLOAT_SIGNED_ZERO,
     DIRICHLET_ALPHA_FLOAT_SUBNORMAL, DIRICHLET_ALPHA_INTERESTING, DIRICHLET_ALPHA_MIDDLE,
+    DIRICHLET_ALPHA_TARGETED, DIRICHLET_ALPHA_UNTARGETED,
 };
 use crate::control::{
     InternalError, hegel_internal_assert, hegel_internal_debug_assert, hegel_internal_unwrap,
@@ -771,10 +774,54 @@ impl Default for FloatGenerationParameters {
     }
 }
 
+/// The per-test-case probability that a date or time draw targets one of
+/// its interesting values (a transition of the zone, an instant, offset
+/// or duration of Appendix C) rather than drawing from its sampler
+/// (`libhegel/docs/datetime.md` §6.2, Q4). Drawn from a Beta with mean
+/// [`TARGETED_PROBABILITY`], so most cases target at about that rate while
+/// a thin tail concentrates on the targets. Unlike the other swarm
+/// parameters it is drawn lazily, by the first draw that targets anything
+/// (a date, time, timestamp, offset, duration or zoned datetime draw with
+/// a target in its bounds; [`NativeTestCase::datetime_parameters`]), and
+/// a node drawn at its rate is recorded under the fixed
+/// [`TARGETED_PROBABILITY`], so the node's kind is the same in every
+/// execution however the case's parameter came out.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DatetimeGenerationParameters {
+    pub targeted_probability: f64,
+}
+
+/// The mean of [`DatetimeGenerationParameters::draw`], and the probability
+/// the targeted node's kind records, so that the kind is the same in every
+/// execution however the case's own parameters came out.
+pub const TARGETED_PROBABILITY: f64 = 0.05;
+
+impl DatetimeGenerationParameters {
+    const ALPHAS: [f64; 2] = [DIRICHLET_ALPHA_TARGETED, DIRICHLET_ALPHA_UNTARGETED];
+
+    pub fn draw(rng: &mut EngineRng) -> Result<Self, InternalError> {
+        let [targeted, _untargeted] = sample_dirichlet(Self::ALPHAS, rng)?;
+        Ok(DatetimeGenerationParameters {
+            targeted_probability: targeted,
+        })
+    }
+}
+
+impl Default for DatetimeGenerationParameters {
+    /// The mean of [`Self::draw`]; see [`GenerationParameters::default`].
+    fn default() -> Self {
+        DatetimeGenerationParameters {
+            targeted_probability: TARGETED_PROBABILITY,
+        }
+    }
+}
+
 /// Per-test-case *swarm* parameters: one set of category weights for integer
 /// draws and one for float draws. Drawn once at the start of each generated
 /// test case (see [`Self::draw`]) and held constant across every draw and every
-/// clone-stream of that case.
+/// clone-stream of that case. The targeting rate of zoned datetime draws is
+/// the third such parameter, held apart in [`DatetimeGenerationParameters`]
+/// because it is drawn on first use rather than up front.
 ///
 /// They only ever change *how likely* each category is, never *which* values are
 /// reachable. Because hegel records typed choice *values* and the samplers are
@@ -1875,6 +1922,9 @@ pub struct FamilyCore {
     /// stream can tell with one atomic load whether its copy is current.
     /// 0 means never set.
     generation_parameters_version: AtomicUsize,
+    /// The zoned datetime draws' targeting rate, drawn from the stream that
+    /// first asks for it; see [`NativeTestCase::datetime_parameters`].
+    datetime_parameters: OnceBox<DatetimeGenerationParameters>,
 }
 
 impl FamilyCore {
@@ -1889,6 +1939,7 @@ impl FamilyCore {
             fresh_ids: Mutex::new(FreshIds::default()),
             generation_parameters: Mutex::new(None),
             generation_parameters_version: AtomicUsize::new(0),
+            datetime_parameters: OnceBox::new(),
         }
     }
 
@@ -2349,6 +2400,28 @@ impl NativeTestCase {
         self.rng = Some(rng);
         self.family.set_budget(self.max_size);
         self
+    }
+
+    /// This test case's [`DatetimeGenerationParameters`]: drawn from this
+    /// stream's RNG the first time any stream of the family asks, which
+    /// the first date, time, timestamp, offset, duration or zoned datetime
+    /// draw with a target in its bounds does, and the default for a family
+    /// that never samples (a replay). Two streams asking at once both
+    /// draw, and both get the value the family kept.
+    pub(crate) fn datetime_parameters(
+        &mut self,
+    ) -> Result<DatetimeGenerationParameters, EngineError> {
+        if let Some(params) = self.family.datetime_parameters.get() {
+            return Ok(*params);
+        }
+        let Some(rng) = self.rng.as_mut() else {
+            return Ok(DatetimeGenerationParameters::default());
+        };
+        let params = DatetimeGenerationParameters::draw(rng)?;
+        Ok(*self
+            .family
+            .datetime_parameters
+            .get_or_init(|| Box::new(params)))
     }
 
     /// The family's swarm [`GenerationParameters`] as of this draw: the
@@ -2877,7 +2950,7 @@ impl NativeTestCase {
 
     /// [`draw_integer_as`](Self::draw_integer_as) for a draw that works in
     /// `BigInt` throughout.
-    fn draw_integer_from(
+    pub(crate) fn draw_integer_from(
         &mut self,
         kind: IntegerChoice,
         sample: impl Fn(&IntegerChoice, &mut EngineRng) -> Result<BigInt, InternalError>,
@@ -3297,6 +3370,17 @@ impl NativeTestCase {
     /// `p = 1 - 2^-32`) are honored. Routed here from `generate_boolean`.
     pub fn weighted_precise(&mut self, p: f64, forced: Option<bool>) -> Result<bool, EngineError> {
         self.weighted_with(p, forced, weighted_boolean_sample_precise)
+    }
+
+    /// A boolean node whose kind records the probability `p` but whose
+    /// fresh value is sampled with `sample_p`: for a decision whose rate
+    /// is a per-case generation parameter, so that the recorded kind is
+    /// the same in every execution (the kind ledger compares kinds across
+    /// executions, and a replay never draws parameters).
+    pub(crate) fn weighted_as(&mut self, p: f64, sample_p: f64) -> Result<bool, EngineError> {
+        self.weighted_with(p, None, move |_, rng| {
+            weighted_boolean_sample_precise(sample_p, rng)
+        })
     }
 
     /// Record `decision`, a boolean the engine worked out for itself, as a

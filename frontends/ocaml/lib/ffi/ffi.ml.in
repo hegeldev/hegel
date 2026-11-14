@@ -183,6 +183,189 @@ module Datetime_struct = struct
   let () = seal t
 end
 
+module Timestamp_struct = struct
+  type s
+
+  let t : s structure typ = structure "hegel_timestamp_t"
+  let second = field t "second" int64_t
+  let nanosecond = field t "nanosecond" uint32_t
+  let () = seal t
+end
+
+module Duration_struct = struct
+  type s
+
+  let t : s structure typ = structure "hegel_duration_t"
+  let seconds = field t "seconds" int64_t
+  let nanoseconds = field t "nanoseconds" int32_t
+  let () = seal t
+end
+
+module Offset_struct = struct
+  type s
+
+  let t : s structure typ = structure "hegel_offset_t"
+  let seconds = field t "seconds" int32_t
+  let known = field t "known" bool
+  let () = seal t
+end
+
+module Span_struct = struct
+  type s
+
+  let t : s structure typ = structure "hegel_span_t"
+
+  let units =
+    List.map
+      (fun name -> field t name int64_t)
+      [ "years"
+      ; "months"
+      ; "weeks"
+      ; "days"
+      ; "hours"
+      ; "minutes"
+      ; "seconds"
+      ; "milliseconds"
+      ; "microseconds"
+      ; "nanoseconds"
+      ]
+  ;;
+
+  let () = seal t
+end
+
+module Resolution_struct = struct
+  type s
+
+  let t : s structure typ = structure "hegel_timezone_resolution_t"
+  let kind = field t "kind" uint32_t
+  let offset_before = field t "offset_before" int32_t
+  let offset_after = field t "offset_after" int32_t
+  let offset_seconds = field t "offset_seconds" int32_t
+  let offset_known = field t "offset_known" bool
+  let timestamp = field t "timestamp" Timestamp_struct.t
+  let () = seal t
+end
+
+module Zone_offset_struct = struct
+  type s
+
+  let t : s structure typ = structure "hegel_timezone_offset_t"
+  let offset_seconds = field t "offset_seconds" int32_t
+  let offset_known = field t "offset_known" bool
+  let is_dst = field t "is_dst" bool
+  let abbreviation = field t "abbreviation" Str.t
+  let () = seal t
+end
+
+module Zone_info_struct = struct
+  type s
+
+  let t : s structure typ = structure "hegel_timezone_info_t"
+  let known = field t "known" bool
+  let primary_name = field t "primary_name" Str.t
+  let is_link = field t "is_link" bool
+  let rank = field t "rank" uint16_t
+  let tags = field t "tags" uint32_t
+  let () = seal t
+end
+
+module Zoned_struct = struct
+  type s
+
+  let t : s structure typ = structure "hegel_zoned_datetime_t"
+  let civil = field t "civil" Datetime_struct.t
+  let offset_seconds = field t "offset_seconds" int32_t
+  let offset_known = field t "offset_known" bool
+  let fold = field t "fold" bool
+  let kind = field t "kind" uint32_t
+  let offset_before = field t "offset_before" int32_t
+  let offset_after = field t "offset_after" int32_t
+  let timestamp = field t "timestamp" Timestamp_struct.t
+  let () = seal t
+end
+
+module Zone_type_struct = struct
+  type s
+
+  let t : s structure typ = structure "hegel_zone_type_t"
+  let utoff = field t "utoff" int32_t
+  let is_dst = field t "is_dst" bool
+  let abbreviation = field t "abbreviation" Str.t
+  let () = seal t
+end
+
+module Zone_transition_struct = struct
+  type s
+
+  let t : s structure typ = structure "hegel_zone_transition_t"
+  let instant = field t "instant" int64_t
+  let local_type = field t "local_type" Zone_type_struct.t
+  let () = seal t
+end
+
+module Rule_date_struct = struct
+  type s
+
+  let t : s structure typ = structure "hegel_zone_rule_date_t"
+  let kind = field t "kind" uint32_t
+  let day = field t "day" uint16_t
+  let month = field t "month" uint8_t
+  let week = field t "week" uint8_t
+  let weekday = field t "weekday" uint8_t
+  let time = field t "time" int32_t
+  let () = seal t
+end
+
+module Zone_data_struct = struct
+  type s
+
+  let t : s structure typ = structure "hegel_zone_data_t"
+  let initial = field t "initial" Zone_type_struct.t
+  let transitions = field t "transitions" (ptr Zone_transition_struct.t)
+  let transition_count = field t "transition_count" size_t
+  let after = field t "after" uint32_t
+  let standard = field t "standard" Zone_type_struct.t
+  let has_dst = field t "has_dst" bool
+  let dst = field t "dst" Zone_type_struct.t
+  let dst_start = field t "dst_start" Rule_date_struct.t
+  let dst_end = field t "dst_end" Rule_date_struct.t
+  let last_year = field t "last_year" int32_t
+  let () = seal t
+end
+
+let offset_fn =
+  Foreign.funptr
+    (ptr void @-> handle_t @-> int64_t @-> ptr Zone_type_struct.t @-> returning int32_t)
+;;
+
+let next_transition_fn =
+  Foreign.funptr_opt
+    (ptr void @-> handle_t @-> int64_t @-> ptr bool @-> ptr int64_t @-> returning int32_t)
+;;
+
+(* The loader and its release hook outlive the call that passes them, so they
+   are function pointers made once and never freed, not closures whose
+   pointer dies with them. *)
+module Loader_fn =
+  (val Foreign.dynamic_funptr
+         (ptr void @-> handle_t @-> handle_t @-> Str.t @-> returning int32_t))
+
+module Loader_release_fn = (val Foreign.dynamic_funptr (ptr void @-> returning void))
+
+module Zone_oracle_struct = struct
+  type s
+
+  let t : s structure typ = structure "hegel_zone_oracle_t"
+  let offset_at = field t "offset_at" offset_fn
+  let next_transition = field t "next_transition" next_transition_fn
+  let user_data = field t "user_data" (ptr void)
+  let first_year = field t "first_year" int32_t
+  let last_year = field t "last_year" int32_t
+  let after = field t "after" uint32_t
+  let () = seal t
+end
+
 (* ------------------------------------------------------------------ *)
 (* Test context                                                        *)
 (* ------------------------------------------------------------------ *)
@@ -559,6 +742,26 @@ let c_owned_string_free =
   foreign "hegel_owned_string_free" (handle_t @-> ptr Str.t @-> returning int)
 ;;
 
+let c_date_options_new =
+  foreign "hegel_date_options_new" (handle_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_date_options_free =
+  foreign "hegel_date_options_free" (handle_t @-> handle_t @-> returning int)
+;;
+
+let c_date_options_set_weekdays =
+  foreign
+    "hegel_date_options_set_weekdays"
+    (handle_t @-> handle_t @-> uint32_t @-> returning int)
+;;
+
+let c_date_options_set_months =
+  foreign
+    "hegel_date_options_set_months"
+    (handle_t @-> handle_t @-> uint32_t @-> returning int)
+;;
+
 let c_generate_date =
   foreign
     "hegel_generate_date"
@@ -566,6 +769,7 @@ let c_generate_date =
      @-> handle_t
      @-> Date_struct.t
      @-> Date_struct.t
+     @-> handle_t
      @-> ptr Date_struct.t
      @-> returning int)
 ;;
@@ -577,6 +781,7 @@ let c_generate_time =
      @-> handle_t
      @-> Time_struct.t
      @-> Time_struct.t
+     @-> uint32_t
      @-> ptr Time_struct.t
      @-> returning int)
 ;;
@@ -588,8 +793,313 @@ let c_generate_datetime =
      @-> handle_t
      @-> Datetime_struct.t
      @-> Datetime_struct.t
+     @-> uint32_t
      @-> ptr Datetime_struct.t
      @-> returning int)
+;;
+
+let c_generate_timestamp =
+  foreign
+    "hegel_generate_timestamp"
+    (handle_t
+     @-> handle_t
+     @-> Timestamp_struct.t
+     @-> Timestamp_struct.t
+     @-> uint32_t
+     @-> ptr Timestamp_struct.t
+     @-> returning int)
+;;
+
+let c_generate_offset =
+  foreign
+    "hegel_generate_offset"
+    (handle_t
+     @-> handle_t
+     @-> int32_t
+     @-> int32_t
+     @-> uint32_t
+     @-> bool
+     @-> ptr Offset_struct.t
+     @-> returning int)
+;;
+
+let c_generate_duration =
+  foreign
+    "hegel_generate_duration"
+    (handle_t
+     @-> handle_t
+     @-> Duration_struct.t
+     @-> Duration_struct.t
+     @-> uint32_t
+     @-> ptr Duration_struct.t
+     @-> returning int)
+;;
+
+let c_span_spec_new =
+  foreign "hegel_span_spec_new" (handle_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_span_spec_free = foreign "hegel_span_spec_free" (handle_t @-> handle_t @-> returning int)
+
+let c_span_spec_set_unit_bounds =
+  foreign
+    "hegel_span_spec_set_unit_bounds"
+    (handle_t @-> handle_t @-> uint32_t @-> int64_t @-> int64_t @-> returning int)
+;;
+
+let c_span_spec_set_sign =
+  foreign "hegel_span_spec_set_sign" (handle_t @-> handle_t @-> uint32_t @-> returning int)
+;;
+
+let c_span_spec_validate =
+  foreign "hegel_span_spec_validate" (handle_t @-> handle_t @-> returning int)
+;;
+
+let c_generate_span =
+  foreign
+    "hegel_generate_span"
+    (handle_t @-> handle_t @-> handle_t @-> ptr Span_struct.t @-> returning int)
+;;
+
+let c_tzdb_version = foreign "hegel_tzdb_version" (handle_t @-> ptr str @-> returning int)
+
+let c_timezone_resolve_in =
+  foreign
+    "hegel_timezone_resolve_in"
+    (handle_t
+     @-> handle_t
+     @-> str
+     @-> Datetime_struct.t
+     @-> ptr Resolution_struct.t
+     @-> returning int)
+;;
+
+let c_timezone_offset_at_in =
+  foreign
+    "hegel_timezone_offset_at_in"
+    (handle_t
+     @-> handle_t
+     @-> str
+     @-> Timestamp_struct.t
+     @-> ptr Zone_offset_struct.t
+     @-> returning int)
+;;
+
+let c_timezone_info_in =
+  foreign
+    "hegel_timezone_info_in"
+    (handle_t @-> handle_t @-> str @-> ptr Zone_info_struct.t @-> returning int)
+;;
+
+let c_zone_source_new =
+  foreign "hegel_zone_source_new" (handle_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_zone_source_bundled =
+  foreign "hegel_zone_source_bundled" (handle_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_zone_source_add_tzif =
+  foreign
+    "hegel_zone_source_add_tzif"
+    (handle_t @-> handle_t @-> str @-> ptr char @-> size_t @-> returning int)
+;;
+
+let c_zone_source_add_zone =
+  foreign
+    "hegel_zone_source_add_zone"
+    (handle_t @-> handle_t @-> str @-> ptr Zone_data_struct.t @-> returning int)
+;;
+
+let c_zone_source_add_oracle =
+  foreign
+    "hegel_zone_source_add_oracle"
+    (handle_t @-> handle_t @-> str @-> ptr Zone_oracle_struct.t @-> returning int)
+;;
+
+let c_zone_source_add_link =
+  foreign
+    "hegel_zone_source_add_link"
+    (handle_t @-> handle_t @-> str @-> str @-> returning int)
+;;
+
+let c_zone_source_declare =
+  foreign
+    "hegel_zone_source_declare"
+    (handle_t @-> handle_t @-> ptr Str.t @-> size_t @-> returning int)
+;;
+
+let c_zone_source_set_loader =
+  foreign
+    "hegel_zone_source_set_loader"
+    (handle_t
+     @-> handle_t
+     @-> Loader_fn.t_opt
+     @-> ptr void
+     @-> Loader_release_fn.t_opt
+     @-> returning int)
+;;
+
+let c_zone_source_set_version =
+  foreign "hegel_zone_source_set_version" (handle_t @-> handle_t @-> str @-> returning int)
+;;
+
+let c_zone_source_version =
+  foreign
+    "hegel_zone_source_version"
+    (handle_t @-> handle_t @-> ptr str @-> returning int)
+;;
+
+let c_set_default_zone_source =
+  foreign "hegel_set_default_zone_source" (handle_t @-> handle_t @-> returning int)
+;;
+
+let c_context_set_error =
+  foreign "hegel_context_set_error" (handle_t @-> str @-> returning int)
+;;
+
+let c_timezone_spec_new =
+  foreign "hegel_timezone_spec_new" (handle_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_timezone_spec_free =
+  foreign "hegel_timezone_spec_free" (handle_t @-> handle_t @-> returning int)
+;;
+
+let c_timezone_spec_set_names =
+  foreign
+    "hegel_timezone_spec_set_names"
+    (handle_t @-> handle_t @-> ptr Str.t @-> size_t @-> returning int)
+;;
+
+let c_timezone_spec_set_links =
+  foreign "hegel_timezone_spec_set_links" (handle_t @-> handle_t @-> bool @-> returning int)
+;;
+
+let c_timezone_spec_set_legacy =
+  foreign "hegel_timezone_spec_set_legacy" (handle_t @-> handle_t @-> bool @-> returning int)
+;;
+
+let c_timezone_spec_set_unknown =
+  foreign "hegel_timezone_spec_set_unknown" (handle_t @-> handle_t @-> bool @-> returning int)
+;;
+
+let c_timezone_spec_set_opaque =
+  foreign "hegel_timezone_spec_set_opaque" (handle_t @-> handle_t @-> bool @-> returning int)
+;;
+
+let c_timezone_spec_set_source =
+  foreign
+    "hegel_timezone_spec_set_source"
+    (handle_t @-> handle_t @-> handle_t @-> returning int)
+;;
+
+let c_timezone_spec_validate =
+  foreign "hegel_timezone_spec_validate" (handle_t @-> handle_t @-> returning int)
+;;
+
+let c_generate_timezone =
+  foreign
+    "hegel_generate_timezone"
+    (handle_t @-> handle_t @-> handle_t @-> ptr Str.t @-> returning int)
+;;
+
+let c_zoned_spec_new =
+  foreign "hegel_zoned_spec_new" (handle_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_zoned_spec_free = foreign "hegel_zoned_spec_free" (handle_t @-> handle_t @-> returning int)
+
+let c_zoned_spec_set_civil_bounds =
+  foreign
+    "hegel_zoned_spec_set_civil_bounds"
+    (handle_t @-> handle_t @-> Datetime_struct.t @-> Datetime_struct.t @-> returning int)
+;;
+
+let c_zoned_spec_set_instant_bounds =
+  foreign
+    "hegel_zoned_spec_set_instant_bounds"
+    (handle_t @-> handle_t @-> Timestamp_struct.t @-> Timestamp_struct.t @-> returning int)
+;;
+
+let c_zoned_spec_set_precision =
+  foreign "hegel_zoned_spec_set_precision" (handle_t @-> handle_t @-> uint32_t @-> returning int)
+;;
+
+let c_zoned_spec_set_imaginary =
+  foreign "hegel_zoned_spec_set_imaginary" (handle_t @-> handle_t @-> uint32_t @-> returning int)
+;;
+
+let c_zoned_spec_set_ambiguous =
+  foreign "hegel_zoned_spec_set_ambiguous" (handle_t @-> handle_t @-> uint32_t @-> returning int)
+;;
+
+let c_zoned_spec_validate =
+  foreign "hegel_zoned_spec_validate" (handle_t @-> handle_t @-> returning int)
+;;
+
+let c_generate_zoned_datetime =
+  foreign
+    "hegel_generate_zoned_datetime"
+    (handle_t
+     @-> handle_t
+     @-> handle_t
+     @-> handle_t
+     @-> ptr Zoned_struct.t
+     @-> ptr Str.t
+     @-> returning int)
+;;
+
+let c_generate_zoned_datetime_for_zone =
+  foreign
+    "hegel_generate_zoned_datetime_for_zone"
+    (handle_t
+     @-> handle_t
+     @-> handle_t
+     @-> str
+     @-> handle_t
+     @-> ptr Zoned_struct.t
+     @-> returning int)
+;;
+
+let c_format_date =
+  foreign "hegel_format_date" (handle_t @-> Date_struct.t @-> ptr Str.t @-> returning int)
+;;
+
+let c_format_time =
+  foreign "hegel_format_time" (handle_t @-> Time_struct.t @-> ptr Str.t @-> returning int)
+;;
+
+let c_format_datetime =
+  foreign
+    "hegel_format_datetime"
+    (handle_t @-> Datetime_struct.t @-> ptr Str.t @-> returning int)
+;;
+
+let c_format_timestamp =
+  foreign
+    "hegel_format_timestamp"
+    (handle_t @-> Timestamp_struct.t @-> ptr Str.t @-> returning int)
+;;
+
+let c_format_offset =
+  foreign "hegel_format_offset" (handle_t @-> Offset_struct.t @-> ptr Str.t @-> returning int)
+;;
+
+let c_format_duration =
+  foreign
+    "hegel_format_duration"
+    (handle_t @-> Duration_struct.t @-> ptr Str.t @-> returning int)
+;;
+
+let c_format_span =
+  foreign "hegel_format_span" (handle_t @-> ptr Span_struct.t @-> ptr Str.t @-> returning int)
+;;
+
+let c_format_zoned_datetime =
+  foreign
+    "hegel_format_zoned_datetime"
+    (handle_t @-> ptr Zoned_struct.t @-> str @-> ptr Str.t @-> returning int)
 ;;
 
 let c_generate_ipv4 =
@@ -1455,52 +1965,97 @@ let generate_string ctx tc sg =
   s
 ;;
 
-type date =
-  { year : int
-  ; month : int
-  ; day : int
-  }
+module T = Temporal_types
 
-type time =
-  { hour : int
-  ; minute : int
-  ; second : int
-  ; nanosecond : int
-  }
+let u8 = Unsigned.UInt8.of_int
+let u16 = Unsigned.UInt16.of_int
+let u32 = Unsigned.UInt32.of_int
 
-(* Build the by-value bound structs from [date]/[time] records. *)
-let make_date { year; month; day } =
+let make_date ({ year; month; day } : T.Date.t) =
   let d = make Date_struct.t in
   setf d Date_struct.year (Int32.of_int year);
-  setf d Date_struct.month (Unsigned.UInt8.of_int month);
-  setf d Date_struct.day (Unsigned.UInt8.of_int day);
+  setf d Date_struct.month (u8 month);
+  setf d Date_struct.day (u8 day);
   d
 ;;
 
-let make_time { hour; minute; second; nanosecond } =
+let make_time ({ hour; minute; second; nanosecond } : T.Time.t) =
   let t = make Time_struct.t in
-  setf t Time_struct.hour (Unsigned.UInt8.of_int hour);
-  setf t Time_struct.minute (Unsigned.UInt8.of_int minute);
-  setf t Time_struct.second (Unsigned.UInt8.of_int second);
-  setf t Time_struct.nanosecond (Unsigned.UInt32.of_int nanosecond);
+  setf t Time_struct.hour (u8 hour);
+  setf t Time_struct.minute (u8 minute);
+  setf t Time_struct.second (u8 second);
+  setf t Time_struct.nanosecond (u32 nanosecond);
   t
 ;;
 
-let make_datetime (date, time) =
+let make_datetime ({ date; time } : T.Datetime.t) =
   let dt = make Datetime_struct.t in
   setf dt Datetime_struct.date (make_date date);
   setf dt Datetime_struct.time (make_time time);
   dt
 ;;
 
-let read_date d =
+let make_timestamp ({ second; nanosecond } : T.Instant.t) =
+  let t = make Timestamp_struct.t in
+  setf t Timestamp_struct.second (Int64.of_int second);
+  setf t Timestamp_struct.nanosecond (u32 nanosecond);
+  t
+;;
+
+let make_duration ({ seconds; nanoseconds } : T.Duration.t) =
+  let d = make Duration_struct.t in
+  setf d Duration_struct.seconds (Int64.of_int seconds);
+  setf d Duration_struct.nanoseconds (Int32.of_int nanoseconds);
+  d
+;;
+
+let make_offset ({ seconds; known } : T.Offset.t) =
+  let o = make Offset_struct.t in
+  setf o Offset_struct.seconds (Int32.of_int seconds);
+  setf o Offset_struct.known known;
+  o
+;;
+
+let make_span (s : T.Span.t) =
+  let span = make Span_struct.t in
+  List.iter2
+    (fun field value -> setf span field (Int64.of_int value))
+    Span_struct.units
+    [ s.years
+    ; s.months
+    ; s.weeks
+    ; s.days
+    ; s.hours
+    ; s.minutes
+    ; s.seconds
+    ; s.milliseconds
+    ; s.microseconds
+    ; s.nanoseconds
+    ];
+  span
+;;
+
+let make_zoned (z : T.Zoned.t) =
+  let value = make Zoned_struct.t in
+  setf value Zoned_struct.civil (make_datetime z.civil);
+  setf value Zoned_struct.offset_seconds (Int32.of_int z.offset_seconds);
+  setf value Zoned_struct.offset_known z.offset_known;
+  setf value Zoned_struct.fold z.fold;
+  setf value Zoned_struct.kind (u32 z.kind);
+  setf value Zoned_struct.offset_before (Int32.of_int z.offset_before);
+  setf value Zoned_struct.offset_after (Int32.of_int z.offset_after);
+  setf value Zoned_struct.timestamp (make_timestamp z.timestamp);
+  value
+;;
+
+let read_date d : T.Date.t =
   { year = Int32.to_int (getf d Date_struct.year)
   ; month = Unsigned.UInt8.to_int (getf d Date_struct.month)
   ; day = Unsigned.UInt8.to_int (getf d Date_struct.day)
   }
 ;;
 
-let read_time t =
+let read_time t : T.Time.t =
   { hour = Unsigned.UInt8.to_int (getf t Time_struct.hour)
   ; minute = Unsigned.UInt8.to_int (getf t Time_struct.minute)
   ; second = Unsigned.UInt8.to_int (getf t Time_struct.second)
@@ -1508,23 +2063,121 @@ let read_time t =
   }
 ;;
 
-let generate_date ctx tc ~min_value ~max_value =
+let read_datetime dt : T.Datetime.t =
+  { date = read_date (getf dt Datetime_struct.date)
+  ; time = read_time (getf dt Datetime_struct.time)
+  }
+;;
+
+let read_timestamp t : T.Instant.t =
+  { second = Int64.to_int (getf t Timestamp_struct.second)
+  ; nanosecond = Unsigned.UInt32.to_int (getf t Timestamp_struct.nanosecond)
+  }
+;;
+
+let read_duration d : T.Duration.t =
+  { seconds = Int64.to_int (getf d Duration_struct.seconds)
+  ; nanoseconds = Int32.to_int (getf d Duration_struct.nanoseconds)
+  }
+;;
+
+let read_span span : T.Span.t =
+  let get i = Int64.to_int (getf span (List.nth Span_struct.units i)) in
+  { years = get 0
+  ; months = get 1
+  ; weeks = get 2
+  ; days = get 3
+  ; hours = get 4
+  ; minutes = get 5
+  ; seconds = get 6
+  ; milliseconds = get 7
+  ; microseconds = get 8
+  ; nanoseconds = get 9
+  }
+;;
+
+let read_zoned value : T.Zoned.t =
+  { civil = read_datetime (getf value Zoned_struct.civil)
+  ; offset_seconds = Int32.to_int (getf value Zoned_struct.offset_seconds)
+  ; offset_known = getf value Zoned_struct.offset_known
+  ; fold = getf value Zoned_struct.fold
+  ; kind = Unsigned.UInt32.to_int (getf value Zoned_struct.kind)
+  ; offset_before = Int32.to_int (getf value Zoned_struct.offset_before)
+  ; offset_after = Int32.to_int (getf value Zoned_struct.offset_after)
+  ; timestamp = read_timestamp (getf value Zoned_struct.timestamp)
+  }
+;;
+
+let new_handle ctx create =
+  let out = allocate handle_t null_handle in
+  check_rc ctx (create ctx out);
+  !@out
+;;
+
+let owned_string ctx call =
+  let result = make Str.t in
+  check_rc ctx (call (addr result));
+  let text = string_of_str result in
+  ignore (c_owned_string_free ctx (addr result) : int);
+  text
+;;
+
+let with_names names f =
+  let strings = List.map str_of_string names in
+  let array = CArray.of_list Str.t strings in
+  let result = f (CArray.start array) (Unsigned.Size_t.of_int (List.length names)) in
+  ignore (Sys.opaque_identity (strings, array) : _ * _);
+  result
+;;
+
+let free_when_unreachable free value = Gc.finalise free value
+
+type date_options = handle
+type span_spec = handle
+type timezone_spec = handle
+type zoned_spec = handle
+type zone_source = handle
+
+let date_options_new ctx = new_handle ctx c_date_options_new
+let date_options_free options = ignore (c_date_options_free null_handle options : int)
+
+let date_options_set_weekdays ctx options mask =
+  check_rc ctx (c_date_options_set_weekdays ctx options (u32 mask))
+;;
+
+let date_options_set_months ctx options mask =
+  check_rc ctx (c_date_options_set_months ctx options (u32 mask))
+;;
+
+let generate_date ctx tc ~min_value ~max_value options =
   let result = make Date_struct.t in
   check_rc
     ctx
-    (c_generate_date ctx tc (make_date min_value) (make_date max_value) (addr result));
+    (c_generate_date
+       ctx
+       tc
+       (make_date min_value)
+       (make_date max_value)
+       options
+       (addr result));
   read_date result
 ;;
 
-let generate_time ctx tc ~min_value ~max_value =
+let generate_time ctx tc ~min_value ~max_value ~precision =
   let result = make Time_struct.t in
   check_rc
     ctx
-    (c_generate_time ctx tc (make_time min_value) (make_time max_value) (addr result));
+    (c_generate_time
+       ctx
+       tc
+       (make_time min_value)
+       (make_time max_value)
+       (u32 precision)
+       (addr result));
   read_time result
 ;;
 
-let generate_datetime ctx tc ~min_value ~max_value =
+let generate_datetime ctx tc ~min_value ~max_value ~precision =
   let result = make Datetime_struct.t in
   check_rc
     ctx
@@ -1533,9 +2186,405 @@ let generate_datetime ctx tc ~min_value ~max_value =
        tc
        (make_datetime min_value)
        (make_datetime max_value)
+       (u32 precision)
        (addr result));
-  ( read_date (getf result Datetime_struct.date)
-  , read_time (getf result Datetime_struct.time) )
+  read_datetime result
+;;
+
+let generate_timestamp ctx tc ~min_value ~max_value ~precision =
+  let result = make Timestamp_struct.t in
+  check_rc
+    ctx
+    (c_generate_timestamp
+       ctx
+       tc
+       (make_timestamp min_value)
+       (make_timestamp max_value)
+       (u32 precision)
+       (addr result));
+  read_timestamp result
+;;
+
+let generate_offset ctx tc ~min_value ~max_value ~granularity ~allow_unknown : T.Offset.t =
+  let result = make Offset_struct.t in
+  check_rc
+    ctx
+    (c_generate_offset
+       ctx
+       tc
+       (Int32.of_int min_value)
+       (Int32.of_int max_value)
+       (u32 granularity)
+       allow_unknown
+       (addr result));
+  { seconds = Int32.to_int (getf result Offset_struct.seconds)
+  ; known = getf result Offset_struct.known
+  }
+;;
+
+let generate_duration ctx tc ~min_value ~max_value ~precision =
+  let result = make Duration_struct.t in
+  check_rc
+    ctx
+    (c_generate_duration
+       ctx
+       tc
+       (make_duration min_value)
+       (make_duration max_value)
+       (u32 precision)
+       (addr result));
+  read_duration result
+;;
+
+let span_spec_new ctx = new_handle ctx c_span_spec_new
+let span_spec_free spec = ignore (c_span_spec_free null_handle spec : int)
+
+let span_spec_set_unit_bounds ctx spec ~unit ~min_value ~max_value =
+  check_rc
+    ctx
+    (c_span_spec_set_unit_bounds
+       ctx
+       spec
+       (u32 unit)
+       (Int64.of_int min_value)
+       (Int64.of_int max_value))
+;;
+
+let span_spec_set_sign ctx spec sign = check_rc ctx (c_span_spec_set_sign ctx spec (u32 sign))
+let span_spec_validate ctx spec = check_rc ctx (c_span_spec_validate ctx spec)
+
+let generate_span ctx tc spec =
+  let result = make Span_struct.t in
+  check_rc ctx (c_generate_span ctx tc spec (addr result));
+  read_span result
+;;
+
+let format_date ctx value = owned_string ctx (c_format_date ctx (make_date value))
+let format_time ctx value = owned_string ctx (c_format_time ctx (make_time value))
+
+let format_datetime ctx value =
+  owned_string ctx (c_format_datetime ctx (make_datetime value))
+;;
+
+let format_timestamp ctx value =
+  owned_string ctx (c_format_timestamp ctx (make_timestamp value))
+;;
+
+let format_offset ctx value = owned_string ctx (c_format_offset ctx (make_offset value))
+
+let format_duration ctx value =
+  owned_string ctx (c_format_duration ctx (make_duration value))
+;;
+
+let format_span ctx value =
+  let span = make_span value in
+  owned_string ctx (c_format_span ctx (addr span))
+;;
+
+let format_zoned_datetime ctx value zone =
+  let zoned = make_zoned value in
+  owned_string ctx (c_format_zoned_datetime ctx (addr zoned) zone)
+;;
+
+let tzdb_version ctx =
+  let out = allocate str "" in
+  check_rc ctx (c_tzdb_version ctx out);
+  !@out
+;;
+
+let zone_source_bundled =
+  memoize (fun () ->
+    let ctx = context_new () in
+    Fun.protect
+      ~finally:(fun () -> context_free ctx)
+      (fun () -> new_handle ctx c_zone_source_bundled))
+;;
+
+let zone_source_new ctx = new_handle ctx c_zone_source_new
+
+let timezone_resolve ctx source name civil : T.Resolution.t =
+  let result = make Resolution_struct.t in
+  check_rc ctx (c_timezone_resolve_in ctx source name (make_datetime civil) (addr result));
+  { kind = Unsigned.UInt32.to_int (getf result Resolution_struct.kind)
+  ; offset_before = Int32.to_int (getf result Resolution_struct.offset_before)
+  ; offset_after = Int32.to_int (getf result Resolution_struct.offset_after)
+  ; offset_seconds = Int32.to_int (getf result Resolution_struct.offset_seconds)
+  ; offset_known = getf result Resolution_struct.offset_known
+  ; timestamp = read_timestamp (getf result Resolution_struct.timestamp)
+  }
+;;
+
+let timezone_offset_at ctx source name instant : T.Zone_offset.t =
+  let result = make Zone_offset_struct.t in
+  check_rc
+    ctx
+    (c_timezone_offset_at_in ctx source name (make_timestamp instant) (addr result));
+  { offset_seconds = Int32.to_int (getf result Zone_offset_struct.offset_seconds)
+  ; offset_known = getf result Zone_offset_struct.offset_known
+  ; is_dst = getf result Zone_offset_struct.is_dst
+  ; abbreviation = string_of_str (getf result Zone_offset_struct.abbreviation)
+  }
+;;
+
+let timezone_info ctx source name : T.Zone_info.t =
+  let result = make Zone_info_struct.t in
+  check_rc ctx (c_timezone_info_in ctx source name (addr result));
+  { known = getf result Zone_info_struct.known
+  ; primary_name = string_of_str (getf result Zone_info_struct.primary_name)
+  ; is_link = getf result Zone_info_struct.is_link
+  ; rank = Unsigned.UInt16.to_int (getf result Zone_info_struct.rank)
+  ; tags = Unsigned.UInt32.to_int (getf result Zone_info_struct.tags)
+  }
+;;
+
+let context_set_error ctx message = ignore (c_context_set_error ctx message : int)
+
+let set_zone_type target ({ offset_seconds; is_dst; abbreviation } : T.Zone_type.t) =
+  let abbreviation = str_of_string abbreviation in
+  setf target Zone_type_struct.utoff (Int32.of_int offset_seconds);
+  setf target Zone_type_struct.is_dst is_dst;
+  setf target Zone_type_struct.abbreviation abbreviation;
+  abbreviation
+;;
+
+let set_rule_date target ({ kind; day; month; week; weekday; time } : T.Rule_date.t) =
+  setf target Rule_date_struct.kind (u32 kind);
+  setf target Rule_date_struct.day (u16 day);
+  setf target Rule_date_struct.month (u8 month);
+  setf target Rule_date_struct.week (u8 week);
+  setf target Rule_date_struct.weekday (u8 weekday);
+  setf target Rule_date_struct.time (Int32.of_int time)
+;;
+
+let zone_source_add_tzif ctx source name bytes =
+  let buffer = str_of_string bytes in
+  check_rc
+    ctx
+    (c_zone_source_add_tzif
+       ctx
+       source
+       name
+       (getf buffer Str.data)
+       (getf buffer Str.len));
+  ignore (Sys.opaque_identity buffer : Str.s structure)
+;;
+
+let zone_source_add_zone ctx source name (zone : T.Zone_data.t) =
+  let data = make Zone_data_struct.t in
+  let count = List.length zone.transitions in
+  let array = CArray.make Zone_transition_struct.t (max count 1) in
+  let kept = ref [] in
+  let set_type target local_type = kept := set_zone_type target local_type :: !kept in
+  set_type (getf data Zone_data_struct.initial) zone.initial;
+  List.iteri
+    (fun i ({ instant; local_type } : T.Zone_transition.t) ->
+       let slot = CArray.get array i in
+       setf slot Zone_transition_struct.instant (Int64.of_int instant);
+       set_type (getf slot Zone_transition_struct.local_type) local_type)
+    zone.transitions;
+  setf data Zone_data_struct.transitions (CArray.start array);
+  setf data Zone_data_struct.transition_count (Unsigned.Size_t.of_int count);
+  setf data Zone_data_struct.after (u32 zone.after);
+  set_type (getf data Zone_data_struct.standard) zone.standard;
+  setf data Zone_data_struct.has_dst zone.has_dst;
+  set_type (getf data Zone_data_struct.dst) zone.dst;
+  set_rule_date (getf data Zone_data_struct.dst_start) zone.dst_start;
+  set_rule_date (getf data Zone_data_struct.dst_end) zone.dst_end;
+  setf data Zone_data_struct.last_year (Int32.of_int zone.last_year);
+  check_rc ctx (c_zone_source_add_zone ctx source name (addr data));
+  ignore (Sys.opaque_identity (array, !kept) : _ * _)
+;;
+
+let callback_failed = 1l
+
+let zone_source_add_oracle
+      ctx
+      source
+      name
+      ~offset_at
+      ~next_transition
+      ~first_year
+      ~last_year
+      ~after
+  =
+  let abbreviation = ref (str_of_string "") in
+  let offset_callback _ callback_ctx instant out =
+    match offset_at callback_ctx (Int64.to_int instant) with
+    | None -> callback_failed
+    | Some local_type ->
+      abbreviation := set_zone_type !@out local_type;
+      0l
+  in
+  let next_callback =
+    Option.map
+      (fun next _ callback_ctx after found out ->
+         match next callback_ctx (Int64.to_int after) with
+         | None -> callback_failed
+         | Some None ->
+           found <-@ false;
+           0l
+         | Some (Some instant) ->
+           found <-@ true;
+           out <-@ Int64.of_int instant;
+           0l)
+      next_transition
+  in
+  let oracle = make Zone_oracle_struct.t in
+  setf oracle Zone_oracle_struct.offset_at offset_callback;
+  setf oracle Zone_oracle_struct.next_transition next_callback;
+  setf oracle Zone_oracle_struct.user_data null;
+  setf oracle Zone_oracle_struct.first_year (Int32.of_int first_year);
+  setf oracle Zone_oracle_struct.last_year (Int32.of_int last_year);
+  setf oracle Zone_oracle_struct.after (u32 after);
+  check_rc ctx (c_zone_source_add_oracle ctx source name (addr oracle));
+  ignore (Sys.opaque_identity (offset_callback, next_callback, abbreviation) : _ * _ * _)
+;;
+
+let zone_source_add_link ctx source name target =
+  check_rc ctx (c_zone_source_add_link ctx source name target)
+;;
+
+let zone_source_declare ctx source names =
+  with_names names (fun names count ->
+    check_rc ctx (c_zone_source_declare ctx source names count))
+;;
+
+(* A loader is rooted here under the key that is its [user_data], from
+   [hegel_zone_source_set_loader] until the engine calls the release hook. *)
+let loaders : (nativeint, context -> string -> bool) Hashtbl.t = Hashtbl.create 4
+let loaders_lock = Mutex.create ()
+let last_loader = ref 0n
+
+let loader_trampoline =
+  memoize (fun () ->
+    Loader_fn.of_fun (fun user_data callback_ctx _ name ->
+      let load =
+        Mutex.protect loaders_lock (fun () ->
+          Hashtbl.find_opt loaders (raw_address_of_ptr user_data))
+      in
+      match load with
+      | Some load when load callback_ctx (string_of_str name) -> 0l
+      | Some _ | None -> callback_failed))
+;;
+
+let loader_release_trampoline =
+  memoize (fun () ->
+    Loader_release_fn.of_fun (fun user_data ->
+      Mutex.protect loaders_lock (fun () ->
+        Hashtbl.remove loaders (raw_address_of_ptr user_data))))
+;;
+
+let zone_source_set_loader ctx source load =
+  match load with
+  | None -> check_rc ctx (c_zone_source_set_loader ctx source None null None)
+  | Some load ->
+    let key =
+      Mutex.protect loaders_lock (fun () ->
+        last_loader := Nativeint.succ !last_loader;
+        Hashtbl.replace loaders !last_loader load;
+        !last_loader)
+    in
+    check_rc
+      ctx
+      (c_zone_source_set_loader
+         ctx
+         source
+         (Some (loader_trampoline ()))
+         (ptr_of_raw_address key)
+         (Some (loader_release_trampoline ())))
+;;
+
+let zone_source_set_version ctx source version =
+  check_rc ctx (c_zone_source_set_version ctx source version)
+;;
+
+let zone_source_version ctx source =
+  let out = allocate str "" in
+  check_rc ctx (c_zone_source_version ctx source out);
+  !@out
+;;
+
+let set_default_zone_source ctx source = check_rc ctx (c_set_default_zone_source ctx source)
+let timezone_spec_new ctx = new_handle ctx c_timezone_spec_new
+let timezone_spec_free spec = ignore (c_timezone_spec_free null_handle spec : int)
+
+let timezone_spec_set_names ctx spec names =
+  with_names names (fun names count ->
+    check_rc ctx (c_timezone_spec_set_names ctx spec names count))
+;;
+
+let timezone_spec_set_links ctx spec allow =
+  check_rc ctx (c_timezone_spec_set_links ctx spec allow)
+;;
+
+let timezone_spec_set_legacy ctx spec allow =
+  check_rc ctx (c_timezone_spec_set_legacy ctx spec allow)
+;;
+
+let timezone_spec_set_unknown ctx spec allow =
+  check_rc ctx (c_timezone_spec_set_unknown ctx spec allow)
+;;
+
+let timezone_spec_set_opaque ctx spec allow =
+  check_rc ctx (c_timezone_spec_set_opaque ctx spec allow)
+;;
+
+let timezone_spec_set_source ctx spec source =
+  check_rc ctx (c_timezone_spec_set_source ctx spec source)
+;;
+
+let timezone_spec_validate ctx spec = check_rc ctx (c_timezone_spec_validate ctx spec)
+let generate_timezone ctx tc spec = owned_string ctx (c_generate_timezone ctx tc spec)
+let zoned_spec_new ctx = new_handle ctx c_zoned_spec_new
+let zoned_spec_free spec = ignore (c_zoned_spec_free null_handle spec : int)
+
+let zoned_spec_set_civil_bounds ctx spec ~min_value ~max_value =
+  check_rc
+    ctx
+    (c_zoned_spec_set_civil_bounds
+       ctx
+       spec
+       (make_datetime min_value)
+       (make_datetime max_value))
+;;
+
+let zoned_spec_set_instant_bounds ctx spec ~min_value ~max_value =
+  check_rc
+    ctx
+    (c_zoned_spec_set_instant_bounds
+       ctx
+       spec
+       (make_timestamp min_value)
+       (make_timestamp max_value))
+;;
+
+let zoned_spec_set_precision ctx spec precision =
+  check_rc ctx (c_zoned_spec_set_precision ctx spec (u32 precision))
+;;
+
+let zoned_spec_set_imaginary ctx spec imaginary =
+  check_rc ctx (c_zoned_spec_set_imaginary ctx spec (u32 imaginary))
+;;
+
+let zoned_spec_set_ambiguous ctx spec ambiguous =
+  check_rc ctx (c_zoned_spec_set_ambiguous ctx spec (u32 ambiguous))
+;;
+
+let zoned_spec_validate ctx spec = check_rc ctx (c_zoned_spec_validate ctx spec)
+
+let generate_zoned_datetime ctx tc zones spec =
+  let value = make Zoned_struct.t in
+  let name = make Str.t in
+  check_rc ctx (c_generate_zoned_datetime ctx tc zones spec (addr value) (addr name));
+  let zone = string_of_str name in
+  ignore (c_owned_string_free ctx (addr name) : int);
+  read_zoned value, zone
+;;
+
+let generate_zoned_datetime_for_zone ctx tc source name spec =
+  let value = make Zoned_struct.t in
+  check_rc ctx (c_generate_zoned_datetime_for_zone ctx tc source name spec (addr value));
+  read_zoned value
 ;;
 
 let generate_ip_bytes ctx tc c_fn n =
@@ -1928,6 +2977,64 @@ let generate_string = Obj.magic_portable generate_string
 let generate_date = Obj.magic_portable generate_date
 let generate_time = Obj.magic_portable generate_time
 let generate_datetime = Obj.magic_portable generate_datetime
+let generate_timestamp = Obj.magic_portable generate_timestamp
+let generate_offset = Obj.magic_portable generate_offset
+let generate_duration = Obj.magic_portable generate_duration
+let generate_span = Obj.magic_portable generate_span
+let date_options_new = Obj.magic_portable date_options_new
+let date_options_free = Obj.magic_portable date_options_free
+let date_options_set_weekdays = Obj.magic_portable date_options_set_weekdays
+let date_options_set_months = Obj.magic_portable date_options_set_months
+let span_spec_new = Obj.magic_portable span_spec_new
+let span_spec_free = Obj.magic_portable span_spec_free
+let span_spec_set_unit_bounds = Obj.magic_portable span_spec_set_unit_bounds
+let span_spec_set_sign = Obj.magic_portable span_spec_set_sign
+let span_spec_validate = Obj.magic_portable span_spec_validate
+let format_date = Obj.magic_portable format_date
+let format_time = Obj.magic_portable format_time
+let format_datetime = Obj.magic_portable format_datetime
+let format_timestamp = Obj.magic_portable format_timestamp
+let format_offset = Obj.magic_portable format_offset
+let format_duration = Obj.magic_portable format_duration
+let format_span = Obj.magic_portable format_span
+let format_zoned_datetime = Obj.magic_portable format_zoned_datetime
+let tzdb_version = Obj.magic_portable tzdb_version
+let zone_source_bundled = Obj.magic_portable zone_source_bundled
+let zone_source_new = Obj.magic_portable zone_source_new
+let timezone_resolve = Obj.magic_portable timezone_resolve
+let timezone_offset_at = Obj.magic_portable timezone_offset_at
+let timezone_info = Obj.magic_portable timezone_info
+let context_set_error = Obj.magic_portable context_set_error
+let zone_source_add_tzif = Obj.magic_portable zone_source_add_tzif
+let zone_source_add_zone = Obj.magic_portable zone_source_add_zone
+let zone_source_add_oracle = Obj.magic_portable zone_source_add_oracle
+let zone_source_add_link = Obj.magic_portable zone_source_add_link
+let zone_source_declare = Obj.magic_portable zone_source_declare
+let zone_source_set_loader = Obj.magic_portable zone_source_set_loader
+let zone_source_set_version = Obj.magic_portable zone_source_set_version
+let zone_source_version = Obj.magic_portable zone_source_version
+let set_default_zone_source = Obj.magic_portable set_default_zone_source
+let timezone_spec_new = Obj.magic_portable timezone_spec_new
+let timezone_spec_free = Obj.magic_portable timezone_spec_free
+let timezone_spec_set_names = Obj.magic_portable timezone_spec_set_names
+let timezone_spec_set_links = Obj.magic_portable timezone_spec_set_links
+let timezone_spec_set_legacy = Obj.magic_portable timezone_spec_set_legacy
+let timezone_spec_set_unknown = Obj.magic_portable timezone_spec_set_unknown
+let timezone_spec_set_opaque = Obj.magic_portable timezone_spec_set_opaque
+let timezone_spec_set_source = Obj.magic_portable timezone_spec_set_source
+let timezone_spec_validate = Obj.magic_portable timezone_spec_validate
+let generate_timezone = Obj.magic_portable generate_timezone
+let zoned_spec_new = Obj.magic_portable zoned_spec_new
+let zoned_spec_free = Obj.magic_portable zoned_spec_free
+let zoned_spec_set_civil_bounds = Obj.magic_portable zoned_spec_set_civil_bounds
+let zoned_spec_set_instant_bounds = Obj.magic_portable zoned_spec_set_instant_bounds
+let zoned_spec_set_precision = Obj.magic_portable zoned_spec_set_precision
+let zoned_spec_set_imaginary = Obj.magic_portable zoned_spec_set_imaginary
+let zoned_spec_set_ambiguous = Obj.magic_portable zoned_spec_set_ambiguous
+let zoned_spec_validate = Obj.magic_portable zoned_spec_validate
+let generate_zoned_datetime = Obj.magic_portable generate_zoned_datetime
+let generate_zoned_datetime_for_zone = Obj.magic_portable generate_zoned_datetime_for_zone
+let free_when_unreachable = Obj.magic_portable free_when_unreachable
 let generate_ipv4 = Obj.magic_portable generate_ipv4
 let generate_ipv6 = Obj.magic_portable generate_ipv6
 let start_span = Obj.magic_portable start_span

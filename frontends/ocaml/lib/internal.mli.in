@@ -130,36 +130,16 @@ val generate_url : test_case -> string
 (** [generate_domain tc ~max_length] draws an RFC 1035 domain name. *)
 val generate_domain : test_case -> max_length:int -> string
 
-(** A proleptic Gregorian calendar date, as drawn by {!generate_date}. *)
-type date = Hegel_ffi.Ffi.date =
-  { year : int
-  ; month : int
-  ; day : int
-  }
-
-(** A time of day at nanosecond resolution, as drawn by {!generate_time}. *)
-type time = Hegel_ffi.Ffi.time =
-  { hour : int
-  ; minute : int
-  ; second : int
-  ; nanosecond : int
-  }
-
-(** [generate_date tc ~min_value ~max_value] draws a Gregorian date in the
-    inclusive range. *)
-val generate_date : test_case -> min_value:date -> max_value:date -> date
-
-(** [generate_time tc ~min_value ~max_value] draws a time in the inclusive
-    range. *)
-val generate_time : test_case -> min_value:time -> max_value:time -> time
-
-(** [generate_datetime tc ~min_value ~max_value] draws a naive datetime in the
-    inclusive range as a [(date, time)] pair. *)
-val generate_datetime
+(** [with_draw tc f] runs the engine draw [f ctx handle] on [tc]'s context and
+    native handle, marking the test case aborted when the draw stops it. *)
+val with_draw
   :  test_case
-  -> min_value:date * time
-  -> max_value:date * time
-  -> date * time
+  -> (Hegel_ffi.Ffi.context -> Hegel_ffi.Ffi.test_case -> 'a)
+  -> 'a
+
+(** [with_context f] runs [f] on a fresh engine context, freed when [f]
+    returns or raises: for calls made outside a test case. *)
+val with_context : (Hegel_ffi.Ffi.context -> 'a) -> 'a
 
 (** [generate_ipv4 tc] draws an IPv4 address as its 4 network-order bytes. *)
 val generate_ipv4 : test_case -> string
@@ -219,9 +199,16 @@ val draw_display_name : test_case -> label:string -> repeatable:bool -> string
     search engine toward higher values. *)
 val target : test_case -> label:string -> value:float -> unit
 
+(** [raw_text text] is the atom [Sexplib0.Sexp.Atom text], marked so that
+    {!render_sexp} prints [text] verbatim rather than in s-expression syntax
+    (no quotes or escapes). The mark is the atom's physical identity, so it
+    survives being embedded in a larger sexp; anything else sees an ordinary
+    atom. *)
+val raw_text : string -> Sexplib0.Sexp.t
+
 (** [render_sexp ctx printer sexp] writes [sexp] to [printer] in s-expression
-    syntax. Lists are printed with breaks between elements when the line
-    overflows. *)
+    syntax, an atom from {!raw_text} verbatim. Lists are printed with breaks
+    between elements when the line overflows. *)
 val render_sexp
   :  Hegel_ffi.Ffi.context
   -> Hegel_ffi.Ffi.printer

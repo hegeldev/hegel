@@ -63,7 +63,7 @@ TEST(Labels, GeneratorsOfYourOwnUseTheirTypeName) {
     uint64_t label = Custom().label();
     EXPECT_EQ(label, fnv1a(typeid(Custom).name()));
     EXPECT_EQ(Custom().label(), label);
-    EXPECT_NE(gs::dates().label(), label);
+    EXPECT_NE(gs::temporal::dates().label(), label);
 }
 
 TEST(Labels, LeafGeneratorsUseTheirName) {
@@ -86,6 +86,20 @@ TEST(Labels, LeafGeneratorsUseTheirName) {
     EXPECT_EQ(gs::ip_addresses({.v = 6}).label(),
               hi::label(hi::LabelName::IpAddressesV6));
     EXPECT_EQ(gs::uuids().label(), hi::label(hi::LabelName::Uuids));
+    EXPECT_EQ(gs::temporal::dates().label(), hi::label(hi::LabelName::Dates));
+    EXPECT_EQ(gs::temporal::times().label(), hi::label(hi::LabelName::Times));
+    EXPECT_EQ(gs::temporal::datetimes().label(),
+              hi::label(hi::LabelName::Datetimes));
+    EXPECT_EQ(gs::temporal::instants().label(),
+              hi::label(hi::LabelName::Instants));
+    EXPECT_EQ(gs::temporal::offsets().label(),
+              hi::label(hi::LabelName::Offsets));
+    EXPECT_EQ(gs::temporal::zones().label(), hi::label(hi::LabelName::Zones));
+    EXPECT_EQ(gs::temporal::durations().label(),
+              hi::label(hi::LabelName::Durations));
+    EXPECT_EQ(gs::temporal::spans().label(), hi::label(hi::LabelName::Spans));
+    EXPECT_EQ(gs::temporal::zoned_datetimes().label(),
+              hi::label(hi::LabelName::ZonedDatetimes));
     EXPECT_EQ(gs::deferred<int>().generator().label(),
               hi::label(hi::LabelName::Deferred));
     EXPECT_EQ(gs::compose([](const hegel::TestCase&) { return 0; }).label(),
@@ -125,6 +139,9 @@ TEST(Labels, CompoundGeneratorsCombineTheirComponents) {
                       [](gs::Generator<int> subtrees) { return subtrees; })
             .label(),
         combined(hi::LabelName::Recursive, {ints}));
+    auto utc = gs::just(gs::temporal::TimeZone{"UTC", "UTC"});
+    EXPECT_EQ(gs::temporal::zoned_datetimes({.zones = utc}).label(),
+              combined(hi::LabelName::ZonedDatetimes, {utc.label()}));
     EXPECT_EQ(gs::permutations({1, 2}).label(),
               hi::label(hi::LabelName::Permutation));
     EXPECT_EQ(gs::subsequences({1, 2}).label(),

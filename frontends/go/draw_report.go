@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 )
 
 var drawReportSource = newSourceCache()
@@ -131,9 +132,16 @@ func formatDrawReport(skip int, value any) string {
 
 func formatDrawLine(stmt string, value any) string {
 	if stmt == "" {
-		stmt = fmt.Sprintf("hegel.Draw[%T](...) = %#v", value, value)
-	} else {
-		stmt = fmt.Sprintf("%s = %#v", stmt, value)
+		stmt = fmt.Sprintf("hegel.Draw[%T](...)", value)
 	}
-	return stmt
+	return fmt.Sprintf("%s = %s", stmt, formatDrawValue(value))
+}
+
+// formatDrawValue prints a drawn value as Go syntax. A location prints as it
+// does inside a time.Time, since its %#v form is a dump of its transitions.
+func formatDrawValue(value any) string {
+	if loc, ok := value.(*time.Location); ok && loc != nil {
+		return fmt.Sprintf("time.Location(%q)", loc.String())
+	}
+	return fmt.Sprintf("%#v", value)
 }

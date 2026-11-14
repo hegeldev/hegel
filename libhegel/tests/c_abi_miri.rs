@@ -34,6 +34,19 @@ use hegel_c::{
     hegel_state_machine_free, hegel_state_machine_start, hegel_status_t, hegel_stop_span,
     hegel_test_case_clone, hegel_test_case_free, hegel_verbosity_t,
 };
+use hegel_c::{
+    HegelZoneSource, hegel_date_options_free, hegel_date_options_new,
+    hegel_date_options_set_weekdays, hegel_format_zoned_datetime,
+    hegel_generate_zoned_datetime_for_zone, hegel_owned_string_free, hegel_owned_string_t,
+    hegel_precision_t, hegel_span_spec_free, hegel_span_spec_new, hegel_span_spec_set_unit_bounds,
+    hegel_span_spec_validate, hegel_string_t, hegel_timezone_kind_t, hegel_timezone_spec_free,
+    hegel_timezone_spec_new, hegel_timezone_spec_set_source, hegel_zone_after_t, hegel_zone_data_t,
+    hegel_zone_rule_date_t, hegel_zone_source_add_link, hegel_zone_source_add_zone,
+    hegel_zone_source_declare, hegel_zone_source_free, hegel_zone_source_new,
+    hegel_zone_source_set_loader, hegel_zone_transition_t, hegel_zone_type_t,
+    hegel_zoned_datetime_t, hegel_zoned_spec_free, hegel_zoned_spec_new,
+    hegel_zoned_spec_set_civil_bounds, hegel_zoned_spec_set_precision, hegel_zoned_spec_validate,
+};
 use std::ffi::{CString, c_void};
 use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -290,6 +303,210 @@ fn object_handles_outlive_the_run_and_free_in_any_order() {
         ok(hegel_collection_free(ctx, collection));
         ok(hegel_repeat_free(ctx, repeat));
         ok(hegel_pool_free(ctx, pool));
+        ok(hegel_context_free(ctx));
+    }
+}
+
+fn view(text: &'static str) -> hegel_string_t {
+    hegel_string_t {
+        data: text.as_ptr().cast(),
+        len: text.len(),
+    }
+}
+
+/// What the lazy zone's loader keeps alive: freed by the release hook, so
+/// that Miri reports a release that never runs as a leak and one that runs
+/// twice as a double free.
+struct LoaderData {
+    calls: AtomicUsize,
+}
+
+unsafe extern "C" fn link_loader(
+    user_data: *mut c_void,
+    ctx: *mut HegelContext,
+    source: *mut HegelZoneSource,
+    name: hegel_string_t,
+) -> i32 {
+    let data = unsafe { &*user_data.cast::<LoaderData>() };
+    data.calls.fetch_add(1, Ordering::SeqCst);
+    unsafe { hegel_zone_source_add_link(ctx, source, name, view("Test/Step")) as i32 }
+}
+
+unsafe extern "C" fn free_loader_data(user_data: *mut c_void) {
+    drop(unsafe { Box::from_raw(user_data.cast::<LoaderData>()) });
+}
+
+/// The temporal handles (a zone source with a loader and its release hook,
+/// a time zone spec, a zoned spec, a span spec and date options) are built,
+/// drawn from and freed with the source's own handle released before the
+/// spec that uses it, so the spec is what keeps the source and its loader
+/// alive last. The zones are drawn by name, since a draw from a time zone
+/// spec reads the bundled catalogue, and inflating and parsing that is
+/// more than Miri's interpreter can do in a test.
+#[test]
+fn temporal_handles_keep_their_source_alive_and_release_its_loader() {
+    unsafe {
+        let (ctx, s, run, tc) = one_case_run();
+
+        let zone_type = |utoff: i32, abbreviation: &'static str| hegel_zone_type_t {
+            utoff,
+            is_dst: false,
+            abbreviation: view(abbreviation),
+        };
+        let no_rule = hegel_zone_rule_date_t {
+            kind: 0,
+            day: 0,
+            month: 0,
+            week: 0,
+            weekday: 0,
+            time: 0,
+        };
+        let transitions = [hegel_zone_transition_t {
+            instant: 1_000_000_000,
+            local_type: zone_type(3600, "BBB"),
+        }];
+        let data = hegel_zone_data_t {
+            initial: zone_type(0, "AAA"),
+            transitions: transitions.as_ptr(),
+            transition_count: transitions.len(),
+            after: hegel_zone_after_t::HEGEL_ZONE_AFTER_HOLD as u32,
+            standard: zone_type(0, "AAA"),
+            has_dst: false,
+            dst: zone_type(0, "AAA"),
+            dst_start: no_rule,
+            dst_end: no_rule,
+            last_year: 0,
+        };
+        let mut source: *mut HegelZoneSource = ptr::null_mut();
+        ok(hegel_zone_source_new(ctx, &mut source));
+        ok(hegel_zone_source_add_zone(
+            ctx,
+            source,
+            view("Test/Step"),
+            &data,
+        ));
+        let declared = [view("Test/Lazy")];
+        ok(hegel_zone_source_declare(ctx, source, declared.as_ptr(), 1));
+        let replaced = Box::into_raw(Box::new(LoaderData {
+            calls: AtomicUsize::new(0),
+        }));
+        ok(hegel_zone_source_set_loader(
+            ctx,
+            source,
+            Some(link_loader),
+            replaced.cast(),
+            Some(free_loader_data),
+        ));
+        let loader_data = Box::into_raw(Box::new(LoaderData {
+            calls: AtomicUsize::new(0),
+        }));
+        ok(hegel_zone_source_set_loader(
+            ctx,
+            source,
+            Some(link_loader),
+            loader_data.cast(),
+            Some(free_loader_data),
+        ));
+
+        let mut tz = ptr::null_mut();
+        ok(hegel_timezone_spec_new(ctx, &mut tz));
+        ok(hegel_timezone_spec_set_source(ctx, tz, source));
+        let mut zoned = ptr::null_mut();
+        ok(hegel_zoned_spec_new(ctx, &mut zoned));
+        ok(hegel_zoned_spec_set_precision(
+            ctx,
+            zoned,
+            hegel_precision_t::HEGEL_PRECISION_SECONDS as u32,
+        ));
+        let bound = |day: u8| hegel_c::hegel_datetime_t {
+            date: hegel_c::hegel_date_t {
+                year: 2001,
+                month: 9,
+                day,
+            },
+            time: hegel_c::hegel_time_t {
+                hour: 0,
+                minute: 0,
+                second: 0,
+                nanosecond: 0,
+            },
+        };
+        ok(hegel_zoned_spec_set_civil_bounds(
+            ctx,
+            zoned,
+            bound(8),
+            bound(10),
+        ));
+        ok(hegel_zoned_spec_validate(ctx, zoned));
+        let mut span = ptr::null_mut();
+        ok(hegel_span_spec_new(ctx, &mut span));
+        ok(hegel_span_spec_set_unit_bounds(ctx, span, 3, -2, 2));
+        ok(hegel_span_spec_validate(ctx, span));
+        let mut options = ptr::null_mut();
+        ok(hegel_date_options_new(ctx, &mut options));
+        ok(hegel_date_options_set_weekdays(ctx, options, 1));
+
+        let mut value = hegel_zoned_datetime_t {
+            civil: bound(1),
+            offset_seconds: 0,
+            offset_known: false,
+            fold: false,
+            kind: hegel_timezone_kind_t::HEGEL_TIMEZONE_KIND_UNIQUE,
+            offset_before: 0,
+            offset_after: 0,
+            timestamp: hegel_c::hegel_timestamp_t {
+                second: 0,
+                nanosecond: 0,
+            },
+        };
+        ok(hegel_generate_zoned_datetime_for_zone(
+            ctx,
+            tc,
+            source,
+            view("Test/Step"),
+            zoned,
+            &mut value,
+        ));
+        assert!(value.offset_known);
+        assert_eq!((*loader_data).calls.load(Ordering::SeqCst), 0);
+        ok(hegel_generate_zoned_datetime_for_zone(
+            ctx,
+            tc,
+            source,
+            view("Test/Lazy"),
+            zoned,
+            &mut value,
+        ));
+        assert_eq!((*loader_data).calls.load(Ordering::SeqCst), 1);
+        ok(hegel_zone_source_free(ctx, source));
+
+        let mut text = hegel_owned_string_t {
+            data: ptr::null(),
+            len: 0,
+        };
+        ok(hegel_format_zoned_datetime(
+            ctx,
+            &value,
+            view("Test/Lazy"),
+            &mut text,
+        ));
+        assert!(text.len > "Test/Lazy".len());
+        ok(hegel_owned_string_free(ctx, &mut text));
+
+        ok(hegel_mark_complete(
+            ctx,
+            tc,
+            hegel_status_t::HEGEL_STATUS_VALID as u32,
+            ptr::null(),
+        ));
+        ok(hegel_test_case_free(ctx, tc));
+        ok(hegel_run_free(ctx, run));
+        ok(hegel_settings_free(ctx, s));
+
+        ok(hegel_date_options_free(ctx, options));
+        ok(hegel_span_spec_free(ctx, span));
+        ok(hegel_zoned_spec_free(ctx, zoned));
+        ok(hegel_timezone_spec_free(ctx, tz));
         ok(hegel_context_free(ctx));
     }
 }

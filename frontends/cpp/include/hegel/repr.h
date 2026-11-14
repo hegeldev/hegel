@@ -1,9 +1,11 @@
 #pragma once
 
 #include "config.h"
+#include "generators/temporal_types.h"
 #include "printer.h"
 
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -115,6 +117,18 @@ namespace hegel::internal {
             static constexpr std::size_t size = N;
         };
 
+        // The date and time values print as their type around the engine's
+        // text in quotes, rather than field by field: the text alone, such
+        // as 2024-03-10, reads as arithmetic in a C++ expression.
+        template <typename T>
+        using is_temporal_value =
+            hegel::generators::temporal::detail::is_value<T>;
+
+        template <typename T> struct is_chrono_duration : std::false_type {};
+        template <typename Rep, typename Period>
+        struct is_chrono_duration<std::chrono::duration<Rep, Period>>
+            : std::true_type {};
+
         template <typename T, typename = void>
         struct prints_itself : std::false_type {};
         template <typename T>
@@ -212,6 +226,22 @@ namespace hegel::internal {
             out += buf;
         }
 
+        // `text` as a string literal. The bytes of a UTF-8 character
+        // outside ASCII stay as they are.
+        inline std::string quoted(const std::string& text) {
+            std::string out = "\"";
+            for (char c : text) {
+                auto byte = static_cast<unsigned char>(c);
+                if (byte >= 0x80) {
+                    out += c;
+                } else {
+                    append_escaped(out, byte, /*in_string=*/true);
+                }
+            }
+            out += "\"";
+            return out;
+        }
+
     } // namespace repr_detail
 
     // C++ source spelling of T, for use inside rendered expressions.
@@ -274,6 +304,23 @@ namespace hegel::internal {
             return "std::array<" +
                    cpp_type_name<typename traits::element_type>() + ", " +
                    std::to_string(traits::size) + ">";
+        } else if constexpr (std::is_same_v<T, std::chrono::nanoseconds>) {
+            return "std::chrono::nanoseconds";
+        } else if constexpr (std::is_same_v<T, std::chrono::microseconds>) {
+            return "std::chrono::microseconds";
+        } else if constexpr (std::is_same_v<T, std::chrono::milliseconds>) {
+            return "std::chrono::milliseconds";
+        } else if constexpr (std::is_same_v<T, std::chrono::seconds>) {
+            return "std::chrono::seconds";
+        } else if constexpr (std::is_same_v<T, std::chrono::minutes>) {
+            return "std::chrono::minutes";
+        } else if constexpr (std::is_same_v<T, std::chrono::hours>) {
+            return "std::chrono::hours";
+        } else if constexpr (repr_detail::is_chrono_duration<T>::value) {
+            using period = typename T::period;
+            return "std::chrono::duration<" + cpp_type_name<typename T::rep>() +
+                   ", std::ratio<" + std::to_string(period::num) + ", " +
+                   std::to_string(period::den) + ">>";
         } else {
             return std::string(compiler_type_name<T>());
         }
@@ -465,6 +512,13 @@ namespace hegel::internal {
                             print_value(p, entry.second);
                             p.end_block("}");
                         });
+        } else if constexpr (repr_detail::is_temporal_value<T>::value) {
+            printer.text(cpp_type_name<T>() + "{" +
+                         repr_detail::quoted(to_string(value)) + "}");
+        } else if constexpr (repr_detail::is_chrono_duration<T>::value) {
+            printer.text(cpp_type_name<T>() + "{");
+            print_value(printer, value.count());
+            printer.text("}");
         }
 #if HEGEL_HAS_REFLECTION
         else if constexpr (repr_detail::is_reflectable<T>::value) {
@@ -563,6 +617,12 @@ namespace hegel::internal {
             std::enable_if_t<!prints_itself<std::map<K, V>>::value>>
             : std::conjunction<is_representable<K>, is_representable<V>> {};
 
+        template <typename Rep, typename Period>
+        struct is_representable<std::chrono::duration<Rep, Period>,
+                                std::enable_if_t<!prints_itself<
+                                    std::chrono::duration<Rep, Period>>::value>>
+            : is_representable<Rep> {};
+
         template <typename T>
         inline constexpr bool is_std_compound_v =
             is_pair<T>::value || is_tuple<T>::value || is_variant<T>::value ||
@@ -573,6 +633,7 @@ namespace hegel::internal {
         struct is_representable<
             T, std::enable_if_t<!is_scalar_v<T> && !prints_itself<T>::value &&
                                 !is_std_compound_v<T> &&
+                                !is_chrono_duration<T>::value &&
                                 (has_ostream_operator<T>::value
 #if HEGEL_HAS_REFLECTION
                                  || is_reflectable<T>::value

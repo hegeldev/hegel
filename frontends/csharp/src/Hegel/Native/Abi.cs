@@ -76,4 +76,7 @@ internal static class Abi
     internal const int FilterAttempts = 3;
 
     internal const uint NoMaxCodepoint = 0xFFFFFFFF;
+
+    /// <summary><c>HEGEL_PRECISION_NANOSECONDS</c>: a time drawn to the nanosecond, the engine's finest.</summary>
+    internal const uint PrecisionNanoseconds = 0;
 }

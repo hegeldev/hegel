@@ -33,9 +33,15 @@ describe("WasmEngine malformed outputs and cleanup", () => {
     expect(() => engine.generateInteger(ctx, tc, 1n, 0n)).toThrow(EngineError);
     expect(() => engine.generateUuid(ctx, tc, 16 as UuidVersion)).toThrow("single hex nibble");
     const date = { year: 2024, month: 2, day: 29 };
-    expect(() => engine.generateDate(ctx, tc, { ...date, month: 256 }, date)).toThrow(
+    expect(() => engine.generateDate(ctx, tc, { ...date, month: 256 }, date, null)).toThrow(
       "temporal field",
     );
+    expect(() => engine.generateOffset(ctx, tc, 0.5, 1, 0, false)).toThrow("temporal field");
+    const span = engine.spanSpecNew(ctx);
+    expect(() => engine.spanSpecSetUnitBounds(ctx, span, 0, 0n, 1n << 63n)).toThrow(
+      "temporal field",
+    );
+    engine.freeSpanSpec(span);
     expect(() => engine.generateInteger(ctx, tc, -(1n << 64n), 0n)).toThrow("signed i64");
     expect(() => engine.generateInteger(ctx, tc, 0n, 1n << 63n)).toThrow("signed i64");
     const call = abi.call.bind(abi);
@@ -118,6 +124,35 @@ describe("WasmEngine malformed outputs and cleanup", () => {
     expect(engine.generateString(ctx, tc, generator)).toBe("\ud800");
     expect(spy).toHaveBeenCalledWith("owned_string_free", 0, result);
     engine.freeStringGenerator(generator);
+    engine.freeTestCase(tc);
+    engine.freeRun(run);
+    engine.freeSettings(settings);
+    engine.freeContext(ctx);
+  });
+
+  it("rejects malformed zoned datetime outputs", () => {
+    const { engine, abi } = wasmFixture();
+    const ctx = engine.newContext(),
+      settings = engine.newSettings(ctx),
+      run = engine.runStart(ctx, settings),
+      tc = engine.nextTestCase(ctx, run)!;
+    const zoned = engine.zonedSpecNew(ctx);
+    const call = abi.call.bind(abi);
+    let corrupt: (memory: WasmMemory, value: number) => void = () => undefined;
+    vi.spyOn(abi, "call").mockImplementation((op, ...args) => {
+      const code = call(op, ...args);
+      if (op === "generate_zoned_datetime_for_zone") {
+        corrupt(new WasmMemory(abi.memory), Number(args[5]));
+      }
+      return code;
+    });
+    const draw = () => engine.generateZonedDatetimeForZone(ctx, tc, null, "UTC", zoned);
+    expect(draw()).toMatchObject({ offsetSeconds: 0, kind: 0 });
+    corrupt = (memory, value) => memory.bytes(value + 21, 1).set([2]);
+    expect(draw).toThrow("temporal field");
+    corrupt = (memory, value) => memory.bytes(value + 24, 1).set([3]);
+    expect(draw).toThrow("temporal field");
+    engine.freeZonedSpec(zoned);
     engine.freeTestCase(tc);
     engine.freeRun(run);
     engine.freeSettings(settings);

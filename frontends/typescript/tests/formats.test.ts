@@ -2,6 +2,8 @@ import { describe, test, expect } from "vitest";
 import * as hegel from "@hegeldev/hegel";
 import * as gs from "@hegeldev/hegel/generators";
 
+const { PlainDate, PlainTime, PlainDateTime } = gs.temporal;
+
 describe("gs.emails()", () => {
   test("exposes a schema via asBasic", () => {
     expect(gs.emails().asBasic()).not.toBeNull();
@@ -50,52 +52,49 @@ describe("gs.domains()", () => {
     ));
 });
 
-describe("gs.dates()", () => {
+describe("gs.temporal.dates()", () => {
   test("exposes a schema via asBasic", () => {
-    expect(gs.dates().asBasic()).not.toBeNull();
+    expect(gs.temporal.dates().asBasic()).not.toBeNull();
   });
 
-  test("generates ISO 8601 date strings (YYYY-MM-DD)", () =>
+  test("generates PlainDates that print as ISO 8601", () =>
     hegel.test(
       (tc) => {
-        const dateStr = tc.draw(gs.dates());
-        expect(typeof dateStr).toBe("string");
-        expect(dateStr).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-        // Must be a valid calendar date
-        const parsed = new Date(dateStr + "T00:00:00Z");
-        expect(parsed.getTime()).not.toBeNaN();
+        const date = tc.draw(gs.temporal.dates({ minValue: { year: 1, month: 1, day: 1 } }));
+        expect(date).toBeInstanceOf(PlainDate);
+        expect(date.toString()).toMatch(/^(\+\d{6}|\d{4})-\d{2}-\d{2}$/);
       },
       { testCases: 30 },
     ));
 });
 
-describe("gs.times()", () => {
+describe("gs.temporal.times()", () => {
   test("exposes a schema via asBasic", () => {
-    expect(gs.times().asBasic()).not.toBeNull();
+    expect(gs.temporal.times().asBasic()).not.toBeNull();
   });
 
-  test("generates time strings containing ':'", () =>
+  test("generates PlainTimes that print as ISO 8601", () =>
     hegel.test(
       (tc) => {
-        const timeStr = tc.draw(gs.times());
-        expect(typeof timeStr).toBe("string");
-        expect(timeStr).toContain(":");
+        const time = tc.draw(gs.temporal.times());
+        expect(time).toBeInstanceOf(PlainTime);
+        expect(time.toString()).toMatch(/^\d{2}:\d{2}:\d{2}(\.\d{1,9})?$/);
       },
       { testCases: 30 },
     ));
 });
 
-describe("gs.datetimes()", () => {
+describe("gs.temporal.datetimes()", () => {
   test("exposes a schema via asBasic", () => {
-    expect(gs.datetimes().asBasic()).not.toBeNull();
+    expect(gs.temporal.datetimes().asBasic()).not.toBeNull();
   });
 
-  test("generates datetime strings containing 'T'", () =>
+  test("generates PlainDateTimes that print as ISO 8601", () =>
     hegel.test(
       (tc) => {
-        const dtStr = tc.draw(gs.datetimes());
-        expect(typeof dtStr).toBe("string");
-        expect(dtStr).toContain("T");
+        const value = tc.draw(gs.temporal.datetimes());
+        expect(value).toBeInstanceOf(PlainDateTime);
+        expect(value.toString()).toContain("T");
       },
       { testCases: 30 },
     ));

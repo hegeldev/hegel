@@ -1,0 +1,1242 @@
+open Generators_core
+module Ffi = Hegel_ffi.Ffi
+module T = Hegel_ffi.Temporal_types
+
+#ifdef OXCAML
+#define MODE(m) @ m
+#else
+#define MODE(m)
+#endif
+
+let unknown_zone = "Etc/Unknown"
+
+type precision =
+  [ `Nanoseconds
+  | `Microseconds
+  | `Milliseconds
+  | `Seconds
+  | `Minutes
+  | `Hours
+  ]
+
+type granularity =
+  [ `Hours
+  | `Quarter_hours
+  | `Minutes
+  | `Seconds
+  ]
+
+type weekday =
+  [ `Monday
+  | `Tuesday
+  | `Wednesday
+  | `Thursday
+  | `Friday
+  | `Saturday
+  | `Sunday
+  ]
+
+type month =
+  [ `January
+  | `February
+  | `March
+  | `April
+  | `May
+  | `June
+  | `July
+  | `August
+  | `September
+  | `October
+  | `November
+  | `December
+  ]
+
+type ambiguous =
+  [ `Both
+  | `Earlier
+  | `Later
+  ]
+
+type sign =
+  [ `Uniform
+  | `Mixed
+  | `Non_negative
+  ]
+
+let precision_code : precision -> int = function
+  | `Nanoseconds -> 0
+  | `Microseconds -> 1
+  | `Milliseconds -> 2
+  | `Seconds -> 3
+  | `Minutes -> 4
+  | `Hours -> 5
+;;
+
+let granularity_code : granularity -> int = function
+  | `Hours -> 0
+  | `Quarter_hours -> 1
+  | `Minutes -> 2
+  | `Seconds -> 3
+;;
+
+let ambiguous_code : ambiguous -> int = function
+  | `Both -> 0
+  | `Earlier -> 1
+  | `Later -> 2
+;;
+
+let sign_code : sign -> int = function
+  | `Uniform -> 0
+  | `Mixed -> 1
+  | `Non_negative -> 2
+;;
+
+let weekday_bit : weekday -> int = function
+  | `Monday -> 0
+  | `Tuesday -> 1
+  | `Wednesday -> 2
+  | `Thursday -> 3
+  | `Friday -> 4
+  | `Saturday -> 5
+  | `Sunday -> 6
+;;
+
+let month_bit : month -> int = function
+  | `January -> 0
+  | `February -> 1
+  | `March -> 2
+  | `April -> 3
+  | `May -> 4
+  | `June -> 5
+  | `July -> 6
+  | `August -> 7
+  | `September -> 8
+  | `October -> 9
+  | `November -> 10
+  | `December -> 11
+;;
+
+let mask bit values = List.fold_left (fun m v -> m lor (1 lsl bit v)) 0 values
+
+(* The C structs hold these fields in fewer bits than an OCaml int, and
+   [Ffi] converts by wrapping. A value outside the field's range goes in as
+   the field's maximum, which the engine rejects, rather than wrapping to a
+   value it accepts. *)
+let saturated ~min ~max n = if n < min || n > max then max else n
+let u8 n = saturated ~min:0 ~max:0xff n
+let u16 n = saturated ~min:0 ~max:0xffff n
+let u32 n = saturated ~min:0 ~max:0xffff_ffff n
+let i32 n = saturated ~min:(-0x8000_0000) ~max:0x7fff_ffff n
+let text format value = Internal.with_context (fun ctx -> format ctx value)
+
+module Value = struct
+  module Date = struct
+    type t = T.Date.t =
+      { year : int
+      ; month : int
+      ; day : int
+      }
+
+    let min_value = { year = -999_999; month = 1; day = 1 }
+    let max_value = { year = 999_999; month = 12; day = 31 }
+    let raw { year; month; day } = { year = i32 year; month = u8 month; day = u8 day }
+    let to_string date = text Ffi.format_date (raw date)
+    let pp formatter date = Format.pp_print_string formatter (to_string date)
+    let sexp_of_t date = Internal.raw_text (to_string date)
+    let equal (a : t) b = a = b
+    let compare (a : t) b = compare a b
+  end
+
+  module Time = struct
+    type t = T.Time.t =
+      { hour : int
+      ; minute : int
+      ; second : int
+      ; nanosecond : int
+      }
+
+    let min_value = { hour = 0; minute = 0; second = 0; nanosecond = 0 }
+    let max_value = { hour = 23; minute = 59; second = 59; nanosecond = 999_999_999 }
+
+    let raw { hour; minute; second; nanosecond } =
+      { hour = u8 hour
+      ; minute = u8 minute
+      ; second = u8 second
+      ; nanosecond = u32 nanosecond
+      }
+    ;;
+
+    let to_string time = text Ffi.format_time (raw time)
+    let pp formatter time = Format.pp_print_string formatter (to_string time)
+    let sexp_of_t time = Internal.raw_text (to_string time)
+    let equal (a : t) b = a = b
+    let compare (a : t) b = compare a b
+  end
+
+  module Datetime = struct
+    type t = T.Datetime.t =
+      { date : Date.t
+      ; time : Time.t
+      }
+
+    let min_value = { date = Date.min_value; time = Time.min_value }
+    let max_value = { date = Date.max_value; time = Time.max_value }
+    let raw { date; time } = { date = Date.raw date; time = Time.raw time }
+    let to_string datetime = text Ffi.format_datetime (raw datetime)
+    let pp formatter datetime = Format.pp_print_string formatter (to_string datetime)
+    let sexp_of_t datetime = Internal.raw_text (to_string datetime)
+    let equal (a : t) b = a = b
+    let compare (a : t) b = compare a b
+  end
+
+  module Instant = struct
+    type t = T.Instant.t =
+      { second : int
+      ; nanosecond : int
+      }
+
+    let min_value = { second = -31_619_087_596_800; nanosecond = 0 }
+    let max_value = { second = 31_494_784_780_799; nanosecond = 999_999_999 }
+    let raw { second; nanosecond } = { second; nanosecond = u32 nanosecond }
+    let to_string instant = text Ffi.format_timestamp (raw instant)
+    let pp formatter instant = Format.pp_print_string formatter (to_string instant)
+    let sexp_of_t instant = Internal.raw_text (to_string instant)
+    let equal (a : t) b = a = b
+    let compare (a : t) b = compare a b
+  end
+
+  module Offset = struct
+    type t =
+      | Known of int
+      | Unknown
+
+    let max_seconds = 93_599
+
+    let raw : t -> T.Offset.t = function
+      | Known seconds -> { seconds = i32 seconds; known = true }
+      | Unknown -> { seconds = 0; known = false }
+    ;;
+
+    let of_raw ~known seconds = if known then Known seconds else Unknown
+    let to_string offset = text Ffi.format_offset (raw offset)
+    let pp formatter offset = Format.pp_print_string formatter (to_string offset)
+    let sexp_of_t offset = Internal.raw_text (to_string offset)
+    let equal (a : t) b = a = b
+    let compare (a : t) b = compare a b
+  end
+
+  module Duration = struct
+    type t = T.Duration.t =
+      { seconds : int
+      ; nanoseconds : int
+      }
+
+    let min_value = { seconds = -max_int; nanoseconds = -999_999_999 }
+    let max_value = { seconds = max_int; nanoseconds = 999_999_999 }
+    let raw { seconds; nanoseconds } = { seconds; nanoseconds = i32 nanoseconds }
+    let to_string duration = text Ffi.format_duration (raw duration)
+    let pp formatter duration = Format.pp_print_string formatter (to_string duration)
+    let sexp_of_t duration = Internal.raw_text (to_string duration)
+    let equal (a : t) b = a = b
+    let compare (a : t) b = compare a b
+  end
+
+  module Span = struct
+    type t = T.Span.t =
+      { years : int
+      ; months : int
+      ; weeks : int
+      ; days : int
+      ; hours : int
+      ; minutes : int
+      ; seconds : int
+      ; milliseconds : int
+      ; microseconds : int
+      ; nanoseconds : int
+      }
+
+    let to_string span = text Ffi.format_span span
+    let pp formatter span = Format.pp_print_string formatter (to_string span)
+    let sexp_of_t span = Internal.raw_text (to_string span)
+    let equal (a : t) b = a = b
+    let compare (a : t) b = compare a b
+  end
+
+  module Zoned_datetime = struct
+    type kind =
+      | Unique
+      | Gap
+      | Fold
+
+    type t =
+      { zone : string
+      ; civil : Datetime.t
+      ; kind : kind
+      ; offset_before : Offset.t
+      ; offset_after : Offset.t
+      ; fold : bool
+      ; offset : Offset.t
+      ; instant : Instant.t
+      }
+
+    let kind_code = function
+      | Unique -> 0
+      | Gap -> 1
+      | Fold -> 2
+    ;;
+
+    let kind_of_code code = List.nth [ Unique; Gap; Fold ] code
+
+    let raw { civil; kind; offset_before; offset_after; fold; offset; instant; zone = _ }
+      : T.Zoned.t
+      =
+      let offset = Offset.raw offset in
+      { civil = Datetime.raw civil
+      ; offset_seconds = offset.seconds
+      ; offset_known = offset.known
+      ; fold
+      ; kind = kind_code kind
+      ; offset_before = (Offset.raw offset_before).seconds
+      ; offset_after = (Offset.raw offset_after).seconds
+      ; timestamp = Instant.raw instant
+      }
+    ;;
+
+    let of_raw zone (z : T.Zoned.t) =
+      let known = z.offset_known in
+      { zone
+      ; civil = z.civil
+      ; kind = kind_of_code z.kind
+      ; offset_before = Offset.of_raw ~known z.offset_before
+      ; offset_after = Offset.of_raw ~known z.offset_after
+      ; fold = z.fold
+      ; offset = Offset.of_raw ~known z.offset_seconds
+      ; instant = z.timestamp
+      }
+    ;;
+
+    let of_resolution zone civil (r : T.Resolution.t) =
+      let known = r.offset_known in
+      { zone
+      ; civil
+      ; kind = kind_of_code r.kind
+      ; offset_before = Offset.of_raw ~known r.offset_before
+      ; offset_after = Offset.of_raw ~known r.offset_after
+      ; fold = false
+      ; offset = Offset.of_raw ~known r.offset_seconds
+      ; instant = r.timestamp
+      }
+    ;;
+
+    let to_string zoned =
+      Internal.with_context (fun ctx ->
+        Ffi.format_zoned_datetime ctx (raw zoned) zoned.zone)
+    ;;
+
+    let pp formatter zoned = Format.pp_print_string formatter (to_string zoned)
+    let sexp_of_t zoned = Internal.raw_text (to_string zoned)
+    let equal (a : t) b = a = b
+    let compare (a : t) b = compare a b
+  end
+end
+
+open Value
+
+module Zone_info = struct
+  type tag =
+    | Fixed
+    | Whole_hour
+    | Fractional
+    | Seconds
+    | Dst
+    | Dst_other
+    | Multi
+    | Base_change
+    | Midnight
+    | Spans_midnight
+    | Whole_day
+    | Same_offset
+    | Undefined
+    | Link
+    | Legacy
+    | Inverted_sign
+
+  type t =
+    { primary_name : string
+    ; is_link : bool
+    ; rank : int
+    ; tags : tag list
+    }
+
+  let all_tags =
+    [ Fixed
+    ; Whole_hour
+    ; Fractional
+    ; Seconds
+    ; Dst
+    ; Dst_other
+    ; Multi
+    ; Base_change
+    ; Midnight
+    ; Spans_midnight
+    ; Whole_day
+    ; Same_offset
+    ; Undefined
+    ; Link
+    ; Legacy
+    ; Inverted_sign
+    ]
+  ;;
+
+  let of_raw (info : T.Zone_info.t) =
+    if info.known
+    then
+      Some
+        { primary_name = info.primary_name
+        ; is_link = info.is_link
+        ; rank = info.rank
+        ; tags = List.filteri (fun bit _ -> info.tags land (1 lsl bit) <> 0) all_tags
+        }
+    else None
+  ;;
+end
+
+module Zone_offset = struct
+  type t =
+    { offset : Offset.t
+    ; is_dst : bool
+    ; abbreviation : string
+    }
+
+  let of_raw (o : T.Zone_offset.t) =
+    { offset = Offset.of_raw ~known:o.offset_known o.offset_seconds
+    ; is_dst = o.is_dst
+    ; abbreviation = o.abbreviation
+    }
+  ;;
+end
+
+let callback_message = function
+  | Internal.Usage_error message | Failure message | Invalid_argument message -> message
+  | exn -> Printexc.to_string exn
+;;
+
+(* An exception must not unwind through the engine: a callback reports it as
+   the engine's error message and returns [failure]. *)
+let guarded ctx ~failure f =
+  match f () with
+  | result -> result
+  | exception exn ->
+    Ffi.context_set_error ctx (callback_message exn);
+    failure
+;;
+
+module Zone_source = struct
+  type t = Ffi.zone_source
+
+  type zone_type = T.Zone_type.t =
+    { offset_seconds : int
+    ; is_dst : bool
+    ; abbreviation : string
+    }
+
+  type zone_transition = T.Zone_transition.t =
+    { instant : int
+    ; local_type : zone_type
+    }
+
+  type rule_day =
+    | Julian of int
+    | Zero_based of int
+    | Month_week_day of
+        { month : month
+        ; week : int
+        ; weekday : weekday
+        }
+
+  type rule_date =
+    { day : rule_day
+    ; time : int
+    }
+
+  type dst_rule =
+    { daylight : zone_type
+    ; starts : rule_date
+    ; ends : rule_date
+    }
+
+  type zone_rule =
+    { standard : zone_type
+    ; dst : dst_rule option
+    }
+
+  type after =
+    | Hold
+    | Rule of zone_rule
+    | Infer of int
+
+  type zone_data =
+    { initial : zone_type
+    ; transitions : zone_transition list
+    ; after : after
+    }
+
+  let raw_type (local_type : zone_type) =
+    { local_type with offset_seconds = i32 local_type.offset_seconds }
+  ;;
+
+  let no_rule_date : T.Rule_date.t =
+    { kind = 0; day = 0; month = 0; week = 0; weekday = 0; time = 0 }
+  ;;
+
+  let raw_rule_date { day; time } : T.Rule_date.t =
+    let time = i32 time in
+    match day with
+    | Julian day -> { no_rule_date with kind = 0; day = u16 day; time }
+    | Zero_based day -> { no_rule_date with kind = 1; day = u16 day; time }
+    | Month_week_day { month; week; weekday } ->
+      { kind = 2
+      ; day = 0
+      ; month = month_bit month + 1
+      ; week = u8 week
+      ; weekday = (weekday_bit weekday + 1) mod 7
+      ; time
+      }
+  ;;
+
+  let raw_data { initial; transitions; after } : T.Zone_data.t =
+    let initial = raw_type initial in
+    let held : T.Zone_data.t =
+      { initial
+      ; transitions =
+          List.map
+            (fun (t : zone_transition) -> { t with local_type = raw_type t.local_type })
+            transitions
+      ; after = 0
+      ; standard = initial
+      ; has_dst = false
+      ; dst = initial
+      ; dst_start = no_rule_date
+      ; dst_end = no_rule_date
+      ; last_year = 0
+      }
+    in
+    match after with
+    | Hold -> held
+    | Rule { standard; dst = None } -> { held with after = 1; standard = raw_type standard }
+    | Rule { standard; dst = Some { daylight; starts; ends } } ->
+      { held with
+        after = 1
+      ; standard = raw_type standard
+      ; has_dst = true
+      ; dst = raw_type daylight
+      ; dst_start = raw_rule_date starts
+      ; dst_end = raw_rule_date ends
+      }
+    | Infer last_year -> { held with after = 2; last_year = i32 last_year }
+  ;;
+
+  let bundled () = Ffi.zone_source_bundled ()
+  let create () = Internal.with_context Ffi.zone_source_new
+
+  let add_tzif source name ~contents =
+    Internal.with_context (fun ctx -> Ffi.zone_source_add_tzif ctx source name contents)
+  ;;
+
+  let add_zone source name data =
+    Internal.with_context (fun ctx ->
+      Ffi.zone_source_add_zone ctx source name (raw_data data))
+  ;;
+
+  let add_oracle
+        source
+        name
+        ?next_transition
+        ?(first_year = 1900)
+        ?(last_year = 2100)
+        ?(infer = false)
+        offset_at
+    =
+    let offset_at ctx instant =
+      guarded ctx ~failure:None (fun () -> Some (raw_type (offset_at instant)))
+    in
+    let next_transition =
+      Option.map
+        (fun next ctx after -> guarded ctx ~failure:None (fun () -> Some (next after)))
+        next_transition
+    in
+    Internal.with_context (fun ctx ->
+      Ffi.zone_source_add_oracle
+        ctx
+        source
+        name
+        ~offset_at
+        ~next_transition
+        ~first_year:(i32 first_year)
+        ~last_year:(i32 last_year)
+        ~after:(if infer then 2 else 0))
+  ;;
+
+  let add_link source name ~target =
+    Internal.with_context (fun ctx -> Ffi.zone_source_add_link ctx source name target)
+  ;;
+
+  let declare source names =
+    Internal.with_context (fun ctx -> Ffi.zone_source_declare ctx source names)
+  ;;
+
+  let set_loader source load =
+    let load ctx name =
+      guarded ctx ~failure:false (fun () ->
+        load source name;
+        true)
+    in
+    Internal.with_context (fun ctx -> Ffi.zone_source_set_loader ctx source (Some load))
+  ;;
+
+  let remove_loader source =
+    Internal.with_context (fun ctx -> Ffi.zone_source_set_loader ctx source None)
+  ;;
+
+  let set_version source version =
+    Internal.with_context (fun ctx -> Ffi.zone_source_set_version ctx source version)
+  ;;
+
+  let version source =
+    Internal.with_context (fun ctx -> Ffi.zone_source_version ctx source)
+  ;;
+end
+
+(* [None] until a default is set: the bundled database, whose handle is only
+   made when something needs it, so that building a generator does not load
+   libhegel. *)
+let default_source : Zone_source.t option ref Locked.t =
+  Locked.create (fun () -> ref None)
+;;
+
+let chosen_default () = Locked.protect default_source (fun chosen -> !chosen)
+
+let source_handle = function
+  | Some source -> source
+  | None -> Zone_source.bundled ()
+;;
+
+let default_zone_source () = source_handle (chosen_default ())
+
+let set_default_zone_source source =
+  source_handle
+    (Locked.protect default_source (fun chosen ->
+       Internal.with_context (fun ctx -> Ffi.set_default_zone_source ctx source);
+       let previous = !chosen in
+       chosen := Some source;
+       previous))
+;;
+
+let source_in_effect = function
+  | Some source -> Some source
+  | None -> chosen_default ()
+;;
+
+let tzdb_version () = Internal.with_context Ffi.tzdb_version
+
+let info ?source name =
+  let source = source_handle (source_in_effect source) in
+  Zone_info.of_raw (Internal.with_context (fun ctx -> Ffi.timezone_info ctx source name))
+;;
+
+let resolve ?source name civil =
+  let source = source_handle (source_in_effect source) in
+  Zoned_datetime.of_resolution
+    name
+    civil
+    (Internal.with_context (fun ctx ->
+       Ffi.timezone_resolve ctx source name (Datetime.raw civil)))
+;;
+
+let offset_at ?source name instant =
+  let source = source_handle (source_in_effect source) in
+  Zone_offset.of_raw
+    (Internal.with_context (fun ctx ->
+       Ffi.timezone_offset_at ctx source name (Instant.raw instant)))
+;;
+
+(* The engine configuration of one generator (date options or a spec), built
+   on the first draw so that building a generator does not load libhegel, and
+   freed when the generator is collected. *)
+type 'spec cell = { slot : 'spec option ref Locked.t }
+
+let live_specs = Atomic.make 0
+
+let cell ~(free : (_ -> unit) MODE(portable)) =
+  let cell = { slot = Locked.create (fun () -> ref None) } in
+  Ffi.free_when_unreachable
+    (fun cell ->
+       Locked.protect cell.slot (fun slot ->
+         Option.iter
+           (fun spec ->
+              free spec;
+              Atomic.decr live_specs)
+           !slot;
+         slot := None))
+    cell;
+  cell
+;;
+
+let with_spec cell ~build f =
+  let spec =
+    Locked.protect cell.slot (fun slot ->
+      match !slot with
+      | Some spec -> spec
+      | None ->
+        let spec = build () in
+        slot := Some spec;
+        Atomic.incr live_specs;
+        spec)
+  in
+  let result = f spec in
+  ignore (Sys.opaque_identity cell : _ cell);
+  result
+;;
+
+(* A spec the engine rejects is freed, not kept, so the next draw reports the
+   same error. *)
+let configured ~free spec configure =
+  match configure spec with
+  | () -> spec
+  | exception exn ->
+    free spec;
+    raise exn
+;;
+
+let dates
+      ?(min_value = Date.min_value)
+      ?(max_value = Date.max_value)
+      ?(weekdays =
+        [ `Monday; `Tuesday; `Wednesday; `Thursday; `Friday; `Saturday; `Sunday ])
+      ?(months =
+        [ `January
+        ; `February
+        ; `March
+        ; `April
+        ; `May
+        ; `June
+        ; `July
+        ; `August
+        ; `September
+        ; `October
+        ; `November
+        ; `December
+        ])
+      ()
+  : _ MODE(portable)
+  =
+  let min_value = Date.raw min_value in
+  let max_value = Date.raw max_value in
+  let weekdays = mask weekday_bit weekdays in
+  let months = mask month_bit months in
+  let options = cell ~free:Ffi.date_options_free in
+  (leaf [@mode portable])
+    ~name:"dates"
+    ~draw:(fun tc ->
+      Internal.with_draw tc (fun ctx handle ->
+        with_spec
+          options
+          ~build:(fun () ->
+            configured
+              ~free:Ffi.date_options_free
+              (Ffi.date_options_new ctx)
+              (fun options ->
+                 Ffi.date_options_set_weekdays ctx options weekdays;
+                 Ffi.date_options_set_months ctx options months))
+          (fun options -> Ffi.generate_date ctx handle ~min_value ~max_value options)))
+    ~sexp_of:Date.sexp_of_t
+;;
+
+let times
+      ?(min_value = Time.min_value)
+      ?(max_value = Time.max_value)
+      ?(precision = `Nanoseconds)
+      ()
+  : _ MODE(portable)
+  =
+  let min_value = Time.raw min_value in
+  let max_value = Time.raw max_value in
+  let precision = precision_code precision in
+  (leaf [@mode portable])
+    ~name:"times"
+    ~draw:(fun tc ->
+      Internal.with_draw tc (fun ctx handle ->
+        Ffi.generate_time ctx handle ~min_value ~max_value ~precision))
+    ~sexp_of:Time.sexp_of_t
+;;
+
+let datetimes
+      ?(min_value = Datetime.min_value)
+      ?(max_value = Datetime.max_value)
+      ?(precision = `Nanoseconds)
+      ()
+  : _ MODE(portable)
+  =
+  let min_value = Datetime.raw min_value in
+  let max_value = Datetime.raw max_value in
+  let precision = precision_code precision in
+  (leaf [@mode portable])
+    ~name:"datetimes"
+    ~draw:(fun tc ->
+      Internal.with_draw tc (fun ctx handle ->
+        Ffi.generate_datetime ctx handle ~min_value ~max_value ~precision))
+    ~sexp_of:Datetime.sexp_of_t
+;;
+
+let instants
+      ?(min_value = Instant.min_value)
+      ?(max_value = Instant.max_value)
+      ?(precision = `Nanoseconds)
+      ()
+  : _ MODE(portable)
+  =
+  let min_value = Instant.raw min_value in
+  let max_value = Instant.raw max_value in
+  let precision = precision_code precision in
+  (leaf [@mode portable])
+    ~name:"instants"
+    ~draw:(fun tc ->
+      Internal.with_draw tc (fun ctx handle ->
+        Ffi.generate_timestamp ctx handle ~min_value ~max_value ~precision))
+    ~sexp_of:Instant.sexp_of_t
+;;
+
+let offsets
+      ?(min_value = -Offset.max_seconds)
+      ?(max_value = Offset.max_seconds)
+      ?(granularity = `Seconds)
+      ?(allow_unknown = false)
+      ()
+  : _ MODE(portable)
+  =
+  let min_value = i32 min_value in
+  let max_value = i32 max_value in
+  let granularity = granularity_code granularity in
+  (leaf [@mode portable])
+    ~name:"offsets"
+    ~draw:(fun tc ->
+      Internal.with_draw tc (fun ctx handle ->
+        let (offset : T.Offset.t) =
+          Ffi.generate_offset ctx handle ~min_value ~max_value ~granularity ~allow_unknown
+        in
+        Offset.of_raw ~known:offset.known offset.seconds))
+    ~sexp_of:Offset.sexp_of_t
+;;
+
+let timezone_spec ctx (query : zone_query) =
+  configured ~free:Ffi.timezone_spec_free (Ffi.timezone_spec_new ctx) (fun spec ->
+    Ffi.timezone_spec_set_source ctx spec (source_handle query.source);
+    Option.iter (Ffi.timezone_spec_set_names ctx spec) query.names;
+    Ffi.timezone_spec_set_links ctx spec query.allow_links;
+    Ffi.timezone_spec_set_legacy ctx spec query.allow_legacy;
+    Ffi.timezone_spec_set_unknown ctx spec query.allow_unknown;
+    Ffi.timezone_spec_set_opaque ctx spec query.allow_opaque;
+    Ffi.timezone_spec_validate ctx spec)
+;;
+
+let zone_query
+      ?names
+      ?(allow_links = true)
+      ?(allow_legacy = false)
+      ?(allow_unknown = false)
+      ?(allow_opaque = false)
+      ?source
+      ()
+  =
+  { names
+  ; allow_links
+  ; allow_legacy
+  ; allow_unknown
+  ; allow_opaque
+  ; source = source_in_effect source
+  }
+;;
+
+let zones ?names ?allow_links ?allow_legacy ?allow_unknown ?allow_opaque ?source ()
+  : _ MODE(portable)
+  =
+  let query =
+    zone_query ?names ?allow_links ?allow_legacy ?allow_unknown ?allow_opaque ?source ()
+  in
+  let spec = cell ~free:Ffi.timezone_spec_free in
+  Printable
+    { core =
+        Leaf
+          { draw =
+              (fun tc ->
+                Internal.with_draw tc (fun ctx handle ->
+                  with_spec
+                    spec
+                    ~build:(fun () -> timezone_spec ctx query)
+                    (fun spec -> Ffi.generate_timezone ctx handle spec)))
+          ; label = leaf_label "zones"
+          ; zones = Some query
+          }
+    ; sexp_of = Internal.raw_text
+    }
+;;
+
+type zoned_bounds =
+  | Civil of Datetime.t * Datetime.t
+  | Instants of Instant.t * Instant.t
+
+type zoned_options =
+  { bounds : zoned_bounds
+  ; precision : int
+  ; imaginary : int
+  ; ambiguous : int
+  }
+
+let zoned_bounds min_value max_value min_instant max_instant =
+  match (min_value, max_value), (min_instant, max_instant) with
+  | (lo, hi), (None, None) ->
+    Civil
+      ( Datetime.raw (Option.value lo ~default:Datetime.min_value)
+      , Datetime.raw (Option.value hi ~default:Datetime.max_value) )
+  | (None, None), (lo, hi) ->
+    Instants
+      ( Instant.raw (Option.value lo ~default:Instant.min_value)
+      , Instant.raw (Option.value hi ~default:Instant.max_value) )
+  | _ ->
+    raise
+      (Internal.Usage_error
+         "zoned_datetimes: cannot combine wall-clock bounds (min_value / max_value) \
+          with instant bounds (min_instant / max_instant)")
+;;
+
+let zoned_spec ctx { bounds; precision; imaginary; ambiguous } =
+  configured ~free:Ffi.zoned_spec_free (Ffi.zoned_spec_new ctx) (fun spec ->
+    (match bounds with
+     | Civil (min_value, max_value) ->
+       Ffi.zoned_spec_set_civil_bounds ctx spec ~min_value ~max_value
+     | Instants (min_value, max_value) ->
+       Ffi.zoned_spec_set_instant_bounds ctx spec ~min_value ~max_value);
+    Ffi.zoned_spec_set_precision ctx spec precision;
+    Ffi.zoned_spec_set_imaginary ctx spec imaginary;
+    Ffi.zoned_spec_set_ambiguous ctx spec ambiguous;
+    Ffi.zoned_spec_validate ctx spec)
+;;
+
+let draw_zoned ctx handle ~zones ~zoned query options =
+  with_spec
+    zones
+    ~build:(fun () -> timezone_spec ctx query)
+    (fun zones ->
+       with_spec
+         zoned
+         ~build:(fun () -> zoned_spec ctx options)
+         (fun spec ->
+            let value, zone = Ffi.generate_zoned_datetime ctx handle zones spec in
+            Zoned_datetime.of_raw zone value))
+;;
+
+let draw_zoned_in ctx handle ~zoned ~source name options =
+  with_spec
+    zoned
+    ~build:(fun () -> zoned_spec ctx options)
+    (fun spec ->
+       match
+         Ffi.generate_zoned_datetime_for_zone ctx handle (source_handle source) name spec
+       with
+       | value -> Zoned_datetime.of_raw name value
+       | exception Internal.Usage_error message ->
+         raise
+           (Internal.Usage_error
+              (message
+               ^ ". zoned_datetimes resolves the names its ~zones generator draws \
+                  against ~source (default: the default zone source when \
+                  zoned_datetimes was called): pass the zone source that has this \
+                  zone as ~source")))
+;;
+
+let%template zoned_datetimes
+               ?zones:zone_generator
+               ?source
+               ?min_value
+               ?max_value
+               ?min_instant
+               ?max_instant
+               ?(precision = `Nanoseconds)
+               ?(allow_imaginary = true)
+               ?(ambiguous = `Both)
+               ()
+  : _ MODE(m)
+  =
+  let options =
+    { bounds = zoned_bounds min_value max_value min_instant max_instant
+    ; precision = precision_code precision
+    ; imaginary = (if allow_imaginary then 0 else 1)
+    ; ambiguous = ambiguous_code ambiguous
+    }
+  in
+  let zoned = cell ~free:Ffi.zoned_spec_free in
+  let joint query =
+    let zones = cell ~free:Ffi.timezone_spec_free in
+    (leaf [@mode m])
+      ~name:"zoned_datetimes"
+      ~draw:(fun tc ->
+        Internal.with_draw tc (fun ctx handle ->
+          draw_zoned ctx handle ~zones ~zoned query options))
+      ~sexp_of:Zoned_datetime.sexp_of_t
+  in
+  match zone_generator with
+  | None -> joint (zone_query ?source ())
+  | Some generator ->
+    (match (core_of [@mode m]) generator, source with
+     | Leaf { zones = Some query; _ }, None -> joint query
+     | Leaf { zones = Some _; _ }, Some _ ->
+       raise
+         (Internal.Usage_error
+            "zoned_datetimes: ~zones is a Temporal.zones generator, which draws the \
+             names of its own zone source: pass ~source to Temporal.zones, not to \
+             zoned_datetimes")
+     | core, source ->
+       let source = source_in_effect source in
+       let label = Labels.combine [ leaf_label "zoned_datetimes"; label_of_core core ] in
+       Printable
+         { core =
+             Composite
+               { label
+               ; generate_fn =
+                   (fun tc ->
+                     let name = do_draw core tc in
+                     Internal.with_draw tc (fun ctx handle ->
+                       draw_zoned_in ctx handle ~zoned ~source name options))
+               }
+         ; sexp_of = Zoned_datetime.sexp_of_t
+         })
+[@@mode m = (nonportable, portable)]
+;;
+
+let durations
+      ?(min_value = Duration.min_value)
+      ?(max_value = Duration.max_value)
+      ?(precision = `Nanoseconds)
+      ()
+  : _ MODE(portable)
+  =
+  let min_value = Duration.raw min_value in
+  let max_value = Duration.raw max_value in
+  let precision = precision_code precision in
+  (leaf [@mode portable])
+    ~name:"durations"
+    ~draw:(fun tc ->
+      Internal.with_draw tc (fun ctx handle ->
+        Ffi.generate_duration ctx handle ~min_value ~max_value ~precision))
+    ~sexp_of:Duration.sexp_of_t
+;;
+
+let spans
+      ?years
+      ?months
+      ?weeks
+      ?days
+      ?hours
+      ?minutes
+      ?seconds
+      ?milliseconds
+      ?microseconds
+      ?nanoseconds
+      ?(sign = `Uniform)
+      ()
+  : _ MODE(portable)
+  =
+  let units =
+    [ years
+    ; months
+    ; weeks
+    ; days
+    ; hours
+    ; minutes
+    ; seconds
+    ; milliseconds
+    ; microseconds
+    ; nanoseconds
+    ]
+  in
+  let units =
+    if List.exists Option.is_some units
+    then units
+    else (
+      let lowest =
+        match sign with
+        | `Non_negative -> 0
+        | `Uniform | `Mixed -> -max_int
+      in
+      List.map (fun _ -> Some (lowest, max_int)) units)
+  in
+  let sign = sign_code sign in
+  let spec = cell ~free:Ffi.span_spec_free in
+  (leaf [@mode portable])
+    ~name:"spans"
+    ~draw:(fun tc ->
+      Internal.with_draw tc (fun ctx handle ->
+        with_spec
+          spec
+          ~build:(fun () ->
+            configured ~free:Ffi.span_spec_free (Ffi.span_spec_new ctx) (fun spec ->
+              List.iteri
+                (fun unit bounds ->
+                   Option.iter
+                     (fun (min_value, max_value) ->
+                        Ffi.span_spec_set_unit_bounds ctx spec ~unit ~min_value ~max_value)
+                     bounds)
+                units;
+              Ffi.span_spec_set_sign ctx spec sign;
+              Ffi.span_spec_validate ctx spec))
+          (fun spec -> Ffi.generate_span ctx handle spec)))
+    ~sexp_of:Span.sexp_of_t
+;;
+
+module Date = struct
+  include Value.Date
+
+  let hegel_generator = dates ()
+end
+
+module Time = struct
+  include Value.Time
+
+  let hegel_generator = times ()
+end
+
+module Datetime = struct
+  include Value.Datetime
+
+  let hegel_generator = datetimes ()
+end
+
+module Instant = struct
+  include Value.Instant
+
+  let hegel_generator = instants ()
+end
+
+module Offset = struct
+  include Value.Offset
+
+  let hegel_generator = offsets ()
+end
+
+module Zoned_datetime = struct
+  include Value.Zoned_datetime
+
+  let hegel_generator = (zoned_datetimes [@mode portable]) ()
+end
+
+module Duration = struct
+  include Value.Duration
+
+  let hegel_generator = durations ()
+end
+
+module Span = struct
+  include Value.Span
+
+  let hegel_generator = spans ()
+end
+
+module Legacy = struct
+  type date = Date.t =
+    { year : int
+    ; month : int
+    ; day : int
+    }
+
+  type time = Time.t =
+    { hour : int
+    ; minute : int
+    ; second : int
+    ; nanosecond : int
+    }
+
+  let format_date { year; month; day } = Printf.sprintf "%04d-%02d-%02d" year month day
+
+  let format_time { hour; minute; second; nanosecond } =
+    Printf.sprintf "%02d:%02d:%02d.%09d" hour minute second nanosecond
+  ;;
+
+  let format_datetime (date, time) = format_date date ^ "T" ^ format_time time
+  let first_date = { year = 1; month = 1; day = 1 }
+  let last_date = { year = 9999; month = 12; day = 31 }
+
+  let%template make_dates
+                 ~(of_date : (date -> 'a) MODE(m))
+                 ~(sexp_of : ('a -> Sexplib0.Sexp.t) MODE(m))
+                 ?(min_date = first_date)
+                 ?(max_date = last_date)
+                 ()
+    : ('a, printable) generator MODE(m)
+    =
+    (with_printer [@mode m])
+      sexp_of
+      ((map [@mode m]) of_date (dates ~min_value:min_date ~max_value:max_date ()))
+  [@@mode m = (nonportable, portable)]
+  ;;
+
+  let%template make_times
+                 ~(of_time : (time -> 'a) MODE(m))
+                 ~(sexp_of : ('a -> Sexplib0.Sexp.t) MODE(m))
+                 ?(min_time = Time.min_value)
+                 ?(max_time = Time.max_value)
+                 ()
+    : ('a, printable) generator MODE(m)
+    =
+    (with_printer [@mode m])
+      sexp_of
+      ((map [@mode m]) of_time (times ~min_value:min_time ~max_value:max_time ()))
+  [@@mode m = (nonportable, portable)]
+  ;;
+
+  let%template make_datetimes
+                 ~(of_datetime : (date * time -> 'a) MODE(m))
+                 ~(sexp_of : ('a -> Sexplib0.Sexp.t) MODE(m))
+                 ?(min_datetime = first_date, Time.min_value)
+                 ?(max_datetime = last_date, Time.max_value)
+                 ()
+    : ('a, printable) generator MODE(m)
+    =
+    let datetime (date, time) : Datetime.t = { date; time } in
+    (with_printer [@mode m])
+      sexp_of
+      ((map [@mode m])
+         (fun ({ date; time } : Datetime.t) -> of_datetime (date, time))
+         (datetimes
+            ~min_value:(datetime min_datetime)
+            ~max_value:(datetime max_datetime)
+            ()))
+  [@@mode m = (nonportable, portable)]
+  ;;
+
+  let dates ?min_date ?max_date () : _ MODE(portable) =
+    (make_dates [@mode portable])
+      ~of_date:format_date
+      ~sexp_of:Sexplib0.Sexp_conv.sexp_of_string
+      ?min_date
+      ?max_date
+      ()
+  ;;
+
+  let times ?min_time ?max_time () : _ MODE(portable) =
+    (make_times [@mode portable])
+      ~of_time:format_time
+      ~sexp_of:Sexplib0.Sexp_conv.sexp_of_string
+      ?min_time
+      ?max_time
+      ()
+  ;;
+
+  let datetimes ?min_datetime ?max_datetime () : _ MODE(portable) =
+    (make_datetimes [@mode portable])
+      ~of_datetime:format_datetime
+      ~sexp_of:Sexplib0.Sexp_conv.sexp_of_string
+      ?min_datetime
+      ?max_datetime
+      ()
+  ;;
+end

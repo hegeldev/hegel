@@ -81,14 +81,12 @@ def test_lookup_knows_about_all_core_strategies():
         "permutations",
         "recursive",
         "sampled_from",
-        "timezones",
+        "zones",
     }
     assert set(_all_generators).issuperset(blocklist), blocklist.difference(_all_generators)
     found = set()
     for thing in (
-        getattr(gs, name)
-        for name in sorted(_all_generators)
-        if name in dir(gs) and name not in blocklist
+        _all_generators[name] for name in sorted(_all_generators) if name not in blocklist
     ):
         for n in range(3):
             try:

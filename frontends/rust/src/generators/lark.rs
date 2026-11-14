@@ -1,4 +1,3 @@
-use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::path::PathBuf;
 use std::sync::{LazyLock, OnceLock};
 
@@ -11,7 +10,7 @@ use crate::test_case::invalid_argument;
 
 static LARK_LABEL: LazyLock<u64> = LazyLock::new(|| label_from_name("hegel.from_lark"));
 
-type ExplicitTerminal = dyn Generator<String> + Send + Sync + UnwindSafe + RefUnwindSafe;
+type ExplicitTerminal = dyn Generator<String> + Send + Sync;
 
 /// A terminal whose values come from a generator of the user's rather
 /// than from the grammar.
@@ -81,7 +80,7 @@ impl LarkGenerator {
     /// few tries rejects the test case.
     pub fn explicit<G>(mut self, name: &str, generator: G) -> Self
     where
-        G: Generator<String> + Send + Sync + UnwindSafe + RefUnwindSafe + 'static,
+        G: Generator<String> + Send + Sync + 'static,
     {
         self.handle = OnceLock::new();
         self.explicit.push(Explicit {

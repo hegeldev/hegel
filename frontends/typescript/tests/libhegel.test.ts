@@ -16,6 +16,7 @@ import {
 import { AssumeError, StopTestError } from "../src/testCase.js";
 import { LIBHEGEL_VERSION } from "../src/libhegel-version.js";
 import { testLibPath } from "./libPath.js";
+import { readFileSync } from "node:fs";
 
 // ---------------------------------------------------------------------------
 // Unit tests for the integer wire-format helpers.
@@ -201,9 +202,71 @@ function fakeBindings(overrides: Partial<Bindings>): Bindings {
     grammarDrawProvide: () => 0,
     grammarDrawResult: () => 0,
     grammarDrawFree: noop,
+    dateOptionsNew: (_ctx, out) => {
+      out[0] = {} as Ptr;
+      return 0;
+    },
+    dateOptionsFree: noop,
+    dateOptionsSetWeekdays: () => 0,
+    dateOptionsSetMonths: () => 0,
     generateDate: () => 0,
     generateTime: () => 0,
     generateDatetime: () => 0,
+    generateTimestamp: () => 0,
+    generateOffset: () => 0,
+    validateDate: () => 0,
+    validateTime: () => 0,
+    validateDatetime: () => 0,
+    validateTimestamp: () => 0,
+    validateOffset: () => 0,
+    timezoneInfo: () => 0,
+    timezoneSpecNew: (_ctx, out) => {
+      out[0] = {} as Ptr;
+      return 0;
+    },
+    timezoneSpecFree: noop,
+    timezoneSpecSetNames: () => 0,
+    timezoneSpecSetSource: () => 0,
+    timezoneSpecSetLinks: () => 0,
+    timezoneSpecSetLegacy: () => 0,
+    timezoneSpecValidate: () => 0,
+    zoneSourceNew: (_ctx, out) => {
+      out[0] = {} as Ptr;
+      return 0;
+    },
+    zoneSourceAddTzif: () => 0,
+    zoneSourceAddZone: () => 0,
+    zoneSourceAddLink: () => 0,
+    zoneSourceDeclare: () => 0,
+    generateTimezone: () => 0,
+    zonedSpecNew: (_ctx, out) => {
+      out[0] = {} as Ptr;
+      return 0;
+    },
+    zonedSpecFree: noop,
+    zonedSpecSetCivilBounds: () => 0,
+    zonedSpecSetInstantBounds: () => 0,
+    zonedSpecSetPrecision: () => 0,
+    zonedSpecSetImaginary: () => 0,
+    zonedSpecSetAmbiguous: () => 0,
+    zonedSpecValidate: () => 0,
+    generateZonedDatetimeForZone: () => 0,
+    spanSpecNew: (_ctx, out) => {
+      out[0] = {} as Ptr;
+      return 0;
+    },
+    spanSpecFree: noop,
+    spanSpecSetUnitBounds: () => 0,
+    spanSpecSetSign: () => 0,
+    spanSpecValidate: () => 0,
+    generateSpan: () => 0,
+    formatDate: () => "",
+    formatTime: () => "",
+    formatDatetime: () => "",
+    formatTimestamp: () => "",
+    formatOffset: () => "",
+    formatSpan: () => "",
+    formatZonedDatetime: () => "",
     generateUuid: () => 0,
     generateIpv4: () => 0,
     generateIpv6: () => 0,
@@ -259,6 +322,7 @@ function fakeBindings(overrides: Partial<Bindings>): Bindings {
     failureReproductionBlob: () => null,
     failureCaveat: () => null,
     version: () => "0.0.0",
+    tzdbVersion: () => "1999z",
     ...overrides,
   };
   return base;
@@ -508,6 +572,7 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
     const lib = new Libhegel(fakeBindings({}));
     const h = lib.newContext();
     expect(lib.version()).toBe("0.0.0");
+    expect(lib.tzdbVersion()).toBe("1999z");
     lib.freeContext(lib.newContext());
     lib.freeSettings(lib.newSettings(h));
     lib.setTestCases(h, 10);
@@ -588,12 +653,72 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
       }),
     ).toBe(0);
     expect(
-      lib.generateDate(h, h, { year: 1, month: 1, day: 1 }, { year: 2, month: 1, day: 1 }),
+      lib.generateDate(h, h, { year: 1, month: 1, day: 1 }, { year: 2, month: 1, day: 1 }, null),
     ).toEqual({
       year: 0,
       month: 0,
       day: 0,
     });
+  });
+
+  it("marshals the zeroed date and time outputs of fake bindings", () => {
+    const lib = new Libhegel(fakeBindings({}));
+    const h = lib.newContext();
+    const zero = { second: 0n, nanosecond: 0 };
+    expect(lib.generateTimestamp(h, h, zero, zero, 0)).toEqual(zero);
+    expect(lib.generateOffset(h, h, 0, 0, 0, false)).toEqual({ seconds: 0, known: false });
+    expect(lib.timezoneInfo(h, "Nowhere/Unknown")).toEqual({
+      known: false,
+      primaryName: "",
+      isLink: false,
+      rank: 0,
+      tags: 0,
+    });
+    expect(lib.generateTimezone(h, h, lib.timezoneSpecNew(h))).toBe("");
+    for (const source of [null, lib.zoneSourceNew(h)]) {
+      expect(lib.generateZonedDatetimeForZone(h, h, source, "UTC", lib.zonedSpecNew(h))).toEqual({
+        civil: {
+          date: { year: 0, month: 0, day: 0 },
+          time: { hour: 0, minute: 0, second: 0, nanosecond: 0 },
+        },
+        offsetSeconds: 0,
+        offsetKnown: false,
+        fold: false,
+        kind: 0,
+        offsetBefore: 0,
+        offsetAfter: 0,
+        timestamp: zero,
+      });
+    }
+    expect(lib.generateSpan(h, h, lib.spanSpecNew(h))).toEqual({
+      years: 0n,
+      months: 0n,
+      weeks: 0n,
+      days: 0n,
+      hours: 0n,
+      minutes: 0n,
+      seconds: 0n,
+      milliseconds: 0n,
+      microseconds: 0n,
+      nanoseconds: 0n,
+    });
+    for (const method of [
+      "dateOptionsNew",
+      "timezoneSpecNew",
+      "zonedSpecNew",
+      "spanSpecNew",
+      "zoneSourceNew",
+    ] as const) {
+      const nullHandle = new Libhegel(
+        fakeBindings({
+          [method]: (_ctx: Ptr, out: Ptr[]) => {
+            out[0] = null;
+            return 0;
+          },
+        }),
+      );
+      expect(() => nullHandle[method](nullHandle.newContext())).toThrow("returned a null handle");
+    }
   });
 });
 
@@ -672,6 +797,15 @@ describe("Libhegel against the real library", () => {
 
   it("reports the expected version", () => {
     expect(lib.version()).toBe(LIBHEGEL_VERSION);
+  });
+
+  it("reports the bundled time zone database release", () => {
+    expect(lib.tzdbVersion()).toBe(
+      readFileSync(
+        `${import.meta.dirname}/../../../libhegel/src/tzdata/version.txt`,
+        "utf8",
+      ).trim(),
+    );
   });
 
   it("passes a property that always holds", () => {
@@ -943,12 +1077,12 @@ describe("Libhegel ABI 0.42.4 regressions", () => {
     const tc = lib.nextTestCase(ctx, run);
     try {
       const date = { year: -12345, month: 6, day: 17 };
-      expect(lib.generateDate(ctx, tc, date, date)).toEqual(date);
+      expect(lib.generateDate(ctx, tc, date, date, null)).toEqual(date);
       for (const nanosecond of [1, 123456789, 999999999]) {
         const time = { hour: 12, minute: 34, second: 56, nanosecond };
-        expect(lib.generateTime(ctx, tc, time, time)).toEqual(time);
+        expect(lib.generateTime(ctx, tc, time, time, 0)).toEqual(time);
         const datetime = { date, time };
-        expect(lib.generateDatetime(ctx, tc, datetime, datetime)).toEqual(datetime);
+        expect(lib.generateDatetime(ctx, tc, datetime, datetime, 0)).toEqual(datetime);
       }
       const uuid = lib.generateUuid(ctx, tc, 4);
       expect(uuid).toHaveLength(16);

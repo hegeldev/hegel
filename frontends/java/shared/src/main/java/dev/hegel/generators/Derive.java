@@ -10,9 +10,10 @@ import java.util.List;
 /**
  * Reflection-based generator derivation. Maps a Java type to a default generator: scalar wrappers
  * to their primitive generators, {@code OptionalInt}/{@code OptionalLong}/{@code OptionalDouble} to
- * optionals over them, enums to a choice over their constants, records to a generator over their
- * components, and {@code List}/{@code Set}/{@code Optional}/{@code Map} to the matching collection
- * generators (using the declared element types).
+ * optionals over them, the {@code java.time} value types to their generators (so {@code DayOfWeek}
+ * and {@code Month} draw like any enum), enums to a choice over their constants, records to a
+ * generator over their components, and {@code List}/{@code Set}/{@code Optional}/{@code Map} to
+ * the matching collection generators (using the declared element types).
  */
 public final class Derive {
     private Derive() {}
@@ -84,28 +85,43 @@ public final class Derive {
             return Generators.binary();
         }
         if (cls == java.time.Duration.class) {
-            return Generators.durations();
+            return Generators.Temporals.durations();
         }
         if (cls == java.time.LocalDate.class) {
-            return Generators.dates();
+            return Generators.Temporals.dates();
         }
         if (cls == java.time.LocalTime.class) {
-            return Generators.times();
+            return Generators.Temporals.times();
         }
         if (cls == java.time.LocalDateTime.class) {
-            return Generators.datetimes();
+            return Generators.Temporals.datetimes();
         }
         if (cls == java.time.OffsetDateTime.class) {
-            return Generators.datetimes().offsets(Generators.zoneOffsets());
+            return Generators.Temporals.datetimes().offsets(Generators.Temporals.offsets());
         }
         if (cls == java.time.ZonedDateTime.class) {
-            return Generators.datetimes().timezones(Generators.zoneIds());
+            return Generators.Temporals.zonedDatetimes();
         }
         if (cls == java.time.ZoneOffset.class) {
-            return Generators.zoneOffsets();
+            return Generators.Temporals.offsets();
         }
         if (cls == java.time.ZoneId.class) {
-            return Generators.zoneIds();
+            return Generators.Temporals.zones();
+        }
+        if (cls == java.time.Instant.class) {
+            return Generators.Temporals.instants();
+        }
+        if (cls == java.time.Period.class) {
+            return Generators.Temporals.spans();
+        }
+        if (cls == java.time.Year.class) {
+            return Generators.Temporals.dates().map(d -> java.time.Year.of(d.getYear()));
+        }
+        if (cls == java.time.YearMonth.class) {
+            return Generators.Temporals.dates().map(java.time.YearMonth::from);
+        }
+        if (cls == java.time.MonthDay.class) {
+            return Generators.Temporals.dates().map(java.time.MonthDay::from);
         }
         return null;
     }

@@ -112,7 +112,8 @@ fn vec_max_size_below_min_size_is_a_clean_usage_error() {
 #[test]
 fn duration_min_above_u64_nanos_is_a_clean_usage_error() {
     let msg = capture_run_panic(|tc| {
-        let _: Duration = tc.draw(gs::durations().min_value(Duration::from_secs(u64::MAX)));
+        let _: Duration =
+            tc.draw(gs::temporal::std_durations().min_value(Duration::from_secs(u64::MAX)));
     });
     assert_clean_usage_error(&msg, "largest generatable Duration");
 }
@@ -147,12 +148,12 @@ fn one_of_empty_drawn_inline_is_a_clean_usage_error() {
 fn duration_max_below_min_is_a_clean_usage_error() {
     let msg = capture_run_panic(|tc| {
         let _: Duration = tc.draw(
-            gs::durations()
+            gs::temporal::std_durations()
                 .min_value(Duration::from_secs(10))
                 .max_value(Duration::from_secs(1)),
         );
     });
-    assert_clean_usage_error(&msg, "Cannot have max_value < min_value");
+    assert_clean_usage_error(&msg, "requires min_value <= max_value");
 }
 
 #[test]

@@ -2,21 +2,22 @@
 
 open! Core
 module G = Hegel.Generators
+module T = G.Temporal
 
 let first_date = Date.create_exn ~y:1 ~m:Jan ~d:1
 let last_date = Date.create_exn ~y:9999 ~m:Dec ~d:31
 let first_ofday = Time_ns.Ofday.start_of_day
 let last_ofday = Time_ns.Ofday.start_of_next_day
 
-let to_hegel_date d : G.date =
+let to_hegel_date d : T.Date.t =
   { year = Date.year d; month = Month.to_int (Date.month d); day = Date.day d }
 ;;
 
-let to_core_date ({ year; month; day } : G.date) =
+let to_core_date ({ year; month; day } : T.Date.t) =
   Date.create_exn ~y:year ~m:(Month.of_int_exn month) ~d:day
 ;;
 
-let to_hegel_time t : G.time =
+let to_hegel_time t : T.Time.t =
   let ({ hr; min; sec; ms; us; ns; sign = _ } : Time_ns.Span.Parts.t) =
     Time_ns.Ofday.to_parts t
   in
@@ -27,27 +28,31 @@ let to_hegel_time t : G.time =
   }
 ;;
 
-let to_ofday ({ hour; minute; second; nanosecond } : G.time) =
+let to_ofday ({ hour; minute; second; nanosecond } : T.Time.t) =
   Time_ns.Ofday.create ~hr:hour ~min:minute ~sec:second ~ns:nanosecond ()
 ;;
 
 let dates ?(min_date = first_date) ?(max_date = last_date) () =
-  (G.make_dates [@mode portable])
-    ~of_date:to_core_date
-    ~sexp_of:Date.sexp_of_t
-    ~min_date:(to_hegel_date min_date)
-    ~max_date:(to_hegel_date max_date)
-    ()
+  (G.with_printer [@mode portable])
+    Date.sexp_of_t
+    ((G.map [@mode portable])
+       to_core_date
+       (T.dates
+          ~min_value:(to_hegel_date min_date)
+          ~max_value:(to_hegel_date max_date)
+          ()))
 ;;
 
 let ofdays ?(min_ofday = first_ofday) ?(max_ofday = last_ofday) () =
   let ofdays_gen ~max_ofday =
-    (G.make_times [@mode portable])
-      ~of_time:to_ofday
-      ~sexp_of:Time_ns.Ofday.sexp_of_t
-      ~min_time:(to_hegel_time min_ofday)
-      ~max_time:(to_hegel_time max_ofday)
-      ()
+    (G.with_printer [@mode portable])
+      Time_ns.Ofday.sexp_of_t
+      ((G.map [@mode portable])
+         to_ofday
+         (T.times
+            ~min_value:(to_hegel_time min_ofday)
+            ~max_value:(to_hegel_time max_ofday)
+            ()))
   in
   if Time_ns.Ofday.( < ) max_ofday Time_ns.Ofday.start_of_next_day
   then ofdays_gen ~max_ofday
@@ -94,18 +99,18 @@ let times
       ?(max_time = Time_ns.max_value_representable)
       ()
   =
-  let utc = Time_float.Zone.utc in
-  let to_hegel_datetime t =
-    let date, ofday = Time_ns.to_date_ofday ~zone:utc t in
-    to_hegel_date date, to_hegel_time ofday
+  let to_instant t : T.Instant.t =
+    let ns = Time_ns.to_int_ns_since_epoch t in
+    { second = Int.( /% ) ns 1_000_000_000; nanosecond = Int.( % ) ns 1_000_000_000 }
   in
-  (G.make_datetimes [@mode portable])
-    ~of_datetime:(fun (date, time) ->
-      Time_ns.of_date_ofday ~zone:utc (to_core_date date) (to_ofday time))
-    ~sexp_of:Time_ns.Alternate_sexp.sexp_of_t
-    ~min_datetime:(to_hegel_datetime min_time)
-    ~max_datetime:(to_hegel_datetime max_time)
-    ()
+  let of_instant ({ second; nanosecond } : T.Instant.t) =
+    Time_ns.of_int_ns_since_epoch ((second * 1_000_000_000) + nanosecond)
+  in
+  (G.with_printer [@mode portable])
+    Time_ns.Alternate_sexp.sexp_of_t
+    ((G.map [@mode portable])
+       of_instant
+       (T.instants ~min_value:(to_instant min_time) ~max_value:(to_instant max_time) ()))
 ;;
 
 let%template hash_tables keys values ?min_size ?max_size () =

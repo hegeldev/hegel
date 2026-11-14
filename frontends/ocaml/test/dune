@@ -14,6 +14,8 @@
   test_generators_combinators
   test_generators_functions
   test_stateful
+  test_temporal
+  test_legacy_dates
   test_loader)
  (libraries
   hegel

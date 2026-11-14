@@ -134,14 +134,14 @@ internal sealed class LiveDataSource : IDataSource
     public DateOnly GenerateDate(DateOnly min, DateOnly max)
     {
         CheckLive();
-        Translate(_lib.GenerateDate(_tc, ToNative(min), ToNative(max), out var value), "generate_date");
+        Translate(_lib.GenerateDate(_tc, ToNative(min), ToNative(max), 0, out var value), "generate_date");
         return FromNative(value);
     }
 
     public TimeOnly GenerateTime(TimeOnly min, TimeOnly max)
     {
         CheckLive();
-        Translate(_lib.GenerateTime(_tc, ToNative(min), ToNative(max), out var value), "generate_time");
+        Translate(_lib.GenerateTime(_tc, ToNative(min), ToNative(max), Abi.PrecisionNanoseconds, out var value), "generate_time");
         return FromNative(value);
     }
 
@@ -150,7 +150,7 @@ internal sealed class LiveDataSource : IDataSource
         CheckLive();
         var nativeMin = new HegelDateTime { Date = ToNative(DateOnly.FromDateTime(min)), Time = ToNative(TimeOnly.FromDateTime(min)) };
         var nativeMax = new HegelDateTime { Date = ToNative(DateOnly.FromDateTime(max)), Time = ToNative(TimeOnly.FromDateTime(max)) };
-        Translate(_lib.GenerateDatetime(_tc, nativeMin, nativeMax, out var value), "generate_datetime");
+        Translate(_lib.GenerateDatetime(_tc, nativeMin, nativeMax, Abi.PrecisionNanoseconds, out var value), "generate_datetime");
         return FromNative(value.Date).ToDateTime(FromNative(value.Time), DateTimeKind.Unspecified);
     }
 

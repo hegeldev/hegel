@@ -159,9 +159,9 @@ internal static unsafe partial class NativeMethods
     [LibraryImport(Library)] internal static partial int hegel_grammar_draw_provide(nint ctx, nint draw, HegelString value);
     [LibraryImport(Library)] internal static partial int hegel_grammar_draw_result(nint ctx, nint draw, HegelString* o);
     [LibraryImport(Library)] internal static partial int hegel_grammar_draw_free(nint ctx, nint draw);
-    [LibraryImport(Library)] internal static partial int hegel_generate_date(nint ctx, nint tc, HegelDate min, HegelDate max, HegelDate* o);
-    [LibraryImport(Library)] internal static partial int hegel_generate_time(nint ctx, nint tc, HegelTime min, HegelTime max, HegelTime* o);
-    [LibraryImport(Library)] internal static partial int hegel_generate_datetime(nint ctx, nint tc, HegelDateTime min, HegelDateTime max, HegelDateTime* o);
+    [LibraryImport(Library)] internal static partial int hegel_generate_date(nint ctx, nint tc, HegelDate min, HegelDate max, nint options, HegelDate* o);
+    [LibraryImport(Library)] internal static partial int hegel_generate_time(nint ctx, nint tc, HegelTime min, HegelTime max, uint precision, HegelTime* o);
+    [LibraryImport(Library)] internal static partial int hegel_generate_datetime(nint ctx, nint tc, HegelDateTime min, HegelDateTime max, uint precision, HegelDateTime* o);
     [LibraryImport(Library)] internal static partial int hegel_generate_uuid(nint ctx, nint tc, byte version, [MarshalAs(UnmanagedType.U1)] bool hasVersion, byte* outBytes);
     [LibraryImport(Library)] internal static partial int hegel_generate_ipv4(nint ctx, nint tc, byte* outBytes);
     [LibraryImport(Library)] internal static partial int hegel_generate_ipv6(nint ctx, nint tc, byte* outBytes);

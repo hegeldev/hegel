@@ -11,34 +11,35 @@ setup:
     uv sync --group dev
     uv run maturin develop --uv
 
-# Rebuild the Rust extension after changing src/ or libhegel.
+# Build the Rust extension (incremental). Every recipe that imports hegel
+# depends on this, so they never run against a stale build.
 build:
     uv run maturin develop --uv
 
 build-release:
     uv run maturin develop --uv --release
 
-test *ARGS:
+test *ARGS: build
     uv run pytest {{ARGS}}
 
 # The package's own test suite.
-check-tests:
+check-tests: build
     uv run pytest -q tests --ignore=tests/hypothesis_port
 
 # The package's own test suite, requiring complete line and branch coverage
 # of python/hegel. Lines marked "unreachable on py3.X" are excluded only when
 # measuring on Python 3.X.
-check-coverage:
+check-coverage: build
     uv run coverage run -m pytest -q tests --ignore=tests/hypothesis_port
     HEGEL_COVERAGE_PYTHON=$(uv run python -c 'import sys; print("%d.%d" % sys.version_info[:2])') uv run coverage report
 
 # The Hypothesis test suite, ported to the Hegel API.
-check-hypothesis-port:
+check-hypothesis-port: build
     uv run pytest -q tests/hypothesis_port -p no:cacheprovider
 
 # The documentation site (Sphinx), as Read the Docs builds it. Warnings are
 # errors.
-docs:
+docs: build
     uv run --group docs sphinx-build -W --keep-going -b html docs docs/_build/html
 
 format:

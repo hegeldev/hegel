@@ -47,11 +47,12 @@ run-sqlite-bank *ARGS: build-libhegel
 check-sqlite: && run-sqlite-bank
     mvn -B -q {{sqlite}} spotless:check
 
+# palantir-java-format breaks on JDK 26+; this picks an installed JDK it runs on.
 format:
-    mvn -B spotless:apply
+    python3 scripts/spotless.py apply
 
 check-format:
-    mvn -B spotless:check
+    python3 scripts/spotless.py check
 
 check-lint: check-format
 

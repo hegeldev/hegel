@@ -101,8 +101,19 @@ func Stub(tb testingTB, returns ...any) *Context {
 					in == reflect.TypeFor[out[bool]](), in == reflect.TypeFor[out[int64]](),
 					in == reflect.TypeFor[out[StateMachineGroup]](),
 					in == reflect.TypeFor[out[float64]](), in == reflect.TypeFor[out[Date]](),
-					in == reflect.TypeFor[out[Time]](), in == reflect.TypeFor[out[Datetime]]():
+					in == reflect.TypeFor[out[Time]](), in == reflect.TypeFor[out[Datetime]](),
+					in == reflect.TypeFor[out[Duration]](), in == reflect.TypeFor[out[Offset]](),
+					in == reflect.TypeFor[out[ZonedDatetime]]():
 					arg.Elem().Set(reflect.ValueOf(retval()).Convert(in.Elem()))
+				case in == reflect.TypeFor[out[timezoneInfoT]]():
+					info := retval().(TimezoneInfo)
+					arg.Elem().Set(reflect.ValueOf(timezoneInfoT{
+						known:       info.Known,
+						primaryName: cString(info.PrimaryName),
+						isLink:      info.IsLink,
+						rank:        info.Rank,
+						tags:        info.Tags,
+					}))
 				default:
 					continue // input pointer
 				}

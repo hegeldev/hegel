@@ -134,6 +134,20 @@ type weather =
   }
 [@@deriving hegel_generator]
 
+(** A record with [Temporal] fields: each value module carries the
+    [hegel_generator] and [sexp_of_t] the deriver looks for. *)
+type appointment =
+  { on : Temporal.Date.t
+  ; starts : Temporal.Time.t
+  ; booked : Temporal.Instant.t
+  ; meeting : Temporal.Zoned_datetime.t
+  ; offset : Temporal.Offset.t
+  ; length : Temporal.Duration.t
+  ; repeats : Temporal.Span.t
+  ; reminder : Temporal.Datetime.t
+  }
+[@@deriving hegel_generator]
+
 (** A record-field override: limit an int to [[3, 5]] by swapping in a custom
     generator (the quickcheck idiom for range-limiting a field). *)
 type ranked =
@@ -378,6 +392,26 @@ let%hegel_test test_qualified_field_e2e tc =
 [@@settings Hegel.Settings.create ~test_cases:20 ~seed:0 ()]
 ;;
 
+(** Test: [Temporal] value types derive, and print as their text. *)
+let%hegel_test test_temporal_fields_e2e tc =
+  let a = Hegel.draw tc hegel_generator_appointment in
+  let printed =
+    Sexp.to_string ((Hegel.Generators.printer hegel_generator_appointment) a)
+  in
+  List.iter
+    [ Temporal.Date.to_string a.on
+    ; Temporal.Time.to_string a.starts
+    ; Temporal.Instant.to_string a.booked
+    ; Temporal.Offset.to_string a.offset
+    ; Temporal.Duration.to_string a.length
+    ; Temporal.Datetime.to_string a.reminder
+    ]
+    ~f:(fun text -> assert (String.is_substring printed ~substring:text));
+  assert (Temporal.Zoned_datetime.equal a.meeting a.meeting);
+  assert (Temporal.Span.equal a.repeats a.repeats)
+[@@settings Hegel.Settings.create ~test_cases:20 ~seed:0 ()]
+;;
+
 (** Test: a [@hegel.generator] field override pins the field to the custom
     generator's distribution — every draw lands in [[3, 5]] *)
 let test_field_override_range_e2e () =
@@ -570,6 +604,7 @@ let () =
             test_inline_record_e2e
         ; Alcotest.test_case "module t naming" `Quick test_module_t_naming_e2e
         ; Alcotest.test_case "qualified M.t field" `Quick test_qualified_field_e2e
+        ; Alcotest.test_case "temporal fields" `Quick test_temporal_fields_e2e
         ; Alcotest.test_case "field override range" `Quick test_field_override_range_e2e
         ; Alcotest.test_case
             "constructor arg override"

@@ -1,8 +1,13 @@
 use crate::printer::{Printer, with_options};
+use crate::time::{
+    DateOptions, PyDate, PyDateTime, PyDuration, PySpan, PyTime, PyTimestamp, SpanSpec,
+    TimeZoneSpec, ZonedSpec, date_from_c, date_to_c, datetime_from_c, datetime_to_c,
+    duration_from_c, duration_to_c, time_from_c, time_to_c, timestamp_from_c, timestamp_to_c,
+};
 use crate::{
-    InternalError, OutputBuffer, SendPtr, Settings, StringGenerator, big_from_le, big_to_le, check,
-    hstr, hstr_bytes, max_size_arg, opt_string_from, output_trampoline, output_user_data,
-    string_from, with_ctx,
+    InternalError, OutputBuffer, SendPtr, Settings, StringGenerator, ZoneSource, big_from_le,
+    big_to_le, check, hstr, hstr_bytes, max_size_arg, opt_string_from, output_trampoline,
+    output_user_data, string_from, with_ctx,
 };
 use hegel_c as c;
 use hegel_c::hegel_result_t as Rc;
@@ -220,50 +225,21 @@ impl TestCase {
     }
 }
 
-fn date_to_c(d: (i32, u8, u8)) -> c::hegel_date_t {
-    c::hegel_date_t {
-        year: d.0,
-        month: d.1,
-        day: d.2,
+/// A zoned datetime for a draw to write its result over.
+fn empty_zoned_datetime() -> c::hegel_zoned_datetime_t {
+    c::hegel_zoned_datetime_t {
+        civil: datetime_to_c((2000, 1, 1, 0, 0, 0, 0)),
+        offset_seconds: 0,
+        offset_known: false,
+        fold: false,
+        kind: c::hegel_timezone_kind_t::HEGEL_TIMEZONE_KIND_UNIQUE,
+        offset_before: 0,
+        offset_after: 0,
+        timestamp: c::hegel_timestamp_t {
+            second: 0,
+            nanosecond: 0,
+        },
     }
-}
-
-fn date_from_c(d: c::hegel_date_t) -> (i32, u8, u8) {
-    (d.year, d.month, d.day)
-}
-
-fn time_to_c(t: (u8, u8, u8, u32)) -> c::hegel_time_t {
-    c::hegel_time_t {
-        hour: t.0,
-        minute: t.1,
-        second: t.2,
-        nanosecond: t.3,
-    }
-}
-
-fn time_from_c(t: c::hegel_time_t) -> (u8, u8, u8, u32) {
-    (t.hour, t.minute, t.second, t.nanosecond)
-}
-
-type PyDateTime = (i32, u8, u8, u8, u8, u8, u32);
-
-fn datetime_to_c(d: PyDateTime) -> c::hegel_datetime_t {
-    c::hegel_datetime_t {
-        date: date_to_c((d.0, d.1, d.2)),
-        time: time_to_c((d.3, d.4, d.5, d.6)),
-    }
-}
-
-fn datetime_from_c(d: c::hegel_datetime_t) -> PyDateTime {
-    (
-        d.date.year,
-        d.date.month,
-        d.date.day,
-        d.time.hour,
-        d.time.minute,
-        d.time.second,
-        d.time.nanosecond,
-    )
 }
 
 #[pymethods]
@@ -460,11 +436,15 @@ impl TestCase {
         Ok(PyBytes::new(py, &bytes))
     }
 
+    /// Draw a date in `[min_value, max_value]` on the weekdays and in the
+    /// months `options` allows (every one for `None`).
+    #[pyo3(signature = (min_value, max_value, options))]
     fn generate_date(
         &self,
-        min_value: (i32, u8, u8),
-        max_value: (i32, u8, u8),
-    ) -> PyResult<(i32, u8, u8)> {
+        min_value: PyDate,
+        max_value: PyDate,
+        options: Option<&DateOptions>,
+    ) -> PyResult<PyDate> {
         let mut out = date_to_c(min_value);
         with_ctx(|ctx| {
             check(unsafe {
@@ -473,6 +453,7 @@ impl TestCase {
                     self.tc(),
                     date_to_c(min_value),
                     date_to_c(max_value),
+                    options.map_or(ptr::null(), DateOptions::raw),
                     &mut out,
                 )
             })
@@ -480,11 +461,14 @@ impl TestCase {
         Ok(date_from_c(out))
     }
 
+    /// Draw a time of day in `[min_value, max_value]` that is a whole
+    /// number of `precision` units (a `PRECISION_*` constant).
     fn generate_time(
         &self,
-        min_value: (u8, u8, u8, u32),
-        max_value: (u8, u8, u8, u32),
-    ) -> PyResult<(u8, u8, u8, u32)> {
+        min_value: PyTime,
+        max_value: PyTime,
+        precision: u32,
+    ) -> PyResult<PyTime> {
         let mut out = time_to_c(min_value);
         with_ctx(|ctx| {
             check(unsafe {
@@ -493,6 +477,7 @@ impl TestCase {
                     self.tc(),
                     time_to_c(min_value),
                     time_to_c(max_value),
+                    precision,
                     &mut out,
                 )
             })
@@ -500,10 +485,13 @@ impl TestCase {
         Ok(time_from_c(out))
     }
 
+    /// Draw a naive datetime in `[min_value, max_value]` whose time of day
+    /// is a whole number of `precision` units.
     fn generate_datetime(
         &self,
         min_value: PyDateTime,
         max_value: PyDateTime,
+        precision: u32,
     ) -> PyResult<PyDateTime> {
         let mut out = datetime_to_c(min_value);
         with_ctx(|ctx| {
@@ -513,11 +501,217 @@ impl TestCase {
                     self.tc(),
                     datetime_to_c(min_value),
                     datetime_to_c(max_value),
+                    precision,
                     &mut out,
                 )
             })
         })?;
         Ok(datetime_from_c(out))
+    }
+
+    /// Draw a signed duration in `[min_value, max_value]` that is a whole
+    /// number of `precision` units, as `(seconds, nanoseconds)` of one sign.
+    fn generate_duration(
+        &self,
+        min_value: PyDuration,
+        max_value: PyDuration,
+        precision: u32,
+    ) -> PyResult<PyDuration> {
+        let mut out = duration_to_c(min_value);
+        with_ctx(|ctx| {
+            check(unsafe {
+                c::hegel_generate_duration(
+                    ctx,
+                    self.tc(),
+                    duration_to_c(min_value),
+                    duration_to_c(max_value),
+                    precision,
+                    &mut out,
+                )
+            })
+        })?;
+        Ok(duration_from_c(out))
+    }
+
+    /// Draw an instant in `[min_value, max_value]`, each `(seconds,
+    /// nanoseconds)` since the Unix epoch, that is a whole number of
+    /// `precision` units since the epoch.
+    fn generate_timestamp(
+        &self,
+        min_value: PyTimestamp,
+        max_value: PyTimestamp,
+        precision: u32,
+    ) -> PyResult<PyTimestamp> {
+        let mut out = timestamp_to_c(min_value);
+        with_ctx(|ctx| {
+            check(unsafe {
+                c::hegel_generate_timestamp(
+                    ctx,
+                    self.tc(),
+                    timestamp_to_c(min_value),
+                    timestamp_to_c(max_value),
+                    precision,
+                    &mut out,
+                )
+            })
+        })?;
+        Ok(timestamp_from_c(out))
+    }
+
+    /// Draw a calendar span within `spec`, as its ten unit values from
+    /// years to nanoseconds.
+    fn generate_span(&self, spec: &SpanSpec) -> PyResult<PySpan> {
+        let mut out = c::hegel_span_t {
+            years: 0,
+            months: 0,
+            weeks: 0,
+            days: 0,
+            hours: 0,
+            minutes: 0,
+            seconds: 0,
+            milliseconds: 0,
+            microseconds: 0,
+            nanoseconds: 0,
+        };
+        with_ctx(|ctx| {
+            check(unsafe { c::hegel_generate_span(ctx, self.tc(), spec.raw(), &mut out) })
+        })?;
+        Ok((
+            out.years,
+            out.months,
+            out.weeks,
+            out.days,
+            out.hours,
+            out.minutes,
+            out.seconds,
+            out.milliseconds,
+            out.microseconds,
+            out.nanoseconds,
+        ))
+    }
+
+    /// Draw a known UTC offset in `[min_seconds, max_seconds]` that is a
+    /// whole number of `granularity` units (a `GRANULARITY_*` constant).
+    fn generate_offset(
+        &self,
+        min_seconds: i32,
+        max_seconds: i32,
+        granularity: u32,
+    ) -> PyResult<i32> {
+        let mut out = c::hegel_offset_t {
+            seconds: 0,
+            known: false,
+        };
+        with_ctx(|ctx| {
+            check(unsafe {
+                c::hegel_generate_offset(
+                    ctx,
+                    self.tc(),
+                    min_seconds,
+                    max_seconds,
+                    granularity,
+                    false,
+                    &mut out,
+                )
+            })
+        })?;
+        Ok(out.seconds)
+    }
+
+    /// Draw an IANA time zone name `spec` allows.
+    fn generate_timezone(&self, spec: &TimeZoneSpec) -> PyResult<String> {
+        let mut result = c::hegel_owned_string_t::default();
+        with_ctx(|ctx| {
+            check(unsafe { c::hegel_generate_timezone(ctx, self.tc(), spec.raw(), &mut result) })?;
+            let name = string_from(result);
+            let _ = unsafe { c::hegel_owned_string_free(ctx, &mut result) };
+            Ok(name)
+        })
+    }
+
+    /// Draw a zoned datetime, as `(zone, civil, fold, kind, offset_seconds,
+    /// offset_known, timestamp)`. The draw may run a zone source's loader,
+    /// so the GIL is released meanwhile.
+    #[allow(clippy::type_complexity)]
+    fn generate_zoned_datetime(
+        &self,
+        py: Python<'_>,
+        tz_spec: &TimeZoneSpec,
+        zoned_spec: &ZonedSpec,
+    ) -> PyResult<(String, PyDateTime, bool, u32, i32, bool, (i64, u32))> {
+        let tc = SendPtr(self.tc());
+        let tz_spec = SendPtr(tz_spec.raw() as *mut c::HegelTimezoneSpec);
+        let zoned_spec = SendPtr(zoned_spec.raw() as *mut c::HegelZonedSpec);
+        let (rc, name, out) = py.detach(move || {
+            let mut zone = c::hegel_owned_string_t::default();
+            let mut out = empty_zoned_datetime();
+            with_ctx(|ctx| unsafe {
+                let rc = c::hegel_generate_zoned_datetime(
+                    ctx,
+                    tc.get(),
+                    tz_spec.get(),
+                    zoned_spec.get(),
+                    &mut out,
+                    &mut zone,
+                );
+                if rc != Rc::HEGEL_OK {
+                    return (rc, String::new(), out);
+                }
+                let name = string_from(zone);
+                let _ = c::hegel_owned_string_free(ctx, &mut zone);
+                (rc, name, out)
+            })
+        });
+        check(rc)?;
+        Ok((
+            name,
+            datetime_from_c(out.civil),
+            out.fold,
+            out.kind as u32,
+            out.offset_seconds,
+            out.offset_known,
+            timestamp_from_c(out.timestamp),
+        ))
+    }
+
+    /// Draw a zoned datetime in the zone `name` of `source`, as `(civil,
+    /// fold, kind, offset_seconds, offset_known, timestamp)`, recording no
+    /// zone choice. The draw may run the source's loader, so the GIL is
+    /// released meanwhile.
+    #[allow(clippy::type_complexity)]
+    fn generate_zoned_datetime_for_zone(
+        &self,
+        py: Python<'_>,
+        source: &ZoneSource,
+        name: &str,
+        zoned_spec: &ZonedSpec,
+    ) -> PyResult<(PyDateTime, bool, u32, i32, bool, (i64, u32))> {
+        let tc = SendPtr(self.tc());
+        let source = SendPtr(source.raw() as *mut c::HegelZoneSource);
+        let zoned_spec = SendPtr(zoned_spec.raw() as *mut c::HegelZonedSpec);
+        let (rc, out) = py.detach(move || {
+            let mut out = empty_zoned_datetime();
+            let rc = with_ctx(|ctx| unsafe {
+                c::hegel_generate_zoned_datetime_for_zone(
+                    ctx,
+                    tc.get(),
+                    source.get(),
+                    hstr(name),
+                    zoned_spec.get(),
+                    &mut out,
+                )
+            });
+            (rc, out)
+        });
+        check(rc)?;
+        Ok((
+            datetime_from_c(out.civil),
+            out.fold,
+            out.kind as u32,
+            out.offset_seconds,
+            out.offset_known,
+            timestamp_from_c(out.timestamp),
+        ))
     }
 
     #[pyo3(signature = (version))]

@@ -91,9 +91,9 @@ internal interface ILibhegel
     int GenerateFloat(nint testCase, int width, double min, double max, bool allowNan, bool allowInfinity, bool excludeMin, bool excludeMax, double smallestNonzeroMagnitude, out double value);
     int GenerateBytes(nint testCase, ulong minSize, ulong maxSize, out byte[] value);
     int GenerateString(nint testCase, nint generator, out string value);
-    int GenerateDate(nint testCase, HegelDate min, HegelDate max, out HegelDate value);
-    int GenerateTime(nint testCase, HegelTime min, HegelTime max, out HegelTime value);
-    int GenerateDatetime(nint testCase, HegelDateTime min, HegelDateTime max, out HegelDateTime value);
+    int GenerateDate(nint testCase, HegelDate min, HegelDate max, nint options, out HegelDate value);
+    int GenerateTime(nint testCase, HegelTime min, HegelTime max, uint precision, out HegelTime value);
+    int GenerateDatetime(nint testCase, HegelDateTime min, HegelDateTime max, uint precision, out HegelDateTime value);
     int GenerateUuid(nint testCase, int version, bool hasVersion, byte[] out16);
     int GenerateIpv4(nint testCase, byte[] out4);
     int GenerateIpv6(nint testCase, byte[] out16);

@@ -22,6 +22,7 @@
 #include "hegel/generators/numeric.h"
 #include "hegel/generators/primitives.h"
 #include "hegel/generators/strings.h"
+#include "hegel/generators/temporal.h"
 
 namespace hegel::generators {
 
@@ -199,6 +200,71 @@ namespace hegel::generators {
         struct DefaultGenerator<T,
                                 std::enable_if_t<std::is_floating_point_v<T>>> {
             static Generator<T> generator() { return floats<T>(); }
+        };
+
+        // =================================================================
+        // Specializations for the date and time values
+        // =================================================================
+
+        template <> struct DefaultGenerator<temporal::Date> {
+            static Generator<temporal::Date> generator() {
+                return temporal::dates();
+            }
+        };
+
+        template <> struct DefaultGenerator<temporal::Time> {
+            static Generator<temporal::Time> generator() {
+                return temporal::times();
+            }
+        };
+
+        template <> struct DefaultGenerator<temporal::DateTime> {
+            static Generator<temporal::DateTime> generator() {
+                return temporal::datetimes();
+            }
+        };
+
+        template <> struct DefaultGenerator<temporal::Instant> {
+            static Generator<temporal::Instant> generator() {
+                return temporal::instants();
+            }
+        };
+
+        template <> struct DefaultGenerator<temporal::UtcOffset> {
+            static Generator<temporal::UtcOffset> generator() {
+                return temporal::offsets();
+            }
+        };
+
+        template <> struct DefaultGenerator<temporal::TimeZone> {
+            static Generator<temporal::TimeZone> generator() {
+                return temporal::zones();
+            }
+        };
+
+        template <> struct DefaultGenerator<temporal::ZonedDateTime> {
+            static Generator<temporal::ZonedDateTime> generator() {
+                return temporal::zoned_datetimes();
+            }
+        };
+
+        template <> struct DefaultGenerator<temporal::SignedDuration> {
+            static Generator<temporal::SignedDuration> generator() {
+                return temporal::durations();
+            }
+        };
+
+        template <> struct DefaultGenerator<temporal::Span> {
+            static Generator<temporal::Span> generator() {
+                return temporal::spans();
+            }
+        };
+
+        template <typename T>
+        struct DefaultGenerator<
+            T,
+            std::enable_if_t<temporal::detail::is_chrono_duration<T>::value>> {
+            static Generator<T> generator() { return temporal::durations<T>(); }
         };
 
         // =================================================================

@@ -5,3 +5,10 @@
 # against cbindgen's freshly-generated, always-LF output) fails on
 # Windows even when nothing has actually drifted.
 *.h text eol=lf
+
+# The bundled time zone table, its checksum and version, and the script
+# that generates them are compared byte for byte by
+# `libhegel/tests/embedded/tzdata_tests.rs`, so they must stay on LF too.
+libhegel/src/tzdata/*.txt text eol=lf
+libhegel/scripts/generate_tzdata.py text eol=lf
+libhegel/src/tzdata/*.z binary

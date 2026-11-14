@@ -30,3 +30,23 @@ export interface RuntimeServices {
 export function consoleOutput(line: string): void {
   console.error(line);
 }
+
+let installed: RuntimeServices | null = null;
+
+/** Record the runtime the package entry point composed, for calls made outside a test. */
+export function setEntryRuntime(runtime: RuntimeServices): void {
+  installed = runtime;
+}
+
+/** The runtime the package entry point composed, if one has loaded. */
+export function entryRuntime(): RuntimeServices | null {
+  return installed;
+}
+
+/** The engine of the runtime the package entry point composed. */
+export function entryEngine(): Engine {
+  if (installed === null) {
+    throw new Error('The engine is not loaded: import "@hegeldev/hegel" before calling this');
+  }
+  return installed.getEngine();
+}

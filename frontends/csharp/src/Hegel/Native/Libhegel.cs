@@ -642,26 +642,26 @@ internal sealed unsafe class Libhegel : ILibhegel
         return rc;
     }
 
-    public int GenerateDate(nint testCase, HegelDate min, HegelDate max, out HegelDate value)
+    public int GenerateDate(nint testCase, HegelDate min, HegelDate max, nint options, out HegelDate value)
     {
         HegelDate o;
-        var rc = NativeMethods.hegel_generate_date(Ctx, testCase, min, max, &o);
+        var rc = NativeMethods.hegel_generate_date(Ctx, testCase, min, max, options, &o);
         value = o;
         return rc;
     }
 
-    public int GenerateTime(nint testCase, HegelTime min, HegelTime max, out HegelTime value)
+    public int GenerateTime(nint testCase, HegelTime min, HegelTime max, uint precision, out HegelTime value)
     {
         HegelTime o;
-        var rc = NativeMethods.hegel_generate_time(Ctx, testCase, min, max, &o);
+        var rc = NativeMethods.hegel_generate_time(Ctx, testCase, min, max, precision, &o);
         value = o;
         return rc;
     }
 
-    public int GenerateDatetime(nint testCase, HegelDateTime min, HegelDateTime max, out HegelDateTime value)
+    public int GenerateDatetime(nint testCase, HegelDateTime min, HegelDateTime max, uint precision, out HegelDateTime value)
     {
         HegelDateTime o;
-        var rc = NativeMethods.hegel_generate_datetime(Ctx, testCase, min, max, &o);
+        var rc = NativeMethods.hegel_generate_datetime(Ctx, testCase, min, max, precision, &o);
         value = o;
         return rc;
     }

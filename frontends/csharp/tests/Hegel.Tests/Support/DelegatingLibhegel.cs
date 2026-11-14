@@ -90,9 +90,9 @@ internal class DelegatingLibhegel : ILibhegel
     public virtual int GenerateFloat(nint testCase, int width, double min, double max, bool allowNan, bool allowInfinity, bool excludeMin, bool excludeMax, double smallestNonzeroMagnitude, out double value) => Inner.GenerateFloat(testCase, width, min, max, allowNan, allowInfinity, excludeMin, excludeMax, smallestNonzeroMagnitude, out value);
     public virtual int GenerateBytes(nint testCase, ulong minSize, ulong maxSize, out byte[] value) => Inner.GenerateBytes(testCase, minSize, maxSize, out value);
     public virtual int GenerateString(nint testCase, nint generator, out string value) => Inner.GenerateString(testCase, generator, out value);
-    public virtual int GenerateDate(nint testCase, HegelDate min, HegelDate max, out HegelDate value) => Inner.GenerateDate(testCase, min, max, out value);
-    public virtual int GenerateTime(nint testCase, HegelTime min, HegelTime max, out HegelTime value) => Inner.GenerateTime(testCase, min, max, out value);
-    public virtual int GenerateDatetime(nint testCase, HegelDateTime min, HegelDateTime max, out HegelDateTime value) => Inner.GenerateDatetime(testCase, min, max, out value);
+    public virtual int GenerateDate(nint testCase, HegelDate min, HegelDate max, nint options, out HegelDate value) => Inner.GenerateDate(testCase, min, max, options, out value);
+    public virtual int GenerateTime(nint testCase, HegelTime min, HegelTime max, uint precision, out HegelTime value) => Inner.GenerateTime(testCase, min, max, precision, out value);
+    public virtual int GenerateDatetime(nint testCase, HegelDateTime min, HegelDateTime max, uint precision, out HegelDateTime value) => Inner.GenerateDatetime(testCase, min, max, precision, out value);
     public virtual int GenerateUuid(nint testCase, int version, bool hasVersion, byte[] out16) => Inner.GenerateUuid(testCase, version, hasVersion, out16);
     public virtual int GenerateIpv4(nint testCase, byte[] out4) => Inner.GenerateIpv4(testCase, out4);
     public virtual int GenerateIpv6(nint testCase, byte[] out16) => Inner.GenerateIpv6(testCase, out16);

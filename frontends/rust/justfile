@@ -19,11 +19,18 @@ check-ffi-list:
 
 test: check-tests
 
-check-tests:
+# The fixture binaries in target/debug load the libhegel cdylib next to them
+# before the one build.rs baked in, and `cargo test` does not rebuild that
+# copy, so build it first rather than test a stale engine.
+check-tests: build-libhegel
     RUST_BACKTRACE=1 cargo test -p hegeltest -p hegeltest-macros
 
 check-tests-all-features:
     RUST_BACKTRACE=1 cargo test -p hegeltest -p hegeltest-macros --all-features
+
+# Build the libhegel cdylib into target/debug.
+build-libhegel:
+    cargo build -p hegeltest-c
 
 compile-examples:
     cargo build -p hegeltest --examples --all-features

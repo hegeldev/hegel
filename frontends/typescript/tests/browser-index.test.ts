@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import { wasmBytes } from "./wasmFixture.js";
 import * as node from "../src/index.js";
 
@@ -18,6 +19,9 @@ it("auto-initializes the browser composition root and preserves the public expor
   expect(Object.keys(browser).sort()).toEqual(Object.keys(node).sort());
   expect(fetch).toHaveBeenCalledExactlyOnceWith(
     new URL("../src/browser/libhegel-wasm32-unknown-unknown.wasm", import.meta.url),
+  );
+  expect(browser.generators.temporal.tzdbVersion()).toBe(
+    readFileSync(`${import.meta.dirname}/../../../libhegel/src/tzdata/version.txt`, "utf8").trim(),
   );
   expect(
     browser.test((tc) => {
@@ -49,4 +53,20 @@ it("auto-initializes the browser composition root and preserves the public expor
   doc.printer.text(")");
   slot.value("described later");
   expect(doc.finish()).toBe('f("described later")');
+});
+
+it("loads the engine when only the browser generators entry point is imported", async () => {
+  vi.resetModules();
+  vi.stubGlobal(
+    "fetch",
+    vi
+      .fn()
+      .mockResolvedValue(
+        new Response(wasmBytes, { headers: { "Content-Type": "application/wasm" } }),
+      ),
+  );
+  const gs = await import("../src/browser/generators.js");
+  expect(gs.temporal.tzdbVersion()).toBe(
+    readFileSync(`${import.meta.dirname}/../../../libhegel/src/tzdata/version.txt`, "utf8").trim(),
+  );
 });

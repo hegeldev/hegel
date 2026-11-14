@@ -80,9 +80,18 @@ namespace hegel::internal {
         StatefulRule,
         PoolValuesReusable,
         PoolValuesConsumed,
+        Dates,
+        Times,
+        Datetimes,
+        Instants,
+        Offsets,
+        Zones,
+        ZonedDatetimes,
+        Durations,
+        Spans,
     };
     inline constexpr std::size_t label_name_count =
-        static_cast<std::size_t>(LabelName::PoolValuesConsumed) + 1;
+        static_cast<std::size_t>(LabelName::Spans) + 1;
 
     // The label of a generator with no component generators, derived once
     // per process.

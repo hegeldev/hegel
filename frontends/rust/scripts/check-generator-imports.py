@@ -10,7 +10,9 @@ etc. — including inside string-literal code snippets such as
 like `use crate::generators::{booleans, integers};`.
 
 Importing traits and types directly (`Generator`, `DefaultGenerator`,
-`BoxedGenerator`) is allowed, as is the deliberate glob-import test in
+`BoxedGenerator`) is allowed, as is importing the types, constants and
+query functions of `hegel::generators::temporal` (but not its
+generators, called as `gs::temporal::dates()`), as is the deliberate glob-import test in
 test_combinators.rs (a glob is not a qualified path, so it does not
 match).
 """
@@ -23,14 +25,26 @@ from pathlib import Path
 
 TESTS_ROOT = Path(__file__).resolve().parent.parent / "tests"
 
-QUALIFIED_RE = re.compile(r"\b(?:hegel|crate)::generators::(?!self\b)[a-z]\w*")
-BRACE_IMPORT_RE = re.compile(r"use\s+(?:hegel|crate)::generators::\{([^}]*)\}")
+TEMPORAL_GENERATORS = (
+    "dates|times|datetimes|instants|offsets|zones|zoned_datetimes|durations|spans"
+    "|std_durations|system_times"
+)
+QUALIFIED_RE = re.compile(
+    r"\b(?:hegel|crate)::generators::(?:(?!self\b|temporal\b)[a-z]\w*"
+    rf"|temporal::(?:{TEMPORAL_GENERATORS})\b)"
+)
+BRACE_IMPORT_RE = re.compile(
+    r"use\s+(?:hegel|crate)::generators::(temporal::)?\{([^}]*)\}"
+)
 
 
-def brace_import_violates(items: str) -> bool:
+def brace_import_violates(temporal: bool, items: str) -> bool:
     for item in items.split(","):
         name = item.strip().split()[0] if item.strip() else ""
-        if name and name != "self" and name[0].islower():
+        if temporal:
+            if re.fullmatch(TEMPORAL_GENERATORS, name):
+                return True
+        elif name and name not in ("self", "temporal") and name[0].islower():
             return True
     return False
 
@@ -58,7 +72,7 @@ def check() -> int:
             i += 1
         for lineno, line in logical:
             brace = BRACE_IMPORT_RE.search(line)
-            if brace and brace_import_violates(brace.group(1)):
+            if brace and brace_import_violates(bool(brace.group(1)), brace.group(2)):
                 violations.append(f"  {rs_file}:{lineno}: {line.strip()}")
             elif not brace and QUALIFIED_RE.search(line):
                 violations.append(f"  {rs_file}:{lineno}: {line.strip()}")

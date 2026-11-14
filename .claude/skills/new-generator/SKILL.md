@@ -5,7 +5,7 @@ description: "How to add a new generator to hegel-rust. Use when the user asks t
 
 # Adding a New Generator
 
-A reference + checklist for implementing a single new generator. The pattern is very consistent across the crate — `frontends/rust/src/generators/time.rs` (`DurationGenerator`) is the cleanest single-builder example, and `frontends/rust/src/generators/numeric.rs` (`FloatGenerator`) is the cleanest multi-builder example. Read whichever is closer to your case before starting.
+A reference + checklist for implementing a single new generator. The pattern is very consistent across the crate — `frontends/rust/src/generators/temporal/system.rs` (`StdDurationGenerator`) is the cleanest single-builder example, and `frontends/rust/src/generators/numeric.rs` (`FloatGenerator`) is the cleanest multi-builder example. Read whichever is closer to your case before starting.
 
 This skill covers writing the generator itself. To make `gs::default::<T>()` work for the new type, also run the **new-default-generator** skill after this one.
 
@@ -20,7 +20,7 @@ If you find that the generator would *dramatically and fundamentally* benefit fr
 **First-party generators** (always-on, not tied to a third-party crate) live under `frontends/rust/src/generators/`:
 
 - If a topical module already exists for this kind of generator, add it there.
-  - Time-shaped → `frontends/rust/src/generators/time.rs`
+  - Time-shaped → `frontends/rust/src/generators/temporal/`
   - Numeric → `frontends/rust/src/generators/numeric.rs`
   - String-shaped → `frontends/rust/src/generators/strings.rs`
   - Tiny / one-off (no obvious topic) → `frontends/rust/src/generators/misc.rs`
@@ -48,7 +48,7 @@ If two builder methods are mutually exclusive, document the exclusion on both me
 
 **Every invalid combination of builder values must be caught at draw time with `invalid_argument!`, with a clear message.** Validation runs at the start of `do_draw` (or, for string-shaped generators, inside the cached-handle builder). Examples to model:
 - `IntegerGenerator` and `FloatGenerator` in `frontends/rust/src/generators/numeric.rs` — bound ordering (`min <= max`), and a descriptive message for the sign-aware-empty float range
-- `DurationGenerator` in `frontends/rust/src/generators/time.rs` — bound ordering for nanoseconds
+- `StdDurationGenerator` in `frontends/rust/src/generators/temporal/system.rs` — bound ordering for nanoseconds
 - `TextGenerator` in `frontends/rust/src/generators/strings.rs` — combination check for `alphabet` vs character methods
 
 These messages are part of the public API: tests assert against them. Pick a stable, descriptive substring.
@@ -78,7 +78,7 @@ A span's label is an opaque `u64` identifying the generator that opened it: the 
 
 Public factory function `pub fn foos() -> FooGenerator` that returns the generator with default-everything. Plural (`durations`, `floats`, `integers`). Inside an `extras::<lib>` module, drop the lib prefix — `dates()` not `<lib>_dates()`.
 
-The factory function gets a `///` doc comment with a short prose description and a runnable example using `#[hegel::test]` in a `no_run` block. Model on the `durations()` factory in `frontends/rust/src/generators/time.rs`.
+The factory function gets a `///` doc comment with a short prose description and a runnable example using `#[hegel::test]` in a `no_run` block. Model on the `std_durations()` factory in `frontends/rust/src/generators/temporal/system.rs`.
 
 Module wiring depends on placement:
 
@@ -94,7 +94,7 @@ Required on every new generator:
 - `///` on every builder method describing what it constrains.
 - `///` on the factory function with a runnable `#[hegel::test]` example wrapped in ` ```no_run ` (use `no_run` so the example compiles but doctests don't execute a full property run).
 
-The example block in the factory function is a *requirement*, not aspirational — see the `durations()` factory in `frontends/rust/src/generators/time.rs` for the canonical shape.
+The example block in the factory function is a *requirement*, not aspirational — see the `std_durations()` factory in `frontends/rust/src/generators/temporal/system.rs` for the canonical shape.
 
 ## Tests
 
@@ -102,7 +102,7 @@ All five test categories below are required for every new generator (except #4 w
 
 Test file location:
 
-- **First-party generator** (under `frontends/rust/src/generators/`) → `frontends/rust/tests/test_<name>.rs`, modeled on `frontends/rust/tests/test_time.rs`.
+- **First-party generator** (under `frontends/rust/src/generators/`) → `frontends/rust/tests/test_<name>.rs`, modeled on `frontends/rust/tests/test_temporal_std.rs`.
 - **Feature-gated generator** (under `frontends/rust/src/extras/<lib>/`) → tests live in a topic-grouped sibling file under `frontends/rust/tests/<lib>/` (e.g. `frontends/rust/tests/jiff/civil.rs`), declared as `mod <name>;` in `frontends/rust/tests/<lib>/main.rs`. Cargo silently skips files not declared in `main.rs`; `just lint` runs `scripts/check-test-modules.py` to catch orphans. See the **add-library-support** skill.
 
 ### Test 1 — Sanity (required)
