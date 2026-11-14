@@ -64,6 +64,24 @@ check-format:
 check-lint: check-format build-libhegel
     dotnet build Hegel.sln -c {{configuration}} -p:HegelTargetFramework={{test_framework}} -warnaserror
 
+# The API references: DocFX for `Hegel` and `Hegel.Xunit` (docs/_site/csharp,
+# served at hegel.dev/csharp) and fsdocs for `Hegel.FSharp` (docs/_site/fsharp,
+# served at hegel.dev/fsharp, the root its links are built for), both with
+# warnings as errors. Neither needs the engine. DocFX lists a namespace's
+# types alphabetically; scripts/group_api_toc.py groups them by role first. fsdocs titles its pages after
+# the directory it runs in, hence docs/fsharp.
+check-docs:
+    dotnet tool restore
+    rm -rf docs/_site docs/csharp/api
+    DOCFX_SOURCE_BRANCH_NAME=main dotnet docfx metadata docs/csharp/docfx.json --warningsAsErrors
+    python3 scripts/group_api_toc.py docs/csharp/api/toc.yml
+    DOCFX_SOURCE_BRANCH_NAME=main dotnet docfx build docs/csharp/docfx.json --warningsAsErrors
+    dotnet build src/Hegel.FSharp/Hegel.FSharp.fsproj -c Release -p:HegelNativesSource=skip
+    cd docs/fsharp && dotnet fsdocs build --projects ../../src/Hegel.FSharp/Hegel.FSharp.fsproj --input . --output ../_site/fsharp --properties Configuration=Release HegelNativesSource=skip --parameters root /fsharp/ fsdocs-collection-name "Hegel for F#" fsdocs-logo-src ../favicon-96x96.png fsdocs-favicon-src ../favicon.ico fsdocs-logo-link /fsharp fsdocs-repository-link https://github.com/hegeldev/hegel/tree/main/frontends/csharp fsdocs-license-link https://github.com/hegeldev/hegel/blob/main/frontends/csharp/LICENSE fsdocs-release-notes-link https://github.com/hegeldev/hegel/blob/main/frontends/csharp/CHANGELOG.md --strict
+
+docs: check-docs
+    open docs/_site/csharp/index.html
+
 # Build the NuGet packages into dist/ with the local engine (the release job
 # packs with -p:HegelNativesSource=release instead, bundling every platform).
 pack: build-libhegel
@@ -72,9 +90,9 @@ pack: build-libhegel
     dotnet pack src/Hegel.Xunit/Hegel.Xunit.csproj -c {{configuration}} -o dist
 
 clean:
-    rm -rf src/Hegel/bin src/Hegel/obj src/Hegel.FSharp/bin src/Hegel.FSharp/obj src/Hegel.Xunit/bin src/Hegel.Xunit/obj tests/Hegel.Tests/bin tests/Hegel.Tests/obj tests/Hegel.FSharp.Tests/bin tests/Hegel.FSharp.Tests/obj coverage dist native
+    rm -rf src/Hegel/bin src/Hegel/obj src/Hegel.FSharp/bin src/Hegel.FSharp/obj src/Hegel.Xunit/bin src/Hegel.Xunit/obj tests/Hegel.Tests/bin tests/Hegel.Tests/obj tests/Hegel.FSharp.Tests/bin tests/Hegel.FSharp.Tests/obj coverage dist native docs/_site docs/csharp/api .fsdocs
 
-check: check-lint check-test
+check: check-lint check-docs check-test
 
 # These aliases are provided as ux improvements for local developers. CI
 # should use the longer forms.

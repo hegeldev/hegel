@@ -1,0 +1,11 @@
+#logo {
+  height: 32px;
+  margin-right: 0.5rem;
+}
+
+/* The home page is served at /csharp, where DocFX cannot tell the Home and
+   API reference links apart and marks neither as the current page. index.md
+   declares the landing layout, which no other page has, so mark Home there. */
+body[data-layout="landing"] .navbar-nav .nav-link[href$="/index.html"] {
+  color: var(--bs-navbar-active-color);
+}
