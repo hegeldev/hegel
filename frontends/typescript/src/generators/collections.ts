@@ -212,7 +212,7 @@ class SetsGenerator<T> extends PrintableGenerator<Set<T>> {
       speculateItem(printer, block, () => {
         const element = tc.drawAndPrint(this.elements as PrintableGenerator<T>, printer);
         const key = structural.key(element);
-        if (seen.has(key)) {
+        if (seen.has(key) || result.has(element)) {
           collection.reject("duplicate element");
           return false;
         }
@@ -281,7 +281,7 @@ class MapsGenerator<K, V> extends PrintableGenerator<Map<K, V>> {
           () => tc.drawAndPrint(this.values as PrintableGenerator<V>, printer),
         );
         const structuralKey = structural.key(key);
-        if (seen.has(structuralKey)) {
+        if (seen.has(structuralKey) || result.has(key)) {
           collection.reject("duplicate key");
           return false;
         }

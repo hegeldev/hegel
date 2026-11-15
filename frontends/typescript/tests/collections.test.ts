@@ -371,3 +371,24 @@ describe("collections of elements mapped many-to-one", () => {
       expect(m.size).toBeGreaterThanOrEqual(2);
     }));
 });
+
+describe("collections of elements that reuse a mutated array", () => {
+  const pool: number[][] = [[], []];
+  const reused = gs.integers({ minValue: 0, maxValue: 9 }).map((n) => {
+    const array = pool[n % 2];
+    array[0] = n;
+    return array;
+  });
+
+  test("sets respect minSize", () =>
+    hegel.test((tc) => {
+      const s = tc.draw(gs.sets(reused, { minSize: 2 }));
+      expect(s.size).toBeGreaterThanOrEqual(2);
+    }, FEW));
+
+  test("maps respect minSize", () =>
+    hegel.test((tc) => {
+      const m = tc.draw(gs.maps(reused, gs.booleans(), { minSize: 2 }));
+      expect(m.size).toBeGreaterThanOrEqual(2);
+    }, FEW));
+});
