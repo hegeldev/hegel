@@ -123,3 +123,26 @@ describe("unique arrays compare elements structurally", () => {
       { testCases: 30 },
     ));
 });
+
+describe("sets and maps compare elements structurally", () => {
+  const byte = gs.binary({ maxSize: 1 });
+  const contents = (bytes: Iterable<Uint8Array>) => new Set([...bytes].map((b) => b.join(",")));
+
+  test("sets of byte arrays", () =>
+    hegel.test(
+      (tc) => {
+        const s = tc.draw(gs.sets(byte, { minSize: 2, maxSize: 4 }));
+        expect(contents(s).size).toBe(s.size);
+      },
+      { testCases: 30 },
+    ));
+
+  test("maps keyed by byte arrays", () =>
+    hegel.test(
+      (tc) => {
+        const m = tc.draw(gs.maps(byte, gs.booleans(), { minSize: 2, maxSize: 4 }));
+        expect(contents(m.keys()).size).toBe(m.size);
+      },
+      { testCases: 30 },
+    ));
+});

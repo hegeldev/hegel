@@ -1,5 +1,6 @@
 /**
- * Structural equality keys for `unique` and `uniqueBy` arrays.
+ * Structural equality keys for `unique` and `uniqueBy` arrays, sets and map
+ * keys.
  *
  * @packageDocumentation
  */

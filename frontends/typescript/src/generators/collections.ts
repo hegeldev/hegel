@@ -104,10 +104,9 @@ class ArraysGenerator<T> extends PrintableGenerator<T[]> {
     this.keys = keys;
 
     const elementBasic = elements.asBasic();
-    if (elementBasic && keys === null) {
+    if (elementBasic && !unique && keys === null) {
       const schema: Record<string, unknown> = {
         type: "list",
-        unique,
         elements: elementBasic.schema,
         min_size: minSize,
       };
@@ -188,7 +187,6 @@ class SetsGenerator<T> extends PrintableGenerator<Set<T>> {
   private readonly elements: Generator<T>;
   private readonly minSize: number;
   private readonly maxSize: number | null;
-  private readonly basic: BasicGenerator<Set<T>> | null;
 
   constructor(elements: Generator<T>, options?: CollectionOptions) {
     super();
@@ -202,59 +200,29 @@ class SetsGenerator<T> extends PrintableGenerator<Set<T>> {
     this.elements = elements;
     this.minSize = minSize;
     this.maxSize = maxSize;
-
-    const elementBasic = elements.asBasic();
-    if (elementBasic) {
-      const schema: Record<string, unknown> = {
-        type: "list",
-        unique: true,
-        elements: elementBasic.schema,
-        min_size: minSize,
-      };
-      if (maxSize !== null) schema["max_size"] = maxSize;
-
-      this.basic = composedBasic(schema, (raw, printer) => {
-        if (!Array.isArray(raw)) throw new Error(`Expected array, got ${typeof raw}`);
-        const result = new Set<T>();
-        const block = new Block(printer, "new Set([", "])");
-        for (const v of raw) {
-          speculateItem(printer, block, () => {
-            const element = elementBasic.parseAndPrint(v, printer);
-            if (result.has(element)) return false;
-            result.add(element);
-            return true;
-          });
-        }
-        block.end();
-        return result;
-      });
-    } else {
-      this.basic = null;
-    }
   }
 
   doDrawAndPrint(tc: TestCase, printer: PrettyPrinter): Set<T> {
-    if (this.basic) return this.basic.doDrawAndPrint(tc, printer);
     const collection = new Collection(tc, this.minSize, this.maxSize ?? undefined);
     const result = new Set<T>();
+    const structural = new StructuralKeys();
+    const seen = new Set<string>();
     const block = new Block(printer, "new Set([", "])");
     while (collection.more()) {
       speculateItem(printer, block, () => {
         const element = tc.drawAndPrint(this.elements as PrintableGenerator<T>, printer);
-        if (result.has(element)) {
+        const key = structural.key(element);
+        if (seen.has(key)) {
           collection.reject("duplicate element");
           return false;
         }
+        seen.add(key);
         result.add(element);
         return true;
       });
     }
     block.end();
     return result;
-  }
-
-  override asBasic(): BasicGenerator<Set<T>> | null {
-    return this.basic;
   }
 
   /** @internal */
@@ -264,8 +232,10 @@ class SetsGenerator<T> extends PrintableGenerator<Set<T>> {
 }
 
 /**
- * Generate Sets with elements from the given generator. A set prints
- * element by element, each as `elements` prints it.
+ * Generate Sets with elements from the given generator. Elements are
+ * compared as the elements of a `unique` array are (see
+ * {@link ArrayOptions}). A set prints element by element, each as
+ * `elements` prints it.
  */
 export function sets<T>(
   elements: PrintableGenerator<T>,
@@ -281,7 +251,6 @@ class MapsGenerator<K, V> extends PrintableGenerator<Map<K, V>> {
   private readonly values: Generator<V>;
   private readonly minSize: number;
   private readonly maxSize: number | null;
-  private readonly basic: BasicGenerator<Map<K, V>> | null;
 
   constructor(keys: Generator<K>, values: Generator<V>, options?: CollectionOptions) {
     super();
@@ -296,50 +265,13 @@ class MapsGenerator<K, V> extends PrintableGenerator<Map<K, V>> {
     this.values = values;
     this.minSize = minSize;
     this.maxSize = maxSize;
-
-    const keyBasic = keys.asBasic();
-    const valueBasic = values.asBasic();
-
-    if (keyBasic && valueBasic) {
-      const schema: Record<string, unknown> = {
-        type: "dict",
-        keys: keyBasic.schema,
-        values: valueBasic.schema,
-        min_size: minSize,
-      };
-      if (maxSize !== null) schema["max_size"] = maxSize;
-
-      this.basic = composedBasic(schema, (raw, printer) => {
-        if (!Array.isArray(raw)) throw new Error(`Expected array, got ${typeof raw}`);
-        const map = new Map<K, V>();
-        const block = new Block(printer, "new Map([", "])");
-        for (const entry of raw) {
-          if (!Array.isArray(entry) || entry.length !== 2) {
-            throw new Error("Expected [key, value] pair");
-          }
-          speculateItem(printer, block, () => {
-            const [key, value] = printEntry(
-              printer,
-              () => keyBasic.parseAndPrint(entry[0], printer),
-              () => valueBasic.parseAndPrint(entry[1], printer),
-            );
-            if (map.has(key)) return false;
-            map.set(key, value);
-            return true;
-          });
-        }
-        block.end();
-        return map;
-      });
-    } else {
-      this.basic = null;
-    }
   }
 
   doDrawAndPrint(tc: TestCase, printer: PrettyPrinter): Map<K, V> {
-    if (this.basic) return this.basic.doDrawAndPrint(tc, printer);
     const collection = new Collection(tc, this.minSize, this.maxSize ?? undefined);
     const result = new Map<K, V>();
+    const structural = new StructuralKeys();
+    const seen = new Set<string>();
     const block = new Block(printer, "new Map([", "])");
     while (collection.more()) {
       speculateItem(printer, block, () => {
@@ -348,20 +280,18 @@ class MapsGenerator<K, V> extends PrintableGenerator<Map<K, V>> {
           () => tc.drawAndPrint(this.keys as PrintableGenerator<K>, printer),
           () => tc.drawAndPrint(this.values as PrintableGenerator<V>, printer),
         );
-        if (result.has(key)) {
+        const structuralKey = structural.key(key);
+        if (seen.has(structuralKey)) {
           collection.reject("duplicate key");
           return false;
         }
+        seen.add(structuralKey);
         result.set(key, value);
         return true;
       });
     }
     block.end();
     return result;
-  }
-
-  override asBasic(): BasicGenerator<Map<K, V>> | null {
-    return this.basic;
   }
 
   /** @internal */
@@ -373,7 +303,8 @@ class MapsGenerator<K, V> extends PrintableGenerator<Map<K, V>> {
 /**
  * Generate Maps with keys and values from the given generators. A map
  * prints entry by entry, each key and value as its generator prints it.
- * When two keys collide, the first entry is kept.
+ * Keys are compared as the elements of a `unique` array are (see
+ * {@link ArrayOptions}). When two keys collide, the first entry is kept.
  */
 export function maps<K, V>(
   keys: PrintableGenerator<K>,

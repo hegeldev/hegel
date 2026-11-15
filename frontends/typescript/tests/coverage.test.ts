@@ -389,12 +389,12 @@ describe("asBasic composition", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Duplicate rejection in engine-driven unique collections. The two-element
-// draws over a two-value range make a duplicate draw (and so a rejection)
-// all but certain within a run, deterministically covering the reject paths.
+// Duplicate rejection in unique collections. The two-element draws over a
+// two-value range make a duplicate draw (and so a rejection) all but certain
+// within a run, deterministically covering the reject paths.
 // ---------------------------------------------------------------------------
 
-describe("duplicate rejection in schema-driven collections", () => {
+describe("duplicate rejection in unique collections", () => {
   test("unique arrays reject duplicate elements", () =>
     hegel.test((tc) => {
       const arr = tc.draw(

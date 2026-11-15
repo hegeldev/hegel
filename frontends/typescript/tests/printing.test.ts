@@ -287,12 +287,12 @@ describe("speculative printing leaves nothing behind", () => {
     expect(line(gs.maps(bit, bit, { minSize: 2 }))).toBe("const x_1 = new Map([[0, 0], [1, 0]]);");
   });
 
-  it("keeps the first entry of a map whose mapped keys collide", () => {
-    const key = gs.integers({ minValue: 0, maxValue: 9 }).map(() => "k");
+  it("prints only the kept entries of collections whose mapped keys collide", () => {
+    const key = gs.integers({ minValue: 0, maxValue: 9 }).map((n) => (n < 5 ? "a" : "b"));
     expect(line(gs.maps(key, gs.integers({ minValue: 0, maxValue: 9 }), { minSize: 2 }))).toBe(
-      'const x_1 = new Map([["k", 0]]);',
+      'const x_1 = new Map([["a", 0], ["b", 0]]);',
     );
-    expect(line(gs.sets(key, { minSize: 2 }))).toBe('const x_1 = new Set(["k"]);');
+    expect(line(gs.sets(key, { minSize: 2 }))).toBe('const x_1 = new Set(["a", "b"]);');
   });
 
   it("prints only the attempt a recursive generator keeps", () => {

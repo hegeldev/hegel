@@ -10,8 +10,7 @@ const boolean = { type: "boolean" };
 const compoundSchemas = [
   { type: "tuple", elements: [boolean] },
   { type: "one_of", generators: [boolean] },
-  { type: "list", elements: boolean, min_size: 0, max_size: 1, unique: false },
-  { type: "dict", keys: boolean, values: boolean, min_size: 0, max_size: 1 },
+  { type: "list", elements: boolean, min_size: 0, max_size: 1 },
 ];
 
 describe("generateValue compound cleanup", () => {
@@ -28,7 +27,7 @@ describe("generateValue compound cleanup", () => {
     });
   }
 
-  it.each([compoundSchemas[2], compoundSchemas[3]])(
+  it.each([compoundSchemas[2]])(
     "leaves no $type span open when collection allocation fails",
     (schema) => {
       const engine = fakeEngine();

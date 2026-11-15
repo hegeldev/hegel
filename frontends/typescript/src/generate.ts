@@ -140,34 +140,6 @@ export function formatIpv6(bytes: Uint8Array): string {
   return `${head}::${tail}`;
 }
 
-/**
- * A stable identity key for a raw drawn value, used to detect duplicates in
- * `unique` lists and dict keys the way the engine's value equality used to.
- * Numbers and bigints of equal value get the same key (the integer draw
- * downcasts to `number` exactly when the value is safe, so one logical value
- * can surface as either type).
- */
-export function valueKey(value: unknown): string {
-  if (value === null) {
-    return "null";
-  }
-  if (typeof value === "number" || typeof value === "bigint") {
-    return `i:${value.toString()}`;
-  }
-  if (typeof value === "string") {
-    return `s:${JSON.stringify(value)}`;
-  }
-  if (typeof value === "boolean") {
-    return `b:${value}`;
-  }
-  if (value instanceof Uint8Array) {
-    return `x:${bytesToHex(value)}`;
-  }
-  // The only remaining raw value shape is an array (tuple / list / dict
-  // entries / one_of pairs).
-  return `a:${(value as unknown[]).map(valueKey).join(",")}`;
-}
-
 /** Downcast a drawn integer to `number` when exact, like the old CBOR decode. */
 function toJsInteger(value: bigint): number | bigint {
   if (value >= BigInt(Number.MIN_SAFE_INTEGER) && value <= BigInt(Number.MAX_SAFE_INTEGER)) {
@@ -462,7 +434,6 @@ function drawList(
   cache: StringGeneratorCache,
 ): unknown[] {
   const elementSchema = schema["elements"] as Record<string, unknown>;
-  const unique = schema["unique"] as boolean;
   const collection = lib.newCollection(
     ctx,
     tc,
@@ -472,56 +443,10 @@ function drawList(
   return withCleanup(
     () => {
       const values: unknown[] = [];
-      const seen = new Set<string>();
       while (lib.collectionMore(ctx, tc, collection)) {
-        const value = drawChild(lib, ctx, tc, elementSchema, cache);
-        if (unique) {
-          const key = valueKey(value);
-          if (seen.has(key)) {
-            lib.collectionReject(ctx, tc, collection, "duplicate element");
-            continue;
-          }
-          seen.add(key);
-        }
-        values.push(value);
+        values.push(drawChild(lib, ctx, tc, elementSchema, cache));
       }
       return values;
-    },
-    () => lib.freeCollection(collection),
-  );
-}
-
-function drawDict(
-  lib: Engine,
-  ctx: ContextHandle,
-  tc: TestCaseHandle,
-  schema: Record<string, unknown>,
-  cache: StringGeneratorCache,
-): unknown[] {
-  const keySchema = schema["keys"] as Record<string, unknown>;
-  const valueSchema = schema["values"] as Record<string, unknown>;
-  const collection = lib.newCollection(
-    ctx,
-    tc,
-    schema["min_size"] as number,
-    schema["max_size"] as number | undefined,
-  );
-  return withCleanup(
-    () => {
-      const entries: unknown[] = [];
-      const seen = new Set<string>();
-      while (lib.collectionMore(ctx, tc, collection)) {
-        const key = drawChild(lib, ctx, tc, keySchema, cache);
-        const value = drawChild(lib, ctx, tc, valueSchema, cache);
-        const identity = valueKey(key);
-        if (seen.has(identity)) {
-          lib.collectionReject(ctx, tc, collection, "duplicate key");
-          continue;
-        }
-        seen.add(identity);
-        entries.push([key, value]);
-      }
-      return entries;
     },
     () => lib.freeCollection(collection),
   );
@@ -615,8 +540,6 @@ export function generateValue(
     }
     case "list":
       return drawList(lib, ctx, tc, schema, cache);
-    case "dict":
-      return drawDict(lib, ctx, tc, schema, cache);
     default:
       throw new Error(`Unsupported generator schema type: ${String(type)}`);
   }
