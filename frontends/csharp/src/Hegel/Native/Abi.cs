@@ -19,6 +19,7 @@ internal static class Abi
     internal const int EConcurrentUse = -9;
     internal const int ERetry = -10;
     internal const int ENotFound = -11;
+    internal const int EUnknownSetting = -12;
 
     internal const int RunStatusPassed = 0;
     internal const int RunStatusFailed = 1;
