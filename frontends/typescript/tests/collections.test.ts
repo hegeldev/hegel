@@ -343,3 +343,31 @@ describe("gs.samples()", () => {
     expect(withoutReplacement).toEqual([5, 6]);
   });
 });
+
+describe("collections of elements mapped many-to-one", () => {
+  const mod3 = gs.integers().map((n) => n % 3);
+
+  test("unique arrays hold distinct mapped values", () =>
+    hegel.test((tc) => {
+      const xs = tc.draw(gs.arrays(mod3, { unique: true }));
+      expect(new Set(xs).size).toBe(xs.length);
+    }));
+
+  test("uniqueBy identity arrays hold distinct mapped values", () =>
+    hegel.test((tc) => {
+      const xs = tc.draw(gs.arrays(mod3, { uniqueBy: (v) => v }));
+      expect(new Set(xs).size).toBe(xs.length);
+    }, FEW));
+
+  test("sets respect minSize", () =>
+    hegel.test((tc) => {
+      const s = tc.draw(gs.sets(mod3, { minSize: 2 }));
+      expect(s.size).toBeGreaterThanOrEqual(2);
+    }));
+
+  test("maps respect minSize", () =>
+    hegel.test((tc) => {
+      const m = tc.draw(gs.maps(mod3, gs.booleans(), { minSize: 2 }));
+      expect(m.size).toBeGreaterThanOrEqual(2);
+    }));
+});
