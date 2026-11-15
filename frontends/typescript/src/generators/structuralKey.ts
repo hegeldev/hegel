@@ -59,7 +59,9 @@ export class StructuralKeys {
   }
 
   private contentsKey(value: object): string | null {
-    if (Array.isArray(value)) return `[${value.map((item) => this.key(item)).join(",")}]`;
+    if (Array.isArray(value)) {
+      return `[${Array.from(value, (item, i) => (i in value ? this.key(item) : "_")).join(",")}]`;
+    }
     if (value instanceof Map) {
       const entries = [...value].map(([k, v]) => `${this.key(k)}:${this.key(v)}`);
       return `Map{${entries.sort().join(",")}}`;

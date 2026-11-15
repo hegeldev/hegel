@@ -52,6 +52,8 @@ describe("structural keys", () => {
     ["undefined and null", undefined, null],
     ["a string and a boolean spelt alike", "true", true],
     ["arrays of different lengths", [1], [1, 1]],
+    ["an empty array and a one-hole array", [], new Array(1)],
+    ["a hole and undefined", new Array(1), [undefined]],
     ["objects with different values", { a: 1 }, { a: 2 }],
     ["an object and an array", {}, []],
     ["an empty map and an empty set", new Map(), new Set()],
