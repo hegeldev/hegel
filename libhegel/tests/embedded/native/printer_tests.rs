@@ -1258,6 +1258,194 @@ fn comments_always_terminate_their_line_and_appear_exactly_once() {
     }
 }
 
+/// Two printers fed the same commands, one of which is told when each slot's
+/// handle goes away. A slot is a pair of ids, one per printer: the released
+/// printer reuses reclaimed storage, so its ids differ.
+struct Twin {
+    released: Printer,
+    kept: Printer,
+}
+
+type Pair = (SlotId, SlotId);
+
+#[derive(Clone, Copy)]
+enum At {
+    Main,
+    Slot(Pair),
+}
+
+impl At {
+    fn targets(self) -> (Target, Target) {
+        match self {
+            At::Main => (M, M),
+            At::Slot((a, b)) => (Target::Slot(a), Target::Slot(b)),
+        }
+    }
+}
+
+impl Twin {
+    fn on<R: PartialEq + core::fmt::Debug>(
+        &mut self,
+        at: At,
+        f: impl Fn(&mut Printer, Target) -> R,
+    ) -> R {
+        let (a, b) = at.targets();
+        let ra = f(&mut self.released, a);
+        let rb = f(&mut self.kept, b);
+        assert_eq!(ra, rb);
+        ra
+    }
+
+    fn open(&mut self, at: At, f: impl Fn(&mut Printer, Target) -> SlotId) -> Pair {
+        let (a, b) = at.targets();
+        (f(&mut self.released, a), f(&mut self.kept, b))
+    }
+
+    fn release(&mut self, slot: Pair) {
+        self.released.release(slot.0);
+    }
+
+    fn assert_same_line_start(&self, at: At) {
+        let (a, b) = at.targets();
+        assert_eq!(self.released.at_line_start(a), self.kept.at_line_start(b));
+    }
+}
+
+fn open_blank_slots(twin: &mut Twin, rng: &mut SmallRng, parent: At, held: &mut Vec<Pair>) {
+    for _ in 0..rng.random_range(1..40) {
+        let outer = if rng.random_bool(0.5) {
+            twin.open(parent, |p, t| p.deferred(t).unwrap())
+        } else {
+            twin.open(parent, |p, t| p.block(t, 2).unwrap())
+        };
+        let inner = twin.open(At::Slot(outer), |p, t| p.block(t, 2).unwrap());
+        let mut handles = [outer, inner];
+        handles.shuffle(rng);
+        for slot in handles {
+            if rng.random_bool(0.7) {
+                twin.release(slot);
+            } else {
+                held.push(slot);
+            }
+        }
+    }
+}
+
+#[test]
+fn releasing_slot_handles_never_changes_the_document() {
+    for seed in 0..200u64 {
+        let mut rng = SmallRng::seed_from_u64(seed + 2000);
+        let max_width = rng.random_range(1..40);
+        let ops = random_program(&mut rng);
+
+        let mut model = printer(max_width);
+        for op in &ops {
+            apply(&mut model, M, op);
+        }
+
+        let mut twin = Twin {
+            released: printer(max_width),
+            kept: printer(max_width),
+        };
+        let mut chunks: Vec<(Pair, Vec<Op>)> = Vec::new();
+        let mut held: Vec<Pair> = Vec::new();
+        let mut i = 0;
+        while i < ops.len() {
+            if rng.random_bool(0.3) {
+                let parent = match chunks.last() {
+                    Some((slot, _)) if rng.random_bool(0.3) => At::Slot(*slot),
+                    _ => At::Main,
+                };
+                open_blank_slots(&mut twin, &mut rng, parent, &mut held);
+            }
+            if !held.is_empty() && rng.random_bool(0.3) {
+                let slot = held.swap_remove(rng.random_range(0..held.len()));
+                twin.release(slot);
+            }
+            if rng.random_bool(0.2) {
+                let len = rng.random_range(1..=(ops.len() - i).min(5));
+                let slot = twin.open(At::Main, |p, t| p.deferred(t).unwrap());
+                chunks.push((slot, ops[i..i + len].to_vec()));
+                i += len;
+            } else {
+                twin.on(At::Main, |p, t| apply(p, t, &ops[i]));
+                i += 1;
+            }
+            twin.assert_same_line_start(At::Main);
+            for (slot, _) in &chunks {
+                twin.assert_same_line_start(At::Slot(*slot));
+            }
+        }
+        chunks.shuffle(&mut rng);
+        for (slot, chunk) in &chunks {
+            for op in chunk {
+                twin.on(At::Slot(*slot), |p, t| apply(p, t, op));
+            }
+            twin.release(*slot);
+        }
+        for slot in held {
+            twin.release(slot);
+        }
+        twin.on(At::Main, |p, _| p.resolve().is_ok());
+        let value = twin.on(At::Main, |p, _| p.value().unwrap().to_string());
+        assert_eq!(value, model.value().unwrap(), "seed {seed}");
+    }
+}
+
+fn live_slots(p: &Printer) -> usize {
+    p.slots.entries.iter().filter(|e| e.slot.is_some()).count()
+}
+
+#[test]
+fn released_blank_slots_are_reclaimed() {
+    let mut p = printer(79);
+    for _ in 0..100_000 {
+        let clone = p.deferred(M).unwrap();
+        let block = p.block(Target::Slot(clone), 2).unwrap();
+        p.release(clone);
+        p.release(block);
+    }
+    assert_eq!(live_slots(&p), 0);
+    assert!(p.slots.entries.len() <= 2, "{}", p.slots.entries.len());
+    assert!(p.main.len() <= MIN_SWEEP_THRESHOLD, "{}", p.main.len());
+}
+
+#[test]
+fn a_released_slot_with_content_is_kept() {
+    let mut p = printer(79);
+    let clone = p.deferred(M).unwrap();
+    p.note(Target::Slot(clone), "kept", None).unwrap();
+    p.release(clone);
+    p.resolve().unwrap();
+    assert_eq!(p.value().unwrap(), "kept\n");
+}
+
+#[test]
+fn a_slot_is_kept_while_any_holder_remains() {
+    let mut p = printer(79);
+    let clone = p.deferred(M).unwrap();
+    p.retain(clone);
+    p.release(clone);
+    p.note(Target::Slot(clone), "late", None).unwrap();
+    p.release(clone);
+    p.resolve().unwrap();
+    assert_eq!(p.value().unwrap(), "late\n");
+}
+
+#[test]
+fn a_reclaimed_slot_id_is_dead_even_when_its_storage_is_reused() {
+    let mut p = printer(79);
+    let first = p.deferred(M).unwrap();
+    p.release(first);
+    let second = p.deferred(M).unwrap();
+    assert!(!p.slot_is_live(first));
+    assert!(p.slot_is_live(second));
+    assert_eq!(
+        p.note(Target::Slot(first), "x", None),
+        Err(PrinterError::DeadSlot)
+    );
+}
+
 #[test]
 fn block_indents_every_line_and_ends_with_the_block() {
     let mut p = printer(79);

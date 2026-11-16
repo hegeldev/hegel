@@ -676,6 +676,48 @@ fn clone_regions_anchor_where_the_clone_was_made() {
     }
 }
 
+/// A printer fetched from a clone keeps writing into the clone's region
+/// after the clone itself is freed.
+#[test]
+fn a_printer_outlives_the_test_case_it_was_fetched_from() {
+    let ctx = hegel_context_new();
+    unsafe {
+        let s = make_settings_no_db(ctx);
+        let run = start(ctx, s);
+        let tc = next_case(ctx, run);
+
+        let mut clone: *mut hegel_c::HegelTestCase = ptr::null_mut();
+        ok(hegel_test_case_clone(ctx, tc, &mut clone));
+        let mut printer: *mut HegelPrinter = ptr::null_mut();
+        ok(hegel_test_case_printer(
+            ctx,
+            clone,
+            ptr::null(),
+            &mut printer,
+        ));
+        ok(hegel_test_case_free(ctx, clone));
+        text(ctx, printer, "late");
+        ok(hegel_printer_free(ctx, printer));
+
+        let mut root: *mut HegelPrinter = ptr::null_mut();
+        ok(hegel_test_case_printer(ctx, tc, ptr::null(), &mut root));
+        ok(hegel_printer_resolve(ctx, root));
+        assert_eq!(value(ctx, root), "late");
+
+        ok(hegel_printer_free(ctx, root));
+        ok(hegel_mark_complete(
+            ctx,
+            tc,
+            hegel_status_t::HEGEL_STATUS_VALID as u32,
+            ptr::null(),
+        ));
+        ok(hegel_test_case_free(ctx, tc));
+        ok(hegel_run_free(ctx, run));
+        ok(hegel_settings_free(ctx, s));
+        ok(hegel_context_free(ctx));
+    }
+}
+
 #[test]
 fn first_explicit_width_configures_the_family_document() {
     let ctx = hegel_context_new();

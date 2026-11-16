@@ -107,8 +107,15 @@ impl core::error::Error for PrinterError {}
 /// A handle to a deferred hole opened by [`Printer::deferred`]. Content
 /// written to the slot is spliced in at the hole's position; after
 /// [`Printer::resolve`] the slot is dead and all further writes error.
+///
+/// The generation tells a reclaimed slot (see [`Printer::release`]) from
+/// a later one stored at the same index: an id whose generation no longer
+/// matches names nothing, and its splice renders nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SlotId(usize);
+pub struct SlotId {
+    index: usize,
+    generation: u64,
+}
 
 /// Where a [`Printer`] operation writes: the main output, or a deferred slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -174,6 +181,11 @@ struct Group {
 
 #[derive(Debug)]
 struct Slot {
+    /// Where the slot's splice was recorded.
+    parent: Target,
+    /// How many handles still write through this slot (see
+    /// [`Printer::retain`] and [`Printer::release`]).
+    holders: usize,
     commands: Vec<Cmd>,
     speculation: Vec<Vec<Cmd>>,
     pending_notes: Vec<Vec<Cmd>>,
@@ -184,6 +196,82 @@ struct Slot {
     /// Whether the slot was opened at a hard line start of its parent, which
     /// is where its own first content stands until it has any.
     starts_line: bool,
+}
+
+#[derive(Debug)]
+struct SlotEntry {
+    generation: u64,
+    slot: Option<Slot>,
+}
+
+/// The slots of a document, stored so that a reclaimed slot's storage is
+/// reused.
+#[derive(Debug, Default)]
+struct Slots {
+    entries: Vec<SlotEntry>,
+    free: Vec<usize>,
+}
+
+impl Slots {
+    fn get(&self, id: SlotId) -> Option<&Slot> {
+        self.entries
+            .get(id.index)
+            .filter(|entry| entry.generation == id.generation)?
+            .slot
+            .as_ref()
+    }
+
+    fn get_mut(&mut self, id: SlotId) -> Option<&mut Slot> {
+        self.entries
+            .get_mut(id.index)
+            .filter(|entry| entry.generation == id.generation)?
+            .slot
+            .as_mut()
+    }
+
+    fn insert(&mut self, slot: Slot) -> SlotId {
+        let index = match self.free.pop() {
+            Some(index) => {
+                self.entries[index].slot = Some(slot);
+                index
+            }
+            None => {
+                self.entries.push(SlotEntry {
+                    generation: 0,
+                    slot: Some(slot),
+                });
+                self.entries.len() - 1
+            }
+        };
+        SlotId {
+            index,
+            generation: self.entries[index].generation,
+        }
+    }
+
+    fn remove(&mut self, id: SlotId) {
+        let entry = &mut self.entries[id.index];
+        entry.slot = None;
+        entry.generation += 1;
+        self.free.push(id.index);
+    }
+
+    fn iter_mut(&mut self) -> impl Iterator<Item = &mut Slot> {
+        self.entries
+            .iter_mut()
+            .filter_map(|entry| entry.slot.as_mut())
+    }
+
+    fn is_stale(&self, cmd: &Cmd) -> bool {
+        matches!(cmd, Cmd::Splice(id) if self.get(*id).is_none())
+    }
+
+    /// The last command of `cmds` that decides whether what follows starts
+    /// a line: indentation shifts and the splices of reclaimed slots are
+    /// looked past.
+    fn last_significant<'c>(&self, mut cmds: impl Iterator<Item = &'c Cmd>) -> Option<&'c Cmd> {
+        cmds.find(|cmd| !matches!(cmd, Cmd::ShiftIndent(_)) && !self.is_stale(cmd))
+    }
 }
 
 fn note_cmds(text: &str, line_prefix: Option<&str>) -> Vec<Cmd> {
@@ -200,21 +288,24 @@ fn note_cmds(text: &str, line_prefix: Option<&str>) -> Vec<Cmd> {
     cmds
 }
 
-fn splice_ids(cmds: &[Cmd]) -> Vec<usize> {
+fn splice_ids(cmds: &[Cmd]) -> Vec<SlotId> {
     cmds.iter()
         .filter_map(|cmd| match cmd {
-            Cmd::Splice(SlotId(id)) => Some(*id),
+            Cmd::Splice(id) => Some(*id),
             _ => None,
         })
         .collect()
 }
 
-fn mark_comment_groups(
-    slots: &[Slot],
-    cmds: &[Cmd],
-    force: &mut Vec<bool>,
-    stack: &mut Vec<usize>,
-) {
+/// The slot `id` names, unless it is dead or reclaimed.
+fn live_slot(slots: &mut Slots, id: SlotId) -> Result<&mut Slot, PrinterError> {
+    match slots.get_mut(id) {
+        Some(slot) if !slot.dead => Ok(slot),
+        _ => Err(PrinterError::DeadSlot),
+    }
+}
+
+fn mark_comment_groups(slots: &Slots, cmds: &[Cmd], force: &mut Vec<bool>, stack: &mut Vec<usize>) {
     for cmd in cmds {
         match cmd {
             Cmd::BeginGroup { .. } => {
@@ -229,13 +320,19 @@ fn mark_comment_groups(
                     force[id] = true;
                 }
             }
-            Cmd::Splice(SlotId(id)) => {
-                mark_comment_groups(slots, &slots[*id].commands, force, stack);
+            Cmd::Splice(id) => {
+                if let Some(slot) = slots.get(*id) {
+                    mark_comment_groups(slots, &slot.commands, force, stack);
+                }
             }
             _ => {}
         }
     }
 }
+
+/// The fewest stale splices a sweep waits for, so that a small document is
+/// not swept on every reclaimed slot.
+const MIN_SWEEP_THRESHOLD: usize = 64;
 
 /// The pretty printer. See the module docs for the printing model.
 #[derive(Debug)]
@@ -245,7 +342,15 @@ pub struct Printer {
     open_groups: isize,
     speculation: Vec<Vec<Cmd>>,
     pending_notes: Vec<Vec<Cmd>>,
-    slots: Vec<Slot>,
+    slots: Slots,
+    /// Whether a slot was ever opened: group structure may span holes from
+    /// then on, so group balance is no longer checked eagerly.
+    had_slots: bool,
+    /// Splices of reclaimed slots still recorded somewhere in the document
+    /// (at most: some were discarded with an aborted speculative region).
+    stale_splices: usize,
+    /// How many stale splices trigger a sweep that removes them.
+    sweep_threshold: usize,
     pending_resolve: bool,
     sealed: bool,
     /// The laid-out document, rendered once on the first [`Printer::resolve`]
@@ -263,7 +368,10 @@ impl Printer {
             open_groups: 0,
             speculation: Vec::new(),
             pending_notes: Vec::new(),
-            slots: Vec::new(),
+            slots: Slots::default(),
+            had_slots: false,
+            stale_splices: 0,
+            sweep_threshold: MIN_SWEEP_THRESHOLD,
             pending_resolve: false,
             sealed: false,
             rendered: None,
@@ -379,20 +487,21 @@ impl Printer {
         if self.sealed {
             return Err(PrinterError::DeadSlot);
         }
-        if let Target::Slot(SlotId(id)) = target {
-            if self.slots[id].dead {
-                return Err(PrinterError::DeadSlot);
-            }
+        if let Target::Slot(id) = target {
+            live_slot(&mut self.slots, id)?;
         }
-        let slot = SlotId(self.slots.len());
-        self.slots.push(Slot {
+        let starts_line = self.at_line_start(target);
+        let slot = self.slots.insert(Slot {
+            parent: target,
+            holders: 1,
             commands: Vec::new(),
             speculation: Vec::new(),
             pending_notes: Vec::new(),
             dead: false,
             block_indent,
-            starts_line: self.at_line_start(target),
+            starts_line,
         });
+        self.had_slots = true;
         self.dispatch(target, Cmd::Splice(slot))?;
         Ok(slot)
     }
@@ -405,40 +514,34 @@ impl Printer {
     /// Break points are not line starts: whether one breaks is decided at
     /// layout time.
     pub fn at_line_start(&self, target: Target) -> bool {
-        let (commands, speculation) = match target {
-            Target::Main => (&self.main, &self.speculation),
-            Target::Slot(SlotId(id)) => (&self.slots[id].commands, &self.slots[id].speculation),
+        let (commands, speculation, starts_line): (&[Cmd], &[Vec<Cmd>], bool) = match target {
+            Target::Main => (&self.main, &self.speculation, true),
+            Target::Slot(id) => self.slots.get(id).map_or((&[], &[], true), |slot| {
+                (&slot.commands, &slot.speculation, slot.starts_line)
+            }),
         };
-        let last = speculation
-            .iter()
-            .rev()
-            .flat_map(|buf| buf.iter().rev())
-            .chain(commands.iter().rev())
-            .find(|cmd| !matches!(cmd, Cmd::ShiftIndent(_)));
+        let last = self.slots.last_significant(
+            speculation
+                .iter()
+                .rev()
+                .flat_map(|buf| buf.iter().rev())
+                .chain(commands.iter().rev()),
+        );
         match last {
             Some(cmd) => self.ends_line(cmd),
-            None => match target {
-                Target::Main => true,
-                Target::Slot(SlotId(id)) => self.slots[id].starts_line,
-            },
+            None => starts_line,
         }
     }
 
     fn ends_line(&self, cmd: &Cmd) -> bool {
         match cmd {
             Cmd::HardBreak => true,
-            Cmd::Splice(SlotId(id)) => {
-                let slot = &self.slots[*id];
-                match slot
-                    .commands
-                    .iter()
-                    .rev()
-                    .find(|cmd| !matches!(cmd, Cmd::ShiftIndent(_)))
-                {
+            Cmd::Splice(id) => self.slots.get(*id).is_some_and(|slot| {
+                match self.slots.last_significant(slot.commands.iter().rev()) {
                     Some(cmd) => self.ends_line(cmd),
                     None => slot.starts_line,
                 }
-            }
+            }),
             _ => false,
         }
     }
@@ -461,11 +564,8 @@ impl Printer {
         }
         match target {
             Target::Main => self.speculation.push(Vec::new()),
-            Target::Slot(SlotId(id)) => {
-                let slot = &mut self.slots[id];
-                if slot.dead {
-                    return Err(PrinterError::DeadSlot);
-                }
+            Target::Slot(id) => {
+                let slot = live_slot(&mut self.slots, id)?;
                 slot.speculation.push(Vec::new());
             }
         }
@@ -491,7 +591,7 @@ impl Printer {
                     self.speculation.last_mut().unwrap().extend(buf);
                     return Ok(());
                 }
-                let sound = self.slots.is_empty();
+                let sound = !self.had_slots;
                 let mut balance = self.open_groups;
                 for cmd in self.speculation.last().unwrap() {
                     match cmd {
@@ -512,11 +612,8 @@ impl Printer {
                 self.open_groups = balance;
                 self.main.extend(buf);
             }
-            Target::Slot(SlotId(id)) => {
-                let slot = &mut self.slots[id];
-                if slot.dead {
-                    return Err(PrinterError::DeadSlot);
-                }
+            Target::Slot(id) => {
+                let slot = live_slot(&mut self.slots, id)?;
                 let buf = slot.speculation.pop().ok_or(PrinterError::NoSpeculation)?;
                 if let Some(outer) = slot.speculation.last_mut() {
                     outer.extend(buf);
@@ -542,11 +639,8 @@ impl Printer {
                 let buf = self.speculation.pop().ok_or(PrinterError::NoSpeculation)?;
                 (buf, self.speculation.is_empty())
             }
-            Target::Slot(SlotId(id)) => {
-                let slot = &mut self.slots[id];
-                if slot.dead {
-                    return Err(PrinterError::DeadSlot);
-                }
+            Target::Slot(id) => {
+                let slot = live_slot(&mut self.slots, id)?;
                 let buf = slot.speculation.pop().ok_or(PrinterError::NoSpeculation)?;
                 (buf, slot.speculation.is_empty())
             }
@@ -559,15 +653,17 @@ impl Printer {
     }
 
     fn release_held_notes(&mut self, target: Target) {
-        let (notes, commands) = match target {
-            Target::Main => (core::mem::take(&mut self.pending_notes), &mut self.main),
-            Target::Slot(SlotId(id)) => {
-                let slot = &mut self.slots[id];
-                (core::mem::take(&mut slot.pending_notes), &mut slot.commands)
-            }
+        let held = match target {
+            Target::Main => Some((&mut self.pending_notes, &mut self.main)),
+            Target::Slot(id) => self
+                .slots
+                .get_mut(id)
+                .map(|slot| (&mut slot.pending_notes, &mut slot.commands)),
         };
-        for note in notes {
-            commands.extend(note);
+        if let Some((notes, commands)) = held {
+            for note in core::mem::take(notes) {
+                commands.extend(note);
+            }
         }
     }
 
@@ -614,7 +710,7 @@ impl Printer {
     /// blocking) the rendered output.
     fn seal(&mut self) {
         self.speculation.clear();
-        for slot in &mut self.slots {
+        for slot in self.slots.iter_mut() {
             slot.speculation.clear();
             slot.dead = true;
         }
@@ -623,7 +719,77 @@ impl Printer {
 
     /// Whether `slot` can still be written to.
     pub fn slot_is_live(&self, slot: SlotId) -> bool {
-        !self.slots[slot.0].dead
+        self.slots.get(slot).is_some_and(|slot| !slot.dead)
+    }
+
+    /// Record one more handle writing through `slot`. A slot starts with
+    /// one, the handle that opened it.
+    pub fn retain(&mut self, slot: SlotId) {
+        if let Some(slot) = self.slots.get_mut(slot) {
+            slot.holders += 1;
+        }
+    }
+
+    /// Record that a handle writing through `slot` is gone. Once the last
+    /// one is, a slot that holds no content is reclaimed, and its splice
+    /// renders nothing: without this, a test case that clones itself
+    /// without end would keep every clone's empty slot until it completes.
+    pub fn release(&mut self, slot: SlotId) {
+        if let Some(released) = self.slots.get_mut(slot) {
+            released.holders = released.holders.saturating_sub(1);
+        }
+        if self.sealed {
+            return;
+        }
+        let mut id = slot;
+        while let Some(slot) = self.slots.get(id) {
+            if slot.holders > 0 || !self.is_blank(slot) {
+                break;
+            }
+            let parent = slot.parent;
+            self.slots.remove(id);
+            self.stale_splices += 1;
+            match parent {
+                Target::Slot(parent) => id = parent,
+                Target::Main => break,
+            }
+        }
+        if self.stale_splices >= self.sweep_threshold {
+            self.sweep();
+        }
+    }
+
+    fn is_blank(&self, slot: &Slot) -> bool {
+        slot.speculation.is_empty()
+            && slot.pending_notes.is_empty()
+            && slot.commands.iter().all(|cmd| self.slots.is_stale(cmd))
+    }
+
+    /// Remove the splices of reclaimed slots from every command list. The
+    /// next sweep waits for as many stale splices as there are commands
+    /// left, so the work is proportional to the splices removed.
+    fn sweep(&mut self) {
+        let mut remaining = 0;
+        for buf in core::iter::once(&mut self.main).chain(self.speculation.iter_mut()) {
+            buf.retain(|cmd| !self.slots.is_stale(cmd));
+            remaining += buf.len();
+        }
+        for index in 0..self.slots.entries.len() {
+            let Some(slot) = self.slots.entries[index].slot.as_mut() else {
+                continue;
+            };
+            let mut commands = core::mem::take(&mut slot.commands);
+            let mut speculation = core::mem::take(&mut slot.speculation);
+            for buf in core::iter::once(&mut commands).chain(speculation.iter_mut()) {
+                buf.retain(|cmd| !self.slots.is_stale(cmd));
+                remaining += buf.len();
+            }
+            let slot = self.slots.entries[index].slot.as_mut().unwrap();
+            slot.commands = commands;
+            slot.speculation = speculation;
+        }
+        self.stale_splices = 0;
+        self.sweep_threshold = remaining.max(MIN_SWEEP_THRESHOLD);
     }
 
     /// Whether the main output can still be written to: `false` once the
@@ -656,11 +822,8 @@ impl Printer {
         }
         let held = match target {
             Target::Main => (!self.speculation.is_empty()).then_some(&mut self.pending_notes),
-            Target::Slot(SlotId(id)) => {
-                let slot = &mut self.slots[id];
-                if slot.dead {
-                    return Err(PrinterError::DeadSlot);
-                }
+            Target::Slot(id) => {
+                let slot = live_slot(&mut self.slots, id)?;
                 (!slot.speculation.is_empty()).then_some(&mut slot.pending_notes)
             }
         };
@@ -688,7 +851,7 @@ impl Printer {
                 match &cmd {
                     Cmd::BeginGroup { .. } => self.open_groups += 1,
                     Cmd::EndGroup { .. } => {
-                        if self.slots.is_empty() && self.open_groups == 0 {
+                        if !self.had_slots && self.open_groups == 0 {
                             return Err(PrinterError::UnbalancedGroup);
                         }
                         self.open_groups -= 1;
@@ -699,11 +862,8 @@ impl Printer {
                 self.main.push(cmd);
                 Ok(())
             }
-            Target::Slot(SlotId(id)) => {
-                let slot = &mut self.slots[id];
-                if slot.dead {
-                    return Err(PrinterError::DeadSlot);
-                }
+            Target::Slot(id) => {
+                let slot = live_slot(&mut self.slots, id)?;
                 if let Some(buf) = slot.speculation.last_mut() {
                     buf.push(cmd);
                 } else {
@@ -717,11 +877,12 @@ impl Printer {
     fn kill_splices(&mut self, cmds: &[Cmd]) {
         let mut work = splice_ids(cmds);
         while let Some(id) = work.pop() {
-            let slot = &mut self.slots[id];
-            slot.dead = true;
-            work.extend(splice_ids(&slot.commands));
-            for buf in &slot.speculation {
-                work.extend(splice_ids(buf));
+            if let Some(slot) = self.slots.get_mut(id) {
+                slot.dead = true;
+                work.extend(splice_ids(&slot.commands));
+                for buf in &slot.speculation {
+                    work.extend(splice_ids(buf));
+                }
             }
         }
     }
@@ -738,7 +899,7 @@ impl Printer {
 
 struct Renderer<'a> {
     max_width: usize,
-    slots: &'a [Slot],
+    slots: &'a Slots,
     force_break: Vec<bool>,
     out: String,
     output_width: usize,
@@ -760,7 +921,7 @@ struct Renderer<'a> {
 }
 
 impl<'a> Renderer<'a> {
-    fn new(max_width: usize, slots: &'a [Slot], force_break: Vec<bool>) -> Renderer<'a> {
+    fn new(max_width: usize, slots: &'a Slots, force_break: Vec<bool>) -> Renderer<'a> {
         Renderer {
             max_width,
             slots,
@@ -803,8 +964,10 @@ impl<'a> Renderer<'a> {
             Cmd::EndGroup { close } => return self.end_group(close),
             Cmd::ShiftIndent(delta) => self.indentation += delta,
             Cmd::Comment(s) => self.comment(s),
-            Cmd::Splice(SlotId(id)) => {
-                let slot = &self.slots[*id];
+            Cmd::Splice(id) => {
+                let Some(slot) = self.slots.get(*id) else {
+                    return Ok(());
+                };
                 self.block_indent += slot.block_indent;
                 self.run(&slot.commands)?;
                 self.block_indent -= slot.block_indent;

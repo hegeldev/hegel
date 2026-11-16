@@ -913,6 +913,14 @@ pub struct HegelTestCase {
     local: Mutex<LocalState>,
 }
 
+impl Drop for HegelTestCase {
+    fn drop(&mut self) {
+        if let PrinterTarget::Slot(slot) = self.print_target {
+            self.family.printer.lock().release(slot);
+        }
+    }
+}
+
 /// The `worker` value of a handle attributed to no worker.
 const NO_WORKER: i64 = -1;
 
@@ -2901,13 +2909,15 @@ pub unsafe extern "C" fn hegel_test_case_clone(
         Ok(stream) => stream,
         Err(e) => return translate_ds_error(ctx, e),
     };
-    let print_target = match src.family.printer.lock().deferred(src.print_target) {
+    let mut printer = src.family.printer.lock();
+    let print_target = match printer.deferred(src.print_target) {
         Ok(slot) => PrinterTarget::Slot(slot),
         // The source's region is already dead (the document was read while
         // this branch of the family straggled): share the dead region, so
         // the clone's prints are no-ops like its parent's.
-        Err(_) => src.print_target,
+        Err(_) => share_target(&mut printer, src.print_target),
     };
+    drop(printer);
     let clone = handle_from_stream(
         Arc::clone(&src.family),
         Arc::from(stream),
@@ -2964,15 +2974,12 @@ pub unsafe extern "C" fn hegel_test_case_block(
         set_last_error(ctx, "hegel_test_case_block: out parameter is null");
         return HEGEL_E_INVALID_ARG;
     }
-    let print_target = match src
-        .family
-        .printer
-        .lock()
-        .block(src.print_target, size_arg(indent))
-    {
+    let mut printer = src.family.printer.lock();
+    let print_target = match printer.block(src.print_target, size_arg(indent)) {
         Ok(slot) => PrinterTarget::Slot(slot),
-        Err(_) => src.print_target,
+        Err(_) => share_target(&mut printer, src.print_target),
     };
+    drop(printer);
     let block = handle_from_stream(
         Arc::clone(&src.family),
         Arc::clone(&src.stream),
@@ -3023,6 +3030,15 @@ pub unsafe extern "C" fn hegel_test_case_set_worker(
     }
     tc.worker.store(worker_index, Ordering::Release);
     HEGEL_OK
+}
+
+/// Count one more handle writing through `target`, for a handle that
+/// shares the region of an existing one.
+fn share_target(printer: &mut Printer, target: PrinterTarget) -> PrinterTarget {
+    if let PrinterTarget::Slot(slot) = target {
+        printer.retain(slot);
+    }
+    target
 }
 
 /// Allocate a fresh family from a data source, reporting its completion to
@@ -6792,6 +6808,14 @@ pub struct HegelPrinter {
     attribution: Option<Arc<Attribution>>,
 }
 
+impl Drop for HegelPrinter {
+    fn drop(&mut self) {
+        if let PrinterTarget::Slot(slot) = self.target {
+            self.inner.lock().release(slot);
+        }
+    }
+}
+
 impl HegelPrinter {
     /// Run a content-recording operation on this handle's target, first
     /// stamping the line it starts with the worker prefix when the handle
@@ -7708,6 +7732,7 @@ pub unsafe extern "C" fn hegel_test_case_printer(
             return HEGEL_E_INVALID_ARG;
         }
     }
+    share_target(&mut inner.lock(), tc.print_target);
     let handle = HegelPrinter {
         inner,
         target: tc.print_target,
