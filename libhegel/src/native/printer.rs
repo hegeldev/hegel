@@ -108,9 +108,9 @@ impl core::error::Error for PrinterError {}
 /// written to the slot is spliced in at the hole's position; after
 /// [`Printer::resolve`] the slot is dead and all further writes error.
 ///
-/// The generation tells a reclaimed slot (see [`Printer::release`]) from
-/// a later one stored at the same index: an id whose generation no longer
-/// matches names nothing, and its splice renders nothing.
+/// The generation tells a reclaimed slot (see [`Printer::release`]) from a
+/// later slot at the same index. An id whose generation does not match names
+/// nothing, and its splice renders nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SlotId {
     index: usize,
@@ -183,8 +183,7 @@ struct Group {
 struct Slot {
     /// Where the slot's splice was recorded.
     parent: Target,
-    /// How many handles still write through this slot (see
-    /// [`Printer::retain`] and [`Printer::release`]).
+    /// How many handles write through this slot (see [`Printer::retain`]).
     holders: usize,
     commands: Vec<Cmd>,
     speculation: Vec<Vec<Cmd>>,
@@ -204,8 +203,8 @@ struct SlotEntry {
     slot: Option<Slot>,
 }
 
-/// The slots of a document, stored so that a reclaimed slot's storage is
-/// reused.
+/// The slots of a document. A reclaimed slot's index is reused with the next
+/// generation.
 #[derive(Debug, Default)]
 struct Slots {
     entries: Vec<SlotEntry>,
@@ -267,8 +266,7 @@ impl Slots {
     }
 
     /// The last command of `cmds` that decides whether what follows starts
-    /// a line: indentation shifts and the splices of reclaimed slots are
-    /// looked past.
+    /// a line. Indentation shifts and splices of reclaimed slots do not count.
     fn last_significant<'c>(&self, mut cmds: impl Iterator<Item = &'c Cmd>) -> Option<&'c Cmd> {
         cmds.find(|cmd| !matches!(cmd, Cmd::ShiftIndent(_)) && !self.is_stale(cmd))
     }
@@ -343,13 +341,12 @@ pub struct Printer {
     speculation: Vec<Vec<Cmd>>,
     pending_notes: Vec<Vec<Cmd>>,
     slots: Slots,
-    /// Whether a slot was ever opened: group structure may span holes from
-    /// then on, so group balance is no longer checked eagerly.
+    /// Whether a slot was ever opened. Groups can span holes from then on,
+    /// so group balance is not checked eagerly.
     had_slots: bool,
-    /// Splices of reclaimed slots still recorded somewhere in the document
-    /// (at most: some were discarded with an aborted speculative region).
+    /// An upper bound on the splices of reclaimed slots still in the
+    /// document. An aborted speculative region can discard some of them.
     stale_splices: usize,
-    /// How many stale splices trigger a sweep that removes them.
     sweep_threshold: usize,
     pending_resolve: bool,
     sealed: bool,
@@ -722,20 +719,19 @@ impl Printer {
         self.slots.get(slot).is_some_and(|slot| !slot.dead)
     }
 
-    /// Record one more handle writing through `slot`. A slot starts with
-    /// one, the handle that opened it.
+    /// Record one more handle writing through `slot`. A slot starts with one
+    /// handle, the one that opened it.
     pub fn retain(&mut self, slot: SlotId) {
         if let Some(slot) = self.slots.get_mut(slot) {
             slot.holders += 1;
         }
     }
 
-    /// Record that a handle writing through `slot` is gone. Once the last
-    /// one is, a speculative region still open on the slot is aborted, as
-    /// nothing can close it any more, and a slot that holds no content is
-    /// reclaimed, its splice rendering nothing: without this, a test case
-    /// that clones itself without end would keep every clone's empty slot
-    /// until it completes.
+    /// Record that a handle writing through `slot` is gone. When the last
+    /// handle goes, abort the speculative regions still open on the slot,
+    /// because nothing can close them. Then reclaim the slot if it holds no
+    /// content, and each parent that this leaves empty with no handles. The
+    /// splice of a reclaimed slot renders nothing.
     pub fn release(&mut self, slot: SlotId) {
         if self.sealed {
             return;
@@ -787,8 +783,8 @@ impl Printer {
     }
 
     /// Remove the splices of reclaimed slots from every command list. The
-    /// next sweep waits for as many stale splices as there are commands
-    /// left, so the work is proportional to the splices removed.
+    /// next sweep waits for as many stale splices as there are commands left,
+    /// so the cost of a sweep is proportional to the splices it removes.
     fn sweep(&mut self) {
         let live: Vec<Option<u64>> = self
             .slots
