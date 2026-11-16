@@ -60,7 +60,7 @@ public sealed record Settings
         {
             var (seed, hasSeed) = lib.SettingsGetSeed(s);
             return new Resolved(
-                checked((long)lib.SettingsGetTestCases(s)),
+                TestCasesFrom(lib.SettingsGetTestCases(s)),
                 hasSeed ? seed : null,
                 lib.SettingsGetDerandomize(s),
                 Database.FromEngine(lib.SettingsGetDatabase(s)),
@@ -199,6 +199,8 @@ public sealed record Settings
         Runner.CheckStringSetting(Engine.Get(), key, value);
         return this with { StringSettings = [.. StringSettings, new KeyValuePair<string, string>(key, value)] };
     }
+
+    internal static long TestCasesFrom(ulong testCases) => (long)Math.Min(testCases, long.MaxValue);
 
     internal Settings Effective(long testCases, bool printBlob, NondeterminismStrictness strictness, Verbosity verbosity) =>
         this with { TestCases = testCases, PrintBlob = printBlob, NondeterminismStrictness = strictness, Verbosity = verbosity };

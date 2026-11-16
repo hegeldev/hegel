@@ -6,3 +6,6 @@ dist/
 TestResults/
 .hegel/
 *.pyc
+docs/_site/
+docs/csharp/api/
+.fsdocs/

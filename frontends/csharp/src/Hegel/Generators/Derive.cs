@@ -140,16 +140,16 @@ internal static class Derive
         {
             CheckAcyclicType(type.GetElementType()!, path);
         }
+        else if (RecordShape.IsRecord(type))
+        {
+            CheckAcyclic(type, path);
+        }
         else if (type.IsGenericType)
         {
             foreach (var argument in type.GetGenericArguments())
             {
                 CheckAcyclicType(argument, path);
             }
-        }
-        else if (RecordShape.IsRecord(type))
-        {
-            CheckAcyclic(type, path);
         }
     }
 
@@ -255,13 +255,17 @@ internal sealed class RecordShape
 
     private RecordShape(Type type)
     {
+        var positional = type.GetMethod("Deconstruct", BindingFlags.Public | BindingFlags.Instance)?.GetParameters()
+            .Select(parameter => parameter.ParameterType.GetElementType()).ToArray();
         Constructor = type.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
             .Where(c => !(c.GetParameters().Length == 1 && c.GetParameters()[0].ParameterType == type))
-            .OrderByDescending(c => c.GetParameters().Length)
+            .OrderByDescending(c => c.IsPublic)
+            .ThenByDescending(c => positional != null && c.GetParameters().Select(parameter => parameter.ParameterType).SequenceEqual(positional))
+            .ThenByDescending(c => c.GetParameters().Length)
             .FirstOrDefault();
         var parameters = Constructor?.GetParameters() ?? [];
         Properties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-            .Where(property => property.SetMethod is { IsPublic: true } && property.GetIndexParameters().Length == 0 && !parameters.Any(parameter => parameter.Name == property.Name))
+            .Where(property => property.SetMethod is { IsPublic: true } && property.GetIndexParameters().Length == 0 && !parameters.Any(parameter => string.Equals(parameter.Name, property.Name, StringComparison.OrdinalIgnoreCase)))
             .ToArray();
         Components = parameters.Select(parameter => (parameter.Name!, parameter.ParameterType))
             .Concat(Properties.Select(property => (property.Name, property.PropertyType)))

@@ -41,6 +41,13 @@ public class SettingsTests
     }
 
     [Fact]
+    public void TestCaseCountsBeyondLongSaturate()
+    {
+        Assert.Equal(5, Settings.TestCasesFrom(5));
+        Assert.Equal(long.MaxValue, Settings.TestCasesFrom(ulong.MaxValue));
+    }
+
+    [Fact]
     public void TestCasesMustBePositive()
     {
         Assert.Equal(1, new Settings { TestCases = 1 }.TestCases);

@@ -312,7 +312,8 @@ type RecordGen<'T> internal (generators: Map<string, Lazy<IGenerator>>) =
 
     member internal _.Draw(tc: TestCase, printer: Printer) : 'T =
         let p = Components.Out printer
-        p.BeginGroup "{ "
+        let openText, closeText = Repr.recordBraces typeof<'T>
+        p.BeginGroup openText
 
         let values =
             Array.map2
@@ -320,12 +321,12 @@ type RecordGen<'T> internal (generators: Map<string, Lazy<IGenerator>>) =
                     if not (obj.ReferenceEquals(field, fields[0])) then
                         Repr.separator p
 
-                    p.Text(field.Name + " = ")
+                    p.Text(Repr.identifier field.Name + " = ")
                     generator.Draw(tc, printer))
                 fields
                 components.Value
 
-        p.EndGroup " }"
+        p.EndGroup closeText
         construct values :?> 'T
 
     override _.Label =
@@ -359,10 +360,10 @@ type UnionGen<'T> internal (cases: (Microsoft.FSharp.Reflection.UnionCaseInfo * 
         let case, fields = cases[index]
 
         if fields.Length = 0 then
-            p.Text case.Name
+            p.Text(Repr.caseName case)
             constructors[index] [||] :?> 'T
         else
-            p.BeginGroup(case.Name + "(")
+            p.BeginGroup(Repr.caseName case + "(")
 
             let values =
                 fields

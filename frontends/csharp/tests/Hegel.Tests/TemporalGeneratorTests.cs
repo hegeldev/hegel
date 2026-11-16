@@ -108,4 +108,20 @@ public class TemporalGeneratorTests
         var zones = TimeZoneInfo.GetSystemTimeZones();
         Gen.All(Generators.TimeZones(), z => zones.Contains(z), 20);
     }
+
+    [Fact]
+    public void BoundErrorsDoNotDependOnTheCurrentCulture()
+    {
+        var before = System.Globalization.CultureInfo.CurrentCulture;
+        System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo("th-TH");
+        try
+        {
+            var dates = Assert.Throws<ArgumentOutOfRangeException>(() => Generators.Dates().Min(new DateOnly(2024, 5, 1)).Max(new DateOnly(2024, 1, 1)));
+            Assert.Contains("Dates: Min (2024-05-01) > Max (2024-01-01)", dates.Message);
+        }
+        finally
+        {
+            System.Globalization.CultureInfo.CurrentCulture = before;
+        }
+    }
 }

@@ -44,6 +44,31 @@ type Sealed =
 type Plain() =
     override _.ToString() = "Plain()"
 
+type Small =
+    | Tiny = 1uy
+
+[<RequireQualifiedAccess>]
+type Qualified =
+    | Bare
+    | Holding of int
+
+[<RequireQualifiedAccess>]
+type QualifiedOf<'T> = Wrapped of 'T
+
+[<CompilationRepresentation(CompilationRepresentationFlags.UseNullAsTrueValue)>]
+type Presence =
+    | Absent
+    | Present of int
+
+type Awkward =
+    {
+        ``two words``: int
+        ``type``: int
+        plain': int
+    }
+
+type Spaced = ``Case name`` of int
+
 let private makeSecret n = { Hidden = n }
 let private makeSealed n = Opened n
 let private closed = Closed
@@ -278,3 +303,41 @@ let ``long records break at the separators`` () =
     doc.MaxWidth <- 12
     Repr.render doc.Printer typeof<Point> (box { X = 1000; Y = 2000 })
     Assert.Equal("{ X = 1000;\n  Y = 2000 }", doc.Finish())
+
+[<Fact>]
+let ``undefined values of enums that are not int32 name their underlying type`` () =
+    Assert.Equal("Small.Tiny", show Small.Tiny)
+
+    Assert.Equal(
+        "LanguagePrimitives.EnumOfValue<byte, Small> (7uy)",
+        show (LanguagePrimitives.EnumOfValue<byte, Small> 7uy)
+    )
+
+[<Fact>]
+let ``union cases are qualified when their type requires it`` () =
+    Assert.Equal("Qualified.Bare", show Qualified.Bare)
+    Assert.Equal("Qualified.Holding(1)", show (Qualified.Holding 1))
+    Assert.Equal("QualifiedOf.Wrapped(1)", show (QualifiedOf.Wrapped 1))
+
+[<Fact>]
+let ``a union case represented as null prints as the case`` () =
+    Assert.Equal("Absent", show Absent)
+    Assert.Equal("[Absent; Present(1)]", show [ Absent; Present 1 ])
+
+[<Fact>]
+let ``names that are not identifiers are written in backticks`` () =
+    Assert.Equal(
+        "{ ``two words`` = 1; ``type`` = 2; plain' = 3 }",
+        show
+            {
+                ``two words`` = 1
+                ``type`` = 2
+                plain' = 3
+            }
+    )
+
+    Assert.Equal("``Case name``(1)", show (``Case name`` 1))
+
+[<Fact>]
+let ``struct anonymous records`` () =
+    Assert.Equal("struct {| A = 1 |}", show (struct {| A = 1 |}))

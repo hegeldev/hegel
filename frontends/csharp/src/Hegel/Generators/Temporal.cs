@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace Hegel;
 
 /// <summary>Draws dates.</summary>
@@ -10,7 +12,7 @@ public sealed class DateGenerator : ValueGenerator<DateOnly>
     {
         if (min > max)
         {
-            throw new ArgumentOutOfRangeException(nameof(min), min, $"Dates: Min ({min:yyyy-MM-dd}) > Max ({max:yyyy-MM-dd})");
+            throw new ArgumentOutOfRangeException(nameof(min), min, string.Create(CultureInfo.InvariantCulture, $"Dates: Min ({min:yyyy-MM-dd}) > Max ({max:yyyy-MM-dd})"));
         }
         _min = min;
         _max = max;
@@ -36,7 +38,7 @@ public sealed class TimeGenerator : ValueGenerator<TimeOnly>
     {
         if (min > max)
         {
-            throw new ArgumentOutOfRangeException(nameof(min), min, $"Times: Min ({min:HH:mm:ss.FFFFFFF}) > Max ({max:HH:mm:ss.FFFFFFF})");
+            throw new ArgumentOutOfRangeException(nameof(min), min, string.Create(CultureInfo.InvariantCulture, $"Times: Min ({min:HH:mm:ss.FFFFFFF}) > Max ({max:HH:mm:ss.FFFFFFF})"));
         }
         _min = min;
         _max = max;

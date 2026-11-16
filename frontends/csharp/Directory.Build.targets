@@ -1,0 +1,13 @@
+<Project>
+  <!-- The packages release together and Hegel.FSharp uses Hegel's internals, so each depends on
+       exactly the Hegel it was built with: pack would otherwise write a lower bound. -->
+  <Target Name="HegelExactProjectReferenceVersions" AfterTargets="_GetProjectReferenceVersions">
+    <ItemGroup>
+      <_HegelExactProjectReference Include="@(_ProjectReferencesWithVersions)">
+        <ProjectVersion>[%(_ProjectReferencesWithVersions.ProjectVersion)]</ProjectVersion>
+      </_HegelExactProjectReference>
+      <_ProjectReferencesWithVersions Remove="@(_ProjectReferencesWithVersions)" />
+      <_ProjectReferencesWithVersions Include="@(_HegelExactProjectReference)" />
+    </ItemGroup>
+  </Target>
+</Project>

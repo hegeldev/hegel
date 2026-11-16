@@ -63,6 +63,26 @@ jobs:
       - name: Test
         run: just csharp::test
 
+  # The API references (DocFX and fsdocs), with warnings as errors.
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/install-tools
+        with:
+          tools: just
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: "10.0.x"
+      - name: Build the API references
+        run: just csharp::check-docs
+
   # A packaging dry run with the in-tree engine, so a broken .nuspec or a
   # missing package file fails the PR rather than the release.
   pack:

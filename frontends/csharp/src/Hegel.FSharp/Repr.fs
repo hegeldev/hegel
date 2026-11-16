@@ -59,6 +59,109 @@ module Repr =
                 bare + "<" + String.Join(", ", args) + ">"
         | _ -> t.Name
 
+    let private reserved =
+        HashSet<string>(
+            [
+                "abstract"
+                "and"
+                "as"
+                "assert"
+                "base"
+                "begin"
+                "class"
+                "const"
+                "default"
+                "delegate"
+                "do"
+                "done"
+                "downcast"
+                "downto"
+                "elif"
+                "else"
+                "end"
+                "exception"
+                "extern"
+                "false"
+                "finally"
+                "fixed"
+                "for"
+                "fun"
+                "function"
+                "global"
+                "if"
+                "in"
+                "inherit"
+                "inline"
+                "interface"
+                "internal"
+                "lazy"
+                "let"
+                "match"
+                "member"
+                "module"
+                "mutable"
+                "namespace"
+                "new"
+                "not"
+                "null"
+                "of"
+                "open"
+                "or"
+                "override"
+                "private"
+                "public"
+                "rec"
+                "return"
+                "select"
+                "sig"
+                "static"
+                "struct"
+                "then"
+                "to"
+                "true"
+                "try"
+                "type"
+                "upcast"
+                "use"
+                "val"
+                "void"
+                "when"
+                "while"
+                "with"
+                "yield"
+            ]
+        )
+
+    /// <paramref name="name"/> as an F# identifier, in double backticks when it is not one as written.
+    let identifier (name: string) : string =
+        let plain =
+            (Char.IsLetter name[0] || name[0] = '_')
+            && name |> Seq.forall (fun c -> Char.IsLetterOrDigit c || c = '_' || c = '\'')
+            && not (reserved.Contains name)
+
+        if plain then name else "``" + name + "``"
+
+    /// The name a union case is written with: qualified by its type when the type requires it.
+    let caseName (case: UnionCaseInfo) : string =
+        let t = case.DeclaringType
+
+        if t.IsDefined(typeof<RequireQualifiedAccessAttribute>, false) then
+            let tick = t.Name.IndexOf '`'
+            let bare = if tick < 0 then t.Name else t.Name.Substring(0, tick)
+            identifier bare + "." + identifier case.Name
+        else
+            identifier case.Name
+
+    /// The brackets a record of type <paramref name="t"/> is written in: anonymous records take
+    /// <c>{| |}</c>, and <c>struct</c> in front when they are value types.
+    let recordBraces (t: Type) : string * string =
+        if not (t.Name.StartsWith("<>f__AnonymousType", StringComparison.Ordinal)) then
+            "{ ", " }"
+        elif t.IsValueType then
+            "struct {| ", " |}"
+        else
+            "{| ", " |}"
+
     /// <paramref name="s"/> as an F# string or character literal, delimited by <paramref name="delimiter"/>.
     let quote (s: string) (delimiter: char) : string =
         let sb = Text.StringBuilder(s.Length + 2).Append(delimiter)
@@ -127,12 +230,36 @@ module Repr =
                  text + ".0")
             + "f"
 
+    let private integerLiteral (value: obj) : string =
+        match value with
+        | :? int as i -> invariant i
+        | :? int64 as i -> invariant i + "L"
+        | :? int16 as i -> invariant i + "s"
+        | :? sbyte as i -> invariant i + "y"
+        | :? byte as i -> invariant i + "uy"
+        | :? uint16 as i -> invariant i + "us"
+        | :? uint32 as i -> invariant i + "u"
+        | _ -> invariant (value :?> uint64) + "UL"
+
     let private enumLiteral (e: Enum) =
         let name = typeName (e.GetType())
         let text = e.ToString()
 
         if Char.IsAsciiDigit text[0] || text[0] = '-' then
-            "enum<" + name + "> (" + text + ")"
+            let underlying = Enum.GetUnderlyingType(e.GetType())
+
+            if underlying = typeof<int> then
+                "enum<" + name + "> (" + text + ")"
+            else
+                let number = Convert.ChangeType(e, underlying, CultureInfo.InvariantCulture)
+
+                "LanguagePrimitives.EnumOfValue<"
+                + typeName underlying
+                + ", "
+                + name
+                + "> ("
+                + integerLiteral number
+                + ")"
         else
             text.Split ", "
             |> Array.map (fun case -> name + "." + case)
@@ -161,20 +288,32 @@ module Repr =
     let rec render (p: Printer) (t: Type) (value: obj) : unit =
         match value with
         | null ->
-            if isDefinition typedefof<option<_>> t then p.Text "None"
-            elif t = typeof<unit> then p.Text "()"
-            else p.Text "null"
+            if isDefinition typedefof<option<_>> t then
+                p.Text "None"
+            elif t = typeof<unit> then
+                p.Text "()"
+            elif FSharpType.IsUnion(t, Reflection.BindingFlags.Public ||| Reflection.BindingFlags.NonPublic) then
+                let case, _ =
+                    FSharpValue.GetUnionFields(
+                        null,
+                        t,
+                        Reflection.BindingFlags.Public ||| Reflection.BindingFlags.NonPublic
+                    )
+
+                p.Text(caseName case)
+            else
+                p.Text "null"
         | :? string as s -> p.Text(quote s '"')
         | :? char as c -> p.Text(quote (string c) '\'')
         | :? bool as b -> p.Text(if b then "true" else "false")
-        | :? int as i -> p.Text(invariant i)
-        | :? int64 as i -> p.Text(invariant i + "L")
-        | :? int16 as i -> p.Text(invariant i + "s")
-        | :? sbyte as i -> p.Text(invariant i + "y")
-        | :? byte as i -> p.Text(invariant i + "uy")
-        | :? uint16 as i -> p.Text(invariant i + "us")
-        | :? uint32 as i -> p.Text(invariant i + "u")
-        | :? uint64 as i -> p.Text(invariant i + "UL")
+        | :? int
+        | :? int64
+        | :? int16
+        | :? sbyte
+        | :? byte
+        | :? uint16
+        | :? uint32
+        | :? uint64 -> p.Text(integerLiteral value)
         | :? nativeint as i -> p.Text(invariant i + "n")
         | :? unativeint as i -> p.Text(invariant i + "un")
         | :? float as d -> p.Text(floatLiteral d)
@@ -218,8 +357,8 @@ module Repr =
             let values = FSharpValue.GetTupleFields value
             applied p (if rt.IsValueType then "struct (" else "(") (Array.zip elements values)
         elif FSharpType.IsRecord(rt, Reflection.BindingFlags.Public ||| Reflection.BindingFlags.NonPublic) then
-            let anonymous = rt.Name.StartsWith("<>f__AnonymousType", StringComparison.Ordinal)
-            p.BeginGroup(if anonymous then "{| " else "{ ")
+            let openText, closeText = recordBraces rt
+            p.BeginGroup openText
             let mutable first = true
 
             for field in
@@ -228,10 +367,10 @@ module Repr =
                     separator p
 
                 first <- false
-                p.Text(field.Name + " = ")
+                p.Text(identifier field.Name + " = ")
                 render p field.PropertyType (field.GetValue value)
 
-            p.EndGroup(if anonymous then " |}" else " }")
+            p.EndGroup closeText
         elif FSharpType.IsUnion(rt, Reflection.BindingFlags.Public ||| Reflection.BindingFlags.NonPublic) then
             let case, values =
                 FSharpValue.GetUnionFields(
@@ -241,10 +380,10 @@ module Repr =
                 )
 
             if values.Length = 0 then
-                p.Text case.Name
+                p.Text(caseName case)
             else
                 let types = case.GetFields() |> Array.map (fun f -> f.PropertyType)
-                applied p (case.Name + "(") (Array.zip types values)
+                applied p (caseName case + "(") (Array.zip types values)
         elif value :? IEnumerable then
             sequence p "seq [" "]" (genericArg 0 rt) (value :?> IEnumerable)
         else
