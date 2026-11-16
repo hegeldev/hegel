@@ -42,6 +42,8 @@ module Private = struct
   let collection_reject = Generators_core.collection_reject
   let label_of = Generators_core.label_of
   let live_temporal_specs () = Atomic.get Generators_temporal.live_specs
+  let live_zone_sources () = Atomic.get Generators_temporal.Zone_source.live
+  let zone_loader_target = Generators_temporal.Zone_source.loader_target
 end
 
 module Ppx_internal = struct

@@ -432,7 +432,7 @@ let guarded ctx ~failure f =
 ;;
 
 module Zone_source = struct
-  type t = Ffi.zone_source
+  type t = zone_source
 
   type zone_type = T.Zone_type.t =
     { offset_seconds : int
@@ -536,16 +536,39 @@ module Zone_source = struct
     | Infer last_year -> { held with after = 2; last_year = i32 last_year }
   ;;
 
-  let bundled () = Ffi.zone_source_bundled ()
-  let create () = Internal.with_context Ffi.zone_source_new
+  let live = Atomic.make 0
+
+  let use source f =
+    let result = f source.zone_handle in
+    ignore (Sys.opaque_identity source : t);
+    result
+  ;;
+
+  let call source f =
+    use source (fun handle -> Internal.with_context (fun ctx -> f ctx handle))
+  ;;
+
+  let bundled () = { zone_handle = Ffi.zone_source_bundled () }
+
+  let create () =
+    let zone_handle = Internal.with_context Ffi.zone_source_new in
+    let source = { zone_handle } in
+    Atomic.incr live;
+    Ffi.free_when_unreachable
+      (fun () ->
+         Ffi.zone_source_free zone_handle;
+         Atomic.decr live)
+      source;
+    source
+  ;;
 
   let add_tzif source name ~contents =
-    Internal.with_context (fun ctx -> Ffi.zone_source_add_tzif ctx source name contents)
+    call source (fun ctx handle -> Ffi.zone_source_add_tzif ctx handle name contents)
   ;;
 
   let add_zone source name data =
-    Internal.with_context (fun ctx ->
-      Ffi.zone_source_add_zone ctx source name (raw_data data))
+    call source (fun ctx handle ->
+      Ffi.zone_source_add_zone ctx handle name (raw_data data))
   ;;
 
   let add_oracle
@@ -565,10 +588,10 @@ module Zone_source = struct
         (fun next ctx after -> guarded ctx ~failure:None (fun () -> Some (next after)))
         next_transition
     in
-    Internal.with_context (fun ctx ->
+    call source (fun ctx handle ->
       Ffi.zone_source_add_oracle
         ctx
-        source
+        handle
         name
         ~offset_at
         ~next_transition
@@ -578,33 +601,38 @@ module Zone_source = struct
   ;;
 
   let add_link source name ~target =
-    Internal.with_context (fun ctx -> Ffi.zone_source_add_link ctx source name target)
+    call source (fun ctx handle -> Ffi.zone_source_add_link ctx handle name target)
   ;;
 
   let declare source names =
-    Internal.with_context (fun ctx -> Ffi.zone_source_declare ctx source names)
+    call source (fun ctx handle -> Ffi.zone_source_declare ctx handle names)
+  ;;
+
+  let loader_target = function
+    | Some source -> source
+    | None -> failwith "a zone source's loader was called after the source was collected"
   ;;
 
   let set_loader source load =
+    let target = Weak.create 1 in
+    Weak.set target 0 (Some source);
     let load ctx name =
       guarded ctx ~failure:false (fun () ->
-        load source name;
+        load (loader_target (Weak.get target 0)) name;
         true)
     in
-    Internal.with_context (fun ctx -> Ffi.zone_source_set_loader ctx source (Some load))
+    call source (fun ctx handle -> Ffi.zone_source_set_loader ctx handle (Some load))
   ;;
 
   let remove_loader source =
-    Internal.with_context (fun ctx -> Ffi.zone_source_set_loader ctx source None)
+    call source (fun ctx handle -> Ffi.zone_source_set_loader ctx handle None)
   ;;
 
   let set_version source version =
-    Internal.with_context (fun ctx -> Ffi.zone_source_set_version ctx source version)
+    call source (fun ctx handle -> Ffi.zone_source_set_version ctx handle version)
   ;;
 
-  let version source =
-    Internal.with_context (fun ctx -> Ffi.zone_source_version ctx source)
-  ;;
+  let version source = call source Ffi.zone_source_version
 end
 
 (* [None] until a default is set: the bundled database, whose handle is only
@@ -616,17 +644,17 @@ let default_source : Zone_source.t option ref Locked.t =
 
 let chosen_default () = Locked.protect default_source (fun chosen -> !chosen)
 
-let source_handle = function
+let or_bundled = function
   | Some source -> source
   | None -> Zone_source.bundled ()
 ;;
 
-let default_zone_source () = source_handle (chosen_default ())
+let default_zone_source () = or_bundled (chosen_default ())
 
 let set_default_zone_source source =
-  source_handle
+  or_bundled
     (Locked.protect default_source (fun chosen ->
-       Internal.with_context (fun ctx -> Ffi.set_default_zone_source ctx source);
+       Zone_source.call source Ffi.set_default_zone_source;
        let previous = !chosen in
        chosen := Some source;
        previous))
@@ -637,41 +665,45 @@ let source_in_effect = function
   | None -> chosen_default ()
 ;;
 
+let with_source source f = Zone_source.use (or_bundled source) f
 let tzdb_version () = Internal.with_context Ffi.tzdb_version
 
+let query source f =
+  with_source (source_in_effect source) (fun handle ->
+    Internal.with_context (fun ctx -> f ctx handle))
+;;
+
 let info ?source name =
-  let source = source_handle (source_in_effect source) in
-  Zone_info.of_raw (Internal.with_context (fun ctx -> Ffi.timezone_info ctx source name))
+  Zone_info.of_raw (query source (fun ctx handle -> Ffi.timezone_info ctx handle name))
 ;;
 
 let resolve ?source name civil =
-  let source = source_handle (source_in_effect source) in
   Zoned_datetime.of_resolution
     name
     civil
-    (Internal.with_context (fun ctx ->
-       Ffi.timezone_resolve ctx source name (Datetime.raw civil)))
+    (query source (fun ctx handle ->
+       Ffi.timezone_resolve ctx handle name (Datetime.raw civil)))
 ;;
 
 let offset_at ?source name instant =
-  let source = source_handle (source_in_effect source) in
   Zone_offset.of_raw
-    (Internal.with_context (fun ctx ->
-       Ffi.timezone_offset_at ctx source name (Instant.raw instant)))
+    (query source (fun ctx handle ->
+       Ffi.timezone_offset_at ctx handle name (Instant.raw instant)))
 ;;
 
 (* The engine configuration of one generator (date options or a spec), built
    on the first draw so that building a generator does not load libhegel, and
-   freed when the generator is collected. *)
+   freed once the generator is collected. *)
 type 'spec cell = { slot : 'spec option ref Locked.t }
 
 let live_specs = Atomic.make 0
 
 let cell ~(free : (_ -> unit) MODE(portable)) =
-  let cell = { slot = Locked.create (fun () -> ref None) } in
+  let slot = Locked.create (fun () -> ref None) in
+  let cell = { slot } in
   Ffi.free_when_unreachable
-    (fun cell ->
-       Locked.protect cell.slot (fun slot ->
+    (fun () ->
+       Locked.protect slot (fun slot ->
          Option.iter
            (fun spec ->
               free spec;
@@ -683,6 +715,7 @@ let cell ~(free : (_ -> unit) MODE(portable)) =
 ;;
 
 let with_spec cell ~build f =
+  Ffi.free_unreachable ();
   let spec =
     Locked.protect cell.slot (fun slot ->
       match !slot with
@@ -830,13 +863,19 @@ let offsets
 
 let timezone_spec ctx (query : zone_query) =
   configured ~free:Ffi.timezone_spec_free (Ffi.timezone_spec_new ctx) (fun spec ->
-    Ffi.timezone_spec_set_source ctx spec (source_handle query.source);
+    with_source query.source (Ffi.timezone_spec_set_source ctx spec);
     Option.iter (Ffi.timezone_spec_set_names ctx spec) query.names;
     Ffi.timezone_spec_set_links ctx spec query.allow_links;
     Ffi.timezone_spec_set_legacy ctx spec query.allow_legacy;
     Ffi.timezone_spec_set_unknown ctx spec query.allow_unknown;
     Ffi.timezone_spec_set_opaque ctx spec query.allow_opaque;
     Ffi.timezone_spec_validate ctx spec)
+;;
+
+let with_zones cell ctx (query : zone_query) f =
+  let result = with_spec cell ~build:(fun () -> timezone_spec ctx query) f in
+  ignore (Sys.opaque_identity query : zone_query);
+  result
 ;;
 
 let zone_query
@@ -870,10 +909,8 @@ let zones ?names ?allow_links ?allow_legacy ?allow_unknown ?allow_opaque ?source
           { draw =
               (fun tc ->
                 Internal.with_draw tc (fun ctx handle ->
-                  with_spec
-                    spec
-                    ~build:(fun () -> timezone_spec ctx query)
-                    (fun spec -> Ffi.generate_timezone ctx handle spec)))
+                  with_zones spec ctx query (fun spec ->
+                    Ffi.generate_timezone ctx handle spec)))
           ; label = leaf_label "zones"
           ; zones = Some query
           }
@@ -923,16 +960,13 @@ let zoned_spec ctx { bounds; precision; imaginary; ambiguous } =
 ;;
 
 let draw_zoned ctx handle ~zones ~zoned query options =
-  with_spec
-    zones
-    ~build:(fun () -> timezone_spec ctx query)
-    (fun zones ->
-       with_spec
-         zoned
-         ~build:(fun () -> zoned_spec ctx options)
-         (fun spec ->
-            let value, zone = Ffi.generate_zoned_datetime ctx handle zones spec in
-            Zoned_datetime.of_raw zone value))
+  with_zones zones ctx query (fun zones ->
+    with_spec
+      zoned
+      ~build:(fun () -> zoned_spec ctx options)
+      (fun spec ->
+         let value, zone = Ffi.generate_zoned_datetime ctx handle zones spec in
+         Zoned_datetime.of_raw zone value))
 ;;
 
 let draw_zoned_in ctx handle ~zoned ~source name options =
@@ -941,7 +975,8 @@ let draw_zoned_in ctx handle ~zoned ~source name options =
     ~build:(fun () -> zoned_spec ctx options)
     (fun spec ->
        match
-         Ffi.generate_zoned_datetime_for_zone ctx handle (source_handle source) name spec
+         with_source source (fun source ->
+           Ffi.generate_zoned_datetime_for_zone ctx handle source name spec)
        with
        | value -> Zoned_datetime.of_raw name value
        | exception Internal.Usage_error message ->

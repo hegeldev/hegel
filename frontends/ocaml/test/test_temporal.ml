@@ -1228,11 +1228,24 @@ let test_default_zone_source () =
 ;;
 
 let live_specs = Hegel.Generators.Private.live_temporal_specs
+let live_sources = Hegel.Generators.Private.live_zone_sources
+
+let settle () =
+  for _ = 1 to 2 do
+    Gc.full_major ();
+    Gc.full_major ();
+    ignore (tzdb_version () : string)
+  done
+;;
 
 let settled_live_specs () =
-  Gc.full_major ();
-  Gc.full_major ();
+  settle ();
   live_specs ()
+;;
+
+let settled_live_sources () =
+  settle ();
+  live_sources ()
 ;;
 
 let test_specs_freed_with_generator () =
@@ -1260,6 +1273,191 @@ let test_specs_freed_with_generator () =
   Alcotest.(check int) "a rejected configuration is not kept" base (settled_live_specs ())
 ;;
 
+let test_specs_freed_during_a_run () =
+  let base = settled_live_specs () in
+  let peak = ref 0 in
+  run ~test_cases:50 (fun tc ->
+    Gc.full_major ();
+    ignore (Hegel.draw_silent tc (spans ~days:(0, 3) ()) : Span.t);
+    ignore (Hegel.draw_silent tc (zones ()) : string);
+    peak := max !peak (live_specs () - base));
+  Alcotest.(check bool)
+    (Printf.sprintf "at most the last two test cases' specs are live, not %d" !peak)
+    true
+    (!peak <= 4)
+;;
+
+let lazy_source ?(loads = Atomic.make 0) () =
+  let source = Z.create () in
+  Z.declare source [ "Test/Lazy" ];
+  Z.set_loader source (fun s name ->
+    Atomic.incr loads;
+    Z.add_zone s name shift_data);
+  source
+;;
+
+let test_zone_sources_freed () =
+  let base = settled_live_sources () in
+  let count = 200 in
+  let released = Atomic.make 0 in
+  let make _ =
+    let captured = Bytes.create 64 in
+    Gc.finalise (fun _ -> Atomic.incr released) captured;
+    let source = Z.create () in
+    Z.add_zone source "Test/Fields" shift_data;
+    Z.declare source [ "Test/Lazy" ];
+    Z.set_loader source (fun s name ->
+      ignore (Sys.opaque_identity captured : Bytes.t);
+      Z.add_zone s name shift_data);
+    source
+  in
+  let[@inline never] hold () =
+    let sources = List.init count make in
+    Alcotest.(check int) "kept while reachable" (base + count) (settled_live_sources ());
+    Alcotest.(check int) "loaders kept with them" 0 (Atomic.get released);
+    List.iter (fun source -> check_shift source "Test/Lazy") sources
+  in
+  hold ();
+  Alcotest.(check int) "every handle freed" base (settled_live_sources ());
+  Alcotest.(check int) "the engine released every loader" count (Atomic.get released);
+  let[@inline never] churn () =
+    for _ = 1 to count do
+      check_shift (make ()) "Test/Fields"
+    done
+  in
+  churn ();
+  Alcotest.(check int) "freed when made in a loop" base (settled_live_sources ());
+  Alcotest.(check int) "and their loaders" (2 * count) (Atomic.get released)
+;;
+
+let test_zone_source_kept_by_generators () =
+  let base = settled_live_sources () in
+  let base_specs = live_specs () in
+  let loads = Atomic.make 0 in
+  let[@inline never] generators () =
+    ( zones ~source:(lazy_source ~loads ()) ()
+    , zoned_datetimes ~source:(lazy_source ~loads ()) ()
+    , zoned_datetimes ~zones:(Hegel.just "Test/Lazy") ~source:(lazy_source ~loads ()) () )
+  in
+  let[@inline never] draw () =
+    let named, joint, derived = generators () in
+    Alcotest.(check int) "kept by their generators" (base + 3) (settled_live_sources ());
+    Alcotest.(check int) "nothing loaded yet" 0 (Atomic.get loads);
+    run ~test_cases:20 (fun tc ->
+      check_string "zones" "Test/Lazy" (Hegel.draw tc named);
+      check_string "zoned" "Test/Lazy" (Hegel.draw tc joint).zone;
+      check_string "derived" "Test/Lazy" (Hegel.draw tc derived).zone);
+    Alcotest.(check int) "each loaded its zone" 3 (Atomic.get loads)
+  in
+  draw ();
+  Alcotest.(check int) "freed with their generators" base (settled_live_sources ());
+  Alcotest.(check int) "as are the specs" base_specs (live_specs ())
+;;
+
+let collecting_source () =
+  let source = Z.create () in
+  Z.declare source [ "Test/Linked" ];
+  Z.set_loader source (fun s name ->
+    (match name with
+     | "Test/Linked" -> Z.add_link s name ~target:"Test/Target"
+     | _ -> Z.add_zone s name shift_data);
+    Gc.full_major ());
+  source
+;;
+
+let test_zone_source_kept_by_calls () =
+  let base = settled_live_sources () in
+  let[@inline never] calls () =
+    Alcotest.(check bool)
+      "info"
+      true
+      (info ~source:(collecting_source ()) "Test/Linked" <> None);
+    Alcotest.(check bool)
+      "resolve"
+      true
+      ((resolve ~source:(collecting_source ()) "Test/Linked" in_the_shift).kind = Gap);
+    check_string
+      "offset_at"
+      "BBB"
+      (offset_at ~source:(collecting_source ()) "Test/Linked" (instant shift))
+        .abbreviation;
+    let linked zone = zone = "Test/Linked" || zone = "Test/Target" in
+    run ~test_cases:5 (fun tc ->
+      assert (linked (Hegel.draw_silent tc (zones ~source:(collecting_source ()) ())));
+      assert (
+        linked
+          (Hegel.draw_silent tc (zoned_datetimes ~source:(collecting_source ()) ())).zone);
+      assert (
+        linked
+          (Hegel.draw_silent
+             tc
+             (zoned_datetimes
+                ~zones:(Hegel.just "Test/Linked")
+                ~source:(collecting_source ())
+                ()))
+            .zone))
+  in
+  calls ();
+  Alcotest.(check int) "freed after the calls" base (settled_live_sources ())
+;;
+
+let test_zone_source_kept_by_default () =
+  let base = settled_live_sources () in
+  let loads = Atomic.make 0 in
+  let[@inline never] install () = set_default_zone_source (lazy_source ~loads ()) in
+  let previous = install () in
+  Fun.protect
+    ~finally:(fun () -> ignore (set_default_zone_source previous : Z.t))
+    (fun () ->
+       Alcotest.(check int) "kept by the default" (base + 1) (settled_live_sources ());
+       Alcotest.(check int) "nothing loaded yet" 0 (Atomic.get loads);
+       Alcotest.(check bool)
+         "queries reach it"
+         true
+         ((resolve "Test/Lazy" in_the_shift).kind = Gap);
+       Alcotest.(check int) "through its loader" 1 (Atomic.get loads);
+       run ~test_cases:20 (fun tc ->
+         check_string
+           "generators read it"
+           "Test/Lazy"
+           (Hegel.draw tc (zoned_datetimes ())).zone);
+       check_shift (default_zone_source ()) "Test/Lazy";
+       Alcotest.(check int) "still kept" (base + 1) (settled_live_sources ()));
+  Alcotest.(check int) "freed once replaced" base (settled_live_sources ())
+;;
+
+let test_zone_loader_target () =
+  let source = Z.create () in
+  let target = Hegel.Generators.Private.zone_loader_target in
+  Alcotest.(check bool) "the source it was set on" true (target (Some source) == source);
+  match target None with
+  | (_ : Z.t) -> Alcotest.fail "expected Failure"
+  | exception Failure message ->
+    Alcotest.(check bool)
+      "names the cause"
+      true
+      (Test_helpers.contains_substring message "collected")
+;;
+
+let test_zone_sources_freed_across_domains () =
+  let base = settled_live_sources () in
+  let work () =
+    for _ = 1 to 10 do
+      let source = lazy_source () in
+      run ~test_cases:5 (fun tc ->
+        assert ((Hegel.draw tc (zoned_datetimes ~source ())).zone = "Test/Lazy"));
+      Gc.full_major ()
+    done
+  in
+  List.init 4 (fun _ ->
+    (Domain.spawn [@alert "-do_not_spawn_domains-unsafe_multidomain"]) work)
+  |> List.iter Domain.join;
+  let rec settles attempts =
+    settled_live_sources () = base || (attempts > 0 && settles (attempts - 1))
+  in
+  Alcotest.(check bool) "every handle freed" true (settles 10)
+;;
+
 let test_shared_across_domains () =
   let source = Z.create () in
   Z.declare source [ "Test/Lazy" ];
@@ -1279,6 +1477,7 @@ let test_shared_across_domains () =
 let tests =
   [ Alcotest.test_case "default zone source" `Quick test_default_zone_source
   ; Alcotest.test_case "specs freed with generator" `Quick test_specs_freed_with_generator
+  ; Alcotest.test_case "specs freed during a run" `Quick test_specs_freed_during_a_run
   ; Alcotest.test_case "date text" `Quick test_date_text
   ; Alcotest.test_case "time text" `Quick test_time_text
   ; Alcotest.test_case "instant text" `Quick test_instant_text
@@ -1325,7 +1524,22 @@ let tests =
       `Quick
       test_zone_source_loader_released
   ; Alcotest.test_case "zone source errors" `Quick test_zone_source_errors
+  ; Alcotest.test_case "zone sources freed" `Quick test_zone_sources_freed
+  ; Alcotest.test_case
+      "zone source kept by generators"
+      `Quick
+      test_zone_source_kept_by_generators
+  ; Alcotest.test_case
+      "zone source kept by default"
+      `Quick
+      test_zone_source_kept_by_default
+  ; Alcotest.test_case "zone source kept by calls" `Quick test_zone_source_kept_by_calls
+  ; Alcotest.test_case "zone loader target" `Quick test_zone_loader_target
   ; Alcotest.test_case "queries" `Quick test_queries
   ; Alcotest.test_case "shared across domains" `Quick test_shared_across_domains
+  ; Alcotest.test_case
+      "zone sources freed across domains"
+      `Quick
+      test_zone_sources_freed_across_domains
   ]
 ;;

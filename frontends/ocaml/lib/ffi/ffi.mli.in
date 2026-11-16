@@ -84,8 +84,9 @@ type state_machine
 
 module T := Temporal_types
 
-(** Opaque time zone source handle ([hegel_zone_source_t]). Never freed: a
-    source is made once and shared with every spec built from it. *)
+(** Opaque time zone source handle ([hegel_zone_source_t]), freed with
+    {!zone_source_free}. A handle shares its source, which the engine keeps
+    while a spec or the process default uses it. *)
 type zone_source
 #ifdef OXCAML
   : value mod portable contended
@@ -220,7 +221,7 @@ val version : context -> string
 
 (** The first call loads libhegel and resolves its symbols. Until then the
     library is not touched, so programs that only derive generators never need
-    it. *)
+    it. Every call first runs the frees {!free_when_unreachable} has queued. *)
 val context_new : unit -> context
 
 val context_free : context -> unit
@@ -492,10 +493,28 @@ val generate_string : context -> test_case -> string_generator -> string
     field for field. A field is converted to its C width as it stands, so a
     caller clamps what may not fit. An enumeration is passed as its C value. *)
 
-(** [free_when_unreachable free value] runs [free value] once [value] is
-    unreachable ([Gc.finalise]). A caller reading a handle out of [value]
-    keeps [value] alive across the engine call with [Sys.opaque_identity]. *)
-val free_when_unreachable : ('a -> unit) -> 'a -> unit
+(** [free_when_unreachable free value] runs [free ()] after [value] becomes
+    unreachable: the collector queues it ([Gc.finalise_last], so once the weak
+    pointers to [value] are erased) and the next {!free_unreachable} runs it,
+    on the thread that calls it. The finaliser does not run [free] itself,
+    because it can interrupt any allocation, including one inside ctypes's
+    callback table lock, and freeing a time zone spec or a zone source can
+    call a loader's release hook, which is a ctypes callback. [free] must not
+    refer to [value]. A caller reading a handle out of [value] keeps [value]
+    alive across the engine call with [Sys.opaque_identity]. *)
+val free_when_unreachable
+  :  (unit -> unit)
+#ifdef OXCAML
+     @ portable
+#endif
+  -> 'a
+  -> unit
+
+(** [free_unreachable ()] runs the frees {!free_when_unreachable} has queued.
+    {!context_new} calls it, and so does a draw from a temporal
+    configuration, so that handles made in a loop are freed as the loop goes.
+    Never call it from a finaliser. *)
+val free_unreachable : unit -> unit
 
 (** [date_options_new ctx] builds date options allowing every weekday and
     month. *)
@@ -712,11 +731,17 @@ val timezone_offset_at : context -> zone_source -> string -> T.Instant.t -> T.Zo
 (** [timezone_info ctx source name] is what [source] knows about [name]. *)
 val timezone_info : context -> zone_source -> string -> T.Zone_info.t
 
-(** [zone_source_bundled ()] is a handle on the bundled database, made once. *)
+(** [zone_source_bundled ()] is a handle on the bundled database, made once
+    and kept for the life of the process. *)
 val zone_source_bundled : unit -> zone_source
 
 (** [zone_source_new ctx] is a new, empty source. *)
 val zone_source_new : context -> zone_source
+
+(** [zone_source_free source] frees a handle {!zone_source_new} made, which
+    no call may be using. The source lives on while a spec or the process
+    default holds it; the engine drops its loader when the last holder goes. *)
+val zone_source_free : zone_source -> unit
 
 (** [zone_source_add_tzif ctx source name bytes] adds a zone from a TZif file. *)
 val zone_source_add_tzif : context -> zone_source -> string -> string -> unit
@@ -756,7 +781,8 @@ val zone_source_declare : context -> zone_source -> string list -> unit
     for a name's data, or removes it for [None]. [load] is given the context
     to report a failure through and the name, returns whether it succeeded,
     and must not raise. It stays reachable until the engine drops it: when
-    another call replaces or removes it. *)
+    another call replaces or removes it, or when the source's last holder (a
+    handle, a spec or the process default) goes. *)
 val zone_source_set_loader
   :  context
   -> zone_source

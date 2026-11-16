@@ -899,6 +899,10 @@ let c_zone_source_bundled =
   foreign "hegel_zone_source_bundled" (handle_t @-> ptr handle_t @-> returning int)
 ;;
 
+let c_zone_source_free =
+  foreign "hegel_zone_source_free" (handle_t @-> handle_t @-> returning int)
+;;
+
 let c_zone_source_add_tzif =
   foreign
     "hegel_zone_source_add_tzif"
@@ -1577,8 +1581,24 @@ let initialize =
     binding_initializers := [])
 ;;
 
+let unreachable : (unit -> unit) list Atomic.t = Atomic.make []
+
+let rec free_later free =
+  let queued = Atomic.get unreachable in
+  if not (Atomic.compare_and_set unreachable queued (free :: queued)) then free_later free
+;;
+
+let free_when_unreachable free value = Gc.finalise_last (fun () -> free_later free) value
+
+let free_unreachable () =
+  match Atomic.get unreachable with
+  | [] -> ()
+  | _ :: _ -> List.iter (fun free -> free ()) (Atomic.exchange unreachable [])
+;;
+
 let context_new () =
   initialize ();
+  free_unreachable ();
   c_context_new ()
 ;;
 
@@ -2130,8 +2150,6 @@ let with_names names f =
   result
 ;;
 
-let free_when_unreachable free value = Gc.finalise free value
-
 type date_options = handle
 type span_spec = handle
 type timezone_spec = handle
@@ -2301,6 +2319,7 @@ let zone_source_bundled =
 ;;
 
 let zone_source_new ctx = new_handle ctx c_zone_source_new
+let zone_source_free source = ignore (c_zone_source_free null_handle source : int)
 
 let timezone_resolve ctx source name civil : T.Resolution.t =
   let result = make Resolution_struct.t in
@@ -3001,6 +3020,7 @@ let format_zoned_datetime = Obj.magic_portable format_zoned_datetime
 let tzdb_version = Obj.magic_portable tzdb_version
 let zone_source_bundled = Obj.magic_portable zone_source_bundled
 let zone_source_new = Obj.magic_portable zone_source_new
+let zone_source_free = Obj.magic_portable zone_source_free
 let timezone_resolve = Obj.magic_portable timezone_resolve
 let timezone_offset_at = Obj.magic_portable timezone_offset_at
 let timezone_info = Obj.magic_portable timezone_info
@@ -3035,6 +3055,7 @@ let zoned_spec_validate = Obj.magic_portable zoned_spec_validate
 let generate_zoned_datetime = Obj.magic_portable generate_zoned_datetime
 let generate_zoned_datetime_for_zone = Obj.magic_portable generate_zoned_datetime_for_zone
 let free_when_unreachable = Obj.magic_portable free_when_unreachable
+let free_unreachable = Obj.magic_portable free_unreachable
 let generate_ipv4 = Obj.magic_portable generate_ipv4
 let generate_ipv6 = Obj.magic_portable generate_ipv6
 let start_span = Obj.magic_portable start_span
