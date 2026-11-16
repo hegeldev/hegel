@@ -13,14 +13,15 @@ import (
 
 // ZoneSource is a time zone database that zone generators draw from.
 //
-// It decides which names [Zones] draws and which daylight-saving and offset
-// transitions [ZonedDatetimes] aims at. [HostZoneSource], the default, is the
-// database Go's own time package reads; [BundledZoneSource] is the one built
-// into Hegel; [ZoneSourceFromLocations] holds locations of your choosing. A
-// ZoneSource is safe for concurrent use and is meant to be built once, in a
-// package-level variable, not inside a test body. Values compare equal when
-// they are the same source. The zero value is not a source: generators given
-// it fail when drawn from.
+// It decides which names a [ZoneGenerator] draws and which daylight-saving and
+// offset transitions a [ZonedDatetimeGenerator] aims at. Sources are made with
+// package [hegel.dev/go/hegel/temporal]: temporal.HostZoneSource, the default,
+// is the database Go's own time package reads; temporal.BundledZoneSource is
+// the one built into Hegel; temporal.ZoneSourceFromLocations holds locations
+// of your choosing. A ZoneSource is safe for concurrent use and is meant to be
+// built once, in a package-level variable, not inside a test body. Values
+// compare equal when they are the same source. The zero value is not a source:
+// generators given it fail when drawn from.
 type ZoneSource struct {
 	impl *zoneSource
 }
@@ -48,10 +49,11 @@ func newZoneSource(open func(ctx *libhegel.Context) (*libhegel.ZoneSource, error
 
 var (
 	errNoZoneSource = errors.New("hegel: no zone source: the zero ZoneSource is not one, and a zero-value zone generator has none; " +
-		"use HostZoneSource, BundledZoneSource or ZoneSourceFromLocations, and build generators with Zones and ZonedDatetimes")
+		"use temporal.HostZoneSource, temporal.BundledZoneSource or temporal.ZoneSourceFromLocations, " +
+		"and build generators with temporal.Zones and temporal.ZonedDatetimes")
 	errNoZoneDatabase = errors.New("hegel: Go has no time zone database, so there are no time zones to generate: " +
 		"time.LoadLocation loads none of the IANA zones. Import _ \"time/tzdata\" in the test to embed a database " +
-		"(or point the ZONEINFO environment variable at one), or pass a zone source built with ZoneSourceFromLocations")
+		"(or point the ZONEINFO environment variable at one), or pass a zone source built with temporal.ZoneSourceFromLocations")
 )
 
 // engine returns the engine's handle on the source, creating it on first use.
@@ -314,67 +316,34 @@ func locationOracle(loc *time.Location) libhegel.ZoneOracle {
 }
 
 var (
-	hostZones         = newGoZones(time.LoadLocation)
-	hostZoneSource    = hostZones.hostSource()
-	bundledZoneSource = hostZones.bundledSource()
-	defaultZoneSource atomic.Pointer[zoneSource]
+	hostZones             = newGoZones(time.LoadLocation)
+	hostZoneSourceImpl    = hostZones.hostSource()
+	bundledZoneSourceImpl = hostZones.bundledSource()
+	defaultZoneSourceImpl atomic.Pointer[zoneSource]
 )
 
 func init() {
-	defaultZoneSource.Store(hostZoneSource)
+	defaultZoneSourceImpl.Store(hostZoneSourceImpl)
 }
 
-// HostZoneSource returns Go's own time zone database as a zone source.
-//
-// It is the database [time.LoadLocation] reads: the ZONEINFO environment
-// variable, the system's zoneinfo directory, the Go installation, or an
-// embedded [time/tzdata]. Its names are those of the IANA database that
-// time.LoadLocation can load, and each zone's transitions are the ones the
-// loaded [time.Location] reports, so a generated wall-clock time is skipped or
-// repeated exactly when Go says it is. It is the default zone source.
-//
-// HostZoneSource returns the same source on every call. Where Go has no time
-// zone database at all (Windows without a Go installation, ZONEINFO or
-// time/tzdata), drawing from a generator that uses it fails with an error
-// that says to import time/tzdata.
-func HostZoneSource() ZoneSource {
-	return ZoneSource{hostZoneSource}
+func hostZoneSource() ZoneSource {
+	return ZoneSource{hostZoneSourceImpl}
 }
 
-// BundledZoneSource returns the time zone database built into Hegel.
-//
-// It is one pinned release of the IANA database, the same on every machine,
-// so a test that uses it draws the same zones and transitions everywhere. A
-// drawn zone is still returned as a [time.Location] loaded with
-// [time.LoadLocation]: a name Go cannot load, and a time Go reads at another
-// wall-clock time than the bundled database does, reject the test case.
-//
-// BundledZoneSource returns the same source on every call.
-func BundledZoneSource() ZoneSource {
-	return ZoneSource{bundledZoneSource}
+func bundledZoneSource() ZoneSource {
+	return ZoneSource{bundledZoneSourceImpl}
 }
 
-// ZoneSourceFromLocations returns a zone source holding exactly the given locations.
-//
-// Each location is known under the name its String method returns, and its
-// transitions are read from the location itself, so the source also works for
-// locations no database has: fixed zones from [time.FixedZone], and locations
-// built with [time.LoadLocationFromTZData]. A name the IANA database also has
-// keeps that database's classification, so a location named like a legacy
-// zone (US/Eastern, say) is drawn only with AllowLegacy.
-//
-// ZoneSourceFromLocations returns a new source on every call. It panics for a
-// nil location and for two locations with one name.
-func ZoneSourceFromLocations(locations ...*time.Location) ZoneSource {
+func zoneSourceFromLocations(locations ...*time.Location) ZoneSource {
 	byName := make(map[string]*time.Location, len(locations))
 	names := make([]string, 0, len(locations))
 	for _, loc := range locations {
 		if loc == nil {
-			panic("hegel: ZoneSourceFromLocations: nil location")
+			panic("hegel: temporal.ZoneSourceFromLocations: nil location")
 		}
 		name := loc.String()
 		if _, ok := byName[name]; ok {
-			panic(fmt.Sprintf("hegel: ZoneSourceFromLocations: two locations are named %q", name))
+			panic(fmt.Sprintf("hegel: temporal.ZoneSourceFromLocations: two locations are named %q", name))
 		}
 		byName[name] = loc
 		names = append(names, name)
@@ -387,24 +356,13 @@ func ZoneSourceFromLocations(locations ...*time.Location) ZoneSource {
 	)}
 }
 
-// DefaultZoneSource returns the zone source generators use when given none.
-//
-// It is [HostZoneSource] until [SetDefaultZoneSource] changes it.
-func DefaultZoneSource() ZoneSource {
-	return ZoneSource{defaultZoneSource.Load()}
+func defaultZoneSource() ZoneSource {
+	return ZoneSource{defaultZoneSourceImpl.Load()}
 }
 
-// SetDefaultZoneSource changes the zone source generators use when given none.
-//
-// The default is process-wide, and a generator reads it when it is built: when
-// [Zones] or [ZonedDatetimes] is called. A generator built earlier keeps the
-// source it read. Set it once, before the tests run, for example in TestMain.
-//
-// SetDefaultZoneSource returns the previous default, so that a caller can
-// restore it. It panics for the zero ZoneSource.
-func SetDefaultZoneSource(source ZoneSource) ZoneSource {
+func setDefaultZoneSource(source ZoneSource) ZoneSource {
 	if source.impl == nil {
-		panic("hegel: SetDefaultZoneSource: the zero ZoneSource is not a zone source")
+		panic("hegel: temporal.SetDefaultZoneSource: the zero ZoneSource is not a zone source")
 	}
-	return ZoneSource{defaultZoneSource.Swap(source.impl)}
+	return ZoneSource{defaultZoneSourceImpl.Swap(source.impl)}
 }

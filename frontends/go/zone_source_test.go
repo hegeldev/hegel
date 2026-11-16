@@ -15,27 +15,27 @@ import (
 
 // TestDefaultZoneSource is not parallel: it changes the process-wide default.
 func TestDefaultZoneSource(t *testing.T) {
-	host, bundled := HostZoneSource(), BundledZoneSource()
-	if DefaultZoneSource() != host || host != HostZoneSource() || host == bundled || bundled != BundledZoneSource() {
+	host, bundled := hostZoneSource(), bundledZoneSource()
+	if defaultZoneSource() != host || host != hostZoneSource() || host == bundled || bundled != bundledZoneSource() {
 		t.Fatal("the default zone source is not the host source, or the built-in sources are not stable")
 	}
 	only := time.FixedZone("Test/Only", 3600)
-	custom := ZoneSourceFromLocations(only)
-	if custom == ZoneSourceFromLocations(only) {
+	custom := zoneSourceFromLocations(only)
+	if custom == zoneSourceFromLocations(only) {
 		t.Fatal("two sources built from the same locations compare equal")
 	}
 
-	builtBefore := []Generator[*time.Location]{Zones(), Map(ZonedDatetimes(), time.Time.Location)}
-	if previous := SetDefaultZoneSource(custom); previous != host {
+	builtBefore := []Generator[*time.Location]{newZones(), Map(newZonedDatetimes(), time.Time.Location)}
+	if previous := setDefaultZoneSource(custom); previous != host {
 		t.Fatal("SetDefaultZoneSource did not return the host source it replaced")
 	}
-	if DefaultZoneSource() != custom {
+	if defaultZoneSource() != custom {
 		t.Fatal("DefaultZoneSource does not return the source that was set")
 	}
 	builtDuring := []Generator[*time.Location]{
-		Zones(),
-		Map(ZonedDatetimes(), time.Time.Location),
-		Map(ZonedDatetimes().Zones(Just(only)), time.Time.Location),
+		newZones(),
+		Map(newZonedDatetimes(), time.Time.Location),
+		Map(newZonedDatetimes().Zones(Just(only)), time.Time.Location),
 		Default[*time.Location](),
 	}
 	for i, g := range builtDuring {
@@ -43,7 +43,7 @@ func TestDefaultZoneSource(t *testing.T) {
 			t.Errorf("generator %d built under the custom default drew %v", i, got)
 		}
 	}
-	if previous := SetDefaultZoneSource(host); previous != custom {
+	if previous := setDefaultZoneSource(host); previous != custom {
 		t.Fatal("SetDefaultZoneSource did not return the custom source it replaced")
 	}
 
@@ -52,16 +52,16 @@ func TestDefaultZoneSource(t *testing.T) {
 			t.Errorf("generator %d built under the custom default drew %v once the default was restored", i, got)
 		}
 	}
-	for i, g := range append(builtBefore, Zones(), Default[*time.Location]()) {
+	for i, g := range append(builtBefore, newZones(), Default[*time.Location]()) {
 		if got := drawnNames(t, g); len(got) < 20 || slices.Contains(got, "Test/Only") {
 			t.Errorf("generator %d built under the host default drew %v", i, got)
 		}
 	}
 
 	assertPanicsWithMessage(t, "SetDefaultZoneSource: the zero ZoneSource is not a zone source", func() {
-		SetDefaultZoneSource(ZoneSource{})
+		setDefaultZoneSource(ZoneSource{})
 	})
-	if DefaultZoneSource() != host {
+	if defaultZoneSource() != host {
 		t.Fatal("a rejected SetDefaultZoneSource changed the default")
 	}
 }
@@ -69,10 +69,10 @@ func TestDefaultZoneSource(t *testing.T) {
 func TestZoneSourceFromLocationsRejectsBadLocations(t *testing.T) {
 	t.Parallel()
 	assertPanicsWithMessage(t, "ZoneSourceFromLocations: nil location", func() {
-		ZoneSourceFromLocations(time.UTC, nil)
+		zoneSourceFromLocations(time.UTC, nil)
 	})
 	assertPanicsWithMessage(t, `ZoneSourceFromLocations: two locations are named "Test/Twice"`, func() {
-		ZoneSourceFromLocations(time.FixedZone("Test/Twice", 0), time.FixedZone("Test/Twice", 3600))
+		zoneSourceFromLocations(time.FixedZone("Test/Twice", 0), time.FixedZone("Test/Twice", 3600))
 	})
 }
 
@@ -82,10 +82,10 @@ func TestZoneSourceFromLocationsRejectsBadLocations(t *testing.T) {
 func TestZoneSourceFromLocationsWithAFixedZone(t *testing.T) {
 	t.Parallel()
 	eastern, fixed := testEastern(t), time.FixedZone("Test/Fixed", -(3*3600+30*60))
-	source := ZoneSourceFromLocations(eastern, fixed)
+	source := zoneSourceFromLocations(eastern, fixed)
 	offsets := map[string]map[int]bool{"Test/Eastern": {}, "Test/Fixed": {}}
 	Test(t, func(ht *T) {
-		got := Draw(ht, ZonedDatetimes().Source(source).MinWall(wall(2000, time.January, 1, 0, 0)).MaxWall(wall(2030, time.January, 1, 0, 0)))
+		got := Draw(ht, newZonedDatetimes().Source(source).MinWall(wall(2000, time.January, 1, 0, 0)).MaxWall(wall(2030, time.January, 1, 0, 0)))
 		name, offset := got.Zone()
 		offsets[got.Location().String()][offset] = true
 		if got.Location() == fixed && (offset != -12600 || name != "Test/Fixed") {
@@ -108,8 +108,8 @@ func TestZoneSourceLoaderIsReleased(t *testing.T) {
 	t.Parallel()
 	held := func() weak.Pointer[time.Location] {
 		loc := time.FixedZone("Test/Released", 3600)
-		source := ZoneSourceFromLocations(loc)
-		got, err := ZonedDatetimes().Source(source).draw(newRealTestCase(t))
+		source := zoneSourceFromLocations(loc)
+		got, err := newZonedDatetimes().Source(source).draw(newRealTestCase(t))
 		if err != nil || got.Location() != loc {
 			t.Fatalf("drew %v, %v", got, err)
 		}
@@ -161,26 +161,26 @@ func TestHostZoneSourceLeavesOutWhatGoCannotLoad(t *testing.T) {
 	host := ZoneSource{zones.hostSource()}
 	names := map[string]bool{}
 	Test(t, func(ht *T) {
-		names[Draw(ht, Zones().Source(host).Names("Europe/Berlin", "Asia/Seoul")).String()] = true
+		names[Draw(ht, newZones().Source(host).Names("Europe/Berlin", "Asia/Seoul")).String()] = true
 	}, WithTestCases(30))
 	if !names["Europe/Berlin"] || !names["Asia/Seoul"] {
 		t.Fatalf("drew %v", names)
 	}
-	_, err = Zones().Source(host).Names("Europe/Paris").draw(newRealTestCase(t))
+	_, err = newZones().Source(host).Names("Europe/Paris").draw(newRealTestCase(t))
 	assertErrorContains(t, "Europe/Paris", err)
-	_, err = ZonedDatetimes().Zones(Just(time.FixedZone("Asia/Tokyo", 9*3600))).Source(host).draw(newRealTestCase(t))
+	_, err = newZonedDatetimes().Zones(Just(time.FixedZone("Asia/Tokyo", 9*3600))).Source(host).draw(newRealTestCase(t))
 	assertErrorContains(t, `does not know the zone "Asia/Tokyo"`, err)
 
 	bundled := ZoneSource{zones.bundledSource()}
-	_, err = Zones().Source(bundled).Names("Europe/Paris").draw(newRealTestCase(t))
+	_, err = newZones().Source(bundled).Names("Europe/Paris").draw(newRealTestCase(t))
 	if !errors.Is(err, libhegel.E_ASSUME) {
 		t.Fatalf("a bundled zone Go cannot load: %v, want a rejected test case", err)
 	}
-	_, err = ZonedDatetimes().Zones(Zones().Source(bundled).Names("Asia/Tokyo")).draw(newRealTestCase(t))
+	_, err = newZonedDatetimes().Zones(newZones().Source(bundled).Names("Asia/Tokyo")).draw(newRealTestCase(t))
 	if !errors.Is(err, libhegel.E_ASSUME) {
 		t.Fatalf("a time in a bundled zone Go cannot load: %v, want a rejected test case", err)
 	}
-	berlin, err := Zones().Source(bundled).Names("Europe/Berlin").draw(newRealTestCase(t))
+	berlin, err := newZones().Source(bundled).Names("Europe/Berlin").draw(newRealTestCase(t))
 	if err != nil || berlin.String() != "Europe/Berlin" {
 		t.Fatalf("a bundled zone Go can load: %v, %v", berlin, err)
 	}
@@ -196,19 +196,19 @@ func TestZoneSourcesWithoutATimeZoneDatabase(t *testing.T) {
 	for label, g := range map[string]interface {
 		draw(TestCase) (*time.Location, error)
 	}{
-		"Zones":                            Zones().Source(host),
-		"Zones with names":                 Zones().Source(host).Names("UTC"),
-		"ZonedDatetimes":                   Map(ZonedDatetimes().Source(host), time.Time.Location),
-		"ZonedDatetimes of a location":     Map(ZonedDatetimes().Zones(Just(time.UTC)).Source(host), time.Time.Location),
-		"bundled Zones":                    Zones().Source(bundled).Names("Europe/Paris"),
-		"bundled ZonedDatetimes of a zone": Map(ZonedDatetimes().Zones(Zones().Source(bundled).Names("Asia/Tokyo")), time.Time.Location),
+		"Zones":                            newZones().Source(host),
+		"Zones with names":                 newZones().Source(host).Names("UTC"),
+		"ZonedDatetimes":                   Map(newZonedDatetimes().Source(host), time.Time.Location),
+		"ZonedDatetimes of a location":     Map(newZonedDatetimes().Zones(Just(time.UTC)).Source(host), time.Time.Location),
+		"bundled Zones":                    newZones().Source(bundled).Names("Europe/Paris"),
+		"bundled ZonedDatetimes of a zone": Map(newZonedDatetimes().Zones(newZones().Source(bundled).Names("Asia/Tokyo")), time.Time.Location),
 	} {
 		_, err := g.draw(newRealTestCase(t))
 		if err == nil || !strings.Contains(err.Error(), `Import _ "time/tzdata"`) {
 			t.Errorf("%s: %v, want an error that says to import time/tzdata", label, err)
 		}
 	}
-	utc, err := Zones().Source(bundled).Names("UTC").draw(newRealTestCase(t))
+	utc, err := newZones().Source(bundled).Names("UTC").draw(newRealTestCase(t))
 	if err != nil || utc != time.UTC {
 		t.Fatalf("bundled UTC without a database: %v, %v", utc, err)
 	}

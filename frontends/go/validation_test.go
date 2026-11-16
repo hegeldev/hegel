@@ -83,14 +83,14 @@ func TestFloatsInfiniteBoundsUseEngineValidation(t *testing.T) {
 func TestDatesMinGreaterThanMax(t *testing.T) {
 	minVal := time.Date(2025, time.January, 1, 0, 0, 0, 0, time.UTC)
 	maxVal := time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC)
-	_, err := Dates().Min(minVal).Max(maxVal).draw(newRealTestCase(t))
+	_, err := newDates().Min(minVal).Max(maxVal).draw(newRealTestCase(t))
 	assertErrorContains(t, "hegel_generate_date", err)
 }
 
 func TestDatetimesMinGreaterThanMax(t *testing.T) {
 	minVal := time.Date(2025, time.January, 1, 0, 0, 0, 0, time.UTC)
 	maxVal := time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC)
-	_, err := Datetimes().Min(minVal).Max(maxVal).draw(newRealTestCase(t))
+	_, err := newDatetimes().Min(minVal).Max(maxVal).draw(newRealTestCase(t))
 	assertErrorContains(t, "hegel_generate_datetime", err)
 }
 
@@ -100,19 +100,19 @@ func TestDateGeneratorsRejectYearsOutsideEngineRange(t *testing.T) {
 		draw func(time.Time) error
 	}{
 		{"date min", func(v time.Time) error {
-			_, err := Dates().Min(v).draw(nil)
+			_, err := newDates().Min(v).draw(nil)
 			return err
 		}},
 		{"date max", func(v time.Time) error {
-			_, err := Dates().Max(v).draw(nil)
+			_, err := newDates().Max(v).draw(nil)
 			return err
 		}},
 		{"datetime min", func(v time.Time) error {
-			_, err := Datetimes().Min(v).draw(nil)
+			_, err := newDatetimes().Min(v).draw(nil)
 			return err
 		}},
 		{"datetime max", func(v time.Time) error {
-			_, err := Datetimes().Max(v).draw(nil)
+			_, err := newDatetimes().Max(v).draw(nil)
 			return err
 		}},
 	}

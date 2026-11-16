@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"math"
+	"reflect"
 	"regexp"
 	"slices"
 	"testing"
@@ -11,7 +12,28 @@ import (
 	_ "time/tzdata"
 
 	"hegel.dev/go/hegel/internal/libhegel"
+	"hegel.dev/go/hegel/internal/temporalbridge"
 )
+
+// TestTemporalBridge checks what package temporal relies on: that package
+// hegel registers every constructor, under the type arguments temporal
+// asserts.
+func TestTemporalBridge(t *testing.T) {
+	t.Parallel()
+	registered, ok := temporalbridge.Registered.(temporalbridge.Constructors[
+		DateGenerator, DatetimeGenerator, DurationGenerator, OffsetGenerator,
+		ZoneGenerator, ZonedDatetimeGenerator, ZoneSource,
+	])
+	if !ok {
+		t.Fatalf("temporalbridge.Registered is a %T", temporalbridge.Registered)
+	}
+	v := reflect.ValueOf(registered)
+	for i := range v.NumField() {
+		if v.Field(i).IsNil() {
+			t.Errorf("no %s constructor is registered", v.Type().Field(i).Name)
+		}
+	}
+}
 
 // tzifType is one local time type of a hand-built TZif file.
 type tzifType struct {
@@ -84,14 +106,14 @@ func TestDatesWeekdays(t *testing.T) {
 	t.Parallel()
 	for day := time.Sunday; day <= time.Saturday; day++ {
 		Test(t, func(ht *T) {
-			if got := Draw(ht, Dates().Weekdays(day)); got.Weekday() != day {
+			if got := Draw(ht, newDates().Weekdays(day)); got.Weekday() != day {
 				ht.Fatalf("drew %v, a %v, want a %v", got, got.Weekday(), day)
 			}
 		}, WithTestCases(15))
 	}
 	seen := map[time.Weekday]bool{}
 	Test(t, func(ht *T) {
-		seen[Draw(ht, Dates().Weekdays(time.Saturday, time.Sunday)).Weekday()] = true
+		seen[Draw(ht, newDates().Weekdays(time.Saturday, time.Sunday)).Weekday()] = true
 	}, WithTestCases(100))
 	if len(seen) != 2 || !seen[time.Saturday] || !seen[time.Sunday] {
 		t.Fatalf("weekend dates fell on %v", seen)
@@ -102,14 +124,14 @@ func TestDatesMonths(t *testing.T) {
 	t.Parallel()
 	for month := time.January; month <= time.December; month++ {
 		Test(t, func(ht *T) {
-			if got := Draw(ht, Dates().Months(month)); got.Month() != month {
+			if got := Draw(ht, newDates().Months(month)); got.Month() != month {
 				ht.Fatalf("drew %v, want a date in %v", got, month)
 			}
 		}, WithTestCases(10))
 	}
 	lo, hi := wall(2020, time.January, 1, 0, 0), wall(2030, time.December, 31, 0, 0)
 	Test(t, func(ht *T) {
-		got := Draw(ht, Dates().Min(lo).Max(hi).Months(time.February, time.July).Weekdays(time.Monday))
+		got := Draw(ht, newDates().Min(lo).Max(hi).Months(time.February, time.July).Weekdays(time.Monday))
 		if (got.Month() != time.February && got.Month() != time.July) || got.Weekday() != time.Monday || got.Before(lo) || got.After(hi) {
 			ht.Fatalf("drew %v", got)
 		}
@@ -119,12 +141,12 @@ func TestDatesMonths(t *testing.T) {
 func TestDatesMaskErrors(t *testing.T) {
 	t.Parallel()
 	for want, g := range map[string]DateGenerator{
-		"Dates: 7 is not a weekday":       Dates().Weekdays(time.Monday, time.Weekday(7)),
-		"Dates: -1 is not a weekday":      Dates().Weekdays(time.Weekday(-1)),
-		"Dates: 0 is not a month":         Dates().Months(time.Month(0)),
-		"Dates: 13 is not a month":        Dates().Months(time.December, time.Month(13)),
-		"hegel_date_options_set_weekdays": Dates().Weekdays(),
-		"hegel_date_options_set_months":   Dates().Months(),
+		"temporal.Dates: 7 is not a weekday":  newDates().Weekdays(time.Monday, time.Weekday(7)),
+		"temporal.Dates: -1 is not a weekday": newDates().Weekdays(time.Weekday(-1)),
+		"temporal.Dates: 0 is not a month":    newDates().Months(time.Month(0)),
+		"temporal.Dates: 13 is not a month":   newDates().Months(time.December, time.Month(13)),
+		"hegel_date_options_set_weekdays":     newDates().Weekdays(),
+		"hegel_date_options_set_months":       newDates().Months(),
 	} {
 		_, err := g.draw(newRealTestCase(t))
 		assertErrorContains(t, want, err)
@@ -134,41 +156,41 @@ func TestDatesMaskErrors(t *testing.T) {
 func TestDatetimesPrecision(t *testing.T) {
 	t.Parallel()
 	Test(t, func(ht *T) {
-		got := Draw(ht, Datetimes().Precision(PrecisionHours))
+		got := Draw(ht, newDatetimes().Precision(libhegel.PRECISION_HOURS))
 		if got.Minute() != 0 || got.Second() != 0 || got.Nanosecond() != 0 {
 			ht.Fatalf("drew %v, want a whole hour", got)
 		}
 	}, WithTestCases(30))
 	Test(t, func(ht *T) {
-		if got := Draw(ht, Datetimes().Precision(PrecisionMilliseconds)); got.Nanosecond()%1_000_000 != 0 {
+		if got := Draw(ht, newDatetimes().Precision(libhegel.PRECISION_MILLISECONDS)); got.Nanosecond()%1_000_000 != 0 {
 			ht.Fatalf("drew %v, want whole milliseconds", got)
 		}
 	}, WithTestCases(30))
-	_, err := Datetimes().Precision(Precision(99)).draw(newRealTestCase(t))
+	_, err := newDatetimes().Precision(Precision(99)).draw(newRealTestCase(t))
 	assertErrorContains(t, "hegel_generate_datetime", err)
 }
 
 func TestDurationsBounds(t *testing.T) {
 	t.Parallel()
 	Test(t, func(ht *T) {
-		Draw(ht, Durations())
+		Draw(ht, newDurations())
 	}, WithTestCases(50))
 	lo, hi := -90*time.Minute, 36*time.Hour
 	Test(t, func(ht *T) {
-		if got := Draw(ht, Durations().Min(lo).Max(hi)); got < lo || got > hi {
+		if got := Draw(ht, newDurations().Min(lo).Max(hi)); got < lo || got > hi {
 			ht.Fatalf("drew %v outside [%v, %v]", got, lo, hi)
 		}
 	}, WithTestCases(100))
 	Test(t, func(ht *T) {
-		if got := Draw(ht, Durations().Min(0)); got < 0 {
+		if got := Draw(ht, newDurations().Min(0)); got < 0 {
 			ht.Fatalf("drew %v below a minimum of zero", got)
 		}
-		if got := Draw(ht, Durations().Max(0)); got > 0 {
+		if got := Draw(ht, newDurations().Max(0)); got > 0 {
 			ht.Fatalf("drew %v above a maximum of zero", got)
 		}
 	}, WithTestCases(100))
 	Test(t, func(ht *T) {
-		if got := Draw(ht, Durations().Precision(PrecisionSeconds)); got%time.Second != 0 {
+		if got := Draw(ht, newDurations().Precision(libhegel.PRECISION_SECONDS)); got%time.Second != 0 {
 			ht.Fatalf("drew %v, want whole seconds", got)
 		}
 	}, WithTestCases(50))
@@ -180,12 +202,12 @@ func TestDurationsExactValues(t *testing.T) {
 	for _, want := range []time.Duration{
 		0, 1, -1, -1500 * time.Millisecond, 90*time.Minute + 7, time.Duration(math.MinInt64), time.Duration(math.MaxInt64),
 	} {
-		got, err := Durations().Min(want).Max(want).draw(tc)
+		got, err := newDurations().Min(want).Max(want).draw(tc)
 		if err != nil || got != want {
 			t.Fatalf("a duration pinned to %d = %d, %v", want, got, err)
 		}
 	}
-	_, err := Durations().Min(time.Second).Max(0).draw(tc)
+	_, err := newDurations().Min(time.Second).Max(0).draw(tc)
 	assertErrorContains(t, "hegel_generate_duration", err)
 }
 
@@ -194,7 +216,7 @@ var offsetName = regexp.MustCompile(`^[+-]\d\d:\d\d(:\d\d)?$`)
 func TestOffsets(t *testing.T) {
 	t.Parallel()
 	Test(t, func(ht *T) {
-		loc := Draw(ht, Offsets())
+		loc := Draw(ht, newOffsets())
 		name, offset := time.Unix(0, 0).In(loc).Zone()
 		if name != loc.String() || !offsetName.MatchString(name) || offset < -93599 || offset > 93599 {
 			ht.Fatalf("drew %q at %d seconds", name, offset)
@@ -202,14 +224,14 @@ func TestOffsets(t *testing.T) {
 	}, WithTestCases(100))
 	lo, hi := -12*time.Hour, 14*time.Hour
 	Test(t, func(ht *T) {
-		loc := Draw(ht, Offsets().Min(lo).Max(hi).Granularity(GranularityQuarterHours))
+		loc := Draw(ht, newOffsets().Min(lo).Max(hi).Granularity(libhegel.OFFSET_GRANULARITY_QUARTER_HOURS))
 		_, offset := time.Unix(0, 0).In(loc).Zone()
 		if got := time.Duration(offset) * time.Second; got < lo || got > hi || got%(15*time.Minute) != 0 {
 			ht.Fatalf("drew an offset of %v", got)
 		}
 	}, WithTestCases(100))
 	Test(t, func(ht *T) {
-		_, offset := time.Unix(0, 0).In(Draw(ht, Offsets().Granularity(GranularityHours))).Zone()
+		_, offset := time.Unix(0, 0).In(Draw(ht, newOffsets().Granularity(libhegel.OFFSET_GRANULARITY_HOURS))).Zone()
 		if offset%3600 != 0 {
 			ht.Fatalf("drew an offset of %d seconds, want whole hours", offset)
 		}
@@ -226,7 +248,7 @@ func TestOffsetsExactValues(t *testing.T) {
 		-(44*time.Minute + 30*time.Second): "-00:44:30",
 		93599 * time.Second:                "+25:59:59",
 	} {
-		loc, err := Offsets().Min(offset).Max(offset).draw(tc)
+		loc, err := newOffsets().Min(offset).Max(offset).draw(tc)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -241,8 +263,8 @@ func TestOffsetsDefaultToTheEngineLimits(t *testing.T) {
 	t.Parallel()
 	tc := newRealTestCase(t)
 	for want, g := range map[string]OffsetGenerator{
-		"+25:59:59": Offsets().Min(93599 * time.Second),
-		"-25:59:59": Offsets().Max(-93599 * time.Second),
+		"+25:59:59": newOffsets().Min(93599 * time.Second),
+		"-25:59:59": newOffsets().Max(-93599 * time.Second),
 	} {
 		loc, err := g.draw(tc)
 		if err != nil || loc.String() != want {
@@ -257,11 +279,11 @@ func TestOffsetsErrors(t *testing.T) {
 	// hour, a bound the engine accepts.
 	wrapsToAnHour := (1<<32 + 3600) * time.Second
 	for want, g := range map[string]OffsetGenerator{
-		"Offsets: Min must be a whole number of seconds, got 1.5s": Offsets().Min(1500 * time.Millisecond),
-		"Offsets: Max must be a whole number of seconds, got -1ns": Offsets().Max(-1),
-		"hegel_generate_offset: E_INVALID_ARG":                     Offsets().Min(time.Hour).Max(0),
-		"max_seconds":                                              Offsets().Max(wrapsToAnHour),
-		"min_seconds":                                              Offsets().Min(-wrapsToAnHour),
+		"temporal.Offsets: Min must be a whole number of seconds, got 1.5s": newOffsets().Min(1500 * time.Millisecond),
+		"temporal.Offsets: Max must be a whole number of seconds, got -1ns": newOffsets().Max(-1),
+		"hegel_generate_offset: E_INVALID_ARG":                              newOffsets().Min(time.Hour).Max(0),
+		"max_seconds":                                                       newOffsets().Max(wrapsToAnHour),
+		"min_seconds":                                                       newOffsets().Min(-wrapsToAnHour),
 	} {
 		_, err := g.draw(newRealTestCase(t))
 		assertErrorContains(t, want, err)
@@ -271,7 +293,7 @@ func TestOffsetsErrors(t *testing.T) {
 // classifiedSource holds four locations whose names the IANA catalogue
 // classifies differently: a zone, UTC, a link and a legacy name.
 func classifiedSource() ZoneSource {
-	return ZoneSourceFromLocations(
+	return zoneSourceFromLocations(
 		time.UTC,
 		time.FixedZone("Europe/Paris", 3600),
 		time.FixedZone("Asia/Calcutta", 19800),
@@ -301,13 +323,13 @@ func TestZonesLinkAndLegacyFlags(t *testing.T) {
 		g     ZoneGenerator
 		want  []string
 	}{
-		{"default", Zones().Source(source), []string{"Asia/Calcutta", "Europe/Paris", "UTC"}},
-		{"without links", Zones().Source(source).AllowLinks(false), []string{"Europe/Paris", "UTC"}},
-		{"with links again", Zones().Source(source).AllowLinks(false).AllowLinks(true), []string{"Asia/Calcutta", "Europe/Paris", "UTC"}},
-		{"with legacy", Zones().Source(source).AllowLegacy(true), []string{"Asia/Calcutta", "EST5EDT", "Europe/Paris", "UTC"}},
-		{"legacy without links", Zones().Source(source).AllowLegacy(true).AllowLinks(false), []string{"EST5EDT", "Europe/Paris", "UTC"}},
-		{"names", Zones().Source(source).Names("EST5EDT", "UTC"), []string{"EST5EDT", "UTC"}},
-		{"names ignore the flags", Zones().Source(source).AllowLinks(false).Names("Asia/Calcutta"), []string{"Asia/Calcutta"}},
+		{"default", newZones().Source(source), []string{"Asia/Calcutta", "Europe/Paris", "UTC"}},
+		{"without links", newZones().Source(source).AllowLinks(false), []string{"Europe/Paris", "UTC"}},
+		{"with links again", newZones().Source(source).AllowLinks(false).AllowLinks(true), []string{"Asia/Calcutta", "Europe/Paris", "UTC"}},
+		{"with legacy", newZones().Source(source).AllowLegacy(true), []string{"Asia/Calcutta", "EST5EDT", "Europe/Paris", "UTC"}},
+		{"legacy without links", newZones().Source(source).AllowLegacy(true).AllowLinks(false), []string{"EST5EDT", "Europe/Paris", "UTC"}},
+		{"names", newZones().Source(source).Names("EST5EDT", "UTC"), []string{"EST5EDT", "UTC"}},
+		{"names ignore the flags", newZones().Source(source).AllowLinks(false).Names("Asia/Calcutta"), []string{"Asia/Calcutta"}},
 	} {
 		if got := drawnNames(t, tt.g); !slices.Equal(got, tt.want) {
 			t.Errorf("%s: drew %v, want %v", tt.label, got, tt.want)
@@ -318,9 +340,9 @@ func TestZonesLinkAndLegacyFlags(t *testing.T) {
 func TestZonesReturnsTheSourcesLocations(t *testing.T) {
 	t.Parallel()
 	paris := time.FixedZone("Europe/Paris", 3600)
-	source := ZoneSourceFromLocations(paris)
+	source := zoneSourceFromLocations(paris)
 	Test(t, func(ht *T) {
-		if got := Draw(ht, Zones().Source(source)); got != paris {
+		if got := Draw(ht, newZones().Source(source)); got != paris {
 			ht.Fatalf("drew %v, want the location the source was given", got)
 		}
 	}, WithTestCases(5))
@@ -329,9 +351,9 @@ func TestZonesReturnsTheSourcesLocations(t *testing.T) {
 func TestZonesFromTheHostAndBundledSources(t *testing.T) {
 	t.Parallel()
 	for label, g := range map[string]ZoneGenerator{
-		"default": Zones(),
-		"host":    Zones().Source(HostZoneSource()),
-		"bundled": Zones().Source(BundledZoneSource()),
+		"default": newZones(),
+		"host":    newZones().Source(hostZoneSource()),
+		"bundled": newZones().Source(bundledZoneSource()),
 	} {
 		names := drawnNames(t, g)
 		if len(names) < 20 {
@@ -343,14 +365,14 @@ func TestZonesFromTheHostAndBundledSources(t *testing.T) {
 			}
 		}
 	}
-	paris, err := Zones().Names("Europe/Paris").draw(newRealTestCase(t))
+	paris, err := newZones().Names("Europe/Paris").draw(newRealTestCase(t))
 	if err != nil || paris.String() != "Europe/Paris" {
 		t.Fatalf("Zones().Names(Europe/Paris) = %v, %v", paris, err)
 	}
 	if _, offset := time.Date(2024, time.July, 1, 0, 0, 0, 0, paris).Zone(); offset != 7200 {
 		t.Fatalf("Europe/Paris is %d seconds from UTC in July, want 7200", offset)
 	}
-	local, err := Zones().Names("Local").draw(newRealTestCase(t))
+	local, err := newZones().Names("Local").draw(newRealTestCase(t))
 	if err != nil || local != time.Local {
 		t.Fatalf("Zones().Names(Local) = %v, %v", local, err)
 	}
@@ -360,12 +382,12 @@ func TestZonesErrors(t *testing.T) {
 	t.Parallel()
 	source := classifiedSource()
 	for want, g := range map[string]Generator[*time.Location]{
-		"Nowhere/Special":               Zones().Source(source).Names("UTC", "Nowhere/Special"),
-		"Not/AZone":                     Zones().Names("Not/AZone"),
-		"hegel_timezone_spec_set_names": Zones().Names(),
-		"no zone source: the zero ZoneSource is not one": Zones().Source(ZoneSource{}),
+		"Nowhere/Special":               newZones().Source(source).Names("UTC", "Nowhere/Special"),
+		"Not/AZone":                     newZones().Names("Not/AZone"),
+		"hegel_timezone_spec_set_names": newZones().Names(),
+		"no zone source: the zero ZoneSource is not one": newZones().Source(ZoneSource{}),
 		"a zero-value zone generator has none":           ZoneGenerator{}.Names("UTC"),
-		"hegel_generate_timezone":                        Zones().Source(ZoneSourceFromLocations()),
+		"hegel_generate_timezone":                        newZones().Source(zoneSourceFromLocations()),
 	} {
 		_, err := g.draw(newRealTestCase(t))
 		assertErrorContains(t, want, err)
@@ -376,7 +398,7 @@ func TestZonedDatetimesDefaults(t *testing.T) {
 	t.Parallel()
 	zones := map[string]bool{}
 	Test(t, func(ht *T) {
-		got := Draw(ht, ZonedDatetimes())
+		got := Draw(ht, newZonedDatetimes())
 		if got.Year() < 1 || got.Year() > 9999 || got.Location() == nil {
 			ht.Fatalf("drew %v", got)
 		}
@@ -391,21 +413,21 @@ func TestZonedDatetimesWallClockBounds(t *testing.T) {
 	t.Parallel()
 	lo, hi := wall(2021, time.March, 13, 22, 0), wall(2021, time.March, 15, 2, 0)
 	Test(t, func(ht *T) {
-		got := wallOf(Draw(ht, ZonedDatetimes().MinWall(lo).MaxWall(hi)))
+		got := wallOf(Draw(ht, newZonedDatetimes().MinWall(lo).MaxWall(hi)))
 		if got.Before(lo) || got.After(hi) {
 			ht.Fatalf("drew the wall-clock time %v outside [%v, %v]", got, lo, hi)
 		}
 	}, WithTestCases(200))
 	Test(t, func(ht *T) {
-		if got := Draw(ht, ZonedDatetimes().MinWall(wall(9999, time.December, 31, 0, 0))); got.Year() != 9999 || got.Month() != time.December || got.Day() != 31 {
+		if got := Draw(ht, newZonedDatetimes().MinWall(wall(9999, time.December, 31, 0, 0))); got.Year() != 9999 || got.Month() != time.December || got.Day() != 31 {
 			ht.Fatalf("drew %v with only a minimum of the last day", got)
 		}
-		if got := Draw(ht, ZonedDatetimes().MaxWall(wall(1, time.January, 1, 23, 59))); got.Year() != 1 || got.YearDay() != 1 {
+		if got := Draw(ht, newZonedDatetimes().MaxWall(wall(1, time.January, 1, 23, 59))); got.Year() != 1 || got.YearDay() != 1 {
 			ht.Fatalf("drew %v with only a maximum of the first day", got)
 		}
 	}, WithTestCases(50))
 	ignored := time.Date(2024, time.May, 5, 12, 0, 0, 0, time.FixedZone("ignored", -7*3600))
-	got, err := ZonedDatetimes().Zones(Just(mustLoad(t, "Asia/Tokyo"))).MinWall(ignored).MaxWall(ignored).draw(newRealTestCase(t))
+	got, err := newZonedDatetimes().Zones(Just(mustLoad(t, "Asia/Tokyo"))).MinWall(ignored).MaxWall(ignored).draw(newRealTestCase(t))
 	if err != nil || !got.Equal(time.Date(2024, time.May, 5, 3, 0, 0, 0, time.UTC)) {
 		t.Fatalf("noon on the Tokyo wall clock = %v, %v", got, err)
 	}
@@ -416,22 +438,22 @@ func TestZonedDatetimesInstantBounds(t *testing.T) {
 	lo := time.Date(2021, time.November, 6, 0, 0, 0, 0, time.UTC)
 	hi := time.Date(2021, time.November, 8, 0, 0, 0, 0, time.FixedZone("west", -5*3600))
 	Test(t, func(ht *T) {
-		if got := Draw(ht, ZonedDatetimes().Min(lo).Max(hi)); got.Before(lo) || got.After(hi) {
+		if got := Draw(ht, newZonedDatetimes().Min(lo).Max(hi)); got.Before(lo) || got.After(hi) {
 			ht.Fatalf("drew the instant %v outside [%v, %v]", got, lo, hi)
 		}
 	}, WithTestCases(200))
 	Test(t, func(ht *T) {
 		late := time.Date(9999, time.December, 31, 0, 0, 0, 0, time.UTC)
-		if got := Draw(ht, ZonedDatetimes().Min(late)); got.Before(late) {
+		if got := Draw(ht, newZonedDatetimes().Min(late)); got.Before(late) {
 			ht.Fatalf("drew %v before the minimum %v", got, late)
 		}
 		early := time.Date(1, time.January, 2, 0, 0, 0, 0, time.UTC)
-		if got := Draw(ht, ZonedDatetimes().Max(early)); got.After(early) {
+		if got := Draw(ht, newZonedDatetimes().Max(early)); got.After(early) {
 			ht.Fatalf("drew %v after the maximum %v", got, early)
 		}
 	}, WithTestCases(50))
 	at := time.Date(2024, time.May, 5, 12, 0, 0, 123456789, time.UTC)
-	got, err := ZonedDatetimes().Zones(Just(mustLoad(t, "Asia/Tokyo"))).Min(at).Max(at).draw(newRealTestCase(t))
+	got, err := newZonedDatetimes().Zones(Just(mustLoad(t, "Asia/Tokyo"))).Min(at).Max(at).draw(newRealTestCase(t))
 	if err != nil || !got.Equal(at) || got.Hour() != 21 || got.Location().String() != "Asia/Tokyo" {
 		t.Fatalf("an instant pinned to %v = %v, %v", at, got, err)
 	}
@@ -442,10 +464,10 @@ func TestZonedDatetimesInstantBoundsDefaultToTheYears1To9999(t *testing.T) {
 	first := time.Date(1, time.January, 1, 0, 0, 0, 0, time.UTC)
 	last := time.Date(9999, time.December, 31, 23, 59, 59, 999999999, time.UTC)
 	Test(t, func(ht *T) {
-		if got := Draw(ht, ZonedDatetimes().Max(first)); !got.Equal(first) {
+		if got := Draw(ht, newZonedDatetimes().Max(first)); !got.Equal(first) {
 			ht.Fatalf("drew %v with only a maximum of %v", got, first)
 		}
-		if got := Draw(ht, ZonedDatetimes().Min(last)); !got.Equal(last) {
+		if got := Draw(ht, newZonedDatetimes().Min(last)); !got.Equal(last) {
 			ht.Fatalf("drew %v with only a minimum of %v", got, last)
 		}
 	}, WithTestCases(100))
@@ -455,13 +477,13 @@ func TestZonedDatetimesMixedBounds(t *testing.T) {
 	t.Parallel()
 	at := wall(2024, time.May, 5, 12, 0)
 	for label, g := range map[string]ZonedDatetimeGenerator{
-		"Min and MinWall": ZonedDatetimes().Min(at).MinWall(at),
-		"Min and MaxWall": ZonedDatetimes().Min(at).MaxWall(at),
-		"Max and MinWall": ZonedDatetimes().MinWall(at).Max(at),
-		"Max and MaxWall": ZonedDatetimes().MaxWall(at).Max(at),
+		"Min and MinWall": newZonedDatetimes().Min(at).MinWall(at),
+		"Min and MaxWall": newZonedDatetimes().Min(at).MaxWall(at),
+		"Max and MinWall": newZonedDatetimes().MinWall(at).Max(at),
+		"Max and MaxWall": newZonedDatetimes().MaxWall(at).Max(at),
 	} {
 		_, err := g.draw(newRealTestCase(t))
-		if err == nil || err.Error() != "ZonedDatetimes: Min and Max bound the instant and MinWall and MaxWall bound the wall clock; set one kind of bound, not both" {
+		if err == nil || err.Error() != "temporal.ZonedDatetimes: Min and Max bound the instant and MinWall and MaxWall bound the wall clock; set one kind of bound, not both" {
 			t.Errorf("%s: %v", label, err)
 		}
 	}
@@ -471,11 +493,11 @@ func TestZonedDatetimesBoundErrors(t *testing.T) {
 	t.Parallel()
 	at := wall(2024, time.May, 5, 12, 0)
 	for want, g := range map[string]ZonedDatetimeGenerator{
-		"hegel_zoned_spec_set_civil_bounds":   ZonedDatetimes().MinWall(at).MaxWall(at.Add(-time.Hour)),
-		"hegel_zoned_spec_set_instant_bounds": ZonedDatetimes().Min(at).Max(at.Add(-time.Hour)),
-		"date year must be between":           ZonedDatetimes().MaxWall(wall(1_000_000, time.January, 1, 0, 0)),
-		"hegel_zoned_spec_set_precision":      ZonedDatetimes().Precision(Precision(99)),
-		"hegel_zoned_spec_set_ambiguous":      ZonedDatetimes().Ambiguous(Ambiguous(99)),
+		"hegel_zoned_spec_set_civil_bounds":   newZonedDatetimes().MinWall(at).MaxWall(at.Add(-time.Hour)),
+		"hegel_zoned_spec_set_instant_bounds": newZonedDatetimes().Min(at).Max(at.Add(-time.Hour)),
+		"date year must be between":           newZonedDatetimes().MaxWall(wall(1_000_000, time.January, 1, 0, 0)),
+		"hegel_zoned_spec_set_precision":      newZonedDatetimes().Precision(Precision(99)),
+		"hegel_zoned_spec_set_ambiguous":      newZonedDatetimes().Ambiguous(Ambiguous(99)),
 	} {
 		_, err := g.draw(newRealTestCase(t))
 		assertErrorContains(t, want, err)
@@ -485,7 +507,7 @@ func TestZonedDatetimesBoundErrors(t *testing.T) {
 func TestZonedDatetimesPrecision(t *testing.T) {
 	t.Parallel()
 	Test(t, func(ht *T) {
-		if got := Draw(ht, ZonedDatetimes().Precision(PrecisionMinutes)); got.Second() != 0 || got.Nanosecond() != 0 {
+		if got := Draw(ht, newZonedDatetimes().Precision(libhegel.PRECISION_MINUTES)); got.Second() != 0 || got.Nanosecond() != 0 {
 			ht.Fatalf("drew %v, want a whole minute on the wall clock", got)
 		}
 	}, WithTestCases(100))
@@ -497,16 +519,16 @@ func TestZonedDatetimesReachBothSidesOfAFold(t *testing.T) {
 	t.Parallel()
 	const daylight, standard = -4 * 3600, -5 * 3600
 	for _, loc := range []*time.Location{mustLoad(t, "America/New_York"), testEastern(t)} {
-		source := ZoneSourceFromLocations(loc)
-		inTheFold := ZonedDatetimes().Zones(Just(loc)).Source(source).
+		source := zoneSourceFromLocations(loc)
+		inTheFold := newZonedDatetimes().Zones(Just(loc)).Source(source).
 			MinWall(wall(2021, time.November, 7, 1, 0)).MaxWall(wall(2021, time.November, 7, 1, 59))
 		for _, tt := range []struct {
 			policy Ambiguous
 			want   []int
 		}{
-			{AmbiguousBoth, []int{standard, daylight}},
-			{AmbiguousEarlier, []int{daylight}},
-			{AmbiguousLater, []int{standard}},
+			{libhegel.AMBIGUOUS_BOTH, []int{standard, daylight}},
+			{libhegel.AMBIGUOUS_EARLIER, []int{daylight}},
+			{libhegel.AMBIGUOUS_LATER, []int{standard}},
 		} {
 			seen := map[int]bool{}
 			Test(t, func(ht *T) {
@@ -536,7 +558,7 @@ func TestZonedDatetimesNeverInAGap(t *testing.T) {
 	lo, hi := wall(2021, time.March, 14, 1, 30), wall(2021, time.March, 14, 3, 30)
 	before, after := 0, 0
 	Test(t, func(ht *T) {
-		got := Draw(ht, ZonedDatetimes().Zones(Just(mustLoad(t, "America/New_York"))).MinWall(lo).MaxWall(hi))
+		got := Draw(ht, newZonedDatetimes().Zones(Just(mustLoad(t, "America/New_York"))).MinWall(lo).MaxWall(hi))
 		shown := wallOf(got)
 		if shown.Before(lo) || shown.After(hi) || got.Hour() == 2 {
 			ht.Fatalf("drew %v", got)
@@ -555,7 +577,7 @@ func TestZonedDatetimesNeverInAGap(t *testing.T) {
 func TestZonedDatetimesZoneSourceRules(t *testing.T) {
 	t.Parallel()
 	eastern, fixed := testEastern(t), time.FixedZone("Test/Fixed", 9*3600)
-	source := ZoneSourceFromLocations(eastern, fixed)
+	source := zoneSourceFromLocations(eastern, fixed)
 	inSource := func(label string, g ZonedDatetimeGenerator, want ...string) {
 		t.Helper()
 		seen := map[string]bool{}
@@ -574,25 +596,25 @@ func TestZonedDatetimesZoneSourceRules(t *testing.T) {
 	}
 	both := []string{"Test/Eastern", "Test/Fixed"}
 	always := func(*time.Location) bool { return true }
-	inSource("Source alone", ZonedDatetimes().Source(source), both...)
-	inSource("Zones with a source", ZonedDatetimes().Zones(Zones().Source(source)), both...)
-	inSource("Zones with names", ZonedDatetimes().Zones(Zones().Source(source).Names("Test/Fixed")), "Test/Fixed")
-	inSource("wrapped Zones and Source", ZonedDatetimes().Zones(Filter(Zones().Source(source), always)).Source(source), both...)
-	inSource("another generator and Source", ZonedDatetimes().Zones(SampledFrom([]*time.Location{eastern, fixed})).Source(source), both...)
+	inSource("Source alone", newZonedDatetimes().Source(source), both...)
+	inSource("Zones with a source", newZonedDatetimes().Zones(newZones().Source(source)), both...)
+	inSource("Zones with names", newZonedDatetimes().Zones(newZones().Source(source).Names("Test/Fixed")), "Test/Fixed")
+	inSource("wrapped Zones and Source", newZonedDatetimes().Zones(Filter(newZones().Source(source), always)).Source(source), both...)
+	inSource("another generator and Source", newZonedDatetimes().Zones(SampledFrom([]*time.Location{eastern, fixed})).Source(source), both...)
 
 	for want, g := range map[string]ZonedDatetimeGenerator{
-		"give the source to it, as Zones().Source(...)":       ZonedDatetimes().Zones(Zones().Source(source)).Source(source),
-		`does not know the zone "Test/Eastern"`:               ZonedDatetimes().Zones(Filter(Zones().Source(source), always)),
-		`does not know the zone "Test/Fixed"`:                 ZonedDatetimes().Zones(Just(fixed)).Source(BundledZoneSource()),
-		`does not know the zone "+05:00"`:                     ZonedDatetimes().Zones(Offsets().Min(5 * time.Hour).Max(5 * time.Hour)),
-		"pass a source that has it to Source":                 ZonedDatetimes().Zones(Just(fixed)),
-		"the zones generator drew a nil *time.Location":       ZonedDatetimes().Zones(Just[*time.Location](nil)),
-		"no zone source: the zero ZoneSource is not one":      ZonedDatetimes().Source(ZoneSource{}),
-		"a zero-value zone generator has none":                ZonedDatetimes().Zones(Just(fixed)).Source(ZoneSource{}),
-		"hegel: no zone source":                               ZonedDatetimeGenerator{},
-		"hegel_generate_zoned_datetime: E_INVALID_ARG":        ZonedDatetimes().Source(ZoneSourceFromLocations()),
-		"hegel_timezone_spec_set_names":                       ZonedDatetimes().Zones(Zones().Source(source).Names()),
-		"SampledFrom requires at least one element (via Map)": ZonedDatetimes().Zones(failingZones{}),
+		"give the source to it, as temporal.Zones().Source(...)": newZonedDatetimes().Zones(newZones().Source(source)).Source(source),
+		`does not know the zone "Test/Eastern"`:                  newZonedDatetimes().Zones(Filter(newZones().Source(source), always)),
+		`does not know the zone "Test/Fixed"`:                    newZonedDatetimes().Zones(Just(fixed)).Source(bundledZoneSource()),
+		`does not know the zone "+05:00"`:                        newZonedDatetimes().Zones(newOffsets().Min(5 * time.Hour).Max(5 * time.Hour)),
+		"pass a source that has it to Source":                    newZonedDatetimes().Zones(Just(fixed)),
+		"the zones generator drew a nil *time.Location":          newZonedDatetimes().Zones(Just[*time.Location](nil)),
+		"no zone source: the zero ZoneSource is not one":         newZonedDatetimes().Source(ZoneSource{}),
+		"a zero-value zone generator has none":                   newZonedDatetimes().Zones(Just(fixed)).Source(ZoneSource{}),
+		"hegel: no zone source":                                  ZonedDatetimeGenerator{},
+		"hegel_generate_zoned_datetime: E_INVALID_ARG":           newZonedDatetimes().Source(zoneSourceFromLocations()),
+		"hegel_timezone_spec_set_names":                          newZonedDatetimes().Zones(newZones().Source(source).Names()),
+		"SampledFrom requires at least one element (via Map)":    newZonedDatetimes().Zones(failingZones{}),
 	} {
 		_, err := g.draw(newRealTestCase(t))
 		assertErrorContains(t, want, err)
@@ -613,9 +635,9 @@ func (failingZones) draw(TestCase) (*time.Location, error) {
 // were not applied to.
 func TestZonedDatetimesRejectWhenGoDisagrees(t *testing.T) {
 	t.Parallel()
-	source := ZoneSourceFromLocations(time.FixedZone("Test/Fixed", 3600))
+	source := zoneSourceFromLocations(time.FixedZone("Test/Fixed", 3600))
 	impostor := time.FixedZone("Test/Fixed", 7200)
-	_, err := ZonedDatetimes().Zones(Just(impostor)).Source(source).draw(newRealTestCase(t))
+	_, err := newZonedDatetimes().Zones(Just(impostor)).Source(source).draw(newRealTestCase(t))
 	if !errors.Is(err, libhegel.E_ASSUME) {
 		t.Fatalf("err = %v, want a rejected test case", err)
 	}
@@ -647,7 +669,7 @@ func TestZonedDatetimesAgreeWithGo(t *testing.T) {
 			time.Date(2500, time.July, 1, 0, 0, 0, 0, time.UTC),
 			time.Date(9999, time.December, 30, 0, 0, 0, 0, time.UTC),
 		} {
-			got, err := ZonedDatetimes().Zones(Just(loc)).Min(at).Max(at).draw(tc)
+			got, err := newZonedDatetimes().Zones(Just(loc)).Min(at).Max(at).draw(tc)
 			if err != nil || !got.Equal(at) || got.Location() != loc {
 				t.Errorf("%s at %v: %v, %v", name, at, got, err)
 			}
@@ -657,11 +679,11 @@ func TestZonedDatetimesAgreeWithGo(t *testing.T) {
 
 func TestZonedDatetimesFromTheBundledSource(t *testing.T) {
 	t.Parallel()
-	bundled := BundledZoneSource()
+	bundled := bundledZoneSource()
 	for label, g := range map[string]ZonedDatetimeGenerator{
-		"Source":            ZonedDatetimes().Source(bundled),
-		"Zones":             ZonedDatetimes().Zones(Zones().Source(bundled)),
-		"another generator": ZonedDatetimes().Zones(Just(mustLoad(t, "Europe/London"))).Source(bundled),
+		"Source":            newZonedDatetimes().Source(bundled),
+		"Zones":             newZonedDatetimes().Zones(newZones().Source(bundled)),
+		"another generator": newZonedDatetimes().Zones(Just(mustLoad(t, "Europe/London"))).Source(bundled),
 	} {
 		lo, hi := wall(1990, time.January, 1, 0, 0), wall(2030, time.January, 1, 0, 0)
 		Test(t, func(ht *T) {

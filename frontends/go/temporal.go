@@ -7,57 +7,51 @@ import (
 	"time"
 
 	"hegel.dev/go/hegel/internal/libhegel"
+	"hegel.dev/go/hegel/internal/temporalbridge"
 )
 
 // Precision is the unit a generated time is a whole number of.
 //
 // A generator with a Precision draws only times of day, instants or durations
-// that are a whole number of that unit, and shrinks in it.
+// that are a whole number of that unit, and shrinks in it. Its values are the
+// Precision constants of package [hegel.dev/go/hegel/temporal], from
+// temporal.PrecisionNanoseconds to temporal.PrecisionHours.
 type Precision = libhegel.Precision
 
-const (
-	// PrecisionNanoseconds allows every value; it is the default.
-	PrecisionNanoseconds = libhegel.PRECISION_NANOSECONDS
-	// PrecisionMicroseconds draws whole microseconds.
-	PrecisionMicroseconds = libhegel.PRECISION_MICROSECONDS
-	// PrecisionMilliseconds draws whole milliseconds.
-	PrecisionMilliseconds = libhegel.PRECISION_MILLISECONDS
-	// PrecisionSeconds draws whole seconds.
-	PrecisionSeconds = libhegel.PRECISION_SECONDS
-	// PrecisionMinutes draws whole minutes.
-	PrecisionMinutes = libhegel.PRECISION_MINUTES
-	// PrecisionHours draws whole hours.
-	PrecisionHours = libhegel.PRECISION_HOURS
-)
-
 // Granularity is the unit a generated UTC offset is a whole number of.
+//
+// Its values are the Granularity constants of package
+// [hegel.dev/go/hegel/temporal], from temporal.GranularityHours to
+// temporal.GranularitySeconds.
 type Granularity = libhegel.OffsetGranularity
-
-const (
-	// GranularityHours draws offsets of whole hours.
-	GranularityHours = libhegel.OFFSET_GRANULARITY_HOURS
-	// GranularityQuarterHours draws offsets of whole quarter-hours.
-	GranularityQuarterHours = libhegel.OFFSET_GRANULARITY_QUARTER_HOURS
-	// GranularityMinutes draws offsets of whole minutes.
-	GranularityMinutes = libhegel.OFFSET_GRANULARITY_MINUTES
-	// GranularitySeconds draws offsets of whole seconds; it is the default.
-	GranularitySeconds = libhegel.OFFSET_GRANULARITY_SECONDS
-)
 
 // Ambiguous says which instant a repeated wall-clock time stands for.
 //
 // When the clocks go back, an hour of wall-clock times happens twice. The
-// policy decides which of the two instants [ZonedDatetimes] generates there.
+// policy decides which of the two instants a [ZonedDatetimeGenerator]
+// generates there. Its values are the Ambiguous constants of package
+// [hegel.dev/go/hegel/temporal]: temporal.AmbiguousBoth,
+// temporal.AmbiguousEarlier and temporal.AmbiguousLater.
 type Ambiguous = libhegel.Ambiguous
 
-const (
-	// AmbiguousBoth generates either instant; it is the default.
-	AmbiguousBoth = libhegel.AMBIGUOUS_BOTH
-	// AmbiguousEarlier generates the first occurrence only.
-	AmbiguousEarlier = libhegel.AMBIGUOUS_EARLIER
-	// AmbiguousLater generates the second occurrence only.
-	AmbiguousLater = libhegel.AMBIGUOUS_LATER
-)
+func init() {
+	temporalbridge.Registered = temporalbridge.Constructors[
+		DateGenerator, DatetimeGenerator, DurationGenerator, OffsetGenerator,
+		ZoneGenerator, ZonedDatetimeGenerator, ZoneSource,
+	]{
+		Dates:                   newDates,
+		Datetimes:               newDatetimes,
+		Durations:               newDurations,
+		Offsets:                 newOffsets,
+		Zones:                   newZones,
+		ZonedDatetimes:          newZonedDatetimes,
+		HostZoneSource:          hostZoneSource,
+		BundledZoneSource:       bundledZoneSource,
+		ZoneSourceFromLocations: zoneSourceFromLocations,
+		DefaultZoneSource:       defaultZoneSource,
+		SetDefaultZoneSource:    setDefaultZoneSource,
+	}
+}
 
 // applyDateMask sets a [DateGenerator]'s weekday or month restriction on its
 // engine options. values is nil when the restriction was not given; bit maps
@@ -69,7 +63,7 @@ func applyDateMask[T ~int](values []T, lo, hi T, what string, bit func(T) int, s
 	var mask uint32
 	for _, v := range values {
 		if v < lo || v > hi {
-			return fmt.Errorf("Dates: %d is not a %s", int(v), what)
+			return fmt.Errorf("temporal.Dates: %d is not a %s", int(v), what)
 		}
 		mask |= 1 << bit(v)
 	}
@@ -94,6 +88,8 @@ func wallClockBounds(minVal, maxVal *time.Time) (libhegel.Datetime, libhegel.Dat
 }
 
 // DurationGenerator generates durations within inclusive bounds.
+//
+// It is made with Durations of package [hegel.dev/go/hegel/temporal].
 type DurationGenerator struct {
 	minVal    *time.Duration
 	maxVal    *time.Duration
@@ -102,11 +98,7 @@ type DurationGenerator struct {
 
 var _ Generator[time.Duration] = DurationGenerator{}
 
-// Durations returns a DurationGenerator over the whole range of [time.Duration].
-//
-// Durations shrink toward zero, and round ones (a second, an hour, a day, a
-// week) and the bounds are drawn more often than chance.
-func Durations() DurationGenerator {
+func newDurations() DurationGenerator {
 	return DurationGenerator{}
 }
 
@@ -155,6 +147,8 @@ const (
 )
 
 // OffsetGenerator generates fixed-offset time zones within inclusive bounds.
+//
+// It is made with Offsets of package [hegel.dev/go/hegel/temporal].
 type OffsetGenerator struct {
 	minVal      *time.Duration
 	maxVal      *time.Duration
@@ -163,18 +157,7 @@ type OffsetGenerator struct {
 
 var _ Generator[*time.Location] = OffsetGenerator{}
 
-// Offsets returns an OffsetGenerator of fixed-offset locations.
-//
-// Each location is a [time.FixedZone] named after its offset, such as
-// "+05:30", "-08:00" or "+00:00". By default the offset is any whole number
-// of seconds from 25:59:59 west of UTC to 25:59:59 east of it. Offsets shrink
-// toward UTC, and the offsets real time zones have used are drawn more often
-// than chance.
-//
-// The locations have no time zone database entry, so to draw times in them
-// with [ZonedDatetimes], apply the offset to an instant yourself or put the
-// locations in a [ZoneSourceFromLocations].
-func Offsets() OffsetGenerator {
+func newOffsets() OffsetGenerator {
 	return OffsetGenerator{}
 }
 
@@ -205,7 +188,7 @@ func (g OffsetGenerator) Granularity(unit Granularity) OffsetGenerator {
 // rejects as out of range like any other.
 func offsetSeconds(name string, v time.Duration) (int32, error) {
 	if v%time.Second != 0 {
-		return 0, fmt.Errorf("Offsets: %s must be a whole number of seconds, got %v", name, v)
+		return 0, fmt.Errorf("temporal.Offsets: %s must be a whole number of seconds, got %v", name, v)
 	}
 	return int32(min(max(int64(v/time.Second), math.MinInt32), math.MaxInt32)), nil
 }
@@ -223,7 +206,7 @@ func (g OffsetGenerator) draw(tc TestCase) (*time.Location, error) {
 			return nil, err
 		}
 	}
-	granularity := GranularitySeconds
+	granularity := libhegel.OFFSET_GRANULARITY_SECONDS
 	if g.granularity != nil {
 		granularity = *g.granularity
 	}
@@ -240,6 +223,10 @@ func (g OffsetGenerator) draw(tc TestCase) (*time.Location, error) {
 }
 
 // ZoneGenerator generates time zones from a zone source.
+//
+// It is made with Zones of package [hegel.dev/go/hegel/temporal]. The zero
+// value has no zone source: it fails when drawn from unless Source gives it
+// one.
 type ZoneGenerator struct {
 	source  *zoneSource
 	names   []string
@@ -249,17 +236,8 @@ type ZoneGenerator struct {
 
 var _ Generator[*time.Location] = ZoneGenerator{}
 
-// Zones returns a ZoneGenerator of the time zones in the default zone source.
-//
-// It generates IANA time zones such as Europe/Paris as [time.Location]
-// values. The default source is Go's own database (see [HostZoneSource] and
-// [SetDefaultZoneSource]), read when Zones is called. Link names such as
-// Asia/Calcutta are included and legacy names such as EST5EDT and US/Eastern
-// are not. Zones with an unusual feature (a fractional offset, a skipped day,
-// negative daylight saving) are drawn more often than chance, and a zone
-// shrinks toward UTC.
-func Zones() ZoneGenerator {
-	return ZoneGenerator{source: defaultZoneSource.Load()}
+func newZones() ZoneGenerator {
+	return ZoneGenerator{source: defaultZoneSourceImpl.Load()}
 }
 
 // Source sets the zone source the zones come from.
@@ -326,6 +304,10 @@ func (g ZoneGenerator) draw(tc TestCase) (*time.Location, error) {
 }
 
 // ZonedDatetimeGenerator generates times in generated time zones.
+//
+// It is made with ZonedDatetimes of package [hegel.dev/go/hegel/temporal]. The
+// zero value has no zone source: it fails when drawn from unless Source gives
+// it one.
 type ZonedDatetimeGenerator struct {
 	zones         Generator[*time.Location]
 	source        *zoneSource
@@ -341,32 +323,19 @@ type ZonedDatetimeGenerator struct {
 
 var _ Generator[time.Time] = ZonedDatetimeGenerator{}
 
-// ZonedDatetimes returns a ZonedDatetimeGenerator of times in time zones.
-//
-// Each value is a [time.Time] whose location is a generated zone. Unlike
-// [Datetimes], which is always in UTC, it looks for the times that break
-// time zone code: about one draw in twenty lands within a second, an hour or
-// a day of one of the zone's daylight-saving or offset transitions, or of a
-// well-known instant such as the Unix epoch, so both occurrences of a
-// repeated wall-clock time are generated. A wall-clock time the clocks
-// skipped is never generated, since a time.Time cannot hold one.
-//
-// By default the zones are those of [Zones] and the wall-clock time is
-// anywhere in the years 1 to 9999. The default zone source is read when
-// ZonedDatetimes is called.
-func ZonedDatetimes() ZonedDatetimeGenerator {
-	return ZonedDatetimeGenerator{defaultSource: defaultZoneSource.Load()}
+func newZonedDatetimes() ZonedDatetimeGenerator {
+	return ZonedDatetimeGenerator{defaultSource: defaultZoneSourceImpl.Load()}
 }
 
 // Zones sets the generator the time zones are drawn from.
 //
-// Given a [Zones] generator, the zones and their transitions come from that
+// Given a [ZoneGenerator], the zones and their transitions come from that
 // generator's zone source; also calling Source is then an error, so give the
-// source to it, as Zones().Source(s). Given any other generator (a [Zones]
-// generator wrapped in [Filter] or [Map], [SampledFrom], [Just]), each drawn
-// location is looked up by name in the source given to Source, or else in the
-// default source read when [ZonedDatetimes] was called. A name that source
-// does not know is an error, never a silent fallback.
+// source to it, as temporal.Zones().Source(s). Given any other generator (a
+// [ZoneGenerator] wrapped in [Filter] or [Map], [SampledFrom], [Just]), each
+// drawn location is looked up by name in the source given to Source, or else
+// in the default source read when the ZonedDatetimeGenerator was made. A name
+// that source does not know is an error, never a silent fallback.
 func (g ZonedDatetimeGenerator) Zones(zones Generator[*time.Location]) ZonedDatetimeGenerator {
 	g.zones = zones
 	return g
@@ -454,7 +423,7 @@ func (g ZonedDatetimeGenerator) setBounds(ctx *libhegel.Context, spec *libhegel.
 		return spec.SetCivilBounds(ctx, minVal, maxVal)
 	}
 	if g.minWall != nil || g.maxWall != nil {
-		return errors.New("ZonedDatetimes: Min and Max bound the instant and MinWall and MaxWall bound the wall clock; set one kind of bound, not both")
+		return errors.New("temporal.ZonedDatetimes: Min and Max bound the instant and MinWall and MaxWall bound the wall clock; set one kind of bound, not both")
 	}
 	bounds := [2]libhegel.Timestamp{fullInstantMin, fullInstantMax}
 	for i, v := range [2]*time.Time{g.minInstant, g.maxInstant} {
@@ -506,8 +475,8 @@ func (g ZonedDatetimeGenerator) draw(tc TestCase) (time.Time, error) {
 	case g.zones == nil:
 		zones, builtin = ZoneGenerator{source: source}, true
 	case builtin && g.hasSource:
-		return time.Time{}, errors.New("ZonedDatetimes: Zones was given a Zones() generator, which has a zone source of its own; " +
-			"give the source to it, as Zones().Source(...), not to ZonedDatetimes().Source(...)")
+		return time.Time{}, errors.New("temporal.ZonedDatetimes: Zones was given a temporal.Zones() generator, which has a zone source of its own; " +
+			"give the source to it, as temporal.Zones().Source(...), not to temporal.ZonedDatetimes().Source(...)")
 	}
 	ctx, ltc := tc.engine()
 	spec, err := g.spec(ctx)
@@ -538,7 +507,7 @@ func (g ZonedDatetimeGenerator) draw(tc TestCase) (time.Time, error) {
 		return time.Time{}, err
 	}
 	if loc == nil {
-		return time.Time{}, errors.New("ZonedDatetimes: the zones generator drew a nil *time.Location")
+		return time.Time{}, errors.New("temporal.ZonedDatetimes: the zones generator drew a nil *time.Location")
 	}
 	handle, err := source.engine(ctx)
 	if err != nil {
@@ -550,8 +519,8 @@ func (g ZonedDatetimeGenerator) draw(tc TestCase) (time.Time, error) {
 		return time.Time{}, err
 	}
 	if !info.Known {
-		return time.Time{}, fmt.Errorf("ZonedDatetimes: the zone source does not know the zone %q that the zones generator drew; "+
-			"pass a source that has it to Source, or to SetDefaultZoneSource before the generator is built", name)
+		return time.Time{}, fmt.Errorf("temporal.ZonedDatetimes: the zone source does not know the zone %q that the zones generator drew; "+
+			"pass a source that has it to Source, or to temporal.SetDefaultZoneSource before the generator is built", name)
 	}
 	value, err := ltc.GenerateZonedDatetimeForZone(ctx, handle, name, spec)
 	if err != nil {

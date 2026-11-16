@@ -577,6 +577,8 @@ func datetimeFromTime(v time.Time) (libhegel.Datetime, error) {
 }
 
 // DateGenerator generates dates at midnight UTC within inclusive bounds.
+//
+// It is made with Dates of package [hegel.dev/go/hegel/temporal].
 type DateGenerator struct {
 	minVal   *time.Time
 	maxVal   *time.Time
@@ -588,7 +590,14 @@ var _ Generator[time.Time] = DateGenerator{}
 
 // Dates returns a DateGenerator with default bounds of 0001-01-01 and
 // 9999-12-31. Custom bounds may use years from -999999 through 999999.
+//
+// Deprecated: Use [hegel.dev/go/hegel/temporal.Dates], which returns the same
+// generator.
 func Dates() DateGenerator {
+	return newDates()
+}
+
+func newDates() DateGenerator {
 	return DateGenerator{}
 }
 
@@ -608,7 +617,7 @@ func (g DateGenerator) Max(v time.Time) DateGenerator {
 
 // Weekdays restricts the dates to the given days of the week.
 //
-// Dates().Weekdays(time.Saturday, time.Sunday) generates weekends only. A
+// temporal.Dates().Weekdays(time.Saturday, time.Sunday) generates weekends only. A
 // drawn date is moved to the nearest allowed one, not filtered.
 func (g DateGenerator) Weekdays(days ...time.Weekday) DateGenerator {
 	g.weekdays = append([]time.Weekday{}, days...)
@@ -617,8 +626,8 @@ func (g DateGenerator) Weekdays(days ...time.Weekday) DateGenerator {
 
 // Months restricts the dates to the given months.
 //
-// Dates().Months(time.February) generates dates in February only. A drawn
-// date is moved to the nearest allowed one, not filtered.
+// temporal.Dates().Months(time.February) generates dates in February only. A
+// drawn date is moved to the nearest allowed one, not filtered.
 func (g DateGenerator) Months(months ...time.Month) DateGenerator {
 	g.months = append([]time.Month{}, months...)
 	return g
@@ -686,6 +695,8 @@ func (g DateGenerator) draw(tc TestCase) (time.Time, error) {
 }
 
 // DatetimeGenerator generates UTC datetimes within inclusive bounds.
+//
+// It is made with Datetimes of package [hegel.dev/go/hegel/temporal].
 type DatetimeGenerator struct {
 	minVal    *time.Time
 	maxVal    *time.Time
@@ -697,7 +708,14 @@ var _ Generator[time.Time] = DatetimeGenerator{}
 // Datetimes returns a DatetimeGenerator with default bounds from 0001-01-01
 // through the last nanosecond of 9999-12-31. Custom bounds may use years from
 // -999999 through 999999.
+//
+// Deprecated: Use [hegel.dev/go/hegel/temporal.Datetimes], which returns the
+// same generator.
 func Datetimes() DatetimeGenerator {
+	return newDatetimes()
+}
+
+func newDatetimes() DatetimeGenerator {
 	return DatetimeGenerator{}
 }
 

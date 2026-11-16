@@ -77,6 +77,7 @@ check-lint: check-format check-libs-empty
 # Verify all exported symbols have doc comments.
 check-docs:
     go doc -all . > /dev/null 2>&1
+    go doc -all ./temporal > /dev/null 2>&1
 
 # Serve the API docs locally; open the printed URL.
 docs:

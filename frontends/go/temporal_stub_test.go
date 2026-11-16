@@ -49,7 +49,7 @@ func drawError[T any](g Generator[T]) func(TestCase) error {
 
 func TestTemporalEngineFailures(t *testing.T) {
 	t.Parallel()
-	utcOnly := func() ZoneSource { return ZoneSourceFromLocations(time.UTC) }
+	utcOnly := func() ZoneSource { return zoneSourceFromLocations(time.UTC) }
 	for _, tt := range []struct {
 		op     string
 		draw   func(TestCase) error
@@ -57,67 +57,67 @@ func TestTemporalEngineFailures(t *testing.T) {
 	}{
 		{
 			"hegel_date_options_new",
-			drawError(Dates().Weekdays(time.Monday)),
+			drawError(newDates().Weekdays(time.Monday)),
 			stubFailure(uintptr(0)),
 		},
 		{
 			"hegel_format_offset",
-			drawError(Offsets()),
+			drawError(newOffsets()),
 			script([]any{libhegel.Offset{Seconds: 3600, Known: true}, libhegel.OK}, stubFailure("")),
 		},
 		{
 			"hegel_zone_source_new",
-			drawError(Zones().Source(utcOnly())),
+			drawError(newZones().Source(utcOnly())),
 			stubFailure(uintptr(0)),
 		},
 		{
 			"hegel_zone_source_declare",
-			drawError(Zones().Source(utcOnly())),
+			drawError(newZones().Source(utcOnly())),
 			script(stubHandle, stubFailure()),
 		},
 		{
 			"hegel_zone_source_set_loader",
-			drawError(Zones().Source(utcOnly())),
+			drawError(newZones().Source(utcOnly())),
 			script(stubHandle, stubOK, stubFailure()),
 		},
 		{
 			"hegel_timezone_spec_new",
-			drawError(Zones().Source(utcOnly())),
+			drawError(newZones().Source(utcOnly())),
 			script(stubOpenSource, stubFailure(uintptr(0))),
 		},
 		{
 			"hegel_timezone_spec_set_source",
-			drawError(Zones().Source(utcOnly())),
+			drawError(newZones().Source(utcOnly())),
 			script(stubOpenSource, stubHandle, stubFailure()),
 		},
 		{
 			"hegel_timezone_spec_set_links",
-			drawError(Zones().Source(utcOnly())),
+			drawError(newZones().Source(utcOnly())),
 			script(stubOpenSource, stubHandle, stubOK, stubFailure()),
 		},
 		{
 			"hegel_timezone_spec_set_legacy",
-			drawError(Zones().Source(utcOnly())),
+			drawError(newZones().Source(utcOnly())),
 			script(stubOpenSource, stubHandle, stubOK, stubOK, stubFailure()),
 		},
 		{
 			"hegel_zoned_spec_new",
-			drawError(ZonedDatetimes().Source(utcOnly())),
+			drawError(newZonedDatetimes().Source(utcOnly())),
 			stubFailure(uintptr(0)),
 		},
 		{
 			"hegel_zoned_spec_set_imaginary",
-			drawError(ZonedDatetimes().Source(utcOnly())),
+			drawError(newZonedDatetimes().Source(utcOnly())),
 			script(stubHandle, stubOK, stubOK, stubOK, stubFailure()),
 		},
 		{
 			"hegel_timezone_info_in",
-			drawError(ZonedDatetimes().Zones(Just(time.UTC)).Source(utcOnly())),
+			drawError(newZonedDatetimes().Zones(Just(time.UTC)).Source(utcOnly())),
 			script(stubZonedSpec, stubSpan, stubOpenSource, stubFailure(libhegel.TimezoneInfo{})),
 		},
 		{
 			"hegel_generate_zoned_datetime_for_zone",
-			drawError(ZonedDatetimes().Zones(Just(time.UTC)).Source(utcOnly())),
+			drawError(newZonedDatetimes().Zones(Just(time.UTC)).Source(utcOnly())),
 			script(stubZonedSpec, stubSpan, stubOpenSource, []any{libhegel.TimezoneInfo{Known: true}, libhegel.OK}, stubFailure(libhegel.ZonedDatetime{})),
 		},
 	} {
@@ -131,7 +131,7 @@ func TestTemporalEngineFailures(t *testing.T) {
 func TestZonedDatetimesStubbedDraw(t *testing.T) {
 	t.Parallel()
 	tokyo := time.FixedZone("Test/Tokyo", 9*3600)
-	source := ZoneSourceFromLocations(tokyo)
+	source := zoneSourceFromLocations(tokyo)
 	drawn := libhegel.ZonedDatetime{OffsetSeconds: 9 * 3600, OffsetKnown: true, Timestamp: libhegel.Timestamp{Second: 86400, Nanosecond: 7}}
 	tc := newStubTestCase(t, script(
 		stubZonedSpec,
@@ -142,7 +142,7 @@ func TestZonedDatetimesStubbedDraw(t *testing.T) {
 		[]any{drawn, "Test/Tokyo", libhegel.OK},
 	)...)
 	for range 2 {
-		got, err := ZonedDatetimes().Source(source).draw(tc)
+		got, err := newZonedDatetimes().Source(source).draw(tc)
 		if err != nil || got.Location() != tokyo || !got.Equal(time.Unix(86400, 7)) || got.Hour() != 9 {
 			t.Fatalf("drew %v, %v", got, err)
 		}
@@ -162,7 +162,7 @@ func TestHostZoneNamesEngineFailures(t *testing.T) {
 		{"hegel_zone_source_name", script(stubHandle, []any{uint64(1), libhegel.OK}, stubFailure(""))},
 	} {
 		zones := newGoZones(time.LoadLocation)
-		_, err := Zones().Source(ZoneSource{zones.hostSource()}).draw(newStubTestCase(t, tt.script...))
+		_, err := newZones().Source(ZoneSource{zones.hostSource()}).draw(newStubTestCase(t, tt.script...))
 		assertErrorContains(t, tt.op+": E_BACKEND: boom", err)
 	}
 }
