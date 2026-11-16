@@ -766,6 +766,7 @@ impl<G> AnyZones for G where G: Generator<TimeZone> + Any + Send + Sync {}
 /// Generator for [`ZonedDateTime`] values. Created by
 /// [`zoned_datetimes()`].
 pub struct ZonedDateTimeGenerator {
+    function: &'static str,
     zones: Option<Box<dyn AnyZones>>,
     source: Option<ZoneSource>,
     default_source: ZoneSource,
@@ -960,13 +961,14 @@ impl ZonedDateTimeGenerator {
         if !matches!(self.zone_source().info(name), Ok(None)) {
             invalid_argument!("{message}");
         }
+        let function = self.function;
         let which = match self.source {
             Some(_) => "the zone source given to source()",
             None => "the default zone source",
         };
         invalid_argument!(
-            "zoned_datetimes(): the zones generator drew the time zone {name:?}, which {which} \
-             does not know. Pass the zone source that has it to source()."
+            "{function}(): the zones generator drew the time zone {name:?}, which {which} does \
+             not know. Pass the zone source that has it to source()."
         )
     }
 }
@@ -999,10 +1001,10 @@ impl Generator<ZonedDateTime> for ZonedDateTimeGenerator {
         let any_zones: &dyn Any = &**zones;
         if let Some(engine) = any_zones.downcast_ref::<ZoneGenerator>() {
             if self.source.is_some() {
+                let function = self.function;
                 invalid_argument!(
-                    "zoned_datetimes(): source() cannot be combined with a zones() generator, \
-                     which has a zone source of its own. Pass the source to zones().source() \
-                     instead."
+                    "{function}(): source() cannot be combined with a zones() generator, which \
+                     has a zone source of its own. Pass the source to zones().source() instead."
                 );
             }
             return self.draw_with(tc, engine);
@@ -1062,17 +1064,24 @@ impl PrintableGenerator<ZonedDateTime> for ZonedDateTimeGenerator {
 /// }
 /// ```
 pub fn zoned_datetimes() -> ZonedDateTimeGenerator {
-    zoned_datetimes_within((MIN_DATETIME, MAX_DATETIME), (MIN_TIMESTAMP, MAX_TIMESTAMP))
+    zoned_datetimes_within(
+        "zoned_datetimes",
+        (MIN_DATETIME, MAX_DATETIME),
+        (MIN_TIMESTAMP, MAX_TIMESTAMP),
+    )
 }
 
 /// [`zoned_datetimes()`] over a narrower range, for a generator that
 /// builds another library's value from the draw: the bounds a draw has on
-/// a side no bound was given for.
+/// a side no bound was given for. `function` is the public function the
+/// generator was built by, which its usage errors name.
 pub(crate) fn zoned_datetimes_within(
+    function: &'static str,
     civil_range: (DateTime, DateTime),
     instant_range: (Instant, Instant),
 ) -> ZonedDateTimeGenerator {
     ZonedDateTimeGenerator {
+        function,
         zones: None,
         source: None,
         default_source: default_zone_source(),

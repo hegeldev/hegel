@@ -780,6 +780,7 @@ mod zoned {
         /// give its zones.
         pub fn generator(&self) -> gs::temporal::ZonedDateTimeGenerator {
             let generator = zoned_datetimes_within(
+                "datetimes",
                 (
                     hegel_datetime(DateTime::<Utc>::MIN_UTC.naive_utc()),
                     hegel_datetime(DateTime::<Utc>::MAX_UTC.naive_utc()),

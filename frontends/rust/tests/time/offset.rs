@@ -1,11 +1,13 @@
 use crate::common::utils::{
-    AssertAllExamples, assert_all_examples, check_can_generate_examples, find_any, minimal,
+    AssertAllExamples, assert_all_examples, check_can_generate_examples, expect_panic, find_any,
+    minimal,
 };
 use hegel::HealthCheck;
 use hegel::extras::time as time_gs;
 use hegel::generators as gs;
 use hegel::generators::temporal::{
-    Ambiguous, Granularity, LocalTimeType, Precision, UNKNOWN_ZONE, ZoneAfter, ZoneData, ZoneSource,
+    Ambiguous, Granularity, LocalTimeType, Precision, TimeZone, UNKNOWN_ZONE, ZoneAfter, ZoneData,
+    ZoneSource,
 };
 use jiff::tz::AmbiguousOffset;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -316,6 +318,52 @@ fn test_offset_datetimes_wall_clock_and_instant_bounds() {
         time_gs::offset_datetimes()
             .min_value(datetime(2000, 1, 1, 0, 0, 0))
             .max_instant(OffsetDateTime::UNIX_EPOCH),
+    );
+}
+
+fn expect_usage_error(generator: time_gs::OffsetDateTimeGenerator, message: &str) {
+    let generator = std::panic::AssertUnwindSafe(generator);
+    expect_panic(
+        move || {
+            let generator = generator;
+            check_can_generate_examples(generator.0);
+        },
+        &format!("^{}$", regex::escape(message)),
+    );
+}
+
+fn unresolved(name: &str) -> TimeZone {
+    TimeZone {
+        name: name.to_string(),
+        primary_name: name.to_string(),
+    }
+}
+
+#[test]
+fn test_offset_datetimes_source_with_a_zones_generator() {
+    expect_usage_error(
+        time_gs::offset_datetimes()
+            .zones(gs::temporal::zones())
+            .source(ZoneSource::bundled()),
+        "offset_datetimes(): source() cannot be combined with a zones() generator, which has a \
+         zone source of its own. Pass the source to zones().source() instead.",
+    );
+}
+
+#[test]
+fn test_offset_datetimes_zone_the_source_does_not_know() {
+    expect_usage_error(
+        time_gs::offset_datetimes().zones(gs::just(unresolved("Mars/Olympus"))),
+        "offset_datetimes(): the zones generator drew the time zone \"Mars/Olympus\", which the \
+         default zone source does not know. Pass the zone source that has it to source().",
+    );
+    expect_usage_error(
+        time_gs::offset_datetimes()
+            .zones(gs::just(unresolved("Mars/Olympus")))
+            .source(ZoneSource::bundled()),
+        "offset_datetimes(): the zones generator drew the time zone \"Mars/Olympus\", which the \
+         zone source given to source() does not know. Pass the zone source that has it to \
+         source().",
     );
 }
 

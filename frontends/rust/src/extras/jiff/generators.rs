@@ -1062,6 +1062,7 @@ impl ZonedGenerator {
     fn inner(&self) -> &gs::temporal::ZonedDateTimeGenerator {
         self.inner.get_or_init(|| {
             let mut generator = zoned_datetimes_within(
+                "zoneds",
                 (engine_datetime(MIN_CIVIL), engine_datetime(MAX_CIVIL)),
                 (
                     engine_timestamp(Timestamp::MIN),

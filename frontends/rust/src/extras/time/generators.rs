@@ -544,6 +544,7 @@ impl PrintableGenerator<OffsetDateTime> for OffsetDateTimeGenerator {
 pub fn offset_datetimes() -> OffsetDateTimeGenerator {
     OffsetDateTimeGenerator {
         inner: zoned_datetimes_within(
+            "offset_datetimes",
             (
                 hegel_datetime(PrimitiveDateTime::MIN),
                 hegel_datetime(PrimitiveDateTime::MAX),

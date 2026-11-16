@@ -676,16 +676,17 @@ mod datetime_validation {
     fn test_zoned_datetimes_zone_the_source_does_not_know() {
         expect_draw_panic(
             gs::temporal::zoned_datetimes().zones(gs::just(unresolved("Mars/Olympus"))),
-            "zoned_datetimes\\(\\): the zones generator drew the time zone \"Mars/Olympus\", \
+            "^zoned_datetimes\\(\\): the zones generator drew the time zone \"Mars/Olympus\", \
              which the default zone source does not know\\. Pass the zone source that has it \
-             to source\\(\\)\\.",
+             to source\\(\\)\\.$",
         );
         expect_draw_panic(
             gs::temporal::zoned_datetimes()
                 .zones(gs::just(unresolved("Mars/Olympus")))
                 .source(ZoneSource::bundled()),
-            "the time zone \"Mars/Olympus\", which the zone source given to source\\(\\) does \
-             not know",
+            "^zoned_datetimes\\(\\): the zones generator drew the time zone \"Mars/Olympus\", \
+             which the zone source given to source\\(\\) does not know\\. Pass the zone source \
+             that has it to source\\(\\)\\.$",
         );
     }
 
@@ -710,8 +711,9 @@ mod datetime_validation {
             gs::temporal::zoned_datetimes()
                 .zones(gs::temporal::zones())
                 .source(ZoneSource::bundled()),
-            "source\\(\\) cannot be combined with a zones\\(\\) generator, which has a zone \
-             source of its own\\. Pass the source to zones\\(\\)\\.source\\(\\) instead\\.",
+            "^zoned_datetimes\\(\\): source\\(\\) cannot be combined with a zones\\(\\) \
+             generator, which has a zone source of its own\\. Pass the source to \
+             zones\\(\\)\\.source\\(\\) instead\\.$",
         );
     }
 
