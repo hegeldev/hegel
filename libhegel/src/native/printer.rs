@@ -731,31 +731,52 @@ impl Printer {
     }
 
     /// Record that a handle writing through `slot` is gone. Once the last
-    /// one is, a slot that holds no content is reclaimed, and its splice
-    /// renders nothing: without this, a test case that clones itself
-    /// without end would keep every clone's empty slot until it completes.
+    /// one is, a speculative region still open on the slot is aborted, as
+    /// nothing can close it any more, and a slot that holds no content is
+    /// reclaimed, its splice rendering nothing: without this, a test case
+    /// that clones itself without end would keep every clone's empty slot
+    /// until it completes.
     pub fn release(&mut self, slot: SlotId) {
-        if let Some(released) = self.slots.get_mut(slot) {
-            released.holders = released.holders.saturating_sub(1);
-        }
         if self.sealed {
             return;
         }
+        let abandoned = self
+            .slots
+            .get_mut(slot)
+            .map(|released| {
+                released.holders = released.holders.saturating_sub(1);
+                if released.holders == 0 {
+                    core::mem::take(&mut released.speculation)
+                } else {
+                    Vec::new()
+                }
+            })
+            .unwrap_or_default();
+        if !abandoned.is_empty() {
+            for buf in &abandoned {
+                self.kill_splices(buf);
+            }
+            self.release_held_notes(Target::Slot(slot));
+        }
         let mut id = slot;
+        let mut reclaimed = false;
         while let Some(slot) = self.slots.get(id) {
             if slot.holders > 0 || !self.is_blank(slot) {
                 break;
             }
             let parent = slot.parent;
             self.slots.remove(id);
-            self.stale_splices += 1;
+            reclaimed = true;
             match parent {
                 Target::Slot(parent) => id = parent,
                 Target::Main => break,
             }
         }
-        if self.stale_splices >= self.sweep_threshold {
-            self.sweep();
+        if reclaimed {
+            self.stale_splices += 1;
+            if self.stale_splices >= self.sweep_threshold {
+                self.sweep();
+            }
         }
     }
 
@@ -769,24 +790,26 @@ impl Printer {
     /// next sweep waits for as many stale splices as there are commands
     /// left, so the work is proportional to the splices removed.
     fn sweep(&mut self) {
+        let live: Vec<Option<u64>> = self
+            .slots
+            .entries
+            .iter()
+            .map(|entry| entry.slot.as_ref().map(|_| entry.generation))
+            .collect();
+        let stale = |cmd: &Cmd| {
+            matches!(cmd, Cmd::Splice(id)
+                if live.get(id.index).copied().flatten() != Some(id.generation))
+        };
         let mut remaining = 0;
-        for buf in core::iter::once(&mut self.main).chain(self.speculation.iter_mut()) {
-            buf.retain(|cmd| !self.slots.is_stale(cmd));
+        let slot_buffers = self.slots.iter_mut().flat_map(|slot| {
+            core::iter::once(&mut slot.commands).chain(slot.speculation.iter_mut())
+        });
+        for buf in core::iter::once(&mut self.main)
+            .chain(self.speculation.iter_mut())
+            .chain(slot_buffers)
+        {
+            buf.retain(|cmd| !stale(cmd));
             remaining += buf.len();
-        }
-        for index in 0..self.slots.entries.len() {
-            let Some(slot) = self.slots.entries[index].slot.as_mut() else {
-                continue;
-            };
-            let mut commands = core::mem::take(&mut slot.commands);
-            let mut speculation = core::mem::take(&mut slot.speculation);
-            for buf in core::iter::once(&mut commands).chain(speculation.iter_mut()) {
-                buf.retain(|cmd| !self.slots.is_stale(cmd));
-                remaining += buf.len();
-            }
-            let slot = self.slots.entries[index].slot.as_mut().unwrap();
-            slot.commands = commands;
-            slot.speculation = speculation;
         }
         self.stale_splices = 0;
         self.sweep_threshold = remaining.max(MIN_SWEEP_THRESHOLD);

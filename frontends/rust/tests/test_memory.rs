@@ -59,8 +59,10 @@ static ALLOCATOR: Counting = Counting;
 const STEPS: usize = 50_000;
 const SAMPLES: usize = 10;
 
-static RULES_RUN: AtomicUsize = AtomicUsize::new(0);
-static SAMPLED: [AtomicIsize; SAMPLES] = [const { AtomicIsize::new(0) }; SAMPLES];
+const UNSAMPLED: isize = -1;
+
+static CHECKS: AtomicUsize = AtomicUsize::new(0);
+static SAMPLED: [AtomicIsize; SAMPLES] = [const { AtomicIsize::new(UNSAMPLED) }; SAMPLES];
 
 struct Idle;
 
@@ -69,15 +71,16 @@ impl Idle {
     #[rule]
     fn idle(&self, tc: TestCase) {
         tc.draw(gs::weighted_booleans(0.02));
-        let run = RULES_RUN.fetch_add(1, Ordering::Relaxed) + 1;
-        if run % (STEPS / SAMPLES) == 0 {
-            SAMPLED[run / (STEPS / SAMPLES) - 1]
-                .store(LIVE_BYTES.load(Ordering::Relaxed), Ordering::Relaxed);
-        }
     }
 
     #[invariant(always_run)]
-    fn quiet(&self, _tc: TestCase) {}
+    fn sample(&self, _tc: TestCase) {
+        let checks = CHECKS.fetch_add(1, Ordering::Relaxed) + 1;
+        let index = checks / (STEPS / SAMPLES);
+        if checks % (STEPS / SAMPLES) == 0 && index <= SAMPLES {
+            SAMPLED[index - 1].store(LIVE_BYTES.load(Ordering::Relaxed), Ordering::Relaxed);
+        }
+    }
 }
 
 #[hegel::test(test_cases = 1, phases = [hegel::Phase::Generate])]
@@ -112,10 +115,14 @@ fn a_long_running_unrecorded_machine_keeps_a_flat_heap() {
         .map(|sample| sample.parse().unwrap())
         .collect();
     assert_eq!(samples.len(), SAMPLES);
+    assert!(
+        !samples.contains(&UNSAMPLED),
+        "the machine stopped before every sample was taken: {samples:?}"
+    );
     let growth = samples[SAMPLES - 1] - samples[1];
     assert!(
         growth < 64 * 1024,
-        "the heap grew by {growth} bytes over {} rules: {samples:?}",
+        "the heap grew by {growth} bytes over {} rounds: {samples:?}",
         STEPS - STEPS / SAMPLES * 2
     );
 }

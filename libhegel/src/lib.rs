@@ -7713,8 +7713,8 @@ pub unsafe extern "C" fn hegel_test_case_printer(
     }
     let options = unsafe { options.as_ref() };
     let inner = Arc::clone(&tc.family.printer);
+    let mut printer = inner.lock();
     if let Some(requested) = options.and_then(|o| o.max_width) {
-        let mut printer = inner.lock();
         if !tc.family.printer_width_configured.load(Ordering::Acquire) {
             printer.set_max_width(size_arg(requested));
             tc.family
@@ -7732,7 +7732,8 @@ pub unsafe extern "C" fn hegel_test_case_printer(
             return HEGEL_E_INVALID_ARG;
         }
     }
-    share_target(&mut inner.lock(), tc.print_target);
+    share_target(&mut printer, tc.print_target);
+    drop(printer);
     let handle = HegelPrinter {
         inner,
         target: tc.print_target,

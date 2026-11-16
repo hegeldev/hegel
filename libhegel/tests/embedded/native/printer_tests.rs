@@ -1433,6 +1433,34 @@ fn a_slot_is_kept_while_any_holder_remains() {
 }
 
 #[test]
+fn a_speculation_left_open_by_the_last_holder_is_aborted() {
+    let mut p = printer(79);
+    let clone = p.deferred(M).unwrap();
+    let c = Target::Slot(clone);
+    p.begin_speculative(c).unwrap();
+    p.text(c, "let x = ").unwrap();
+    let inner = p.deferred(c).unwrap();
+    p.release(clone);
+    p.release(inner);
+    assert_eq!(live_slots(&p), 0);
+    p.resolve().unwrap();
+    assert_eq!(p.value().unwrap(), "");
+}
+
+#[test]
+fn notes_held_by_an_abandoned_speculation_are_kept() {
+    let mut p = printer(79);
+    let clone = p.deferred(M).unwrap();
+    let c = Target::Slot(clone);
+    p.begin_speculative(c).unwrap();
+    p.text(c, "let x = ").unwrap();
+    p.note(c, "held", None).unwrap();
+    p.release(clone);
+    p.resolve().unwrap();
+    assert_eq!(p.value().unwrap(), "held\n");
+}
+
+#[test]
 fn a_reclaimed_slot_id_is_dead_even_when_its_storage_is_reused() {
     let mut p = printer(79);
     let first = p.deferred(M).unwrap();
