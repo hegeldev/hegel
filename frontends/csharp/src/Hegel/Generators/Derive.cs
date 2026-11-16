@@ -221,7 +221,7 @@ internal static class Derive
         }
         if (type == typeof(TimeSpan))
         {
-            return Generators.TimeSpans();
+            return DurationGenerator.NonNegative();
         }
         if (type == typeof(DateOnly))
         {
@@ -237,11 +237,19 @@ internal static class Derive
         }
         if (type == typeof(DateTimeOffset))
         {
-            return Generators.DateTimes().WithOffsets(Generators.UtcOffsets());
+            return Generators.DateTimes().WithOffsets(Generators.Offsets());
         }
         if (type == typeof(TimeZoneInfo))
         {
-            return Generators.TimeZones();
+            return Generators.Zones();
+        }
+        if (type == typeof(ZonedDateTime))
+        {
+            return Generators.ZonedDateTimes();
+        }
+        if (type == typeof(CalendarSpan))
+        {
+            return Generators.Spans();
         }
         return null;
     }

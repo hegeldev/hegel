@@ -187,27 +187,56 @@ module Gen =
     /// GUIDs; <c>.Version</c> picks a UUID version.
     let guid: UuidGenerator = Generators.Uuids()
 
-    /// Dates; <c>.Min</c> and <c>.Max</c> bound them.
+    /// Dates; <c>.Min</c>, <c>.Max</c>, <c>.Weekdays</c> and <c>.Months</c> narrow them.
     let dateOnly: DateGenerator = Generators.Dates()
 
-    /// Times of day; <c>.Min</c> and <c>.Max</c> bound them.
+    /// Times of day; <c>.Min</c>, <c>.Max</c> and <c>.Precision</c> narrow them.
     let timeOnly: TimeGenerator = Generators.Times()
 
-    /// Date-times; <c>.Min</c>, <c>.Max</c>, <c>.WithTimeZones</c> and <c>.WithOffsets</c> narrow them.
+    /// Date-times without a time zone; <c>.Min</c>, <c>.Max</c> and <c>.Precision</c> narrow them,
+    /// and <c>.WithOffsets</c> gives them a UTC offset.
     let dateTime: DateTimeGenerator = Generators.DateTimes()
 
     /// Date-times with a UTC offset.
     let dateTimeOffset: Generator<DateTimeOffset> =
-        Generators.DateTimes().WithOffsets(Generators.UtcOffsets())
+        Generators.DateTimes().WithOffsets(Generators.Offsets())
 
-    /// Durations; <c>.Min</c> and <c>.Max</c> bound them.
-    let timeSpan: TimeSpanGenerator = Generators.TimeSpans()
+    /// Instants, as <c>DateTimeOffset</c>s with a zero offset; <c>.Min</c>, <c>.Max</c> and
+    /// <c>.Precision</c> narrow them.
+    let instant: InstantGenerator = Generators.Instants()
+
+    /// UTC offsets, whole minutes between -14:00 and +14:00; <c>.Min</c>, <c>.Max</c> and
+    /// <c>.Granularity</c> narrow them.
+    let offset: OffsetGenerator = Generators.Offsets()
+
+    /// Exact lengths of time of either sign; <c>.Min</c>, <c>.Max</c> and <c>.Precision</c> narrow them.
+    let duration: DurationGenerator = Generators.Durations()
+
+    /// Calendar spans, a count of each unit from years to nanoseconds; the unit methods
+    /// (<c>.Years</c> to <c>.Nanoseconds</c>) bound the units drawn and <c>.Sign</c> sets their signs.
+    let span: SpanGenerator = Generators.Spans()
+
+    /// Time zones this system has a <c>TimeZoneInfo</c> for; <c>.Names</c>, <c>.AllowLinks</c>,
+    /// <c>.AllowLegacy</c> and <c>.Source</c> narrow them. A function, because the generator draws
+    /// from <c>ZoneSource.Default</c> as it is when the generator is made.
+    let zone () : ZoneGenerator = Generators.Zones()
+
+    /// Date-times in time zones; <c>.Zones</c>, <c>.Source</c>, <c>.Min</c>, <c>.Max</c>,
+    /// <c>.Precision</c>, <c>.Ambiguous</c> and <c>.AllowImaginary</c> narrow them. A function,
+    /// because the generator draws from <c>ZoneSource.Default</c> as it is when the generator is made.
+    let zonedDateTime () : ZonedDateTimeGenerator = Generators.ZonedDateTimes()
+
+    /// Durations, from zero up; <c>.Min</c> and <c>.Max</c> bound them.
+    [<Obsolete("Use Gen.duration, which draws durations of either sign: Gen.duration.Min(TimeSpan.Zero) is this generator.")>]
+    let timeSpan: DurationGenerator = DurationGenerator.NonNegative()
 
     /// UTC offsets; <c>.Min</c> and <c>.Max</c> bound them.
-    let utcOffset: UtcOffsetGenerator = Generators.UtcOffsets()
+    [<Obsolete("Use Gen.offset.")>]
+    let utcOffset: OffsetGenerator = Generators.Offsets()
 
     /// The system's time zones.
-    let timeZone: Generator<TimeZoneInfo> = Generators.TimeZones()
+    [<Obsolete("Use Gen.zone (), which reads ZoneSource.Default when it is called.")>]
+    let timeZone: ZoneGenerator = Generators.Zones()
 
 /// The <c>gen { }</c> block: <c>let!</c> draws from a generator and <c>return</c> gives the value,
 /// which is printed as the block's draw.

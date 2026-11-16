@@ -170,6 +170,25 @@ let ``scalars with parse forms`` () =
 
     Assert.Equal("TimeSpan.Parse(\"01:02:03\")", show (TimeSpan(1, 2, 3)))
     Assert.Equal("TimeZoneInfo.FindSystemTimeZoneById(\"UTC\")", show TimeZoneInfo.Utc)
+    Assert.Equal("CalendarSpan()", show (CalendarSpan()))
+    Assert.Equal("CalendarSpan(Years = 1L, Days = -3L)", show (CalendarSpan(Years = 1L, Days = -3L)))
+
+    Assert.Equal(
+        "ZonedDateTime(DateTime.Parse(\"2024-02-29T13:45:00\"),\n"
+        + "              TimeSpan.Parse(\"00:00:00\"),\n"
+        + "              TimeZoneInfo.FindSystemTimeZoneById(\"UTC\"),\n"
+        + "              DateTimeOffset.Parse(\"2024-02-29T13:45:00+00:00\"),\n"
+        + "              WallTimeKind.Earlier)",
+        render
+            typeof<ZonedDateTime>
+            (ZonedDateTime(
+                DateTime(2024, 2, 29, 13, 45, 0),
+                TimeSpan.Zero,
+                TimeZoneInfo.Utc,
+                DateTimeOffset(2024, 2, 29, 13, 45, 0, TimeSpan.Zero),
+                WallTimeKind.Earlier
+            ))
+    )
 
 [<Fact>]
 let ``arrays`` () =

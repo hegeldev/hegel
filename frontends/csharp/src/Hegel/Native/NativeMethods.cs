@@ -40,6 +40,84 @@ internal struct HegelDateTime
     public HegelTime Time;
 }
 
+[StructLayout(LayoutKind.Sequential)]
+internal struct HegelTimestamp
+{
+    public long Second;
+    public uint Nanosecond;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct HegelOffset
+{
+    public int Seconds;
+    public byte Known;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct HegelDuration
+{
+    public long Seconds;
+    public int Nanoseconds;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct HegelSpan
+{
+    public long Years;
+    public long Months;
+    public long Weeks;
+    public long Days;
+    public long Hours;
+    public long Minutes;
+    public long Seconds;
+    public long Milliseconds;
+    public long Microseconds;
+    public long Nanoseconds;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct HegelZonedDateTime
+{
+    public HegelDateTime Civil;
+    public int OffsetSeconds;
+    public byte OffsetKnown;
+    public byte Fold;
+    public uint Kind;
+    public int OffsetBefore;
+    public int OffsetAfter;
+    public HegelTimestamp Timestamp;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct HegelZoneType
+{
+    public int Utoff;
+    public byte IsDst;
+    public HegelString Abbreviation;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct HegelZoneOracle
+{
+    public delegate* unmanaged<nint, nint, long, HegelZoneType*, int> OffsetAt;
+    public delegate* unmanaged<nint, nint, long, byte*, long*, int> NextTransition;
+    public nint UserData;
+    public int FirstYear;
+    public int LastYear;
+    public uint After;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+internal struct HegelTimezoneInfo
+{
+    public byte Known;
+    public HegelString PrimaryName;
+    public byte IsLink;
+    public ushort Rank;
+    public uint Tags;
+}
+
 /// <summary>The raw C ABI of libhegel, one source-generated P/Invoke per exported function.</summary>
 internal static unsafe partial class NativeMethods
 {
@@ -48,6 +126,7 @@ internal static unsafe partial class NativeMethods
     [LibraryImport(Library)] internal static partial nint hegel_context_new();
     [LibraryImport(Library)] internal static partial int hegel_context_free(nint ctx);
     [LibraryImport(Library)] internal static partial HegelString hegel_context_last_error(nint ctx);
+    [LibraryImport(Library)] internal static partial int hegel_context_set_error(nint ctx, HegelString message);
 
     [LibraryImport(Library)] internal static partial int hegel_settings_new(nint ctx, nint* outSettings);
     [LibraryImport(Library)] internal static partial int hegel_settings_new_for_profile(nint ctx, HegelString name, nint* outSettings);
@@ -162,6 +241,58 @@ internal static unsafe partial class NativeMethods
     [LibraryImport(Library)] internal static partial int hegel_generate_date(nint ctx, nint tc, HegelDate min, HegelDate max, nint options, HegelDate* o);
     [LibraryImport(Library)] internal static partial int hegel_generate_time(nint ctx, nint tc, HegelTime min, HegelTime max, uint precision, HegelTime* o);
     [LibraryImport(Library)] internal static partial int hegel_generate_datetime(nint ctx, nint tc, HegelDateTime min, HegelDateTime max, uint precision, HegelDateTime* o);
+    [LibraryImport(Library)] internal static partial int hegel_date_options_new(nint ctx, nint* o);
+    [LibraryImport(Library)] internal static partial int hegel_date_options_free(nint ctx, nint options);
+    [LibraryImport(Library)] internal static partial int hegel_date_options_set_weekdays(nint ctx, nint options, uint mask);
+    [LibraryImport(Library)] internal static partial int hegel_date_options_set_months(nint ctx, nint options, uint mask);
+    [LibraryImport(Library)] internal static partial int hegel_validate_date(nint ctx, HegelDate min, HegelDate max, nint options);
+    [LibraryImport(Library)] internal static partial int hegel_validate_time(nint ctx, HegelTime min, HegelTime max, uint precision);
+    [LibraryImport(Library)] internal static partial int hegel_validate_datetime(nint ctx, HegelDateTime min, HegelDateTime max, uint precision);
+    [LibraryImport(Library)] internal static partial int hegel_generate_timestamp(nint ctx, nint tc, HegelTimestamp min, HegelTimestamp max, uint precision, HegelTimestamp* o);
+    [LibraryImport(Library)] internal static partial int hegel_validate_timestamp(nint ctx, HegelTimestamp min, HegelTimestamp max, uint precision);
+    [LibraryImport(Library)] internal static partial int hegel_generate_offset(nint ctx, nint tc, int minSeconds, int maxSeconds, uint granularity, [MarshalAs(UnmanagedType.U1)] bool allowUnknown, HegelOffset* o);
+    [LibraryImport(Library)] internal static partial int hegel_validate_offset(nint ctx, int minSeconds, int maxSeconds, uint granularity, [MarshalAs(UnmanagedType.U1)] bool allowUnknown);
+    [LibraryImport(Library)] internal static partial int hegel_generate_duration(nint ctx, nint tc, HegelDuration min, HegelDuration max, uint precision, HegelDuration* o);
+    [LibraryImport(Library)] internal static partial int hegel_validate_duration(nint ctx, HegelDuration min, HegelDuration max, uint precision);
+    [LibraryImport(Library)] internal static partial int hegel_span_spec_new(nint ctx, nint* o);
+    [LibraryImport(Library)] internal static partial int hegel_span_spec_free(nint ctx, nint spec);
+    [LibraryImport(Library)] internal static partial int hegel_span_spec_set_unit_bounds(nint ctx, nint spec, uint unit, long min, long max);
+    [LibraryImport(Library)] internal static partial int hegel_span_spec_set_sign(nint ctx, nint spec, uint sign);
+    [LibraryImport(Library)] internal static partial int hegel_span_spec_validate(nint ctx, nint spec);
+    [LibraryImport(Library)] internal static partial int hegel_generate_span(nint ctx, nint tc, nint spec, HegelSpan* o);
+    [LibraryImport(Library)] internal static partial int hegel_timezone_spec_new(nint ctx, nint* o);
+    [LibraryImport(Library)] internal static partial int hegel_timezone_spec_free(nint ctx, nint spec);
+    [LibraryImport(Library)] internal static partial int hegel_timezone_spec_set_names(nint ctx, nint spec, HegelString* names, nuint len);
+    [LibraryImport(Library)] internal static partial int hegel_timezone_spec_set_links(nint ctx, nint spec, [MarshalAs(UnmanagedType.U1)] bool links);
+    [LibraryImport(Library)] internal static partial int hegel_timezone_spec_set_legacy(nint ctx, nint spec, [MarshalAs(UnmanagedType.U1)] bool legacy);
+    [LibraryImport(Library)] internal static partial int hegel_timezone_spec_set_source(nint ctx, nint spec, nint source);
+    [LibraryImport(Library)] internal static partial int hegel_timezone_spec_validate(nint ctx, nint spec);
+    [LibraryImport(Library)] internal static partial int hegel_generate_timezone(nint ctx, nint tc, nint spec, HegelString* o);
+    [LibraryImport(Library)] internal static partial int hegel_zoned_spec_new(nint ctx, nint* o);
+    [LibraryImport(Library)] internal static partial int hegel_zoned_spec_free(nint ctx, nint spec);
+    [LibraryImport(Library)] internal static partial int hegel_zoned_spec_set_civil_bounds(nint ctx, nint spec, HegelDateTime min, HegelDateTime max);
+    [LibraryImport(Library)] internal static partial int hegel_zoned_spec_set_instant_bounds(nint ctx, nint spec, HegelTimestamp min, HegelTimestamp max);
+    [LibraryImport(Library)] internal static partial int hegel_zoned_spec_set_precision(nint ctx, nint spec, uint precision);
+    [LibraryImport(Library)] internal static partial int hegel_zoned_spec_set_imaginary(nint ctx, nint spec, uint imaginary);
+    [LibraryImport(Library)] internal static partial int hegel_zoned_spec_set_ambiguous(nint ctx, nint spec, uint ambiguous);
+    [LibraryImport(Library)] internal static partial int hegel_zoned_spec_validate(nint ctx, nint spec);
+    [LibraryImport(Library)] internal static partial int hegel_generate_zoned_datetime(nint ctx, nint tc, nint tzSpec, nint zonedSpec, HegelZonedDateTime* outValue, HegelString* outZone);
+    [LibraryImport(Library)] internal static partial int hegel_generate_zoned_datetime_for_zone(nint ctx, nint tc, nint source, HegelString name, nint zonedSpec, HegelZonedDateTime* outValue);
+    [LibraryImport(Library)] internal static partial int hegel_zone_source_new(nint ctx, nint* o);
+    [LibraryImport(Library)] internal static partial int hegel_zone_source_bundled(nint ctx, nint* o);
+    [LibraryImport(Library)] internal static partial int hegel_zone_source_free(nint ctx, nint source);
+    [LibraryImport(Library)] internal static partial int hegel_zone_source_add_tzif(nint ctx, nint source, HegelString name, byte* bytes, nuint len);
+    [LibraryImport(Library)] internal static partial int hegel_zone_source_add_oracle(nint ctx, nint source, HegelString name, HegelZoneOracle* oracle);
+    [LibraryImport(Library)] internal static partial int hegel_zone_source_add_link(nint ctx, nint source, HegelString name, HegelString target);
+    [LibraryImport(Library)] internal static partial int hegel_zone_source_declare(nint ctx, nint source, HegelString* names, nuint len);
+    [LibraryImport(Library)] internal static partial int hegel_zone_source_set_loader(nint ctx, nint source, delegate* unmanaged<nint, nint, nint, HegelString, int> loader, nint userData, delegate* unmanaged<nint, void> release);
+    [LibraryImport(Library)] internal static partial int hegel_zone_source_set_version(nint ctx, nint source, HegelString version);
+    [LibraryImport(Library)] internal static partial int hegel_zone_source_version(nint ctx, nint source, HegelString* o);
+    [LibraryImport(Library)] internal static partial int hegel_zone_source_name_count(nint ctx, nint source, nuint* o);
+    [LibraryImport(Library)] internal static partial int hegel_zone_source_name(nint ctx, nint source, nuint index, HegelString* o);
+    [LibraryImport(Library)] internal static partial int hegel_timezone_info_in(nint ctx, nint source, HegelString name, HegelTimezoneInfo* o);
+    [LibraryImport(Library)] internal static partial int hegel_format_span(nint ctx, HegelSpan* value, HegelString* o);
+    [LibraryImport(Library)] internal static partial int hegel_format_zoned_datetime(nint ctx, HegelZonedDateTime* value, HegelString zone, HegelString* o);
     [LibraryImport(Library)] internal static partial int hegel_generate_uuid(nint ctx, nint tc, byte version, [MarshalAs(UnmanagedType.U1)] bool hasVersion, byte* outBytes);
     [LibraryImport(Library)] internal static partial int hegel_generate_ipv4(nint ctx, nint tc, byte* outBytes);
     [LibraryImport(Library)] internal static partial int hegel_generate_ipv6(nint ctx, nint tc, byte* outBytes);

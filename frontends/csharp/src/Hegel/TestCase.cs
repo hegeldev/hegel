@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Numerics;
 using System.Runtime.ExceptionServices;
+using Hegel.Native;
 
 namespace Hegel;
 
@@ -512,15 +513,37 @@ public sealed class TestCase
 
     /// <summary>Engine primitive: a date.</summary>
     [EditorBrowsable(EditorBrowsableState.Never)]
-    public DateOnly GenerateDate(DateOnly min, DateOnly max) => _source.GenerateDate(min, max);
+    public DateOnly GenerateDate(DateOnly min, DateOnly max) => _source.GenerateDate(min, max, null);
 
     /// <summary>Engine primitive: a time of day.</summary>
     [EditorBrowsable(EditorBrowsableState.Never)]
-    public TimeOnly GenerateTime(TimeOnly min, TimeOnly max) => _source.GenerateTime(min, max);
+    public TimeOnly GenerateTime(TimeOnly min, TimeOnly max) => _source.GenerateTime(min, max, Precision.Ticks);
 
     /// <summary>Engine primitive: a date and time.</summary>
     [EditorBrowsable(EditorBrowsableState.Never)]
-    public DateTime GenerateDatetime(DateTime min, DateTime max) => _source.GenerateDatetime(min, max);
+    public DateTime GenerateDatetime(DateTime min, DateTime max) => _source.GenerateDatetime(min, max, Precision.Ticks);
+
+    internal ILibhegel Binding() => _source.Binding();
+
+    internal DateOnly GenerateDate(DateOnly min, DateOnly max, EngineHandle? options) => _source.GenerateDate(min, max, options);
+
+    internal TimeOnly GenerateTime(TimeOnly min, TimeOnly max, Precision precision) => _source.GenerateTime(min, max, precision);
+
+    internal DateTime GenerateDatetime(DateTime min, DateTime max, Precision precision) => _source.GenerateDatetime(min, max, precision);
+
+    internal DateTimeOffset GenerateInstant(DateTimeOffset min, DateTimeOffset max, Precision precision) => _source.GenerateInstant(min, max, precision);
+
+    internal TimeSpan GenerateOffset(int minSeconds, int maxSeconds, OffsetGranularity granularity) => _source.GenerateOffset(minSeconds, maxSeconds, granularity);
+
+    internal TimeSpan GenerateDuration(TimeSpan min, TimeSpan max, Precision precision) => _source.GenerateDuration(min, max, precision);
+
+    internal CalendarSpan GenerateSpan(EngineHandle spec) => _source.GenerateSpan(spec);
+
+    internal string GenerateTimezone(EngineHandle spec) => _source.GenerateTimezone(spec);
+
+    internal HegelZonedDateTime GenerateZonedDatetime(EngineHandle timezoneSpec, EngineHandle zonedSpec, out string zone) => _source.GenerateZonedDatetime(timezoneSpec, zonedSpec, out zone);
+
+    internal HegelZonedDateTime GenerateZonedDatetimeForZone(EngineHandle source, string name, EngineHandle zonedSpec) => _source.GenerateZonedDatetimeForZone(source, name, zonedSpec);
 
     /// <summary>Engine primitive: a UUID of <paramref name="version"/>, or any version.</summary>
     [EditorBrowsable(EditorBrowsableState.Never)]

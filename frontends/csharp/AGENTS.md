@@ -146,6 +146,36 @@ There is no engine version pin to keep in step in this directory.
   over scalars, enums, nullables, collections, tuples and records,
   `RecordGenerator<T>`) and `Internal` (`ValueGenerator<T>`, handle caches,
   size validation) hold the implementations.
+- `Generators/Temporal`, `TemporalTypes`, `TemporalEngine`, `ZoneSource` —
+  dates and times, all drawn, validated and formatted by the engine.
+  `Temporal` holds the nine generators (`Dates`, `Times`, `DateTimes`,
+  `Instants`, `Offsets`, `Durations`, `Spans`, `Zones`, `ZonedDateTimes`).
+  Each builder method re-validates with the engine (`hegel_validate_*`,
+  `*_spec_validate`) the settings given explicitly so far, with every
+  setting not yet given at its least restrictive rather than its default,
+  and throws `ArgumentException` with the engine's message; defaults are
+  applied, and checked, at the first draw (`HegelUsageException`), so the
+  outcome of a chain of builder calls never depends on their order.
+  `TemporalTypes` is the public value types .NET lacks (`ZonedDateTime`,
+  `CalendarSpan`, whose `ToString` is the engine's text) and the option
+  enums, numbered from `Abi`. `TemporalEngine` is the plumbing:
+  `EngineHandle` (an engine spec, options or zone source handle, freed on
+  `Dispose` or by its finalizer, kept reachable across each call that uses
+  it), `PerEngine<T>` (one handle per `ILibhegel` binding), `EngineCalls`
+  (result codes as `ArgumentException` while building and
+  `HegelUsageException` while drawing) and `TemporalValues` (ticks to and
+  from the engine's nanosecond structs: a lower bound is its tick's first
+  nanosecond, an upper bound its last, a drawn value is rounded down).
+  `ZoneSource` is the zone data a draw reads: `Bundled` (the engine's),
+  `Host` (the default: the bundled names `TimeZoneInfo` resolves, each
+  loaded on demand by probing `TimeZoneInfo.GetUtcOffset` as an offset
+  oracle over 1800 to 2100) and built ones (TZif bytes, `TimeZoneInfo`
+  objects, oracles, links, a loader). Its `ZoneTable` maps a drawn name back
+  to a `TimeZoneInfo`, and `Zones()` only offers the engine names that have
+  one. The loader and oracle callbacks are `[UnmanagedCallersOnly]`
+  trampolines in `Libhegel` that report an exception with
+  `hegel_context_set_error`; the loader's `GCHandle` is freed by the engine's
+  release hook when the source's last reference goes.
 - `src/Hegel.Xunit/` — the `Hegel.Xunit` package: `HegelTestAttribute`, a
   `FactAttribute` whose constructor takes `[CallerFilePath]`/`[CallerLineNumber]`
   (so the method's own file and line are the test location, with no help

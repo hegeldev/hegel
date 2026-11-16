@@ -44,7 +44,14 @@ internal sealed unsafe class Libhegel : ILibhegel
         }
     }
 
-    private nint Ctx => _contexts.Value!.Handle;
+    [ThreadStatic]
+    private static nint _callbackContext;
+
+    /// <summary>
+    /// The context this thread's calls report errors on: its own, or inside a zone source callback
+    /// the one the engine passed it, which is where the engine looks for that callback's error.
+    /// </summary>
+    private nint Ctx => _callbackContext != 0 ? _callbackContext : _contexts.Value!.Handle;
 
     public void ReleaseThreadContext()
     {
@@ -663,6 +670,390 @@ internal sealed unsafe class Libhegel : ILibhegel
         HegelDateTime o;
         var rc = NativeMethods.hegel_generate_datetime(Ctx, testCase, min, max, precision, &o);
         value = o;
+        return rc;
+    }
+
+    public int DateOptionsNew(out nint options)
+    {
+        nint o;
+        var rc = NativeMethods.hegel_date_options_new(Ctx, &o);
+        options = o;
+        return rc;
+    }
+
+    public void DateOptionsFree(nint options) => NativeMethods.hegel_date_options_free(Ctx, options);
+
+    public int DateOptionsSetWeekdays(nint options, uint mask) => NativeMethods.hegel_date_options_set_weekdays(Ctx, options, mask);
+
+    public int DateOptionsSetMonths(nint options, uint mask) => NativeMethods.hegel_date_options_set_months(Ctx, options, mask);
+
+    public int ValidateDate(HegelDate min, HegelDate max, nint options) => NativeMethods.hegel_validate_date(Ctx, min, max, options);
+
+    public int ValidateTime(HegelTime min, HegelTime max, uint precision) => NativeMethods.hegel_validate_time(Ctx, min, max, precision);
+
+    public int ValidateDatetime(HegelDateTime min, HegelDateTime max, uint precision) => NativeMethods.hegel_validate_datetime(Ctx, min, max, precision);
+
+    public int GenerateTimestamp(nint testCase, HegelTimestamp min, HegelTimestamp max, uint precision, out HegelTimestamp value)
+    {
+        HegelTimestamp o;
+        var rc = NativeMethods.hegel_generate_timestamp(Ctx, testCase, min, max, precision, &o);
+        value = o;
+        return rc;
+    }
+
+    public int ValidateTimestamp(HegelTimestamp min, HegelTimestamp max, uint precision) => NativeMethods.hegel_validate_timestamp(Ctx, min, max, precision);
+
+    public int GenerateOffset(nint testCase, int minSeconds, int maxSeconds, uint granularity, out HegelOffset value)
+    {
+        HegelOffset o;
+        var rc = NativeMethods.hegel_generate_offset(Ctx, testCase, minSeconds, maxSeconds, granularity, false, &o);
+        value = o;
+        return rc;
+    }
+
+    public int ValidateOffset(int minSeconds, int maxSeconds, uint granularity) => NativeMethods.hegel_validate_offset(Ctx, minSeconds, maxSeconds, granularity, false);
+
+    public int GenerateDuration(nint testCase, HegelDuration min, HegelDuration max, uint precision, out HegelDuration value)
+    {
+        HegelDuration o;
+        var rc = NativeMethods.hegel_generate_duration(Ctx, testCase, min, max, precision, &o);
+        value = o;
+        return rc;
+    }
+
+    public int ValidateDuration(HegelDuration min, HegelDuration max, uint precision) => NativeMethods.hegel_validate_duration(Ctx, min, max, precision);
+
+    public int SpanSpecNew(out nint spec)
+    {
+        nint o;
+        var rc = NativeMethods.hegel_span_spec_new(Ctx, &o);
+        spec = o;
+        return rc;
+    }
+
+    public void SpanSpecFree(nint spec) => NativeMethods.hegel_span_spec_free(Ctx, spec);
+
+    public int SpanSpecSetUnitBounds(nint spec, uint unit, long min, long max) => NativeMethods.hegel_span_spec_set_unit_bounds(Ctx, spec, unit, min, max);
+
+    public int SpanSpecSetSign(nint spec, uint sign) => NativeMethods.hegel_span_spec_set_sign(Ctx, spec, sign);
+
+    public int SpanSpecValidate(nint spec) => NativeMethods.hegel_span_spec_validate(Ctx, spec);
+
+    public int GenerateSpan(nint testCase, nint spec, out HegelSpan value)
+    {
+        HegelSpan o;
+        var rc = NativeMethods.hegel_generate_span(Ctx, testCase, spec, &o);
+        value = o;
+        return rc;
+    }
+
+    public int TimezoneSpecNew(out nint spec)
+    {
+        nint o;
+        var rc = NativeMethods.hegel_timezone_spec_new(Ctx, &o);
+        spec = o;
+        return rc;
+    }
+
+    public void TimezoneSpecFree(nint spec) => NativeMethods.hegel_timezone_spec_free(Ctx, spec);
+
+    public int TimezoneSpecSetNames(nint spec, IReadOnlyList<string> names)
+    {
+        using var a = new Arena();
+        return NativeMethods.hegel_timezone_spec_set_names(Ctx, spec, a.Strs(names), (nuint)names.Count);
+    }
+
+    public int TimezoneSpecSetLinks(nint spec, bool links) => NativeMethods.hegel_timezone_spec_set_links(Ctx, spec, links);
+
+    public int TimezoneSpecSetLegacy(nint spec, bool legacy) => NativeMethods.hegel_timezone_spec_set_legacy(Ctx, spec, legacy);
+
+    public int TimezoneSpecSetSource(nint spec, nint source) => NativeMethods.hegel_timezone_spec_set_source(Ctx, spec, source);
+
+    public int TimezoneSpecValidate(nint spec) => NativeMethods.hegel_timezone_spec_validate(Ctx, spec);
+
+    public int GenerateTimezone(nint testCase, nint spec, out string name)
+    {
+        HegelString o;
+        var rc = NativeMethods.hegel_generate_timezone(Ctx, testCase, spec, &o);
+        name = rc == Abi.Ok ? Owned(o) : "";
+        return rc;
+    }
+
+    public int ZonedSpecNew(out nint spec)
+    {
+        nint o;
+        var rc = NativeMethods.hegel_zoned_spec_new(Ctx, &o);
+        spec = o;
+        return rc;
+    }
+
+    public void ZonedSpecFree(nint spec) => NativeMethods.hegel_zoned_spec_free(Ctx, spec);
+
+    public int ZonedSpecSetCivilBounds(nint spec, HegelDateTime min, HegelDateTime max) => NativeMethods.hegel_zoned_spec_set_civil_bounds(Ctx, spec, min, max);
+
+    public int ZonedSpecSetInstantBounds(nint spec, HegelTimestamp min, HegelTimestamp max) => NativeMethods.hegel_zoned_spec_set_instant_bounds(Ctx, spec, min, max);
+
+    public int ZonedSpecSetPrecision(nint spec, uint precision) => NativeMethods.hegel_zoned_spec_set_precision(Ctx, spec, precision);
+
+    public int ZonedSpecSetImaginary(nint spec, uint imaginary) => NativeMethods.hegel_zoned_spec_set_imaginary(Ctx, spec, imaginary);
+
+    public int ZonedSpecSetAmbiguous(nint spec, uint ambiguous) => NativeMethods.hegel_zoned_spec_set_ambiguous(Ctx, spec, ambiguous);
+
+    public int ZonedSpecValidate(nint spec) => NativeMethods.hegel_zoned_spec_validate(Ctx, spec);
+
+    public int GenerateZonedDatetime(nint testCase, nint timezoneSpec, nint zonedSpec, out HegelZonedDateTime value, out string zone)
+    {
+        HegelZonedDateTime o;
+        HegelString name;
+        var rc = NativeMethods.hegel_generate_zoned_datetime(Ctx, testCase, timezoneSpec, zonedSpec, &o, &name);
+        value = o;
+        zone = rc == Abi.Ok ? Owned(name) : "";
+        return rc;
+    }
+
+    public int GenerateZonedDatetimeForZone(nint testCase, nint source, string name, nint zonedSpec, out HegelZonedDateTime value)
+    {
+        using var a = new Arena();
+        HegelZonedDateTime o;
+        var rc = NativeMethods.hegel_generate_zoned_datetime_for_zone(Ctx, testCase, source, a.Str(name), zonedSpec, &o);
+        value = o;
+        return rc;
+    }
+
+    public int ZoneSourceNew(out nint source)
+    {
+        nint o;
+        var rc = NativeMethods.hegel_zone_source_new(Ctx, &o);
+        source = o;
+        return rc;
+    }
+
+    public int ZoneSourceBundled(out nint source)
+    {
+        nint o;
+        var rc = NativeMethods.hegel_zone_source_bundled(Ctx, &o);
+        source = o;
+        return rc;
+    }
+
+    public void ZoneSourceFree(nint source) => NativeMethods.hegel_zone_source_free(Ctx, source);
+
+    public int ZoneSourceAddTzif(nint source, string name, byte[] bytes)
+    {
+        using var a = new Arena();
+        fixed (byte* p = bytes)
+        {
+            return NativeMethods.hegel_zone_source_add_tzif(Ctx, source, a.Str(name), p, (nuint)bytes.Length);
+        }
+    }
+
+    /// <summary>What an oracle's callbacks reach through their user data, alive for one <c>hegel_zone_source_add_oracle</c> call.</summary>
+    private sealed class OracleState
+    {
+        private readonly Func<long, OracleType> _offsetAt;
+        private readonly Func<long, long?>? _nextTransition;
+        private string? _abbreviation;
+        private HegelString _abbreviationBytes;
+
+        public OracleState(Func<long, OracleType> offsetAt, Func<long, long?>? nextTransition)
+        {
+            _offsetAt = offsetAt;
+            _nextTransition = nextTransition;
+        }
+
+        public HegelZoneType OffsetAt(long instant)
+        {
+            var type = _offsetAt(instant);
+            if (type.Abbreviation != _abbreviation)
+            {
+                var bytes = Encoding.UTF8.GetBytes(type.Abbreviation);
+                Release();
+                var copy = (byte*)NativeMemory.Alloc((nuint)Math.Max(bytes.Length, 1));
+                bytes.CopyTo(new Span<byte>(copy, bytes.Length));
+                _abbreviationBytes = new HegelString { Data = copy, Len = (nuint)bytes.Length };
+                _abbreviation = type.Abbreviation;
+            }
+            return new HegelZoneType { Utoff = type.Utoff, IsDst = type.IsDst ? (byte)1 : (byte)0, Abbreviation = _abbreviationBytes };
+        }
+
+        public long? NextTransition(long after) => _nextTransition!(after);
+
+        public void Release()
+        {
+            NativeMemory.Free(_abbreviationBytes.Data);
+            _abbreviationBytes = default;
+            _abbreviation = null;
+        }
+    }
+
+    private static int CallbackFailed(nint ctx, Exception e)
+    {
+        var message = Encoding.UTF8.GetBytes(e.Message);
+        fixed (byte* p = message)
+        {
+            NativeMethods.hegel_context_set_error(ctx, new HegelString { Data = p, Len = (nuint)message.Length });
+        }
+        return 1;
+    }
+
+    [UnmanagedCallersOnly]
+    private static int OnOffsetAt(nint userData, nint ctx, long instant, HegelZoneType* outType)
+    {
+        var outer = _callbackContext;
+        _callbackContext = ctx;
+        try
+        {
+            *outType = ((OracleState)GCHandle.FromIntPtr(userData).Target!).OffsetAt(instant);
+            return 0;
+        }
+        catch (Exception e)
+        {
+            return CallbackFailed(ctx, e);
+        }
+        finally
+        {
+            _callbackContext = outer;
+        }
+    }
+
+    [UnmanagedCallersOnly]
+    private static int OnNextTransition(nint userData, nint ctx, long after, byte* outFound, long* outInstant)
+    {
+        var outer = _callbackContext;
+        _callbackContext = ctx;
+        try
+        {
+            var next = ((OracleState)GCHandle.FromIntPtr(userData).Target!).NextTransition(after);
+            *outFound = next.HasValue ? (byte)1 : (byte)0;
+            *outInstant = next.GetValueOrDefault();
+            return 0;
+        }
+        catch (Exception e)
+        {
+            return CallbackFailed(ctx, e);
+        }
+        finally
+        {
+            _callbackContext = outer;
+        }
+    }
+
+    public int ZoneSourceAddOracle(nint source, string name, Func<long, OracleType> offsetAt, Func<long, long?>? nextTransition, int firstYear, int lastYear, uint after)
+    {
+        using var a = new Arena();
+        var state = new OracleState(offsetAt, nextTransition);
+        var handle = GCHandle.Alloc(state);
+        try
+        {
+            var oracle = new HegelZoneOracle
+            {
+                OffsetAt = &OnOffsetAt,
+                NextTransition = nextTransition == null ? null : &OnNextTransition,
+                UserData = GCHandle.ToIntPtr(handle),
+                FirstYear = firstYear,
+                LastYear = lastYear,
+                After = after,
+            };
+            return NativeMethods.hegel_zone_source_add_oracle(Ctx, source, a.Str(name), &oracle);
+        }
+        finally
+        {
+            state.Release();
+            handle.Free();
+        }
+    }
+
+    public int ZoneSourceAddLink(nint source, string name, string target)
+    {
+        using var a = new Arena();
+        return NativeMethods.hegel_zone_source_add_link(Ctx, source, a.Str(name), a.Str(target));
+    }
+
+    public int ZoneSourceDeclare(nint source, IReadOnlyList<string> names)
+    {
+        using var a = new Arena();
+        return NativeMethods.hegel_zone_source_declare(Ctx, source, a.Strs(names), (nuint)names.Count);
+    }
+
+    [UnmanagedCallersOnly]
+    private static int OnLoad(nint userData, nint ctx, nint source, HegelString name)
+    {
+        var outer = _callbackContext;
+        _callbackContext = ctx;
+        try
+        {
+            ((Action<nint, string>)GCHandle.FromIntPtr(userData).Target!)(source, Borrowed(name));
+            return 0;
+        }
+        catch (Exception e)
+        {
+            return CallbackFailed(ctx, e);
+        }
+        finally
+        {
+            _callbackContext = outer;
+        }
+    }
+
+    [UnmanagedCallersOnly]
+    private static void OnLoaderRelease(nint userData) => GCHandle.FromIntPtr(userData).Free();
+
+    public int ZoneSourceSetLoader(nint source, Action<nint, string> loader) =>
+        NativeMethods.hegel_zone_source_set_loader(Ctx, source, &OnLoad, GCHandle.ToIntPtr(GCHandle.Alloc(loader)), &OnLoaderRelease);
+
+    public int ZoneSourceSetVersion(nint source, string version)
+    {
+        using var a = new Arena();
+        return NativeMethods.hegel_zone_source_set_version(Ctx, source, a.Str(version));
+    }
+
+    public int ZoneSourceVersion(nint source, out string version)
+    {
+        HegelString o;
+        var rc = NativeMethods.hegel_zone_source_version(Ctx, source, &o);
+        version = rc == Abi.Ok ? Borrowed(o) : "";
+        return rc;
+    }
+
+    public int ZoneSourceNameCount(nint source, out ulong count)
+    {
+        nuint o;
+        var rc = NativeMethods.hegel_zone_source_name_count(Ctx, source, &o);
+        count = o;
+        return rc;
+    }
+
+    public int ZoneSourceName(nint source, ulong index, out string name)
+    {
+        HegelString o;
+        var rc = NativeMethods.hegel_zone_source_name(Ctx, source, (nuint)index, &o);
+        name = rc == Abi.Ok ? Borrowed(o) : "";
+        return rc;
+    }
+
+    public int TimezoneInfoIn(nint source, string name, out ZoneNameInfo info)
+    {
+        using var a = new Arena();
+        HegelTimezoneInfo o;
+        var rc = NativeMethods.hegel_timezone_info_in(Ctx, source, a.Str(name), &o);
+        info = rc == Abi.Ok ? new ZoneNameInfo(o.Known != 0, o.IsLink != 0, o.Tags) : default;
+        return rc;
+    }
+
+    public int FormatSpan(HegelSpan value, out string text)
+    {
+        HegelString o;
+        var rc = NativeMethods.hegel_format_span(Ctx, &value, &o);
+        text = rc == Abi.Ok ? Owned(o) : "";
+        return rc;
+    }
+
+    public int FormatZonedDatetime(HegelZonedDateTime value, string zone, out string text)
+    {
+        using var a = new Arena();
+        HegelString o;
+        var rc = NativeMethods.hegel_format_zoned_datetime(Ctx, &value, a.Str(zone), &o);
+        text = rc == Abi.Ok ? Owned(o) : "";
         return rc;
     }
 

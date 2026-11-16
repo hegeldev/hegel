@@ -113,7 +113,8 @@ Generators.Tuples(Generators.Integers(), Generators.Booleans())
 Generators.SampledFrom(["red", "green", "blue"])
 Generators.OneOf(Generators.Integers(), Generators.Just(-1))
 Generators.Nullable(Generators.Integers())
-Generators.Dates(), Generators.DateTimes().WithTimeZones(Generators.TimeZones())
+Generators.Dates().Min(new DateOnly(2020, 1, 1)).Weekdays(DayOfWeek.Saturday, DayOfWeek.Sunday)
+Generators.ZonedDateTimes().Zones(Generators.Zones().Names("Europe/London", "America/New_York"))
 ```
 
 Generators compose with `Map`, `Filter` and `FlatMap`:
@@ -145,6 +146,33 @@ var ranges = Generators.Composite(tc =>
 ```
 
 `Generators.ForType<T>()` derives a generator from a type: the scalars, `Nullable<T>`, enums, arrays, `List<T>`, `HashSet<T>`, `Dictionary<K, V>`, tuples, and records, recursively through their primary constructors and settable properties. `Generators.Records<T>()` does the same for one record and lets you override a component with `.With("Name", generator)`. `Generators.Recursive(base, extend)` builds trees, and `Generators.Deferred<T>()` lets a generator refer to itself.
+
+### Dates and times
+
+`Generators.Dates()`, `Times()`, `DateTimes()`, `Instants()`, `Offsets()`, `Durations()`, `Spans()`, `Zones()` and `ZonedDateTimes()` draw dates and times, under the names every Hegel frontend uses:
+
+| Generator | Draws | Narrowed with |
+|---|---|---|
+| `Dates()` | `DateOnly` | `Min`, `Max`, `Weekdays`, `Months` |
+| `Times()` | `TimeOnly` | `Min`, `Max`, `Precision` |
+| `DateTimes()` | `DateTime` with no zone (`DateTimeKind.Unspecified`) | `Min`, `Max`, `Precision`; `WithOffsets` makes them `DateTimeOffset`s |
+| `Instants()` | `DateTimeOffset` with a zero offset | `Min`, `Max`, `Precision` |
+| `Offsets()` | `TimeSpan`, a UTC offset: whole minutes from -14:00 to +14:00 | `Min`, `Max`, `Granularity` |
+| `Durations()` | `TimeSpan` of either sign | `Min`, `Max`, `Precision` |
+| `Spans()` | `CalendarSpan`, a count of each unit from years to nanoseconds | `Years(min, max)` … `Nanoseconds(min, max)`, `Sign` |
+| `Zones()` | `TimeZoneInfo` | `Names`, `AllowLinks`, `AllowLegacy`, `Source` |
+| `ZonedDateTimes()` | `ZonedDateTime` | `Zones`, `Source`, `Min`, `Max`, `Precision`, `Ambiguous`, `AllowImaginary` |
+
+A `ZonedDateTime` is a wall-clock time in a zone, with the offset and instant the zone gives it and a `Kind` that says whether the clocks showed that time once, twice (`Earlier`, `Later`) or never (`Skipped`). Hegel aims draws at the zone's transitions, so a property over `ZonedDateTimes()` meets repeated times without being told to, and skipped ones once `AllowImaginary(true)` asks for them:
+
+```csharp
+var meeting = tc.Draw(Generators.ZonedDateTimes().Min(new DateTime(2024, 1, 1)).Max(new DateTime(2024, 12, 31)));
+Assert.Equal(meeting.Offset, meeting.Zone.GetUtcOffset(meeting.Instant));
+```
+
+Zones and their rules come from a `ZoneSource`. The default, `ZoneSource.Host`, is this system's zones as `TimeZoneInfo` reports them, which is what code using `TimeZoneInfo` sees. `ZoneSource.Bundled` is the IANA database built into Hegel, the same on every machine; `ZoneSource.FromTimeZones(...)` draws your own `TimeZoneInfo` objects, `TimeZoneInfo.CreateCustomTimeZone` ones included; and `ZoneSource.CreateBuilder()` builds a source from TZif files, `TimeZoneInfo` objects, offset functions and links. Give one to a generator with `.Source(source)`, or to every generator made from then on with `ZoneSource.SetDefault(source)`.
+
+A setting the engine rejects is an `ArgumentException` from the builder method that completes the mistake, whatever order the methods are called in: `Dates().Min(a).Max(b)` and `Dates().Max(b).Min(a)` both throw at the second call when `a` is after `b`. A conflict with a default that a later call could still change is reported by the first draw instead.
 
 Values are printed in a failure as the C# that constructs them. Your own types print with `ToString()`; a generator you write can print its draws itself by extending `PrintableGenerator<T>`, or you can attach a printer to any generator with `PrintWith`.
 
@@ -246,7 +274,11 @@ Gen.tuple2 Gen.int Gen.string           // int * string, up to tuple5
 Gen.item [ "red"; "green"; "blue" ]
 Gen.oneOf [ Gen.int; Gen.constant -1 ]
 Gen.regex "[a-z]+@[a-z]+\\.com"
+Gen.dateOnly.Min(DateOnly(2020, 1, 1))
+Gen.zonedDateTime().Source(ZoneSource.Bundled)
 ```
+
+The date and time generators are `Gen.dateOnly`, `Gen.timeOnly`, `Gen.dateTime`, `Gen.dateTimeOffset`, `Gen.instant`, `Gen.offset`, `Gen.duration`, `Gen.span`, `Gen.zone ()` and `Gen.zonedDateTime ()`. The last two are functions because a zone generator reads `ZoneSource.Default` when it is made.
 
 Generators compose with `Gen.map`, `Gen.filter` and `Gen.bind`, or in a `gen { }` block, which draws from each generator it binds:
 

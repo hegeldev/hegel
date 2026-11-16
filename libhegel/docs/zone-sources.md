@@ -1,7 +1,7 @@
 # Zone sources: generating against the time zone data the code under test uses
 
 Status: implemented in the engine (2026-10-23) and adopted by every
-frontend except C#, which has no zoned draws yet. Supersedes the
+frontend. Supersedes the
 version-skew contract of `datetime.md` §8.1. The Summary and §1 describe
 the problem as it stood before zone sources.
 
@@ -368,7 +368,7 @@ hegel_result_t hegel_timezone_info_in(hegel_context_t*, const hegel_zone_source_
 
 ## 4. Per frontend
 
-Every frontend but C# exposes a zone-source abstraction in its own idiom, so that
+Every frontend exposes a zone-source abstraction in its own idiom, so that
 an integration with any date/time library can supply one, not just the
 built-ins below. Each one says which database it draws against, and
 generators built on a library default to that library's source.
@@ -387,6 +387,7 @@ generators built on a library default to that library's source.
 | TypeScript, Temporal present | oracle (next transition) | `Temporal.ZonedDateTime#getTimeZoneTransition` | The process default where `Temporal` exists. Exact transitions within the probe range; footer inferred beyond it. |
 | TypeScript, `Intl` only | oracle (offset at t) | `Intl.DateTimeFormat` with `timeZoneName: "longOffset"` | The process default otherwise. Slower probing; lazy, per drawn zone. Keep today's reject on disagreement as a safety net for anything beyond the probe range. |
 | Go, `time` | oracle (next transition), lazy | `time.LoadLocation`: each zone's offsets and transitions (`Time.ZoneBounds`) probed through the loaded `*time.Location` | The frontend's default. Go cannot list its zone names, so the source declares the names of the bundled source (`hegel_zone_source_name`) that `time.LoadLocation` loads. The frontend keeps the default itself and attaches the source to each spec. `ZoneSourceFromLocations` builds a source the same way from given locations. |
+| C#, `TimeZoneInfo` | oracle (offset at t), lazy | `TimeZoneInfo.FindSystemTimeZoneById`: each zone's `GetUtcOffset`, probed over 1800 to 2100 with the yearly rule inferred beyond | The frontend's default (`ZoneSource.Host`). `TimeZoneInfo.GetSystemTimeZones` lists Windows ids on Windows, so the source declares the names of the bundled source that `TimeZoneInfo` finds. The frontend keeps the default itself and attaches the source to each spec. `ZoneSource.FromTimeZones` builds a source the same way from given `TimeZoneInfo` objects, custom ones included. .NET rounds an offset to whole minutes and reports no release, so the version is empty and a zoned draw the `TimeZoneInfo` reads at another offset is rejected. |
 
 Wherever a source is exact (TZif, `java.time`, Boost), the
 reject-on-disagreement checks in Java, Python and TypeScript become dead
