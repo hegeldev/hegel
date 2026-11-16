@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.3 - 2026-11-16
+
+This release updates the bundled libhegel engine to 0.51.6.
+
 ## 0.2.2 - 2026-11-13
 
 This patch fixes a number of bugs in how values are printed and how generators are derived.

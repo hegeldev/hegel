@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.12.5 - 2026-11-16
+
+This release updates the bundled libhegel engine to 0.51.6.
+
 ## 0.12.4 - 2026-11-13
 
 This patch adds `pauseFaults` to `@Invariant`. An invariant declared with `@Invariant(pauseFaults = true)` is bracketed by the engine's new `hegel_pause_faults` / `hegel_unpause_faults` calls every time it runs (on the initial state, at each sampled join point and on the final state, in both the sequential and the concurrent driver), and is unpaused even when it throws:

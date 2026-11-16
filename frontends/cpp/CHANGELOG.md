@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.17.6 - 2026-11-16
+
+This release updates the bundled libhegel engine to 0.51.6.
+
 ## 0.17.5 - 2026-11-13
 
 This patch adds a `pause_faults` flag to `hegel::stateful::InvariantParams`, next to `always_check`. An invariant declared with it asks the engine to pause fault injection for the duration of each of its checks, in sequential and concurrent state machines alike, so that inside Antithesis no fault lands in the middle of the check. Fault injection resumes when the check returns or throws.

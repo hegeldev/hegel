@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.8 - 2026-11-16
+
+This release updates the bundled libhegel engine to 0.51.6.
+
 ## 0.5.7 - 2026-11-13
 
 This patch adds a `pauseFaults` option to the invariants of a `stateful.StateMachine`, alongside `alwaysCheck`. An invariant declared with `{ check, pauseFaults: true }` asks the engine to pause fault injection while it runs, so that inside [Antithesis](https://antithesis.com/) no fault lands in the middle of the check; faults resume as soon as the check returns or throws.

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.8 - 2026-11-16
+
+This release updates the bundled libhegel engine to 0.51.6.
+
 ## 0.4.7 - 2026-11-13
 
 This patch adds a `pause_faults` flag to stateful invariants, next to `always_run`: on `@hegel.invariant(...)`, `Machine.invariant(...)` and the `Invariant` dataclass. An invariant declared with `pause_faults=True` has fault injection paused for the duration of each check, so that inside [Antithesis](https://antithesis.com/) the fault injector stops while the invariant runs and the check observes the system under test without a fault landing in the middle of it.
