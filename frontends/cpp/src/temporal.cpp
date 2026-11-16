@@ -50,6 +50,36 @@ namespace hegel::generators::temporal {
             return whole + fraction;
         }
 
+        std::optional<uint64_t> unsigned_units_from_parts(int64_t seconds,
+                                                          int64_t nanos,
+                                                          int64_t unit_nanos) {
+            if (seconds < 0 || nanos < 0) {
+                return std::nullopt;
+            }
+            uint64_t whole_seconds = static_cast<uint64_t>(seconds);
+            if (unit_nanos >= nanos_per_second) {
+                uint64_t seconds_per_unit =
+                    static_cast<uint64_t>(unit_nanos / nanos_per_second);
+                if (nanos != 0 || whole_seconds % seconds_per_unit != 0) {
+                    return std::nullopt;
+                }
+                return whole_seconds / seconds_per_unit;
+            }
+            uint64_t units_per_second =
+                static_cast<uint64_t>(nanos_per_second / unit_nanos);
+            if (nanos % unit_nanos != 0 ||
+                whole_seconds >
+                    std::numeric_limits<uint64_t>::max() / units_per_second) {
+                return std::nullopt;
+            }
+            uint64_t whole = whole_seconds * units_per_second;
+            uint64_t fraction = static_cast<uint64_t>(nanos / unit_nanos);
+            if (whole > std::numeric_limits<uint64_t>::max() - fraction) {
+                return std::nullopt;
+            }
+            return whole + fraction;
+        }
+
         std::optional<std::pair<int64_t, int64_t>>
         parts_from_units(int64_t count, int64_t unit_nanos, bool floor) {
             if (unit_nanos >= nanos_per_second) {
@@ -70,6 +100,26 @@ namespace hegel::generators::temporal {
                 remainder += units_per_second;
             }
             return std::pair<int64_t, int64_t>{seconds, remainder * unit_nanos};
+        }
+
+        std::optional<std::pair<int64_t, int64_t>>
+        parts_from_unsigned_units(uint64_t count, int64_t unit_nanos) {
+            if (unit_nanos >= nanos_per_second) {
+                uint64_t seconds_per_unit =
+                    static_cast<uint64_t>(unit_nanos / nanos_per_second);
+                if (count >
+                    static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) /
+                        seconds_per_unit) {
+                    return std::nullopt;
+                }
+                return std::pair<int64_t, int64_t>{
+                    static_cast<int64_t>(count * seconds_per_unit), 0};
+            }
+            uint64_t units_per_second =
+                static_cast<uint64_t>(nanos_per_second / unit_nanos);
+            return std::pair<int64_t, int64_t>{
+                static_cast<int64_t>(count / units_per_second),
+                static_cast<int64_t>(count % units_per_second) * unit_nanos};
         }
 
     } // namespace detail

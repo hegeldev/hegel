@@ -36,8 +36,9 @@ option(HEGEL_REFLECTION "Enable reflect-cpp powered default_generator (requires 
 option(HEGEL_THROW_SITE "Name throw sites in failure reports (requires a shared C++ runtime)" ON)
 
 # The Boost.DateTime adapter (hegel/extras/boost_date_time.h) as the target
-# hegel::boost_date_time, and its tests. OFF keeps Boost out of the build;
-# see cmake/boost_date_time.cmake.
+# hegel::boost_date_time, and its tests. The target is installed and exported
+# with the library, and the installed package then needs Boost. OFF keeps
+# Boost out of the build and the package; see cmake/boost_date_time.cmake.
 option(HEGEL_BOOST_DATE_TIME "Build the Boost.DateTime zone source adapter target and its tests" OFF)
 
 # The library builds at C++20; with HEGEL_REFLECTION=OFF the public headers are
@@ -164,6 +165,10 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
   )
+
+  if(HEGEL_BOOST_DATE_TIME)
+    install(TARGETS hegel_boost_date_time EXPORT hegelTargets)
+  endif()
 
   # Ship libhegel beside the static archive. The static lib's hegel_* symbols
   # are resolved against this shared library when a consumer links the final

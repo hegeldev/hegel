@@ -27,8 +27,8 @@ namespace hegel::generators::temporal {
         constexpr DateTime min_datetime{{MIN_YEAR, 1, 1}, {0, 0, 0, 0}};
         constexpr DateTime max_datetime{{MAX_YEAR, 12, 31},
                                         {23, 59, 59, 999'999'999}};
-        constexpr Instant lowest_instant{MIN_INSTANT, 0};
-        constexpr Instant highest_instant{MAX_INSTANT, 999'999'999};
+        using detail::highest_instant;
+        using detail::lowest_instant;
         constexpr SignedDuration min_duration{
             std::numeric_limits<int64_t>::min(), -999'999'999};
         constexpr SignedDuration max_duration{
@@ -217,7 +217,7 @@ namespace hegel::generators::temporal {
         class InstantsGenerator
             : public generators::detail::ValuePrinted<Instant> {
           public:
-            explicit InstantsGenerator(const InstantsParams& params)
+            explicit InstantsGenerator(const InstantsParams<Instant>& params)
                 : min_(params.min_value.value_or(lowest_instant)),
                   max_(params.max_value.value_or(highest_instant)),
                   precision_(precision_to_c(params.precision)) {
@@ -521,7 +521,8 @@ namespace hegel::generators::temporal {
         return Generator<DateTime>(new DatetimesGenerator(params));
     }
 
-    Generator<Instant> instants(InstantsParams params) {
+    Generator<Instant>
+    detail::engine_instants(const InstantsParams<Instant>& params) {
         return Generator<Instant>(new InstantsGenerator(params));
     }
 

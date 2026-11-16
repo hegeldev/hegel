@@ -1,11 +1,13 @@
 #pragma once
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "hegel/core.h"
@@ -64,9 +66,24 @@ namespace hegel::generators::temporal {
     };
 
     /**
-     * @brief Parameters for instants() generator.
+     * @brief Parameters for instants() generator over a
+     * `std::chrono::system_clock` time point.
+     * @tparam TimePoint The `std::chrono::time_point` type, or Instant for
+     *   the specialization that also takes a precision.
      */
-    struct InstantsParams {
+    template <typename TimePoint = Instant> struct InstantsParams {
+        /// Minimum time point (inclusive). Default: the lowest value both
+        /// the type and the engine hold.
+        std::optional<TimePoint> min_value;
+        /// Maximum time point (inclusive). Default: the highest value both
+        /// the type and the engine hold.
+        std::optional<TimePoint> max_value;
+    };
+
+    /**
+     * @brief Parameters for instants() generator over Instant.
+     */
+    template <> struct InstantsParams<Instant> {
         /// Minimum instant (inclusive). Default: MIN_INSTANT.
         std::optional<Instant> min_value;
         /// Maximum instant (inclusive). Default: the last nanosecond of
@@ -269,6 +286,46 @@ namespace hegel::generators::temporal {
             static constexpr Precision value = Precision::Hours;
         };
 
+        inline constexpr Instant lowest_instant{MIN_INSTANT, 0};
+        inline constexpr Instant highest_instant{MAX_INSTANT, 999'999'999};
+
+        // The engine precision of an instant draw for a time point type:
+        // the finest one that is a whole number of the type's ticks, so
+        // that the type holds every instant at it. `known` is false for
+        // a type that does not convert to Instant, and for a tick that
+        // does not divide an hour.
+        template <typename TimePoint, bool = holds_instants<TimePoint>::value>
+        struct time_point_precision {
+            static constexpr bool known = false;
+            static constexpr Precision value = Precision::Nanoseconds;
+        };
+        template <typename TimePoint>
+        struct time_point_precision<TimePoint, true> {
+            static constexpr int64_t tick =
+                period_nanos<typename TimePoint::period>::value;
+            static constexpr bool known = 3'600'000'000'000 % tick == 0;
+            static constexpr Precision value =
+                1 % tick == 0                ? Precision::Nanoseconds
+                : 1'000 % tick == 0          ? Precision::Microseconds
+                : 1'000'000 % tick == 0      ? Precision::Milliseconds
+                : 1'000'000'000 % tick == 0  ? Precision::Seconds
+                : 60'000'000'000 % tick == 0 ? Precision::Minutes
+                                             : Precision::Hours;
+        };
+
+        // The Instant at a time since the epoch, inside the engine's range
+        // or not; nullopt when its seconds do not fit in int64_t.
+        template <typename Rep, typename Period>
+        std::optional<Instant>
+        instant_at(std::chrono::duration<Rep, Period> since_epoch) {
+            std::optional<std::pair<int64_t, int64_t>> parts =
+                parts_from_duration(since_epoch, /*floor=*/true);
+            if (!parts) {
+                return std::nullopt;
+            }
+            return Instant{parts->first, static_cast<uint32_t>(parts->second)};
+        }
+
     } // namespace detail
     /// @endcond
 
@@ -321,22 +378,6 @@ namespace hegel::generators::temporal {
      *   bounds holding no value at the precision.
      */
     Generator<DateTime> datetimes(DatetimesParams params = {});
-
-    /**
-     * @brief Generate Instant values.
-     *
-     * By default any instant of the engine's range, years ±999,999, at
-     * nanosecond precision; shrinks toward 2000-01-01T00:00:00Z or the
-     * nearest bound. One draw in twenty on average targets an interesting
-     * instant: the Unix epoch, the 32-bit and 64-bit boundaries, a leap
-     * second's or a time zone transition's.
-     *
-     * @param params Bounds and precision.
-     * @return Generator producing instants.
-     * @throws std::invalid_argument for an invalid or inverted bound, or
-     *   bounds holding no value at the precision.
-     */
-    Generator<Instant> instants(InstantsParams params = {});
 
     /**
      * @brief Generate UtcOffset values.
@@ -461,11 +502,136 @@ namespace hegel::generators::temporal {
     /// @cond INTERNAL
     namespace detail {
 
+        Generator<Instant>
+        engine_instants(const InstantsParams<Instant>& params);
+
         Generator<SignedDuration>
         signed_durations(const DurationsParams<SignedDuration>& params);
 
+        template <typename TimePoint>
+        class TimePointsGenerator
+            : public generators::detail::ValuePrinted<TimePoint> {
+          public:
+            explicit TimePointsGenerator(Generator<Instant> instants)
+                : instants_(std::move(instants)) {}
+
+            TimePoint do_draw(const TestCase& tc) const override {
+                return *instants_.do_draw(tc)
+                            .template to_chrono<typename TimePoint::duration>();
+            }
+
+            uint64_t label() const override { return instants_.label(); }
+
+          private:
+            Generator<Instant> instants_;
+        };
+
+        template <typename TimePoint>
+        Generator<TimePoint>
+        time_points(const InstantsParams<TimePoint>& params) {
+            using Duration = typename TimePoint::duration;
+            InstantsParams<Instant> inner;
+            inner.precision = time_point_precision<TimePoint>::value;
+            if (params.min_value.has_value()) {
+                inner.min_value =
+                    instant_at(params.min_value->time_since_epoch());
+                if (!inner.min_value.has_value()) {
+                    throw std::invalid_argument(
+                        "min_value lies outside the engine's instant range");
+                }
+            } else {
+                inner.min_value = std::max(
+                    instant_at(Duration::min()).value_or(lowest_instant),
+                    lowest_instant);
+            }
+            if (params.max_value.has_value()) {
+                inner.max_value =
+                    instant_at(params.max_value->time_since_epoch());
+                if (!inner.max_value.has_value()) {
+                    throw std::invalid_argument(
+                        "max_value lies outside the engine's instant range");
+                }
+            } else {
+                inner.max_value = std::min(
+                    instant_at(Duration::max()).value_or(highest_instant),
+                    highest_instant);
+            }
+            return Generator<TimePoint>(
+                new TimePointsGenerator<TimePoint>(engine_instants(inner)));
+        }
+
     } // namespace detail
     /// @endcond
+
+    /**
+     * @brief Generate Instant values, or `std::chrono::system_clock` time
+     * points when `TimePoint` is one.
+     *
+     * For Instant, the default: by default any instant of the engine's
+     * range, years ±999,999, at nanosecond precision; shrinks toward
+     * 2000-01-01T00:00:00Z or the nearest bound. One draw in twenty on
+     * average targets an interesting instant: the Unix epoch, the 32-bit
+     * and 64-bit boundaries, a leap second's or a time zone transition's.
+     *
+     * For a `std::chrono::time_point` of `std::chrono::system_clock`, the
+     * same draw at the precision and within the range of the type, so
+     * that the type holds every drawn instant exactly. The precision is
+     * the finest of the engine's (Precision) that is a whole number of
+     * the duration's ticks: `std::chrono::milliseconds` draws whole
+     * milliseconds, and a tick of 100 nanoseconds whole microseconds. The
+     * default bounds are the widest both the type and the engine hold: a
+     * 64-bit count of nanoseconds gives the years 1678 to 2262, and one
+     * of seconds the engine's range. A failure report shows a drawn time
+     * point as its type and the text of the instant:
+     * `std::chrono::sys_time<std::chrono::milliseconds>{"2024-03-10T02:30:00.5Z"}`.
+     *
+     * The duration must have an integer count of at most 64 bits and a
+     * tick that is a whole number of nanoseconds and divides a second,
+     * or a whole number of seconds that divides an hour. Any other
+     * duration, such as `std::chrono::days` or one finer than
+     * nanoseconds, does not compile: draw `std::chrono::hours` and
+     * convert. Only `std::chrono::system_clock` is supported, the one
+     * clock whose epoch every toolchain fixes at the Unix epoch; convert
+     * to another clock with `std::chrono::clock_cast` where the standard
+     * library has it.
+     *
+     * @code{.cpp}
+     * auto at = tc.draw(
+     *     gs::temporal::instants({.precision = Precision::Seconds}));
+     * using sys_ms = std::chrono::sys_time<std::chrono::milliseconds>;
+     * auto ms = tc.draw(gs::temporal::instants<sys_ms>(
+     *     {.min_value = sys_ms{std::chrono::milliseconds{0}}}));
+     * auto now = tc.draw(
+     *     gs::temporal::instants<std::chrono::system_clock::time_point>());
+     * @endcode
+     *
+     * @tparam TimePoint Instant (the default) or a `std::chrono::time_point`
+     *   of `std::chrono::system_clock`.
+     * @param params Bounds and, for Instant, the precision.
+     * @return Generator producing instants.
+     * @throws std::invalid_argument for an invalid or inverted bound, a
+     *   bound outside the engine's range, or bounds holding no value at the
+     *   precision.
+     */
+    template <typename TimePoint = Instant>
+    Generator<TimePoint> instants(InstantsParams<TimePoint> params = {}) {
+        if constexpr (std::is_same_v<TimePoint, Instant>) {
+            return detail::engine_instants(params);
+        } else {
+            static_assert(detail::is_system_time_point<TimePoint>::value,
+                          "instants<TimePoint>() requires Instant or a "
+                          "std::chrono::time_point of "
+                          "std::chrono::system_clock");
+            static_assert(detail::time_point_precision<TimePoint>::known,
+                          "instants<TimePoint>() requires a duration with an "
+                          "integer count of at most 64 bits and a tick that "
+                          "is a whole number of nanoseconds and divides a "
+                          "second, or a whole number of seconds that divides "
+                          "an hour; for another duration draw "
+                          "std::chrono::hours or finer and convert");
+            return detail::time_points(params);
+        }
+    }
 
     /**
      * @brief Generate SignedDuration values, or `std::chrono::duration`

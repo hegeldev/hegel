@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <regex>
@@ -139,6 +140,10 @@ TEST(FailureReport, TemporalValuesPrintAsTheirTypeAndTheEngineText) {
             "offset",
             temporal::offsets({.min_value = temporal::UtcOffset{19'800},
                                .max_value = temporal::UtcOffset{19'800}}));
+        (void)tc.draw(
+            "sent",
+            temporal::instants<std::chrono::time_point<
+                std::chrono::system_clock, std::chrono::milliseconds>>());
         throw std::runtime_error("boom");
     });
     Approvals::verify(out, scrub_blob());

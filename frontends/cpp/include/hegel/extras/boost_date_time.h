@@ -6,13 +6,24 @@
  *
  * Header-only, and the only part of Hegel that uses Boost: include it in a
  * project that already uses Boost.DateTime (1.73 or later, where the
- * library is header-only) and link Hegel and Boost as usual. A project
- * that builds Hegel as part of its own build (`FetchContent` or
- * `add_subdirectory`) can set `HEGEL_BOOST_DATE_TIME=ON` to get the CMake
- * target `hegel::boost_date_time`, which links Hegel and the Boost headers
- * (an installed Boost when CMake finds one, otherwise a Boost release
- * fetched at configure time). An installed Hegel has the header and no
- * such target.
+ * library is header-only) and link Hegel and Boost as usual. Or build
+ * Hegel with `HEGEL_BOOST_DATE_TIME=ON` to get the CMake target
+ * `hegel::boost_date_time`, which links Hegel and the Boost headers:
+ *
+ * - In a project that builds Hegel as part of its own build
+ *   (`FetchContent` or `add_subdirectory`), the target uses an installed
+ *   Boost when CMake finds one, otherwise a Boost release fetched at
+ *   configure time.
+ * - A Hegel installed from such a build exports the target, and its CMake
+ *   package then needs an installed Boost:
+ *   `find_package(hegel REQUIRED COMPONENTS boost_date_time)` finds it. A
+ *   Hegel built without the option has the header and no such target, and
+ *   asking for the component fails with a message that says so.
+ *
+ * @code{.cmake}
+ * find_package(hegel REQUIRED COMPONENTS boost_date_time)
+ * target_link_libraries(my_tests PRIVATE hegel::boost_date_time)
+ * @endcode
  *
  * A Boost time zone has one rule for all time: its current standard
  * offset and, when it has daylight-saving time, the dates that time starts

@@ -87,6 +87,54 @@ namespace {
                                       {hour, minute, second, nanosecond}};
     }
 
+    template <typename Duration>
+    using sys = std::chrono::time_point<std::chrono::system_clock, Duration>;
+
+    template <typename Duration>
+    constexpr gs::temporal::Precision precision_of =
+        gs::temporal::detail::time_point_precision<sys<Duration>>::value;
+
+    template <typename T>
+    constexpr bool draws_instants =
+        gs::temporal::detail::time_point_precision<T>::known;
+
+    // Checks that instants<sys<Duration>>() between -5 and 5 ticks draws
+    // each of those time points and no other.
+    template <typename Duration> void expect_every_tick_in_bounds() {
+        sys<Duration> lowest{Duration{-5}};
+        sys<Duration> highest{Duration{5}};
+        std::set<sys<Duration>> seen;
+        assert_all_examples<sys<Duration>>(
+            gs::temporal::instants<sys<Duration>>(
+                {.min_value = lowest, .max_value = highest}),
+            [&](const sys<Duration>& at) {
+                seen.insert(at);
+                return at >= lowest && at <= highest;
+            },
+            300);
+        EXPECT_EQ(seen.size(), 11U);
+    }
+
+    // A draw is a given bound of a wide range about once in 150 draws,
+    // so this many attempts find it.
+    constexpr uint64_t bound_attempts = 3000;
+
+    // Checks that instants<sys<Duration>>() draws both `lowest` and
+    // `highest` and nothing outside them.
+    template <typename Duration>
+    void expect_default_range(sys<Duration> lowest, sys<Duration> highest) {
+        auto gen = gs::temporal::instants<sys<Duration>>();
+        assert_all_examples<sys<Duration>>(gen, [&](const sys<Duration>& at) {
+            return at >= lowest && at <= highest;
+        });
+        find_any<sys<Duration>>(
+            gen, [&](const sys<Duration>& at) { return at == lowest; },
+            bound_attempts);
+        find_any<sys<Duration>>(
+            gen, [&](const sys<Duration>& at) { return at == highest; },
+            bound_attempts);
+    }
+
 } // namespace
 
 TEST(TemporalValues, DatesAndTimesPrintInRfc9557Form) {
@@ -602,6 +650,42 @@ TEST(TemporalChrono, EveryInstantATimePointHoldsConverts) {
                         .database = hegel::Database::disabled()});
 }
 
+TEST(TemporalChrono, UnsignedCountsConvertOverTheirWholeRange) {
+    using namespace std::chrono;
+    using gs::temporal::Instant;
+    using gs::temporal::SignedDuration;
+    using wide = duration<uint64_t, std::nano>;
+    using unsigned_minutes = duration<uint32_t, std::ratio<60>>;
+    Instant last{18'446'744'073, 709'551'615};
+    EXPECT_EQ(Instant::from_chrono(sys<wide>::max()), last);
+    EXPECT_EQ(last.to_chrono<wide>(), sys<wide>::max());
+    EXPECT_EQ((Instant{18'446'744'073, 709'551'616}).to_chrono<wide>(),
+              std::nullopt);
+    EXPECT_EQ((Instant{18'446'744'074, 0}).to_chrono<wide>(), std::nullopt);
+    EXPECT_EQ((Instant{-1, 0}).to_chrono<wide>(), std::nullopt);
+    using unsigned_micros = duration<uint64_t, std::micro>;
+    EXPECT_EQ((Instant{0, 1}).to_chrono<unsigned_micros>(), std::nullopt);
+    EXPECT_EQ((Instant{256, 0}).to_chrono<duration<uint8_t>>(), std::nullopt);
+    EXPECT_EQ((Instant{120, 0}).to_chrono<unsigned_minutes>(),
+              sys<unsigned_minutes>{unsigned_minutes{2}});
+    EXPECT_EQ((Instant{121, 0}).to_chrono<unsigned_minutes>(), std::nullopt);
+    EXPECT_EQ((Instant{120, 1}).to_chrono<unsigned_minutes>(), std::nullopt);
+    EXPECT_EQ(Instant::from_chrono(sys<unsigned_minutes>{unsigned_minutes{2}}),
+              (Instant{120, 0}));
+
+    EXPECT_EQ(SignedDuration::from_chrono(wide::max()),
+              (SignedDuration{18'446'744'073, 709'551'615}));
+    EXPECT_EQ((SignedDuration{18'446'744'073, 709'551'615}).to_chrono<wide>(),
+              wide::max());
+    EXPECT_EQ((SignedDuration{0, -1}).to_chrono<wide>(), std::nullopt);
+
+    assert_all_examples<wide>(gs::temporal::durations<wide>(),
+                              [](const wide&) { return true; });
+    find_any<wide>(
+        gs::temporal::durations<wide>(),
+        [](const wide& d) { return d == wide::max(); }, bound_attempts);
+}
+
 TEST(TemporalChrono, DatesConvertToAndFromYearMonthDay) {
     using namespace std::chrono;
     std::optional<year_month_day> ymd =
@@ -676,6 +760,32 @@ TEST(TemporalRepr, ValuesRenderAsTheirTypeAndTheEngineText) {
               "std::chrono::duration<int, std::ratio<1, 100>>{7}");
 }
 
+TEST(TemporalRepr, TimePointsRenderAsTheirTypeAndTheEngineText) {
+    using namespace std::chrono;
+    using hegel::internal::cpp_type_name;
+    using hegel::internal::repr;
+    EXPECT_EQ(cpp_type_name<sys<milliseconds>>(),
+              "std::chrono::sys_time<std::chrono::milliseconds>");
+    EXPECT_EQ(repr(sys<milliseconds>{milliseconds{1'710'037'800'500}}),
+              "std::chrono::sys_time<std::chrono::milliseconds>"
+              "{\"2024-03-10T02:30:00.5Z\"}");
+    EXPECT_EQ(repr(sys<nanoseconds>{nanoseconds{-1}}),
+              "std::chrono::sys_time<std::chrono::nanoseconds>"
+              "{\"1969-12-31T23:59:59.999999999Z\"}");
+    EXPECT_EQ(repr(sys<hours>{hours{24}}),
+              "std::chrono::sys_time<std::chrono::hours>"
+              "{\"1970-01-02T00:00:00Z\"}");
+    EXPECT_EQ(repr(std::vector<sys<seconds>>{sys<seconds>{seconds{0}}}),
+              "std::vector<std::chrono::sys_time<std::chrono::seconds>>{"
+              "std::chrono::sys_time<std::chrono::seconds>"
+              "{\"1970-01-01T00:00:00Z\"}}");
+    EXPECT_EQ(repr(sys<seconds>{seconds{gs::temporal::MAX_INSTANT + 1}}),
+              "std::chrono::sys_time<std::chrono::seconds>{" +
+                  repr(seconds{gs::temporal::MAX_INSTANT + 1}) + "}");
+    static_assert(hegel::is_representable_v<sys<milliseconds>>);
+    static_assert(hegel::is_representable_v<system_clock::time_point>);
+}
+
 TEST(TemporalGenerators, DrawAll) {
     hegel::test(
         [](hegel::TestCase& tc) {
@@ -732,6 +842,13 @@ TEST(TemporalGenerators, DrawAll) {
             (void)tc.draw(gs::temporal::durations<std::chrono::seconds>(
                 {.min_value = std::chrono::seconds{-10},
                  .max_value = std::chrono::seconds{10}}));
+            (void)tc.draw(gs::temporal::instants<gs::temporal::Instant>());
+            (void)tc.draw(gs::temporal::instants<
+                          std::chrono::system_clock::time_point>());
+            (void)tc.draw(gs::temporal::instants<sys<std::chrono::seconds>>(
+                {.min_value = sys<std::chrono::seconds>{},
+                 .max_value =
+                     sys<std::chrono::seconds>{std::chrono::seconds{10}}}));
         },
         hegel::Settings{.test_cases = 20,
                         .database = hegel::Database::disabled()});
@@ -1088,6 +1205,235 @@ TEST(TemporalGenerators,
                     [](const hours& d) { return d < hours{0}; });
 }
 
+TEST(TemporalGenerators, TimePointsDrawAtThePrecisionOfTheirTick) {
+    using namespace std::chrono;
+    using gs::temporal::Precision;
+    static_assert(precision_of<nanoseconds> == Precision::Nanoseconds);
+    static_assert(precision_of<microseconds> == Precision::Microseconds);
+    static_assert(precision_of<milliseconds> == Precision::Milliseconds);
+    static_assert(precision_of<seconds> == Precision::Seconds);
+    static_assert(precision_of<minutes> == Precision::Minutes);
+    static_assert(precision_of<hours> == Precision::Hours);
+    static_assert(precision_of<duration<int64_t, std::ratio<1, 10'000'000>>> ==
+                  Precision::Microseconds);
+    static_assert(precision_of<duration<int64_t, std::ratio<1, 2000>>> ==
+                  Precision::Milliseconds);
+    static_assert(precision_of<duration<int64_t, std::ratio<1, 500>>> ==
+                  Precision::Seconds);
+    static_assert(precision_of<duration<int32_t, std::ratio<1, 2>>> ==
+                  Precision::Seconds);
+    static_assert(precision_of<duration<int32_t, std::ratio<30>>> ==
+                  Precision::Minutes);
+    static_assert(precision_of<duration<int32_t, std::ratio<900>>> ==
+                  Precision::Hours);
+    static_assert(draws_instants<system_clock::time_point>);
+    static_assert(draws_instants<sys<duration<uint16_t, std::milli>>>);
+    static_assert(!draws_instants<sys<days>>);
+    static_assert(!draws_instants<sys<duration<int32_t, std::ratio<7>>>>);
+    static_assert(!draws_instants<sys<duration<int64_t, std::pico>>>);
+    static_assert(!draws_instants<sys<duration<int64_t, std::ratio<3, 2>>>>);
+    static_assert(!draws_instants<sys<duration<double>>>);
+    static_assert(!draws_instants<steady_clock::time_point>);
+    static_assert(!draws_instants<seconds>);
+
+    using ticks = duration<int64_t, std::ratio<1, 10'000'000>>;
+    assert_all_examples<sys<ticks>>(
+        gs::temporal::instants<sys<ticks>>(
+            {.min_value = sys<ticks>{ticks{-25}},
+             .max_value = sys<ticks>{ticks{25}}}),
+        [](const sys<ticks>& at) {
+            return at.time_since_epoch().count() % 10 == 0 &&
+                   at >= sys<ticks>{ticks{-20}} && at <= sys<ticks>{ticks{20}};
+        });
+    using quarters = duration<int32_t, std::ratio<900>>;
+    assert_all_examples<sys<quarters>>(
+        gs::temporal::instants<sys<quarters>>(), [](const sys<quarters>& at) {
+            return at.time_since_epoch().count() % 4 == 0;
+        });
+    find_any<sys<nanoseconds>>(
+        gs::temporal::instants<sys<nanoseconds>>(),
+        [](const sys<nanoseconds>& at) {
+            return at.time_since_epoch().count() % 1000 != 0;
+        });
+}
+
+TEST(TemporalGenerators, TimePointsRespectTheirBounds) {
+    using namespace std::chrono;
+    expect_every_tick_in_bounds<nanoseconds>();
+    expect_every_tick_in_bounds<microseconds>();
+    expect_every_tick_in_bounds<milliseconds>();
+    expect_every_tick_in_bounds<seconds>();
+    expect_every_tick_in_bounds<minutes>();
+    expect_every_tick_in_bounds<hours>();
+    expect_every_tick_in_bounds<system_clock::duration>();
+
+    sys<milliseconds> from{milliseconds{1'710'037'800'500}};
+    assert_all_examples<sys<milliseconds>>(
+        gs::temporal::instants<sys<milliseconds>>({.min_value = from}),
+        [&](const sys<milliseconds>& at) { return at >= from; });
+    assert_all_examples<sys<milliseconds>>(
+        gs::temporal::instants<sys<milliseconds>>({.max_value = from}),
+        [&](const sys<milliseconds>& at) { return at <= from; });
+    assert_all_examples<sys<seconds>>(
+        gs::temporal::instants<sys<seconds>>(
+            {.min_value = sys<seconds>{seconds{gs::temporal::MIN_INSTANT}},
+             .max_value = sys<seconds>{seconds{gs::temporal::MAX_INSTANT}}}),
+        [](const sys<seconds>&) { return true; });
+}
+
+TEST(TemporalGenerators, TimePointsDefaultToTheRangeOfTheTypeAndTheEngine) {
+    using namespace std::chrono;
+    expect_default_range<nanoseconds>(sys<nanoseconds>::min(),
+                                      sys<nanoseconds>::max());
+    expect_default_range<microseconds>(sys<microseconds>::min(),
+                                       sys<microseconds>::max());
+    expect_default_range<milliseconds>(
+        sys<milliseconds>{milliseconds{gs::temporal::MIN_INSTANT * 1000}},
+        sys<milliseconds>{
+            milliseconds{gs::temporal::MAX_INSTANT * 1000 + 999}});
+    expect_default_range<seconds>(
+        sys<seconds>{seconds{gs::temporal::MIN_INSTANT}},
+        sys<seconds>{seconds{gs::temporal::MAX_INSTANT}});
+    expect_default_range<hours>(
+        sys<hours>{hours{gs::temporal::MIN_INSTANT / 3600}},
+        sys<hours>{hours{(gs::temporal::MAX_INSTANT - 3599) / 3600}});
+
+    using tiny = duration<int8_t>;
+    expect_default_range<tiny>(sys<tiny>::min(), sys<tiny>::max());
+    using small = duration<int16_t, std::milli>;
+    expect_default_range<small>(sys<small>::min(), sys<small>::max());
+    using natural = duration<uint8_t, std::ratio<60>>;
+    expect_default_range<natural>(sys<natural>{}, sys<natural>::max());
+    using wide = duration<uint64_t, std::nano>;
+    expect_default_range<wide>(sys<wide>{}, sys<wide>::max());
+    using ticks = duration<int64_t, std::ratio<1, 10'000'000>>;
+    expect_default_range<ticks>(sys<ticks>{ticks{-9'223'372'036'854'775'800}},
+                                sys<ticks>{ticks{9'223'372'036'854'775'800}});
+}
+
+TEST(TemporalGenerators, TimePointsValidateTheirParameters) {
+    using namespace std::chrono;
+    expect_contains(build_error([&] {
+                        return gs::temporal::instants<sys<seconds>>(
+                            {.min_value = sys<seconds>{seconds{1}},
+                             .max_value = sys<seconds>{seconds{0}}});
+                    }),
+                    "generate_timestamp requires min_value <= max_value, got "
+                    "[1970-01-01T00:00:01Z, 1970-01-01T00:00:00Z]");
+    expect_contains(build_error([&] {
+                        return gs::temporal::instants<sys<seconds>>(
+                            {.min_value = sys<seconds>{
+                                 seconds{gs::temporal::MIN_INSTANT - 1}}});
+                    }),
+                    "min_value.second must be in");
+    expect_contains(build_error([&] {
+                        return gs::temporal::instants<sys<seconds>>(
+                            {.max_value = sys<seconds>{
+                                 seconds{gs::temporal::MAX_INSTANT + 1}}});
+                    }),
+                    "max_value.second must be in");
+    expect_contains(build_error([&] {
+                        return gs::temporal::instants<sys<milliseconds>>(
+                            {.max_value = sys<milliseconds>::max()});
+                    }),
+                    "max_value.second must be in");
+    EXPECT_EQ(build_error([&] {
+                  return gs::temporal::instants<sys<hours>>(
+                      {.min_value = sys<hours>::min()});
+              }),
+              "min_value lies outside the engine's instant range");
+    EXPECT_EQ(build_error([&] {
+                  return gs::temporal::instants<sys<hours>>(
+                      {.max_value = sys<hours>::max()});
+              }),
+              "max_value lies outside the engine's instant range");
+    using ticks = duration<int64_t, std::ratio<1, 10'000'000>>;
+    expect_contains(build_error([&] {
+                        return gs::temporal::instants<sys<ticks>>(
+                            {.min_value = sys<ticks>{ticks{1}},
+                             .max_value = sys<ticks>{ticks{9}}});
+                    }),
+                    "no value at precision");
+    using tiny = duration<int8_t>;
+    expect_contains(build_error([&] {
+                        return gs::temporal::instants<sys<tiny>>(
+                            {.min_value = sys<tiny>{tiny{1}},
+                             .max_value = sys<tiny>{tiny{0}}});
+                    }),
+                    "min_value <= max_value");
+    EXPECT_NO_THROW(gs::temporal::instants<sys<nanoseconds>>(
+        {.min_value = sys<nanoseconds>::min(),
+         .max_value = sys<nanoseconds>::max()}));
+}
+
+TEST(TemporalGenerators, TimePointsShrinkTowardTheMillennium) {
+    using namespace std::chrono;
+    auto any = [](const auto&) { return true; };
+    EXPECT_EQ(minimal<sys<nanoseconds>>(
+                  gs::temporal::instants<sys<nanoseconds>>(), any),
+              sys<nanoseconds>{seconds{946'684'800}});
+    EXPECT_EQ(minimal<sys<microseconds>>(
+                  gs::temporal::instants<sys<microseconds>>(), any),
+              sys<microseconds>{seconds{946'684'800}});
+    EXPECT_EQ(minimal<sys<milliseconds>>(
+                  gs::temporal::instants<sys<milliseconds>>(), any),
+              sys<milliseconds>{seconds{946'684'800}});
+    EXPECT_EQ(
+        minimal<sys<seconds>>(gs::temporal::instants<sys<seconds>>(), any),
+        sys<seconds>{seconds{946'684'800}});
+    EXPECT_EQ(minimal<sys<hours>>(gs::temporal::instants<sys<hours>>(), any),
+              sys<hours>{hours{262'968}});
+    EXPECT_EQ(minimal<sys<milliseconds>>(
+                  gs::temporal::instants<sys<milliseconds>>(),
+                  [](const sys<milliseconds>& at) {
+                      return at > sys<milliseconds>{seconds{946'684'800}};
+                  }),
+              sys<milliseconds>{milliseconds{946'684'800'001}});
+    using tiny = duration<int8_t>;
+    EXPECT_EQ(minimal<sys<tiny>>(gs::temporal::instants<sys<tiny>>(), any),
+              sys<tiny>::max());
+    EXPECT_EQ(minimal<sys<seconds>>(
+                  gs::temporal::instants<sys<seconds>>(
+                      {.min_value = sys<seconds>{seconds{1'000'000'000}}}),
+                  any),
+              sys<seconds>{seconds{1'000'000'000}});
+}
+
+TEST(TemporalGenerators, TimePointsPrintAsTheInstantsTheyAre) {
+    using namespace std::chrono;
+    sys<milliseconds> at{milliseconds{1'710'037'800'500}};
+    testing::internal::CaptureStderr();
+    EXPECT_THROW(
+        hegel::test(
+            [&](hegel::TestCase& tc) {
+                (void)tc.draw("at", gs::temporal::instants<sys<seconds>>());
+                (void)tc.draw(
+                    "stamps",
+                    gs::vectors(gs::temporal::instants<sys<milliseconds>>(
+                                    {.min_value = at, .max_value = at}),
+                                {.min_size = 1, .max_size = 1}));
+                (void)tc.draw("even",
+                              gs::temporal::instants<sys<seconds>>().filter(
+                                  [](const sys<seconds>& t) {
+                                      return t.time_since_epoch().count() % 2 ==
+                                             0;
+                                  }));
+                throw std::runtime_error("boom");
+            },
+            hegel::Settings{.test_cases = 20,
+                            .database = hegel::Database::disabled()}),
+        std::runtime_error);
+    std::string out = testing::internal::GetCapturedStderr();
+    expect_contains(out, "auto at_1 = "
+                         "std::chrono::sys_time<std::chrono::seconds>"
+                         "{\"2000-01-01T00:00:00Z\"};");
+    expect_contains(out, "std::chrono::sys_time<std::chrono::milliseconds>"
+                         "{\"2024-03-10T02:30:00.5Z\"}");
+    expect_contains(out, "auto even_1 = "
+                         "std::chrono::sys_time<std::chrono::seconds>"
+                         "{\"2000-01-01T00:00:00Z\"};");
+}
+
 #if HEGEL_HAS_REFLECTION
 
 struct Appointment {
@@ -1110,6 +1456,9 @@ TEST(TemporalGenerators, DefaultGeneratorsCoverEveryValueType) {
                 gs::default_generator<gs::temporal::SignedDuration>());
             (void)tc.draw(gs::default_generator<gs::temporal::Span>());
             (void)tc.draw(gs::default_generator<std::chrono::milliseconds>());
+            (void)tc.draw(
+                gs::default_generator<std::chrono::system_clock::time_point>());
+            (void)tc.draw(gs::default_generator<sys<std::chrono::seconds>>());
             Appointment a = tc.draw(gs::default_generator<Appointment>());
             EXPECT_TRUE(gs::temporal::info(a.when.zone.name).has_value());
         },

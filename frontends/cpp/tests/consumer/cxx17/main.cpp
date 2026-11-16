@@ -77,6 +77,16 @@ int main() {
                 hegel::generators::temporal::SignedDuration::from_chrono(
                     duration);
             auto exact = tc.draw(gs::temporal::durations());
+            using sys_ms = std::chrono::time_point<std::chrono::system_clock,
+                                                   std::chrono::milliseconds>;
+            sys_ms sent = tc.draw(
+                gs::temporal::instants<sys_ms>({.min_value = sys_ms{}}));
+            auto now = tc.draw(gs::temporal::instants<
+                               std::chrono::system_clock::time_point>());
+            if (sent < sys_ms{}) {
+                throw std::runtime_error("a time point is below its bound");
+            }
+            (void)now;
             std::set<gs::temporal::TimeZone> zones =
                 tc.draw(gs::sets(gs::temporal::zones()));
             std::unordered_set<gs::temporal::Date> dates{date};

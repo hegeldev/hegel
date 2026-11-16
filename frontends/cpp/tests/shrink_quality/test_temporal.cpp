@@ -81,6 +81,24 @@ TEST(ShrinkTemporal, InstantsShrinkTowardTheMillennium) {
         (gs::temporal::Instant{0, 0}));
 }
 
+TEST(ShrinkTemporal, TimePointsShrinkTowardTheMillennium) {
+    using namespace std::chrono;
+    using sys_ms = time_point<system_clock, milliseconds>;
+    EXPECT_EQ(minimal<sys_ms>(gs::temporal::instants<sys_ms>(),
+                              [](const sys_ms&) { return true; }),
+              sys_ms{seconds{946'684'800}});
+    EXPECT_EQ(
+        minimal<sys_ms>(gs::temporal::instants<sys_ms>({.max_value = sys_ms{}}),
+                        [](const sys_ms&) { return true; }),
+        sys_ms{});
+    EXPECT_EQ(minimal<sys_ms>(gs::temporal::instants<sys_ms>(),
+                              [](const sys_ms& at) {
+                                  return at.time_since_epoch().count() % 1000 !=
+                                         0;
+                              }),
+              sys_ms{milliseconds{946'684'800'001}});
+}
+
 TEST(ShrinkTemporal, OffsetsShrinkToZeroAndToKnown) {
     EXPECT_EQ(minimal<gs::temporal::UtcOffset>(
                   gs::temporal::offsets(),

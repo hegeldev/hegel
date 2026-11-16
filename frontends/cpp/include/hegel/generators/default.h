@@ -267,6 +267,13 @@ namespace hegel::generators {
             static Generator<T> generator() { return temporal::durations<T>(); }
         };
 
+        template <typename T>
+        struct DefaultGenerator<
+            T, std::enable_if_t<
+                   temporal::detail::time_point_precision<T>::known>> {
+            static Generator<T> generator() { return temporal::instants<T>(); }
+        };
+
         // =================================================================
         // Specializations for standard containers
         // =================================================================

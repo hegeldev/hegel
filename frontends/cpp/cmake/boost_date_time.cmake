@@ -6,6 +6,11 @@
 # used when CMake finds one. Otherwise Boost's release tarball (the b2-nodocs
 # asset of its GitHub release, pinned to the SHA-256 Boost publishes beside
 # it) is fetched and its headers used; nothing of it is built.
+#
+# The top-level CMakeLists.txt installs and exports the target with the
+# library. The installed target links Boost::headers whichever Boost this
+# build used: hegelConfig.cmake finds Boost again on the consumer's machine,
+# and a fetched Boost is never installed.
 
 set(HEGEL_BOOST_VERSION 1.86.0)
 
@@ -35,5 +40,10 @@ else()
 endif()
 
 add_library(hegel_boost_date_time INTERFACE)
-target_link_libraries(hegel_boost_date_time INTERFACE hegel ${_hegel_boost_headers})
+target_link_libraries(hegel_boost_date_time INTERFACE
+    hegel
+    $<BUILD_INTERFACE:${_hegel_boost_headers}>
+    $<INSTALL_INTERFACE:Boost::headers>
+)
+set_target_properties(hegel_boost_date_time PROPERTIES EXPORT_NAME boost_date_time)
 add_library(hegel::boost_date_time ALIAS hegel_boost_date_time)

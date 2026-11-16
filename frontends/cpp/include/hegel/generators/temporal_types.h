@@ -35,6 +35,9 @@
  * @ref hegel::generators::temporal::durations "durations()" and
  * @ref hegel::generators::temporal::spans "spans()", and the parameter structs
  * and option enums they take.
+ * @ref hegel::generators::temporal::instants "instants<TimePoint>()" and
+ * @ref hegel::generators::temporal::durations "durations<Duration>()" draw
+ * `std::chrono::system_clock` time points and `std::chrono` durations.
  *
  * Each value type compares, orders and hashes, and to_string() and
  * `operator<<` give the text the engine defines for it, in the form of RFC
@@ -82,18 +85,6 @@ namespace hegel::generators::temporal {
 
         inline constexpr int64_t nanos_per_second = 1'000'000'000;
 
-        template <typename Rep> bool fits(int64_t value) {
-            static_assert(std::is_integral_v<Rep>,
-                          "a chrono conversion needs an integral Rep");
-            if constexpr (std::is_signed_v<Rep>) {
-                return value >= std::numeric_limits<Rep>::min() &&
-                       value <= std::numeric_limits<Rep>::max();
-            } else {
-                return value >= 0 && static_cast<uint64_t>(value) <=
-                                         std::numeric_limits<Rep>::max();
-            }
-        }
-
         // The length of a chrono period in nanoseconds. The period must be
         // a whole number of nanoseconds that divides a second or is a
         // multiple of one, which every standard unit is.
@@ -116,6 +107,12 @@ namespace hegel::generators::temporal {
         std::optional<int64_t> units_from_parts(int64_t seconds, int64_t nanos,
                                                 int64_t unit_nanos);
 
+        // As units_from_parts, for a count that is not negative and fits
+        // in uint64_t.
+        std::optional<uint64_t> unsigned_units_from_parts(int64_t seconds,
+                                                          int64_t nanos,
+                                                          int64_t unit_nanos);
+
         // The seconds and nanoseconds of `count` units of `unit_nanos`
         // nanoseconds, the nanoseconds of the sign of `count` or, with
         // `floor`, non-negative; nullopt when the seconds do not fit in
@@ -123,15 +120,34 @@ namespace hegel::generators::temporal {
         std::optional<std::pair<int64_t, int64_t>>
         parts_from_units(int64_t count, int64_t unit_nanos, bool floor);
 
+        // As parts_from_units, for a count of any uint64_t value.
+        std::optional<std::pair<int64_t, int64_t>>
+        parts_from_unsigned_units(uint64_t count, int64_t unit_nanos);
+
         template <typename Duration>
         std::optional<Duration> duration_from_parts(int64_t seconds,
                                                     int64_t nanos) {
-            std::optional<int64_t> count = units_from_parts(
-                seconds, nanos, period_nanos<typename Duration::period>::value);
-            if (!count || !fits<typename Duration::rep>(*count)) {
-                return std::nullopt;
+            using Rep = typename Duration::rep;
+            static_assert(std::is_integral_v<Rep>,
+                          "a chrono conversion needs an integral Rep");
+            constexpr int64_t unit_nanos =
+                period_nanos<typename Duration::period>::value;
+            if constexpr (std::is_unsigned_v<Rep>) {
+                std::optional<uint64_t> count =
+                    unsigned_units_from_parts(seconds, nanos, unit_nanos);
+                if (!count || *count > std::numeric_limits<Rep>::max()) {
+                    return std::nullopt;
+                }
+                return Duration(static_cast<Rep>(*count));
+            } else {
+                std::optional<int64_t> count =
+                    units_from_parts(seconds, nanos, unit_nanos);
+                if (!count || *count < std::numeric_limits<Rep>::min() ||
+                    *count > std::numeric_limits<Rep>::max()) {
+                    return std::nullopt;
+                }
+                return Duration(static_cast<Rep>(*count));
             }
-            return Duration(static_cast<typename Duration::rep>(*count));
         }
 
         template <typename Rep, typename Period>
@@ -140,15 +156,41 @@ namespace hegel::generators::temporal {
             static_assert(std::is_integral_v<Rep>,
                           "a chrono conversion needs an integral Rep");
             if constexpr (std::is_unsigned_v<Rep>) {
-                if (static_cast<uint64_t>(d.count()) >
-                    static_cast<uint64_t>(
-                        std::numeric_limits<int64_t>::max())) {
-                    return std::nullopt;
-                }
+                return parts_from_unsigned_units(
+                    static_cast<uint64_t>(d.count()),
+                    period_nanos<Period>::value);
+            } else {
+                return parts_from_units(static_cast<int64_t>(d.count()),
+                                        period_nanos<Period>::value, floor);
             }
-            return parts_from_units(static_cast<int64_t>(d.count()),
-                                    period_nanos<Period>::value, floor);
         }
+
+        template <typename T> struct is_system_time_point : std::false_type {};
+        template <typename Duration>
+        struct is_system_time_point<
+            std::chrono::time_point<std::chrono::system_clock, Duration>>
+            : std::true_type {};
+
+        // Whether period_nanos accepts the period.
+        template <typename Period> struct is_instant_period {
+            using ratio = std::ratio_divide<Period, std::nano>;
+            static constexpr bool value =
+                ratio::den == 1 && (ratio::num >= nanos_per_second
+                                        ? ratio::num % nanos_per_second == 0
+                                        : nanos_per_second % ratio::num == 0);
+        };
+
+        // Whether `T` is a system_clock time point that converts to and
+        // from Instant: one that counts, in an integer of at most 64
+        // bits, a period that period_nanos accepts.
+        template <typename T> struct holds_instants : std::false_type {};
+        template <typename Rep, typename Period>
+        struct holds_instants<std::chrono::time_point<
+            std::chrono::system_clock, std::chrono::duration<Rep, Period>>>
+            : std::integral_constant<bool,
+                                     std::is_integral_v<Rep> &&
+                                         sizeof(Rep) <= sizeof(int64_t) &&
+                                         is_instant_period<Period>::value> {};
 
     } // namespace detail
     /// @endcond
@@ -256,7 +298,9 @@ namespace hegel::generators::temporal {
          * 64-bit count of nanoseconds holds the years 1678 to 2262 only,
          * and one of microseconds about ±292,000 years. Bound the
          * generator, or name a coarser duration, when the conversion must
-         * succeed.
+         * succeed, or draw the time point itself with
+         * @ref hegel::generators::temporal::instants "instants<TimePoint>()",
+         * which draws only instants the type holds.
          *
          * @code{.cpp}
          * auto at = instant.to_chrono<std::chrono::system_clock::duration>();

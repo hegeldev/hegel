@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -92,6 +93,9 @@ TEST(Labels, LeafGeneratorsUseTheirName) {
               hi::label(hi::LabelName::Datetimes));
     EXPECT_EQ(gs::temporal::instants().label(),
               hi::label(hi::LabelName::Instants));
+    EXPECT_EQ(
+        gs::temporal::instants<std::chrono::system_clock::time_point>().label(),
+        hi::label(hi::LabelName::Instants));
     EXPECT_EQ(gs::temporal::offsets().label(),
               hi::label(hi::LabelName::Offsets));
     EXPECT_EQ(gs::temporal::zones().label(), hi::label(hi::LabelName::Zones));

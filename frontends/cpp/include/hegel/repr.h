@@ -129,6 +129,16 @@ namespace hegel::internal {
         struct is_chrono_duration<std::chrono::duration<Rep, Period>>
             : std::true_type {};
 
+        template <typename T>
+        using is_system_time_point =
+            hegel::generators::temporal::detail::is_system_time_point<T>;
+
+        // A system_clock time point that converts to an Instant prints as
+        // its type around the engine's text of that instant.
+        template <typename T>
+        using is_instant_time_point =
+            hegel::generators::temporal::detail::holds_instants<T>;
+
         template <typename T, typename = void>
         struct prints_itself : std::false_type {};
         template <typename T>
@@ -316,6 +326,9 @@ namespace hegel::internal {
             return "std::chrono::minutes";
         } else if constexpr (std::is_same_v<T, std::chrono::hours>) {
             return "std::chrono::hours";
+        } else if constexpr (repr_detail::is_system_time_point<T>::value) {
+            return "std::chrono::sys_time<" +
+                   cpp_type_name<typename T::duration>() + ">";
         } else if constexpr (repr_detail::is_chrono_duration<T>::value) {
             using period = typename T::period;
             return "std::chrono::duration<" + cpp_type_name<typename T::rep>() +
@@ -519,6 +532,17 @@ namespace hegel::internal {
             printer.text(cpp_type_name<T>() + "{");
             print_value(printer, value.count());
             printer.text("}");
+        } else if constexpr (repr_detail::is_instant_time_point<T>::value) {
+            std::optional<hegel::generators::temporal::Instant> instant =
+                hegel::generators::temporal::Instant::from_chrono(value);
+            if (instant.has_value()) {
+                printer.text(cpp_type_name<T>() + "{" +
+                             repr_detail::quoted(to_string(*instant)) + "}");
+                return;
+            }
+            printer.text(cpp_type_name<T>() + "{");
+            print_value(printer, value.time_since_epoch());
+            printer.text("}");
         }
 #if HEGEL_HAS_REFLECTION
         else if constexpr (repr_detail::is_reflectable<T>::value) {
@@ -624,6 +648,11 @@ namespace hegel::internal {
             : is_representable<Rep> {};
 
         template <typename T>
+        struct is_representable<
+            T, std::enable_if_t<is_instant_time_point<T>::value &&
+                                !prints_itself<T>::value>> : std::true_type {};
+
+        template <typename T>
         inline constexpr bool is_std_compound_v =
             is_pair<T>::value || is_tuple<T>::value || is_variant<T>::value ||
             is_optional<T>::value || is_vector<T>::value || is_set<T>::value ||
@@ -634,6 +663,7 @@ namespace hegel::internal {
             T, std::enable_if_t<!is_scalar_v<T> && !prints_itself<T>::value &&
                                 !is_std_compound_v<T> &&
                                 !is_chrono_duration<T>::value &&
+                                !is_instant_time_point<T>::value &&
                                 (has_ostream_operator<T>::value
 #if HEGEL_HAS_REFLECTION
                                  || is_reflectable<T>::value
@@ -655,9 +685,12 @@ namespace hegel {
      * True for arithmetic types, enums, `std::string`, `std::monostate`,
      * a type with a `void print_to(hegel::Printer&) const` member, the
      * standard pairs, tuples, variants, optionals, vectors, sets, arrays and
-     * maps of such types, a reflectable aggregate (C++20), and a type with
-     * an `operator<<`. For a reflectable aggregate it does not look at the
-     * fields: a field with no representation prints as `<unprintable ...>`.
+     * maps of such types, a `std::chrono::duration` of such a type, a
+     * `std::chrono::system_clock` time point that converts to an
+     * @ref hegel::generators::temporal::Instant "Instant", a reflectable
+     * aggregate (C++20), and a type with an `operator<<`. For a reflectable
+     * aggregate it does not look at the fields: a field with no representation
+     * prints as `<unprintable ...>`.
      *
      * A generator that prints the value it produced (`map`, `just`,
      * `sampled_from`, `compose`) is printable only for such a type.
