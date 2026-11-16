@@ -27,9 +27,9 @@ public final class EngineAccess {
     }
 
     /**
-     * A test case with no engine test case behind it, through which a generator builds and
-     * validates its configuration handles when it is created, so that a bad argument is reported
-     * there and not at the first draw. Drawing from it fails.
+     * A test case with no engine test case behind it, through which a generator validates the
+     * settings it was given as it is built, so that settings no later call could make work are
+     * reported there and not at the first draw. Drawing from it fails.
      */
     public static TestCase setup() {
         return new TestCase(new LiveDataSource(binding(), 0), false, Reporter.silent());

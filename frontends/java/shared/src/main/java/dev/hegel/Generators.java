@@ -670,6 +670,15 @@ public final class Generators {
      * {@code Temporals.zonedDatetimes()} and so on. The generators of dates ({@link #dates()}, {@link
      * #datetimes()}, {@link #zonedDatetimes()} and {@link #instants()}) share one default range, the
      * years 1 to 9999.
+     *
+     * <p>The fluent methods of these generators can be called in any order: the same calls make the
+     * same generator however they are ordered. A method throws an {@link IllegalArgumentException}
+     * for an argument that is wrong by itself, and for the settings given so far when nothing set
+     * afterwards could make them work together, such as a {@code min} after the {@code max} or a
+     * zone name the given zone source lacks. A setting that was not given counts as its default
+     * only at the generator's first draw: what conflicts with nothing but a default, such as a
+     * {@code min} beyond the year 9999 with no {@code max}, fails that draw with an {@link
+     * IllegalArgumentException} thrown in the test.
      */
     public static final class Temporals {
         private Temporals() {}

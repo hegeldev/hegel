@@ -20,10 +20,14 @@ import java.util.Objects;
  * draw in twenty on average targets an interesting instant: the Unix epoch, the 32-bit and 64-bit
  * boundaries, a leap-second boundary or a daylight-saving transition of some time zone.
  *
- * <p>Bounds in the wrong order, and bounds that hold no value at the precision, are rejected with
- * an {@link IllegalArgumentException} by the method that makes them so. A bound that was not set
- * counts as its default, so to draw beyond the year 9999 set {@code max} before {@code min}, and
- * before the year 1 {@code min} before {@code max}.
+ * <p>The fluent methods can be called in any order. Each rejects, with an {@link
+ * IllegalArgumentException}, what cannot work whatever is set afterwards: a bound outside the years
+ * {@code -999999} to {@code 999999}, a precision that is not one of the six units, and the settings
+ * given so far when they do not fit together ({@code min} after {@code max}, or bounds with no
+ * value at the precision). A setting that was not given is not held against the others until the
+ * first draw, where it counts as its default: {@code min} alone may be beyond the year 9999, since
+ * a {@code max} can follow in either order, and without one the first draw fails with an {@link
+ * IllegalArgumentException} because the default {@code max} is the last day of 9999.
  */
 public final class InstantGenerator implements Generator<Instant> {
     /** The engine's instant range: the civil range of years {@code [-999999, 999999]}. */
@@ -50,22 +54,25 @@ public final class InstantGenerator implements Generator<Instant> {
     /**
      * @param min the inclusive lower bound
      * @param max the inclusive upper bound
+     * @throws IllegalArgumentException if {@code min} is after {@code max}
      */
     public InstantGenerator(Instant min, Instant max) {
         this(Objects.requireNonNull(min), Objects.requireNonNull(max), ChronoUnit.NANOS);
     }
 
     private InstantGenerator(Instant min, Instant max, ChronoUnit precision) {
-        this.lo = min != null ? min : DEFAULT_MIN;
-        this.hi = max != null ? max : DEFAULT_MAX;
+        this.lo = Bounds.or(min, DEFAULT_MIN);
+        this.hi = Bounds.or(max, DEFAULT_MAX);
         validate(lo, "instants");
         validate(hi, "instants");
-        Bounds.ordered("instants", min, max, lo, hi);
         this.min = min;
         this.max = max;
         this.precision = precision;
         this.precisionCode = Precisions.engine(precision, "instants");
-        EngineAccess.setup().validateTimestamp(lo, hi, precisionCode);
+        Instant widestLo = Bounds.or(min, MIN_ENGINE);
+        Instant widestHi = Bounds.or(max, MAX_ENGINE);
+        Bounds.ordered("instants", min, max, widestLo, widestHi);
+        EngineAccess.setup().validateTimestamp(widestLo, widestHi, precisionCode);
     }
 
     static void validate(Instant instant, String what) {
@@ -79,7 +86,7 @@ public final class InstantGenerator implements Generator<Instant> {
      * @return a copy with the lower bound set
      */
     public InstantGenerator min(Instant min) {
-        return new InstantGenerator(min, max, precision);
+        return new InstantGenerator(Objects.requireNonNull(min), max, precision);
     }
 
     /**
@@ -87,7 +94,7 @@ public final class InstantGenerator implements Generator<Instant> {
      * @return a copy with the upper bound set
      */
     public InstantGenerator max(Instant max) {
-        return new InstantGenerator(min, max, precision);
+        return new InstantGenerator(min, Objects.requireNonNull(max), precision);
     }
 
     /**
@@ -106,6 +113,7 @@ public final class InstantGenerator implements Generator<Instant> {
     /** @hidden */
     @Override
     public Instant doDraw(TestCase tc) {
+        Bounds.ordered("instants", min, max, lo, hi);
         return tc.generateTimestamp(lo, hi, precisionCode);
     }
 }

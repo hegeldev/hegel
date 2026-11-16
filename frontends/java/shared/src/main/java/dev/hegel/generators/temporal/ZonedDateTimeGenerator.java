@@ -15,6 +15,7 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.Objects;
 
 /**
  * Generates {@link ZonedDateTime} values: a zone, a wall-clock time in it and, when the clocks
@@ -23,10 +24,21 @@ import java.time.temporal.ChronoUnit;
  * <p>The bounds are either on the wall clock of whatever zone is drawn ({@link
  * #min(LocalDateTime)} / {@link #max(LocalDateTime)}; by default years 1 to 9999, as for {@link
  * DateTimeGenerator}) or on the instant ({@link #min(Instant)} / {@link #max(Instant)}, or a {@link
- * ZonedDateTime} standing for its instant); setting bounds of both kinds is an {@link
- * IllegalArgumentException}. A bound that was not set counts as its default, so to draw beyond the
- * year 9999 set {@code max} before {@code min}, and before the year 1 {@code min} before {@code
- * max}. Values shrink down a ladder of zones to {@code UTC}, then toward 2000-01-01T00:00.
+ * ZonedDateTime} standing for its instant), never both. A bound that was not set counts as its
+ * default, so a {@code min} beyond the year 9999 needs a {@code max} as well, and a {@code max}
+ * before the year 1 a {@code min}. Values shrink down a ladder of zones to {@code UTC}, then toward
+ * 2000-01-01T00:00.
+ *
+ * <p>The fluent methods can be called in any order. Each rejects, with an {@link
+ * IllegalArgumentException}, what cannot work whatever is set afterwards: a bound outside the years
+ * {@code -999999} to {@code 999999}, a precision that is not one of the six units, and the
+ * settings given so far when they do not fit together (bounds of both kinds, {@code min} after
+ * {@code max}, bounds with no value at the precision, a {@link ZoneGenerator} together with {@link
+ * #source(ZoneSource)}). A setting that was not given is not held against the others until the
+ * first draw, where it counts as its default: {@code min} alone may be beyond the year 9999, since
+ * a {@code max} can follow in either order, and without one the first draw fails with an {@link
+ * IllegalArgumentException}, as it does for whatever a {@link ZoneGenerator} given as the zones
+ * leaves to its own first draw.
  *
  * <p>The engine knows every zone's daylight-saving and offset transitions, from a {@link
  * ZoneSource}: one draw in twenty on average lands within a second, an hour or a day of one, or of
@@ -44,7 +56,7 @@ import java.time.temporal.ChronoUnit;
  *       source. The default is read when the generator is created.
  *   <li>With a {@link ZoneGenerator} as the zones, that generator's source is used. Give the
  *       source to it, with {@link ZoneGenerator#source(ZoneSource)}: also calling {@link
- *       #source(ZoneSource)} here is an {@link IllegalArgumentException}.
+ *       #source(ZoneSource)} here, before or after, is an {@link IllegalArgumentException}.
  *   <li>With any other generator of zones (a mapped or filtered {@link ZoneGenerator}, {@code
  *       just(...)}, {@code sampledFrom(...)}), each drawn zone is looked up by its id in the
  *       source given to {@link #source(ZoneSource)}, or else in the default as it was when this
@@ -82,6 +94,7 @@ public final class ZonedDateTimeGenerator implements Generator<ZonedDateTime> {
 
     private final ZoneGenerator builtIn;
     private final ZoneSource resolved;
+    private final boolean civilBounded;
     private final boolean instantBounded;
     private final LocalDateTime civilLo;
     private final LocalDateTime civilHi;
@@ -103,21 +116,16 @@ public final class ZonedDateTimeGenerator implements Generator<ZonedDateTime> {
             Instant instantMax,
             ChronoUnit precision,
             Ambiguous ambiguous) {
+        this.civilBounded = civilMin != null || civilMax != null;
         this.instantBounded = instantMin != null || instantMax != null;
-        if (instantBounded && (civilMin != null || civilMax != null)) {
-            throw new IllegalArgumentException(WHAT + ": the bounds are either on the wall clock (a LocalDateTime) or"
-                    + " on the instant (an Instant or a ZonedDateTime), not both");
-        }
-        this.civilLo = civilMin != null ? civilMin : DateTimeGenerator.DEFAULT_MIN;
-        this.civilHi = civilMax != null ? civilMax : DateTimeGenerator.DEFAULT_MAX;
-        this.instantLo = instantMin != null ? instantMin : InstantGenerator.DEFAULT_MIN;
-        this.instantHi = instantMax != null ? instantMax : InstantGenerator.DEFAULT_MAX;
+        this.civilLo = Bounds.or(civilMin, DateTimeGenerator.DEFAULT_MIN);
+        this.civilHi = Bounds.or(civilMax, DateTimeGenerator.DEFAULT_MAX);
+        this.instantLo = Bounds.or(instantMin, InstantGenerator.DEFAULT_MIN);
+        this.instantHi = Bounds.or(instantMax, InstantGenerator.DEFAULT_MAX);
         DateTimeGenerator.validateCivil(civilLo, WHAT);
         DateTimeGenerator.validateCivil(civilHi, WHAT);
         InstantGenerator.validate(instantLo, WHAT);
         InstantGenerator.validate(instantHi, WHAT);
-        Bounds.ordered(WHAT, civilMin, civilMax, civilLo, civilHi);
-        Bounds.ordered(WHAT, instantMin, instantMax, instantLo, instantHi);
         if (zones instanceof ZoneGenerator) {
             if (source != null) {
                 throw new IllegalArgumentException(WHAT + ": the zones are a zones() generator, which has a zone"
@@ -138,8 +146,31 @@ public final class ZonedDateTimeGenerator implements Generator<ZonedDateTime> {
         this.instantMax = instantMax;
         this.precision = precision;
         this.precisionCode = Precisions.engine(precision, WHAT);
-        this.ambiguous = ambiguous;
-        spec.get(EngineAccess.setup(), this::buildSpec);
+        this.ambiguous = Objects.requireNonNull(ambiguous);
+        validateGiven();
+    }
+
+    /**
+     * Reject the settings given so far if no later call could make them work: each bound that was
+     * not set is the engine's extreme here, not its default, and a generator with no bounds has
+     * the engine's whole range. Bounds of both kinds both go to the engine, which rejects the pair.
+     */
+    private void validateGiven() {
+        LocalDateTime civilWidestLo = Bounds.or(civilMin, DateTimeGenerator.MIN_CIVIL);
+        LocalDateTime civilWidestHi = Bounds.or(civilMax, DateTimeGenerator.MAX_CIVIL);
+        Instant instantWidestLo = Bounds.or(instantMin, InstantGenerator.MIN_ENGINE);
+        Instant instantWidestHi = Bounds.or(instantMax, InstantGenerator.MAX_ENGINE);
+        Bounds.ordered(WHAT, civilMin, civilMax, civilWidestLo, civilWidestHi);
+        Bounds.ordered(WHAT, instantMin, instantMax, instantWidestLo, instantWidestHi);
+        EngineAccess.setup()
+                .zonedSpec(
+                        civilBounded ? civilWidestLo : null,
+                        civilBounded ? civilWidestHi : null,
+                        instantBounded ? instantWidestLo : null,
+                        instantBounded ? instantWidestHi : null,
+                        precisionCode,
+                        Abi.IMAGINARY_AVOID,
+                        ambiguous.engineValue);
     }
 
     /** What {@link DateTimeGenerator#zones(Generator)} makes: wall-clock bounds, each null when not set. */
@@ -197,7 +228,7 @@ public final class ZonedDateTimeGenerator implements Generator<ZonedDateTime> {
      * @throws IllegalArgumentException if an instant bound was set
      */
     public ZonedDateTimeGenerator min(LocalDateTime min) {
-        return civil(min, civilMax);
+        return civil(Objects.requireNonNull(min), civilMax);
     }
 
     /**
@@ -206,7 +237,7 @@ public final class ZonedDateTimeGenerator implements Generator<ZonedDateTime> {
      * @throws IllegalArgumentException if an instant bound was set
      */
     public ZonedDateTimeGenerator max(LocalDateTime max) {
-        return civil(civilMin, max);
+        return civil(civilMin, Objects.requireNonNull(max));
     }
 
     /**
@@ -215,7 +246,7 @@ public final class ZonedDateTimeGenerator implements Generator<ZonedDateTime> {
      * @throws IllegalArgumentException if a wall-clock bound was set
      */
     public ZonedDateTimeGenerator min(Instant min) {
-        return instant(min, instantMax);
+        return instant(Objects.requireNonNull(min), instantMax);
     }
 
     /**
@@ -224,7 +255,7 @@ public final class ZonedDateTimeGenerator implements Generator<ZonedDateTime> {
      * @throws IllegalArgumentException if a wall-clock bound was set
      */
     public ZonedDateTimeGenerator max(Instant max) {
-        return instant(instantMin, max);
+        return instant(instantMin, Objects.requireNonNull(max));
     }
 
     /**
@@ -270,7 +301,10 @@ public final class ZonedDateTimeGenerator implements Generator<ZonedDateTime> {
                 zones, source, defaultSource, civilMin, civilMax, instantMin, instantMax, precision, ambiguous);
     }
 
+    /** The zoned spec a draw uses, with the default for each bound that was not set. */
     private SpecHandle buildSpec(TestCase tc) {
+        Bounds.ordered(WHAT, civilMin, civilMax, civilLo, civilHi);
+        Bounds.ordered(WHAT, instantMin, instantMax, instantLo, instantHi);
         return tc.zonedSpec(
                 instantBounded ? null : civilLo,
                 instantBounded ? null : civilHi,
@@ -284,20 +318,20 @@ public final class ZonedDateTimeGenerator implements Generator<ZonedDateTime> {
     /** @hidden */
     @Override
     public ZonedDateTime doDraw(TestCase tc) {
+        SpecHandle zoned = spec.get(tc, this::buildSpec);
         tc.startSpan(Label.ZONED_DATETIME);
         try {
             if (builtIn != null) {
-                Libhegel.ZonedDatetime drawn =
-                        tc.generateZonedDatetime(builtIn.spec(tc), spec.get(tc, this::buildSpec));
+                Libhegel.ZonedDatetime drawn = tc.generateZonedDatetime(builtIn.spec(tc), zoned);
                 return resolve(tc, drawn, ZoneId.of(drawn.zone()));
             }
-            return in(tc, zones.doDraw(tc));
+            return in(tc, zones.doDraw(tc), zoned);
         } finally {
             tc.stopSpan(false);
         }
     }
 
-    private ZonedDateTime in(TestCase tc, ZoneId zone) {
+    private ZonedDateTime in(TestCase tc, ZoneId zone, SpecHandle zoned) {
         if (zone instanceof ZoneOffset) {
             return fixed(tc, zone, (ZoneOffset) zone);
         }
@@ -305,7 +339,7 @@ public final class ZonedDateTimeGenerator implements Generator<ZonedDateTime> {
         try {
             long handle = resolved.handle(tc.binding());
             if (tc.timezoneInfo(handle, id).known()) {
-                return resolve(tc, tc.generateZonedDatetimeForZone(handle, id, spec.get(tc, this::buildSpec)), zone);
+                return resolve(tc, tc.generateZonedDatetimeForZone(handle, id, zoned), zone);
             }
         } finally {
             Reference.reachabilityFence(resolved);

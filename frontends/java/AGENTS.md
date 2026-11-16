@@ -272,22 +272,47 @@ aliases. The public
   spec and a span spec). `LiveDataSource` applies a spec's setters in any
   order, then calls `hegel_timezone_spec_validate`, `hegel_zoned_spec_validate`
   or `hegel_span_spec_validate`; on a failure it reads the error before
-  freeing the handle, because freeing clears the context's message. Argument
-  errors are eager: every temporal generator's constructor (so every fluent
-  method, each of which makes a new generator) checks its configuration
-  against the engine through `EngineAccess.setup()`, a `TestCase` over the
-  process binding with no engine test case behind it. The spec-based
-  generators build and cache their spec there, and the six handle-less ones
-  call `hegel_validate_date`/`_time`/`_datetime`/`_timestamp`/`_offset`/
-  `_duration`, which make the checks of the matching draw. Only what depends
-  on a drawn value is left to the draw: a zone of a non-`ZoneGenerator` zones
-  generator that the source does not know, and bounds no allowed zone has a
-  value in. The Java-side checks that remain are the ones that name Java's
-  parameters (bound order, the engine's year range, an empty set). The
-  date-bearing generators (`dates`, `datetimes`, `zonedDatetimes`,
-  `instants`) default to years 1 to 9999, and a bound that was not set counts
-  as its default when the order is checked, so a `min` beyond the year 9999
-  needs `max` set first (`Bounds.ordered` says so).
+  freeing the handle, because freeing clears the context's message. The
+  fluent methods of a temporal generator can be called in any order: the
+  same calls give the same generator, and the same outcome, however they are
+  ordered (`TemporalBuilderOrderTest`). The rule that makes it so: every
+  temporal generator's constructor (so every fluent method, each of which
+  makes a new generator) validates, through the engine, the settings given
+  explicitly so far, with each setting not yet given unconstrained rather
+  than at its default; a default is applied, and checked, only at the first
+  draw. So settings that cannot work together throw from the call that gives
+  the last of them, in any order, and a setting that conflicts only with a
+  default, which a later call can still replace, fails the first draw. The
+  eager validation goes through `EngineAccess.setup()`, a `TestCase` over
+  the process binding with no engine test case behind it: the six
+  handle-less generators call `hegel_validate_date`/`_time`/`_datetime`/
+  `_timestamp`/`_offset`/`_duration`, which make the checks of the matching
+  draw, and the spec-based ones build their spec there. The defaults of
+  `times`, `durations`, `offsets` and `spans` are the least constraining
+  values, so for them everything is eager. `dates`, `datetimes`, `instants`
+  and `zonedDatetimes` default to years 1 to 9999, narrower than the
+  engine's range, so their constructors validate with the engine's extreme
+  in place of a bound that was not set (`ZonedDateTimeGenerator` sends the
+  engine no bounds when none was set, and both kinds when both were, for
+  `hegel_zoned_spec_validate` to reject), and `doDraw` checks again with the
+  defaults: a `min` beyond the year 9999 with no `max` fails the first draw
+  (`Bounds.ordered` says the other bound is the default), and the two work
+  in either order. A zone spec has no unconstrained source, so
+  `ZoneGenerator` validates its names eagerly only once `source(...)` was
+  called (`sourceGiven`), and against the default source at the first draw.
+  Its check that the source has a zone the link and legacy flags admit always
+  waits for the first draw, since a later `names(...)` makes the flags moot.
+  A draw-time argument error is an `IllegalArgumentException` thrown in the
+  test body, which the runner reports as the test's failure;
+  `ZonedDateTimeGenerator` builds its zoned spec before it draws a zone, so
+  the error does not depend on the zone drawn. Never make a constructor
+  check an explicit setting against a default: that makes the order of the
+  fluent calls matter. Besides defaults, only what depends on a drawn value
+  is left to the draw: a zone of a non-`ZoneGenerator` zones generator that
+  the source does not know, and bounds no allowed zone has a value in. The
+  Java-side checks that remain are the ones that name Java's parameters
+  (bound order, the engine's year range, an empty set, null, a
+  `ZoneGenerator` together with `source(...)`).
   A `ZoneGenerator` reads `ZoneSource.getDefault()` when it is created. For
   `ZoneSource.javaTime()` its spec names no zones, so the engine filters the
   source's names by the link and legacy flags; for any other source it names

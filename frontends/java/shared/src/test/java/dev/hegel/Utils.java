@@ -1,5 +1,7 @@
 package dev.hegel;
 
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Predicate;
@@ -18,6 +20,17 @@ final class Utils {
                     }
                 },
                 new Settings().database(Database.disabled()));
+    }
+
+    /**
+     * The {@link IllegalArgumentException} the first draw from {@code gen} reports: where a
+     * generator whose settings do not fit together says so.
+     */
+    static IllegalArgumentException firstDrawError(Generator<?> gen) {
+        return assertThrows(
+                IllegalArgumentException.class,
+                () -> Hegel.run(tc -> tc.draw(gen), new Settings().database(Database.disabled()), Reporter.silent())
+                        .throwIfFailed());
     }
 
     /** Assert that no generated value satisfies {@code condition}. */

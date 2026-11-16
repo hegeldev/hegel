@@ -22,15 +22,21 @@ import java.util.Set;
  * wrong: the leap days nearest the bounds, the year boundaries, the 2038 and 2106 overflow days
  * and the days of an ISO week 53.
  *
- * <p>Bounds in the wrong order, and bounds that hold no date on an allowed weekday and month, are
- * rejected with an {@link IllegalArgumentException} by the method that makes them so. A bound that
- * was not set counts as its default, so to draw beyond the year 9999 set {@code max} before {@code
- * min}, and before the year 1 {@code min} before {@code max}.
+ * <p>The fluent methods can be called in any order. Each rejects, with an {@link
+ * IllegalArgumentException}, what cannot work whatever is set afterwards: a bound outside the years
+ * {@code -999999} to {@code 999999}, an empty set of weekdays or months, and the settings given so
+ * far when they do not fit together ({@code min} after {@code max}, or bounds with no date on an
+ * allowed weekday and month). A setting that was not given is not held against the others until the
+ * first draw, where it counts as its default: {@code min} alone may be beyond the year 9999, since
+ * a {@code max} can follow in either order, and without one the first draw fails with an {@link
+ * IllegalArgumentException} because the default {@code max} is the last day of 9999.
  */
 public final class DateGenerator implements Generator<LocalDate> {
     static final LocalDate DEFAULT_MIN = LocalDate.of(1, 1, 1);
     static final LocalDate DEFAULT_MAX = LocalDate.of(9999, 12, 31);
     static final int MAX_ENGINE_YEAR = 999_999;
+    static final LocalDate MIN_ENGINE = LocalDate.of(-MAX_ENGINE_YEAR, 1, 1);
+    static final LocalDate MAX_ENGINE = LocalDate.of(MAX_ENGINE_YEAR, 12, 31);
 
     private final LocalDate min;
     private final LocalDate max;
@@ -47,23 +53,26 @@ public final class DateGenerator implements Generator<LocalDate> {
     /**
      * @param min the inclusive lower bound
      * @param max the inclusive upper bound
+     * @throws IllegalArgumentException if {@code min} is after {@code max}
      */
     public DateGenerator(LocalDate min, LocalDate max) {
         this(Objects.requireNonNull(min), Objects.requireNonNull(max), null, null);
     }
 
     private DateGenerator(LocalDate min, LocalDate max, Set<DayOfWeek> weekdays, Set<Month> months) {
-        this.lo = min != null ? min : DEFAULT_MIN;
-        this.hi = max != null ? max : DEFAULT_MAX;
+        this.lo = Bounds.or(min, DEFAULT_MIN);
+        this.hi = Bounds.or(max, DEFAULT_MAX);
         validateYear(lo);
         validateYear(hi);
-        Bounds.ordered("dates", min, max, lo, hi);
         this.min = min;
         this.max = max;
         this.weekdays = weekdays;
         this.months = months;
+        LocalDate widestLo = Bounds.or(min, MIN_ENGINE);
+        LocalDate widestHi = Bounds.or(max, MAX_ENGINE);
+        Bounds.ordered("dates", min, max, widestLo, widestHi);
         TestCase setup = EngineAccess.setup();
-        setup.validateDate(lo, hi, optionsHandle(setup));
+        setup.validateDate(widestLo, widestHi, optionsHandle(setup));
     }
 
     private static void validateYear(LocalDate date) {
@@ -84,7 +93,7 @@ public final class DateGenerator implements Generator<LocalDate> {
      * @return a copy with the lower bound set
      */
     public DateGenerator min(LocalDate min) {
-        return new DateGenerator(min, max, weekdays, months);
+        return new DateGenerator(Objects.requireNonNull(min), max, weekdays, months);
     }
 
     /**
@@ -92,7 +101,7 @@ public final class DateGenerator implements Generator<LocalDate> {
      * @return a copy with the upper bound set
      */
     public DateGenerator max(LocalDate max) {
-        return new DateGenerator(min, max, weekdays, months);
+        return new DateGenerator(min, Objects.requireNonNull(max), weekdays, months);
     }
 
     /**
@@ -156,6 +165,7 @@ public final class DateGenerator implements Generator<LocalDate> {
     /** @hidden */
     @Override
     public LocalDate doDraw(TestCase tc) {
+        Bounds.ordered("dates", min, max, lo, hi);
         return tc.generateDate(lo, hi, optionsHandle(tc));
     }
 }

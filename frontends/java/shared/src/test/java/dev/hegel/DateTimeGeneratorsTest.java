@@ -4,6 +4,7 @@ import static dev.hegel.Generators.forType;
 import static dev.hegel.Generators.just;
 import static dev.hegel.Utils.assertAllExamples;
 import static dev.hegel.Utils.findAny;
+import static dev.hegel.Utils.firstDrawError;
 import static dev.hegel.Utils.minimal;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -176,32 +177,29 @@ class DateTimeGeneratorsTest {
     }
 
     @Test
-    void aBoundBeyondTheDefaultOfTheOtherIsRejectedUntilTheOtherIsSet() {
+    void aBoundBeyondTheDefaultOfTheOtherFailsTheFirstDrawUnlessTheOtherIsSet() {
         LocalDate farDay = LocalDate.of(20_000, 1, 1);
         LocalDateTime far = farDay.atStartOfDay();
         Instant farInstant = far.toInstant(ZoneOffset.UTC);
-        List<Supplier<Generator<?>>> beyondTheDefaultMax = List.of(
-                () -> Temporals.dates().min(farDay),
-                () -> Temporals.datetimes().min(far),
-                () -> Temporals.instants().min(farInstant),
-                () -> Temporals.zonedDatetimes().min(far),
-                () -> Temporals.zonedDatetimes().min(farInstant));
-        for (Supplier<Generator<?>> build : beyondTheDefaultMax) {
-            IllegalArgumentException unordered = assertThrows(IllegalArgumentException.class, build::get);
+        List<Generator<?>> beyondTheDefaultMax = List.of(
+                Temporals.dates().min(farDay),
+                Temporals.datetimes().min(far),
+                Temporals.instants().min(farInstant),
+                Temporals.zonedDatetimes().min(far),
+                Temporals.zonedDatetimes().min(farInstant));
+        for (Generator<?> gen : beyondTheDefaultMax) {
+            IllegalArgumentException unordered = firstDrawError(gen);
             assertTrue(
-                    unordered.getMessage().contains("max was not set, so it is the default: set it before min"),
-                    unordered.getMessage());
+                    unordered.getMessage().endsWith("; max was not set, so it is the default"), unordered.getMessage());
         }
-        IllegalArgumentException early = assertThrows(
-                IllegalArgumentException.class, () -> Temporals.dates().max(farDay.withYear(-5)));
-        assertTrue(
-                early.getMessage().contains("min was not set, so it is the default: set it before max"),
-                early.getMessage());
+        IllegalArgumentException early = firstDrawError(Temporals.dates().max(farDay.withYear(-5)));
+        assertTrue(early.getMessage().endsWith("; min was not set, so it is the default"), early.getMessage());
         IllegalArgumentException both = assertThrows(
                 IllegalArgumentException.class,
                 () -> Temporals.dates().max(farDay.plusYears(1)).min(farDay.plusYears(2)));
         assertFalse(both.getMessage().contains("default"), both.getMessage());
         assertAllExamples(Temporals.dates().max(farDay.plusYears(1)).min(farDay), d -> d.getYear() >= 20_000);
+        assertAllExamples(Temporals.dates().min(farDay).max(farDay.plusYears(1)), d -> d.getYear() >= 20_000);
         assertAllExamples(Temporals.dates().min(farDay.withYear(-6)).max(farDay.withYear(-5)), d -> d.getYear() <= -5);
         assertAllExamples(Temporals.datetimes().max(far.plusYears(1)).min(far), dt -> dt.getYear() >= 20_000);
         assertAllExamples(
@@ -320,6 +318,26 @@ class DateTimeGeneratorsTest {
         assertThrows(IllegalArgumentException.class, () -> new OffsetGenerator(two, one));
     }
 
+    @Test
+    void aNullSettingIsRejectedByTheCallThatGivesIt() {
+        List<Runnable> nulls = List.of(
+                () -> Temporals.dates().min(null),
+                () -> Temporals.dates().max(null),
+                () -> Temporals.datetimes().min(null),
+                () -> Temporals.datetimes().max(null),
+                () -> Temporals.instants().min(null),
+                () -> Temporals.instants().max(null),
+                () -> Temporals.zonedDatetimes().min((LocalDateTime) null),
+                () -> Temporals.zonedDatetimes().max((LocalDateTime) null),
+                () -> Temporals.zonedDatetimes().min((Instant) null),
+                () -> Temporals.zonedDatetimes().max((Instant) null),
+                () -> Temporals.zonedDatetimes().ambiguous(null),
+                () -> Temporals.zones().source(null));
+        for (Runnable build : nulls) {
+            assertThrows(NullPointerException.class, build::run);
+        }
+    }
+
     // --- offsets ---
 
     @Test
@@ -412,6 +430,10 @@ class DateTimeGeneratorsTest {
                 assertThrows(IllegalArgumentException.class, () -> hostOnly.source(ZoneSource.bundled()));
         assertTrue(
                 unknown.getMessage().contains("unknown time zone \"" + HostOnlyZone.ID + "\""), unknown.getMessage());
+        ZoneGenerator bundled = Temporals.zones().source(ZoneSource.bundled());
+        IllegalArgumentException sourceFirst =
+                assertThrows(IllegalArgumentException.class, () -> bundled.names(HostOnlyZone.ID));
+        assertEquals(unknown.getMessage(), sourceFirst.getMessage());
     }
 
     @Test

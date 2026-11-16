@@ -313,7 +313,8 @@ final class LiveDataSource implements DataSource {
         if (civilMin != null) {
             configure(
                     spec, freer, lib.zonedSpecSetCivilBounds(spec, civilMin, civilMax), "zoned_spec_set_civil_bounds");
-        } else {
+        }
+        if (instantMin != null) {
             configure(
                     spec,
                     freer,

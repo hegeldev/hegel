@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
+import java.util.Objects;
 import java.util.TreeSet;
 
 /**
@@ -33,40 +34,62 @@ import java.util.TreeSet;
  * short run. A name shrinks to a zone a reader recognises: real zones with a whole-hour offset and
  * a simple daylight-saving rule first, then the other real zones, then the {@code Etc/GMT} family,
  * then the legacy names, and last any name the engine's catalogue of IANA names lacks.
+ *
+ * <p>The fluent methods can be called in any order. Each rejects, with an {@link
+ * IllegalArgumentException}, what cannot work whatever is set afterwards: an empty list of names, a
+ * name this JVM cannot resolve, and, once both {@link #names(String...)} and {@link
+ * #source(ZoneSource)} were called, a name that source lacks. What a later call could still put
+ * right waits for the first draw, which fails with an {@link IllegalArgumentException}: a name the
+ * default zone source lacks when no source was given, and a source none of whose zones the {@link
+ * #allowLinks(boolean)} and {@link #allowLegacy(boolean)} settings admit when no names were. A
+ * {@link ZonedDateTimeGenerator} given such a generator fails its own first draw the same way.
  */
 public final class ZoneGenerator implements Generator<ZoneId> {
     private final List<String> names;
     private final boolean allowLinks;
     private final boolean allowLegacy;
     private final ZoneSource source;
+    private final boolean sourceGiven;
     private final SpecCache listed = new SpecCache();
 
     public ZoneGenerator() {
-        this(null, true, false, ZoneSource.getDefault());
+        this(null, true, false, ZoneSource.getDefault(), false);
     }
 
-    private ZoneGenerator(List<String> names, boolean allowLinks, boolean allowLegacy, ZoneSource source) {
+    /**
+     * {@code sourceGiven} says {@link #source(ZoneSource)} named {@code source}. Explicit names are
+     * checked against such a source here; against the default, which a later call can still
+     * replace, only at a draw.
+     */
+    private ZoneGenerator(
+            List<String> names, boolean allowLinks, boolean allowLegacy, ZoneSource source, boolean sourceGiven) {
         this.names = names;
         this.allowLinks = allowLinks;
         this.allowLegacy = allowLegacy;
         this.source = source;
-        spec(EngineAccess.setup());
+        this.sourceGiven = sourceGiven;
+        if (sourceGiven && names != null) {
+            spec(EngineAccess.setup());
+        }
     }
 
     /** The default set of names of {@code source}. */
     static ZoneGenerator of(ZoneSource source) {
-        return new ZoneGenerator(null, true, false, source);
+        return new ZoneGenerator(null, true, false, source, false);
     }
 
     /**
      * Draw only these names, each exactly as this JVM spells it. {@link #allowLinks(boolean)} and
-     * {@link #allowLegacy(boolean)} do not apply to an explicit list. A name this JVM cannot
-     * resolve, or that the generator's zone source lacks, is rejected with an {@link
-     * IllegalArgumentException}: to draw names of another source, call {@link #source(ZoneSource)}
-     * before this.
+     * {@link #allowLegacy(boolean)} do not apply to an explicit list. The names are those of the
+     * source the generator ends up with, so {@link #source(ZoneSource)} may come before or after
+     * this: a name that source lacks is rejected by whichever of the two calls comes second, and a
+     * name the default source lacks, when {@link #source(ZoneSource)} is never called, by the
+     * first draw.
      *
      * @param names the allowed names, at least one
      * @return a copy restricted to those names
+     * @throws IllegalArgumentException if {@code names} is empty, or holds a name this JVM cannot
+     *     resolve or that the source given to {@link #source(ZoneSource)} lacks
      */
     public ZoneGenerator names(String... names) {
         return names(Arrays.asList(names));
@@ -75,6 +98,8 @@ public final class ZoneGenerator implements Generator<ZoneId> {
     /**
      * @param names the allowed names, at least one
      * @return a copy restricted to those names
+     * @throws IllegalArgumentException if {@code names} is empty, or holds a name this JVM cannot
+     *     resolve or that the source given to {@link #source(ZoneSource)} lacks
      * @see #names(String...)
      */
     public ZoneGenerator names(Collection<String> names) {
@@ -88,7 +113,7 @@ public final class ZoneGenerator implements Generator<ZoneId> {
                 throw new IllegalArgumentException("zones: \"" + name + "\" is not a zone this JVM knows", e);
             }
         }
-        return new ZoneGenerator(List.copyOf(names), allowLinks, allowLegacy, source);
+        return new ZoneGenerator(List.copyOf(names), allowLinks, allowLegacy, source, sourceGiven);
     }
 
     /**
@@ -97,7 +122,7 @@ public final class ZoneGenerator implements Generator<ZoneId> {
      * @return a copy with the setting applied
      */
     public ZoneGenerator allowLinks(boolean allow) {
-        return new ZoneGenerator(names, allow, allowLegacy, source);
+        return new ZoneGenerator(names, allow, allowLegacy, source, sourceGiven);
     }
 
     /**
@@ -106,19 +131,22 @@ public final class ZoneGenerator implements Generator<ZoneId> {
      * @return a copy with the setting applied
      */
     public ZoneGenerator allowLegacy(boolean allow) {
-        return new ZoneGenerator(names, allowLinks, allow, source);
+        return new ZoneGenerator(names, allowLinks, allow, source, sourceGiven);
     }
 
     /**
      * Draw from {@code source} rather than the default zone source: the names are its names, and a
      * {@link ZonedDateTimeGenerator} given this generator aims its wall-clock times at the
-     * source's transitions.
+     * source's transitions. The names given to {@link #names(String...)}, before or after this,
+     * must be names of {@code source}.
      *
      * @param source the time zone data to draw from
      * @return a copy with the source set
+     * @throws IllegalArgumentException if {@link #names(String...)} was called with a name {@code
+     *     source} lacks
      */
     public ZoneGenerator source(ZoneSource source) {
-        return new ZoneGenerator(names, allowLinks, allowLegacy, source);
+        return new ZoneGenerator(names, allowLinks, allowLegacy, Objects.requireNonNull(source), true);
     }
 
     ZoneSource source() {

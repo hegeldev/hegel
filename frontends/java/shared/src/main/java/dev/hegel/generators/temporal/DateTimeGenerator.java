@@ -22,10 +22,14 @@ import java.util.Objects;
  * whole number of some unit with {@link #precision(ChronoUnit)}. Values shrink toward 2000-01-01T00:00:00, or the nearest
  * bound when that is out of range.
  *
- * <p>Bounds in the wrong order, and bounds that hold no value at the precision, are rejected with
- * an {@link IllegalArgumentException} by the method that makes them so. A bound that was not set
- * counts as its default, so to draw beyond the year 9999 set {@code max} before {@code min}, and
- * before the year 1 {@code min} before {@code max}.
+ * <p>The fluent methods can be called in any order. Each rejects, with an {@link
+ * IllegalArgumentException}, what cannot work whatever is set afterwards: a bound outside the years
+ * {@code -999999} to {@code 999999}, a precision that is not one of the six units, and the settings
+ * given so far when they do not fit together ({@code min} after {@code max}, or bounds with no
+ * value at the precision). A setting that was not given is not held against the others until the
+ * first draw, where it counts as its default: {@code min} alone may be beyond the year 9999, since
+ * a {@code max} can follow in either order, and without one the first draw fails with an {@link
+ * IllegalArgumentException} because the default {@code max} is the last day of 9999.
  *
  * <p>Attach a time zone to produce zone-aware values: {@link #zones(Generator)} draws each
  * wall-clock time in a {@link ZoneId} to make a DST-aware {@link ZonedDateTime} (see {@link
@@ -58,22 +62,25 @@ public final class DateTimeGenerator implements Generator<LocalDateTime> {
     /**
      * @param min the inclusive lower bound
      * @param max the inclusive upper bound
+     * @throws IllegalArgumentException if {@code min} is after {@code max}
      */
     public DateTimeGenerator(LocalDateTime min, LocalDateTime max) {
         this(Objects.requireNonNull(min), Objects.requireNonNull(max), ChronoUnit.NANOS);
     }
 
     private DateTimeGenerator(LocalDateTime min, LocalDateTime max, ChronoUnit precision) {
-        this.lo = min != null ? min : DEFAULT_MIN;
-        this.hi = max != null ? max : DEFAULT_MAX;
+        this.lo = Bounds.or(min, DEFAULT_MIN);
+        this.hi = Bounds.or(max, DEFAULT_MAX);
         validateCivil(lo, "datetimes");
         validateCivil(hi, "datetimes");
-        Bounds.ordered("datetimes", min, max, lo, hi);
         this.min = min;
         this.max = max;
         this.precision = precision;
         this.precisionCode = Precisions.engine(precision, "datetimes");
-        EngineAccess.setup().validateDatetime(lo, hi, precisionCode);
+        LocalDateTime widestLo = Bounds.or(min, MIN_CIVIL);
+        LocalDateTime widestHi = Bounds.or(max, MAX_CIVIL);
+        Bounds.ordered("datetimes", min, max, widestLo, widestHi);
+        EngineAccess.setup().validateDatetime(widestLo, widestHi, precisionCode);
     }
 
     static void validateCivil(LocalDateTime dt, String what) {
@@ -87,7 +94,7 @@ public final class DateTimeGenerator implements Generator<LocalDateTime> {
      * @return a copy with the lower bound set
      */
     public DateTimeGenerator min(LocalDateTime min) {
-        return new DateTimeGenerator(min, max, precision);
+        return new DateTimeGenerator(Objects.requireNonNull(min), max, precision);
     }
 
     /**
@@ -95,7 +102,7 @@ public final class DateTimeGenerator implements Generator<LocalDateTime> {
      * @return a copy with the upper bound set
      */
     public DateTimeGenerator max(LocalDateTime max) {
-        return new DateTimeGenerator(min, max, precision);
+        return new DateTimeGenerator(min, Objects.requireNonNull(max), precision);
     }
 
     /**
@@ -114,6 +121,7 @@ public final class DateTimeGenerator implements Generator<LocalDateTime> {
     /** @hidden */
     @Override
     public LocalDateTime doDraw(TestCase tc) {
+        Bounds.ordered("datetimes", min, max, lo, hi);
         return tc.generateDatetime(lo, hi, precisionCode);
     }
 

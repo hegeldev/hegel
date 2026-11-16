@@ -97,8 +97,10 @@ interface DataSource {
     SpecHandle timezoneSpec(List<String> names, boolean links, boolean legacy, long source);
 
     /**
-     * Exactly one pair of bounds is non-null: civil (wall-clock) or instant. {@code imaginary} is an
-     * {@code Abi.IMAGINARY_*} constant and {@code ambiguous} an {@code Abi.AMBIGUOUS_*} one.
+     * A pair of bounds is civil (wall-clock) or instant, and null when not set: with neither the
+     * spec has the engine's whole civil range, and the engine rejects one given both. {@code
+     * imaginary} is an {@code Abi.IMAGINARY_*} constant and {@code ambiguous} an {@code
+     * Abi.AMBIGUOUS_*} one.
      */
     SpecHandle zonedSpec(
             LocalDateTime civilMin,
