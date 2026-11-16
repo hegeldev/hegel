@@ -1,5 +1,6 @@
 using System.Numerics;
 using Hegel.Native;
+using Hegel.Temporal;
 
 namespace Hegel;
 

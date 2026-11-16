@@ -7,6 +7,7 @@ open Xunit
 open Hegel.FSharp.Tests.Support
 open Hegel
 open Hegel.FSharp
+open Hegel.FSharp.Temporal
 
 type Primary =
     | Cyan = 1

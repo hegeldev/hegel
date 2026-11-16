@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using Hegel.Native;
+using Hegel.Temporal;
 
 namespace Hegel;
 

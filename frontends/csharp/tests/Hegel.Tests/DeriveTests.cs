@@ -1,4 +1,5 @@
 using System.Numerics;
+using Hegel.Temporal;
 using Xunit;
 
 namespace Hegel.Tests;

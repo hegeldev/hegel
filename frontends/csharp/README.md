@@ -113,8 +113,8 @@ Generators.Tuples(Generators.Integers(), Generators.Booleans())
 Generators.SampledFrom(["red", "green", "blue"])
 Generators.OneOf(Generators.Integers(), Generators.Just(-1))
 Generators.Nullable(Generators.Integers())
-Generators.Dates().Min(new DateOnly(2020, 1, 1)).Weekdays(DayOfWeek.Saturday, DayOfWeek.Sunday)
-Generators.ZonedDateTimes().Zones(Generators.Zones().Names("Europe/London", "America/New_York"))
+Generators.Temporal.Dates().Min(new DateOnly(2020, 1, 1)).Weekdays(DayOfWeek.Saturday, DayOfWeek.Sunday)
+Generators.Temporal.ZonedDateTimes().Zones(Generators.Temporal.Zones().Names("Europe/London", "America/New_York"))
 ```
 
 Generators compose with `Map`, `Filter` and `FlatMap`:
@@ -149,7 +149,7 @@ var ranges = Generators.Composite(tc =>
 
 ### Dates and times
 
-`Generators.Dates()`, `Times()`, `DateTimes()`, `Instants()`, `Offsets()`, `Durations()`, `Spans()`, `Zones()` and `ZonedDateTimes()` draw dates and times, under the names every Hegel frontend uses:
+The date and time generators are on `Generators.Temporal`, under the names every Hegel frontend uses, and the types that go with them (`ZonedDateTime`, `CalendarSpan`, `Precision`, `ZoneSource` and the rest) are in the `Hegel.Temporal` namespace:
 
 | Generator | Draws | Narrowed with |
 |---|---|---|
@@ -166,7 +166,7 @@ var ranges = Generators.Composite(tc =>
 A `ZonedDateTime` is a wall-clock time in a zone, with the offset and instant the zone gives it and a `Kind` that says whether the clocks showed that time once, twice (`Earlier`, `Later`) or never (`Skipped`). Hegel aims draws at the zone's transitions, so a property over `ZonedDateTimes()` meets repeated times without being told to, and skipped ones once `AllowImaginary(true)` asks for them:
 
 ```csharp
-var meeting = tc.Draw(Generators.ZonedDateTimes().Min(new DateTime(2024, 1, 1)).Max(new DateTime(2024, 12, 31)));
+var meeting = tc.Draw(Generators.Temporal.ZonedDateTimes().Min(new DateTime(2024, 1, 1)).Max(new DateTime(2024, 12, 31)));
 Assert.Equal(meeting.Offset, meeting.Zone.GetUtcOffset(meeting.Instant));
 ```
 
@@ -274,11 +274,11 @@ Gen.tuple2 Gen.int Gen.string           // int * string, up to tuple5
 Gen.item [ "red"; "green"; "blue" ]
 Gen.oneOf [ Gen.int; Gen.constant -1 ]
 Gen.regex "[a-z]+@[a-z]+\\.com"
-Gen.dateOnly.Min(DateOnly(2020, 1, 1))
-Gen.zonedDateTime().Source(ZoneSource.Bundled)
+Gen.Temporal.date.Min(DateOnly(2020, 1, 1))
+Gen.Temporal.zonedDateTime().Source(ZoneSource.Bundled)
 ```
 
-The date and time generators are `Gen.dateOnly`, `Gen.timeOnly`, `Gen.dateTime`, `Gen.dateTimeOffset`, `Gen.instant`, `Gen.offset`, `Gen.duration`, `Gen.span`, `Gen.zone ()` and `Gen.zonedDateTime ()`. The last two are functions because a zone generator reads `ZoneSource.Default` when it is made.
+The date and time generators are in `Gen.Temporal`: `date`, `time`, `dateTime`, `dateTimeOffset`, `instant`, `offset`, `duration`, `span`, `zone ()` and `zonedDateTime ()`. The last two are functions because a zone generator reads `ZoneSource.Default` when it is made. Their types, `ZoneSource` among them, are in the `Hegel.FSharp.Temporal` namespace.
 
 Generators compose with `Gen.map`, `Gen.filter` and `Gen.bind`, or in a `gen { }` block, which draws from each generator it binds:
 

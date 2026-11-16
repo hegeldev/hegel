@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Numerics;
 using Hegel.Native;
+using Hegel.Temporal;
 using Hegel.Tests.Support;
 using Xunit;
 

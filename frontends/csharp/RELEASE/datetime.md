@@ -1,27 +1,34 @@
 RELEASE_TYPE: minor
 
-This release moves every date and time generator onto the engine's temporal draws, under the names every Hegel frontend shares, and adds `Generators.Instants()`, `Generators.Spans()` and `Generators.ZonedDateTimes()`, options on the existing generators, and zone sources, which say whose time zone data a draw reads. A few changes can break existing code or tests.
+This release moves every date and time generator onto the engine's temporal draws and into a temporal namespace, under the names every Hegel frontend shares: the generators are on `Generators.Temporal`, and their types are in the namespace `Hegel.Temporal`. It adds `Instants()`, `Spans()` and `ZonedDateTimes()`, options on the existing generators, and zone sources, which say whose time zone data a draw reads. A few changes can break existing code or tests.
 
-The generators are `Generators.Dates()` (`DateOnly`), `Times()` (`TimeOnly`), `DateTimes()` (`DateTime`), `Instants()` (`DateTimeOffset` with a zero offset), `Offsets()` (`TimeSpan`), `Durations()` (`TimeSpan`), `Spans()` (`CalendarSpan`), `Zones()` (`TimeZoneInfo`) and `ZonedDateTimes()` (`ZonedDateTime`). Three released names are deprecated in their favour and keep working with the defaults they had, and `DateTimeGenerator.WithTimeZones` is deprecated in favour of `ZonedDateTimes()`:
+The generators are `Generators.Temporal.Dates()` (`DateOnly`), `Times()` (`TimeOnly`), `DateTimes()` (`DateTime`), `Instants()` (`DateTimeOffset` with a zero offset), `Offsets()` (`TimeSpan`), `Durations()` (`TimeSpan`), `Spans()` (`CalendarSpan`), `Zones()` (`TimeZoneInfo`) and `ZonedDateTimes()` (`ZonedDateTime`). The six date and time generators that were directly on `Generators` are deprecated in their favour and keep working with the defaults they had, and `DateTimeGenerator.WithTimeZones` is deprecated in favour of `ZonedDateTimes()`:
 
 ```csharp
 // before
+Generators.Dates()
+Generators.Times()
+Generators.DateTimes()
 Generators.TimeSpans()
 Generators.UtcOffsets()
 Generators.TimeZones()
 Generators.DateTimes().WithTimeZones(Generators.TimeZones())
 
 // after
-Generators.Durations().Min(TimeSpan.Zero)
-Generators.Offsets()
-Generators.Zones()
-Generators.ZonedDateTimes().Zones(Generators.Zones()).Map(zoned => zoned.ToDateTimeOffset())
+Generators.Temporal.Dates()
+Generators.Temporal.Times()
+Generators.Temporal.DateTimes()
+Generators.Temporal.Durations().Min(TimeSpan.Zero)
+Generators.Temporal.Offsets()
+Generators.Temporal.Zones()
+Generators.Temporal.ZonedDateTimes().Zones(Generators.Temporal.Zones()).Map(zoned => zoned.ToDateTimeOffset())
 ```
 
-In F#, `Gen.timeSpan`, `Gen.utcOffset` and `Gen.timeZone` are deprecated in the same way, for `Gen.duration`, `Gen.offset` and `Gen.zone ()`, beside the new `Gen.instant`, `Gen.span` and `Gen.zonedDateTime ()`.
+In F#, the generators are in the module `Gen.Temporal` (`date`, `time`, `dateTime`, `dateTimeOffset`, `instant`, `offset`, `duration`, `span`, `zone ()` and `zonedDateTime ()`) and their types in the namespace `Hegel.FSharp.Temporal`. `Gen.dateOnly`, `Gen.timeOnly`, `Gen.dateTime`, `Gen.dateTimeOffset`, `Gen.timeSpan`, `Gen.utcOffset` and `Gen.timeZone` are deprecated in the same way.
 
 What can break:
 
+- `DateGenerator`, `TimeGenerator` and `DateTimeGenerator` are now in the namespace `Hegel.Temporal`, so code that names one of those types needs `using Hegel.Temporal;` (F# code needs nothing: `Hegel.FSharp` still has them).
 - The classes `TimeSpanGenerator` and `UtcOffsetGenerator` are gone. `TimeSpans()` returns a `DurationGenerator` and `UtcOffsets()` an `OffsetGenerator`, which have the same `Min` and `Max` methods, and `TimeZones()` returns a `ZoneGenerator`, so only code that names one of the old types needs changing (and code compiled against an earlier version needs recompiling).
 - A bad argument to a date or time generator is now an `ArgumentException` carrying the engine's message, such as `generate_date requires min_value <= max_value, got [2020-12-31, 2020-01-01]`. It used to be an `ArgumentOutOfRangeException`, which is a subclass, so a test that expects that exact type or the old message needs updating.
 - `Durations()` draws durations of either sign, over the whole range of `TimeSpan`. The deprecated `TimeSpans()` still starts at zero.

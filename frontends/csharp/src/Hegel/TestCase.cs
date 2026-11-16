@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Numerics;
 using System.Runtime.ExceptionServices;
 using Hegel.Native;
+using Hegel.Temporal;
 
 namespace Hegel;
 

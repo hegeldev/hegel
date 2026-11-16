@@ -148,8 +148,15 @@ There is no engine version pin to keep in step in this directory.
   size validation) hold the implementations.
 - `Generators/Temporal`, `TemporalTypes`, `TemporalEngine`, `ZoneSource` —
   dates and times, all drawn, validated and formatted by the engine.
-  `Temporal` holds the nine generators (`Dates`, `Times`, `DateTimes`,
-  `Instants`, `Offsets`, `Durations`, `Spans`, `Zones`, `ZonedDateTimes`).
+  Every frontend puts its temporal API in a temporal namespace, and here
+  that is two things: the factories are the nested class
+  `Generators.Temporal` (`Dates`, `Times`, `DateTimes`, `Instants`,
+  `Offsets`, `Durations`, `Spans`, `Zones`, `ZonedDateTimes`), and every
+  public temporal type (the generator classes in `Generators/Temporal.cs`,
+  `TemporalTypes.cs`, `ZoneSource.cs`) is in the namespace
+  `Hegel.Temporal`. The names already released directly on `Generators`
+  (`Dates`, `Times`, `DateTimes`, `TimeSpans`, `UtcOffsets`, `TimeZones`)
+  are `[Obsolete]` aliases; add nothing temporal to `Generators` itself.
   Each builder method re-validates with the engine (`hegel_validate_*`,
   `*_spec_validate`) the settings given explicitly so far, with every
   setting not yet given at its least restrictive rather than its default,
@@ -205,7 +212,10 @@ There is no engine version pin to keep in step in this directory.
 
 - `src/Hegel.FSharp/` — the F# package, compiled in this order: `Types.fs`
   (abbreviations for every public type of `Hegel`, so F# code opens
-  `Hegel.FSharp` alone), `Repr.fs`
+  `Hegel.FSharp` alone, and in a second namespace `Hegel.FSharp.Temporal`
+  for every public type of `Hegel.Temporal`; `Gen.Temporal` is the module
+  of temporal generators, and the temporal names already released directly in
+  `Gen` are `[<Obsolete>]` aliases), `Repr.fs`
   (`Repr.render`, F# literals for every value by runtime type with the
   static type deciding how `null` prints, and `Repr.dialect`, the
   `Dialect` that prints `let name = value`), `Generators.fs` (the F#

@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using Hegel.Native;
 
-namespace Hegel;
+namespace Hegel.Temporal;
 
 /// <summary>The offset, daylight-saving flag and abbreviation a <see cref="ZoneOracle"/> reports for an instant.</summary>
 /// <param name="Offset">The UTC offset in force, a whole number of seconds less than two days in size.</param>
@@ -200,7 +200,7 @@ internal sealed class ZoneFiller : IZoneData
 }
 
 /// <summary>
-/// The time zone data that <see cref="Generators.Zones"/> and <see cref="Generators.ZonedDateTimes"/>
+/// The time zone data that <see cref="Generators.Temporal.Zones"/> and <see cref="Generators.Temporal.ZonedDateTimes"/>
 /// draw from: which zones exist, and when each one's offset changes. It should be the data the code
 /// under test uses, so that a drawn wall-clock time is skipped or repeated for that code too.
 /// </summary>

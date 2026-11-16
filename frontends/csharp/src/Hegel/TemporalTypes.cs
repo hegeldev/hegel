@@ -1,6 +1,6 @@
 using Hegel.Native;
 
-namespace Hegel;
+namespace Hegel.Temporal;
 
 /// <summary>The unit a drawn time is a whole number of.</summary>
 public enum Precision
@@ -80,7 +80,7 @@ public enum ZoneBeyond
 }
 
 /// <summary>
-/// A date and time in a time zone, as <see cref="Generators.ZonedDateTimes"/> draws it: the
+/// A date and time in a time zone, as <see cref="Generators.Temporal.ZonedDateTimes"/> draws it: the
 /// wall-clock time, the zone, and what the generator's <see cref="ZoneSource"/> says that wall
 /// clock means there. .NET has no such type of its own: a <see cref="DateTimeOffset"/> keeps the
 /// offset but not the zone, and cannot say that a wall-clock time was skipped or repeated.
@@ -143,7 +143,7 @@ public readonly record struct ZonedDateTime
 }
 
 /// <summary>
-/// A span of calendar and clock units, as <see cref="Generators.Spans"/> draws it: one count per
+/// A span of calendar and clock units, as <see cref="Generators.Temporal.Spans"/> draws it: one count per
 /// unit, each kept as drawn rather than folded into the next (13 months stay 13 months). .NET has
 /// no such type of its own: a <see cref="TimeSpan"/> is an exact length of time and has no months
 /// or years.

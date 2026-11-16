@@ -1,4 +1,5 @@
 using Hegel.Native;
+using Hegel.Temporal;
 using Hegel.Tests.Support;
 using Xunit;
 using static Hegel.Tests.Support.TestZones;
@@ -10,7 +11,7 @@ public class ZonedDateTimeTests
     private static readonly TimeZoneInfo Home = Springfield();
     private static readonly ZoneSource HomeOnly = ZoneSource.FromTimeZones(Home);
 
-    private static ZonedDateTimeGenerator AtHome() => Generators.ZonedDateTimes().Source(HomeOnly);
+    private static ZonedDateTimeGenerator AtHome() => Generators.Temporal.ZonedDateTimes().Source(HomeOnly);
 
     private static bool Consistent(ZonedDateTime value) =>
         value.LocalDateTime.Kind == DateTimeKind.Unspecified
@@ -22,11 +23,11 @@ public class ZonedDateTimeTests
     public void ZonedDateTimesAreInTheHostsZonesByDefault()
     {
         var host = ZoneSource.Host.Names.ToHashSet();
-        var values = Gen.Sample(Generators.ZonedDateTimes(), 200);
+        var values = Gen.Sample(Generators.Temporal.ZonedDateTimes(), 200);
         Assert.All(values, value => Assert.Contains(value.Zone.Id, host));
         Assert.All(values, value => Assert.True(Consistent(value), value.ToString()));
         Assert.DoesNotContain(values, value => value.Kind == WallTimeKind.Skipped);
-        var minimal = Gen.MinimalOutput(Generators.ZonedDateTimes());
+        var minimal = Gen.MinimalOutput(Generators.Temporal.ZonedDateTimes());
         Assert.Equal(
             """
             var x_1 = new ZonedDateTime(DateTime.Parse("2000-01-01T00:00:00"),
@@ -98,7 +99,7 @@ public class ZonedDateTimeTests
         var lo = new DateTime(2020, 6, 1, 9, 0, 0);
         var hi = new DateTime(2020, 6, 1, 17, 0, 0);
         var source = ZoneSource.FromTimeZones(Home, Fixed("Test/East", TimeSpan.FromHours(9)));
-        var values = Gen.Sample(Generators.ZonedDateTimes().Source(source).Min(lo).Max(hi), 100);
+        var values = Gen.Sample(Generators.Temporal.ZonedDateTimes().Source(source).Min(lo).Max(hi), 100);
         Assert.All(values, value => Assert.InRange(value.LocalDateTime, lo, hi));
         Assert.Contains(values, value => value.Zone.Id == "Test/East");
         Assert.Contains(values, value => value.Zone.Id == "Test/Springfield");
@@ -115,7 +116,7 @@ public class ZonedDateTimeTests
         var lo = new DateTimeOffset(2020, 6, 1, 9, 0, 0, TimeSpan.Zero);
         var hi = new DateTimeOffset(2020, 6, 3, 17, 0, 0, TimeSpan.FromHours(2));
         var source = ZoneSource.FromTimeZones(Home, Fixed("Test/East", TimeSpan.FromHours(9)));
-        var values = Gen.Sample(Generators.ZonedDateTimes().Source(source).Min(lo).Max(hi), 100);
+        var values = Gen.Sample(Generators.Temporal.ZonedDateTimes().Source(source).Min(lo).Max(hi), 100);
         Assert.All(values, value => Assert.InRange(value.Instant, lo, hi));
         Assert.All(values, value => Assert.True(Consistent(value), value.ToString()));
         Gen.All(AtHome().Min(lo), value => value.Instant >= lo, 50);
@@ -135,22 +136,22 @@ public class ZonedDateTimeTests
     {
         var east = Fixed("Test/East", TimeSpan.FromHours(9));
         var source = ZoneSource.FromTimeZones(Home, east);
-        var chosen = Generators.ZonedDateTimes().Zones(Generators.SampledFrom([Home, east])).Source(source);
+        var chosen = Generators.Temporal.ZonedDateTimes().Zones(Generators.SampledFrom([Home, east])).Source(source);
         var values = Gen.Sample(chosen, 100);
         Assert.All(values, value => Assert.True(Consistent(value) && (ReferenceEquals(value.Zone, Home) || ReferenceEquals(value.Zone, east)), value.ToString()));
         Assert.Contains(values, value => ReferenceEquals(value.Zone, east));
-        Gen.All(Generators.ZonedDateTimes().Zones(Generators.Just(TimeZoneInfo.Utc)), value => value.Zone.Equals(TimeZoneInfo.Utc) && value.Offset == TimeSpan.Zero, 20);
-        Gen.All(Generators.ZonedDateTimes().Zones(Generators.Zones().Source(source).Names("Test/East")), value => ReferenceEquals(value.Zone, east), 20);
-        Gen.All(Generators.ZonedDateTimes().Zones(Generators.Zones().Source(source)).Min(GapStart).Max(GapEnd), Consistent, 50);
+        Gen.All(Generators.Temporal.ZonedDateTimes().Zones(Generators.Just(TimeZoneInfo.Utc)), value => value.Zone.Equals(TimeZoneInfo.Utc) && value.Offset == TimeSpan.Zero, 20);
+        Gen.All(Generators.Temporal.ZonedDateTimes().Zones(Generators.Temporal.Zones().Source(source).Names("Test/East")), value => ReferenceEquals(value.Zone, east), 20);
+        Gen.All(Generators.Temporal.ZonedDateTimes().Zones(Generators.Temporal.Zones().Source(source)).Min(GapStart).Max(GapEnd), Consistent, 50);
 
         var tzif = ZoneSource.CreateBuilder().AddTzif("UTC", SpringfieldTzif()).Build();
-        var unchecked_ = Gen.Sample(Generators.ZonedDateTimes().Zones(Generators.Just(TimeZoneInfo.Utc)).Source(tzif), 100);
+        var unchecked_ = Gen.Sample(Generators.Temporal.ZonedDateTimes().Zones(Generators.Just(TimeZoneInfo.Utc)).Source(tzif), 100);
         Assert.All(unchecked_, value => Assert.True(value.Offset == Standard || value.Offset == Daylight));
 
         var stranger = Fixed("Nowhere/Land", TimeSpan.Zero);
-        var unknown = Assert.Throws<HegelUsageException>(() => Gen.Sample(Generators.ZonedDateTimes().Zones(Generators.Just(stranger)).Source(source), 1));
+        var unknown = Assert.Throws<HegelUsageException>(() => Gen.Sample(Generators.Temporal.ZonedDateTimes().Zones(Generators.Just(stranger)).Source(source), 1));
         Assert.StartsWith("hegel_generate_zoned_datetime_for_zone: unknown time zone \"Nowhere/Land\"", unknown.Message);
-        Assert.Throws<HegelUsageException>(() => Gen.Sample(Generators.ZonedDateTimes().Zones(Generators.Just(stranger)), 1));
+        Assert.Throws<HegelUsageException>(() => Gen.Sample(Generators.Temporal.ZonedDateTimes().Zones(Generators.Just(stranger)), 1));
     }
 
     [Fact]
@@ -163,11 +164,11 @@ public class ZonedDateTimeTests
         var expected = TimeZoneInfo.TryConvertWindowsIdToIanaId(windows.Id, out var iana) ? iana : windows.Id;
         Assert.Equal(expected, table.NameOf(windows));
         var byIana = ZoneSource.FromTimeZones(Fixed(expected, TimeSpan.FromHours(-8)));
-        Gen.All(Generators.ZonedDateTimes().Zones(Generators.Just(windows)).Source(byIana), value => ReferenceEquals(value.Zone, windows) && value.Offset == TimeSpan.FromHours(-8), 20);
+        Gen.All(Generators.Temporal.ZonedDateTimes().Zones(Generators.Just(windows)).Source(byIana), value => ReferenceEquals(value.Zone, windows) && value.Offset == TimeSpan.FromHours(-8), 20);
         var byWindowsId = ZoneSource.FromTimeZones(windows);
         Assert.Equal(windows.Id, byWindowsId.Table.NameOf(windows));
-        Gen.All(Generators.ZonedDateTimes().Zones(Generators.Just(windows)).Source(byWindowsId), value => ReferenceEquals(value.Zone, windows) && value.Offset == TimeSpan.FromHours(-8), 20);
-        Gen.All(Generators.ZonedDateTimes().Source(byWindowsId), value => ReferenceEquals(value.Zone, windows), 20);
+        Gen.All(Generators.Temporal.ZonedDateTimes().Zones(Generators.Just(windows)).Source(byWindowsId), value => ReferenceEquals(value.Zone, windows) && value.Offset == TimeSpan.FromHours(-8), 20);
+        Gen.All(Generators.Temporal.ZonedDateTimes().Source(byWindowsId), value => ReferenceEquals(value.Zone, windows), 20);
     }
 
     [Fact]
@@ -175,7 +176,7 @@ public class ZonedDateTimeTests
     {
         var source = ZoneSource.FromTimeZones(Fixed("Test/Fixed", TimeSpan.FromHours(2)));
         var impostor = Fixed("Test/Fixed", TimeSpan.FromHours(3));
-        var generator = Generators.ZonedDateTimes().Zones(Generators.Just(impostor)).Source(source);
+        var generator = Generators.Temporal.ZonedDateTimes().Zones(Generators.Just(impostor)).Source(source);
         using var run = new RawRun();
         Assert.Throws<AssumeRejected>(() => run.Case(captured: false).DrawSilent(generator));
     }
@@ -187,21 +188,21 @@ public class ZonedDateTimeTests
         var west = ZoneSource.FromTimeZones(Fixed("Test/West", TimeSpan.FromHours(-9)));
         using (var run = new RawRun())
         {
-            Assert.Throws<AssumeRejected>(() => run.Case(captured: false).DrawSilent(Generators.ZonedDateTimes().Source(east).Max(DateTime.MinValue)));
+            Assert.Throws<AssumeRejected>(() => run.Case(captured: false).DrawSilent(Generators.Temporal.ZonedDateTimes().Source(east).Max(DateTime.MinValue)));
         }
         using (var run = new RawRun())
         {
-            Assert.Throws<AssumeRejected>(() => run.Case(captured: false).DrawSilent(Generators.ZonedDateTimes().Source(west).Min(DateTime.MaxValue)));
+            Assert.Throws<AssumeRejected>(() => run.Case(captured: false).DrawSilent(Generators.Temporal.ZonedDateTimes().Source(west).Min(DateTime.MaxValue)));
         }
         using (var run = new RawRun())
         {
-            Assert.Throws<AssumeRejected>(() => run.Case(captured: false).DrawSilent(Generators.ZonedDateTimes().Source(east).Min(DateTimeOffset.MaxValue)));
+            Assert.Throws<AssumeRejected>(() => run.Case(captured: false).DrawSilent(Generators.Temporal.ZonedDateTimes().Source(east).Min(DateTimeOffset.MaxValue)));
         }
         using (var run = new RawRun())
         {
-            Assert.Throws<AssumeRejected>(() => run.Case(captured: false).DrawSilent(Generators.ZonedDateTimes().Source(west).Max(DateTimeOffset.MinValue)));
+            Assert.Throws<AssumeRejected>(() => run.Case(captured: false).DrawSilent(Generators.Temporal.ZonedDateTimes().Source(west).Max(DateTimeOffset.MinValue)));
         }
-        Gen.All(Generators.ZonedDateTimes().Source(west).Max(DateTime.MinValue), value => value.Instant.UtcDateTime == DateTime.MinValue.AddHours(9), 3);
+        Gen.All(Generators.Temporal.ZonedDateTimes().Source(west).Max(DateTime.MinValue), value => value.Instant.UtcDateTime == DateTime.MinValue.AddHours(9), 3);
     }
 
     [Fact]
@@ -211,35 +212,35 @@ public class ZonedDateTimeTests
         var hi = new DateTime(2020, 1, 1, 9, 50, 0);
         Assert.StartsWith(
             "hegel_zoned_spec_set_civil_bounds",
-            RejectedWhenBuilt(Generators.ZonedDateTimes(), g => g.Min(hi), g => g.Max(lo)));
+            RejectedWhenBuilt(Generators.Temporal.ZonedDateTimes(), g => g.Min(hi), g => g.Max(lo)));
         Assert.StartsWith(
             "hegel_zoned_spec_set_instant_bounds",
-            RejectedWhenBuilt(Generators.ZonedDateTimes(), g => g.Min(DateTimeOffset.UnixEpoch.AddDays(1)), g => g.Max(DateTimeOffset.UnixEpoch)));
+            RejectedWhenBuilt(Generators.Temporal.ZonedDateTimes(), g => g.Min(DateTimeOffset.UnixEpoch.AddDays(1)), g => g.Max(DateTimeOffset.UnixEpoch)));
         Assert.Equal(
             "hegel_zoned_spec_validate: a zoned datetime draw is bounded on the wall clock or on the instant, not both: civil bounds and instant bounds were both set",
-            RejectedWhenBuilt(Generators.ZonedDateTimes(), g => g.Min(lo), g => g.Max(DateTimeOffset.UnixEpoch)));
+            RejectedWhenBuilt(Generators.Temporal.ZonedDateTimes(), g => g.Min(lo), g => g.Max(DateTimeOffset.UnixEpoch)));
         Assert.StartsWith(
             "hegel_zoned_spec_validate",
-            RejectedWhenBuilt(Generators.ZonedDateTimes(), g => g.Min(lo), g => g.Max(hi), g => g.Precision(Precision.Hours)));
+            RejectedWhenBuilt(Generators.Temporal.ZonedDateTimes(), g => g.Min(lo), g => g.Max(hi), g => g.Precision(Precision.Hours)));
         Assert.StartsWith(
             "hegel_zoned_spec_validate",
-            RejectedWhenBuilt(Generators.ZonedDateTimes(), g => g.Min(DateTimeOffset.UnixEpoch.AddTicks(1)), g => g.Max(DateTimeOffset.UnixEpoch.AddTicks(2)), g => g.Precision(Precision.Seconds)));
-        Assert.Equal("hegel_zoned_spec_set_precision: unknown precision 99", Assert.Throws<ArgumentException>(() => Generators.ZonedDateTimes().Precision((Precision)99)).Message);
+            RejectedWhenBuilt(Generators.Temporal.ZonedDateTimes(), g => g.Min(DateTimeOffset.UnixEpoch.AddTicks(1)), g => g.Max(DateTimeOffset.UnixEpoch.AddTicks(2)), g => g.Precision(Precision.Seconds)));
+        Assert.Equal("hegel_zoned_spec_set_precision: unknown precision 99", Assert.Throws<ArgumentException>(() => Generators.Temporal.ZonedDateTimes().Precision((Precision)99)).Message);
         Assert.StartsWith(
-            "ZonedDateTimes: the generator given to Zones came from Generators.Zones() and carries its own zone source",
-            RejectedWhenBuilt(Generators.ZonedDateTimes(), g => g.Zones(Generators.Zones()), g => g.Source(HomeOnly)));
+            "ZonedDateTimes: the generator given to Zones came from Generators.Temporal.Zones() and carries its own zone source",
+            RejectedWhenBuilt(Generators.Temporal.ZonedDateTimes(), g => g.Zones(Generators.Temporal.Zones()), g => g.Source(HomeOnly)));
         foreach (var kind in new[] { DateTimeKind.Utc, DateTimeKind.Local })
         {
-            var min = Assert.Throws<ArgumentException>(() => Generators.ZonedDateTimes().Min(DateTime.SpecifyKind(lo, kind)));
+            var min = Assert.Throws<ArgumentException>(() => Generators.Temporal.ZonedDateTimes().Min(DateTime.SpecifyKind(lo, kind)));
             Assert.StartsWith("ZonedDateTimes: a DateTime bound is a wall-clock time in whichever zone is drawn, so its Kind must be Unspecified; to bound the instant, pass a DateTimeOffset", min.Message);
             Assert.Equal("min", min.ParamName);
-            Assert.Equal("max", Assert.Throws<ArgumentException>(() => Generators.ZonedDateTimes().Max(DateTime.SpecifyKind(lo, kind))).ParamName);
+            Assert.Equal("max", Assert.Throws<ArgumentException>(() => Generators.Temporal.ZonedDateTimes().Max(DateTime.SpecifyKind(lo, kind))).ParamName);
         }
-        Assert.Throws<ArgumentNullException>(() => Generators.ZonedDateTimes().Zones(null!));
-        Assert.Throws<ArgumentNullException>(() => Generators.ZonedDateTimes().Source(null!));
+        Assert.Throws<ArgumentNullException>(() => Generators.Temporal.ZonedDateTimes().Zones(null!));
+        Assert.Throws<ArgumentNullException>(() => Generators.Temporal.ZonedDateTimes().Source(null!));
         Assert.Equal(
             "Zones: the zone source has no zone that this system has a TimeZoneInfo for",
-            Assert.Throws<ArgumentException>(() => Generators.ZonedDateTimes().Source(ZoneSource.CreateBuilder().Build())).Message);
+            Assert.Throws<ArgumentException>(() => Generators.Temporal.ZonedDateTimes().Source(ZoneSource.CreateBuilder().Build())).Message);
     }
 
     [Fact]
