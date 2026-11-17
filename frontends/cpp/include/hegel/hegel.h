@@ -399,6 +399,7 @@
 #include "generators/stateful.h"
 #include "generators/strings.h"
 
+#include <exception>
 #include <functional>
 
 #if defined(__GNUC__) || defined(__clang__) ||                                 \
@@ -583,6 +584,9 @@ namespace hegel {
             // Runs one test-case body, raising the failed assertions the
             // framework recorded.
             void (*run_case)(const std::function<void()>&) = nullptr;
+            // Whether an exception is the framework's report of failed
+            // assertions, whose message names where each one failed.
+            bool (*is_assertion_failure)(const std::exception&) = nullptr;
         };
 
         // Makes `hooks` the integration every later run uses. Returns true, so

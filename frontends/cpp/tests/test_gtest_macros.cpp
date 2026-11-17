@@ -9,6 +9,7 @@
 #include <functional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <hegel/hegel.h>
 
@@ -118,6 +119,43 @@ TEST(GTestMacros, RepeatedAttemptsDoNotFloodTheEnclosingTest) {
         hegel::Settings{.test_cases = 300});
     EXPECT_EQ(out.failures, 0);
     EXPECT_NE(out.rethrown, "<no exception>");
+}
+
+// A verbose run prints a failed assertion's position and the first line of
+// its message after the test case; a debug run prints the whole message.
+TEST(GTestMacros, FailureDiagnosticLeadsWithThePosition) {
+    for (hegel::Verbosity verbosity :
+         {hegel::Verbosity::Verbose, hegel::Verbosity::Debug}) {
+        RunResult out = run(
+            [](hegel::TestCase& tc) {
+                auto x = tc.draw("x", small_int());
+                ASSERT_LT(x, 60) << "too big: " << x;
+            },
+            hegel::Settings{.test_cases = 100, .verbosity = verbosity});
+        std::vector<std::string> lines;
+        std::string::size_type start = 0;
+        std::string::size_type end;
+        while ((end = out.report.find('\n', start)) != std::string::npos) {
+            lines.push_back(out.report.substr(start, end - start));
+            start = end + 1;
+        }
+        std::string summary;
+        bool full_message = false;
+        for (const std::string& line : lines) {
+            if (contains(line, "test_gtest_macros.cpp:") &&
+                contains(line, "Expected: (x) < (60)")) {
+                summary = line;
+            }
+            full_message = full_message || line == "too big: 60";
+        }
+        EXPECT_TRUE(contains(summary, ": Expected: (x) < (60), actual: 60 vs "
+                                      "60"))
+            << summary;
+        bool shortened = summary.size() >= 4 &&
+                         summary.compare(summary.size() - 4, 4, " …") == 0;
+        EXPECT_EQ(shortened, verbosity == hegel::Verbosity::Verbose) << summary;
+        EXPECT_EQ(full_message, verbosity == hegel::Verbosity::Debug);
+    }
 }
 
 // Two ASSERT_* on different lines are two bugs.
