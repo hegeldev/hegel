@@ -998,7 +998,7 @@ func isHegelFrame(fn string) bool {
 }
 
 func isNotHegelFrame(fn string) bool {
-	return !isHegelFrame(fn)
+	return !isHegelFrame(fn) && !strings.HasPrefix(fn, "runtime.")
 }
 
 func (s *testCase) setWorker(index int64) error {

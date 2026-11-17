@@ -288,6 +288,24 @@ func TestIsHegelFrame(t *testing.T) {
 	}
 }
 
+func TestIsNotHegelFrameSkipsRuntime(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		fn   string
+		want bool
+	}{
+		{"hegel.dev/go/hegel.Run", false},
+		{"runtime.gopanic", false},
+		{"runtime.Callers", false},
+		{"main.main", true},
+	}
+	for _, tc := range cases {
+		if got := isNotHegelFrame(tc.fn); got != tc.want {
+			t.Errorf("isNotHegelFrame(%q) = %v, want %v", tc.fn, got, tc.want)
+		}
+	}
+}
+
 // TestFindCallerStableAcrossValues verifies that origin is stable per call
 // site. libhegel uses the origin as a shrink-grouping key, and per-value
 // origins would prevent the shrinker from converging.
