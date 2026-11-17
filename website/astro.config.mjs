@@ -88,6 +88,12 @@ export default defineConfig({
 					],
 				},
 				{
+					label: 'Antithesis',
+					items: [
+						{ slug: 'antithesis/hegel-antithesis'},
+					],
+				},
+				{
 					label: 'API documentation',
 					items: [
 						{ label: 'hegel-rust', link: 'https://docs.rs/hegeltest', attrs: { target: '_blank', class: 'external-link' } },
