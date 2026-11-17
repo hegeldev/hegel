@@ -6,6 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -56,5 +59,18 @@ class LibhegelLoadTest {
         assertEquals("wrapped", e.getMessage());
         assertSame(cause, e.getCause());
         assertEquals("plain", new LibhegelException("plain").getMessage());
+    }
+
+    @Test
+    void stderrCalledDirectlyPrintsToSystemErr() {
+        PrintStream saved = System.err;
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        System.setErr(new PrintStream(buf, true, StandardCharsets.UTF_8));
+        try {
+            Libhegel.STDERR.accept("a line");
+        } finally {
+            System.setErr(saved);
+        }
+        assertEquals("a line" + System.lineSeparator(), buf.toString(StandardCharsets.UTF_8));
     }
 }

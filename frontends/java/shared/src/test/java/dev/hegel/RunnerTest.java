@@ -2,6 +2,7 @@ package dev.hegel;
 
 import static dev.hegel.Generators.integers;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -11,6 +12,7 @@ import dev.hegel.lowlevel.Abi;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
@@ -95,6 +97,86 @@ class RunnerTest {
     }
 
     @Test
+    void failingCasesCompleteWithTheSummaryAndDetailTheEngineWants() {
+        FakeLibhegel fake = new FakeLibhegel();
+        fake.caseCount = 4;
+        fake.wantsOutputSequence = new boolean[] {false, true, true, true};
+        fake.wantsDetailSequence = new boolean[] {false, false, true, false};
+        AtomicInteger calls = new AtomicInteger();
+        AssertionError err = new AssertionError("nope");
+        Runner.run(
+                fake,
+                new Settings().database(Database.disabled()),
+                tc -> {
+                    if (calls.incrementAndGet() != 2) {
+                        throw err;
+                    }
+                },
+                Reporter.silent());
+        assertEquals(
+                List.of(Abi.STATUS_INTERESTING, Abi.STATUS_VALID, Abi.STATUS_INTERESTING, Abi.STATUS_INTERESTING),
+                fake.markedStatuses);
+        String summary = Runner.summary(err, List.of());
+        assertEquals(Arrays.asList(null, null, summary, summary), fake.markedSummaries);
+        assertTrue(summary.endsWith(": java.lang.AssertionError: nope"), summary);
+        String detail = Runner.diagnostic(err);
+        assertEquals(Arrays.asList(null, null, detail, null), fake.markedDetails);
+        assertTrue(detail.startsWith("java.lang.AssertionError: nope"), detail);
+        assertTrue(detail.contains("\tat "), detail);
+    }
+
+    @Test
+    void summaryIsOneLineLedByTheUserFrame() {
+        AssertionError err = new AssertionError("first\r\nsecond\nthird");
+        err.setStackTrace(new StackTraceElement[] {
+            new StackTraceElement("dev.hegel.Runner", "run", "Runner.java", 1),
+            new StackTraceElement("com.example.SortTest", "sorts", "SortTest.java", 23),
+        });
+        assertEquals("SortTest.java:23: java.lang.AssertionError: first …", Runner.summary(err, List.of()));
+    }
+
+    @Test
+    void summaryNamesTheFrameItCanAndOmitsAMissingOne() {
+        IllegalStateException noFile = new IllegalStateException("x");
+        noFile.setStackTrace(new StackTraceElement[] {new StackTraceElement("com.example.T", "m", null, -1)});
+        assertEquals("com.example.T: java.lang.IllegalStateException: x", Runner.summary(noFile, List.of()));
+        IllegalStateException noLine = new IllegalStateException("x");
+        noLine.setStackTrace(new StackTraceElement[] {new StackTraceElement("com.example.T", "m", "T.java", -1)});
+        assertEquals("T.java: java.lang.IllegalStateException: x", Runner.summary(noLine, List.of()));
+        IllegalStateException noFrame = new IllegalStateException("x");
+        noFrame.setStackTrace(new StackTraceElement[0]);
+        assertEquals("java.lang.IllegalStateException: x", Runner.summary(noFrame, List.of()));
+    }
+
+    @Test
+    void summaryFallsBackToTheTypeForAnEmptyRendering() {
+        class Blank extends RuntimeException {
+            private final String text;
+
+            Blank(String text) {
+                this.text = text;
+                setStackTrace(new StackTraceElement[0]);
+            }
+
+            @Override
+            public String toString() {
+                return text;
+            }
+        }
+        assertEquals(Blank.class.getName(), Runner.summary(new Blank(null), List.of()));
+        assertEquals(Blank.class.getName(), Runner.summary(new Blank(" "), List.of()));
+    }
+
+    @Test
+    void aSilentReporterGivesTheEngineNoDestination() {
+        FakeLibhegel fake = new FakeLibhegel();
+        Runner.run(fake, new Settings().database(Database.disabled()), tc -> {}, Reporter.silent());
+        assertNull(fake.output);
+        Runner.run(fake, new Settings().database(Database.disabled()), tc -> {}, new Reporter() {});
+        assertNotNull(fake.output);
+    }
+
+    @Test
     void hegelExceptionFromBodyPropagates() {
         FakeLibhegel fake = new FakeLibhegel();
         fake.generateBooleanRc = Abi.E_BACKEND;
@@ -168,9 +250,9 @@ class RunnerTest {
     }
 
     @Test
-    void unstampedCasesKeepOnlyTheirException() {
+    void casesWhoseOutputIsUnwantedKeepOnlyTheirException() {
         FakeLibhegel fake = new FakeLibhegel();
-        fake.captureSequence = new boolean[] {false};
+        fake.wantsOutputSequence = new boolean[] {false};
         fake.runStatus = Abi.RUN_STATUS_FAILED;
         fake.failureBlobs.add("blob-1");
         ByteArrayOutputStream buf = new ByteArrayOutputStream();

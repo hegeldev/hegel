@@ -166,7 +166,7 @@ class ConcurrentStatefulDriverTest {
         ByteArrayOutputStream buf = new ByteArrayOutputStream();
         TestCase tc = new TestCase(
                 new LiveDataSource(fake, FakeLibhegel.TC),
-                false,
+                true,
                 true,
                 Reporter.printing(new PrintStream(buf, true, StandardCharsets.UTF_8)));
         Stateful.run(new Recording(), tc, twoWorkers());
@@ -175,8 +175,9 @@ class ConcurrentStatefulDriverTest {
         assertTrue(printed.contains("[worker 0] Rule: alpha"), printed.toString());
         assertTrue(printed.contains("[worker 1] Rule: gamma"), printed.toString());
         assertTrue(printed.contains("[worker 1] x = 0;"), printed.toString());
-        // Not captured: nothing is kept for a report.
-        assertTrue(tc.notes().isEmpty());
+        assertTrue(
+                unstamped(tc.notes()).contains("[worker 1] Rule: gamma"),
+                tc.notes().toString());
     }
 
     @Test

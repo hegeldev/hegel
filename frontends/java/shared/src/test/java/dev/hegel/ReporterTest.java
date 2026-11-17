@@ -20,7 +20,7 @@ class ReporterTest {
     void silentReporterIgnoresEveryCallback() {
         Reporter silent = Reporter.silent();
         RunReport report = new RunReport(RunStatus.PASSED, new RunStatistics.Counter().snapshot(), null, List.of());
-        Failure failure = new Failure("origin", "blob", null, new AssertionError("x"), Map.of(), List.of());
+        Failure failure = new Failure("origin", "blob", null, new AssertionError("x"), Map.of(), List.of(), null);
         silent.runStarted(new Settings());
         silent.engineOutput("line");
         silent.caseStarted(false);
@@ -42,7 +42,8 @@ class ReporterTest {
         printing.draw("xs", List.of(1, 2), true);
         printing.note("a note", true);
         printing.caseFinished(CaseOutcome.INTERESTING, true);
-        printing.failure(new Failure("o", "b64", null, new AssertionError("x"), Map.of(), List.of())); // printBlob off
+        printing.failure(
+                new Failure("o", "b64", null, new AssertionError("x"), Map.of(), List.of(), null)); // printBlob off
         assertEquals("engine line\nxs = [1, 2];\na note\n", text(buf));
     }
 
@@ -52,11 +53,25 @@ class ReporterTest {
         Reporter printing = Reporter.printing(new PrintStream(buf, true, StandardCharsets.UTF_8));
         printing.runStarted(new Settings().printBlob(true));
         printing.failure(new Failure(
-                "o", "b64", "nondeterministic failure, confirmed", new AssertionError("x"), Map.of(), List.of()));
+                "o", "b64", "nondeterministic failure, confirmed", new AssertionError("x"), Map.of(), List.of(), null));
         assertEquals(
                 "note: nondeterministic failure, confirmed\n\nTo reproduce this failure, replay it with:\n"
                         + "    @HegelTest(reproduceFailure = \"b64\")\n",
                 text(buf));
+    }
+
+    @Test
+    void standaloneReporterPrintsTheEngineDiagnosticOrElseTheStackTrace() {
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        Reporter standalone = PrintingReporter.forMain(new PrintStream(buf, true, StandardCharsets.UTF_8));
+        standalone.runStarted(new Settings());
+        AssertionError err = new AssertionError("x");
+        standalone.failure(new Failure("o", null, null, err, Map.of(), List.of(), "the engine's\ndiagnostic"));
+        assertEquals("the engine's\ndiagnostic\n", text(buf));
+
+        buf.reset();
+        standalone.failure(new Failure("o", null, null, err, Map.of(), List.of(), null));
+        assertEquals(Runner.diagnostic(err).replace("\r\n", "\n") + "\n", text(buf));
     }
 
     @Test
