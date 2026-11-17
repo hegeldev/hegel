@@ -7,15 +7,16 @@
 //!
 //! The engine lives behind libhegel's C ABI; `drive` owns everything around
 //! it — installing the panic hook, wrapping each test body with
-//! `catch_unwind` plus `mark_complete`, the antithesis integration, printing
-//! each reported failure from its captured material, and the closing
-//! re-raise of the failing test's own panic.
+//! `catch_unwind` plus `mark_complete`, handing the engine each failure's
+//! summary and rendered diagnostic, printing each reported failure from the
+//! report the engine kept of it, and the closing re-raise of the failing
+//! test's own panic. The engine prints each test case's output itself.
 
 use std::backtrace::{Backtrace, BacktraceStatus};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::panic::{self, AssertUnwindSafe, catch_unwind};
-use std::sync::{Arc, Once, PoisonError};
+use std::sync::{Arc, Once};
 
 use crate::backend::{Failure, TestCaseResult};
 use crate::control::{
@@ -23,7 +24,7 @@ use crate::control::{
     hegel_internal_error, hegel_internal_unwrap, with_test_context,
 };
 use crate::explicit_test_case::ExplicitTestCase;
-use crate::ffi::{CTestCase, RunErrorKind, RunHandle, SettingsHandle};
+use crate::ffi::{CTestCase, FailureReport, RunErrorKind, RunHandle, SettingsHandle};
 use crate::runner::{Settings, TestLocation, Verbosity};
 use crate::test_case::{RunOutput, TestCase};
 
@@ -38,8 +39,9 @@ thread_local! {
         const { RefCell::new(None) };
 
     /// Whether the panic hook should pay to capture a backtrace for the next
-    /// panic on this thread. Set by [`run_test_case`] to `should_emit` —
-    /// i.e. only when the resulting diagnostic will actually be shown.
+    /// panic on this thread. Set by [`run_test_case`] to whether the engine
+    /// wants the test case's detail — i.e. only when the resulting full
+    /// diagnostic will actually be shown.
     /// Capturing (and, under
     /// `RUST_BACKTRACE`, symbolizing) a backtrace for every discarded shrink
     /// probe is the dominant cost of failing-heavy property runs, and is far
@@ -259,69 +261,47 @@ pub fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
 /// the engine reads it back over the C ABI.
 /// On the `Interesting` path the panic site is captured as a
 /// `file:line:col` string and stored on the [`Failure`] so per-origin
-/// shrinking can key on it, and the rendered diagnostic block (panic
-/// location, message, backtrace) is built here, at the moment the panic
-/// is caught — on a non-quiet final replay it is returned to the caller to
-/// print (right after the live draw/note lines, which is what keeps each
-/// failure one block), for a non-final case in verbose mode it goes to
-/// `output`, the run's resolved destination, and for a stamped non-final
-/// case it is returned to the caller for the deferred failure report (and,
-/// in verbose mode, printed to `output` as well, like any other non-final
-/// case's).
+/// shrinking can key on it.
 ///
-/// The capture decision is the engine's, read once at case start
-/// ([`CTestCase::should_capture`]): the engine stamps the executions a
-/// failure report can be built from — confirmation batches, database-reuse
-/// replays, the report-time final replay, and generation cases under
-/// nondeterministic handling, whose failing origins may be reported
-/// unconfirmed — so those carry their diagnostics, while ordinary
-/// exploration cases skip backtrace capture. A stamped replay executes the
-/// whole body, so its capture holds the case's full trace — for a
-/// concurrent-machine case, draws and notes made before
-/// `stateful::Machine::run_concurrent` included.
+/// What is printed is the engine's decision, read once at case start. When
+/// it wants the case's output ([`CTestCase::wants_output`]) — every case of
+/// a verbose run, and the executions it stamps for capture because a
+/// failure report can be built from them — draws and notes are printed and
+/// a failing case hands it a one-line summary (the panic line and message).
+/// When it also wants the case's detail ([`CTestCase::wants_detail`]) — a
+/// debug run, and the stamped executions — a backtrace is captured and the
+/// full diagnostic (panic location, message, backtrace) rendered and handed
+/// over too. Both reach the engine with the outcome (`hegel_mark_complete`),
+/// and it prints them after the case's output, wherever that goes.
 ///
-/// Also returns the caught panic payload for an `Interesting` result, so a
-/// final replay's caller can re-raise the test's *own* panic as the run's
-/// closing unwind instead of synthesizing one.
+/// Also returns the caught panic payload for an `Interesting` result, so
+/// the caller can re-raise the test's *own* panic as the run's closing
+/// unwind instead of synthesizing one, and whether the engine wanted the
+/// case's output, which says whether that payload matches the failure's
+/// report.
 pub(crate) fn run_test_case(
     c_tc: CTestCase,
     test_fn: &mut dyn FnMut(TestCase),
-    is_final: bool,
-    verbosity: Verbosity,
-    output: &RunOutput,
-    case_sink: Option<crate::test_case::OutputSink>,
-) -> (
-    TestCaseResult,
-    Option<Box<dyn std::any::Any + Send>>,
-    Option<String>,
-) {
-    let verbose = matches!(verbosity, Verbosity::Verbose | Verbosity::Debug);
-    let quiet = verbosity == Verbosity::Quiet;
-    let stamped = !is_final && c_tc.should_capture();
-    let should_emit = ((is_final || stamped) && !quiet) || verbose;
-    CAPTURE_BACKTRACE.with(|c| c.set(should_emit));
+) -> (TestCaseResult, Option<Box<dyn std::any::Any + Send>>, bool) {
+    let wants_output = c_tc.wants_output();
+    let wants_detail = c_tc.wants_detail();
+    CAPTURE_BACKTRACE.with(|c| c.set(wants_detail));
     // Drop any capture left over from a previous test case on this thread
     // (e.g. a body that caught its own panic and then passed): a later panic
     // that skips the hook via resume_unwind must not inherit it.
     take_panic_info();
 
     let c_tc = Arc::new(c_tc);
-    let tc = TestCase::new(
-        Arc::clone(&c_tc),
-        should_emit,
-        case_sink.or_else(|| output.sink().cloned()),
-    );
-    let reporter = tc.reporter();
+    let tc = TestCase::new(Arc::clone(&c_tc), wants_output);
     let result = with_test_context(|| catch_unwind(AssertUnwindSafe(|| test_fn(tc))));
-    reporter.emit_rendered_output();
 
-    let (tc_result, payload, diagnostic) = match result {
-        Ok(()) => (TestCaseResult::Valid, None, None),
-        Err(e) if e.downcast_ref::<AssumeFailed>().is_some() => {
-            (TestCaseResult::Invalid, None, None)
-        }
-        Err(e) if e.downcast_ref::<StopTest>().is_some() => (TestCaseResult::Overrun, None, None),
-        Err(e) if e.downcast_ref::<LoopDone>().is_some() => (TestCaseResult::Valid, None, None),
+    let mut summary = None;
+    let mut detail = None;
+    let (tc_result, payload) = match result {
+        Ok(()) => (TestCaseResult::Valid, None),
+        Err(e) if e.downcast_ref::<AssumeFailed>().is_some() => (TestCaseResult::Invalid, None),
+        Err(e) if e.downcast_ref::<StopTest>().is_some() => (TestCaseResult::Overrun, None),
+        Err(e) if e.downcast_ref::<LoopDone>().is_some() => (TestCaseResult::Valid, None),
         Err(e) => {
             let e = match e.downcast::<InvalidArgument>() {
                 Ok(invalid) => panic!("{}", invalid.0),
@@ -333,40 +313,44 @@ pub(crate) fn run_test_case(
             };
             let (thread_name, thread_id, location, backtrace) =
                 take_panic_info().unwrap_or_else(unknown_panic_info);
-
-            let captured = if (is_final || stamped) && !quiet {
-                let msg = panic_message(&e);
-                let diagnostic =
-                    render_diagnostic(&thread_name, &thread_id, &location, &msg, &backtrace);
-                if verbose && stamped {
-                    output.block(&diagnostic);
-                }
-                Some(diagnostic)
-            } else {
-                if verbose {
-                    let msg = panic_message(&e);
-                    let diagnostic =
-                        render_diagnostic(&thread_name, &thread_id, &location, &msg, &backtrace);
-                    for line in diagnostic.trim_end_matches('\n').split('\n') {
-                        output.line(line);
-                    }
-                }
-                None
-            };
+            let msg = panic_message(&e);
+            if wants_output {
+                summary = Some(render_summary(&thread_name, &thread_id, &location, &msg));
+            }
+            if wants_detail {
+                detail = Some(render_diagnostic(
+                    &thread_name,
+                    &thread_id,
+                    &location,
+                    &msg,
+                    &backtrace,
+                ));
+            }
             let failure = TestCaseResult::Interesting(Failure {
                 origin: format!("Panic at {}", location),
             });
-            (failure, Some(e), captured)
+            (failure, Some(e))
         }
     };
 
-    if verbose {
-        emit_verbose_stop_reason(&tc_result, output);
-    }
+    report_outcome(&c_tc, &tc_result, summary.as_deref(), detail.as_deref());
 
-    report_outcome(&c_tc, &tc_result);
+    (tc_result, payload, wants_output)
+}
 
-    (tc_result, payload, diagnostic)
+/// A failure in one line: the panic line Rust prints followed by the
+/// message, a message spanning several lines cut at its first line and
+/// followed by ` …`.
+fn render_summary(thread_name: &str, thread_id: &str, location: &str, msg: &str) -> String {
+    let first = msg.lines().next().unwrap_or("");
+    let cut = if msg.trim_end().contains('\n') {
+        " …"
+    } else {
+        ""
+    };
+    format!("thread '{thread_name}' ({thread_id}) panicked at {location}: {first}{cut}")
+        .trim_end()
+        .to_string()
 }
 
 /// A failing explicit test case: its origin, for keeping one failure per
@@ -374,7 +358,8 @@ pub(crate) fn run_test_case(
 /// material.
 pub(crate) struct ExplicitFailure {
     pub(crate) origin: String,
-    report: CapturedReport,
+    report: Vec<String>,
+    payload: Box<dyn std::any::Any + Send>,
 }
 
 impl ExplicitFailure {
@@ -384,6 +369,7 @@ impl ExplicitFailure {
         ReportedFailure {
             origin: self.origin,
             report: self.report,
+            payload: self.payload,
             caveat: None,
             reproducer: None,
         }
@@ -400,8 +386,8 @@ impl ExplicitFailure {
 /// their message, as they do in a generated case. Any other panic is a
 /// failure, returned with the case's draw and note lines and the rendered
 /// diagnostic (neither under quiet) for the caller to report. A verbose run
-/// prints the case's lines and diagnostic as it finishes, like a generated
-/// case's.
+/// prints the case's lines and the failure's summary as it finishes, and a
+/// debug run its full diagnostic, as the engine does for a generated case.
 pub(crate) fn run_explicit_case<F: FnOnce(&ExplicitTestCase)>(
     case: &ExplicitTestCase,
     body: F,
@@ -448,10 +434,10 @@ pub(crate) fn run_explicit_case<F: FnOnce(&ExplicitTestCase)>(
     };
     let (thread_name, thread_id, location, backtrace) =
         take_panic_info().unwrap_or_else(unknown_panic_info);
+    let msg = panic_message(&payload);
     let diagnostic = if quiet {
         None
     } else {
-        let msg = panic_message(&payload);
         Some(render_diagnostic(
             &thread_name,
             &thread_id,
@@ -464,55 +450,63 @@ pub(crate) fn run_explicit_case<F: FnOnce(&ExplicitTestCase)>(
         for line in &lines {
             output.line(line);
         }
-        if let Some(diagnostic) = &diagnostic {
-            output.block(diagnostic);
+        match (verbosity, &diagnostic) {
+            (Verbosity::Debug, Some(diagnostic)) => output.block(diagnostic),
+            _ => output.line(&render_summary(&thread_name, &thread_id, &location, &msg)),
         }
     }
+    let mut report = lines;
+    report.extend(
+        diagnostic
+            .iter()
+            .flat_map(|d| d.lines().map(str::to_string)),
+    );
     Some(ExplicitFailure {
         origin: format!("Panic at {}", location),
-        report: CapturedReport {
-            lines,
-            diagnostic,
-            payload,
-        },
+        report,
+        payload,
     })
 }
 
 /// Report a test case's outcome to the engine over the C ABI.
 ///
-/// Only the status — and, for an interesting (failing) case, the bug origin —
-/// crosses the boundary; the panic message and reproduce blob are recovered
-/// from the run result afterward, not pushed through here. This reports on
-/// the handle the body drew on (shared with it through the `Arc`);
-/// `hegel_mark_complete` waits for any in-flight operation on the handle, so
-/// a still-running leaked thread cannot make this report fail.
-fn report_outcome(handle: &CTestCase, result: &TestCaseResult) {
+/// The status crosses the boundary, and for an interesting (failing) case
+/// its origin, `summary` and `detail` (each of the last two present exactly
+/// when the engine wants it); the reproduce blob is recovered from the run
+/// result afterward. This reports on the handle the body drew on (shared
+/// with it through the `Arc`); `hegel_mark_complete` waits for any
+/// in-flight operation on the handle, so a still-running leaked thread
+/// cannot make this report fail. A call the engine rejects as incomplete
+/// is an internal error.
+fn report_outcome(
+    handle: &CTestCase,
+    result: &TestCaseResult,
+    summary: Option<&str>,
+    detail: Option<&str>,
+) {
     use crate::ffi::sys::hegel_status_t as Status;
-    let (status, origin) = match result {
+    let (status, failure) = match result {
         TestCaseResult::Valid => (Status::HEGEL_STATUS_VALID, None),
         TestCaseResult::Invalid => (Status::HEGEL_STATUS_INVALID, None),
         TestCaseResult::Overrun => (Status::HEGEL_STATUS_OVERRUN, None),
         TestCaseResult::Interesting(failure) => (
             Status::HEGEL_STATUS_INTERESTING,
-            Some(failure.origin.as_str()),
+            Some(FailureReport {
+                origin: &failure.origin,
+                summary,
+                detail,
+            }),
         ),
     };
     handle
-        .mark_complete(status, origin)
-        .unwrap_or_else(|rc| crate::test_case::raise_for_rc(rc));
-}
-
-/// Print a per-test-case line describing why this test case stopped.
-fn emit_verbose_stop_reason(result: &TestCaseResult, output: &RunOutput) {
-    match result {
-        TestCaseResult::Invalid => {
-            output.line("Test case stopped: failed assumption");
-        }
-        TestCaseResult::Overrun => {
-            output.line("Test case stopped: out of data");
-        }
-        TestCaseResult::Valid | TestCaseResult::Interesting(_) => {}
-    }
+        .mark_complete(status, failure.as_ref())
+        .unwrap_or_else(|rc| match rc {
+            crate::ffi::sys::hegel_result_t::HEGEL_E_INVALID_ARG => hegel_internal_error!(
+                "libhegel rejected a test case's outcome: {}",
+                crate::ffi::last_error_string()
+            ),
+            rc => crate::test_case::raise_for_rc(rc),
+        });
 }
 
 /// Render a failure's diagnostic block. Mirrors the default Rust
@@ -582,72 +576,14 @@ fn reproducer_line(
     })
 }
 
-/// One origin's failure report material. Captures are ranked
-/// ([`capture_rank`]): a rendered diagnostic over draw/note lines over a
-/// bare capture, and a new interesting case replaces the stored capture
-/// only at rank >= stored ([`store_capture`]). An unstamped shrink or
-/// measurement probe's bare capture thus cannot clobber a stamped
-/// diagnostic or draw lines, while at equal rank the newer wins: final
-/// replay over confirmation over discovery. The panic payload travels with its capture, so the re-raised
-/// panic always matches the printed diagnostic. When the final replay is
-/// dry, the printed lines are the freshest stamped *failing* execution
-/// (usually confirmation-time, pre-shrink values) while the blob and
-/// choice sequence carry the shrunk incumbent. Printing is deferred
-/// to the run verdict (verbose runs stream the lines live too), because a
-/// frontend-interesting report can lose silently to an engine-side family
-/// conclusion, and because a captured bug may not be reported at all —
-/// the engine's confirmation may reject it, and the run may pass.
-struct CapturedReport {
-    /// The buffered draw/note lines of the case (empty under
-    /// [`Verbosity::Quiet`], where nothing would be printed), already in
-    /// report order: the case's document renders with each round's output
-    /// grouped worker by worker.
-    lines: Vec<String>,
-    /// The rendered panic diagnostic (thread, location, message, backtrace);
-    /// `None` under quiet and for unstamped, non-final cases.
-    diagnostic: Option<String>,
-    /// The caught panic payload, re-raised as the run's closing unwind.
-    payload: Box<dyn std::any::Any + Send>,
-}
-
-/// The diagnostic of a failure whose only capture is a bare one: the
-/// engine reported it from a case it never stamped for capture, as it does
-/// for a run it does not record (a single test case inside Antithesis with
-/// no database), whose failure is never replayed. It holds what such
-/// a case keeps, the panic's site (its origin) and its message, and no
-/// backtrace.
+/// The diagnostic of a failure the engine kept no diagnostic of
+/// (`hegel_failure_diagnostic` is NULL): it reported the failure from a case it
+/// never stamped for capture, as it does for a run it does not record (a
+/// single test case inside Antithesis with no database), whose failure is
+/// never replayed. It holds what such a case keeps, the panic's site (its
+/// origin) and its message, and no backtrace.
 fn bare_diagnostic(origin: &str, payload: &Box<dyn std::any::Any + Send>) -> String {
     format!("{origin}:\n{}\n", panic_message(payload))
-}
-
-fn capture_rank(diagnostic: &Option<String>, lines: &[String]) -> u8 {
-    match (diagnostic.is_some(), !lines.is_empty()) {
-        (true, _) => 2,
-        (false, true) => 1,
-        (false, false) => 0,
-    }
-}
-
-/// Store `report` as `origin`'s capture unless a higher-ranked capture
-/// already stands (see [`CapturedReport`]).
-fn store_capture(
-    captured: &mut HashMap<String, CapturedReport>,
-    origin: String,
-    report: CapturedReport,
-) {
-    match captured.entry(origin) {
-        std::collections::hash_map::Entry::Vacant(entry) => {
-            entry.insert(report);
-        }
-        std::collections::hash_map::Entry::Occupied(mut entry) => {
-            let stored = entry.get();
-            if capture_rank(&report.diagnostic, &report.lines)
-                >= capture_rank(&stored.diagnostic, &stored.lines)
-            {
-                entry.insert(report);
-            }
-        }
-    }
 }
 
 /// Drive a libhegel run to completion against the user's test function.
@@ -656,16 +592,14 @@ fn store_capture(
 /// (`hegel_run_start`), and pulls each test case the engine schedules
 /// (`hegel_next_test_case`), wrapping every one in [`run_test_case`]. The
 /// engine owns the whole exploration — generation, shrinking, and the final
-/// replay of every failure it is about to report — so every pumped case is
-/// non-final, and the report material is captured as the cases run: each
-/// interesting case's buffered output, diagnostic, and panic payload is
-/// kept per origin, the highest-ranked capture winning, newest at equal
-/// rank (see [`CapturedReport`]).
+/// replay of every failure it is about to report — and prints each test
+/// case's output, keeping the report of each failure itself.
 ///
 /// Once the loop drains, a failed verdict prints each distinct failure as
-/// one grouped block — the captured lines and diagnostic, the caveat when
-/// the run handled nondeterminism, and the reproducer line when the
-/// failure carries a blob — and ends by re-raising the failing test's own
+/// one grouped block — the engine's report of it (the printed lines and
+/// diagnostic), the caveat when the run handled nondeterminism, and the
+/// reproducer line when the failure carries a blob — and ends by re-raising
+/// the failing test's own
 /// panic (or, for several distinct bugs, a panic carrying the count). A
 /// run-level error — a failed health check, a nondeterminism abort under
 /// `error` strictness, an engine panic — surfaces with the engine's own
@@ -697,7 +631,7 @@ pub(crate) fn drive<F>(
         Err(message) => panic!("RunError: {message}"), // nocov
     };
 
-    let generated = drive_run(run, &mut test_fn, settings, &output, reproduce_attribute);
+    let generated = drive_run(run, &mut test_fn, settings, reproduce_attribute);
     if explicit_failures.is_empty() {
         match generated {
             Ok(failures) if failures.is_empty() => return,
@@ -721,15 +655,12 @@ pub(crate) fn drive<F>(
         ),
         Err(message) => failures.push(ReportedFailure {
             origin: String::new(),
-            report: CapturedReport {
-                lines: Vec::new(),
-                diagnostic: if quiet {
-                    None
-                } else {
-                    Some(format!("{message}\n"))
-                },
-                payload: Box::new(message),
+            report: if quiet {
+                Vec::new()
+            } else {
+                message.lines().map(str::to_string).collect()
             },
+            payload: Box::new(message),
             caveat: None,
             reproducer: None,
         }),
@@ -737,20 +668,31 @@ pub(crate) fn drive<F>(
     raise_failures(failures, quiet, &output);
 }
 
-/// One failure a run reported: its origin, its captured material plus the
+/// One failure a run reported: its origin, the lines of its report (the
+/// printed output and diagnostic of a failing execution; empty under
+/// [`Verbosity::Quiet`]), the panic payload to re-raise for it, and the
 /// engine's caveat and the reproducer line to print after it.
 pub(crate) struct ReportedFailure {
     origin: String,
-    report: CapturedReport,
+    report: Vec<String>,
+    payload: Box<dyn std::any::Any + Send>,
     caveat: Option<String>,
     reproducer: Option<String>,
 }
 
 /// The shared pump loop behind [`drive`] and [`drive_blob_replay`]: pull
-/// every test case off `run`, capture report material per origin, then
+/// every test case off `run`, keep a panic payload per failing origin, then
 /// read the run's verdict. A passing run returns no failures, a failed one
 /// returns every failure it reported, in the engine's order, and an
 /// errored one returns its [`run_error_message`] as the error.
+///
+/// The engine's report of a failure is that of the latest failing execution
+/// it wanted the output of, so the payload kept for an origin is replaced
+/// by each such execution's (and kept from any other until one comes): the
+/// re-raised panic then matches the printed diagnostic. A failure's report
+/// is the lines its execution printed (`hegel_failure_output`) followed by
+/// its diagnostic (`hegel_failure_diagnostic`), or by its
+/// [`bare_diagnostic`] when the engine kept none.
 ///
 /// `#[inline(always)]`: without it the test body's call stops being
 /// inlined and panic backtraces lose the user closure's source location
@@ -760,44 +702,27 @@ fn drive_run<F: FnMut(TestCase)>(
     run: RunHandle,
     test_fn: &mut F,
     settings: &Settings,
-    output: &RunOutput,
     reproduce_attribute: Option<&str>,
 ) -> Result<Vec<ReportedFailure>, String> {
-    let verbosity = settings.verbosity;
-    let quiet = verbosity == Verbosity::Quiet;
-    let verbose = matches!(verbosity, Verbosity::Verbose | Verbosity::Debug);
-    let mut captured: HashMap<String, CapturedReport> = HashMap::new();
+    let quiet = settings.verbosity == Verbosity::Quiet;
+    let mut payloads: HashMap<String, Box<dyn std::any::Any + Send>> = HashMap::new();
     while let Some(c_tc) = run.next_test_case() {
-        let buffer: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
-        let live: Option<RunOutput> = if verbose { Some(output.clone()) } else { None };
-        let case_sink: Option<crate::test_case::OutputSink> = if quiet {
-            None
-        } else {
-            let buffer = Arc::clone(&buffer);
-            Some(Arc::new(move |line: &str| {
-                if let Some(live) = &live {
-                    live.line(line);
-                }
-                buffer
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .push(line.to_string());
-            }))
-        };
-        let (tc_result, payload, diagnostic) =
-            run_test_case(c_tc, test_fn, false, verbosity, output, case_sink);
-        if let TestCaseResult::Interesting(failure) = &tc_result {
-            let records =
-                std::mem::take(&mut *buffer.lock().unwrap_or_else(PoisonError::into_inner));
-            store_capture(
-                &mut captured,
-                failure.origin.clone(),
-                CapturedReport {
-                    lines: records,
-                    diagnostic,
-                    payload: payload.expect("an interesting case carries the caught panic payload"),
-                },
+        let (tc_result, payload, wants_output) = run_test_case(c_tc, test_fn);
+        if let TestCaseResult::Interesting(failure) = tc_result {
+            let payload = hegel_internal_unwrap!(
+                payload,
+                "an interesting case carries the caught panic payload"
             );
+            match payloads.entry(failure.origin) {
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert(payload);
+                }
+                std::collections::hash_map::Entry::Occupied(mut entry) => {
+                    if wants_output {
+                        entry.insert(payload);
+                    }
+                }
+            }
         }
     }
 
@@ -811,16 +736,27 @@ fn drive_run<F: FnMut(TestCase)>(
         RunStatus::HEGEL_RUN_STATUS_FAILED => Ok((0..result.failure_count())
             .map(|index| {
                 let failure = result.failure(index);
-                let mut report = hegel_internal_unwrap!(
-                    captured.remove(&failure.origin),
-                    "failure {index} has no capture"
+                let payload = hegel_internal_unwrap!(
+                    payloads.remove(&failure.origin),
+                    "failure {index} has no panic payload"
                 );
-                if report.diagnostic.is_none() && !quiet {
-                    report.diagnostic = Some(bare_diagnostic(&failure.origin, &report.payload));
-                }
+                let report = if quiet {
+                    Vec::new()
+                } else {
+                    let diagnostic = failure
+                        .diagnostic
+                        .unwrap_or_else(|| bare_diagnostic(&failure.origin, &payload));
+                    let output = failure.output.unwrap_or_default();
+                    output
+                        .lines()
+                        .chain(diagnostic.lines())
+                        .map(str::to_string)
+                        .collect()
+                };
                 ReportedFailure {
                     origin: failure.origin,
                     report,
+                    payload,
                     reproducer: reproducer_line(
                         settings,
                         failure.reproduce_blob.as_deref(),
@@ -849,11 +785,8 @@ pub(crate) fn raise_failures(failures: Vec<ReportedFailure>, quiet: bool, output
         if multiple && !quiet {
             output.line("");
         }
-        for line in &failure.report.lines {
+        for line in &failure.report {
             output.line(line);
-        }
-        if let Some(diagnostic) = failure.report.diagnostic {
-            output.block(&diagnostic);
         }
         if !quiet {
             if let Some(caveat) = &failure.caveat {
@@ -863,7 +796,7 @@ pub(crate) fn raise_failures(failures: Vec<ReportedFailure>, quiet: bool, output
         if let Some(line) = failure.reproducer {
             output.block(&format!("{line}\n"));
         }
-        last_payload = Some(failure.report.payload);
+        last_payload = Some(failure.payload);
     }
 
     if multiple {
@@ -929,7 +862,7 @@ pub(crate) fn drive_blob_replay<F>(
     let mut failures = Vec::new();
     for blob in blobs {
         let run = RunHandle::start_blob(&c_settings, blob, output.sink());
-        match drive_run(run, &mut test_fn, settings, &output, reproduce_attribute) {
+        match drive_run(run, &mut test_fn, settings, reproduce_attribute) {
             Ok(reproduced) => failures.extend(reproduced),
             Err(message) => panic!("{message}"),
         }

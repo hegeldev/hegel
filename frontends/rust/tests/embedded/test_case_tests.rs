@@ -5,8 +5,8 @@ use crate::generators as gs;
 use crate::runner::Settings;
 
 /// Start a real engine run and hand back its first live test case wrapped in an
-/// emitting `TestCase` (`emit = true`, the path a failing test's final replay
-/// takes), keeping the owning [`RunHandle`] alive alongside it.
+/// emitting `TestCase` (`emit = true`, the path a case whose output the engine
+/// wants takes), keeping the owning [`RunHandle`] alive alongside it.
 ///
 /// There is no `DataSource` trait to stub against any more — `TestCase` drives
 /// libhegel through a concrete handle — so the unit tests below that only
@@ -20,7 +20,7 @@ fn emitting_test_case() -> (RunHandle, TestCase) {
     let c_tc = run
         .next_test_case()
         .expect("the engine schedules at least one case");
-    let tc = TestCase::new(Arc::new(c_tc), true, current_output_sink());
+    let tc = TestCase::new(Arc::new(c_tc), true);
     (run, tc)
 }
 

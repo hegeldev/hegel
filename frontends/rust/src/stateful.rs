@@ -1634,8 +1634,8 @@ fn run_concurrent_machine<M: ConcurrentStateMachine + Sync>(
 /// Misclassification costs are asymmetric, too: a dropped genuine panic
 /// merely discards this case and resurfaces in a later one, while a
 /// reported fake panic halts the run with a false bug. Dropped panics are
-/// noted into the case's output buffer, so they stay visible whenever that
-/// buffer is shown. Among several panics, the lowest worker index wins.
+/// noted into the case's output, so they stay visible wherever that
+/// output is shown. Among several panics, the lowest worker index wins.
 fn resolve_round(events: Vec<WorkerEvent>, tc: &TestCase) {
     struct WorkerPanic {
         worker: usize,

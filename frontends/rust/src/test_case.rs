@@ -101,14 +101,11 @@ pub(crate) fn raise_for_rc(rc: hegel_c::hegel_result_t) -> ! {
 }
 
 pub(crate) struct TestCaseGlobalData {
-    /// Whether drawn-value records and notes are surfaced for this test case
-    /// (true on the final replay of a failure — unless quiet — or when
-    /// verbose output is on, and for every non-final case of a run already
-    /// known to be nondeterministic, whose failures are reported from the
-    /// discovering execution).
-    /// When false `on_draw` is a no-op, so the draw-recording bookkeeping in
+    /// Whether the engine will use what this test case prints
+    /// ([`CTestCase::wants_output`]). When false, drawn values and notes are
+    /// not printed at all, so the draw-recording bookkeeping in
     /// [`TestCase::record_named_draw`] (display-name allocation + `Debug`
-    /// rendering of the value) can be skipped entirely.
+    /// rendering of the value) is skipped entirely.
     emit: bool,
 }
 
@@ -156,7 +153,6 @@ pub(crate) struct TestCaseLocalData {
     /// Printed draws currently in progress on this instance (see
     /// [`PrintingDrawScope`]).
     printing_depth: usize,
-    on_draw: OutputSink,
 }
 
 /// A handle to the current test case.
@@ -291,44 +287,9 @@ impl std::fmt::Debug for TestCase {
     }
 }
 
-/// What the run lifecycle keeps of a [`TestCase`] it has handed to the test
-/// body: enough to render the document of drawn values and notes — the root
-/// region and every region forked from it — once the body has finished,
-/// successfully or not.
-pub(crate) struct OutputReporter {
-    emit: bool,
-    handle: Arc<CTestCase>,
-    sink: OutputSink,
-}
-
-impl OutputReporter {
-    /// Render the document and push it, line by line, through the output
-    /// sink. A straggling clone still writing on an unjoined thread loses
-    /// its uncommitted draw and its region dies; its later writes are
-    /// harmless no-ops.
-    pub(crate) fn emit_rendered_output(&self) {
-        if !self.emit {
-            return;
-        }
-        let output = PrettyPrinter::from_handle(self.handle.printer(PRINTER_MAX_WIDTH)).try_value();
-        match output {
-            Ok(output) => {
-                for line in output.lines() {
-                    (self.sink)(line);
-                }
-            }
-            Err(message) => (self.sink)(&format!(
-                "Failed to render this test case's drawn values ({message}). This \
-                 indicates a bug in printing code the test uses: check any \
-                 hand-written PrintableGenerator impl or print_with closure for \
-                 unbalanced begin_group/end_group calls."
-            )),
-        }
-    }
-}
-
 /// A callback invoked for each line of run output — engine progress lines,
-/// draw/note output, verbose diagnostics, and the final failure report.
+/// a test case's printed output and diagnostic (which the engine prints),
+/// and the final failure report.
 pub(crate) type OutputSink = Arc<dyn Fn(&str) + Send + Sync>;
 
 thread_local! {
@@ -341,11 +302,9 @@ thread_local! {
 ///
 /// A run started while the override is active resolves it once, at start,
 /// and routes everything through it for the run's lifetime: the engine's own
-/// progress lines (emitted while the engine runs between test cases), draw
-/// and note output —
-/// including from clones driven on other threads — verbose per-case
-/// diagnostics and stop reasons, and the final failure report with its
-/// reproducer line. Which of those exist at all is still governed by
+/// progress lines, the draw and note output and diagnostics of test cases
+/// (including from clones driven on other threads) and their stop reasons,
+/// and the final failure report with its reproducer line. Which of those exist at all is still governed by
 /// [`Verbosity`](crate::Verbosity); the override only changes where they go.
 #[doc(hidden)]
 pub fn with_output_override<R>(sink: OutputSink, f: impl FnOnce() -> R) -> R {
@@ -359,10 +318,9 @@ pub fn with_output_override<R>(sink: OutputSink, f: impl FnOnce() -> R) -> R {
     f()
 }
 
-/// Return a clone of the currently-installed output sink, if any. Lets the
-/// run lifecycle's verbose output (stop-reason lines, per-test-case panic
-/// diagnostics) flow through `with_output_override` so tests can capture
-/// them in-process without having to spawn a subprocess.
+/// Return a clone of the currently-installed output sink, if any. Lets a
+/// run's output flow through `with_output_override` so tests can capture it
+/// in-process without having to spawn a subprocess.
 pub(crate) fn current_output_sink() -> Option<OutputSink> {
     OUTPUT_OVERRIDE.with(|cell| cell.borrow().clone())
 }
@@ -390,8 +348,7 @@ impl RunOutput {
         }
     }
 
-    /// The resolved sink, for handing to the engine and to test cases;
-    /// `None` means stderr.
+    /// The resolved sink, for handing to the engine; `None` means stderr.
     pub(crate) fn sink(&self) -> Option<&OutputSink> {
         self.sink.as_ref()
     }
@@ -419,27 +376,17 @@ impl RunOutput {
 }
 
 impl TestCase {
-    /// `emit` is decided by the lifecycle (`run_lifecycle::run_test_case`):
-    /// true on a non-quiet final replay, in verbose mode, or for a non-final
-    /// case the engine stamped for capture ([`CTestCase::should_capture`] —
-    /// the replays, confirmation batches, and generation cases a failure
-    /// report can be built from) — wherever drawn values and notes should be
-    /// surfaced. `sink` is the run's resolved
-    /// output destination ([`RunOutput::sink`]) — passed in rather than read
-    /// from the thread-local override so that a test case created here and
-    /// then driven from another thread still prints to the right place.
-    pub(crate) fn new(handle: Arc<CTestCase>, emit: bool, sink: Option<OutputSink>) -> Self {
-        let on_draw: OutputSink = if emit {
-            sink.unwrap_or_else(|| Arc::new(|msg| eprintln!("{}", msg)))
-        } else {
-            Arc::new(|_| {})
-        };
+    /// `emit` is the engine's answer to whether it will use what this test
+    /// case prints ([`CTestCase::wants_output`]), read once by the lifecycle
+    /// (`run_lifecycle::run_test_case`): drawn values and notes are printed
+    /// into the case's document only when it is true, and the engine prints
+    /// the document wherever the run's output goes.
+    pub(crate) fn new(handle: Arc<CTestCase>, emit: bool) -> Self {
         TestCase {
             global: Arc::new(TestCaseGlobalData { emit }),
             local: RefCell::new(TestCaseLocalData {
                 span_depth: 0,
                 printing_depth: 0,
-                on_draw,
             }),
             handle: RefCell::new(handle),
             printer: RefCell::new(None),
@@ -876,14 +823,12 @@ impl TestCase {
     /// `extra_indent` columns further in, and opens a fresh draw-naming
     /// scope.
     pub(crate) fn child(&self, extra_indent: usize) -> Self {
-        let local = self.local.borrow();
         let block = self.handle.borrow().block_handle(extra_indent as u64);
         TestCase {
             global: self.global.clone(),
             local: RefCell::new(TestCaseLocalData {
                 span_depth: 0,
                 printing_depth: 0,
-                on_draw: local.on_draw.clone(),
             }),
             handle: RefCell::new(Arc::new(block)),
             printer: RefCell::new(None),
@@ -917,16 +862,6 @@ impl TestCase {
             PrettyPrinter::from_handle(self.with_ctc(|ctc| ctc.printer(PRINTER_MAX_WIDTH)))
         });
         f(printer)
-    }
-
-    /// The reporter that renders this instance's document once the test
-    /// body — which takes the instance itself — has finished.
-    pub(crate) fn reporter(&self) -> OutputReporter {
-        OutputReporter {
-            emit: self.global.emit,
-            handle: Arc::clone(&self.handle.borrow()),
-            sink: self.local.borrow().on_draw.clone(),
-        }
     }
 
     /// Validate and count a draw name, returning the allocated display name
