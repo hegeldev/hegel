@@ -432,7 +432,7 @@ describe("runTestCase error classification", () => {
       () => {
         throw new StopTestError();
       },
-      false,
+      {},
     );
     expect(result.status).toBe("overrun");
     expect(ds.markCompleteCalls[0].origin).toBeNull();
@@ -453,7 +453,7 @@ describe("runTestCase with non-Error throws", () => {
       () => {
         throw "string error";
       },
-      false,
+      {},
     );
     expect(result.status).toBe("interesting");
     expect(ds.markCompleteCalls[0].origin).toBe("<unknown>");
@@ -467,7 +467,7 @@ describe("runTestCase with non-Error throws", () => {
         tc.draw(gs.integers());
         throw "string thrown";
       },
-      true,
+      { emit: true },
     );
     expect(result.status).toBe("interesting");
     expect(ds.output.lines()).toEqual(["const draw_1 = 42;"]);

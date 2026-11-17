@@ -4,13 +4,14 @@ import { EngineError, Status, type UuidVersion } from "../src/engine.js";
 import { browserRuntime } from "../src/browser/runtime.js";
 import { createRunner } from "../src/runnerCore.js";
 import { WasmMemory } from "../src/browser/arena.js";
+import { HostStderr } from "../src/browser/host.js";
 import { wasmFixture } from "./wasmFixture.js";
 import * as gs from "../src/generators/index.js";
 
 describe("WasmEngine malformed outputs and cleanup", () => {
   it("rejects null context/settings outputs and accepts empty context diagnostics", () => {
     const { abi } = wasmFixture(),
-      engine = new WasmEngine(abi);
+      engine = new WasmEngine(abi, new HostStderr());
     const call = abi.call.bind(abi);
     const spy = vi
       .spyOn(abi, "call")
@@ -137,7 +138,7 @@ describe("WasmEngine malformed outputs and cleanup", () => {
     expect(engine.collectionMore(ctx, tc, collection)).toBe(true);
     engine.collectionReject(ctx, tc, collection, null);
     engine.freeCollection(collection);
-    engine.markComplete(ctx, tc, Status.INVALID, null);
+    engine.markComplete(ctx, tc, Status.INVALID, null, null, null);
     engine.freeTestCase(tc);
     engine.freeRun(run);
     engine.freeSettings(settings);

@@ -133,7 +133,11 @@ describe("hegel_host imports", () => {
   it("fails safely before memory assignment and uses fresh views after growth", () => {
     const host = createHostImports(),
       imports = host.imports.hegel_host;
-    expect(Object.keys(imports).sort()).toEqual(["entropy_fill", "monotonic_nanos"]);
+    expect(Object.keys(imports).sort()).toEqual([
+      "entropy_fill",
+      "monotonic_nanos",
+      "stderr_write",
+    ]);
     expect(imports.entropy_fill(4, 4)).toBe(0);
     const memory = new WebAssembly.Memory({ initial: 2 });
     host.setMemory(memory);
@@ -145,6 +149,38 @@ describe("hegel_host imports", () => {
     expect(new Uint8Array(memory.buffer, 131072, 4)).toEqual(new Uint8Array([42, 42, 42, 42]));
     expect(imports.entropy_fill(-1, 4)).toBe(0);
     expect(imports.entropy_fill(0, 4)).toBe(0);
+  });
+  it("splits the error stream into lines, whatever pieces its bytes arrive in", () => {
+    const host = createHostImports();
+    const write = host.imports.hegel_host.stderr_write;
+    const lines: string[] = [];
+    host.stderr.sink = (line) => lines.push(line);
+    write(8, 4);
+    expect(lines).toEqual([]);
+    const memory = new WebAssembly.Memory({ initial: 1 });
+    host.setMemory(memory);
+    const bytes = new TextEncoder().encode("one\ntw\u00e9\n\nthree");
+    new Uint8Array(memory.buffer).set(bytes, 8);
+    write(8, 7);
+    expect(lines).toEqual(["one"]);
+    write(15, bytes.length - 7);
+    expect(lines).toEqual(["one", "tw\u00e9", ""]);
+    host.stderr.sink = () => {
+      throw new Error("sink failed");
+    };
+    new Uint8Array(memory.buffer).set([10], 8 + bytes.length);
+    expect(() => write(8 + bytes.length, 1)).not.toThrow();
+    expect(() => write(65536, 1)).not.toThrow();
+  });
+  it("prints the error stream to the console until a run routes it", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const host = createHostImports();
+    const memory = new WebAssembly.Memory({ initial: 1 });
+    host.setMemory(memory);
+    new Uint8Array(memory.buffer).set(new TextEncoder().encode("line\n"), 8);
+    host.imports.hegel_host.stderr_write(8, 5);
+    expect(error).toHaveBeenCalledWith("line");
+    error.mockRestore();
   });
   it("returns failure on Web Crypto errors including its chunk limit", () => {
     const host = createHostImports();

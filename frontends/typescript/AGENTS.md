@@ -134,7 +134,21 @@ so a Node import creeping into a shared module fails `check-lint`.
    host can keep a database (the browser cannot, so its runs disable it), how
    to read a grammar file a `fromLark` grammar imports (Node only), and
    where report lines go (`output`: `console.error` on every host, so Node and
-   browsers print the same report). Settings defaults, CI detection and Antithesis
+   browsers print the same report). The engine prints a run's own lines (a
+   verbose run's test cases, phases, statistics) to the same `output`: the
+   native adapter registers it as the run's `hegel_output_callback_t` (a
+   koffi callback, unregistered when the run is freed); the Wasm module
+   cannot call back into JavaScript, so it gets the engine's own
+   `hegel_output_stderr` (from `hegel_output_stderr_callback()`; a NULL
+   callback would mean no output), which writes to the
+   `hegel_host.stderr_write` import: `src/browser/host.ts` splits it into
+   lines and `WasmEngine` routes them to the destination of the run whose
+   context or run handle the current call was given. A failing test case
+   passes the engine a one-line summary (`file:line:col: Error: message`, from
+   the first stack frame outside `node_modules`) when it wants output, and the
+   error's full `stack` when it wants detail (`hegel_test_case_wants_detail`):
+   a verbose run prints the summary after the test case, a debug run the
+   detail. Settings defaults, CI detection and Antithesis
    reporting all belong to the engine: a run starts from
    `hegel_settings_new` (or `_for_profile`) and `src/settings.ts` sets only
    the fields the user gave; the test's location and database key come from
@@ -162,9 +176,11 @@ so a Node import creeping into a shared module fails `check-lint`.
    `run_start_blob` for each `reproduceFailure` blob) → `next_test_case` →
    `mark_complete` → `run_result`. The engine owns the whole run, the final
    replay of each failure included; the runner never replays. A test case
-   the engine stamps (`hegel_test_case_should_capture`), or every one in a
-   verbose run, prints its draws and notes into the engine's printer
-   document. Printing is the generator's job: `TestCase.draw` hands the
+   whose output the engine wants (`hegel_test_case_wants_output`: it streams
+   a verbose run's test cases, "Test case stopped" lines included, and keeps
+   a stamped failing one's as its failure's report) prints its draws and
+   notes into the engine's printer document; the engine lays it out and
+   prints it as it becomes final. Printing is the generator's job: `TestCase.draw` hands the
    document's `PrettyPrinter` to the generator's `doDrawAndPrint`, which
    prints as it draws (containers element by element, through
    `TestCase.drawAndPrint`), so only a `PrintableGenerator` can be drawn
@@ -175,15 +191,17 @@ so a Node import creeping into a shared module fails `check-lint`.
    `hegel_printer_is_live`) and `PrettyPrinter.value`, the JavaScript
    representation value-producing generators (`map`, `just`, leaves,
    `printAsValue`) print with, which calls a class's `[prettyPrint]` method
-   where it has one; the runner keeps each failure origin's
-   best capture and, on `FAILED`, prints it with the caveat and the
+   where it has one; the runner keeps each failure origin's error (the
+   latest one from a test case whose output was wanted, matching the
+   engine's report) and, on `FAILED`, prints each failure's
+   `hegel_failure_output` with the caveat and the
    `.reproduceFailure(...)` line, then rethrows the test's own error (an
    `AggregateError` of them for several distinct failures). An errored run
    throws a `RunError` subclass chosen by `hegel_run_result_error_kind`
    (`src/errors.ts`). `EngineDataSource` implements `DataSource` against an
    engine test case, owning the clones, blocks, printers and deferred
-   printer regions derived from it. Once the document is read or released,
-   writes to any of its printers do nothing, so a value holding a deferred
+   printer regions derived from it. Once the test case completes, which
+   seals its document, writes to any of its printers do nothing, so a value holding a deferred
    region may outlive its test case.
    Span labels come from the engine (`hegel_label_from_name` /
    `hegel_label_combine`, `src/labels.ts`), never hard-coded numbers.
@@ -225,7 +243,7 @@ thread (the main thread unless the user runs tests in a worker themselves).
 
 No persistence (`Database.fromPath` throws; every run's database is
 disabled), no grammar files (`fromLark`'s `importPath` fails the test), no worker offloading, no Antithesis output (the location is passed,
-but the Wasm engine has no output directory), no raw engine-output callbacks. Web
+but the Wasm engine has no output directory). Web
 Crypto in a secure context is required, and the Wasm asset must be servable
 under the page's CORS/CSP.
 

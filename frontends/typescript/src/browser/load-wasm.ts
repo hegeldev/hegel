@@ -11,10 +11,11 @@ function validateImports(module: WebAssembly.Module): void {
   const imports = WebAssembly.Module.imports(module);
   const names = new Set(imports.map((entry) => `${entry.module}.${entry.name}:${entry.kind}`));
   if (
-    imports.length !== 2 ||
-    names.size !== 2 ||
+    imports.length !== 3 ||
+    names.size !== 3 ||
     !names.has("hegel_host.entropy_fill:function") ||
-    !names.has("hegel_host.monotonic_nanos:function")
+    !names.has("hegel_host.monotonic_nanos:function") ||
+    !names.has("hegel_host.stderr_write:function")
   ) {
     throw new EngineError("Incompatible Wasm host imports");
   }
@@ -55,7 +56,7 @@ export async function loadWasm(source: WasmSource): Promise<WasmEngine> {
     }
     const abi = new WasmAbi(instance.exports);
     host.setMemory(abi.memory);
-    const engine = new WasmEngine(abi);
+    const engine = new WasmEngine(abi, host.stderr);
     const version = engine.version();
     if (version !== WASM_ARTIFACT.version) {
       throw new EngineError(
