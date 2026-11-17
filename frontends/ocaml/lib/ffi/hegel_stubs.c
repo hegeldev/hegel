@@ -9,6 +9,13 @@
 #include <caml/mlvalues.h>
 #include <caml/signals.h>
 
+/* A stub that passes a pointer into the OCaml heap to libhegel (such as
+   String_val in hegel_ocaml_mark_complete) must be [@@noalloc] and must not
+   release the runtime lock, so the GC cannot move or free that memory while
+   libhegel reads it. A stub that releases the lock (such as
+   hegel_ocaml_next_test_case) must first copy everything it passes into C
+   memory, and must not touch an OCaml value until it has the lock back. */
+
 typedef struct {
   const char *data;
   size_t len;

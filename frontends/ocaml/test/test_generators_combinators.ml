@@ -117,6 +117,16 @@ let test_ip_both_e2e () =
   Alcotest.(check bool) "saw v6" true !saw_v6
 ;;
 
+(** Test: ip_addresses prints an address in its [Ipaddr.to_string] form. *)
+let test_ip_addresses_printer () =
+  let render version address =
+    Core.Sexp.to_string
+      ((printer (ip_addresses ~version ())) (Ipaddr.of_string_exn address))
+  in
+  Alcotest.(check string) "v4" "127.0.0.1" (render `V4 "127.0.0.1");
+  Alcotest.(check string) "v6" "::1" (render `V6 "::1")
+;;
+
 (** Test: tuples2 primitive e2e. *)
 let test_tuples2_e2e () =
   Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:20 ()) (fun tc ->
@@ -203,6 +213,7 @@ let tests =
   ; Alcotest.test_case "optional e2e" `Quick test_optional_e2e
   ; Alcotest.test_case "ip_addresses e2e" `Quick test_ip_addresses_e2e
   ; Alcotest.test_case "ip_addresses both e2e" `Quick test_ip_both_e2e
+  ; Alcotest.test_case "ip_addresses printer" `Quick test_ip_addresses_printer
   ; Alcotest.test_case "tuples2 e2e" `Quick test_tuples2_e2e
   ; Alcotest.test_case "tuples2 composite e2e" `Quick test_tuples2_composite_e2e
   ; Alcotest.test_case "tuples3 e2e" `Quick test_tuples3_e2e
