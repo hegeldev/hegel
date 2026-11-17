@@ -2,6 +2,7 @@ package libhegel
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -89,7 +90,11 @@ func TestPrinterTextAndNotes(t *testing.T) {
 	if err := settings.ShowStatistics(ctx, true); err != nil {
 		t.Fatal(err)
 	}
-	run, err := settings.RunStart(ctx, nil)
+	if err := settings.Verbosity(ctx, VERBOSITY_VERBOSE); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	run, err := settings.RunStart(ctx, &out)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,12 +115,14 @@ func TestPrinterTextAndNotes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := tc.MarkComplete(ctx, STATUS_VALID, ""); err != nil {
+	if _, err := doc.Value(ctx); !errors.Is(err, E_INVALID_ARG) {
+		t.Fatalf("reading a test case's document = %v", err)
+	}
+	if err := tc.MarkComplete(ctx, STATUS_VALID, "", "", ""); err != nil {
 		t.Fatal(err)
 	}
-	got, err = doc.Value(ctx)
-	if err != nil || got != "first\nsecond\n" {
-		t.Fatalf("notes = %q, %v", got, err)
+	if !strings.Contains(out.String(), "first\nsecond\n") {
+		t.Fatalf("notes = %q", out.String())
 	}
 }
 
@@ -266,7 +273,7 @@ func TestNanosecondDrawRoundTrip(t *testing.T) {
 	if err != nil || dt != dateBound || dt.ToTime().Nanosecond() != 987654321 {
 		t.Fatalf("datetime = %#v, %v", dt, err)
 	}
-	if err := tc.MarkComplete(ctx, STATUS_VALID, ""); err != nil {
+	if err := tc.MarkComplete(ctx, STATUS_VALID, "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 }

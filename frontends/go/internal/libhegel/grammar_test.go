@@ -50,7 +50,7 @@ func TestGrammarImports(t *testing.T) {
 	if got, err := tc.GenerateGrammar(ctx, grammar, 0); err != nil || got != "hello" {
 		t.Fatalf("GenerateGrammar = %q, %v", got, err)
 	}
-	if err := tc.MarkComplete(ctx, STATUS_VALID, ""); err != nil {
+	if err := tc.MarkComplete(ctx, STATUS_VALID, "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -181,7 +181,7 @@ func TestPoolRestore(t *testing.T) {
 	if got, err := pool.Generate(ctx, tc, false); err != nil || got != id {
 		t.Fatalf("restored = %d, %v", got, err)
 	}
-	if err := tc.MarkComplete(ctx, STATUS_VALID, ""); err != nil {
+	if err := tc.MarkComplete(ctx, STATUS_VALID, "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -222,7 +222,7 @@ func TestRepeat(t *testing.T) {
 			t.Fatal("repeat loop did not terminate")
 		}
 	}
-	if err := tc.MarkComplete(ctx, STATUS_VALID, ""); err != nil {
+	if err := tc.MarkComplete(ctx, STATUS_VALID, "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -288,7 +288,7 @@ func TestGrammarDraw(t *testing.T) {
 	if got, err := draw.Result(ctx); err != nil || got != "aa-99" {
 		t.Fatalf("Result = %q, %v; want \"aa-99\"", got, err)
 	}
-	if err := tc.MarkComplete(ctx, STATUS_VALID, ""); err != nil {
+	if err := tc.MarkComplete(ctx, STATUS_VALID, "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -353,7 +353,7 @@ func TestGrammarOptions(t *testing.T) {
 	if _, err := ctx.GrammarNew(builder, "", 0, 0, alphabet, nil); !errors.Is(err, E_INVALID_ARG) {
 		t.Fatalf("grammar outside alphabet = %v", err)
 	}
-	if err := tc.MarkComplete(ctx, STATUS_VALID, ""); err != nil {
+	if err := tc.MarkComplete(ctx, STATUS_VALID, "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 }
