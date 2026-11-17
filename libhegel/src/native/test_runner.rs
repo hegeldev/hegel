@@ -3218,7 +3218,10 @@ impl<'a> Engine<'a> {
     /// resuming the engine without concluding the offered case (see
     /// [`NativeDataSource::take_outcome`]).
     async fn execute(&mut self, ntc: NativeTestCase) -> Result<RunResult, RunError> {
-        if self.settings.verbosity == Verbosity::Verbose {
+        if matches!(
+            self.settings.verbosity,
+            Verbosity::Verbose | Verbosity::Debug
+        ) {
             self.settings.output.line("Running test case");
         }
         let (data_source, handle) = NativeDataSource::new(ntc);
