@@ -39,9 +39,9 @@ let lib =
 
 let binding_initializers = ref []
 
-let foreign ?(release_runtime_lock = false) name typ =
+let foreign name typ =
   let binding =
-    memoize (fun () -> Foreign.foreign ~from:(lib ()) ~release_runtime_lock name typ)
+    memoize (fun () -> Foreign.foreign ~from:(lib ()) name typ)
   in
   let initialize () =
     let (_ : _ -> _) = binding () in
@@ -52,11 +52,6 @@ let foreign ?(release_runtime_lock = false) name typ =
     let f = binding () in
     f arg
 ;;
-
-(* [hegel_next_test_case] runs the engine on the calling thread. An engine call
-   can take a while, so release the OCaml runtime lock for its duration to let
-   other OCaml threads run. *)
-let foreign_blocking name typ = foreign ~release_runtime_lock:true name typ
 
 (* ------------------------------------------------------------------ *)
 (* Handles                                                            *)
@@ -406,12 +401,6 @@ let c_run_start_blob =
      @-> returning int)
 ;;
 
-let c_next_test_case =
-  foreign_blocking
-    "hegel_next_test_case"
-    (handle_t @-> handle_t @-> ptr handle_t @-> returning int)
-;;
-
 let c_run_result =
   foreign "hegel_run_result" (handle_t @-> handle_t @-> ptr handle_t @-> returning int)
 ;;
@@ -423,22 +412,6 @@ let c_run_result_free =
 ;;
 
 let c_failure_free = foreign "hegel_failure_free" (handle_t @-> handle_t @-> returning int)
-
-let c_test_case_free =
-  foreign "hegel_test_case_free" (handle_t @-> handle_t @-> returning int)
-;;
-
-let c_test_case_wants_output =
-  foreign
-    "hegel_test_case_wants_output"
-    (handle_t @-> handle_t @-> ptr bool @-> returning int)
-;;
-
-let c_test_case_wants_detail =
-  foreign
-    "hegel_test_case_wants_detail"
-    (handle_t @-> handle_t @-> ptr bool @-> returning int)
-;;
 
 let c_test_case_clone =
   foreign
@@ -456,35 +429,6 @@ let c_test_case_block =
   foreign
     "hegel_test_case_block"
     (handle_t @-> handle_t @-> uint64_t @-> ptr handle_t @-> returning int)
-;;
-
-let c_generate_boolean =
-  foreign
-    "hegel_generate_boolean"
-    (handle_t @-> handle_t @-> double @-> bool @-> bool @-> ptr bool @-> returning int)
-;;
-
-let c_generate_integer =
-  foreign
-    "hegel_generate_integer"
-    (handle_t @-> handle_t @-> int64_t @-> int64_t @-> ptr int64_t @-> returning int)
-;;
-
-let c_generate_float =
-  foreign
-    "hegel_generate_float"
-    (handle_t
-     @-> handle_t
-     @-> uint32_t
-     @-> double
-     @-> double
-     @-> bool
-     @-> bool
-     @-> bool
-     @-> bool
-     @-> double
-     @-> ptr double
-     @-> returning int)
 ;;
 
 let c_generate_bytes =
@@ -603,10 +547,6 @@ let c_generate_ipv6 =
   foreign "hegel_generate_ipv6" (handle_t @-> handle_t @-> ptr uint8_t @-> returning int)
 ;;
 
-let c_start_span =
-  foreign "hegel_start_span" (handle_t @-> handle_t @-> uint64_t @-> returning int)
-;;
-
 let c_label_from_name =
   foreign "hegel_label_from_name" (handle_t @-> str @-> ptr uint64_t @-> returning int)
 ;;
@@ -617,30 +557,10 @@ let c_label_combine =
     (handle_t @-> ptr uint64_t @-> size_t @-> ptr uint64_t @-> returning int)
 ;;
 
-let c_stop_span =
-  foreign "hegel_stop_span" (handle_t @-> handle_t @-> bool @-> returning int)
-;;
-
-let c_new_collection =
-  foreign
-    "hegel_new_collection"
-    (handle_t @-> handle_t @-> uint64_t @-> uint64_t @-> ptr handle_t @-> returning int)
-;;
-
-let c_collection_more =
-  foreign
-    "hegel_collection_more"
-    (handle_t @-> handle_t @-> handle_t @-> ptr bool @-> returning int)
-;;
-
 let c_collection_reject =
   foreign
     "hegel_collection_reject"
     (handle_t @-> handle_t @-> handle_t @-> str_opt @-> returning int)
-;;
-
-let c_collection_free =
-  foreign "hegel_collection_free" (handle_t @-> handle_t @-> returning int)
 ;;
 
 let c_new_pool =
@@ -840,12 +760,6 @@ let c_test_case_printer =
 
 let c_note = foreign "hegel_note" text_typ
 
-let c_mark_complete =
-  foreign
-    "hegel_mark_complete"
-    (handle_t @-> handle_t @-> int @-> str_opt @-> str_opt @-> str_opt @-> returning int)
-;;
-
 let c_result_status =
   foreign "hegel_run_result_status" (handle_t @-> handle_t @-> ptr int @-> returning int)
 ;;
@@ -1022,16 +936,14 @@ let status_to_int = function
   | Interesting -> 3
 ;;
 
-(* Translate a libhegel return code into success or an exception. *)
-let check_rc ctx rc =
-  if rc = ok
-  then ()
-  else if rc = e_stop_test
-  then raise Stop_test
+(* The exception a nonzero libhegel return code stands for. *)
+let error_of_rc ctx rc =
+  if rc = e_stop_test
+  then Stop_test
   else if rc = e_assume
-  then raise Assume_rejected
+  then Assume_rejected
   else if rc = e_invalid_arg
-  then raise (Usage_error (c_last_error_message ctx))
+  then Usage_error (c_last_error_message ctx)
   else (
     let label =
       if rc = e_backend
@@ -1050,8 +962,156 @@ let check_rc ctx rc =
     in
     let msg = c_last_error_message ctx in
     let detail = if String.length msg = 0 then "" else ": " ^ msg in
-    raise (Internal_error (label ^ detail)))
+    Internal_error (label ^ detail))
 ;;
+
+(* Translate a libhegel return code into success or an exception. *)
+let check_rc ctx rc = if rc <> ok then raise (error_of_rc ctx rc)
+
+(* ------------------------------------------------------------------ *)
+(* Direct C stubs (hegel_stubs.c) for the calls made on every draw or  *)
+(* test case. Each calls libhegel through a function pointer looked up *)
+(* from the same library handle as the ctypes bindings. A stub that    *)
+(* returns a bool, nothing, or a handle returns a negative libhegel    *)
+(* return code on failure; the integer and float draws raise           *)
+(* [Engine_status] instead.                                            *)
+(* ------------------------------------------------------------------ *)
+
+exception Engine_status of int
+
+let () = Callback.register_exception "hegel_ffi_status" (Engine_status 0)
+
+let symbol name =
+  let address = memoize (fun () -> Dl.dlsym ~handle:(lib ()) ~symbol:name) in
+  binding_initializers
+  := (fun () -> ignore (address () : nativeint)) :: !binding_initializers;
+  address
+;;
+
+let address_of h = raw_address_of_ptr (raw h)
+
+let check_flag ctx r = if r < 0 then raise (error_of_rc ctx r) else r = 1
+
+let check_handle ctx r =
+  if Nativeint.compare r 0n < 0 then raise (error_of_rc ctx (Nativeint.to_int r));
+  H (ptr_of_raw_address r)
+;;
+
+let s_generate_integer = symbol "hegel_generate_integer"
+let s_generate_boolean = symbol "hegel_generate_boolean"
+let s_generate_float = symbol "hegel_generate_float"
+let s_start_span = symbol "hegel_start_span"
+let s_stop_span = symbol "hegel_stop_span"
+let s_new_collection = symbol "hegel_new_collection"
+let s_collection_more = symbol "hegel_collection_more"
+let s_collection_free = symbol "hegel_collection_free"
+let s_next_test_case = symbol "hegel_next_test_case"
+let s_test_case_wants_output = symbol "hegel_test_case_wants_output"
+let s_test_case_wants_detail = symbol "hegel_test_case_wants_detail"
+let s_mark_complete = symbol "hegel_mark_complete"
+let s_test_case_free = symbol "hegel_test_case_free"
+
+external stub_generate_integer
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (int[@untagged])
+  -> (int[@untagged])
+  -> int
+  = "hegel_ocaml_generate_integer_byte" "hegel_ocaml_generate_integer"
+
+external stub_generate_boolean
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (float[@unboxed])
+  -> (int[@untagged])
+  -> (int[@untagged])
+  = "hegel_ocaml_generate_boolean_byte" "hegel_ocaml_generate_boolean"
+[@@noalloc]
+
+external stub_generate_float
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (float[@unboxed])
+  -> (float[@unboxed])
+  -> (int[@untagged])
+  -> (float[@unboxed])
+  -> (float[@unboxed])
+  = "hegel_ocaml_generate_float_byte" "hegel_ocaml_generate_float"
+
+external stub_start_span
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (int64[@unboxed])
+  -> (int[@untagged])
+  = "hegel_ocaml_start_span_byte" "hegel_ocaml_start_span"
+[@@noalloc]
+
+external stub_stop_span
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> bool
+  -> (int[@untagged])
+  = "hegel_ocaml_stop_span_byte" "hegel_ocaml_stop_span"
+[@@noalloc]
+
+external stub_new_collection
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (int64[@unboxed])
+  -> (int64[@unboxed])
+  -> (nativeint[@unboxed])
+  = "hegel_ocaml_new_collection_byte" "hegel_ocaml_new_collection"
+[@@noalloc]
+
+external stub_collection_more
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (int[@untagged])
+  = "hegel_ocaml_collection_more_byte" "hegel_ocaml_collection_more"
+[@@noalloc]
+
+external stub_handle_free
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (int[@untagged])
+  = "hegel_ocaml_handle_free_byte" "hegel_ocaml_handle_free"
+[@@noalloc]
+
+external stub_next_test_case
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  = "hegel_ocaml_next_test_case_byte" "hegel_ocaml_next_test_case"
+
+external stub_test_case_flag
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (int[@untagged])
+  = "hegel_ocaml_test_case_flag_byte" "hegel_ocaml_test_case_flag"
+[@@noalloc]
+
+external stub_mark_complete
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (int[@untagged])
+  -> string option
+  -> string option
+  -> string option
+  -> (int[@untagged])
+  = "hegel_ocaml_mark_complete_byte" "hegel_ocaml_mark_complete"
+[@@noalloc]
 
 (* ------------------------------------------------------------------ *)
 (* Diagnostics                                                         *)
@@ -1252,9 +1312,8 @@ let run_start_blob ctx s blob =
 ;;
 
 let next_test_case ctx run =
-  let out = allocate handle_t null_handle in
-  check_rc ctx (c_next_test_case ctx run out);
-  if is_null (raw !@out) then None else Some !@out
+  let r = stub_next_test_case (s_next_test_case ()) (address_of ctx) (address_of run) in
+  if Nativeint.equal r 0n then None else Some (check_handle ctx r)
 ;;
 
 let run_result ctx run =
@@ -1266,7 +1325,9 @@ let run_result ctx run =
 let run_free ctx run = check_rc ctx (c_run_free ctx run)
 let run_result_free ctx r = check_rc ctx (c_run_result_free ctx r)
 let failure_free ctx f = check_rc ctx (c_failure_free ctx f)
-let test_case_free ctx tc = check_rc ctx (c_test_case_free ctx tc)
+let test_case_free ctx tc =
+  check_rc ctx (stub_handle_free (s_test_case_free ()) (address_of ctx) (address_of tc))
+;;
 
 let test_case_clone ctx tc =
   let out = allocate handle_t null_handle in
@@ -1284,16 +1345,14 @@ let test_case_block ctx tc ~indent =
   !@out
 ;;
 
-let test_case_wants_output ctx tc =
-  let out = allocate bool false in
-  check_rc ctx (c_test_case_wants_output ctx tc out);
-  !@out
+let test_case_flag ctx tc symbol =
+  check_flag
+    ctx
+    (stub_test_case_flag (symbol ()) (address_of ctx) (address_of tc))
 ;;
 
-let test_case_wants_detail ctx tc =
-  let out = allocate bool false in
-  check_rc ctx (c_test_case_wants_detail ctx tc out);
-  !@out
+let test_case_wants_output ctx tc = test_case_flag ctx tc s_test_case_wants_output
+let test_case_wants_detail ctx tc = test_case_flag ctx tc s_test_case_wants_detail
 ;;
 
 (* ------------------------------------------------------------------ *)
@@ -1317,22 +1376,32 @@ let to_string_array = function
 ;;
 
 let generate_boolean ctx tc p forced =
-  let out_ptr = allocate bool false in
-  let rc =
+  let forced =
     match forced with
-    | Some b -> c_generate_boolean ctx tc p b true out_ptr
-    | None -> c_generate_boolean ctx tc p false false out_ptr
+    | Some b -> Bool.to_int b
+    | None -> -1
   in
-  check_rc ctx rc;
-  !@out_ptr
+  check_flag
+    ctx
+    (stub_generate_boolean
+       (s_generate_boolean ())
+       (address_of ctx)
+       (address_of tc)
+       p
+       forced)
 ;;
 
 let generate_integer ctx tc ~min_value ~max_value =
-  let out = allocate int64_t 0L in
-  check_rc
-    ctx
-    (c_generate_integer ctx tc (Int64.of_int min_value) (Int64.of_int max_value) out);
-  Int64.to_int !@out
+  match
+    stub_generate_integer
+      (s_generate_integer ())
+      (address_of ctx)
+      (address_of tc)
+      min_value
+      max_value
+  with
+  | v -> v
+  | exception Engine_status rc -> raise (error_of_rc ctx rc)
 ;;
 
 let generate_float
@@ -1346,22 +1415,24 @@ let generate_float
       ~exclude_max
       ~smallest_nonzero_magnitude
   =
-  let out = allocate double 0.0 in
-  check_rc
-    ctx
-    (c_generate_float
-       ctx
-       tc
-       (Unsigned.UInt32.of_int 64)
-       min_value
-       max_value
-       allow_nan
-       allow_infinity
-       exclude_min
-       exclude_max
-       smallest_nonzero_magnitude
-       out);
-  !@out
+  let flags =
+    Bool.to_int allow_nan
+    lor (Bool.to_int allow_infinity lsl 1)
+    lor (Bool.to_int exclude_min lsl 2)
+    lor (Bool.to_int exclude_max lsl 3)
+  in
+  match
+    stub_generate_float
+      (s_generate_float ())
+      (address_of ctx)
+      (address_of tc)
+      min_value
+      max_value
+      flags
+      smallest_nonzero_magnitude
+  with
+  | v -> v
+  | exception Engine_status rc -> raise (error_of_rc ctx rc)
 ;;
 
 let generate_bytes ctx tc ~min_size ~max_size =
@@ -1568,7 +1639,7 @@ let generate_ipv4 ctx tc = generate_ip_bytes ctx tc c_generate_ipv4 4
 let generate_ipv6 ctx tc = generate_ip_bytes ctx tc c_generate_ipv6 16
 
 let start_span ctx tc label =
-  check_rc ctx (c_start_span ctx tc (Unsigned.UInt64.of_int64 label))
+  check_rc ctx (stub_start_span (s_start_span ()) (address_of ctx) (address_of tc) label)
 ;;
 
 let label_from_name ctx name =
@@ -1590,30 +1661,45 @@ let label_combine ctx labels =
   Unsigned.UInt64.to_int64 !@out
 ;;
 
-let stop_span ctx tc discard = check_rc ctx (c_stop_span ctx tc discard)
+let stop_span ctx tc discard =
+  check_rc ctx (stub_stop_span (s_stop_span ()) (address_of ctx) (address_of tc) discard)
+;;
 
 let new_collection ctx tc ~min_size ~max_size =
-  let out = allocate handle_t null_handle in
-  let max_u =
+  let max_size =
     match max_size with
-    | Some m -> Unsigned.UInt64.of_int m
-    | None -> Unsigned.UInt64.max_int
+    | Some m -> Int64.of_int m
+    | None -> -1L
   in
-  check_rc ctx (c_new_collection ctx tc (Unsigned.UInt64.of_int min_size) max_u out);
-  !@out
+  check_handle
+    ctx
+    (stub_new_collection
+       (s_new_collection ())
+       (address_of ctx)
+       (address_of tc)
+       (Int64.of_int min_size)
+       max_size)
 ;;
 
 let collection_more ctx tc collection =
-  let out = allocate bool false in
-  check_rc ctx (c_collection_more ctx tc collection out);
-  !@out
+  check_flag
+    ctx
+    (stub_collection_more
+       (s_collection_more ())
+       (address_of ctx)
+       (address_of tc)
+       (address_of collection))
 ;;
 
 let collection_reject ctx tc collection why =
   check_rc ctx (c_collection_reject ctx tc collection why)
 ;;
 
-let collection_free ctx collection = check_rc ctx (c_collection_free ctx collection)
+let collection_free ctx collection =
+  check_rc
+    ctx
+    (stub_handle_free (s_collection_free ()) (address_of ctx) (address_of collection))
+;;
 
 let new_pool ctx tc =
   let out = allocate handle_t null_handle in
@@ -1818,7 +1904,16 @@ let note ctx tc text = check_rc ctx (c_note ctx tc text)
 
 (* A rejected completion is the frontend's fault, never the user's. *)
 let mark_complete ctx tc status ~origin ~summary ~detail =
-  let rc = c_mark_complete ctx tc (status_to_int status) origin summary detail in
+  let rc =
+    stub_mark_complete
+      (s_mark_complete ())
+      (address_of ctx)
+      (address_of tc)
+      (status_to_int status)
+      origin
+      summary
+      detail
+  in
   if rc = e_invalid_arg
   then raise (Internal_error ("invalid completion: " ^ c_last_error_message ctx))
   else check_rc ctx rc
