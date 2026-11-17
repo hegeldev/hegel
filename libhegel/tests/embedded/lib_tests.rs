@@ -483,6 +483,51 @@ fn concurrent_use_of_one_printer_handle_is_rejected() {
     }
 }
 
+/// Once every handle onto a region that holds nothing is freed — test-case
+/// clones and blocks, printers fetched from them, and deferred printers —
+/// the region is reclaimed.
+#[test]
+fn freeing_every_handle_onto_a_blank_region_reclaims_it() {
+    unsafe {
+        let (ctx, s, run, tc) = start_run_and_first_case();
+        let mut clone: *mut HegelTestCase = ptr::null_mut();
+        ok(hegel_test_case_clone(ctx, tc, &mut clone));
+        let mut block: *mut HegelTestCase = ptr::null_mut();
+        ok(hegel_test_case_block(ctx, clone, 2, &mut block));
+        let mut printer: *mut HegelPrinter = ptr::null_mut();
+        ok(hegel_test_case_printer(
+            ctx,
+            block,
+            ptr::null(),
+            &mut printer,
+        ));
+        let mut deferred: *mut HegelPrinter = ptr::null_mut();
+        ok(hegel_printer_deferred(ctx, printer, &mut deferred));
+
+        let slots: Vec<_> = [
+            (*clone).print_target,
+            (*block).print_target,
+            (*deferred).target,
+        ]
+        .into_iter()
+        .map(|target| match target {
+            PrinterTarget::Slot(slot) => slot,
+            PrinterTarget::Main => panic!("a derived handle prints into a slot"),
+        })
+        .collect();
+        let family = &(*tc).family;
+        let live = |slot| family.printer.lock().slot_is_live(slot);
+        ok(hegel_test_case_free(ctx, clone));
+        ok(hegel_test_case_free(ctx, block));
+        ok(hegel_printer_free(ctx, printer));
+        assert!(slots.iter().all(|slot| live(*slot)));
+        ok(hegel_printer_free(ctx, deferred));
+        assert!(slots.iter().all(|slot| !live(*slot)));
+
+        finish(ctx, s, run, tc);
+    }
+}
+
 #[test]
 fn last_error_view_preserves_interior_nuls() {
     let ctx = hegel_context_new();

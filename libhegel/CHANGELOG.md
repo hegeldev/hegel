@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.51.6 - 2026-11-16
+
+This patch fixes the memory a long-running test case keeps for the output regions of its test-case handles. Every `hegel_test_case_clone` and `hegel_test_case_block` handle opens a region in the test case's document, and these regions were kept until the test case ended, so a concurrent state machine that never stops, such as a `#[hegel::main]` workload in Antithesis, grew without bound. A region that holds no output is now freed when the last handle writing into it is freed.
+
 ## 0.51.5 - 2026-11-13
 
 This patch adds `hegel_pause_faults` and `hegel_unpause_faults` to the C ABI. A frontend brackets each stateful invariant declared with `pause_faults` with this pair, so that inside [Antithesis](https://antithesis.com/) no fault lands in the middle of the check. Antithesis names its fault-control program in the `ANTITHESIS_FAULT_CONTROL` environment variable: `hegel_pause_faults` runs that program with `--pause`, `hegel_unpause_faults` runs it with `--unpause`, and each waits for it to exit. When the variable is unset, or names nothing that exists, both calls do nothing, so a test declaring `pause_faults` runs the same outside Antithesis. A program that exists but cannot be run, or exits with a non-zero status, fails the call with `HEGEL_E_INVALID_ARG`, and `hegel_context_last_error` names the program and what went wrong.
