@@ -5,7 +5,8 @@ sidebar:
 ---
 
 To get more bugfinding power and total reproducibility out of your Hegel tests, you can
-run them in [Antithesis](https://antithesis.com). 
+run them in [Antithesis](https://antithesis.com). Using Hegel for Antithesis workloads
+is officially supported in C++, Go, Java, OCaml, Python, and Rust.
 
 Any use of concurrent stateful testing is worth running in Antithesis,
 since handling nondeterministic failures is obviated by the deterministic
