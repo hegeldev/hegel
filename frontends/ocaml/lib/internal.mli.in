@@ -237,7 +237,7 @@ type draw_segment =
 (** [print_line tc segments] appends one line assembled from [segments ()] to
     the test case's print region, subject to the run's verbosity (like [note]).
     [segments] is only called when the line is printed. *)
-val print_line : test_case -> (unit -> draw_segment list) -> unit
+val print_line : test_case -> (unit -> draw_segment list) MODE(local) -> unit
 
 (** [event tc ~label] records [label] as observed on this test case for the
     end-of-run statistics report. *)
