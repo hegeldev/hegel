@@ -88,6 +88,9 @@ pub enum PrinterError {
     UnresolvedDeferred,
     /// `resolve` was called with no deferred session outstanding.
     NothingToResolve,
+    /// `set_max_width` asked for a different width after
+    /// [`Printer::take_final`] had laid out part of the document.
+    WidthFixed,
 }
 
 impl core::fmt::Display for PrinterError {
@@ -98,6 +101,9 @@ impl core::fmt::Display for PrinterError {
             PrinterError::NoSpeculation => "commit or abort without an open speculative region",
             PrinterError::UnresolvedDeferred => "printer has unresolved deferred slots",
             PrinterError::NothingToResolve => "resolve called with no outstanding deferred slots",
+            PrinterError::WidthFixed => {
+                "max_width cannot change once part of the document is taken"
+            }
         })
     }
 }
@@ -328,6 +334,73 @@ fn mark_comment_groups(slots: &Slots, cmds: &[Cmd], force: &mut Vec<bool>, stack
     }
 }
 
+/// What layout after a line start outside every group depends on from the
+/// lines before it: the break-point indentation in force, the padding the
+/// line started with, and the state of the outermost group, which spans the
+/// whole document — whether it broke, and whether it can still break.
+#[derive(Debug, Clone, Copy, Default)]
+struct Carry {
+    indentation: isize,
+    pad: isize,
+    root_broken: bool,
+    root_dequeued: bool,
+}
+
+/// How far [`Printer::take_final`] has looked into the main output, so that
+/// each of its commands is examined once however often the document is
+/// read. A slot spliced into it is examined whole once no handle writes
+/// through it any more. We accept that a final slot holding a slot still
+/// written through is examined again on every read until that one is final
+/// too: that is quadratic only in a large slot around a long-held one,
+/// which no frontend builds.
+#[derive(Debug, Default)]
+struct Scan {
+    /// Position in the main output.
+    pos: usize,
+    /// Groups open at the position.
+    depth: isize,
+    /// Whether the position is past content on its line.
+    mid_line: bool,
+    /// The longest prefix of the main output that ends at a line start
+    /// outside every group.
+    cut: usize,
+}
+
+impl Scan {
+    /// Follow `cmds` and the final slots they splice, and return whether
+    /// all of them could be followed: not past a slot that is not final, or
+    /// an `end_group` that closes no group, which makes the rest of the
+    /// document fail to lay out.
+    fn follow(&mut self, slots: &Slots, cmds: &[Cmd]) -> bool {
+        for cmd in cmds {
+            match cmd {
+                Cmd::Splice(id) => match slots.get(*id) {
+                    Some(slot) if slot.holders == 0 && slot.speculation.is_empty() => {
+                        if !self.follow(slots, &slot.commands) {
+                            return false;
+                        }
+                    }
+                    Some(_) => return false,
+                    None => {}
+                },
+                Cmd::EndGroup { .. } if self.depth == 0 => return false,
+                Cmd::BeginGroup { .. } => {
+                    self.depth += 1;
+                    self.mid_line = true;
+                }
+                Cmd::EndGroup { .. } => {
+                    self.depth -= 1;
+                    self.mid_line = true;
+                }
+                Cmd::HardBreak => self.mid_line = false,
+                Cmd::ShiftIndent(_) => {}
+                _ => self.mid_line = true,
+            }
+        }
+        true
+    }
+}
+
 /// The fewest stale splices a sweep waits for, so that a small document is
 /// not swept on every reclaimed slot.
 const MIN_SWEEP_THRESHOLD: usize = 64;
@@ -348,6 +421,13 @@ pub struct Printer {
     /// document. An aborted speculative region can discard some of them.
     stale_splices: usize,
     sweep_threshold: usize,
+    /// The layout state where the lines already taken by
+    /// [`Printer::take_final`] end.
+    carry: Carry,
+    scan: Scan,
+    /// Whether [`Printer::take_final`] has laid out any text, which fixes
+    /// the width.
+    taken: bool,
     pending_resolve: bool,
     sealed: bool,
     /// The laid-out document, rendered once on the first [`Printer::resolve`]
@@ -369,6 +449,9 @@ impl Printer {
             had_slots: false,
             stale_splices: 0,
             sweep_threshold: MIN_SWEEP_THRESHOLD,
+            carry: Carry::default(),
+            scan: Scan::default(),
+            taken: false,
             pending_resolve: false,
             sealed: false,
             rendered: None,
@@ -380,12 +463,20 @@ impl Printer {
         self.max_width
     }
 
-    /// Change the width lines are laid out to. Safe at any time before
-    /// rendering: commands are recorded width-independently, and the width
-    /// is only consulted when the document is laid out.
-    pub fn set_max_width(&mut self, max_width: usize) {
-        self.max_width = max_width;
-        self.rendered = None;
+    /// Change the width lines are laid out to. Commands are recorded
+    /// width-independently and the width is only consulted when the document
+    /// is laid out, so this is safe until [`Printer::take_final`] lays out
+    /// part of the document: from then on the width is fixed, and a
+    /// different one is refused.
+    pub fn set_max_width(&mut self, max_width: usize) -> Result<(), PrinterError> {
+        if max_width != self.max_width {
+            if self.taken {
+                return Err(PrinterError::WidthFixed);
+            }
+            self.max_width = max_width;
+            self.rendered = None;
+        }
+        Ok(())
     }
 
     /// Emit literal, unbreakable text. Must not contain newlines.
@@ -731,7 +822,9 @@ impl Printer {
     /// handle goes, abort the speculative regions still open on the slot,
     /// because nothing can close them. Then reclaim the slot if it holds no
     /// content, and each parent that this leaves empty with no handles. The
-    /// splice of a reclaimed slot renders nothing.
+    /// splice of a reclaimed slot renders nothing. A slot with no handles
+    /// left is final: [`Printer::take_final`] may take it, so it must not be
+    /// retained or written to any more.
     pub fn release(&mut self, slot: SlotId) {
         if self.sealed {
             return;
@@ -809,6 +902,7 @@ impl Printer {
         }
         self.stale_splices = 0;
         self.sweep_threshold = remaining.max(MIN_SWEEP_THRESHOLD);
+        self.scan = Scan::default();
     }
 
     /// Whether the main output can still be written to: `false` once the
@@ -894,25 +988,99 @@ impl Printer {
     }
 
     fn kill_splices(&mut self, cmds: &[Cmd]) {
-        let mut work = splice_ids(cmds);
-        while let Some(id) = work.pop() {
+        for id in self.subtree_ids(cmds) {
             if let Some(slot) = self.slots.get_mut(id) {
                 slot.dead = true;
+            }
+        }
+    }
+
+    /// The slots spliced into `cmds`, directly or through other slots.
+    fn subtree_ids(&self, cmds: &[Cmd]) -> Vec<SlotId> {
+        let mut ids = Vec::new();
+        let mut work = splice_ids(cmds);
+        while let Some(id) = work.pop() {
+            if let Some(slot) = self.slots.get(id) {
+                ids.push(id);
                 work.extend(splice_ids(&slot.commands));
                 for buf in &slot.speculation {
                     work.extend(splice_ids(buf));
                 }
             }
         }
+        ids
     }
 
     fn render(&self) -> Result<String, PrinterError> {
+        Ok(self.render_cmds(&self.main)?.finish())
+    }
+
+    fn render_cmds<'s>(&'s self, cmds: &'s [Cmd]) -> Result<Renderer<'s>, PrinterError> {
         let mut force = vec![false];
         let mut stack = Vec::new();
-        mark_comment_groups(&self.slots, &self.main, &mut force, &mut stack);
-        let mut renderer = Renderer::new(self.max_width, &self.slots, force);
-        renderer.run(&self.main)?;
-        Ok(renderer.finish())
+        mark_comment_groups(&self.slots, cmds, &mut force, &mut stack);
+        let mut renderer = Renderer::new(self.max_width, &self.slots, force, self.carry);
+        renderer.run(cmds)?;
+        Ok(renderer)
+    }
+
+    /// Lay out and remove the part of the main output that nothing can
+    /// change any more, returning its text. That is the longest prefix
+    /// ending at a line start outside every group whose slots have no
+    /// handle or speculative region left to write through them: later content
+    /// cannot change how it breaks. Reading the document piecewise this
+    /// way, and the rest with [`Printer::take_rest`], gives exactly what
+    /// [`Printer::value`] would have, while the document only keeps what
+    /// may still change. The prefix never holds an unmatched `end_group`,
+    /// so its layout does not fail in practice; an error is the layout's.
+    pub fn take_final(&mut self) -> Result<String, PrinterError> {
+        if self.sealed {
+            return Ok(String::new());
+        }
+        let cut = self.final_prefix_len();
+        if cut == 0 {
+            return Ok(String::new());
+        }
+        let (text, carry) = self.render_cmds(&self.main[..cut])?.finish_chunk();
+        self.carry = carry;
+        self.taken |= !text.is_empty();
+        self.scan.pos -= cut;
+        self.scan.cut = 0;
+        let prefix: Vec<Cmd> = self.main.drain(..cut).collect();
+        for id in self.subtree_ids(&prefix) {
+            self.slots.remove(id);
+        }
+        Ok(text)
+    }
+
+    /// Seal the document and lay out what [`Printer::take_final`] has not
+    /// taken.
+    pub fn take_rest(&mut self) -> Result<String, PrinterError> {
+        self.seal();
+        let text = self.render()?;
+        self.main.clear();
+        Ok(text)
+    }
+
+    /// Advance the scan as far as the document is final, and return the
+    /// length of the longest prefix of the main output it found that ends at
+    /// a line start outside every group.
+    fn final_prefix_len(&mut self) -> usize {
+        let Printer {
+            scan, slots, main, ..
+        } = self;
+        while let Some(cmd) = main.get(scan.pos) {
+            let (depth, mid_line) = (scan.depth, scan.mid_line);
+            if !scan.follow(slots, core::slice::from_ref(cmd)) {
+                (scan.depth, scan.mid_line) = (depth, mid_line);
+                break;
+            }
+            scan.pos += 1;
+            if scan.depth == 0 && !scan.mid_line {
+                scan.cut = scan.pos;
+            }
+        }
+        scan.cut
     }
 }
 
@@ -940,29 +1108,40 @@ struct Renderer<'a> {
 }
 
 impl<'a> Renderer<'a> {
-    fn new(max_width: usize, slots: &'a Slots, force_break: Vec<bool>) -> Renderer<'a> {
+    /// A renderer for a document whose earlier lines were already laid out
+    /// (see [`Printer::take_final`]), leaving `carry` behind.
+    fn new(
+        max_width: usize,
+        slots: &'a Slots,
+        force_break: Vec<bool>,
+        carry: Carry,
+    ) -> Renderer<'a> {
         Renderer {
             max_width,
             slots,
             force_break,
             out: String::new(),
-            output_width: 0,
+            output_width: carry.pad.max(0) as usize,
             at_line_start: true,
-            pending_pad: Some(0),
+            pending_pad: Some(carry.pad),
             block_indent: 0,
             buffer: VecDeque::new(),
             buffer_width: 0,
             pending_comments: String::new(),
-            indentation: 0,
+            indentation: carry.indentation,
             groups: vec![Group {
                 depth: 0,
                 indent: 0,
                 pending: 0,
-                want_break: false,
+                want_break: carry.root_broken,
                 comment: false,
             }],
             group_stack: vec![0],
-            group_queue: vec![vec![0]],
+            group_queue: vec![if carry.root_dequeued {
+                Vec::new()
+            } else {
+                vec![0]
+            }],
         }
     }
 
@@ -1004,6 +1183,20 @@ impl<'a> Renderer<'a> {
         if let Some(indent) = self.pending_pad {
             self.output_width = block_indent + indent.max(0) as usize;
         }
+    }
+
+    /// The text laid out so far, ending at a line start, and the layout
+    /// state there. The line's padding is left to the renderer of what
+    /// follows.
+    fn finish_chunk(mut self) -> (String, Carry) {
+        self.flush();
+        let carry = Carry {
+            indentation: self.indentation,
+            pad: self.pending_pad.unwrap_or_default(),
+            root_broken: self.groups[0].want_break,
+            root_dequeued: !self.group_queue[0].contains(&0),
+        };
+        (self.out, carry)
     }
 
     fn finish(mut self) -> String {

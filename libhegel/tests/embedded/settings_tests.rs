@@ -564,6 +564,7 @@ fn output_debug_names_the_destination() {
         format!("{:?}", Output::callback(|_| {})),
         "Output(callback)"
     );
+    assert_eq!(format!("{:?}", Output::none()), "Output(none)");
 }
 
 #[test]

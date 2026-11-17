@@ -1601,9 +1601,9 @@ pub(crate) struct Engine<'a> {
     /// makes the run skip generation. Every other measurement run leaves
     /// the incumbent and the database alone.
     reuse_replays: bool,
-    /// While set, every measurement execution is stamped for capture
-    /// (`hegel_test_case_should_capture`), telling the client to buffer
-    /// its output and diagnostic — the material for the failure report.
+    /// While set, every measurement execution is stamped for capture: the
+    /// engine keeps its output and diagnostic as the material for the
+    /// failure report (`hegel_failure_output`).
     /// Set around confirmation batches, database-reuse replays, the
     /// final replay, and ND blob replays (the deterministic choices-blob
     /// path stamps its case directly); shrink-gauntlet and boost replays

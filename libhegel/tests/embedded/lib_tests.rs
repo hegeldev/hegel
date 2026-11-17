@@ -47,6 +47,8 @@ unsafe fn finish(
             tc,
             hegel_status_t::HEGEL_STATUS_VALID as u32,
             ptr::null(),
+            ptr::null(),
+            ptr::null(),
         ));
         ok(hegel_test_case_free(ctx, tc));
         ok(hegel_run_free(ctx, run));
@@ -77,8 +79,8 @@ fn concurrent_use_of_one_handle_is_rejected() {
     }
 }
 
-/// `hegel_mark_complete` never reports `HEGEL_E_CONCURRENT_USE`: completion is
-/// first-caller-wins and always succeeds, so it waits for an in-flight
+/// `hegel_mark_complete` never reports `HEGEL_E_CONCURRENT_USE`: completing
+/// always succeeds for valid arguments, so it waits for an in-flight
 /// operation on the same handle instead of erroring. A worker thread holds the
 /// handle's own `local` lock (standing in for a draw in progress) and releases
 /// it shortly after signalling; `hegel_mark_complete`, called while the lock
@@ -103,6 +105,8 @@ fn mark_complete_waits_for_an_in_flight_operation() {
                 tc,
                 hegel_status_t::HEGEL_STATUS_VALID as u32,
                 ptr::null(),
+                ptr::null(),
+                ptr::null(),
             ));
         });
 
@@ -126,6 +130,8 @@ fn completion_is_reported_before_concurrent_use() {
                 ctx,
                 tc,
                 hegel_status_t::HEGEL_STATUS_VALID as u32,
+                ptr::null(),
+                ptr::null(),
                 ptr::null()
             ),
             HEGEL_OK
@@ -250,6 +256,7 @@ fn engine_suspending_without_an_offer_becomes_a_run_error() {
         current_family: None,
         result: None,
         reporter: None,
+        output: RunOutputPolicy::new(&Settings::default()),
     }));
 
     unsafe {
@@ -353,6 +360,7 @@ fn every_run_error_maps_to_its_kind_through_the_abi() {
             current_family: None,
             result: None,
             reporter: None,
+            output: RunOutputPolicy::new(&Settings::default()),
         }));
         unsafe {
             let mut tc: *mut HegelTestCase = ptr::null_mut();
@@ -432,6 +440,7 @@ fn internal_run_error_surfaces_through_run_result_error() {
         current_family: None,
         result: None,
         reporter: None,
+        output: RunOutputPolicy::new(&Settings::default()),
     }));
 
     unsafe {
