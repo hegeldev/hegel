@@ -461,8 +461,9 @@ type draw_segment =
   | Text of string
   | Value of Sexp.t
 
-(** [print_line tc segments] appends one line assembled from [segments] to the
-    test case's print region. *)
+(** [print_line tc segments] appends one line assembled from [segments ()] to
+    the test case's print region. [segments] is only called when the line is
+    printed. *)
 let print_line tc segments =
   if should_print tc
   then (
@@ -475,7 +476,7 @@ let print_line tc segments =
            (function
              | Text s -> Ffi.printer_text ctx printer s
              | Value sexp -> render_sexp ctx printer sexp)
-           segments;
+           (segments ());
          Ffi.printer_hard_break ctx printer))
 ;;
 

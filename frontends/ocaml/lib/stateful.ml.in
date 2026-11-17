@@ -266,7 +266,8 @@ let run_machine
   in
   let print_state () =
     Option.iter
-      (fun sexp_of -> Internal.print_line tc [ Text "state = "; Value (sexp_of init) ])
+      (fun sexp_of ->
+         Internal.print_line tc (fun () -> [ Text "state = "; Value (sexp_of init) ]))
       sexp_of_state
   in
   let check_invariants ~where ~sample =

@@ -64,13 +64,12 @@ let%template make
          first invocation in normal verbosity. *)
       if Internal.draw_depth tc = 0 && (is_fresh || Internal.is_high_verbosity tc)
       then
-        Internal.print_line
-          tc
+        Internal.print_line tc (fun () ->
           [ Text (display ^ " ")
           ; Value (sexp_of_arg arg)
           ; Text " = "
           ; Value (show_ret ret)
-          ];
+          ]);
       ret
     in
     adapt base
