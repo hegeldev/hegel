@@ -987,13 +987,23 @@ impl<'a> Renderer<'a> {
                 let Some(slot) = self.slots.get(*id) else {
                     return Ok(());
                 };
-                self.block_indent += slot.block_indent;
+                self.set_block_indent(self.block_indent + slot.block_indent);
                 self.run(&slot.commands)?;
-                self.block_indent -= slot.block_indent;
+                self.set_block_indent(self.block_indent - slot.block_indent);
             }
             Cmd::LinePrefix(s) => self.line_prefix(s),
         }
         Ok(())
+    }
+
+    /// Enter or leave blocks. A line with no content yet is as wide as the
+    /// padding it will get, which includes the block indentation in force
+    /// when its content arrives.
+    fn set_block_indent(&mut self, block_indent: usize) {
+        self.block_indent = block_indent;
+        if let Some(indent) = self.pending_pad {
+            self.output_width = block_indent + indent.max(0) as usize;
+        }
     }
 
     fn finish(mut self) -> String {

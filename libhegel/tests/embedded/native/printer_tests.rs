@@ -1626,3 +1626,25 @@ fn blank_lines_and_trailing_breaks_keep_their_padding() {
     p.hard_break(M).unwrap();
     assert_eq!(p.value().unwrap(), "a\n  \n  b\n  ");
 }
+
+#[test]
+fn a_block_shifts_the_width_of_a_line_without_content_only_while_it_lasts() {
+    let mut p = printer(20);
+    let b = Target::Slot(p.block(M, 10).unwrap());
+    p.text(b, "x").unwrap();
+    p.hard_break(b).unwrap();
+    p.breakable(M, " ").unwrap();
+    p.text(M, "aaaaaaaaaa").unwrap();
+    p.hard_break(M).unwrap();
+    let b = Target::Slot(p.block(M, 10).unwrap());
+    p.begin_group(b, 0, "").unwrap();
+    p.breakable(b, " ").unwrap();
+    p.text(b, "aaaaaaaaaa").unwrap();
+    p.end_group(b, "").unwrap();
+    p.hard_break(b).unwrap();
+    p.resolve().unwrap();
+    assert_eq!(
+        p.value().unwrap(),
+        "          x\n aaaaaaaaaa\n          \n          aaaaaaaaaa\n"
+    );
+}
