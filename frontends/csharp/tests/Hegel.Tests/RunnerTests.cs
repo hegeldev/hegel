@@ -70,7 +70,7 @@ public class RunnerTests
     public void AFailingRunShrinksAndReportsTheFailure()
     {
         var reporter = new Recording();
-        var report = Property.Run(tc => FailAbove(tc, 10), Quiet, reporter);
+        var report = Property.Run(tc => FailAbove(tc, 10), Engines.Reported, reporter);
         Assert.Equal(RunStatus.Failed, report.Status);
         var failure = Assert.Single(report.Failures);
         Assert.StartsWith("InvalidOperationException at RunnerTests.cs:", failure.Origin);
@@ -88,6 +88,25 @@ public class RunnerTests
     {
         var e = Assert.Throws<InvalidOperationException>(() => Property.Test(tc => FailAbove(tc, 10), Quiet, Reporter.Silent));
         Assert.Equal("too big: 10", e.Message);
+    }
+
+    [Fact]
+    public void AQuietFailureKeepsItsMinimalExceptionAndDrawsButNoOutput()
+    {
+        var report = Property.Run(tc => FailAbove(tc, 10), Quiet, Reporter.Silent);
+        var failure = Assert.Single(report.Failures);
+        Assert.Equal("too big: 10", failure.Exception.Message);
+        Assert.Equal(10, failure.Draws["x_1"]);
+        Assert.Empty(failure.Output);
+    }
+
+    [Fact]
+    public void AVerboseRunStreamsEachCaseBeforeItEnds()
+    {
+        var reporter = new Recording();
+        Property.Run(tc => tc.Draw(Generators.Integers(), "x"), Quiet with { TestCases = 1, Verbosity = Verbosity.Verbose }, reporter);
+        var drawn = reporter.Events.FindIndex(e => e.StartsWith("engine:var x_1 = ", StringComparison.Ordinal));
+        Assert.InRange(drawn, 0, reporter.Events.IndexOf("end:Valid:False"));
     }
 
     [Fact]
@@ -175,7 +194,9 @@ public class RunnerTests
         Assert.True(report.Passed);
         Assert.True(report.Statistics.Invalid > 0);
         Assert.Contains("end:Invalid:False", reporter.Events);
-        Assert.Contains(reporter.Events, e => e.StartsWith("out:var x_1 = "));
+        Assert.Contains(reporter.Events, e => e.StartsWith("engine:var x_1 = "));
+        Assert.Contains("engine:Test case stopped: failed assumption", reporter.Events);
+        Assert.DoesNotContain(reporter.Events, e => e.StartsWith("out:"));
     }
 
     [Fact]
@@ -317,7 +338,7 @@ public class RunnerTests
     {
         var blob = Blob();
         var reporter = new Recording();
-        var report = Property.Run(tc => FailAbove(tc, 10), Quiet with { ReproduceFailure = [blob] }, reporter);
+        var report = Property.Run(tc => FailAbove(tc, 10), Engines.Reported with { ReproduceFailure = [blob] }, reporter);
         Assert.Equal(RunStatus.Failed, report.Status);
         var failure = Assert.Single(report.Failures);
         Assert.Equal(["var x_1 = 10;"], failure.Output);
@@ -578,11 +599,11 @@ public class RunnerTests
     }
 
     [Fact]
-    public void AnOriginWithoutACaptureIsAnInternalError()
+    public void AnOriginWithoutAFailingExecutionIsAnInternalError()
     {
         using var engine = Engines.Override(new BogusOrigins(Engines.Real));
         var e = Assert.Throws<HegelException>(() => Property.Run(tc => FailAbove(tc, 10), Quiet, Reporter.Silent));
-        Assert.Equal("internal error: failure 0 (bogus) has no captured failing execution", e.Message);
+        Assert.Equal("internal error: failure 0 (bogus) has no failing execution", e.Message);
     }
 
     [Fact]
@@ -594,22 +615,64 @@ public class RunnerTests
     }
 
     [Fact]
-    public void AnOutputErrorIsAttachedToTheFailure()
+    public void AFailureTheEngineRejectsIsAnEngineError()
     {
-        using var engine = Engines.Override(new FailingPrinterValue(Engines.Real));
-        var report = Property.Run(tc => FailAbove(tc, 10), Quiet, Reporter.Silent);
-        var failure = Assert.Single(report.Failures);
-        Assert.Empty(failure.Output);
-        var attached = Assert.IsType<HegelException>(failure.Exception.Data["HegelOutputError"]);
-        Assert.StartsWith("hegel_printer_value failed (rc=-8)", attached.Message);
+        using var engine = Engines.Override(new NoDetail(Engines.Real));
+        var e = Assert.Throws<HegelException>(() => Property.Run(tc => FailAbove(tc, 10), Quiet with { Verbosity = Verbosity.Debug }, Reporter.Silent));
+        Assert.StartsWith("hegel_mark_complete failed (rc=-5): ", e.Message);
+        Assert.Contains("detail", e.Message);
     }
 
     [Fact]
-    public void AnOutputErrorInAPassingCaseAbortsTheRun()
+    public void TheSilentReporterGivesTheEngineNoDestination()
     {
-        using var engine = Engines.Override(new FailingPrinterValue(Engines.Real));
-        var e = Assert.Throws<HegelException>(() => Property.Run(tc => tc.Draw(Generators.Integers()), Quiet with { Verbosity = Verbosity.Verbose }, Reporter.Silent));
-        Assert.StartsWith("hegel_printer_value failed (rc=-8)", e.Message);
+        var recording = new RecordingOutputs(Engines.Real);
+        using var engine = Engines.Override(recording);
+        var blob = Blob();
+        Property.Run(tc => FailAbove(tc, 10), Quiet with { ReproduceFailure = [blob] }, Reporter.Silent);
+        var reporter = new Recording();
+        Property.Run(tc => { }, Quiet with { TestCases = 1 }, reporter);
+        Assert.Equal(3, recording.Outputs.Count);
+        Assert.All(recording.Outputs.Take(2), Assert.Null);
+        Assert.NotNull(recording.Outputs[2]);
+    }
+
+    [Fact]
+    public void AVerboseRunPrintsEachFailuresSummary()
+    {
+        var output = new StringWriter();
+        Property.Run(tc => FailAbove(tc, 10), Quiet with { Verbosity = Verbosity.Verbose }, Reporter.Printing(output));
+        var lines = output.ToString().Split(Environment.NewLine);
+        var summary = lines.First(l => l.EndsWith(": InvalidOperationException: too big: 10", StringComparison.Ordinal));
+        Assert.Matches(@"RunnerTests\.cs:\d+(:\d+)?: ", summary);
+        Assert.DoesNotContain(lines, l => l.TrimStart().StartsWith("at ", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ADebugRunPrintsEachFailuresFullDiagnostic()
+    {
+        var output = new StringWriter();
+        Property.Run(tc => FailAbove(tc, 10), Quiet with { Verbosity = Verbosity.Debug }, Reporter.Printing(output));
+        var text = output.ToString();
+        Assert.Contains("System.InvalidOperationException: too big: 10", text);
+        Assert.Contains("at Hegel.Tests.RunnerTests.FailAbove(", text);
+        Assert.DoesNotContain(": InvalidOperationException: too big: 10", text);
+    }
+
+    [Fact]
+    public void ASummaryIsOneLineWithTheUsersLocation()
+    {
+        Assert.Equal("InvalidOperationException: first …", Runner.SummaryOf(new InvalidOperationException("first\nsecond"), []));
+        Assert.Equal("InvalidOperationException: first …", Runner.SummaryOf(new InvalidOperationException("first \r\nsecond"), []));
+        Assert.Equal("InvalidOperationException: …", Runner.SummaryOf(new InvalidOperationException("\nsecond"), []));
+        Assert.Equal("MessagelessException", Runner.SummaryOf(new MessagelessException(), []));
+        var thrown = Assert.Throws<InvalidOperationException>(Thrower.Throw);
+        Assert.Matches(@"^.+RunnerTests\.cs:\d+(:\d+)?: InvalidOperationException: thrown$", Runner.SummaryOf(thrown, []));
+    }
+
+    private sealed class MessagelessException : Exception
+    {
+        public override string Message => "";
     }
 
     [Fact]
@@ -684,15 +747,28 @@ public class RunnerTests
 
     private sealed class FailingMarkComplete(ILibhegel inner) : DelegatingLibhegel(inner)
     {
-        public override int MarkComplete(nint testCase, int status, string? origin) => Abi.EInternal;
+        public override int MarkComplete(nint testCase, int status, string? origin, string? summary, string? detail) => Abi.EInternal;
     }
 
-    private sealed class FailingPrinterValue(ILibhegel inner) : DelegatingLibhegel(inner)
+    private sealed class NoDetail(ILibhegel inner) : DelegatingLibhegel(inner)
     {
-        public override int PrinterValue(nint printer, out string value)
+        public override bool TestCaseWantsDetail(nint testCase) => false;
+    }
+
+    private sealed class RecordingOutputs(ILibhegel inner) : DelegatingLibhegel(inner)
+    {
+        internal readonly List<Action<string>?> Outputs = [];
+
+        public override nint RunStart(nint settings, Action<string>? output)
         {
-            value = "";
-            return Abi.EInternal;
+            Outputs.Add(output);
+            return base.RunStart(settings, output);
+        }
+
+        public override nint RunStartBlob(nint settings, string blob, Action<string>? output)
+        {
+            Outputs.Add(output);
+            return base.RunStartBlob(settings, blob, output);
         }
     }
 

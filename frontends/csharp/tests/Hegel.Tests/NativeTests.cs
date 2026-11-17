@@ -8,6 +8,29 @@ namespace Hegel.Tests;
 public class NativeTests
 {
     [Fact]
+    public void AFailureCarriesItsOutputAndDiagnostic()
+    {
+        var lib = Engines.Real;
+        var settings = Runner.NewSettings(lib, null);
+        Runner.ApplySettings(lib, settings, Engines.Reported with { TestCases = 5 });
+        var run = lib.RunStart(settings, _ => { });
+        for (var tc = lib.NextTestCase(run); tc != 0; tc = lib.NextTestCase(run))
+        {
+            Assert.Equal(Abi.Ok, lib.Note(tc, "noted"));
+            var summary = lib.TestCaseWantsOutput(tc) ? "summarised" : null;
+            var detail = lib.TestCaseWantsDetail(tc) ? "diagnosed" : null;
+            Assert.Equal(Abi.Ok, lib.MarkComplete(tc, Abi.StatusInteresting, "origin", summary, detail));
+            lib.TestCaseFree(tc);
+        }
+        var result = lib.RunResult(run);
+        Assert.Equal("noted", lib.FailureOutput(result, 0));
+        Assert.Equal("diagnosed", lib.FailureDiagnostic(result, 0));
+        lib.RunResultFree(result);
+        lib.RunFree(run);
+        lib.SettingsFree(settings);
+    }
+
+    [Fact]
     public void LibraryFileNameMatchesThePlatform()
     {
         var name = LibraryLoader.LibraryFileName;
@@ -124,7 +147,39 @@ public class NativeTests
         Assert.Throws<HegelException>(() => Engines.Real.RunStart(0, _ => { }));
         Assert.Throws<HegelException>(() => Engines.Real.RunStartBlob(0, "blob", _ => { }));
         Assert.Throws<HegelException>(() => Engines.Real.GrammarDrawNew(0, 0));
-        Assert.Throws<HegelException>(() => Engines.Real.TestCaseShouldCapture(0));
+        Assert.Throws<HegelException>(() => Engines.Real.TestCaseWantsOutput(0));
+        Assert.Throws<HegelException>(() => Engines.Real.TestCaseWantsDetail(0));
+        Assert.Throws<HegelException>(() => Engines.Real.RunStart(0, null));
+    }
+
+    [Fact]
+    public void ARunWithoutAnOutputHasNoDestination()
+    {
+        var lib = Engines.Real;
+        var settings = Runner.NewSettings(lib, null);
+        Runner.ApplySettings(lib, settings, Engines.Quiet with { TestCases = 1, Verbosity = Verbosity.Debug });
+        var run = lib.RunStart(settings, null);
+        var tc = lib.NextTestCase(run);
+        Assert.False(lib.TestCaseWantsOutput(tc));
+        Assert.False(lib.TestCaseWantsDetail(tc));
+        Assert.Equal(Abi.Ok, lib.MarkComplete(tc, Abi.StatusValid, null, null, null));
+        lib.TestCaseFree(tc);
+        Assert.Equal(0, lib.NextTestCase(run));
+        lib.RunResultFree(lib.RunResult(run));
+        lib.RunFree(run);
+        lib.SettingsFree(settings);
+    }
+
+    [Fact]
+    public void MarkCompleteRejectsAFailureWithoutWhatTheEngineWants()
+    {
+        var lib = Engines.Real;
+        using var run = new RawRun(Engines.Quiet with { TestCases = 1, Verbosity = Verbosity.Debug });
+        Assert.Equal(Abi.EInvalidArg, lib.MarkComplete(run.Tc, Abi.StatusInteresting, "origin", "summarised", null));
+        Assert.Contains("detail", lib.LastErrorMessage());
+        Assert.Equal(Abi.EInvalidArg, lib.MarkComplete(run.Tc, Abi.StatusInteresting, "origin", "two\nlines", "diagnosed"));
+        Assert.Contains("summary", lib.LastErrorMessage());
+        Assert.Equal(Abi.Ok, lib.MarkComplete(run.Tc, Abi.StatusInteresting, "origin", "summarised", "diagnosed"));
     }
 
     [Fact]
@@ -240,7 +295,7 @@ public class NativeTests
     {
         var first = Runs.Failing(tc => tc.Draw(Generators.Integers().Min(1).Max(9), "n"));
         Assert.NotNull(first.ReproduceBlob);
-        var replayed = Runs.Failing(tc => tc.Draw(Generators.Integers().Min(1).Max(9), "n"), Engines.Quiet with { ReproduceFailure = [first.ReproduceBlob!] });
+        var replayed = Runs.Failing(tc => tc.Draw(Generators.Integers().Min(1).Max(9), "n"), Engines.Reported with { ReproduceFailure = [first.ReproduceBlob!] });
         Assert.Equal(first.Output, replayed.Output);
     }
 
@@ -258,8 +313,8 @@ public class NativeTests
     {
         var lib = Engines.Real;
         using var run = new RawRun();
-        Assert.Equal(Abi.Ok, lib.MarkComplete(run.Tc, Abi.StatusInteresting, "Boom at here:1"));
-        Assert.Equal(Abi.EAlreadyComplete, lib.MarkComplete(run.Tc, Abi.StatusValid, null));
+        Assert.Equal(Abi.Ok, lib.MarkComplete(run.Tc, Abi.StatusInteresting, "Boom at here:1", null, null));
+        Assert.Equal(Abi.EAlreadyComplete, lib.MarkComplete(run.Tc, Abi.StatusValid, null, null, null));
     }
 
     [Fact]

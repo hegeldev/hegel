@@ -28,7 +28,8 @@ type Shape =
 let ``smoke: a sort test fails with an F# transcript`` () =
     let report =
         Hegel.run (
-            quiet,
+            reported,
+            Reporter.Silent,
             fun tc ->
                 let xs = tc.Draw(Gen.list Gen.int, "xs")
                 let sorted = xs |> Set.ofList |> Set.toList

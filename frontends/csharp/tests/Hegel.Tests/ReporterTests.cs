@@ -57,23 +57,6 @@ public class ReporterTests
     }
 
     [Fact]
-    public void CaseFinishedExplainsStoppedCasesOnlyWhenVerbose()
-    {
-        var (quiet, quietOut) = Printing(Engines.Quiet with { Verbosity = Verbosity.Normal });
-        quiet.CaseFinished(CaseOutcome.Invalid, false);
-        quiet.CaseFinished(CaseOutcome.Overrun, false);
-        Assert.Equal("", quietOut.ToString());
-
-        var (verbose, verboseOut) = Printing(Engines.Quiet with { Verbosity = Verbosity.Verbose });
-        verbose.CaseFinished(CaseOutcome.Valid, false);
-        verbose.CaseFinished(CaseOutcome.Interesting, false);
-        verbose.CaseFinished(CaseOutcome.Invalid, true);
-        verbose.CaseFinished(CaseOutcome.Invalid, false);
-        verbose.CaseFinished(CaseOutcome.Overrun, false);
-        Assert.Equal("Test case stopped: failed assumption\nTest case stopped: out of data\n", verboseOut.ToString());
-    }
-
-    [Fact]
     public void MultipleFailuresAreAnnouncedAndSeparated()
     {
         var (reporter, output) = Printing(Engines.Quiet with { Verbosity = Verbosity.Normal });

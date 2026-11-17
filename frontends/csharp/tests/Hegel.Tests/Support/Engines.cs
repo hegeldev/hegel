@@ -18,4 +18,6 @@ internal static class Engines
     }
 
     internal static Settings Quiet => new() { Database = Database.Disabled, Verbosity = Verbosity.Quiet, PrintBlob = false };
+
+    internal static Settings Reported => Quiet with { Verbosity = Verbosity.Normal };
 }

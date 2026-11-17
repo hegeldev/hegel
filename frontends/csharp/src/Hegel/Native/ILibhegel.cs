@@ -49,14 +49,15 @@ internal interface ILibhegel
     void SettingsPrintBlob(nint settings, bool yes);
     void SettingsNondeterminismStrictness(nint settings, int strictness);
 
-    nint RunStart(nint settings, Action<string> output);
-    nint RunStartBlob(nint settings, string blob, Action<string> output);
+    nint RunStart(nint settings, Action<string>? output);
+    nint RunStartBlob(nint settings, string blob, Action<string>? output);
     nint NextTestCase(nint run);
     nint RunResult(nint run);
     void RunResultFree(nint result);
     void RunFree(nint run);
     void TestCaseFree(nint testCase);
-    bool TestCaseShouldCapture(nint testCase);
+    bool TestCaseWantsOutput(nint testCase);
+    bool TestCaseWantsDetail(nint testCase);
     int TestCaseClone(nint testCase, out nint clone);
     void TestCaseSetWorker(nint testCase, long workerIndex);
     int TestCaseBlock(nint testCase, ulong indent, out nint block);
@@ -153,7 +154,7 @@ internal interface ILibhegel
     int Target(nint testCase, double value, string label);
     int Event(nint testCase, string label);
     int EventValue(nint testCase, double value, string label);
-    int MarkComplete(nint testCase, int status, string? origin);
+    int MarkComplete(nint testCase, int status, string? origin, string? summary, string? detail);
 
     int RunResultStatus(nint result);
     string RunResultError(nint result);
@@ -162,6 +163,8 @@ internal interface ILibhegel
     string? FailureBlob(nint result, ulong index);
     string FailureOrigin(nint result, ulong index);
     string? FailureCaveat(nint result, ulong index);
+    string? FailureOutput(nint result, ulong index);
+    string? FailureDiagnostic(nint result, ulong index);
 
     ulong LabelFromName(string name);
     ulong LabelCombine(ulong[] labels);

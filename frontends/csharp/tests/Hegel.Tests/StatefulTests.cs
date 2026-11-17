@@ -9,9 +9,13 @@ public class StatefulTests
 {
     private static Settings Quick => Engines.Quiet with { TestCases = 20 };
 
+    private static Settings Reported => Engines.Reported with { TestCases = 20 };
+
     private sealed class CapturingReporter : Reporter
     {
         internal readonly List<string> Lines = [];
+
+        public override void EngineOutput(string line) => Lines.Add(line);
 
         public override void CaseOutput(string line, bool finalReplay) => Lines.Add(line);
     }
@@ -184,7 +188,7 @@ public class StatefulTests
     [Fact]
     public void AFailingRuleIsReportedWithItsSteps()
     {
-        var report = Property.Run(tc => Stateful.Run(new Booming(), tc), Quick);
+        var report = Property.Run(tc => Stateful.Run(new Booming(), tc), Reported, Reporter.Silent);
         Assert.Equal(RunStatus.Failed, report.Status);
         var failure = Assert.Single(report.Failures);
         Assert.IsType<InvalidOperationException>(failure.Exception);
@@ -210,7 +214,7 @@ public class StatefulTests
     [Fact]
     public void AFailingInvariantIsFoundAndNoted()
     {
-        var report = Property.Run(tc => Stateful.Run(new Capped(), tc), Quick);
+        var report = Property.Run(tc => Stateful.Run(new Capped(), tc), Reported, Reporter.Silent);
         Assert.Equal(RunStatus.Failed, report.Status);
         var failure = Assert.Single(report.Failures);
         Assert.Equal("Checking invariants on the initial state.", failure.Output[0]);
@@ -329,7 +333,7 @@ public class StatefulTests
     {
         var lib = new FaultControlCounting(Engines.Real);
         using var _ = Engines.Override(lib);
-        var report = Property.Run(tc => Stateful.Run(new PausingBreakOnce(), tc), Quick);
+        var report = Property.Run(tc => Stateful.Run(new PausingBreakOnce(), tc), Reported, Reporter.Silent);
         Assert.Equal(RunStatus.Failed, report.Status);
         var failure = Assert.Single(report.Failures);
         Assert.Equal("Invariant NotBroken failed:", failure.Output[^1]);

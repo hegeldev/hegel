@@ -485,17 +485,14 @@ public class LiveDataSourceTests
     [Fact]
     public void NotesAndPrintersWriteToTheRegion()
     {
-        using var run = new RawRun();
+        using var run = RawRun.Verbose();
         var source = run.Source();
         source.Note("one");
-        var regions = new Printer.Regions();
-        var printer = source.Printer(regions);
+        var printer = source.Printer(new Printer.Regions());
         printer.Text("two");
         printer.HardBreak();
-        var root = source.Printer(regions);
-        Assert.Equal("one\ntwo\n", root.Read());
-        root.Free();
         printer.Free();
+        Assert.Equal(["one", "two"], run.Complete());
     }
 
     [Fact]

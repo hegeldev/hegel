@@ -78,25 +78,19 @@ public sealed class TestCase
 
     private sealed class Shared
     {
-        internal readonly bool Captured;
         internal readonly bool Emits;
         internal readonly Printer.Regions Regions = new();
         private readonly Dictionary<string, object?> _draws = [];
         private readonly List<string> _order = [];
         private readonly List<TestCase> _blocks = [];
 
-        internal Shared(bool captured, bool verbose)
+        internal Shared(bool emits)
         {
-            Captured = captured;
-            Emits = captured || verbose;
+            Emits = emits;
         }
 
         internal void Record(string name, object? value)
         {
-            if (!Captured)
-            {
-                return;
-            }
             lock (_draws)
             {
                 var key = name;
@@ -141,8 +135,8 @@ public sealed class TestCase
         }
     }
 
-    internal TestCase(IDataSource source, bool captured, bool verbose = false)
-        : this(source, new Shared(captured, verbose), null, new Names(), false)
+    internal TestCase(IDataSource source, bool wantsOutput)
+        : this(source, new Shared(wantsOutput), null, new Names(), false)
     {
     }
 
@@ -156,7 +150,7 @@ public sealed class TestCase
     }
 
     internal static TestCase Explicit(ExplicitDraws draws) =>
-        new(ExplicitDataSource.Instance, new Shared(true, false), draws, new Names(), false);
+        new(ExplicitDataSource.Instance, new Shared(true), draws, new Names(), false);
 
     internal TestCase ForWorker(int worker)
     {
@@ -230,29 +224,7 @@ public sealed class TestCase
         }
     }
 
-    internal IReadOnlyList<string> Output()
-    {
-        ClosePrinter();
-        if (!_shared.Emits)
-        {
-            return [];
-        }
-        var root = _source.Printer(_shared.Regions);
-        try
-        {
-            return Printer.Lines(root.Read());
-        }
-        finally
-        {
-            root.Free();
-        }
-    }
-
-    /// <summary>
-    /// Whether this is the final run of a failing test case, the one that is reported: the place
-    /// for expensive diagnostics.
-    /// </summary>
-    public bool IsFinal => _shared.Captured;
+    internal bool WantsOutput => _shared.Emits;
 
     /// <summary>
     /// Draw a value from <paramref name="generator"/>, printed in the failure report as
