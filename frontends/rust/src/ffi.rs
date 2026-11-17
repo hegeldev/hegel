@@ -18,7 +18,6 @@ pub(crate) mod sys;
 
 use self::sys as hegel_c;
 
-use crate::control::hegel_internal_error;
 use crate::runner::{
     Backend, Database, HealthCheck, NondeterminismStrictness, Phase, Settings, TestLocation,
     Verbosity,
@@ -95,7 +94,7 @@ pub(crate) fn engine_version() -> String {
         // SAFETY: ctx is this thread's live context and `version` is a valid
         // out-parameter; the engine's pointer is static.
         require_ok(unsafe { hegel_c::hegel_version(ctx, &mut version) });
-        string_opt(version).unwrap_or_default()
+        string_value(version)
     })
 }
 
@@ -1268,9 +1267,8 @@ impl CTestCase {
         rc_to_unit(rc)
     }
 
-    /// Seal the machine's rules and invariants and draw its concurrency
-    /// level in `[min_concurrency, max_concurrency]` — weighted toward the
-    /// maximum (the engine owns the distribution) — returning it.
+    /// Seal the machine's rules and invariants, returning `max_concurrency`:
+    /// the number of workers to run.
     pub(crate) fn state_machine_start(
         &self,
         state_machine: &StateMachineHandle,
@@ -1284,23 +1282,31 @@ impl CTestCase {
 
     /// Start the machine's next round, yielding the id of the round's
     /// current concurrency group (as passed to
-    /// [`Self::state_machine_add_rule`]); `None` once the engine has run enough rounds
+    /// [`Self::state_machine_add_rule`]) and the round's concurrency level;
+    /// `None` once the engine has run enough rounds
     /// (`HEGEL_STATE_MACHINE_DONE`). Call on the root test-case handle at
     /// every join point, including before the first rule is requested.
     pub(crate) fn state_machine_next_group(
         &self,
         state_machine: &StateMachineHandle,
-    ) -> Result<Option<i64>, hegel_result_t> {
+    ) -> Result<Option<(i64, i64)>, hegel_result_t> {
         let mut out: i64 = 0;
+        let mut concurrency: i64 = 0;
         let rc = with_context(|ctx| unsafe {
-            hegel_c::hegel_state_machine_next_group(ctx, self.raw, state_machine.raw, &mut out)
+            hegel_c::hegel_state_machine_next_group(
+                ctx,
+                self.raw,
+                state_machine.raw,
+                &mut out,
+                &mut concurrency,
+            )
         });
-        let group = if out == hegel_c::HEGEL_STATE_MACHINE_DONE {
+        let round = if out == hegel_c::HEGEL_STATE_MACHINE_DONE {
             None
         } else {
-            Some(out)
+            Some((out, concurrency))
         };
-        rc_to_value(rc, group)
+        rc_to_value(rc, round)
     }
 
     /// Ask the engine for the next rule for worker `worker_index` to run
@@ -1368,6 +1374,28 @@ impl CTestCase {
             )
         });
         rc_to_value(rc, out)
+    }
+
+    /// Pause fault injection on this test case until [`unpause_faults`]
+    /// (`hegel_pause_faults`): inside Antithesis, a stateful invariant
+    /// declared with `pause_faults` runs between the pair, so no fault
+    /// lands in the middle of the check; outside Antithesis nothing happens.
+    ///
+    /// [`unpause_faults`]: CTestCase::unpause_faults
+    pub(crate) fn pause_faults(&self) -> Result<(), hegel_result_t> {
+        rc_to_unit(with_context(|ctx| unsafe {
+            hegel_c::hegel_pause_faults(ctx, self.raw)
+        }))
+    }
+
+    /// Resume fault injection paused by [`pause_faults`]
+    /// (`hegel_unpause_faults`).
+    ///
+    /// [`pause_faults`]: CTestCase::pause_faults
+    pub(crate) fn unpause_faults(&self) -> Result<(), hegel_result_t> {
+        rc_to_unit(with_context(|ctx| unsafe {
+            hegel_c::hegel_unpause_faults(ctx, self.raw)
+        }))
     }
 
     pub(crate) fn target(&self, score: f64, label: &str) -> Result<(), hegel_result_t> {
@@ -1774,7 +1802,7 @@ impl GrammarBuilder {
             return None;
         }
         require_ok(rc);
-        Some(string_opt(path).unwrap_or_default())
+        Some(string_value(path))
     }
 }
 
@@ -2209,14 +2237,13 @@ impl RunResult {
         let mut blob = ptr::null();
         let mut caveat = ptr::null();
         // SAFETY: f is the failure snapshot allocated above; it is freed
-        // exactly once, after the strings have been copied out by string_opt.
+        // exactly once, after the strings have been copied out by string_value.
         with_context(|ctx| unsafe {
             require_ok(hegel_c::hegel_failure_origin(ctx, f, &mut origin));
             require_ok(hegel_c::hegel_failure_reproduction_blob(ctx, f, &mut blob));
             require_ok(hegel_c::hegel_failure_caveat(ctx, f, &mut caveat));
             let failure = Failure {
-                origin: string_opt(origin)
-                    .unwrap_or_else(|| hegel_internal_error!("failure {index} has no origin")),
+                origin: string_value(origin),
                 reproduce_blob: optional_string(blob),
                 caveat: optional_string(caveat),
             };
@@ -2271,16 +2298,12 @@ fn rc_to_value<T>(rc: hegel_result_t, value: T) -> Result<T, hegel_result_t> {
     }
 }
 
-fn string_opt(p: hegel_c::hegel_string_t) -> Option<String> {
+fn string_value(p: hegel_c::hegel_string_t) -> String {
     if p.len == 0 {
-        Some(String::new())
+        String::new()
     } else {
-        Some(
-            String::from_utf8_lossy(unsafe {
-                std::slice::from_raw_parts(p.data.cast::<u8>(), p.len)
-            })
-            .into_owned(),
-        )
+        String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(p.data.cast::<u8>(), p.len) })
+            .into_owned()
     }
 }
 
@@ -2437,5 +2460,5 @@ fn health_checks_from_bitmask(mask: u32) -> Vec<HealthCheck> {
 mod tests;
 
 fn optional_string(p: *const hegel_c::hegel_string_t) -> Option<String> {
-    unsafe { p.as_ref() }.and_then(|s| string_opt(*s))
+    unsafe { p.as_ref() }.map(|s| string_value(*s))
 }

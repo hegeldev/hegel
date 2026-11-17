@@ -212,7 +212,7 @@ func (s *testCase) stateMachineNew(ruleNames []string, ruleGroups [][]int64, inv
 	return machine, concurrency, nil
 }
 
-func (s *testCase) stateMachineNextGroup(machine *libhegel.StateMachine) (libhegel.StateMachineGroup, error) {
+func (s *testCase) stateMachineNextGroup(machine *libhegel.StateMachine) (libhegel.StateMachineGroup, int64, error) {
 	return s.tc.StateMachineNextGroup(s.ctx, machine)
 }
 
@@ -226,6 +226,14 @@ func (s *testCase) stateMachineRuleRejected(machine *libhegel.StateMachine, work
 
 func (s *testCase) stateMachineShouldCheckInvariant(machine *libhegel.StateMachine, invariant int64) (bool, error) {
 	return s.tc.StateMachineShouldCheckInvariant(s.ctx, machine, invariant)
+}
+
+func (s *testCase) pauseFaults() error {
+	return s.tc.PauseFaults(s.ctx)
+}
+
+func (s *testCase) unpauseFaults() error {
+	return s.tc.UnpauseFaults(s.ctx)
 }
 
 func (s *testCase) startSpan(spanLabel libhegel.Label) error {

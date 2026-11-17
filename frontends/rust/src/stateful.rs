@@ -5,8 +5,13 @@
 //! methods annotated with `#[invariant]` become invariants (checked on the machine's initial
 //! and final state, and sampled in between. `#[invariant(always_run)]` opts an invariant out
 //! of the sampling: it runs after every rule, for invariants that must observe every
-//! intermediate state or that mutate state when checked. `#[rule(weight = w)]` also
-//! hints how often a rule should be chosen compared to other rules in its group.
+//! intermediate state or that mutate state when checked. `#[invariant(pause_faults = true)]`
+//! pauses fault injection while the invariant runs: inside
+//! [Antithesis](https://antithesis.com/), the fault injector stands down from just before
+//! the invariant's body until just after it, so the check observes the system under test
+//! without a fault landing in the middle of it. Outside Antithesis the flag has no effect. The
+//! two combine as `#[invariant(always_run, pause_faults = true)]`. `#[rule(weight = w)]`
+//! also hints how often a rule should be chosen compared to other rules in its group.
 //! This is not a distributional guarantee.
 //!
 //! Both take a [`TestCase`] parameter and borrow the state machine: rules
@@ -198,10 +203,13 @@ impl<M> Rule<M> {
 
 /// An invariant of a [`StateMachine`], checked on the machine's initial and
 /// final state. In between it is sampled at join points, or checked at every
-/// one when `always_run` is set.
+/// one when `always_run` is set. With `pause_faults` set, fault injection is
+/// paused for the duration of every check (see
+/// [`pause_faults`](Invariant::pause_faults)).
 pub struct Invariant<M: ?Sized> {
     pub name: String,
     pub always_run: bool,
+    pub pause_faults: bool,
     pub apply: fn(&mut M, TestCase),
 }
 
@@ -211,6 +219,7 @@ impl<M> Invariant<M> {
         Invariant {
             name: name.to_string(),
             always_run: false,
+            pause_faults: false,
             apply,
         }
     }
@@ -221,6 +230,26 @@ impl<M> Invariant<M> {
             always_run: true,
             ..Invariant::new(name, apply)
         }
+    }
+
+    /// Set whether fault injection is paused while this invariant runs:
+    /// inside [Antithesis](https://antithesis.com/), the fault injector is
+    /// asked to stand down from just before the invariant's body runs until
+    /// just after it returns (or unwinds), so the check observes the system
+    /// under test without a fault landing in the middle of it. Outside
+    /// Antithesis the flag has no effect. Composes with
+    /// [`new_always_run`](Invariant::new_always_run):
+    ///
+    /// ```rust
+    /// use hegel::stateful::Invariant;
+    /// # struct Machine;
+    /// let invariant: Invariant<Machine> =
+    ///     Invariant::new_always_run("consistent", |_, _| {}).pause_faults(true);
+    /// assert!(invariant.always_run && invariant.pause_faults);
+    /// ```
+    pub fn pause_faults(mut self, pause_faults: bool) -> Self {
+        self.pause_faults = pause_faults;
+        self
     }
 }
 
@@ -694,7 +723,9 @@ pub trait StateMachine {
     /// sampled after rules in between with probability
     /// `1 / step_count` each — except invariants whose
     /// [`always_run`](Invariant::always_run) flag is set, which run after
-    /// every rule.
+    /// every rule. Fault injection is paused around every check of an
+    /// invariant whose [`pause_faults`](Invariant::pause_faults) flag is
+    /// set.
     fn invariants(&self) -> Vec<Invariant<Self>>;
 }
 
@@ -706,6 +737,39 @@ fn note_panic_trailer(tc: &TestCase, e: &(dyn std::any::Any + Send), trailer: &s
     if e.downcast_ref::<AssumeFailed>().is_none() && e.downcast_ref::<StopTest>().is_none() {
         tc.note(trailer);
     }
+}
+
+/// Fault injection paused on a test case for the guard's lifetime
+/// (`hegel_pause_faults` on creation, `hegel_unpause_faults` on drop), so
+/// an invariant body that unwinds still unpauses. An engine error from
+/// either call surfaces through [`raise_for_rc`]; from the drop of an
+/// already unwinding invariant that aborts the process, which is acceptable
+/// for an error the engine only reports for a dead handle.
+struct FaultsPaused<'a> {
+    tc: &'a TestCase,
+}
+
+impl<'a> FaultsPaused<'a> {
+    fn new(tc: &'a TestCase) -> Self {
+        tc.with_ctc(|ctc| ctc.pause_faults())
+            .unwrap_or_else(|rc| raise_for_rc(rc));
+        FaultsPaused { tc }
+    }
+}
+
+impl Drop for FaultsPaused<'_> {
+    fn drop(&mut self) {
+        self.tc
+            .with_ctc(|ctc| ctc.unpause_faults())
+            .unwrap_or_else(|rc| raise_for_rc(rc));
+    }
+}
+
+/// Run an invariant body, with fault injection paused around it when the
+/// invariant asks for that (see [`Invariant::pause_faults`]).
+fn apply_invariant(tc: &TestCase, pause_faults: bool, body: impl FnOnce()) {
+    let _paused = pause_faults.then(|| FaultsPaused::new(tc));
+    body();
 }
 
 /// Run invariants at a join point. With a machine, each invariant runs only
@@ -726,7 +790,8 @@ fn check_invariants<M: StateMachine>(
             }
         }
         let inv_tc = tc.child(2); // nocov
-        if let Err(e) = catch_unwind(AssertUnwindSafe(|| (invariant.apply)(m, inv_tc))) {
+        let body = || apply_invariant(tc, invariant.pause_faults, || (invariant.apply)(m, inv_tc));
+        if let Err(e) = catch_unwind(AssertUnwindSafe(body)) {
             note_panic_trailer(
                 tc,
                 e.as_ref(),
@@ -738,7 +803,7 @@ fn check_invariants<M: StateMachine>(
 }
 
 /// Ask the engine whether the machine should run another round, and which
-/// concurrency group is current for it.
+/// concurrency group and concurrency level are current for it.
 ///
 /// The start of the test case counts as a join point, so both runners call
 /// this *before* running any rules: the machine has no current group until
@@ -746,9 +811,9 @@ fn check_invariants<M: StateMachine>(
 /// it), and the first call is also what draws the test case's round cap.
 /// Since the cap is at least 1, the first call of a fresh machine always
 /// starts a round; `None` only ever follows earlier rounds.
-fn machine_next_group(tc: &TestCase, machine: &StateMachineHandle) -> Option<usize> {
+fn machine_next_group(tc: &TestCase, machine: &StateMachineHandle) -> Option<(usize, i64)> {
     match tc.with_ctc(|ctc| ctc.state_machine_next_group(machine)) {
-        Ok(group) => group.map(|g| g as usize),
+        Ok(round) => round.map(|(group, concurrency)| (group as usize, concurrency)),
         Err(rc) => raise_for_rc(rc),
     }
 }
@@ -882,7 +947,8 @@ impl<M: StateMachine> Machine<M> {
     /// `1 / step_count`) says to, keeping an invariant's expected cost
     /// per test case constant as the step count grows — except always-run
     /// invariants (`#[invariant(always_run)]`), which run at every join point.
-    /// One consequence of the
+    /// Every check of an invariant declared `#[invariant(pause_faults = true)]`
+    /// runs with fault injection paused. One consequence of the
     /// join-point timing: a sampled check can land after a rule that stopped on
     /// a violated assumption (rules are expected to reject before mutating the
     /// model, and nothing restores model state on rejection anyway).
@@ -926,14 +992,18 @@ impl<M: ConcurrentStateMachine + Sync> Machine<M> {
     /// main thread runs the invariants the engine's sampling draws select
     /// (probability `1 / step_count` each, and always-run invariants
     /// unconditionally); every invariant runs in full on the machine's initial
-    /// and final state. Each test case runs at most this machine's step count
+    /// and final state, and an invariant declared
+    /// `#[invariant(pause_faults = true)]` runs each check with fault
+    /// injection paused. Each test case runs at most this machine's step count
     /// ([`Self::steps`]) rounds.
     ///
-    /// The number of worker threads is drawn per test case, when the state
-    /// machine is created, within this machine's concurrency bounds
+    /// Each test case runs [`Self::max_concurrency`] worker threads. The
+    /// concurrency level, how many of them run rules, is drawn when the
+    /// state machine is created, within this machine's concurrency bounds
     /// ([`Self::min_concurrency`] and [`Self::max_concurrency`], both 1 by
     /// default) and weighted toward the maximum (concurrency bugs need
-    /// concurrency); set equal bounds for a fixed level.
+    /// concurrency), and may be redrawn between rounds; set equal bounds for
+    /// a fixed level.
     ///
     /// # Nondeterminism
     ///
@@ -1011,8 +1081,7 @@ struct RuleSpec<'a> {
 /// Build and start an engine state machine: create it with the bounds and
 /// step count, declare every rule and invariant in order (so the engine's
 /// rule and invariant indices are positions in `rules` and `invariants`),
-/// and start it. Returns the machine and the concurrency level the engine
-/// drew.
+/// and start it. Returns the machine and the number of workers to run.
 fn register_machine(
     tc: &TestCase,
     rules: &[RuleSpec<'_>],
@@ -1165,10 +1234,13 @@ impl<M> ConcurrentRule<M> {
 /// An invariant of a [`ConcurrentStateMachine`], checked on the main thread
 /// at join points — between rounds of concurrent rule execution, while all
 /// worker threads are parked. It is sampled there, or checked at every join
-/// point when `always_run` is set.
+/// point when `always_run` is set. With `pause_faults` set, fault injection
+/// is paused for the duration of every check (see
+/// [`pause_faults`](ConcurrentInvariant::pause_faults)).
 pub struct ConcurrentInvariant<M: ?Sized> {
     pub name: String,
     pub always_run: bool,
+    pub pause_faults: bool,
     pub apply: fn(&M, TestCase),
 }
 
@@ -1178,6 +1250,7 @@ impl<M> ConcurrentInvariant<M> {
         ConcurrentInvariant {
             name: name.to_string(),
             always_run: false,
+            pause_faults: false,
             apply,
         }
     }
@@ -1188,6 +1261,26 @@ impl<M> ConcurrentInvariant<M> {
             always_run: true,
             ..ConcurrentInvariant::new(name, apply)
         }
+    }
+
+    /// Set whether fault injection is paused while this invariant runs:
+    /// inside [Antithesis](https://antithesis.com/), the fault injector is
+    /// asked to stand down from just before the invariant's body runs until
+    /// just after it returns (or unwinds), so the check observes the system
+    /// under test without a fault landing in the middle of it. Outside
+    /// Antithesis the flag has no effect. Composes with
+    /// [`new_always_run`](ConcurrentInvariant::new_always_run):
+    ///
+    /// ```rust
+    /// use hegel::stateful::ConcurrentInvariant;
+    /// # struct Machine;
+    /// let invariant: ConcurrentInvariant<Machine> =
+    ///     ConcurrentInvariant::new("consistent", |_, _| {}).pause_faults(true);
+    /// assert!(!invariant.always_run && invariant.pause_faults);
+    /// ```
+    pub fn pause_faults(mut self, pause_faults: bool) -> Self {
+        self.pause_faults = pause_faults;
+        self
     }
 }
 
@@ -1230,7 +1323,9 @@ pub trait ConcurrentStateMachine {
     /// sampled at the join points in between with probability
     /// `1 / step_count` each — except invariants whose
     /// [`always_run`](ConcurrentInvariant::always_run) flag is set, which
-    /// run at every join point.
+    /// run at every join point. Fault injection is paused around every
+    /// check of an invariant whose
+    /// [`pause_faults`](ConcurrentInvariant::pause_faults) flag is set.
     fn invariants(&self) -> Vec<ConcurrentInvariant<Self>>;
 }
 
@@ -1249,7 +1344,8 @@ fn check_concurrent_invariants<M: ConcurrentStateMachine + ?Sized>(
             }
         }
         let inv_tc = tc.child(2);
-        if let Err(e) = catch_unwind(AssertUnwindSafe(|| (invariant.apply)(m, inv_tc))) {
+        let body = || apply_invariant(tc, invariant.pause_faults, || (invariant.apply)(m, inv_tc));
+        if let Err(e) = catch_unwind(AssertUnwindSafe(body)) {
             note_panic_trailer(
                 tc,
                 e.as_ref(),
@@ -1456,8 +1552,6 @@ fn run_concurrent_machine<M: ConcurrentStateMachine + Sync>(
         max_concurrency,
         step_count,
     );
-    tc.note(&format!("Concurrency level: {concurrency}"));
-
     if !invariants.is_empty() {
         tc.note("Checking invariants on the initial state.");
     }
@@ -1491,12 +1585,17 @@ fn run_concurrent_machine<M: ConcurrentStateMachine + Sync>(
         }
 
         let mut round = 0u64;
-        while let Some(group) = machine_next_group(&tc, machine) {
+        let mut noted_level = None;
+        while let Some((group, level)) = machine_next_group(&tc, machine) {
             hegel_internal_assert!(
                 group < group_names.len(),
                 "state_machine_next_group returned unknown group id {group}"
             );
             round += 1;
+            if noted_level != Some(level) {
+                tc.note(&format!("Concurrency level: {level}"));
+                noted_level = Some(level);
+            }
             tc.note(&format!(
                 "---------------- Round {round}: group {:?} ----------------",
                 group_names[group]

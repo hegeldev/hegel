@@ -959,8 +959,7 @@ impl Program {
             next.pcs.clear();
             let c = text.get(pos).copied();
             let mut waiting = 0;
-            for i in 0..current.pcs.len() {
-                let pc = current.pcs[i];
+            for (i, &pc) in current.pcs.iter().enumerate() {
                 let target = match &self.insts[pc] {
                     Inst::Match => {
                         if exact_end.is_none_or(|end| end == pos) {

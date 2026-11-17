@@ -580,7 +580,7 @@ impl Replay {
         let mut timelines = Vec::with_capacity(self.timelines.len());
         let mut nodes = Vec::with_capacity(self.timelines.len());
         let mut batch = Vec::new();
-        for k in 0..self.timelines.len() {
+        for (k, &live) in set.live.iter().enumerate().take(self.timelines.len()) {
             match self.value_at(k, position) {
                 Some(ChoiceValue::Clone(record)) => {
                     nodes.push(if self.rescue == Rescue::Pun {
@@ -593,7 +593,7 @@ impl Replay {
                 _ => {
                     timelines.push(None);
                     nodes.push(None);
-                    if set.live[k] {
+                    if live {
                         batch.push(k);
                     }
                 }

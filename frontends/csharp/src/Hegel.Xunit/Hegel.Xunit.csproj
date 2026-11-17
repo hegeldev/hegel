@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Hegel.Xunit</RootNamespace>
+    <AssemblyName>Hegel.Xunit</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <PackageId>Hegel.Xunit</PackageId>
+    <Title>Hegel for xUnit</Title>
+    <Authors>David R. MacIver</Authors>
+    <Company>Antithesis</Company>
+    <Description>xUnit.net v2 integration for Hegel: [HegelTest] marks a method taking a TestCase as a property-based test.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://hegel.dev</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/hegeldev/hegel</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>property-based-testing;testing;hegel;hypothesis;fuzzing;xunit</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+    <InternalsVisibleTo Include="Hegel.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.extensibility.execution" Version="2.9.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Hegel/Hegel.csproj" />
+  </ItemGroup>
+
+</Project>

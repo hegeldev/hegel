@@ -1642,7 +1642,7 @@ func TestStatefulNextGroupError(t *testing.T) {
 		uintptr(1), libhegel.OK, // new_state_machine
 		libhegel.OK,           // state_machine_add_rule
 		int64(1), libhegel.OK, // state_machine_start
-		int64(0), libhegel.E_BACKEND, "boom", // next_group fails
+		int64(0), int64(0), libhegel.E_BACKEND, "boom", // next_group fails
 	)
 	sm := &stateMachine{rules: []stateMachineRule{{name: "Rule", fn: func(TestCase) {}}}, ruleGroups: [][]int64{{0}}}
 	defer func() {
@@ -1674,13 +1674,36 @@ func TestStatefulInitialInvariantError(t *testing.T) {
 	sm.Run(tc)
 }
 
+// TestStatefulPauseFaultsErrorsSurface covers the runner's pause and unpause
+// hooks forwarding the engine's error rather than swallowing it.
+func TestStatefulPauseFaultsErrorsSurface(t *testing.T) {
+	t.Parallel()
+	tc := newStubTestCase(t,
+		libhegel.OK, libhegel.OK, // pause_faults, unpause_faults
+		libhegel.E_INVALID_HANDLE, "pause on a dead case",
+		libhegel.E_INVALID_HANDLE, "unpause on a dead case",
+	)
+	if err := tc.pauseFaults(); err != nil {
+		t.Fatalf("pause = %v", err)
+	}
+	if err := tc.unpauseFaults(); err != nil {
+		t.Fatalf("unpause = %v", err)
+	}
+	if err := tc.pauseFaults(); !errors.Is(err, libhegel.E_INVALID_HANDLE) || !strings.Contains(err.Error(), "pause on a dead case") {
+		t.Fatalf("pause = %v, want the engine's error", err)
+	}
+	if err := tc.unpauseFaults(); !errors.Is(err, libhegel.E_INVALID_HANDLE) || !strings.Contains(err.Error(), "unpause on a dead case") {
+		t.Fatalf("unpause = %v, want the engine's error", err)
+	}
+}
+
 func TestStatefulFinalInvariantError(t *testing.T) {
 	t.Parallel()
 	tc := newStubTestCase(t,
 		uintptr(1), libhegel.OK, // new_state_machine
 		libhegel.OK,           // state_machine_add_invariant
 		int64(1), libhegel.OK, // state_machine_start
-		libhegel.StateMachineDone, libhegel.OK, // state_machine_next_group
+		libhegel.StateMachineDone, int64(0), libhegel.OK, // state_machine_next_group
 	)
 	calls := 0
 	sm := &stateMachine{invariants: []stateMachineRule{{name: "Inv", fn: func(tc TestCase) {

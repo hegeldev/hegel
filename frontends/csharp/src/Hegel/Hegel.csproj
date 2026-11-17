@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Hegel</RootNamespace>
+    <AssemblyName>Hegel</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <PackageId>Hegel</PackageId>
+    <Title>Hegel</Title>
+    <Authors>David R. MacIver</Authors>
+    <Company>Antithesis</Company>
+    <Description>Property-based testing for .NET, driven by the Hegel engine (libhegel).</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://hegel.dev</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/hegeldev/hegel</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>property-based-testing;testing;hegel;hypothesis;fuzzing</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <HegelNativesSource Condition="'$(HegelNativesSource)' == ''">local</HegelNativesSource>
+    <HegelRoot>$(MSBuildProjectDirectory)/../..</HegelRoot>
+    <HegelNativeDir>$(HegelRoot)/native</HegelNativeDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+    <InternalsVisibleTo Include="Hegel.Tests" />
+    <InternalsVisibleTo Include="Hegel.FSharp" />
+  </ItemGroup>
+
+  <Target Name="HegelEngine" BeforeTargets="AssignTargetPaths;CoreCompile;_GetPackageFiles">
+    <Exec Command="&quot;$(HegelPython)&quot; &quot;$(HegelRoot)/scripts/engine.py&quot; build-info --out &quot;$(IntermediateOutputPath.TrimEnd('\').TrimEnd('/'))&quot;" />
+    <Exec Condition="'$(HegelNativesSource)' != 'skip'" Command="&quot;$(HegelPython)&quot; &quot;$(HegelRoot)/scripts/engine.py&quot; stage --source $(HegelNativesSource) --out &quot;$(HegelNativeDir)&quot;" />
+    <ItemGroup>
+      <Compile Include="$(IntermediateOutputPath)BuildInfo.g.cs" />
+      <HegelNative Include="$(HegelNativeDir)/runtimes/**/*" />
+      <Content Include="@(HegelNative)" Link="runtimes/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" Pack="true" PackagePath="runtimes/%(RecursiveDir)%(Filename)%(Extension)" />
+    </ItemGroup>
+  </Target>
+
+</Project>

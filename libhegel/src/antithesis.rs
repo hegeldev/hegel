@@ -18,6 +18,13 @@
 //! only a side effect it has to infer. The urandom backend does the same
 //! ([`fuzz_source`]), falling back to `/dev/urandom` when the library is
 //! not there.
+//!
+//! Antithesis can also set `ANTITHESIS_FAULT_CONTROL` to a program that
+//! holds and resumes fault injection when run with `--pause` and
+//! `--unpause`. [`pause_faults`] and [`unpause_faults`] run it for the
+//! stateful invariants a frontend declares with `pause_faults`, so no fault
+//! lands in the middle of such a check; when the variable is unset or names
+//! nothing that exists they do nothing.
 
 use crate::backend::RunError;
 use crate::settings::Output;
@@ -39,6 +46,68 @@ const VOIDSTAR_PATH: &str = "/usr/lib/libvoidstar.so";
 /// The library's function returning 64 fuzzer-controlled bits per call,
 /// the one every Antithesis SDK draws its randomness from.
 const FUZZ_GET_RANDOM: &str = "fuzz_get_random";
+
+/// The environment variable naming Antithesis's fault-control program.
+const FAULT_CONTROL_VAR: &str = "ANTITHESIS_FAULT_CONTROL";
+
+/// The fault-control program's flag to hold fault injection.
+const PAUSE_FLAG: &str = "--pause";
+
+/// The fault-control program's flag to resume fault injection.
+const UNPAUSE_FLAG: &str = "--unpause";
+
+/// Ask Antithesis to stop injecting faults until [`unpause_faults`], by
+/// running the program `ANTITHESIS_FAULT_CONTROL` names with `--pause`.
+/// Does nothing when the variable is unset or names nothing that exists.
+/// `Err` carries the message to report when the program fails.
+pub(crate) fn pause_faults() -> Result<(), String> {
+    fault_control(PAUSE_FLAG)
+}
+
+/// Resume fault injection held by [`pause_faults`], by running the program
+/// `ANTITHESIS_FAULT_CONTROL` names with `--unpause`. Does nothing when the
+/// variable is unset or names nothing that exists. `Err` carries the
+/// message to report when the program fails.
+pub(crate) fn unpause_faults() -> Result<(), String> {
+    fault_control(UNPAUSE_FLAG)
+}
+
+#[cfg(unix)]
+fn fault_control(flag: &str) -> Result<(), String> {
+    fault_control_from(crate::sys::env_var, crate::sys::process::run, flag)
+}
+
+/// Antithesis runs only on Unix, so elsewhere the variable is ignored.
+#[cfg(not(unix))]
+fn fault_control(_flag: &str) -> Result<(), String> {
+    Ok(())
+}
+
+/// [`pause_faults`] and [`unpause_faults`] with the environment read and
+/// the program runner injected, so the inside-Antithesis path can be
+/// unit-tested without mutating the process environment.
+#[cfg(unix)]
+fn fault_control_from(
+    env: impl Fn(&str) -> Option<String>,
+    run: impl Fn(&str, &[&str]) -> Result<i32, crate::sys::Error>,
+    flag: &str,
+) -> Result<(), String> {
+    let Some(program) = env(FAULT_CONTROL_VAR) else {
+        return Ok(());
+    };
+    if !crate::sys::fs::exists(&program) {
+        return Ok(());
+    }
+    match run(&program, &[flag]) {
+        Ok(0) => Ok(()),
+        Ok(status) => Err(format!(
+            "{FAULT_CONTROL_VAR}={program} {flag} exited with status {status}"
+        )),
+        Err(_) => Err(format!(
+            "{FAULT_CONTROL_VAR}={program} {flag} could not be run, or did not exit normally"
+        )),
+    }
+}
 
 /// The fuzzer's entropy when running inside Antithesis: `fuzz_get_random`
 /// from libvoidstar. `None` outside Antithesis, or inside it when the

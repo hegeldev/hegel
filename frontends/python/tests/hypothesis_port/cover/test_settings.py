@@ -91,6 +91,10 @@ def test_settings_uses_defaults():
     assert s.test_cases == Settings.from_profile(SUITE_PROFILE).test_cases
 
 
+def test_suite_profile_suppresses_too_slow():
+    assert Settings().suppress_health_check == frozenset({HealthCheck.too_slow})
+
+
 def test_raises_attribute_error():
     with pytest.raises(AttributeError):
         Settings().kittens  # noqa: B018

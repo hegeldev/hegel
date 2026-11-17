@@ -83,6 +83,23 @@ fn note_panic_trailer_notes_real_panics_and_skips_control_unwinds() {
 }
 
 #[test]
+fn apply_invariant_pauses_faults_only_when_asked_and_unpauses_on_unwind() {
+    let (_run, tc, _lines) = capturing_test_case();
+    let mut ran = Vec::new();
+    apply_invariant(&tc, false, || ran.push("unpaused"));
+    apply_invariant(&tc, true, || ran.push("paused"));
+    let unwound = catch_unwind(AssertUnwindSafe(|| {
+        apply_invariant(&tc, true, || panic!("invariant body unwinds"))
+    }));
+    assert_eq!(
+        unwound.unwrap_err().downcast_ref::<&str>(),
+        Some(&"invariant body unwinds")
+    );
+    apply_invariant(&tc, true, || ran.push("paused again"));
+    assert_eq!(ran, ["unpaused", "paused", "paused again"]);
+}
+
+#[test]
 fn resolve_round_with_all_workers_done_returns_normally() {
     let (_run, tc, lines) = capturing_test_case();
     resolve_round(vec![WorkerEvent::RoundDone, WorkerEvent::RoundDone], &tc);

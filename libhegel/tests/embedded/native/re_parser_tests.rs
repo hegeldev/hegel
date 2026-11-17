@@ -34,6 +34,22 @@ fn literal_escape() {
 }
 
 #[test]
+fn literal_control_escapes() {
+    assert_eq!(parsed("\\a").data, vec![lit(7)]);
+    assert_eq!(parsed("\\f").data, vec![lit(12)]);
+    assert_eq!(parsed("\\v").data, vec![lit(11)]);
+    assert_eq!(
+        parsed("[\\a\\b\\f\\v]").data,
+        vec![OpCode::In(vec![
+            SetItem::Literal(7),
+            SetItem::Literal(8),
+            SetItem::Literal(12),
+            SetItem::Literal(11),
+        ])]
+    );
+}
+
+#[test]
 fn literal_hex_escape() {
     assert_eq!(parsed("\\x41").data, vec![lit(0x41)]);
 }
@@ -658,6 +674,29 @@ fn parse_error_display_includes_position() {
 fn err_bad_escape_at_end_of_pattern() {
     let err = parse_err(r"abc\");
     assert!(err.msg.contains("bad escape"), "{}", err.msg);
+}
+
+#[test]
+fn an_escape_token_without_its_character_is_a_bad_escape() {
+    let mut source = Tokenizer::new("").unwrap();
+    let err = class_escape(&mut source, "\\").err().unwrap();
+    assert_eq!(err.msg, "bad escape (end of pattern)");
+    let mut state = State::new();
+    let err = escape_code(&mut source, "\\", &mut state).err().unwrap();
+    assert_eq!(err.msg, "bad escape (end of pattern)");
+}
+
+#[test]
+fn a_numeric_escape_with_a_non_digit_is_a_bad_escape() {
+    let source = Tokenizer::new("").unwrap();
+    assert_eq!(
+        parse_escape_value(&source, "\\x41", "41", 16).ok(),
+        Some(0x41)
+    );
+    let err = parse_escape_value(&source, "\\xzz", "zz", 16)
+        .err()
+        .unwrap();
+    assert_eq!(err.msg, "bad escape \\xzz");
 }
 
 #[test]

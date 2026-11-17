@@ -163,13 +163,16 @@ class JnaLibhegelTest {
         assertEquals(Abi.E_INVALID_HANDLE, lib.stateMachineAddInvariant(0, 0, "i", true));
         assertEquals(Abi.E_INVALID_HANDLE, lib.stateMachineStart(0, 0, concurrency));
         assertEquals(9, concurrency[0]);
-        assertEquals(Abi.E_INVALID_HANDLE, lib.stateMachineNextGroup(0, 0, out));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.stateMachineNextGroup(0, 0, out, concurrency));
         assertEquals(7, out[0]);
+        assertEquals(9, concurrency[0]);
         assertEquals(Abi.E_INVALID_HANDLE, lib.stateMachineNextRule(0, 0, 0, out));
         assertEquals(7, out[0]);
         assertEquals(Abi.E_INVALID_HANDLE, lib.stateMachineRuleRejected(0, 0, 0));
         assertEquals(Abi.E_INVALID_HANDLE, lib.stateMachineShouldCheckInvariant(0, 0, 0, check));
         assertTrue(check[0]);
+        assertEquals(Abi.E_INVALID_HANDLE, lib.pauseFaults(0));
+        assertEquals(Abi.E_INVALID_HANDLE, lib.unpauseFaults(0));
         // Freeing NULL is a documented no-op.
         lib.stateMachineFree(0);
     }
@@ -325,8 +328,8 @@ class JnaLibhegelTest {
 
     @Test
     void stateMachinesAreDeclaredRuleByRule() {
-        // Names cross by value, an empty one with a zero length; the started machine reports the
-        // fixed concurrency level, proving every declaration reached the engine.
+        // Names cross by value, an empty one with a zero length; the started machine and its first
+        // round report the fixed concurrency level, proving every declaration reached the engine.
         JnaLibhegel lib = real();
         long s = newSettings(lib);
         lib.settingsDatabase(s, "");
@@ -343,6 +346,11 @@ class JnaLibhegelTest {
             long[] concurrency = new long[1];
             assertEquals(Abi.OK, lib.stateMachineStart(tc, id[0], concurrency));
             assertEquals(1, concurrency[0]);
+            long[] group = new long[1];
+            long[] level = new long[1];
+            assertEquals(Abi.OK, lib.stateMachineNextGroup(tc, id[0], group, level));
+            assertEquals(0, group[0]);
+            assertEquals(1, level[0]);
             lib.stateMachineFree(id[0]);
             assertEquals(Abi.OK, lib.markComplete(tc, Abi.STATUS_VALID, null));
             lib.testCaseFree(tc);

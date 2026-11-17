@@ -582,9 +582,6 @@ impl Generator<String> for DomainGenerator {
 
     fn do_draw(&self, tc: &TestCase) -> String {
         let handle = self.handle.get_or_init(|| {
-            if !(self.max_length >= 4 && self.max_length <= 255) {
-                invalid_argument!("max_length must be between 4 and 255");
-            }
             ffi::StringGenerator::domain(self.max_length as u64)
                 .unwrap_or_else(|msg| invalid_argument!("{msg}"))
         });

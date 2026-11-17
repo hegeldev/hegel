@@ -137,8 +137,8 @@ class ConcurrentStatefulDriverTest {
         // Output: each round's worker lines follow its header, grouped by worker index.
         assertEquals(
                 List.of(
-                        "Concurrency level: 2",
                         "Checking invariants on the initial state.",
+                        "Concurrency level: 2",
                         "---------------- Round 1: group \"<anonymous>\" ----------------",
                         "[worker 0] Rule: alpha",
                         "[worker 0] Rule: gamma",
@@ -409,6 +409,30 @@ class ConcurrentStatefulDriverTest {
     }
 
     @Test
+    void theConcurrencyLevelIsNotedWheneverARoundChangesIt() {
+        FakeLibhegel fake = concurrentFake(2, new long[][] {{0}}, new long[][] {{0}}, new long[][] {{0}, {0}});
+        fake.roundConcurrency = new long[] {1, 1, 2};
+        Recording machine = new Recording();
+        TestCase tc = capturedCase(fake);
+        Stateful.run(machine, tc, Stateful.options().maxConcurrency(2));
+        assertEquals(Set.of(0, 1), machine.workers);
+        assertEquals(
+                List.of(
+                        "Checking invariants on the initial state.",
+                        "Concurrency level: 1",
+                        "---------------- Round 1: group \"<anonymous>\" ----------------",
+                        "[worker 0] Rule: alpha",
+                        "---------------- Round 2: group \"<anonymous>\" ----------------",
+                        "[worker 0] Rule: alpha",
+                        "Concurrency level: 2",
+                        "---------------- Round 3: group \"<anonymous>\" ----------------",
+                        "[worker 0] Rule: alpha",
+                        "[worker 1] Rule: alpha",
+                        "Checking invariants on the final state."),
+                unstamped(tc.notes()));
+    }
+
+    @Test
     void maxConcurrencyOneRunsSequentiallyOnTheCallingThread() {
         FakeLibhegel fake = new FakeLibhegel();
         fake.ruleSequence = new long[] {0};
@@ -444,6 +468,60 @@ class ConcurrentStatefulDriverTest {
         Stateful.run(new Tiered(), capturedCase(fake), Stateful.options().maxConcurrency(1));
         assertEquals(List.of("flush", "read", "write"), fake.stateMachineRules);
         assertArrayEquals(new long[][] {{0}, {1, 0}, {1}}, fake.stateMachineRuleGroups);
+    }
+
+    /** A machine whose fault-pausing invariant marks the fake's event log, and can be made to fail. */
+    static final class Pausing {
+        private final FakeLibhegel fake;
+        boolean explode;
+
+        Pausing(FakeLibhegel fake) {
+            this.fake = fake;
+        }
+
+        @Rule
+        void step(TestCase t) {}
+
+        @Invariant(pauseFaults = true)
+        void protectedCheck(TestCase t) {
+            fake.faultEvents.add("protected");
+            if (explode) {
+                throw new AssertionError("protected invariant failed");
+            }
+        }
+    }
+
+    @Test
+    void concurrentDriverBracketsPauseFaultsInvariants() {
+        // Initial state, the join point of the one round, final state: each on the driving thread,
+        // paused immediately before and unpaused immediately after.
+        FakeLibhegel fake = concurrentFake(2, new long[][] {{0}, {0}});
+        Stateful.run(new Pausing(fake), exploringCase(fake), twoWorkers());
+        assertEquals(
+                List.of(
+                        "pause",
+                        "protected",
+                        "unpause",
+                        "pause",
+                        "protected",
+                        "unpause",
+                        "pause",
+                        "protected",
+                        "unpause"),
+                fake.faultEvents);
+        assertEquals(List.of(0L), fake.invariantChecksAsked);
+    }
+
+    @Test
+    void concurrentDriverUnpausesAroundAThrowingInvariant() {
+        FakeLibhegel fake = concurrentFake(2, new long[][] {{0}, {0}});
+        Pausing machine = new Pausing(fake);
+        machine.explode = true;
+        AssertionError e =
+                assertThrows(AssertionError.class, () -> Stateful.run(machine, exploringCase(fake), twoWorkers()));
+        assertEquals("protected invariant failed", e.getMessage());
+        assertEquals(List.of("pause", "protected", "unpause"), fake.faultEvents);
+        assertEquals(1, fake.freedStateMachines);
     }
 
     @Test

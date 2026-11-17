@@ -45,9 +45,8 @@ namespace {
 
     std::string blob_in(const std::string& report) {
         std::smatch match;
-        if (!std::regex_search(
-                report, match,
-                std::regex(R"(rerun with: --failure-blob (\S+))"))) {
+        if (!std::regex_search(report, match,
+                               std::regex(R"(--failure-blob (\S+))"))) {
             return "";
         }
         return match[1];
@@ -120,13 +119,18 @@ TEST(Main, ProfileApplies) {
     EXPECT_EQ(r.exit_code, 0) << r.stderr_data;
 }
 
-TEST(Main, FailureReportNamesTheProgramAndTheOption) {
+TEST(Main, FailureReportEndsWithTheOptionAndTheException) {
     SubprocessResult r = run_main({"--phases", "generate"}, "fail");
     EXPECT_EQ(r.exit_code, 1);
-    EXPECT_TRUE(contains(r.stderr_data, "--- Failure: subject_workload ("))
+    EXPECT_TRUE(contains(r.stderr_data, "auto n_1 = ")) << r.stderr_data;
+    EXPECT_TRUE(contains(r.stderr_data,
+                         "To reproduce this failure, run the program with:\n"
+                         "    --failure-blob "))
         << r.stderr_data;
-    EXPECT_TRUE(contains(r.stderr_data, "main_subject.cpp:")) << r.stderr_data;
     EXPECT_NE(blob_in(r.stderr_data), "") << r.stderr_data;
+    EXPECT_TRUE(contains(r.stderr_data,
+                         "Exception: std::runtime_error: failed with n="))
+        << r.stderr_data;
 }
 
 TEST(Main, FailureBlobReplaysTheFailure) {
@@ -134,7 +138,7 @@ TEST(Main, FailureBlobReplaysTheFailure) {
     ASSERT_NE(blob, "");
     SubprocessResult r = run_main({"--failure-blob", blob}, "fail");
     EXPECT_EQ(r.exit_code, 1);
-    EXPECT_TRUE(contains(r.stderr_data, "auto n = ")) << r.stderr_data;
+    EXPECT_TRUE(contains(r.stderr_data, "auto n_1 = ")) << r.stderr_data;
     EXPECT_TRUE(contains(r.stderr_data,
                          "Exception: std::runtime_error: failed with n="))
         << r.stderr_data;
@@ -155,7 +159,7 @@ TEST(Main, FailureBlobThatDoesNotReproduce) {
     SubprocessResult r = run_main({"--failure-blob=" + blob}, "pass");
     EXPECT_EQ(r.exit_code, 1);
     EXPECT_TRUE(contains(r.stderr_data, "error: The failure blob did not "
-                                        "reproduce an error"))
+                                        "reproduce a failure"))
         << r.stderr_data;
 }
 
@@ -166,15 +170,6 @@ TEST(Main, InvalidRegisteredBlobIsReported) {
     EXPECT_EQ(test_cases_run(r), 0u);
 }
 
-TEST(Main, FailureBlobOptionComesBeforeRegisteredBlobs) {
-    std::string blob = failing_blob();
-    ASSERT_NE(blob, "");
-    SubprocessResult r = run_reproduce_main({"--failure-blob", blob});
-    EXPECT_EQ(r.exit_code, 1);
-    EXPECT_TRUE(contains(r.stderr_data, "reproduced an error"))
-        << r.stderr_data;
-}
-
 TEST(Main, OptionsSetVerbosityAndPrintBlob) {
     SubprocessResult quiet = run_main({"--verbosity", "quiet"}, "fail");
     EXPECT_EQ(quiet.exit_code, 1);
@@ -182,7 +177,9 @@ TEST(Main, OptionsSetVerbosityAndPrintBlob) {
 
     SubprocessResult no_blob = run_main({"--print-blob", "false"}, "fail");
     EXPECT_EQ(no_blob.exit_code, 1);
-    EXPECT_FALSE(contains(no_blob.stderr_data, "rerun with:"))
+    EXPECT_FALSE(contains(no_blob.stderr_data, "--failure-blob"))
+        << no_blob.stderr_data;
+    EXPECT_TRUE(contains(no_blob.stderr_data, "Exception: std::runtime_error"))
         << no_blob.stderr_data;
 
     EXPECT_EQ(run_main({"--verbosity=verbose"}).exit_code, 0);
@@ -192,8 +189,8 @@ TEST(Main, OptionsSetVerbosityAndPrintBlob) {
 TEST(Main, RunErrorIsPrinted) {
     SubprocessResult r = run_main({}, "reject");
     EXPECT_EQ(r.exit_code, 1);
-    EXPECT_TRUE(contains(r.stderr_data, "error: Hegel run error: "))
-        << r.stderr_data;
+    EXPECT_TRUE(contains(r.stderr_data, "error: ")) << r.stderr_data;
+    EXPECT_FALSE(contains(r.stderr_data, "Exception: ")) << r.stderr_data;
 }
 
 TEST(Main, FailureWithANonStandardException) {
@@ -203,9 +200,16 @@ TEST(Main, FailureWithANonStandardException) {
 }
 
 TEST(Main, InvalidInlineSettings) {
-    SubprocessResult r =
-        run_main({}, "pass", {{"HEGEL_MAIN_SUBJECT_STEPS", "0"}});
+    SubprocessResult r = run_main(
+        {}, "pass", {{"HEGEL_MAIN_SUBJECT_PROFILE", "no-such-profile"}});
     EXPECT_EQ(r.exit_code, 1);
-    EXPECT_TRUE(contains(r.stderr_data, "error: Settings::stateful_step_count"))
-        << r.stderr_data;
+    EXPECT_TRUE(contains(r.stderr_data, "error: ")) << r.stderr_data;
+    EXPECT_TRUE(contains(r.stderr_data, "no-such-profile")) << r.stderr_data;
+    EXPECT_EQ(test_cases_run(r), 0u);
+}
+
+TEST(Main, InlineSettingsComeFromTheSelectedProfile) {
+    SubprocessResult r = run_main({"--profile=ci", "--verbosity=verbose"});
+    EXPECT_EQ(r.exit_code, 0) << r.stderr_data;
+    EXPECT_EQ(test_cases_run(r), 1u) << r.stdout_data;
 }

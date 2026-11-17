@@ -684,7 +684,14 @@ mod provisional_strategies {
 
     #[test]
     fn test_invalid_domain_arguments() {
-        for max_length in [0_usize, 3, 256] {
+        for (max_length, message) in [
+            (0_usize, "domain max_length=0 leaves no eligible TLDs"),
+            (3, "domain max_length=3 leaves no eligible TLDs"),
+            (
+                256,
+                "domain max_length=256 exceeds the RFC 1035 limit of 255",
+            ),
+        ] {
             expect_panic(
                 move || {
                     hegel::Hegel::new(move |tc| {
@@ -693,7 +700,7 @@ mod provisional_strategies {
                     .settings(hegel::Settings::new().test_cases(1).database(None))
                     .run();
                 },
-                "max_length must be between 4 and 255",
+                message,
             );
         }
     }

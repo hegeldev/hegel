@@ -294,10 +294,11 @@ public final class Settings {
      * These settings with the values the engine resolved for what was left unset, so a run and its
      * reporters see the effective configuration.
      */
-    Settings resolved(long testCases, boolean printBlob, NondeterminismStrictness strictness) {
+    Settings resolved(long testCases, boolean printBlob, Verbosity verbosity, NondeterminismStrictness strictness) {
         return with(b -> {
             b.testCases = testCases;
             b.printBlob = printBlob;
+            b.verbosity = verbosity;
             b.nondeterminismStrictness = strictness;
         });
     }

@@ -519,8 +519,8 @@ public final class TestCase {
         return source.stateMachineStart(stateMachineId);
     }
 
-    long stateMachineNextGroup(long stateMachineId) {
-        return source.stateMachineNextGroup(stateMachineId);
+    long stateMachineNextGroup(long stateMachineId, long[] outConcurrency) {
+        return source.stateMachineNextGroup(stateMachineId, outConcurrency);
     }
 
     long stateMachineNextRule(long stateMachineId, long workerIndex) {
@@ -537,6 +537,14 @@ public final class TestCase {
 
     void stateMachineFree(long stateMachineId) {
         source.stateMachineFree(stateMachineId);
+    }
+
+    void pauseFaults() {
+        source.pauseFaults();
+    }
+
+    void unpauseFaults() {
+        source.unpauseFaults();
     }
 
     /** Whether the engine has concluded this case (overrun or invalid), so its body must unwind. */

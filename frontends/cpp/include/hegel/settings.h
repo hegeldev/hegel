@@ -1,8 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <cstdlib>
-#include <cstring>
 #include <optional>
 #include <string>
 #include <vector>
@@ -19,25 +17,6 @@ namespace hegel {
     };
 
     /**
-     * @brief Convert Verbosity enum to command-line string.
-     * @param v The verbosity level
-     * @return The string representation for CLI argument
-     */
-    inline const char* verbosity_to_string(Verbosity v) {
-        switch (v) {
-        case Verbosity::Quiet:
-            return "quiet";
-        case Verbosity::Verbose:
-            return "verbose";
-        case Verbosity::Debug:
-            return "debug";
-        case Verbosity::Normal:
-        default:
-            return "normal";
-        }
-    }
-
-    /**
      * @brief Health checks.
      */
     enum class HealthCheck {
@@ -46,22 +25,6 @@ namespace hegel {
         TestCasesTooLarge,    ///< Generated test cases are too large.
         LargeInitialTestCase, ///< First generated test case is unusually large.
     };
-
-    /// @cond INTERNAL
-    inline const char* health_check_to_string(HealthCheck c) {
-        switch (c) {
-        case HealthCheck::FilterTooMuch:
-            return "filter_too_much";
-        case HealthCheck::TooSlow:
-            return "too_slow";
-        case HealthCheck::TestCasesTooLarge:
-            return "test_cases_too_large";
-        case HealthCheck::LargeInitialTestCase:
-            return "large_initial_test_case";
-        }
-        return "";
-    }
-    /// @endcond
 
     /**
      * @brief All health checks, suitable for full suppression.
@@ -85,7 +48,7 @@ namespace hegel {
     };
 
     /**
-     * @brief All phases, the default for Settings::phases.
+     * @brief All phases, the base value of Settings::phases.
      * @return A vector containing every Phase variant.
      */
     inline std::vector<Phase> all_phases() {
@@ -129,23 +92,23 @@ namespace hegel {
       public:
         /// The configuration of the database. See the methods below.
         enum class Kind {
-            Unset, ///< Default behavior. By default, Hegel places the database
-                   ///< at `.hegel`.
+            Default,  ///< Use the database at `.hegel/examples`.
             Disabled, ///< Disable the database.
             Path,     ///< Use the given directory as the database.
         };
 
-        /// Default behavior. By default, Hegel places the database at `.hegel`.
-        /// @return A database with Database.Kind.Unset.
-        static Database unset() { return {Kind::Unset, {}}; }
+        /// Use the database at `.hegel/examples`, also where the settings
+        /// profile disables the database.
+        /// @return A database with Database::Kind::Default.
+        static Database default_location() { return {Kind::Default, {}}; }
 
         /// Disable the database.
-        /// @return A database with Database.Kind.Disabled.
+        /// @return A database with Database::Kind::Disabled.
         static Database disabled() { return {Kind::Disabled, {}}; }
 
         /// Use the given directory as the database.
         /// @param path The directory path for the database.
-        /// @return A database with Database.Kind.Path.
+        /// @return A database with Database::Kind::Path.
         static Database from_path(std::string path) {
             return {Kind::Path, std::move(path)};
         }
@@ -162,118 +125,193 @@ namespace hegel {
     };
 
     /// @cond INTERNAL
-    namespace internal {
-        // True if a CI environment is detected, by probing the variables the
-        // common CI providers set. Used as the default for
-        // Settings::derandomize so runs are reproducible under CI.
-        inline bool in_ci() {
-            // expected == nullptr means "any value present satisfies it".
-            struct CiVar {
-                const char* name;
-                const char* expected;
-            };
-            static constexpr CiVar ci_vars[] = {
-                {"CI", nullptr},
-                {"TF_BUILD", "true"},
-                {"BUILDKITE", "true"},
-                {"CIRCLECI", "true"},
-                {"CIRRUS_CI", "true"},
-                {"CODEBUILD_BUILD_ID", nullptr},
-                {"GITHUB_ACTIONS", "true"},
-                {"GITLAB_CI", nullptr},
-                {"HEROKU_TEST_RUN_ID", nullptr},
-                {"TEAMCITY_VERSION", nullptr},
-            };
-            for (const CiVar& v : ci_vars) {
-                const char* value = std::getenv(v.name);
-                if (value == nullptr) {
-                    continue;
-                }
-                if (v.expected == nullptr ||
-                    std::strcmp(value, v.expected) == 0) {
-                    return true;
-                }
-            }
-            return false;
-        }
-    } // namespace internal
+    namespace detail {
+        /// The values of a settings profile, as the engine resolves them.
+        struct ResolvedSettings {
+            uint64_t test_cases = 100;
+            Verbosity verbosity = Verbosity::Normal;
+            std::optional<uint64_t> seed;
+            bool derandomize = false;
+            bool report_multiple_failures = false;
+            bool stop_on_first_failure = true;
+            NondeterminismStrictness nondeterminism_strictness =
+                NondeterminismStrictness::Quiet;
+            bool print_blob = true;
+            bool show_statistics = false;
+            bool unbounded_choices = false;
+            Database database = Database::default_location();
+            std::vector<HealthCheck> suppress_health_check;
+            std::vector<Phase> phases;
+            Backend backend = Backend::Default;
+        };
+
+        /// Resolve the named profile, or the `default` profile, now.
+        ResolvedSettings
+        resolve_settings(const std::optional<std::string>& profile);
+    } // namespace detail
     /// @endcond
 
     /**
      * @brief Configuration options for hegel::test().
      *
-     * A field left at its default takes the value of the engine's settings
-     * profile: the engine resolves its `default` profile from
-     * `hegel_set_default_profile`, the `HEGEL_DEFAULT_PROFILE` environment
-     * variable, and a `hegel.toml` in the working directory or an ancestor,
-     * else from the detected environment (`workload` inside Antithesis, `ci`
-     * on a CI server, `development` otherwise).
+     * Creating a Settings resolves an engine settings profile and copies
+     * every value it resolves: the `default` profile, or the profile named
+     * to Settings::from_profile(). The engine resolves the `default` profile
+     * from hegel::set_default_profile(), the `HEGEL_DEFAULT_PROFILE`
+     * environment variable, and a `hegel.toml` in the working directory or
+     * an ancestor, else from the detected environment (`workload` inside
+     * Antithesis, `ci` on a CI server, `development` otherwise). The
+     * `HEGEL_*` settings environment variables then apply over the profile.
+     *
+     * Each field that you set replaces the resolved value. Each field that
+     * you do not set keeps it:
+     *
+     * @code{.cpp}
+     * hegel::Settings settings{.test_cases = 500, .seed = 42};
+     * hegel::Settings nightly = hegel::Settings::from_profile("ci");
+     * nightly.test_cases = 10000;
+     * @endcode
+     *
+     * The values are fixed when the Settings is created: a profile that
+     * hegel::register_profile() or hegel::set_default_profile() changes
+     * afterwards does not change it. A malformed `hegel.toml` or `HEGEL_*`
+     * variable throws std::invalid_argument from the creation.
      */
     struct Settings {
-        /// Number of test cases to run. Unset (the default) uses the engine
-        /// profile's value, which is 100 unless a `hegel.toml` changes it.
-        std::optional<uint64_t> test_cases;
+        /// @cond INTERNAL
+        detail::ResolvedSettings resolved_ =
+            detail::resolve_settings(std::nullopt);
+        /// @endcond
 
-        /// Verbosity level. Defaults to Verbosity::Normal.
-        Verbosity verbosity = Verbosity::Normal;
+        /// Settings resolved from the named profile instead of the `default`
+        /// one. A name can be reserved (`base`, `default`), shipped
+        /// (`development`, `ci`, `workload`), defined in `hegel.toml`, or
+        /// registered with hegel::register_profile().
+        /// @param name The profile name.
+        /// @return The settings of that profile.
+        /// @throws std::invalid_argument for an unknown name, or a malformed
+        ///         `hegel.toml` or `HEGEL_*` variable.
+        static Settings from_profile(const std::string& name);
 
-        /// Explicit seed for the test.
-        std::optional<uint64_t> seed;
+        /// Number of test cases to run. The base value is 100.
+        uint64_t test_cases = resolved_.test_cases;
 
-        /// If true, use a deterministic RNG, making the test deterministic
-        /// across executions. Defaults to true when a CI environment is
-        /// detected, false otherwise.
-        bool derandomize = internal::in_ci();
+        /// Verbosity level. The base value is Verbosity::Normal.
+        Verbosity verbosity = resolved_.verbosity;
+
+        /// Explicit seed for the test. The profiles have none by default:
+        /// each run then picks a fresh seed.
+        std::optional<uint64_t> seed = resolved_.seed;
+
+        /// If true, derive the seed from the database key, so the test is
+        /// deterministic across executions. The base value is false; the
+        /// `ci` profile sets it to true.
+        bool derandomize = resolved_.derandomize;
 
         /// If true, keep generating after the first failure to surface
-        /// additional distinct bugs, and report all of them. If false (the
-        /// default), stop the run at the first failing example.
-        bool report_multiple_failures = false;
+        /// additional distinct bugs, and report all of them. If false, stop
+        /// the run at the first failing example. The base value is false.
+        bool report_multiple_failures = resolved_.report_multiple_failures;
 
-        /// If true (the default), stop generating once a failure is found
-        /// and move on to shrinking and reporting it. If false, the run uses
-        /// its whole test_cases budget before reporting, whatever it finds
-        /// along the way; every distinct failure found is persisted to the
-        /// database either way.
-        bool stop_on_first_failure = true;
+        /// If true, stop generating once a failure is found and move on to
+        /// shrinking and reporting it. If false, the run uses its whole
+        /// test_cases budget before reporting, whatever it finds along the
+        /// way; every distinct failure found is persisted to the database
+        /// either way. The base value is true.
+        bool stop_on_first_failure = resolved_.stop_on_first_failure;
 
         /// How the run reacts to a test whose outcome or draws change when
-        /// the same generated data is replayed. Defaults to
+        /// the same generated data is replayed. The base value is
         /// NondeterminismStrictness::Quiet.
         NondeterminismStrictness nondeterminism_strictness =
-            NondeterminismStrictness::Quiet;
+            resolved_.nondeterminism_strictness;
 
-        /// If true (the default), a failure report ends with a
-        /// `rerun with:` line holding the base64 blob that replays the
-        /// failure.
-        bool print_blob = true;
+        /// If true, the report of each failure ends with the line that
+        /// replays it from its base64 reproduce blob, at every verbosity.
+        /// The base value is true.
+        bool print_blob = resolved_.print_blob;
 
-        /// Configure the Hegel database. See Database. Defaults to a database
-        /// at `.hegel`, or disabled when a CI environment is detected.
-        Database database =
-            internal::in_ci() ? Database::disabled() : Database::unset();
+        /// If true, the run prints statistics at its end: for each label
+        /// recorded with an event, the fraction of test cases it occurred
+        /// in. The base value is false.
+        bool show_statistics = resolved_.show_statistics;
 
-        /// Key scoping the examples stored in and replayed from the database.
-        /// Unset (the default) disables persistence and Reuse-phase replay.
+        /// If true, a test case may make any number of choices. By default
+        /// the engine stops a test case after 2^20 choices. A long-running
+        /// test case needs this. The base value is false.
+        bool unbounded_choices = resolved_.unbounded_choices;
+
+        /// Configure the Hegel database. See Database. The base value is
+        /// Database::default_location(), `.hegel/examples`; the `ci` and
+        /// `workload` profiles disable the database.
+        Database database = resolved_.database;
+
+        /// Key scoping the examples stored in and replayed from the
+        /// database. A derandomized run also derives its seed from it.
+        /// Unset, @ref HEGEL_TEST uses `"<file>::<name>"` of the test, and
+        /// hegel::test() derives a key as it documents. A run with no key
+        /// does not store or replay examples.
         std::optional<std::string> database_key;
 
-        /// Health checks to suppress for this test. Empty (the default) uses
-        /// the engine profile's set: none locally, `TooSlow` on a CI server.
-        std::vector<HealthCheck> suppress_health_check;
+        /// Health checks to suppress for this test. The profiles suppress
+        /// none locally, `TooSlow` on a CI server and all of them inside
+        /// Antithesis. An empty list (`{}`) suppresses none.
+        std::vector<HealthCheck> suppress_health_check =
+            resolved_.suppress_health_check;
 
-        /// Phases to run. Defaults to all phases; phases left out are
-        /// disabled (e.g. drop Phase::Shrink to keep failing examples
-        /// unshrunk). An empty vector produces a run that does nothing.
-        std::vector<Phase> phases = all_phases();
+        /// Phases to run, all of them by default. Phases left out of a list
+        /// are disabled (e.g. drop Phase::Shrink to keep failing examples
+        /// unshrunk). An empty list (`{}`) produces a run that does nothing.
+        std::vector<Phase> phases = resolved_.phases;
 
-        /// Randomness backend. Defaults to Backend::Auto; picking an explicit
-        /// backend overrides the engine profile's choice.
-        Backend backend = Backend::Auto;
-
-        /// The maximum number of steps a stateful test case attempts. Each
-        /// case runs at least one step and at most this many. Must be at
-        /// least 1; hegel::test() rejects other values with
-        /// std::invalid_argument.
-        int64_t stateful_step_count = 50;
+        /// Randomness backend. The base value is Backend::Default; the
+        /// `workload` profile selects Backend::Urandom.
+        Backend backend = resolved_.backend;
     };
+
+    /**
+     * @brief Register settings as a named settings profile.
+     *
+     * The profile holds a complete snapshot of @p settings.
+     * Settings::database_key is not part of the snapshot. Registration is
+     * process-wide and replaces an earlier registration of the same name.
+     * It is not retroactive: a Settings created before it keeps its values,
+     * so register a profile before creating the Settings that use it. A
+     * `hegel.toml` section for @p name still applies over the snapshot.
+     *
+     * @code{.cpp}
+     * hegel::Settings nightly = hegel::Settings::from_profile("ci");
+     * nightly.test_cases = 10000;
+     * hegel::register_profile("nightly", nightly);
+     * hegel::test(body, hegel::Settings::from_profile("nightly"));
+     * @endcode
+     *
+     * @param name The profile name: ASCII letters, digits, `-` and `_`. The
+     *             reserved names `base` and `default` are not permitted.
+     * @param settings The settings to register.
+     * @throws std::invalid_argument for an invalid or reserved name, or when
+     *         @p settings name a profile that does not exist.
+     */
+    void register_profile(const std::string& name, const Settings& settings);
+
+    /**
+     * @brief Set the default settings profile for the whole process.
+     *
+     * The `default` profile then resolves to @p name. This takes precedence
+     * over the `HEGEL_DEFAULT_PROFILE` environment variable, the `default`
+     * entry in `hegel.toml`, and the detected environment. It is not
+     * retroactive: a Settings created before it keeps its values. The
+     * profile does not have to exist yet.
+     *
+     * @param name The profile name, or an empty string to remove an earlier
+     *             call's selection.
+     * @throws std::invalid_argument for an invalid name.
+     */
+    void set_default_profile(const std::string& name);
+
+    /**
+     * @brief The version of libhegel, the engine that Hegel for C++ drives.
+     * @return The version, e.g. `"0.48.0"`.
+     */
+    std::string engine_version();
 } // namespace hegel

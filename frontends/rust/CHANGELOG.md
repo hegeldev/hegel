@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.52.7 - 2026-11-16
+
+This release updates the `hegeltest-c` dependency to 0.51.6.
+
+## 0.52.6 - 2026-11-13
+
+This patch adds a `pause_faults` flag to stateful invariants. An invariant declared with it runs every check (on the initial state, at the sampled join points, and on the final state) with fault injection paused: inside [Antithesis](https://antithesis.com/), the fault injector is asked to stand down from just before the invariant's body until just after it returns or panics, so the check observes the system under test without a fault landing in the middle of it. The flag works on sequential and concurrent state machines alike, and combines with `always_run`:
+
+```rust
+#[invariant(pause_faults = true)]
+fn replicas_agree(&self, _: TestCase) { /* ... */ }
+
+#[invariant(always_run, pause_faults = true)]
+fn ledger_balances(&self, _: TestCase) { /* ... */ }
+```
+
+For hand-written `StateMachine` and `ConcurrentStateMachine` implementations, `Invariant` and `ConcurrentInvariant` gain a `pause_faults` field and a `.pause_faults(true)` builder method that composes with `new` and `new_always_run`.
+
+Outside Antithesis the flag has no effect.
+
+## 0.52.5 - 2026-11-13
+
+This release updates the `hegeltest-c` dependency to 0.51.4.
+
+## 0.52.4 - 2026-11-13
+
+This patch changes the error `gs::domains().max_length(n)` reports for an invalid `n`. The message is now the engine's own, which says what is wrong with the value: `domain max_length=256 exceeds the RFC 1035 limit of 255`, or `domain max_length=3 leaves no eligible TLDs`. Previously it was `max_length must be between 4 and 255` for both. Which values are accepted has not changed.
+
+It also refactors some internal error handling.
+
+## 0.52.3 - 2026-11-13
+
+This release updates the `hegeltest-c` dependency to 0.51.2.
+
+## 0.52.2 - 2026-11-10
+
+This patch fixes the unbounded memory growth of a long-running `#[hegel::main]` binary under Antithesis. A run of a single test case inside Antithesis, with the database disabled as the `workload` profile has it, no longer records the choices its test case makes.
+
+A failure of such a run is now reported as it happened, as the panic's location and message. It is not shrunk or replayed, the values it drew are not printed, and it has no `reproduce_failure` blob.
+
+## 0.52.1 - 2026-11-09
+
+This patch lets a long state-machine run explore more than one configuration. Between rounds, a state machine now occasionally redraws its value distribution, the rules each worker has enabled, and the concurrency level. Previously these were fixed for the whole test case, so a `#[hegel::main]` binary kept one configuration for its whole run.
+
+A concurrent machine now always starts `max_concurrency` worker threads, and only the current concurrency level's worth of them run rules in a round. A failure report notes `Concurrency level: n` at the first round and whenever the level changes.
+
 ## 0.52.0 - 2026-11-03
 
 This release lets a rule of a concurrent state machine belong to several concurrency groups: the rule runs in the rounds of each of them. The list must name at least one group and must not repeat one; the engine reports either as an invalid argument when the machine runs. A bare `#[rule]` still indicates the anonymous group.

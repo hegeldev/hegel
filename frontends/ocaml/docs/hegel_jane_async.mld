@@ -111,7 +111,7 @@ module%hegel_concurrent_state_machine [@async] Counter_machine = struct
 
   let matches _tc s =
     Counter.read s.counter >>| fun n -> if n <> s.model then failwith "lost update"
-  [@@invariant { always_check = true }]
+  [@@invariant { always_check = true; pause_faults = true }]
   ;;
 end
 
@@ -173,12 +173,14 @@ module Stateful : sig
       { name : string
       ; inv : Hegel.test_case -> 'state -> unit Async.Deferred.t
       ; always_check : bool
+      ; pause_faults : bool
       }
 
     val create
       :  name:string
       -> inv:(Hegel.test_case -> 'state -> unit Async.Deferred.t)
       -> ?always_check:bool
+      -> ?pause_faults:bool
       -> unit
       -> 'state t
 

@@ -15,6 +15,7 @@ jobs:
     name: check release
     if: "github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'skip release')"
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:

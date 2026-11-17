@@ -74,6 +74,7 @@ module Make (B : S) : sig
         { name : string
         ; inv : Internal.test_case -> 'state -> unit B.t
         ; always_check : bool
+        ; pause_faults : bool
         }
 
       (** Same as {!Hegel.Stateful.Invariant.create}, for an [inv] returning
@@ -82,6 +83,7 @@ module Make (B : S) : sig
         :  name:string
         -> inv:(Internal.test_case -> 'state -> unit B.t)
         -> ?always_check:bool
+        -> ?pause_faults:bool
         -> unit
         -> 'state t
 

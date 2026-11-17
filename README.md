@@ -3,7 +3,7 @@
 > [!IMPORTANT]
 > Hegel is in beta, and we'd love for you to try it and [report any feedback](https://github.com/hegeldev/hegel/issues/new). See https://hegel.dev/compatibility for details on what may still change.
 
-[Hegel](https://hegel.dev) is property-based testing, based on [Hypothesis](https://github.com/hypothesisworks/hypothesis): a native engine that does the generating, shrinking and bookkeeping, and thin frontends that give it an idiomatic surface in each language.
+[Hegel](https://hegel.dev) is a family of property-based testing libraries inspired by [Hypothesis](https://github.com/hypothesisworks/hypothesis). It provides a core library, libhegel, that implements the property-based testing engine, and frontends that use that library to provide high quality and idiomatic property-based testing libraries for a variety of languages.
 
 This is the Hegel monorepo that includes the engine and (currently only some of) our officially supported frontends.
 Specifically, right now it contains:
@@ -16,8 +16,9 @@ Specifically, right now it contains:
 | Hegel for TypeScript | [`frontends/typescript/`](frontends/typescript/) | The [`@hegeldev/hegel`](https://www.npmjs.com/package/@hegeldev/hegel) package, for Node, Bun, Deno and browsers. |
 | Hegel for C++ | [`frontends/cpp/`](frontends/cpp/) | The `hegel` CMake library, fetched from this repository with `FetchContent`. |
 | Hegel for Java | [`frontends/java/`](frontends/java/) | The [`dev.hegel:hegel`](https://central.sonatype.com/artifact/dev.hegel/hegel) (Java 22+) and [`dev.hegel:hegel-jna`](https://central.sonatype.com/artifact/dev.hegel/hegel-jna) (Java 17+) artifacts on Maven Central. |
+| Hegel for C# and F# | [`frontends/csharp/`](frontends/csharp/) | The [`Hegel`](https://www.nuget.org/packages/Hegel) NuGet package, for .NET 8 and later, and [`Hegel.FSharp`](https://www.nuget.org/packages/Hegel.FSharp) on top of it for F#. |
 | Hegel for OCaml | [`frontends/ocaml/`](frontends/ocaml/) | The [`hegel`](https://opam.ocaml.org/packages/hegel/) opam package, with its `ppx_hegel_generator` and `ppx_hegel_test` PPXes. |
 
-Each component is versioned and released independently; releases are tagged `<path>/<version>`, for example `libhegel/0.47.1`, `frontends/rust/0.50.1`, `frontends/python/0.1.0`, `frontends/typescript/0.4.10`, `frontends/cpp/0.13.1`, `frontends/java/0.10.2` or `frontends/ocaml/0.26.4`.
+Each component is versioned and released independently; releases are tagged `<path>/<version>`, for example `libhegel/0.47.1`, `frontends/rust/0.50.1`, `frontends/python/0.1.0`, `frontends/typescript/0.4.10`, `frontends/cpp/0.13.1`, `frontends/java/0.10.2`, `frontends/csharp/0.2.0` or `frontends/ocaml/0.26.4`.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) to get started.

@@ -1,5 +1,6 @@
 // A parenthesized #[invariant()] with no arguments is rejected: either
-// write a bare #[invariant] for a sampled invariant or pass `always_run`.
+// write a bare #[invariant] for a sampled invariant or pass `always_run`
+// or `pause_faults = true`.
 
 struct Machine;
 

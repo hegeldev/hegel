@@ -65,11 +65,15 @@ class Invariant:
     """An invariant of a state machine: ``apply(tc)`` checks it. An
     always-run invariant is checked after every step; otherwise the engine
     samples when to check it (it always runs on the initial and final
-    state)."""
+    state). With ``pause_faults`` set, fault injection is paused around
+    each check: inside `Antithesis <https://antithesis.com/>`_ the fuzzer
+    stops injecting faults while the invariant runs; elsewhere the flag
+    has no effect."""
 
     name: str
     apply: Callable[[TestCase], Any]
     always_run: bool = False
+    pause_faults: bool = False
 
 
 def _check_groups(name: str, groups: Iterable[str]) -> tuple[str, ...]:
@@ -120,9 +124,10 @@ class Machine:
     :meth:`max_concurrency` return the machine, so calls chain.
 
     With ``max_concurrency`` above 1 the machine runs concurrently, in
-    rounds. The engine draws a number of worker threads for the test case
-    in ``[min_concurrency, max_concurrency]``, weighted toward the maximum.
-    Each round, it picks one group of rules, every worker runs a short
+    rounds, on ``max_concurrency`` worker threads. The engine draws how
+    many of them run rules in ``[min_concurrency, max_concurrency]``,
+    weighted toward the maximum, and may redraw it between rounds.
+    Each round, it picks one group of rules, every active worker runs a short
     sequence of that group's rules against the shared model, and the
     invariants then run on the main thread. Rules in the same group may
     overlap; rules in different groups never do; a rule in several groups
@@ -191,6 +196,7 @@ class Machine:
         apply: Callable[[TestCase], Any] | None = None,
         *,
         always_run: bool = False,
+        pause_faults: bool = False,
     ) -> Any:
         """Add an invariant called ``name``, checked by ``apply(tc)``;
         usable as a decorator when ``apply`` is omitted.
@@ -198,14 +204,19 @@ class Machine:
         Every invariant runs on the initial and final state. Between steps
         each one runs with probability ``1 / steps``, keeping its expected
         cost constant as the step count grows, unless ``always_run`` is
-        set, in which case it runs after every step. A duplicate name is an
+        set, in which case it runs after every step. With ``pause_faults``
+        set, fault injection is paused for the duration of each check:
+        inside `Antithesis <https://antithesis.com/>`_ the fuzzer stops
+        injecting faults while the invariant runs, so it observes the
+        system under test without a fault landing in the middle of the
+        check; elsewhere the flag has no effect. A duplicate name is an
         :class:`~hegel.InvalidArgument`.
         """
 
         def add(fn: Callable[[TestCase], Any]) -> Callable[[TestCase], Any]:
             if any(i.name == name for i in self._invariants):
                 raise InvalidArgument(f"duplicate invariant name {name!r}")
-            self._invariants.append(Invariant(name, fn, bool(always_run)))
+            self._invariants.append(Invariant(name, fn, bool(always_run), bool(pause_faults)))
             return fn
 
         if apply is None:
@@ -280,10 +291,21 @@ def _check_invariants(
         if machine is not None and not machine.should_check_invariant(tc._handle, index):
             continue
         try:
-            inv.apply(tc._child(2))
+            _apply_invariant(tc, inv)
         except BaseException as exception:
             _note_trailer(tc, exception, f"Invariant {inv.name} failed:")
             raise
+
+
+def _apply_invariant(tc: TestCase, inv: Invariant) -> None:
+    if not inv.pause_faults:
+        inv.apply(tc._child(2))
+        return
+    tc._handle.pause_faults()
+    try:
+        inv.apply(tc._child(2))
+    finally:
+        tc._handle.unpause_faults()
 
 
 def _register_machine(
@@ -486,7 +508,6 @@ def _run_concurrent(
         tc, rule_specs, invariants, min_concurrency, max_concurrency, step_count
     )
     concurrency = machine.start(tc._handle)
-    tc.note(f"Concurrency level: {concurrency}")
     if invariants:
         tc.note("Checking invariants on the initial state.")
     _check_invariants(tc, invariants, None)
@@ -509,10 +530,15 @@ def _run_concurrent(
         thread.start()
     try:
         round_number = 0
-        while (group := machine.next_group(tc._handle)) is not None:
+        noted_level = None
+        while (round_ := machine.next_group(tc._handle)) is not None:
+            group, level = round_
             if not 0 <= group < len(group_names):  # nocov
                 raise InternalError(f"state_machine_next_group returned unknown group id {group}")
             round_number += 1
+            if level != noted_level:
+                tc.note(f"Concurrency level: {level}")
+                noted_level = level
             name = group_names[group]
             tc.note(f'---------------- Round {round_number}: group "{name}" ----------------')
             for worker, rounds in enumerate(round_queues):
@@ -593,7 +619,11 @@ def rule(
 
 
 def invariant(
-    fn: Callable[..., Any] | None = None, *, always_run: bool = False, name: str | None = None
+    fn: Callable[..., Any] | None = None,
+    *,
+    always_run: bool = False,
+    pause_faults: bool = False,
+    name: str | None = None,
 ) -> Any:
     """Mark a :class:`StateMachine` method as an invariant: a check of the
     machine's state that fails by raising. The method takes the test case:
@@ -601,15 +631,20 @@ def invariant(
 
     Every invariant runs on the initial and final state. Between steps
     each one runs with probability ``1 / steps``, unless
-    ``always_run=True``, in which case it runs after every step. Usable as
-    ``@hegel.invariant`` or ``@hegel.invariant(...)``; ``name`` replaces
-    the method name in the failure report.
+    ``always_run=True``, in which case it runs after every step. With
+    ``pause_faults=True``, fault injection is paused for the duration of
+    each check: inside `Antithesis <https://antithesis.com/>`_ the fuzzer
+    stops injecting faults while the invariant runs; elsewhere the flag
+    has no effect. Usable as ``@hegel.invariant`` or
+    ``@hegel.invariant(...)``; ``name`` replaces the method name in the
+    failure report.
     """
 
     def decorate(method: Callable[..., Any]) -> Callable[..., Any]:
         _check_step_method("invariant", method)
         method._hegel_invariant = {  # type: ignore[attr-defined]
             "always_run": bool(always_run),
+            "pause_faults": bool(pause_faults),
             "name": name or method.__name__,
         }
         return method
@@ -683,7 +718,12 @@ class StateMachine:
                 spec["name"], getattr(self, attr), groups=spec["groups"], weight=spec["weight"]
             )
         for attr, spec in self._invariants():
-            machine.invariant(spec["name"], getattr(self, attr), always_run=spec["always_run"])
+            machine.invariant(
+                spec["name"],
+                getattr(self, attr),
+                always_run=spec["always_run"],
+                pause_faults=spec["pause_faults"],
+            )
         machine.steps(self.steps)
         machine.min_concurrency(self.min_concurrency)
         machine.max_concurrency(self.max_concurrency)

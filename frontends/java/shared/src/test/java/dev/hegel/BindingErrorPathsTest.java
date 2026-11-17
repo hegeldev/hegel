@@ -63,12 +63,15 @@ class BindingErrorPathsTest {
         assertEquals(List.of("r"), fake.stateMachineRules);
         assertEquals(List.of("i"), fake.stateMachineInvariants);
         assertEquals(1, fake.startedStateMachines);
-        assertEquals(Abi.STATE_MACHINE_DONE, ds.stateMachineNextGroup(5));
+        assertEquals(Abi.STATE_MACHINE_DONE, ds.stateMachineNextGroup(5, new long[1]));
         assertEquals(Abi.STATE_MACHINE_DONE, ds.stateMachineNextRule(5, 2));
         ds.stateMachineRuleRejected(5, 2);
         assertEquals(List.of(2L), fake.nextRuleWorkers);
         assertEquals(List.of(2L), fake.rejectedWorkers);
         assertTrue(ds.stateMachineShouldCheckInvariant(5, 0));
+        ds.pauseFaults();
+        ds.unpauseFaults();
+        assertEquals(List.of("pause", "unpause"), fake.faultEvents);
         ds.stateMachineFree(5);
         assertEquals(1, fake.freedStateMachines);
     }
@@ -180,10 +183,14 @@ class BindingErrorPathsTest {
         assertThrows(StopTest.class, () -> ds.stateMachineAddRule(1, "r", 1.0, new long[] {0}));
         assertThrows(StopTest.class, () -> ds.stateMachineAddInvariant(1, "i", false));
         assertThrows(StopTest.class, () -> ds.stateMachineStart(1));
-        assertThrows(StopTest.class, () -> ds.stateMachineNextGroup(1));
+        assertThrows(StopTest.class, () -> ds.stateMachineNextGroup(1, new long[1]));
         assertThrows(StopTest.class, () -> ds.stateMachineNextRule(1, 0));
         assertThrows(StopTest.class, () -> ds.stateMachineRuleRejected(1, 0));
         assertThrows(StopTest.class, () -> ds.stateMachineShouldCheckInvariant(1, 0));
+        assertThrows(StopTest.class, () -> ds.pauseFaults());
+        // Unpausing is a no-op once aborted (used by the invariant-closing finally block).
+        ds.unpauseFaults();
+        assertEquals(List.of(), fake.faultEvents);
         // Freeing the machine is not a draw: it must still work once the case is aborted.
         ds.stateMachineFree(1);
         assertEquals(1, fake.freedStateMachines);
@@ -300,7 +307,7 @@ class BindingErrorPathsTest {
 
         FakeLibhegel group = new FakeLibhegel();
         group.stateMachineNextGroupRc = Abi.E_STOP_TEST;
-        assertThrows(StopTest.class, () -> source(group).stateMachineNextGroup(1));
+        assertThrows(StopTest.class, () -> source(group).stateMachineNextGroup(1, new long[1]));
 
         FakeLibhegel next = new FakeLibhegel();
         next.stateMachineNextRuleRc = Abi.E_STOP_TEST;
@@ -313,5 +320,17 @@ class BindingErrorPathsTest {
         FakeLibhegel check = new FakeLibhegel();
         check.stateMachineShouldCheckInvariantRc = Abi.E_STOP_TEST;
         assertThrows(StopTest.class, () -> source(check).stateMachineShouldCheckInvariant(1, 0));
+
+        FakeLibhegel pause = new FakeLibhegel();
+        pause.pauseFaultsRc = Abi.E_INVALID_HANDLE;
+        HegelException pauseError =
+                assertThrows(HegelException.class, () -> source(pause).pauseFaults());
+        assertTrue(pauseError.getMessage().startsWith("hegel_pause_faults failed"), pauseError.getMessage());
+
+        FakeLibhegel unpause = new FakeLibhegel();
+        unpause.unpauseFaultsRc = Abi.E_INVALID_HANDLE;
+        HegelException unpauseError =
+                assertThrows(HegelException.class, () -> source(unpause).unpauseFaults());
+        assertTrue(unpauseError.getMessage().startsWith("hegel_unpause_faults failed"), unpauseError.getMessage());
     }
 }

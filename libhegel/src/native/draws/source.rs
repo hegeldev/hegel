@@ -231,9 +231,11 @@ impl Draws for RngDraws<'_> {
             "Invalid range [{min_value:?}, {max_value:?}]"
         );
         let (lo, hi) = (i128::from(min_value), i128::from(max_value));
-        let narrow = is_narrow(lo, hi)
-            .then(|| self.narrow_ranges.get(lo, hi))
-            .transpose()?;
+        let narrow = if is_narrow(lo, hi) {
+            Some(self.narrow_ranges.get(lo, hi)?)
+        } else {
+            None
+        };
         let sample =
             biased_i64_sample(min_value, max_value, narrow.as_ref(), self.rng, self.params);
         Ok(sample?)

@@ -25,6 +25,7 @@ def test_default_settings_come_from_default_profile():
     settings = Settings()
     assert settings.database == ""
     assert settings.test_cases == 30
+    assert settings.suppress_health_check == frozenset({HealthCheck.too_slow})
 
 
 def test_overrides_apply_and_validate():

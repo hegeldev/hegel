@@ -48,6 +48,7 @@ let matches_model =
   S.Invariant.create
     ~name:"matches_model"
     ~always_check:true
+    ~pause_faults:true
     ~inv:(fun _tc s ->
       Counter.read s.counter
       >>| fun n -> if n <> s.model then failwithf "counter %d, model %d" n s.model ())

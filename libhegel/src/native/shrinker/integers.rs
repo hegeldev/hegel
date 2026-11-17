@@ -127,8 +127,8 @@ impl<'a> Shrinker<'a> {
                     i += 1;
                 } else {
                     let mut replacements: HashMap<usize, ChoiceValue> = HashMap::default();
-                    for j in i..i + k {
-                        replacements.insert(j, self.current_nodes[j].data.simplest_value()?);
+                    for (j, node) in self.current_nodes.iter().enumerate().skip(i).take(k) {
+                        replacements.insert(j, node.data.simplest_value()?);
                     }
                     self.replace(&replacements).await?;
                     i += k;

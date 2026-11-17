@@ -34,7 +34,10 @@ def output() -> Iterator[Output]:
 @pytest.fixture(autouse=True)
 def _quiet_default_profile() -> Iterator[None]:
     """Keep the test-suite's own runs away from the example database and
-    the engine's environment-dependent default profile."""
+    the engine's environment-dependent default profile. The profile
+    suppresses ``too_slow`` as the engine's ``ci`` profile does, so that a
+    stalled machine cannot fail a test; the tests of that check enable it
+    in their own settings."""
     hegel.Settings.register_profile(
         "hegel-tests",
         hegel.Settings.from_profile("development"),
@@ -44,6 +47,7 @@ def _quiet_default_profile() -> Iterator[None]:
         verbosity=hegel.Verbosity.normal,
         seed=None,
         derandomize=False,
+        suppress_health_check=[hegel.HealthCheck.too_slow],
     )
     hegel.Settings.set_default_profile("hegel-tests")
     yield

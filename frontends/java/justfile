@@ -32,6 +32,21 @@ test: build-libhegel
 test-only PATTERN: build-libhegel
     mvn -B test -Dtest='{{PATTERN}}' -Dsurefire.failIfNoSpecifiedTests=false
 
+# The SQLite bank example builds only under the sqlite-examples profile
+sqlite := "-P sqlite-examples -pl examples/sqlite_bank -Dhegel.version=" + `sed -n 's:.*<version>\(.*\)</version>.*:\1:p' pom.xml | head -1`
+
+# Build the SQLite bank example and run its workload. Arguments go to the
+# program, e.g. `just java::run-sqlite-bank --seed 1`.
+run-sqlite-bank *ARGS: build-libhegel
+    mvn -B -q {{sqlite}} -am -DskipTests package
+    java --enable-native-access=ALL-UNNAMED \
+        -cp "examples/sqlite_bank/target/classes:$(cat examples/sqlite_bank/target/classpath.txt)" \
+        dev.hegel.examples.sqlitebank.BankWorkload {{ARGS}}
+
+# Format check of the SQLite bank example, then one run of its workload.
+check-sqlite: && run-sqlite-bank
+    mvn -B -q {{sqlite}} spotless:check
+
 format:
     mvn -B spotless:apply
 

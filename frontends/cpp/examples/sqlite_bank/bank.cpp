@@ -392,12 +392,10 @@ namespace {
             ", " + std::to_string(workload.max_concurrency) + "]");
         Bank bank(workload.bank);
         hegel::stateful::run_concurrent(bank, tc, workload.min_concurrency,
-                                        workload.max_concurrency);
+                                        workload.max_concurrency,
+                                        {.step_count = steps_from_env()});
     }
 
 } // namespace
 
-HEGEL_MAIN(workload,
-           {.stateful_step_count = steps_from_env()})(hegel::TestCase& tc) {
-    run(tc, workload(tc));
-}
+HEGEL_MAIN(workload)(hegel::TestCase& tc) { run(tc, workload(tc)); }

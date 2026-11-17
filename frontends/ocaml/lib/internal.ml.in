@@ -541,6 +541,7 @@ type rule_info =
 type invariant_info =
   { name : string
   ; always_check : bool
+  ; pause_faults : bool
   }
 
 let new_state_machine_with_concurrency
@@ -664,6 +665,12 @@ let state_machine_should_check_invariant tc ~state_machine ~invariant_index =
 ;;
 
 let state_machine_free tc ~state_machine = Ffi.state_machine_free tc.context state_machine
+
+(** [pause_faults tc] pauses fault injection on [tc] until {!unpause_faults}. *)
+let pause_faults tc = Ffi.pause_faults tc.context tc.handle
+
+(** [unpause_faults tc] resumes the fault injection {!pause_faults} paused. *)
+let unpause_faults tc = Ffi.unpause_faults tc.context tc.handle
 
 (* ------------------------------------------------------------------ *)
 (* Settings translation                                                *)

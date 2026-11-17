@@ -28,5 +28,6 @@ just python::check                  # everything CI checks for this frontend
 ## Gotchas
 
 - The crate has no Rust tests and is excluded from the Rust coverage and minimal-versions runs; its tests are the pytest suite, which exercises every binding.
+- The default profile of both test suites (`tests/conftest.py`, `tests/hypothesis_port/conftest.py`) suppresses the `too_slow` health check, as the engine's `ci` profile does: it measures wall-clock time, so a stalled CI runner trips it on a test that did nothing slow. A test of `too_slow` itself enables it with `suppress_health_check=()`.
 - `_native.pyi` is the type stub for the extension; keep it in step with `src/` or mypy's view of the package drifts.
 - The extension is built with `pyo3/extension-module` only through maturin (`pyproject.toml`); plain `cargo test`/`cargo clippy` link against the interpreter instead, which is why `cargo test --workspace --all-features` excludes this crate.

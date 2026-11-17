@@ -1,0 +1,8 @@
+before the clone
+from the clone
+after the clone
+
+To reproduce this failure, pass its blob to hegel::test():
+    hegel::test(test_fn, settings, {"[blob]"})
+--- rethrown: boom
+

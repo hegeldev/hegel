@@ -913,6 +913,14 @@ pub struct HegelTestCase {
     local: Mutex<LocalState>,
 }
 
+impl Drop for HegelTestCase {
+    fn drop(&mut self) {
+        if let PrinterTarget::Slot(slot) = self.print_target {
+            self.family.printer.lock().release(slot);
+        }
+    }
+}
+
 /// The `worker` value of a handle attributed to no worker.
 const NO_WORKER: i64 = -1;
 
@@ -2901,13 +2909,15 @@ pub unsafe extern "C" fn hegel_test_case_clone(
         Ok(stream) => stream,
         Err(e) => return translate_ds_error(ctx, e),
     };
-    let print_target = match src.family.printer.lock().deferred(src.print_target) {
+    let mut printer = src.family.printer.lock();
+    let print_target = match printer.deferred(src.print_target) {
         Ok(slot) => PrinterTarget::Slot(slot),
         // The source's region is already dead (the document was read while
         // this branch of the family straggled): share the dead region, so
         // the clone's prints are no-ops like its parent's.
-        Err(_) => src.print_target,
+        Err(_) => share_target(&mut printer, src.print_target),
     };
+    drop(printer);
     let clone = handle_from_stream(
         Arc::clone(&src.family),
         Arc::from(stream),
@@ -2964,15 +2974,12 @@ pub unsafe extern "C" fn hegel_test_case_block(
         set_last_error(ctx, "hegel_test_case_block: out parameter is null");
         return HEGEL_E_INVALID_ARG;
     }
-    let print_target = match src
-        .family
-        .printer
-        .lock()
-        .block(src.print_target, size_arg(indent))
-    {
+    let mut printer = src.family.printer.lock();
+    let print_target = match printer.block(src.print_target, size_arg(indent)) {
         Ok(slot) => PrinterTarget::Slot(slot),
-        Err(_) => src.print_target,
+        Err(_) => share_target(&mut printer, src.print_target),
     };
+    drop(printer);
     let block = handle_from_stream(
         Arc::clone(&src.family),
         Arc::clone(&src.stream),
@@ -3023,6 +3030,15 @@ pub unsafe extern "C" fn hegel_test_case_set_worker(
     }
     tc.worker.store(worker_index, Ordering::Release);
     HEGEL_OK
+}
+
+/// Count one more handle writing through `target`, for a handle that
+/// shares the region of an existing one.
+fn share_target(printer: &mut Printer, target: PrinterTarget) -> PrinterTarget {
+    if let PrinterTarget::Slot(slot) = target {
+        printer.retain(slot);
+    }
+    target
 }
 
 /// Allocate a fresh family from a data source, reporting its completion to
@@ -4326,11 +4342,12 @@ unsafe fn state_machine_ref<'a>(
 /// `hegel_state_machine_start`, which seals the declaration and draws the
 /// concurrency level. Only then may rounds be driven.
 ///
-/// The engine draws the machine's concurrency level — the number of workers
-/// (typically worker threads) that will pull rules — in `[min_concurrency,
-/// max_concurrency]` when the machine starts, and `hegel_state_machine_start`
-/// reports it; the caller must run exactly that many workers. The engine
-/// owns the distribution, which is weighted toward `max_concurrency`
+/// The caller runs `max_concurrency` workers (typically worker threads),
+/// as reported by `hegel_state_machine_start`. The engine draws the
+/// machine's concurrency level — how many of those workers pull rules —
+/// in `[min_concurrency, max_concurrency]` when the machine starts and may
+/// redraw it between rounds; `hegel_state_machine_next_group` reports it.
+/// The engine owns the distribution, which is weighted toward `max_concurrency`
 /// (concurrency bugs need concurrency) rather than shrink-biased toward the
 /// minimum. Pass `min_concurrency == max_concurrency` to fix the level
 /// without consuming entropy — `1, 1` for a sequential machine.
@@ -4520,8 +4537,10 @@ pub unsafe extern "C" fn hegel_state_machine_add_invariant(
 }
 
 /// Seal a state machine's declared rules and invariants and draw its
-/// concurrency level, writing the level into `*out_concurrency`: the caller
-/// must run exactly that many workers, indexed `0 .. concurrency`. No rule
+/// concurrency level, writing `max_concurrency` into `*out_concurrency`: the
+/// caller must run exactly that many workers, indexed `0 .. concurrency`,
+/// for the whole test case. `hegel_state_machine_next_group` reports how
+/// many of them are active each round. No rule
 /// or invariant may be added afterwards, and no round may be driven
 /// before. Starting draws from the calling handle's stream: the
 /// concurrency level and each worker's swarm parameters are decided here,
@@ -4583,6 +4602,13 @@ pub const HEGEL_STATE_MACHINE_DONE: i64 = i64::MIN;
 /// rejects `HEGEL_STATE_MACHINE_DONE` as a group id so it stays
 /// unambiguous here.)
 ///
+/// When a new round has begun, also writes the round's concurrency level
+/// into `*out_concurrency`: that many workers, chosen by the engine, are
+/// handed rules this round, and the rest get `HEGEL_STATE_MACHINE_DONE`
+/// from `hegel_state_machine_next_rule`. Each round redraws, with
+/// probability 1/50, the level, the active workers, every
+/// worker's swarm parameters, and the test case's value distribution.
+///
 /// Call this on the root test-case handle (the handle used for
 /// hegel_new_state_machine) at every join point — after each worker's
 /// `hegel_state_machine_next_rule` stream is exhausted — including before the
@@ -4601,6 +4627,7 @@ pub unsafe extern "C" fn hegel_state_machine_next_group(
     tc: *mut HegelTestCase,
     state_machine: *mut HegelStateMachine,
     out_group_id: *mut i64,
+    out_concurrency: *mut i64,
 ) -> hegel_result_t {
     clear_last_error(ctx);
     let (tc, _guard) = match unsafe { tc_guard(ctx, "hegel_state_machine_next_group", tc) } {
@@ -4612,14 +4639,17 @@ pub unsafe extern "C" fn hegel_state_machine_next_group(
             Ok(m) => m,
             Err(rc) => return rc,
         };
-    if out_group_id.is_null() {
+    if out_group_id.is_null() || out_concurrency.is_null() {
         set_last_error(ctx, "hegel_state_machine_next_group: out parameter is null");
         return HEGEL_E_INVALID_ARG;
     }
     let mut machine = state_machine.machine.lock();
     match tc.stream.state_machine_next_group(&mut machine) {
         Ok(Some(group)) => {
-            unsafe { *out_group_id = group };
+            unsafe {
+                *out_group_id = group;
+                *out_concurrency = machine.concurrency();
+            }
             HEGEL_OK
         }
         Ok(None) => {
@@ -4635,8 +4665,8 @@ pub unsafe extern "C" fn hegel_state_machine_next_group(
 /// is always a rule belonging to the current concurrency group (see
 /// `hegel_state_machine_next_group`). Swarm testing is applied per worker:
 /// a random subset of rules is enabled (at least one per group) on the
-/// worker's first selection and selection is restricted to that subset for
-/// the rest of the test case.
+/// worker's first selection and selection is restricted to that subset
+/// until the machine re-randomizes (see `hegel_state_machine_next_group`).
 ///
 /// `tc` may be any handle of the machine's test-case family: the machine's
 /// state is family-wide, and the handle only determines which choice
@@ -4648,8 +4678,9 @@ pub unsafe extern "C" fn hegel_state_machine_next_group(
 /// stays with whoever drives `hegel_state_machine_next_group`.
 ///
 /// `worker_index` identifies the calling worker and must satisfy
-/// `0 <= worker_index < concurrency` (the level `hegel_state_machine_start`
-/// drew and wrote to `*out_concurrency`);
+/// `0 <= worker_index < concurrency` (the value `hegel_state_machine_start`
+/// wrote to `*out_concurrency`). A worker left out of the round's active
+/// set gets `HEGEL_STATE_MACHINE_DONE` without drawing anything;
 /// an index rather than the handle identifies the worker because a single
 /// OS thread could hold multiple test-case clones. Draws consult only
 /// per-worker and per-clone state, so draws on one worker don't affect
@@ -4811,6 +4842,70 @@ pub unsafe extern "C" fn hegel_state_machine_should_check_invariant(
             HEGEL_OK
         }
         Err(e) => translate_ds_error(ctx, e),
+    }
+}
+
+/// Pause fault injection for the duration of a check on this test case:
+/// inside [Antithesis](https://antithesis.com/), ask the fuzzer to stop
+/// injecting faults until the matching `hegel_unpause_faults` on the same
+/// handle. Frontends bracket each stateful invariant declared with
+/// `pause_faults` with this pair, so the invariant observes the system under
+/// test without a fault landing in the middle of the check.
+///
+/// Antithesis names its fault-control program in the
+/// `ANTITHESIS_FAULT_CONTROL` environment variable; this runs that program
+/// with `--pause` and waits for it. When the variable is unset, or names
+/// nothing that exists, nothing happens and the call succeeds, so a test
+/// declaring `pause_faults` runs the same outside Antithesis.
+///
+/// Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `tc`, or
+/// `HEGEL_E_INVALID_ARG` when the program exists but could not be run or
+/// exited with a non-zero status; `hegel_context_last_error` then names the
+/// program and what went wrong.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_pause_faults(
+    ctx: *mut HegelContext,
+    tc: *mut HegelTestCase,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    if unsafe { tc.as_ref() }.is_none() {
+        set_last_error(ctx, "hegel_pause_faults: test case pointer is null");
+        return HEGEL_E_INVALID_HANDLE;
+    }
+    match crate::antithesis::pause_faults() {
+        Ok(()) => HEGEL_OK,
+        Err(message) => {
+            set_last_error(ctx, &format!("hegel_pause_faults: {message}"));
+            HEGEL_E_INVALID_ARG
+        }
+    }
+}
+
+/// Resume fault injection paused by `hegel_pause_faults` on this test case,
+/// by running the `ANTITHESIS_FAULT_CONTROL` program with `--unpause`. Like
+/// pausing, does nothing when the variable is unset or names nothing that
+/// exists.
+///
+/// Returns `HEGEL_OK`, `HEGEL_E_INVALID_HANDLE` for a NULL `tc`, or
+/// `HEGEL_E_INVALID_ARG` when the program exists but could not be run or
+/// exited with a non-zero status; `hegel_context_last_error` then names the
+/// program and what went wrong.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_unpause_faults(
+    ctx: *mut HegelContext,
+    tc: *mut HegelTestCase,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    if unsafe { tc.as_ref() }.is_none() {
+        set_last_error(ctx, "hegel_unpause_faults: test case pointer is null");
+        return HEGEL_E_INVALID_HANDLE;
+    }
+    match crate::antithesis::unpause_faults() {
+        Ok(()) => HEGEL_OK,
+        Err(message) => {
+            set_last_error(ctx, &format!("hegel_unpause_faults: {message}"));
+            HEGEL_E_INVALID_ARG
+        }
     }
 }
 
@@ -6713,6 +6808,14 @@ pub struct HegelPrinter {
     attribution: Option<Arc<Attribution>>,
 }
 
+impl Drop for HegelPrinter {
+    fn drop(&mut self) {
+        if let PrinterTarget::Slot(slot) = self.target {
+            self.inner.lock().release(slot);
+        }
+    }
+}
+
 impl HegelPrinter {
     /// Run a content-recording operation on this handle's target, first
     /// stamping the line it starts with the worker prefix when the handle
@@ -7610,8 +7713,8 @@ pub unsafe extern "C" fn hegel_test_case_printer(
     }
     let options = unsafe { options.as_ref() };
     let inner = Arc::clone(&tc.family.printer);
+    let mut printer = inner.lock();
     if let Some(requested) = options.and_then(|o| o.max_width) {
-        let mut printer = inner.lock();
         if !tc.family.printer_width_configured.load(Ordering::Acquire) {
             printer.set_max_width(size_arg(requested));
             tc.family
@@ -7629,6 +7732,8 @@ pub unsafe extern "C" fn hegel_test_case_printer(
             return HEGEL_E_INVALID_ARG;
         }
     }
+    share_target(&mut printer, tc.print_target);
+    drop(printer);
     let handle = HegelPrinter {
         inner,
         target: tc.print_target,

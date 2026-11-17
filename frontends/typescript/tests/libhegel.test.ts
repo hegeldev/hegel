@@ -246,6 +246,8 @@ function fakeBindings(overrides: Partial<Bindings>): Bindings {
     stateMachineNextRule: () => 0,
     stateMachineRuleRejected: () => 0,
     stateMachineShouldCheckInvariant: () => 0,
+    pauseFaults: () => 0,
+    unpauseFaults: () => 0,
     stateMachineFree: noop,
     runResultStatus: () => RunStatus.PASSED,
     runResultError: () => null,
@@ -528,6 +530,8 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
     expect(lib.stateMachineStart(h, h, h)).toBe(0);
     lib.stateMachineRuleRejected(h, h, h, 0);
     expect(lib.stateMachineShouldCheckInvariant(h, h, h, 0)).toBe(false);
+    lib.pauseFaults(h, h);
+    lib.unpauseFaults(h, h);
     lib.freeRunResult(lib.runResult(h, h));
     lib.freeFailure(lib.failure(h, 0));
     lib.freeRun(lib.runStart(h, h));
@@ -680,6 +684,27 @@ describe("Libhegel against the real library", () => {
     expect(res.status).toBe(RunStatus.FAILED);
     expect(res.failureOrigin).toBe("test:integerRun");
     expect(typeof res.reproductionBlob).toBe("string");
+  });
+
+  it("pauses and unpauses faults on a live test case, and refuses a freed one", () => {
+    const ctx = lib.newContext();
+    const settings = lib.newSettings(ctx);
+    lib.setDatabase(ctx, settings, "");
+    lib.setVerbosity(settings, NativeVerbosity.QUIET);
+    const run = lib.runStart(ctx, settings);
+    const tc = lib.nextTestCase(ctx, run)!;
+    try {
+      lib.pauseFaults(ctx, tc);
+      lib.unpauseFaults(ctx, tc);
+      lib.markComplete(ctx, tc, Status.VALID, null);
+    } finally {
+      lib.freeTestCase(tc);
+      lib.freeRun(run);
+      lib.freeSettings(settings);
+      lib.freeContext(ctx);
+    }
+    expect(() => lib.pauseFaults(ctx, tc)).toThrow("Foreign, freed or invalid engine handle");
+    expect(() => lib.unpauseFaults(ctx, tc)).toThrow("Foreign, freed or invalid engine handle");
   });
 
   it("throws a LibhegelError when the default settings profile cannot be resolved", () => {

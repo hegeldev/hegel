@@ -2,8 +2,10 @@
 # workspace-wide checks, calls each component's reusable workflow
 # (libhegel.yml, frontend-rust.yml, frontend-python.yml,
 # frontend-typescript.yml, frontend-cpp.yml, frontend-java.yml,
-# frontend-ocaml.yml, website.yml) only when that component is affected, and —
-# on a push to main — releases whatever has a release file pending.
+# frontend-csharp.yml, frontend-ocaml.yml, website.yml) only when that component
+# is affected, and — on a push to main — releases whatever has a release file
+# pending. The OCaml frontend is the exception: ocaml-release.yml releases it
+# weekly.
 #
 # Adding a frontend: add a `frontends/<lang>/**` filter below, a
 # `.github/workflows/frontend-<lang>.yml` reusable workflow, a job here that
@@ -37,6 +39,7 @@ jobs:
   changes:
     name: changes
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
@@ -47,6 +50,7 @@ jobs:
       typescript: ${{ (github.event_name == 'push' && steps.code.outputs.code == 'true') || steps.filter.outputs.typescript == 'true' }}
       cpp: ${{ (github.event_name == 'push' && steps.code.outputs.code == 'true') || steps.filter.outputs.cpp == 'true' }}
       java: ${{ (github.event_name == 'push' && steps.code.outputs.code == 'true') || steps.filter.outputs.java == 'true' }}
+      csharp: ${{ (github.event_name == 'push' && steps.code.outputs.code == 'true') || steps.filter.outputs.csharp == 'true' }}
       ocaml: ${{ (github.event_name == 'push' && steps.code.outputs.code == 'true') || steps.filter.outputs.ocaml == 'true' }}
       go: ${{ (github.event_name == 'push' && steps.code.outputs.code == 'true') || steps.filter.outputs.go == 'true' }}
       website: ${{ github.event_name == 'push' || steps.filter.outputs.website == 'true' }}
@@ -124,6 +128,10 @@ jobs:
               - *shared
               - 'libhegel/**'
               - 'frontends/java/**'
+            csharp:
+              - *shared
+              - 'libhegel/**'
+              - 'frontends/csharp/**'
             ocaml:
               - *shared
               - 'libhegel/**'
@@ -144,6 +152,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -174,6 +183,11 @@ jobs:
           distribution: temurin
           java-version: "25"
           cache: maven
+      # The C# frontend's lints (dotnet format, the analyzers with warnings
+      # as errors) need the .NET SDK.
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: "10.0.x"
       # The OCaml frontend's lints (dune build @fmt, the generated opam files,
       # opam lint) run from an opam switch.
       - uses: ./.github/actions/setup-opam
@@ -249,6 +263,13 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/frontend-java.yml
+  csharp:
+    name: csharp
+    needs: changes
+    if: needs.changes.outputs.csharp == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/frontend-csharp.yml
   ocaml:
     name: ocaml
     needs: changes
@@ -273,11 +294,15 @@ jobs:
     uses: ./.github/workflows/website.yml
 
   # Test with the minimal versions of every dependency in the workspace.
+  # `ubuntu-8-core` is an org larger runner (Settings → Actions → Runners):
+  # this and `coverage` are the longest jobs in a run, and larger runners
+  # don't count against the plan's cap on concurrent standard-runner jobs.
   test-minimal-versions:
     name: test-minimal-versions
     needs: changes
     if: needs.changes.outputs.rust == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-8-core
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -297,7 +322,8 @@ jobs:
     name: coverage
     needs: changes
     if: needs.changes.outputs.rust == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-8-core
+    timeout-minutes: 45
     permissions:
       contents: write  # needed for ratchet auto-update
       pull-requests: write  # needed for creating PRs on main
@@ -375,6 +401,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.cpp == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -395,8 +422,9 @@ jobs:
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [changes, lint, libhegel, rust, python, typescript, cpp, java, ocaml, go, website, test-minimal-versions, coverage, nix]
+    needs: [changes, lint, libhegel, rust, python, typescript, cpp, java, csharp, ocaml, go, website, test-minimal-versions, coverage, nix]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions: {}
     steps:
       - name: Check dependency results
@@ -415,8 +443,9 @@ jobs:
     # job evaluate its condition at all when a dependency was skipped. A push
     # confined to website/ tested nothing it could release.
     if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.changes.outputs.code == 'true' }}
-    needs: [changes, lint, libhegel, rust, python, typescript, cpp, java, ocaml, go, website, test-minimal-versions, coverage, nix]
+    needs: [changes, lint, libhegel, rust, python, typescript, cpp, java, csharp, ocaml, go, website, test-minimal-versions, coverage, nix]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: write
       # id-token: "enables the workflow to request and use an OIDC token from GitHub's OIDC provider".
@@ -431,12 +460,14 @@ jobs:
     # builds, `typescript_released` / `typescript_tag` for the npm
     # publish, `cpp_released` / `cpp_tag` for the C++ docs push,
     # `java_released` / `java_tag` for the Maven Central publish and
-    # `ocaml_released` / `ocaml_tag` for the opam source tarball. Each
+    # `csharp_released` / `csharp_tag` for the NuGet publish and the
+    # .NET docs push. Each
     # is read off the tags release.py left on the release
     # commit, so a frontend dragged along by a libhegel release counts too.
     # The Go frontend is tagged on a commit of its own (release-go), so
     # release.py reports `go_tag` instead, and `commit` is the release commit
-    # that commit builds on.
+    # that commit builds on. `source_tags` are the frontend tags on the
+    # release commit, separated by spaces, for release-source-archives.
     outputs:
       c_released: ${{ steps.released.outputs.libhegel_tag != '' }}
       version: ${{ steps.released.outputs.libhegel_version }}
@@ -449,11 +480,12 @@ jobs:
       cpp_tag: ${{ steps.released.outputs.cpp_tag }}
       java_released: ${{ steps.released.outputs.java_tag != '' }}
       java_tag: ${{ steps.released.outputs.java_tag }}
-      ocaml_released: ${{ steps.released.outputs.ocaml_tag != '' }}
-      ocaml_tag: ${{ steps.released.outputs.ocaml_tag }}
+      csharp_released: ${{ steps.released.outputs.csharp_tag != '' }}
+      csharp_tag: ${{ steps.released.outputs.csharp_tag }}
       go_released: ${{ steps.released.outputs.go_tag != '' }}
       go_tag: ${{ steps.released.outputs.go_tag }}
       commit: ${{ steps.release.outputs.commit }}
+      source_tags: ${{ steps.released.outputs.source_tags }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -520,8 +552,8 @@ jobs:
           typescript_tag=$(git tag --points-at HEAD --list 'frontends/typescript/*')
           cpp_tag=$(git tag --points-at HEAD --list 'frontends/cpp/*')
           java_tag=$(git tag --points-at HEAD --list 'frontends/java/*')
-          ocaml_tag=$(git tag --points-at HEAD --list 'frontends/ocaml/*')
-          if [ -z "$libhegel_tag$rust_tag$python_tag$typescript_tag$cpp_tag$java_tag$ocaml_tag$GO_TAG" ]; then
+          csharp_tag=$(git tag --points-at HEAD --list 'frontends/csharp/*')
+          if [ -z "$libhegel_tag$rust_tag$python_tag$typescript_tag$cpp_tag$java_tag$csharp_tag$GO_TAG" ]; then
             echo "release.py left no release tag on the release commit" >&2
             exit 1
           fi
@@ -534,8 +566,9 @@ jobs:
             echo "typescript_tag=$typescript_tag"
             echo "cpp_tag=$cpp_tag"
             echo "java_tag=$java_tag"
-            echo "ocaml_tag=$ocaml_tag"
+            echo "csharp_tag=$csharp_tag"
             echo "go_tag=$GO_TAG"
+            echo "source_tags=$(xargs <<< "$rust_tag $python_tag $typescript_tag $cpp_tag $java_tag $csharp_tag")"
           } >> "$GITHUB_OUTPUT"
 
       - name: Authenticate with crates.io
@@ -597,6 +630,48 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
 
+  # A GitHub release on the tag of each frontend released, holding its source
+  # archive: `hegel-<frontend>-<version>.tar.gz`, the monorepo at the tag cut
+  # down to the frontend, libhegel and the Cargo workspace the engine builds
+  # in, with a `.sha256` beside it. The frontend builds from it as from a
+  # checkout, which each frontend workflow's `source-archive` job tests on
+  # every change. GitHub's own archive of a tag is the whole monorepo with the
+  # website's Git LFS objects, which it generates on demand and often fails
+  # to finish serving; a release asset is a stored file with a stable
+  # checksum, which is what a package registry wants to point at. The archive
+  # is source only, so it waits for no publish job. The Go and OCaml
+  # frontends, whose tags are not on the release commit of a push, attach
+  # theirs in release-go and ocaml-release.yml.
+  release-source-archives:
+    name: release-source-archives
+    if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.source_tags != '' }}
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          ref: ${{ needs.release.outputs.commit }}
+      # cargo prunes the archive's Cargo.lock.
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Publish the source archives
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAGS: ${{ needs.release.outputs.source_tags }}
+        run: |
+          set -euo pipefail
+          for tag in $TAGS; do
+            git fetch --quiet --depth=1 origin "refs/tags/$tag:refs/tags/$tag"
+            python .github/scripts/release.py publish-source-archive "$tag" "${RUNNER_TEMP}/source-archives"
+          done
+
   # Cross-platform shared and static library builds for libhegel. Triggers
   # after the `release` job has tagged a new version; each matrix entry builds
   # for one Go-style (GOOS, GOARCH) target, gives both libraries stable release
@@ -638,6 +713,7 @@ jobs:
           # windows-latest ships the toolchain.
           - { platform: windows-arm64, runner: windows-latest,   target: aarch64-pc-windows-msvc,     goos: windows, goarch: arm64, shared_ext: dll,   static_ext: lib }
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     env:
       VERSION: ${{ needs.release.outputs.version }}
       TAG: ${{ needs.release.outputs.libhegel_tag }}
@@ -745,6 +821,7 @@ jobs:
     if: github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.outputs.c_released == 'true'
     needs: release
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: write
     env:
@@ -792,6 +869,7 @@ jobs:
     if: github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.outputs.c_released == 'true'
     needs: [release, release-binaries, release-wasm]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # `contents: write` (not just read) so this job can both view the draft
     # release — drafts are invisible to read-only tokens — and publish it
     # once every expected asset is present.
@@ -869,6 +947,7 @@ jobs:
           - { platform: darwin-arm64,  runner: macos-latest }
           - { platform: windows-amd64, runner: windows-latest }
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     steps:
       - name: Checkout release commit
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -891,6 +970,7 @@ jobs:
     if: github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.outputs.python_released == 'true'
     needs: release
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -922,6 +1002,7 @@ jobs:
     if: github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.outputs.python_released == 'true'
     needs: [release, release-python-wheels, release-python-sdist]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       id-token: write
     steps:
@@ -950,6 +1031,7 @@ jobs:
     if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.typescript_released == 'true' && (needs.release.outputs.c_released != 'true' || needs.release-binaries-verify.result == 'success') }}
     needs: [release, release-binaries-verify]
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
       id-token: write
@@ -982,6 +1064,7 @@ jobs:
     if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.typescript_released == 'true' }}
     needs: release
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # The push to main uses the app token below, not GITHUB_TOKEN.
     permissions:
       contents: read
@@ -1033,6 +1116,7 @@ jobs:
     if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.cpp_released == 'true' }}
     needs: release
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # The push to main uses the app token below, not GITHUB_TOKEN.
     permissions:
       contents: read
@@ -1083,6 +1167,7 @@ jobs:
     if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.java_released == 'true' && (needs.release.outputs.c_released != 'true' || needs.release-binaries-verify.result == 'success') }}
     needs: [release, release-binaries-verify]
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     permissions:
       contents: read
     steps:
@@ -1134,104 +1219,57 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
-  # The OCaml frontend: the opam source tarball — the frontends/ocaml subtree
-  # plus a `prebuilt/` directory holding the Linux amd64/arm64 and macOS
-  # arm64 libhegel libraries of the engine version in libhegel/Cargo.toml
-  # (from that libhegel GitHub release, sha256-verified) and the dune rules
-  # (.github/ocaml/prebuilt.dune) that install the host's one into the
-  # package's `libhegel` dune-site, so `opam install hegel` ships its engine.
-  # The tarball is attached to a GitHub release on the frontends/ocaml tag,
-  # which is where opam-repository fetches it from: publishing there is the
-  # manual `ocaml-opam-release.yml` workflow. When libhegel released in the
-  # same run its binaries are only on the release once
-  # `release-binaries-verify` has published it, so this job waits for that;
-  # a frontend-only release bundles the already-published engine release.
-  release-ocaml:
-    name: release-ocaml
-    if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.ocaml_released == 'true' && (needs.release.outputs.c_released != 'true' || needs.release-binaries-verify.result == 'success') }}
+  # The C# frontend: the `Hegel` NuGet package, bundling every platform's
+  # libhegel shared library downloaded from the GitHub release of the engine
+  # version in libhegel/Cargo.toml, and the `Hegel.FSharp` package over it. When libhegel released in the same run
+  # those binaries are only on the release once `release-binaries-verify`
+  # has published it, so this job waits for that; a frontend-only release
+  # bundles the already-published engine release and needs no wait. The
+  # packages are pushed to nuget.org with a short-lived API key obtained
+  # through NuGet trusted publishing (`.github/scripts/publish_csharp.py`).
+  release-csharp:
+    name: release-csharp
+    if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.csharp_released == 'true' && (needs.release.outputs.c_released != 'true' || needs.release-binaries-verify.result == 'success') }}
     needs: [release, release-binaries-verify]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
-      contents: write
-    env:
-      TAG: ${{ needs.release.outputs.ocaml_tag }}
-      PREBUILT_ASSETS: libhegel-linux-amd64.so libhegel-linux-arm64.so libhegel-darwin-arm64.dylib
+      contents: read
+      # NuGet trusted publishing exchanges the workflow's OIDC token for a
+      # short-lived API key.
+      id-token: write
     steps:
       - name: Checkout release commit
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-          fetch-depth: 0
-          ref: refs/tags/${{ needs.release.outputs.ocaml_tag }}
-      - name: Build the bundled source archive
-        id: archive
+          ref: refs/tags/${{ needs.release.outputs.csharp_tag }}
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: "10.0.x"
+      - name: Log in to NuGet
+        id: nuget-login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        with:
+          # The nuget.org account whose trusted publishing policy names this
+          # repository and workflow.
+          user: ${{ vars.NUGET_USER }}
+      - name: Publish to NuGet
         env:
-          REPOSITORY: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          VERSION="${TAG#frontends/ocaml/}"
-          LIBHEGEL_VERSION=$(grep '^version' libhegel/Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
-          URL_BASE="https://github.com/${REPOSITORY}/releases/download/libhegel/${LIBHEGEL_VERSION}"
-          STAGE_DIR="hegel-${VERSION}"
-          STAGE="${RUNNER_TEMP}/${STAGE_DIR}"
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+        run: python3 .github/scripts/publish_csharp.py
 
-          # The frontend's clean source tree at the tag (tracked files only).
-          mkdir -p "$STAGE"
-          git archive --format=tar "HEAD:frontends/ocaml" | tar -x -C "$STAGE"
-
-          # Download + checksum-verify each platform's libhegel into prebuilt/,
-          # then drop in the dune rules that select & install the matching one.
-          mkdir -p "$STAGE/prebuilt"
-          for asset in $PREBUILT_ASSETS; do
-            curl -fsSL -o "$STAGE/prebuilt/$asset" "$URL_BASE/$asset"
-            curl -fsSL -o "${RUNNER_TEMP}/$asset.sha256" "$URL_BASE/$asset.sha256"
-            WANT=$(awk '{print $1}' "${RUNNER_TEMP}/$asset.sha256")
-            echo "${WANT}  $STAGE/prebuilt/$asset" | sha256sum -c -
-          done
-          cp .github/ocaml/prebuilt.dune "$STAGE/prebuilt/dune"
-
-          ASSET_NAME="hegel-${VERSION}-opam.tar.gz"
-          TARBALL="${RUNNER_TEMP}/${ASSET_NAME}"
-          tar -C "${RUNNER_TEMP}" -czf "$TARBALL" "$STAGE_DIR"
-
-          # The release notes are the version's changelog entry.
-          awk -v version="$VERSION" '
-            /^## / { printing = ($2 == version) ; next }
-            printing { print }
-          ' frontends/ocaml/CHANGELOG.md > "${RUNNER_TEMP}/notes.md"
-
-          {
-            echo "version=$VERSION"
-            echo "tarball=$TARBALL"
-            echo "notes=${RUNNER_TEMP}/notes.md"
-          } >> "$GITHUB_OUTPUT"
-      - name: Create the GitHub release with the archive attached
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.archive.outputs.version }}
-          TARBALL: ${{ steps.archive.outputs.tarball }}
-          NOTES: ${{ steps.archive.outputs.notes }}
-        run: |
-          set -euo pipefail
-          # Assets must land in a *draft* release: GitHub's immutable releases
-          # lock a release's assets once it is published. `--clobber` makes
-          # re-runs idempotent.
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" \
-              --draft \
-              --title "Hegel for OCaml v${VERSION}" \
-              --notes-file "$NOTES"
-          fi
-          gh release upload "$TAG" "$TARBALL" --clobber
-          gh release edit "$TAG" --draft=false
-
-  # The OCaml API reference, committed to website/public/ocaml on main
-  # (served at hegel.dev/ocaml) for every OCaml release.
-  release-ocaml-docs:
-    name: release-ocaml-docs
-    if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.ocaml_released == 'true' }}
+  # The .NET API references (DocFX for `Hegel` and `Hegel.Xunit`, fsdocs for
+  # `Hegel.FSharp`), committed to website/public/csharp and
+  # website/public/fsharp on main (served at hegel.dev/csharp and
+  # hegel.dev/fsharp) for every .NET release. nuget.org hosts no API
+  # reference, so the site does.
+  release-csharp-docs:
+    name: release-csharp-docs
+    if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.csharp_released == 'true' }}
     needs: release
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # The push to main uses the app token below, not GITHUB_TOKEN.
     permissions:
       contents: read
@@ -1248,19 +1286,15 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-          ref: refs/tags/${{ needs.release.outputs.ocaml_tag }}
+          ref: refs/tags/${{ needs.release.outputs.csharp_tag }}
       - uses: ./.github/actions/install-tools
         with:
           tools: just
-      - uses: ./.github/actions/setup-opam
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
-          cache-key: opam-${{ runner.os }}-5.2.1-with-doc-${{ hashFiles('frontends/ocaml/*.opam') }}
-          cache-restore-keys: |
-            opam-${{ runner.os }}-5.2.1-with-doc-
-          deps-flags: --with-doc
-          packages: core async
+          dotnet-version: "10.0.x"
       - name: Build the documentation
-        run: just ocaml::check-docs
+        run: just csharp::check-docs
       # Checked out only now so that no build above sees a second copy of
       # the repository.
       - name: Checkout main to publish into # zizmor: ignore[artipacked]
@@ -1273,8 +1307,7 @@ jobs:
         env:
           HEGEL_RELEASE_APP_ID: ${{ vars.HEGEL_RELEASE_APP_ID }}
           HEGEL_RELEASE_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
-        run: python3 .github/scripts/push_ocaml_docs.py
-
+        run: python3 .github/scripts/push_csharp_docs.py
 
   # The Go frontend's release. A Go module version is the tree its tag names,
   # and the module embeds the libhegel binaries, which only exist once
@@ -1284,12 +1317,14 @@ jobs:
   # commit with internal/libhegel/libs/ filled in, never pushed to a branch.
   # First the suite runs against those embedded binaries on each OS with a
   # runner; then release-go makes the commit, pushes its LFS objects and the
-  # tag, and creates the GitHub release with the changelog entry as notes.
+  # tag, and creates the GitHub release with the changelog entry as notes and
+  # the module's source archive attached.
   release-go-verify:
     name: release-go-verify (${{ matrix.os }})
     if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.go_released == 'true' && (needs.release.outputs.c_released != 'true' || needs.release-binaries-verify.result == 'success') }}
     needs: [release, release-binaries-verify]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     permissions:
       contents: read
     strategy:
@@ -1326,6 +1361,7 @@ jobs:
     if: ${{ !cancelled() && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.release.result == 'success' && needs.release.outputs.go_released == 'true' && needs.release-go-verify.result == 'success' }}
     needs: [release, release-go-verify]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: write
     env:
@@ -1389,18 +1425,24 @@ jobs:
           { printf 'Release %s\n\n' "$TAG"; cat "$NOTES"; } | git commit --quiet --file=-
           git tag "$TAG"
           git push origin "refs/tags/$TAG"
+      # cargo prunes the archive's Cargo.lock.
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      # The release carries the module's source archive (see
+      # release-source-archives), embedded binaries included: they are Git
+      # LFS files, so the tag's objects must be here for `git archive` to
+      # write their contents, which on a re-run means fetching them.
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.notes.outputs.version }}
-          NOTES: ${{ steps.notes.outputs.notes }}
         run: |
           set -euo pipefail
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --verify-tag \
-              --title "Hegel for Go v${VERSION}" \
-              --notes-file "$NOTES"
-          fi
+          git lfs install --local
+          git fetch --quiet --depth=1 origin "refs/tags/$TAG:refs/tags/$TAG"
+          git lfs fetch origin "refs/tags/$TAG"
+          python .github/scripts/release.py publish-source-archive "$TAG" "${RUNNER_TEMP}/source-archives"
       # Ask the public module proxy for the new version so it indexes it
       # (https://go.dev/doc/modules/publishing), once the GitHub release exists.
       - name: Update the Go module proxy

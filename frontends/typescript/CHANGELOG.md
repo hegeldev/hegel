@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.5.8 - 2026-11-16
+
+This release updates the bundled libhegel engine to 0.51.6.
+
+## 0.5.7 - 2026-11-13
+
+This patch adds a `pauseFaults` option to the invariants of a `stateful.StateMachine`, alongside `alwaysCheck`. An invariant declared with `{ check, pauseFaults: true }` asks the engine to pause fault injection while it runs, so that inside [Antithesis](https://antithesis.com/) no fault lands in the middle of the check; faults resume as soon as the check returns or throws.
+
+```ts
+const machine: hegel.stateful.StateMachine<Cluster> = {
+  rules: { ... },
+  invariants: {
+    replicasAgree: {
+      pauseFaults: true,
+      check: async (_tc, cluster) => {
+        expect(await cluster.replicaStates()).toSatisfy(allEqual);
+      },
+    },
+  },
+};
+```
+
+The option is accepted on every host; outside Antithesis it has no effect.
+
+## 0.5.6 - 2026-11-13
+
+This release updates the bundled libhegel engine to 0.51.4.
+
+## 0.5.5 - 2026-11-13
+
+This release updates the bundled libhegel engine to 0.51.3.
+
+## 0.5.4 - 2026-11-13
+
+This release updates the bundled libhegel engine to 0.51.2.
+
+## 0.5.3 - 2026-11-10
+
+This release updates the bundled libhegel engine to 0.51.1.
+
+## 0.5.2 - 2026-11-09
+
+This patch lets a long state-machine run explore more than one configuration. Between steps, a state machine now occasionally redraws its value distribution and which of its rules are enabled. Previously these were fixed for the whole test case, so a single long-running test case kept one configuration for its whole run.
+
 ## 0.5.1 - 2026-11-03
 
 This release updates the bundled libhegel engine to 0.50.0.

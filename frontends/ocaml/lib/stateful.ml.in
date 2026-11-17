@@ -87,10 +87,16 @@ module Invariant = struct
     { name : string
     ; inv : Internal.test_case -> 'state -> unit
     ; always_check : bool
+    ; pause_faults : bool
     }
 
-  let create ~name ~inv ?(always_check = false) () = { name; inv; always_check }
+  let create ~name ~inv ?(always_check = false) ?(pause_faults = false) () =
+    { name; inv; always_check; pause_faults }
+  ;;
+
   let name invariant = invariant.name
+  let always_check invariant = invariant.always_check
+  let pause_faults invariant = invariant.pause_faults
 end
 
 let run_rules tc ~state_machine ~worker_index LOCAL_CTX ~heading ~rule =
@@ -123,6 +129,7 @@ type rule_info =
 type invariant_info = Internal.invariant_info =
   { name : string
   ; always_check : bool
+  ; pause_faults : bool
   }
 
 let unique_groups rules =
@@ -149,7 +156,10 @@ let to_engine_rules rules names =
 let to_inv_record invariants =
   List.map
     (fun (inv : _ Invariant.t) : invariant_info ->
-       { name = inv.name; always_check = inv.always_check })
+       { name = inv.name
+       ; always_check = inv.always_check
+       ; pause_faults = inv.pause_faults
+       })
     invariants
 ;;
 
@@ -269,13 +279,15 @@ let run_machine
                 ~state_machine
                 ~invariant_index:i
          then (
+           if invariant.pause_faults then Internal.pause_faults tc;
            match
              if Internal.should_print tc
              then Internal.with_block tc ~indent:2 (fun tc -> check_invariant i tc)
              else check_invariant i tc
            with
-           | () -> ()
+           | () -> if invariant.pause_faults then Internal.unpause_faults tc
            | exception e ->
+             if invariant.pause_faults then Internal.unpause_faults tc;
              Internal.note tc (Printf.sprintf "Invariant %s violated %s." invariant.name where);
              raise e))
       0
@@ -284,8 +296,6 @@ let run_machine
   (* Can't use Fun.protect because its body must be a global closure *)
   let free () = Internal.state_machine_free tc ~state_machine in
   let run_test () =
-    if num_workers > 1
-    then Internal.note tc (Printf.sprintf "Concurrency level: %d" num_workers);
     print_state ();
     check_invariants ~where:"in the initial state" ~sample:false;
     run_steps ~state_machine ~num_workers ~print_state ~check_invariants;
@@ -304,7 +314,7 @@ let run_internal ~init ~rules ~invariants ?sexp_of_state ?(step_count = 50) tc =
       Internal.start_span ~label:Generators.Private.Labels.stateful_rule tc;
       match Internal.state_machine_next_group tc ~state_machine with
       | None -> Internal.stop_span tc
-      | Some _group ->
+      | Some _ ->
         let step = steps_attempted + 1 in
         let rejected =
           match
@@ -388,10 +398,12 @@ let run_concurrent_core
   let group_names = unique_groups rules in
   let run_steps ~state_machine ~num_workers ~print_state ~check_invariants:LOCAL(check_invariants) =
     (* Local closures are passed down rather than captured. *)
-    let rec loop LOCAL(run_round) LOCAL(check_invariants) round =
+    let rec loop LOCAL(run_round) LOCAL(check_invariants) round noted_level =
       match Internal.state_machine_next_group tc ~state_machine with
       | None -> ()
-      | Some group ->
+      | Some (group, level) ->
+        if noted_level <> Some level
+        then Internal.note tc (Printf.sprintf "Concurrency level: %d" level);
         Internal.note
           tc
           (Printf.sprintf
@@ -401,9 +413,9 @@ let run_concurrent_core
         reraise_worker_failure (run_round ~state_machine ~num_workers);
         print_state ();
         check_invariants ~where:(Printf.sprintf "after round %d" round) ~sample:true;
-        loop run_round check_invariants (round + 1)
+        loop run_round check_invariants (round + 1) (Some level)
     in
-    loop run_round check_invariants 1
+    loop run_round check_invariants 1 None
   in
   run_machine
     tc

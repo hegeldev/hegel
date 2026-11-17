@@ -166,6 +166,14 @@ class FakeDataSource implements DataSource {
     throw new Error("not supported by FakeDataSource");
   }
 
+  pauseFaults(): void {
+    throw new Error("not supported by FakeDataSource");
+  }
+
+  unpauseFaults(): void {
+    throw new Error("not supported by FakeDataSource");
+  }
+
   drawGrammar(): string {
     throw new Error("not supported by FakeDataSource");
   }

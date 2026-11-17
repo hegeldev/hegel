@@ -8,6 +8,7 @@ import {
 } from "../src/runnerCore.js";
 import { AssumeError, StopTestError } from "../src/testCase.js";
 import * as gs from "../src/generators/index.js";
+import * as stateful from "../src/stateful.js";
 import { RunError } from "../src/errors.js";
 import { fakeEngine, fakeRuntime, context, settings, testCase, failure } from "./fakeEngine.js";
 import { labelSpec } from "../src/labels.js";
@@ -148,6 +149,27 @@ describe("runnerCore engine fault classification and cleanup", () => {
       );
     },
   );
+
+  it("surfaces an engine fault from pausing faults like any other engine fault", () => {
+    const engine = fakeEngine();
+    const fault = new EngineError("pause failed");
+    engine.pauseFaults.mockImplementation(() => {
+      throw fault;
+    });
+    const check = vi.fn();
+    expect(() =>
+      createRunner(fakeRuntime(engine)).test((tc) => {
+        stateful.run(
+          tc,
+          { rules: { noop: () => {} }, invariants: { paused: { check, pauseFaults: true } } },
+          {},
+        );
+      }),
+    ).toThrow(fault);
+    expect(check).not.toHaveBeenCalled();
+    expect(engine.unpauseFaults).not.toHaveBeenCalled();
+    expect(engine.markComplete).toHaveBeenCalledWith(context, testCase, Status.INVALID, null);
+  });
 
   it("does not treat an engine fault thrown by the test itself as a failure", () => {
     const engine = fakeEngine();

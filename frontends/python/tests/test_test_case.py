@@ -175,7 +175,7 @@ def test_repeat_runs_until_the_engine_stops_it():
         tc.repeat(step)
         after += 1
 
-    run_test(body, test_cases=3)
+    run_test(body, test_cases=3, derandomize=True)
     assert repetitions > 0
     assert after == 0
 
@@ -196,6 +196,16 @@ def test_child_and_clone_handles():
     assert "    a = 'a'" in text
     assert "    inside" in text
     assert "b = 'b'" in text
+
+
+def test_pause_and_unpause_faults_on_a_live_handle():
+    def body(tc):
+        assert tc._handle.pause_faults() is None
+        assert tc._handle.unpause_faults() is None
+        assert tc._child(2)._handle.pause_faults() is None
+        assert tc._child(2)._handle.unpause_faults() is None
+
+    run_test(body, test_cases=1)
 
 
 def test_span_bookkeeping():

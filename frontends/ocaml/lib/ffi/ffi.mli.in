@@ -594,8 +594,8 @@ val state_machine_add_invariant
   -> unit
 
 (** [state_machine_start ctx tc ~state_machine] seals the declared rules and
-    invariants and returns the concurrency level the engine drew in
-    [[min_concurrency, max_concurrency]]. The engine owns rule selection.
+    invariants and returns [max_concurrency], the number of workers to run.
+    The engine owns rule selection.
     Raises {!Usage_error} if no rule was declared or the machine was already
     started, and {!Stop_test} when the engine's choice budget is exhausted. *)
 val state_machine_start
@@ -605,15 +605,15 @@ val state_machine_start
   -> int
 
 (** [state_machine_next_group ctx tc ~state_machine] starts the machine's next
-    round on the root handle, returning the round's concurrency group id, or
-    [None] ([HEGEL_STATE_MACHINE_DONE]) when the machine has terminated. Call it
-    before the first rule and after every round. Raises {!Stop_test} when the
-    engine's choice budget is exhausted. *)
+    round on the root handle, returning the round's concurrency group id and
+    concurrency level, or [None] ([HEGEL_STATE_MACHINE_DONE]) when the machine
+    has terminated. Call it before the first rule and after every round. Raises
+    {!Stop_test} when the engine's choice budget is exhausted. *)
 val state_machine_next_group
   :  context
   -> test_case
   -> state_machine:state_machine
-  -> int option
+  -> (int * int) option
 
 (** [state_machine_next_rule ctx tc ~state_machine ~worker_index] draws the
     index of the next rule for [worker_index] to run this round, in
@@ -652,6 +652,16 @@ val state_machine_should_check_invariant
 
 (** [state_machine_free ctx sm] releases [sm]. *)
 val state_machine_free : context -> state_machine -> unit
+
+(** [pause_faults ctx tc] asks the fault injector to stop injecting faults on
+    [tc] until the matching {!unpause_faults}: inside Antithesis, the pair
+    brackets an invariant declared with [pause_faults]; elsewhere nothing
+    happens. Raises {!Internal_error} on an invalid handle. *)
+val pause_faults : context -> test_case -> unit
+
+(** [unpause_faults ctx tc] resumes the fault injection {!pause_faults} paused
+    on [tc]. Raises {!Internal_error} on an invalid handle. *)
+val unpause_faults : context -> test_case -> unit
 
 (** [target ctx tc value label] records a targeting observation. *)
 val target : context -> test_case -> float -> string -> unit

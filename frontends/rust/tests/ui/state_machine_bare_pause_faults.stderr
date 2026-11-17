@@ -1,0 +1,5 @@
+error: expected `=`
+  --> tests/ui/state_machine_bare_pause_faults.rs:11:29
+   |
+11 |     #[invariant(pause_faults)]
+   |                             ^

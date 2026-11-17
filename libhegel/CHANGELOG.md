@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.51.6 - 2026-11-16
+
+This patch fixes the memory a long-running test case keeps for the output regions of its test-case handles. Every `hegel_test_case_clone` and `hegel_test_case_block` handle opens a region in the test case's document, and these regions were kept until the test case ended, so a concurrent state machine that never stops, such as a `#[hegel::main]` workload in Antithesis, grew without bound. A region that holds no output is now freed when the last handle writing into it is freed.
+
+## 0.51.5 - 2026-11-13
+
+This patch adds `hegel_pause_faults` and `hegel_unpause_faults` to the C ABI. A frontend brackets each stateful invariant declared with `pause_faults` with this pair, so that inside [Antithesis](https://antithesis.com/) no fault lands in the middle of the check. Antithesis names its fault-control program in the `ANTITHESIS_FAULT_CONTROL` environment variable: `hegel_pause_faults` runs that program with `--pause`, `hegel_unpause_faults` runs it with `--unpause`, and each waits for it to exit. When the variable is unset, or names nothing that exists, both calls do nothing, so a test declaring `pause_faults` runs the same outside Antithesis. A program that exists but cannot be run, or exits with a non-zero status, fails the call with `HEGEL_E_INVALID_ARG`, and `hegel_context_last_error` names the program and what went wrong.
+
+## 0.51.4 - 2026-11-13
+
+This patch fixes two cases where a failing test reported a recursive value that was not fully shrunk.
+
+A recursive value whose branches may hold a single child, such as a tree of lists of one or two subtrees, could shrink to a branch of two children when a branch of one was also a failure. And a value found after the engine had abandoned earlier attempts at drawing it, most often one with large collections at every level, could be reported with much of its original data intact, because shrinking spent its whole budget on the abandoned attempts.
+
+## 0.51.3 - 2026-11-13
+
+Internal refactoring of two error paths, with no change in behavior.
+
+## 0.51.2 - 2026-11-13
+
+Internal refactoring.
+
+## 0.51.1 - 2026-11-10
+
+This patch stops a run of a single test case inside Antithesis (detected from `ANTITHESIS_OUTPUT_DIR`), with no database to save a failure to, from recording the choices its test case makes. This is the configuration of a long-running workload, where the record of an hours-long test case grew without bound.
+
+A failure of such a run is now reported from its one execution: it is not shrunk or replayed, the test case is not stamped for capture, and the failure has no reproduce blob.
+
+## 0.51.0 - 2026-11-09
+
+This release lets a long state-machine run explore more than one configuration. Until now a test case drew its value distribution, each worker's set of enabled rules, and its concurrency level once, at the start. A `#[hegel::main]` binary, which runs a single test case, kept that configuration for its whole life. At the start of each round, a state machine now redraws all three with probability 1/50.
+
+To let the concurrency level change between rounds without starting or stopping threads, the meaning of the concurrency values in the C ABI changes:
+
+* `hegel_state_machine_start` now writes `max_concurrency` into `*out_concurrency`. The caller runs that many workers for the whole test case.
+* `hegel_state_machine_next_group` takes a new `out_concurrency` parameter, which receives the round's concurrency level. That many workers, chosen by the engine, are handed rules. The others get `HEGEL_STATE_MACHINE_DONE` from `hegel_state_machine_next_rule`.
+
+Before:
+
+```c
+hegel_state_machine_next_group(ctx, tc, machine, &group);
+```
+
+After:
+
+```c
+hegel_state_machine_next_group(ctx, tc, machine, &group, &concurrency);
+```
+
 ## 0.50.0 - 2026-11-03
 
 This release changes how a state machine is declared through the C ABI to allow rules to belong to multiple concurrency groups.

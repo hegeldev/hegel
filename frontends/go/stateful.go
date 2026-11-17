@@ -25,6 +25,7 @@ type stateMachine struct {
 	stepCount            int
 	configuredRuleGroups []stateMachineRuleGroup
 	alwaysCheckNames     []string
+	pauseFaultsNames     []string
 	ruleGroups           [][]int64
 	invariantAlwaysCheck []bool
 }
@@ -38,8 +39,9 @@ type stateMachineRuleGroup struct {
 type StateMachineOption func(*stateMachine)
 
 // WithConcurrency allows state machine rules to run concurrently. The engine
-// chooses a worker count between 1 and [runtime.GOMAXPROCS] for each test case,
-// so concurrent execution is not guaranteed for every test case.
+// chooses a worker count between 1 and [runtime.GOMAXPROCS] for each test case
+// and may change it between rounds, so concurrent execution is not guaranteed
+// for every round.
 //
 // Workers invoke rule methods concurrently on the same machine value. Any
 // state read or mutated by rules must therefore be safe for concurrent access,
@@ -90,6 +92,23 @@ func WithAlwaysCheckInvariants(invariants ...string) StateMachineOption {
 	}
 }
 
+// WithPauseFaultsInvariants marks invariants that run with fault injection
+// paused. Inside Antithesis the engine pauses the fault injector immediately
+// before each such invariant runs and resumes it immediately after, even when
+// the invariant fails, so the invariant observes the system under test without
+// a fault landing in the middle of the check. Outside Antithesis the option
+// has no effect. Invariants not named here never pause fault injection.
+//
+// Pass the full method names, including the Invariant prefix. Calls are
+// additive, and combine with [WithAlwaysCheckInvariants]. RunStateful panics
+// if a name is not a discovered invariant.
+func WithPauseFaultsInvariants(invariants ...string) StateMachineOption {
+	names := slices.Clone(invariants)
+	return func(sm *stateMachine) {
+		sm.pauseFaultsNames = append(sm.pauseFaultsNames, names...)
+	}
+}
+
 // WithRuleGroup assigns rules to a named concurrency group. Rules in the same
 // group may run concurrently with each other; rules that share no group never
 // overlap. Pass the full method names, including the Rule prefix. Calls using
@@ -119,9 +138,11 @@ func WithRuleGroup(name string, rules ...string) StateMachineOption {
 
 // stateMachineRule is a discovered rule or invariant: the method name and
 // a bound function value with the receiver pre-applied at discovery time.
+// pauseFaults is set on invariants named by [WithPauseFaultsInvariants].
 type stateMachineRule struct {
-	name string
-	fn   func(TestCase)
+	name        string
+	fn          func(TestCase)
+	pauseFaults bool
 }
 
 // newStateMachine inspects machine's method set and returns a runner.
@@ -200,6 +221,13 @@ func newStateMachine[M any, T interface{ *M }](machine T, opts ...StateMachineOp
 		}
 		sm.invariantAlwaysCheck[index] = true
 	}
+	for _, name := range sm.pauseFaultsNames {
+		index, ok := invariantIndices[name]
+		if !ok {
+			return nil, fmt.Errorf("state machine pause-faults configuration references unknown invariant %q; available invariants: %s", name, strings.Join(names(sm.invariants), ", "))
+		}
+		sm.invariants[index].pauseFaults = true
+	}
 
 	// Group 0 is the "catch all" for rules no option names.
 	sm.ruleGroups = make([][]int64, len(sm.rules))
@@ -246,6 +274,8 @@ func names(rules []stateMachineRule) []string {
 // (the engine owns rule selection, including swarm testing) and invokes it.
 // At each join point always-check invariants are run, while the rest are
 // sampled by the engine. Every invariant is run again on the final state.
+// Each run of an invariant configured with [WithPauseFaultsInvariants] is
+// bracketed by a pause and an unpause of fault injection on the test case.
 //
 // Rules that reject the current pre-state via [TestCase.Assume] are
 // skipped and another rule is drawn, up to a retry budget.
@@ -255,13 +285,10 @@ func (sm *stateMachine) Run(tc TestCase) {
 		tc.abort(err)
 	}
 
-	if sm.maxConcurrency != 1 {
-		tc.log("Concurrency level: %d", concurrency)
-	}
 	tc.log("Initial invariant check.")
 
 	for _, inv := range sm.invariants {
-		if _, err := invokeRule(tc, inv.fn); err != nil {
+		if err := checkInvariant(tc, inv); err != nil {
 			tc.abort(err)
 		}
 	}
@@ -274,8 +301,9 @@ func (sm *stateMachine) Run(tc TestCase) {
 	// stateMachineNextRule until the engine signals the join point. With a
 	// single group and concurrency 1 this runs the familiar sequential loop;
 	// the engine owns the overall step budget.
+	notedLevel := int64(0)
 	for round := 1; ; round++ {
-		group, err := tc.stateMachineNextGroup(machine)
+		group, level, err := tc.stateMachineNextGroup(machine)
 		if err != nil {
 			tc.abort(err)
 		}
@@ -285,6 +313,10 @@ func (sm *stateMachine) Run(tc TestCase) {
 		groupName := "<anonymous>"
 		if group != 0 {
 			groupName = sm.configuredRuleGroups[int(group)-1].name
+		}
+		if sm.maxConcurrency != 1 && level != notedLevel {
+			tc.log("Concurrency level: %d", level)
+			notedLevel = level
 		}
 		tc.log("---------------- Round %d: group %q ----------------", round, groupName)
 
@@ -360,7 +392,7 @@ func (sm *stateMachine) Run(tc TestCase) {
 			if !shouldCheck {
 				continue
 			}
-			if _, err := invokeRule(tc, inv.fn); err != nil {
+			if err := checkInvariant(tc, inv); err != nil {
 				tc.abort(err)
 			}
 		}
@@ -368,10 +400,29 @@ func (sm *stateMachine) Run(tc TestCase) {
 
 	tc.log("Final invariant check.")
 	for _, inv := range sm.invariants {
-		if _, err := invokeRule(tc, inv.fn); err != nil {
+		if err := checkInvariant(tc, inv); err != nil {
 			tc.abort(err)
 		}
 	}
+}
+
+// checkInvariant runs an invariant once, with fault injection paused around
+// it when the invariant was configured with [WithPauseFaultsInvariants]. The
+// unpause is deferred so it happens even when the invariant fails; an error
+// from the invariant takes precedence over one from unpausing.
+func checkInvariant(tc TestCase, inv stateMachineRule) (err error) {
+	if inv.pauseFaults {
+		if err := tc.pauseFaults(); err != nil {
+			return err
+		}
+		defer func() {
+			if unpauseErr := tc.unpauseFaults(); err == nil {
+				err = unpauseErr
+			}
+		}()
+	}
+	_, err = invokeRule(tc, inv.fn)
+	return err
 }
 
 // invokeRule gives each rule or invariant its own abort boundary. Assume
@@ -401,7 +452,8 @@ func invokeRule(tc TestCase, fn testBody) (bool, error) {
 // [WithStatefulStepCount] to change the default limit of 50 rounds, and
 // [WithAlwaysCheckInvariants] for invariants that must observe every join
 // point. Other invariants are sampled between unconditional initial and final
-// checks.
+// checks. Pass [WithPauseFaultsInvariants] for invariants that must run with
+// fault injection paused.
 //
 // It panics if a method takes TestCase but is not prefixed
 // with Rule or Invariant, if a Rule- or Invariant-prefixed method has

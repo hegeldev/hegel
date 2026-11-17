@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <functional>
 #include <future>
 #include <memory>
@@ -13,7 +14,12 @@ namespace hegel::impl::test_case {
 }
 
 namespace hegel::generators {
+    template <typename T> class AnyGenerator;
     template <typename T> class Generator;
+} // namespace hegel::generators
+
+namespace hegel {
+    class Printer;
 }
 
 namespace hegel {
@@ -51,13 +57,18 @@ namespace hegel {
         ~TestCase();
 
         /**
-         * @brief Draw a random value from a generator.
+         * @brief Draw a random value from a printable generator.
          *
          * Each draw is printed as a C++ declaration, `auto <name> =
          * <value>;`, on the final replay of a failing test case and on
-         * every case at Verbosity::Verbose and above. Draws made through
-         * this overload print as `draw_1`, `draw_2`, ... in draw order.
-         * Use the named overload to print under a variable name.
+         * every case at Verbosity::Verbose and above. The generator prints
+         * the value as it draws it (see generators::IPrintableGenerator).
+         * A value too wide for one line is broken across lines. Draws made
+         * through this overload print as `draw_1`, `draw_2`, ... in draw
+         * order. Use the named overload to print under a variable name.
+         *
+         * Only a printable generator (generators::Generator) can be drawn
+         * with draw(). Draw any other generator with draw_silent().
          *
          * @tparam T The value type produced by @p gen
          * @param gen The generator to draw from
@@ -66,21 +77,66 @@ namespace hegel {
         template <typename T> T draw(const generators::Generator<T>& gen) const;
 
         /**
-         * @brief Draw a random value from a generator, printed under
-         *        @p name.
+         * @brief Draw a random value from a printable generator, printed
+         *        under @p name.
+         *
+         * Each use of @p name prints with a 1-based suffix (`x_1`, `x_2`,
+         * ...), so a draw that runs in a loop, or a helper called more than
+         * once, numbers its values in order.
          *
          * @tparam T The value type produced by @p gen
          * @param name Variable name for the printed declaration.
          * @param gen The generator to draw from
-         * @param repeatable Pass true to print @p name with a 1-based
-         *             suffix per use (`x_1`, `x_2`, ...). Useful when the
-         *             same draw runs in a loop. A non-repeatable name
-         *             prints bare on every use.
          * @return A freshly generated value of type T
          */
         template <typename T>
-        T draw(std::string_view name, const generators::Generator<T>& gen,
-               bool repeatable = false) const;
+        T draw(std::string_view name,
+               const generators::Generator<T>& gen) const;
+
+        /// @cond INTERNAL
+        template <typename T>
+        T draw(const generators::AnyGenerator<T>& gen) const;
+        template <typename T>
+        T draw(std::string_view name,
+               const generators::AnyGenerator<T>& gen) const;
+        /// @endcond
+
+        /**
+         * @brief Draw a random value from any generator, without printing
+         *        it.
+         *
+         * Draws made by @p gen itself (for example with draw() inside a
+         * generators::compose() function) do not print either.
+         *
+         * @code{.cpp}
+         * auto handle = tc.draw_silent(gs::compose(open_file));
+         * @endcode
+         *
+         * @tparam T The value type produced by @p gen
+         * @param gen The generator to draw from
+         * @return A generated value of type T
+         * @throws std::invalid_argument in an explicit test case.
+         */
+        template <typename T>
+        T draw_silent(const generators::AnyGenerator<T>& gen) const;
+
+        /**
+         * @brief Draw a value from a printable generator and print it to
+         *        @p printer.
+         *
+         * For use in generators::IPrintableGenerator::do_draw_and_print(),
+         * to draw a component and print it where the component goes.
+         * Draws made by @p gen itself do not print.
+         *
+         * @tparam T The value type produced by @p gen
+         * @param gen The generator to draw from
+         * @param printer The printer to print the value to
+         * @return A generated value of type T
+         * @throws std::invalid_argument in an explicit test case.
+         */
+        template <typename T>
+        T draw_and_print(const generators::Generator<T>& gen,
+                         Printer& printer) const;
 
         /**
          * @brief Reject the current test case if @p condition is false.
@@ -129,15 +185,60 @@ namespace hegel {
         void target(double score, std::string_view label = "") const;
 
         /**
-         * @brief Run @p body in an engine-managed loop.
+         * @brief Record an event for the end-of-run statistics report.
          *
-         * The engine decides how many iterations to run, exploring and
-         * shrinking the count like any other drawn quantity. Control returns to
-         * the caller once the loop completes. A rejected iteration (via
-         * @c assume / @c reject) is discarded and the loop continues; any other
-         * exception propagates out as a failure.
+         * With Settings::show_statistics on, the end of the run reports, for
+         * each label, the fraction of generated test cases that recorded it
+         * at least once. Without it, events report nothing.
          *
-         * @param body Callable invoked once per iteration.
+         * @param label The event to record.
+         *
+         * @code{.cpp}
+         * auto xs = tc.draw(gs::vectors(gs::integers<int>()));
+         * if (xs.empty()) {
+         *     tc.event("empty");
+         * }
+         * @endcode
+         */
+        void event(std::string_view label) const;
+
+        /**
+         * @brief Record a numeric observation for the end-of-run statistics
+         *        report.
+         *
+         * With Settings::show_statistics on, the end of the run reports, for
+         * each label, a summary of the observed values (count, min, median,
+         * mean, p90, max) over the generated test cases. Unlike target(), a
+         * label can be observed any number of times per test case, and the
+         * observations do not steer generation.
+         *
+         * @param label Names the observed quantity.
+         * @param value The observation. Must be finite.
+         *
+         * @code{.cpp}
+         * auto xs = tc.draw(gs::vectors(gs::integers<int>()));
+         * tc.event_value("size", static_cast<double>(xs.size()));
+         * @endcode
+         */
+        void event_value(std::string_view label, double value) const;
+
+        /**
+         * @brief Run @p body over and over until the engine ends the test
+         *        case. It never returns.
+         *
+         * The loop is logically infinite: the engine decides how many
+         * repetitions run, so a failing loop shrinks to the fewest, and when
+         * the engine ends the loop the test case ends as passing. Code after
+         * the call never runs. Use it for workload-style tests that drive a
+         * system with a stream of random operations. Each repetition's draws
+         * and notes print indented under a `// Repetition #N` note. A
+         * repetition rejected with assume() or reject() is skipped and the
+         * loop goes on; any other exception fails the test case.
+         *
+         * In an explicit test case the body runs once, and the test case
+         * ends.
+         *
+         * @param body Callable invoked once per repetition.
          *
          * @code{.cpp}
          * int total = 0;
@@ -147,11 +248,15 @@ namespace hegel {
          * });
          * @endcode
          */
-        void repeat(const std::function<void()>& body) const;
+        [[noreturn]] void repeat(const std::function<void()>& body) const;
 
         /**
          * @brief Record a message that will be printed on the final replay
          *        of a failing test case.
+         *
+         * The message prints in order with the drawn values, and on every
+         * test case at Verbosity::Verbose and above. Each line of a
+         * multi-line message prints as its own line.
          *
          * @param message The message to record.
          */
@@ -165,6 +270,13 @@ namespace hegel {
          * shares this case's outcome and budget. A single test case must not be
          * drawn from concurrently, so give each thread its own clone.
          *
+         * What the clone prints (its notes and drawn values) appears in the
+         * output at the point where the clone was made, however the threads
+         * are scheduled.
+         *
+         * In an explicit test case, the clone draws the same values and
+         * names its draws in the same sequence as this test case.
+         *
          * @return A @c TestCase.
          *
          * @code{.cpp}
@@ -174,6 +286,35 @@ namespace hegel {
          * @endcode
          */
         TestCase clone() const;
+
+        /**
+         * @brief Attribute what this test case prints from now on to a
+         *        worker.
+         *
+         * When several threads each draw from their own clone, give each
+         * clone a worker index so the output says which thread printed what.
+         * Every line this test case prints after the call, and every line
+         * of the blocks and clones made from it after the call, is prefixed
+         * with `[worker N +X.XXXms]`: the worker index and the time since
+         * the test case started. In an explicit test case, which has no
+         * output to attribute, this does nothing.
+         *
+         * @param worker_index The worker to attribute the output to.
+         *
+         * @code{.cpp}
+         * std::vector<std::thread> threads;
+         * for (std::size_t i = 0; i < 2; i++) {
+         *     threads.emplace_back([worker = tc.clone(), i]() mutable {
+         *         worker.set_worker(i);
+         *         auto n = worker.draw(gs::integers<int>());
+         *     });
+         * }
+         * for (auto& thread : threads) {
+         *     thread.join();
+         * }
+         * @endcode
+         */
+        void set_worker(std::size_t worker_index);
 
         /**
          * @brief Run @p fn on a clone of this test case in a new thread.

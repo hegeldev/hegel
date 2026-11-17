@@ -16,6 +16,7 @@ jobs:
   test:
     name: test (java ${{ matrix.java-version }})
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     strategy:
@@ -42,6 +43,7 @@ jobs:
   test-jna:
     name: test hegel-jna (java ${{ matrix.java-version }})
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     strategy:
@@ -68,12 +70,13 @@ jobs:
   test-os:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-2025]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["windows-2025"]' || '["macos-latest", "windows-2025"]') }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -91,6 +94,7 @@ jobs:
   docs:
     name: docs
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -107,3 +111,24 @@ jobs:
           cache: maven
       - name: Build Javadoc
         run: just java::check-docs
+
+  # The frontend built from the source archive its release attaches to
+  # GitHub (scripts/check-source-archive.py), with nothing of the checkout.
+  source-archive:
+    name: source-archive
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-rust
+      - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+      - name: Build from the source archive
+        run: just check-source-archive java

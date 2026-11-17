@@ -262,7 +262,7 @@ fn test_subsequences_min_size_too_large() {
 fn test_domains_max_length_too_small() {
     expect_draw_panic(
         gs::domains().max_length(2),
-        "max_length must be between 4 and 255",
+        "domain max_length=2 leaves no eligible TLDs",
     );
 }
 

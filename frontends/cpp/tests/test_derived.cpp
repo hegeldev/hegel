@@ -1,5 +1,12 @@
 #include <gtest/gtest.h>
 
+#include <functional>
+#include <map>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
 #include <hegel/hegel.h>
 
 namespace gs = hegel::generators;
@@ -251,6 +258,69 @@ TEST(DefaultGeneratorProperty, OptionalOfStruct) {
             (void)maybe_point->x;
             (void)maybe_point->y;
         }
+    });
+}
+
+struct Node {
+    int value;
+    std::vector<Node> children;
+};
+
+struct Ping;
+
+struct Pong {
+    std::vector<Ping> pings;
+};
+
+struct Ping {
+    std::map<std::string, Pong> pongs;
+};
+
+struct Holder {
+    std::optional<Node> node;
+};
+
+static std::string usage_error_of(const std::function<void()>& body) {
+    try {
+        body();
+    } catch (const std::invalid_argument& e) {
+        return e.what();
+    }
+    return "";
+}
+
+TEST(DefaultGenerator, RecursiveStructsAreRejected) {
+    std::string direct = usage_error_of([] {
+        hegel::test([](hegel::TestCase& tc) {
+            (void)tc.draw(gs::default_generator<Node>());
+        });
+    });
+    EXPECT_NE(direct.find("Node"), std::string::npos) << direct;
+    EXPECT_NE(direct.find("children"), std::string::npos) << direct;
+    EXPECT_NE(direct.find("recursive()"), std::string::npos) << direct;
+    EXPECT_NE(direct.find("override(field<&"), std::string::npos) << direct;
+    std::string mutual = usage_error_of([] {
+        hegel::test([](hegel::TestCase& tc) {
+            (void)tc.draw(gs::default_generator<Ping>());
+        });
+    });
+    EXPECT_NE(mutual.find("Ping"), std::string::npos) << mutual;
+    EXPECT_NE(mutual.find("pongs"), std::string::npos) << mutual;
+    std::string held = usage_error_of([] {
+        hegel::test([](hegel::TestCase& tc) {
+            (void)tc.draw(gs::default_generator<Holder>());
+        });
+    });
+    EXPECT_NE(held.find("Node"), std::string::npos) << held;
+    EXPECT_EQ(held.find("Holder>()"), std::string::npos) << held;
+}
+
+TEST(DefaultGenerator, RecursiveStructsDeriveWithTheFieldOverridden) {
+    hegel::test([](hegel::TestCase& tc) {
+        auto gen = gs::default_generator<Node>().override(
+            gs::field<&Node::children>(gs::just(std::vector<Node>{})));
+        Node node = tc.draw_silent(gen);
+        EXPECT_TRUE(node.children.empty());
     });
 }
 

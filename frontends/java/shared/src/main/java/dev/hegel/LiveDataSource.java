@@ -335,10 +335,10 @@ final class LiveDataSource implements DataSource {
     }
 
     @Override
-    public long stateMachineNextGroup(long stateMachineId) {
+    public long stateMachineNextGroup(long stateMachineId, long[] outConcurrency) {
         checkLive();
         long[] group = new long[1];
-        translate(lib.stateMachineNextGroup(tc, stateMachineId, group), "state_machine_next_group");
+        translate(lib.stateMachineNextGroup(tc, stateMachineId, group, outConcurrency), "state_machine_next_group");
         return group[0];
     }
 
@@ -392,6 +392,20 @@ final class LiveDataSource implements DataSource {
     public void stateMachineFree(long stateMachineId) {
         // Not gated on `aborted`: the handle outlives the case and must be released exactly once.
         lib.stateMachineFree(stateMachineId);
+    }
+
+    @Override
+    public void pauseFaults() {
+        checkLive();
+        translate(lib.pauseFaults(tc), "pause_faults");
+    }
+
+    @Override
+    public void unpauseFaults() {
+        if (aborted) {
+            return;
+        }
+        translate(lib.unpauseFaults(tc), "unpause_faults");
     }
 
     @Override

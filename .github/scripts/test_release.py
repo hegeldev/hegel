@@ -19,11 +19,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import hashlib
 import json
 import re
 import subprocess
+import tarfile
 import release
-from release import CPP, GO, JAVA, LIBHEGEL, OCAML, PYTHON, RUST, TYPESCRIPT
+from release import CPP, CSHARP, GO, JAVA, LIBHEGEL, OCAML, PYTHON, RUST, TYPESCRIPT
 
 RUST_CARGO = """\
 [package]
@@ -145,6 +147,28 @@ JAVA_MODULE_POM = """\
 </project>
 """
 
+# The C# frontend's version is the <Version> of Directory.Build.props; the
+# package references below carry versions of their own that must not move.
+CSHARP_PROPS = """\
+<Project>
+  <PropertyGroup>
+    <Version>0.1.0</Version>
+    <LangVersion>13</LangVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageVersion Include="xunit" Version="2.9.3" />
+  </ItemGroup>
+</Project>
+"""
+
+CSHARP_README = """\
+<PackageReference Include="Hegel" Version="0.1.0" />
+
+dotnet add package Hegel --version 0.1.0
+
+Requires .NET 8.0.1.0 or 10.1.0.
+"""
+
 # The OCaml frontend's version is the dune-project `(version ...)`, which
 # dune copies into each generated .opam file.
 OCAML_DUNE_PROJECT = """\
@@ -238,6 +262,8 @@ class ApplyVersionBumpTest(unittest.TestCase):
             ("frontends/java/hegel/pom.xml", JAVA_MODULE_POM),
             ("frontends/java/hegel-jna/pom.xml", JAVA_MODULE_POM),
             ("frontends/java/README.md", JAVA_README),
+            ("frontends/csharp/Directory.Build.props", CSHARP_PROPS),
+            ("frontends/csharp/README.md", CSHARP_README),
             ("frontends/ocaml/dune-project", OCAML_DUNE_PROJECT),
             *((f"frontends/ocaml/{name}.opam", ocaml_opam(name)) for name in OCAML.crates),
         ]:
@@ -290,6 +316,20 @@ class ApplyVersionBumpTest(unittest.TestCase):
         )
         for rel in JAVA.manifests[1:]:
             self.assertEqual(self.read(rel), JAVA_MODULE_POM.replace("0.10.2", "0.10.3"), rel)
+
+    def test_bumps_the_msbuild_props_version_and_nothing_else(self) -> None:
+        # Only the <Version> element moves: package reference versions stay.
+        release.apply_version_bump(self.root, {CSHARP: "0.1.1"})
+        self.assertEqual(
+            self.read("frontends/csharp/Directory.Build.props"),
+            CSHARP_PROPS.replace("<Version>0.1.0</Version>", "<Version>0.1.1</Version>"),
+        )
+        self.assertEqual(
+            self.read("frontends/csharp/README.md"),
+            CSHARP_README.replace('Version="0.1.0"', 'Version="0.1.1"').replace(
+                "--version 0.1.0", "--version 0.1.1"
+            ),
+        )
 
     def test_rewrites_the_version_in_install_docs(self) -> None:
         # Only whole mentions of the old version move, not longer numbers
@@ -440,6 +480,7 @@ CURRENT = {
     TYPESCRIPT: "0.4.10",
     CPP: "0.13.1",
     JAVA: "0.10.2",
+    CSHARP: "0.1.0",
     OCAML: "0.26.3",
     GO: "0.9.28",
 }
@@ -454,7 +495,7 @@ class PlanReleaseTest(unittest.TestCase):
         plan = release.plan_release(CURRENT, {PYTHON: PATCH})
         self.assertEqual(plan, {PYTHON: ("0.1.1", "This patch does a thing.")})
 
-    def test_c_only_patch_bumps_every_frontend_with_an_engine_entry(self) -> None:
+    def test_c_only_patch_bumps_every_push_released_frontend_with_an_engine_entry(self) -> None:
         plan = release.plan_release(CURRENT, {LIBHEGEL: ("patch", "This patch tweaks the C ABI.")})
         self.assertEqual(
             plan,
@@ -471,7 +512,7 @@ class PlanReleaseTest(unittest.TestCase):
                     "This release updates the bundled libhegel engine to 0.5.1.",
                 ),
                 JAVA: ("0.10.3", "This release updates the bundled libhegel engine to 0.5.1."),
-                OCAML: ("0.26.4", "This release updates the bundled libhegel engine to 0.5.1."),
+                CSHARP: ("0.1.1", "This release updates the bundled libhegel engine to 0.5.1."),
                 GO: ("0.9.29", "This release updates the bundled libhegel engine to 0.5.1."),
             },
         )
@@ -486,7 +527,7 @@ class PlanReleaseTest(unittest.TestCase):
         self.assertEqual(plan[TYPESCRIPT][0], "0.4.11")
         self.assertEqual(plan[CPP][0], "0.13.2")
         self.assertEqual(plan[JAVA][0], "0.10.3")
-        self.assertEqual(plan[OCAML][0], "0.26.4")
+        self.assertNotIn(OCAML, plan)
 
     def test_a_frontend_release_file_overrides_the_engine_entry(self) -> None:
         plan = release.plan_release(CURRENT, {RUST: PATCH, LIBHEGEL: MINOR})
@@ -556,6 +597,17 @@ class CurrentVersionTest(unittest.TestCase):
             manifest.write_text(JAVA_MODULE_POM)
             self.assertEqual(release.current_version(manifest), "0.10.2")
 
+    def test_reads_an_msbuild_props_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = Path(tmp) / "Directory.Build.props"
+            manifest.write_text(CSHARP_PROPS)
+            self.assertEqual(release.current_version(manifest), "0.1.0")
+            manifest.write_text("<Project />\n")
+            with self.assertRaises(ValueError):
+                release.current_version(manifest)
+            with self.assertRaises(ValueError):
+                release.set_version(manifest, "0.1.1")
+
     def test_reads_a_dune_project_and_an_opam_version(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             dune_project = Path(tmp) / "dune-project"
@@ -574,6 +626,7 @@ class ComponentTest(unittest.TestCase):
         self.assertEqual(TYPESCRIPT.tag("0.4.11"), "frontends/typescript/0.4.11")
         self.assertEqual(CPP.tag("0.13.2"), "frontends/cpp/0.13.2")
         self.assertEqual(JAVA.tag("0.10.3"), "frontends/java/0.10.3")
+        self.assertEqual(CSHARP.tag("0.1.1"), "frontends/csharp/0.1.1")
         self.assertEqual(OCAML.tag("0.26.4"), "frontends/ocaml/0.26.4")
 
     def test_go_tags_carry_the_v_a_go_module_version_needs(self) -> None:
@@ -617,10 +670,22 @@ class ComponentTest(unittest.TestCase):
 
     def test_crates_match_the_manifests(self) -> None:
         for component in release.COMPONENTS:
-            names = {
-                release_name(release.ROOT / manifest) for manifest in component.manifests
-            }
+            names = set().union(
+                *(release_names(release.ROOT / manifest) for manifest in component.manifests)
+            )
             self.assertEqual(names, set(component.crates), component.path)
+
+
+def release_names(manifest: Path) -> set[str]:
+    if manifest.suffix == ".props":
+        # Directory.Build.props carries the version; the package ids are the
+        # <PackageId>s of the packable projects under src/.
+        projects = [*manifest.parent.glob("src/*/*.csproj"), *manifest.parent.glob("src/*/*.fsproj")]
+        return {
+            re.search(r"<PackageId>([^<]+)</PackageId>", project.read_text()).group(1)
+            for project in projects
+        }
+    return {release_name(manifest)}
 
 
 def release_name(manifest: Path) -> str:
@@ -717,6 +782,43 @@ class ReleaseFilesTest(unittest.TestCase):
             {LIBHEGEL: ["libhegel/RELEASE/abi.md"]},
         )
 
+    def test_pending_splits_the_weekly_components_from_the_rest(self) -> None:
+        write(self.root, "libhegel/RELEASE/abi.md", C_ENTRY)
+        write(self.root, "frontends/ocaml/RELEASE/printer.md", RUST_ENTRY)
+        self.assertEqual(
+            release.pending_release_files(self.root),
+            {LIBHEGEL: ["libhegel/RELEASE/abi.md"]},
+        )
+        self.assertEqual(
+            release.pending_release_files(self.root, weekly=True),
+            {OCAML: ["frontends/ocaml/RELEASE/printer.md"]},
+        )
+
+    def test_a_libhegel_release_leaves_weekly_frontends_an_engine_release_file(self) -> None:
+        write(self.root, "frontends/ocaml/RELEASE/printer.md", C_ENTRY)
+        self.assertEqual(
+            release.defer_engine_bumps(self.root, "0.5.1"), ["frontends/ocaml/RELEASE/libhegel.md"]
+        )
+        self.assertEqual(
+            release.defer_engine_bumps(self.root, "0.5.2"), ["frontends/ocaml/RELEASE/libhegel.md"]
+        )
+        files = release.pending_release_files(self.root, weekly=True)
+        self.assertEqual(
+            files,
+            {OCAML: ["frontends/ocaml/RELEASE/libhegel.md", "frontends/ocaml/RELEASE/printer.md"]},
+        )
+        entries = [release.parse_release_file(self.root / f) for f in files[OCAML]]
+        self.assertEqual(
+            release.plan_release(CURRENT, {OCAML: release.combine_entries(entries)}),
+            {
+                OCAML: (
+                    "0.27.0",
+                    "This release updates the bundled libhegel engine to 0.5.2."
+                    "\n\nThis release breaks the C ABI.",
+                )
+            },
+        )
+
     def test_combining_entries_takes_the_largest_bump_and_keeps_every_entry(self) -> None:
         self.assertEqual(
             release.combine_entries([("patch", "One."), ("minor", "Two."), ("patch", "Three.")]),
@@ -751,9 +853,235 @@ class TaggedVersionTest(unittest.TestCase):
         self.assertEqual(release.tagged_version(self.root, GO), "0.9.28")
         self.assertEqual(release.component_version(self.root, GO), "0.9.28")
 
+    def test_the_latest_frontend_tags_are_each_frontends_highest(self) -> None:
+        for frontend in release.FRONTENDS:
+            self.git("tag", frontend.tag("1.2.3"))
+            self.git("tag", frontend.tag("1.10.0"))
+        self.assertEqual(
+            release.latest_frontend_tags(self.root),
+            [
+                "frontends/rust/1.10.0",
+                "frontends/python/1.10.0",
+                "frontends/typescript/1.10.0",
+                "frontends/cpp/1.10.0",
+                "frontends/java/1.10.0",
+                "frontends/csharp/1.10.0",
+                "frontends/ocaml/1.10.0",
+                "frontends/go/v1.10.0",
+            ],
+        )
+
     def test_no_tag_is_an_error(self) -> None:
         with self.assertRaises(ValueError):
             release.tagged_version(self.root, GO)
+
+
+class SourceArchiveTest(unittest.TestCase):
+    """Builds archives of a small repository shaped like this one: a Cargo
+    workspace of libhegel and two frontend crates, and a C++ frontend that
+    is no crate. Needs cargo, which prunes the lockfile, but no network: the
+    workspace has no registry dependencies."""
+
+    def setUp(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name) / "repo"
+        self.out = Path(tmp.name) / "out"
+        self.root.mkdir()
+        self.git("init", "--quiet")
+        self.write(
+            "Cargo.toml",
+            '[workspace]\nresolver = "3"\n'
+            'members = ["libhegel", "frontends/rust", "frontends/rust/macros", "frontends/python"]\n'
+            "\n[profile.dev]\nopt-level = 1\n",
+        )
+        self.crate("libhegel", "hegeltest-c", "0.51.1")
+        self.crate("frontends/rust/macros", "hegeltest-macros", "0.52.1")
+        self.crate(
+            "frontends/rust",
+            "hegeltest",
+            "0.52.1",
+            'hegeltest-macros = { version = "=0.52.1", path = "macros" }\n',
+        )
+        self.crate(
+            "frontends/python", "hegel-python", "0.4.2", 'hegeltest-c = { path = "../../libhegel" }\n'
+        )
+        subprocess.run(["cargo", "generate-lockfile", "--offline"], cwd=self.root, check=True)
+        self.write("LICENSE", "MIT\n")
+        self.write("website/big.png", "not part of any frontend\n")
+        self.write("frontends/cpp/CMakeLists.txt", "project(hegel VERSION 0.17.2)\n")
+        self.write("frontends/cpp/include/hegel/hegel.h", "#pragma once\n")
+        self.write(
+            "frontends/cpp/CHANGELOG.md",
+            "# Changelog\n\n## 0.17.2 - 2026-11-13\n\nFixes a thing.\n\nAnd another.\n\n"
+            "## 0.17.1 - 2026-11-10\n\nAn older fix.\n",
+        )
+        self.write("frontends/rust/CHANGELOG.md", "# Changelog\n\n## 0.52.1 - 2026-11-13\n\nRust fix.\n")
+        self.commit("Release frontends/cpp/0.17.2")
+        self.git("tag", "frontends/cpp/0.17.2")
+        self.git("tag", "frontends/rust/0.52.1")
+        self.git("tag", "libhegel/0.51.1")
+
+    def git(self, *args: str) -> None:
+        subprocess.run(["git", *args], cwd=self.root, check=True)
+
+    def write(self, rel: str, text: str) -> None:
+        path = self.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def crate(self, rel: str, name: str, version: str, dependencies: str = "") -> None:
+        self.write(
+            f"{rel}/Cargo.toml",
+            f'[package]\nname = "{name}"\nversion = "{version}"\nedition = "2021"\n'
+            f"\n[dependencies]\n{dependencies}",
+        )
+        self.write(f"{rel}/src/lib.rs", "")
+
+    def commit(self, message: str) -> None:
+        self.git("add", "-A")
+        self.git(
+            "-c", "user.name=t", "-c", "user.email=t@example.com",
+            "commit", "--quiet", "--no-gpg-sign", "-m", message,
+        )
+
+    def build(self, tag: str) -> dict[str, str]:
+        return release.build_source_release(self.root, tag, self.out)
+
+    def contents(self, tag: str) -> dict[str, str]:
+        with tarfile.open(self.build(tag)["archive"]) as tar:
+            return {m.name: tar.extractfile(m).read().decode() for m in tar if m.isfile()}
+
+    def locked_packages(self, lockfile: str) -> list[str]:
+        return re.findall(r'^name = "([^"]+)"$', lockfile, re.MULTILINE)
+
+    def test_the_archive_holds_the_frontend_and_the_engine_it_builds(self) -> None:
+        result = self.build("frontends/cpp/0.17.2")
+        self.assertEqual(Path(result["archive"]).name, "hegel-cpp-0.17.2.tar.gz")
+        contents = self.contents("frontends/cpp/0.17.2")
+        self.assertEqual(
+            sorted(contents),
+            [
+                "hegel-cpp-0.17.2/Cargo.lock",
+                "hegel-cpp-0.17.2/Cargo.toml",
+                "hegel-cpp-0.17.2/LICENSE",
+                "hegel-cpp-0.17.2/frontends/cpp/CHANGELOG.md",
+                "hegel-cpp-0.17.2/frontends/cpp/CMakeLists.txt",
+                "hegel-cpp-0.17.2/frontends/cpp/include/hegel/hegel.h",
+                "hegel-cpp-0.17.2/libhegel/Cargo.toml",
+                "hegel-cpp-0.17.2/libhegel/src/lib.rs",
+            ],
+        )
+        self.assertEqual(
+            contents["hegel-cpp-0.17.2/frontends/cpp/include/hegel/hegel.h"], "#pragma once\n"
+        )
+
+    def test_the_workspace_is_pruned_to_the_crates_in_the_archive(self) -> None:
+        cpp = self.contents("frontends/cpp/0.17.2")
+        self.assertIn('\nmembers = ["libhegel"]\n', cpp["hegel-cpp-0.17.2/Cargo.toml"])
+        self.assertIn("[profile.dev]\nopt-level = 1\n", cpp["hegel-cpp-0.17.2/Cargo.toml"])
+        self.assertEqual(self.locked_packages(cpp["hegel-cpp-0.17.2/Cargo.lock"]), ["hegeltest-c"])
+
+        rust = self.contents("frontends/rust/0.52.1")
+        self.assertIn(
+            '\nmembers = ["libhegel", "frontends/rust", "frontends/rust/macros"]\n',
+            rust["hegel-rust-0.52.1/Cargo.toml"],
+        )
+        self.assertEqual(
+            self.locked_packages(rust["hegel-rust-0.52.1/Cargo.lock"]),
+            ["hegeltest", "hegeltest-c", "hegeltest-macros"],
+        )
+
+    def test_cargo_accepts_the_archives_lockfile(self) -> None:
+        with tarfile.open(self.build("frontends/rust/0.52.1")["archive"]) as tar:
+            tar.extractall(self.out / "unpacked")
+        subprocess.run(
+            ["cargo", "metadata", "--locked", "--offline", "--format-version", "1"],
+            cwd=self.out / "unpacked" / "hegel-rust-0.52.1",
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
+
+    def test_a_manifest_without_a_members_line_is_an_error(self) -> None:
+        with self.assertRaisesRegex(ValueError, "no `members"):
+            release.prune_workspace_members('[workspace]\nresolver = "3"\n', ["libhegel"])
+
+    def test_the_checksum_file_is_the_archives_sha256(self) -> None:
+        result = self.build("frontends/cpp/0.17.2")
+        digest = hashlib.sha256(Path(result["archive"]).read_bytes()).hexdigest()
+        self.assertEqual(
+            Path(result["checksum"]).read_text(), f"{digest}  hegel-cpp-0.17.2.tar.gz\n"
+        )
+
+    def test_building_the_archive_again_gives_the_same_bytes(self) -> None:
+        first = Path(self.build("frontends/cpp/0.17.2")["archive"]).read_bytes()
+        self.git("clone", "--quiet", str(self.root), str(self.root.parent / "clone"))
+        second = release.build_source_release(
+            self.root.parent / "clone", "frontends/cpp/0.17.2", self.root.parent / "out2"
+        )
+        self.assertEqual(Path(second["archive"]).read_bytes(), first)
+
+    def test_the_release_is_titled_and_annotated_from_the_changelog(self) -> None:
+        result = self.build("frontends/cpp/0.17.2")
+        self.assertEqual(result["title"], "Hegel for C++ v0.17.2")
+        notes = Path(result["notes"]).read_text()
+        self.assertTrue(notes.startswith("Fixes a thing.\n\nAnd another.\n\n"), notes)
+        self.assertNotIn("An older fix.", notes)
+        self.assertIn("`hegel-cpp-0.17.2.tar.gz`", notes)
+        self.assertIn("libhegel 0.51.1", notes)
+
+    def test_the_archive_is_of_the_tag_not_of_the_checkout(self) -> None:
+        self.write("frontends/cpp/later.txt", "after the release\n")
+        self.commit("Later")
+        self.assertNotIn(
+            "hegel-cpp-0.17.2/frontends/cpp/later.txt", self.contents("frontends/cpp/0.17.2")
+        )
+
+    def test_an_archive_of_another_commit_takes_the_version_it_is_given(self) -> None:
+        self.write("frontends/cpp/later.txt", "after the release\n")
+        self.commit("Later")
+        archive, _ = release.build_source_archive(self.root, CPP, "0.0.0", "HEAD", self.out)
+        with tarfile.open(archive) as tar:
+            self.assertIn("hegel-cpp-0.0.0/frontends/cpp/later.txt", tar.getnames())
+
+    def test_a_go_tag_drops_its_v_from_the_archive_name(self) -> None:
+        self.write("frontends/go/go.mod", "module hegel.dev/go/hegel\n")
+        self.write("frontends/go/CHANGELOG.md", "# Changelog\n\n## 0.9.33 - 2026-11-13\n\nGo fix.\n")
+        self.commit("Release frontends/go/v0.9.33")
+        self.git("tag", "frontends/go/v0.9.33")
+        result = self.build("frontends/go/v0.9.33")
+        self.assertEqual(Path(result["archive"]).name, "hegel-go-0.9.33.tar.gz")
+        self.assertEqual(result["title"], "Hegel for Go v0.9.33")
+
+    def test_a_git_lfs_pointer_in_the_archive_is_an_error(self) -> None:
+        self.write(
+            "frontends/cpp/lib.so",
+            "version https://git-lfs.github.com/spec/v1\noid sha256:abc\nsize 3\n",
+        )
+        self.commit("Release frontends/cpp/0.17.3")
+        self.git("tag", "frontends/cpp/0.17.3")
+        with self.assertRaisesRegex(ValueError, "lib.so is a Git LFS pointer"):
+            self.build("frontends/cpp/0.17.3")
+
+    def test_a_version_missing_from_the_changelog_is_an_error(self) -> None:
+        self.git("tag", "frontends/cpp/0.18.0")
+        with self.assertRaisesRegex(ValueError, "no 0.18.0 entry"):
+            self.build("frontends/cpp/0.18.0")
+
+    def test_libhegel_and_unknown_tags_are_errors(self) -> None:
+        with self.assertRaisesRegex(ValueError, "libhegel releases no source archive"):
+            self.build("libhegel/0.51.1")
+        with self.assertRaisesRegex(ValueError, "not the release tag of any component"):
+            self.build("frontends/cobol/1.0.0")
+        with self.assertRaisesRegex(ValueError, "not the release tag of any component"):
+            self.build("frontends/go/0.9.33")
+
+    def test_every_frontend_has_a_name_for_its_release_title(self) -> None:
+        self.assertEqual(
+            [c.name for c in release.FRONTENDS],
+            ["Rust", "Python", "TypeScript", "C++", "Java", "C#", "OCaml", "Go"],
+        )
+        self.assertIsNone(LIBHEGEL.name)
 
 
 class CheckReleaseFilesTest(unittest.TestCase):

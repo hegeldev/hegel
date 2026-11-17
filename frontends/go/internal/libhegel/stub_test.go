@@ -86,8 +86,8 @@ func TestStubUnwiredPrimitives(t *testing.T) {
 		uintptr(3), OK, // new_state_machine: machine handle
 		OK,           // state_machine_add_rule
 		OK,           // state_machine_add_invariant
-		int64(1), OK, // state_machine_start: drawn concurrency
-		int64(0), OK, // state_machine_next_group: group index
+		int64(1), OK, // state_machine_start: max concurrency
+		int64(2), int64(3), OK, // state_machine_next_group: group index, concurrency level
 		int64(0), OK, // state_machine_next_rule: rule index
 		OK,       // state_machine_rule_rejected
 		true, OK, // generate_boolean: value
@@ -121,8 +121,12 @@ func TestStubUnwiredPrimitives(t *testing.T) {
 	if concurrency != 1 {
 		t.Fatalf("StateMachineStart: concurrency = %d, want 1", concurrency)
 	}
-	if _, err := tc.StateMachineNextGroup(lib, machine); err != nil {
+	group, level, err := tc.StateMachineNextGroup(lib, machine)
+	if err != nil {
 		t.Fatalf("StateMachineNextGroup: %v", err)
+	}
+	if group != 2 || level != 3 {
+		t.Fatalf("StateMachineNextGroup: group, level = %d, %d, want 2, 3", group, level)
 	}
 	if _, err := tc.StateMachineNextRule(lib, machine, 0); err != nil {
 		t.Fatalf("StateMachineNextRule: %v", err)

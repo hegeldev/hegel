@@ -8,6 +8,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
+import java.util.function.LongConsumer;
 
 /**
  * Drives a single property test: builds the settings handle, pumps the engine's run loop, and turns
@@ -70,16 +71,29 @@ final class Runner {
     }
 
     static RunReport run(Libhegel lib, Settings settings, Consumer<TestCase> body, Reporter reporter) {
+        return run(lib, settings, body, reporter, s -> {});
+    }
+
+    /**
+     * As {@link #run(Libhegel, Settings, Consumer, Reporter)}, but calls {@code configure} with the
+     * settings handle after applying {@code settings}, so values set by {@code configure} override
+     * values from {@code settings}. The run and its reporters use the values after both are
+     * applied.
+     */
+    static RunReport run(
+            Libhegel lib, Settings settings, Consumer<TestCase> body, Reporter reporter, LongConsumer configure) {
         RunStatistics.Counter counts = new RunStatistics.Counter();
         RunReport report;
         long s = newSettings(lib);
         try {
             applySettings(lib, s, settings);
+            configure.accept(s);
             // The engine resolved whatever the caller left unset (its profile, hegel.toml, the
             // HEGEL_* variables); the run and its reporters see the effective configuration.
             Settings effective = settings.resolved(
                     lib.settingsGetTestCases(s),
                     lib.settingsGetPrintBlob(s),
+                    Verbosity.fromCode(lib.settingsGetVerbosity(s)),
                     NondeterminismStrictness.fromCode(lib.settingsGetNondeterminismStrictness(s)));
             reporter.runStarted(effective);
             long run = effective.reproduceFailure == null
@@ -103,7 +117,7 @@ final class Runner {
      * fail on user input: a malformed {@code hegel.toml} or variable surfaces as an {@link
      * IllegalArgumentException} carrying the engine's diagnostic.
      */
-    private static long newSettings(Libhegel lib) {
+    static long newSettings(Libhegel lib) {
         long[] out = new long[1];
         int rc = lib.settingsNew(out);
         if (rc == Abi.E_INVALID_ARG) {
@@ -161,7 +175,7 @@ final class Runner {
         switch (lib.runResultStatus(result)) {
             case Abi.RUN_STATUS_PASSED:
                 if (replayingBlob) {
-                    throw new HegelException(STALE_BLOB);
+                    throw new BlobNotReproducedException(null);
                 }
                 return new RunReport(RunStatus.PASSED, counts.snapshot(), null, List.of());
             case Abi.RUN_STATUS_ERROR:
@@ -170,7 +184,7 @@ final class Runner {
                 // cannot decode never gets this far: hegel_run_start_blob rejects it.)
                 String error = nullToEmpty(lib.runResultError(result));
                 if (replayingBlob) {
-                    throw new HegelException("reproduceFailure: the blob replay ended in an error: " + error);
+                    throw new BlobNotReproducedException(error);
                 }
                 return new RunReport(RunStatus.ERROR, counts.snapshot(), error, List.of());
             default:

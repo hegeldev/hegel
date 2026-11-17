@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "isRoot": true,
+  "tools": {
+    "fantomas": {
+      "version": "8.1.0",
+      "commands": [
+        "fantomas"
+      ],
+      "rollForward": false
+    },
+    "docfx": {
+      "version": "2.81.0",
+      "commands": [
+        "docfx"
+      ],
+      "rollForward": false
+    },
+    "fsdocs-tool": {
+      "version": "22.2.0",
+      "commands": [
+        "fsdocs"
+      ],
+      "rollForward": false
+    }
+  }
+}

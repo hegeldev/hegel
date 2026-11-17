@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import gzip
+import hashlib
+import io
 import json
 import os
 import re
 import subprocess
+import tarfile
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,8 +26,9 @@ class Component:
     `manifests` are the manifests that carry the component's version (Cargo
     manifests, npm's `package.json` and `package-lock.json`, a
     `CMakeLists.txt` with a `project(... VERSION x.y.z ...)` line, Maven's
-    `pom.xml` files, or dune's `dune-project` and the `.opam` files it
-    generates; the first is the one its version is read from) and `crates` the
+    `pom.xml` files, MSBuild's `Directory.Build.props`, or dune's
+    `dune-project` and the `.opam` files it generates; the first is the one
+    its version is read from) and `crates` the
     packages those manifests declare, all at the component's version;
     `source_dirs` are the paths whose changes require a release file
     (`<path>/RELEASE/<slug>.md`, one per pull request so that two pull
@@ -31,8 +37,8 @@ class Component:
 
     A frontend ships the engine (the Rust frontend pins the `hegeltest-c`
     crate exactly, the Python frontend compiles libhegel into its wheels, the
-    TypeScript, Java and OCaml frontends bundle the libhegel binaries, the C++
-    frontend builds the in-tree libhegel it is fetched with), so a libhegel release
+    TypeScript, Java, C# and OCaml frontends bundle the libhegel binaries, the
+    C++ frontend builds the in-tree libhegel it is fetched with), so a libhegel release
     also patch-bumps every frontend without a release file of its own, giving it
     `engine_bump_entry` (with `{version}` filled in) as its changelog entry.
     libhegel itself has no such entry. A frontend that records the engine
@@ -50,17 +56,30 @@ class Component:
     `install_docs` are documents, such as a README, whose install snippets
     name the component's own version: a release rewrites every occurrence of
     the version it replaces to the new one.
+
+    A `weekly` component (the OCaml frontend, whose every release is a pull
+    request a maintainer of opam-repository reviews) is not released by a
+    push to main: its release files stay on main until the weekly run
+    (`release --weekly`) folds them into one release. A libhegel release
+    leaves it an `engine_bump_file` instead of patch-bumping it.
+
+    `name` is what a frontend is called in the title of its GitHub release
+    ("Hegel for <name> v<version>"), which carries its source archive (see
+    `build_source_archive`). libhegel has none: its GitHub release carries
+    the prebuilt binaries instead.
     """
 
     path: str
     manifests: tuple[str, ...]
     crates: tuple[str, ...]
     source_dirs: tuple[str, ...]
+    name: str | None = None
     engine_bump_entry: str | None = None
     engine_pin: str | None = None
     install_docs: tuple[str, ...] = ()
     tag_version_prefix: str = ""
     tagged_on_release_commit: bool = True
+    weekly: bool = False
 
     @property
     def release_dir(self) -> str:
@@ -96,11 +115,23 @@ class Component:
         return files
 
     @property
+    def engine_bump_file(self) -> str:
+        """The release file a libhegel release writes for a `weekly`
+        component, holding its `engine_bump_entry`. Each libhegel release
+        overwrites it, so the weekly release names the engine it ships."""
+        return f"{self.release_dir}/libhegel.md"
+
+    @property
     def changelog(self) -> str:
         return f"{self.path}/CHANGELOG.md"
 
     def tag(self, version: str) -> str:
         return f"{self.path}/{self.tag_version_prefix}{version}"
+
+    def source_archive_stem(self, version: str) -> str:
+        """The name of the source archive of a release, less its `.tar.gz`,
+        and of the one directory it unpacks to: `hegel-cpp-0.17.2`."""
+        return f"hegel-{self.path.rsplit('/', 1)[-1]}-{version}"
 
 
 
@@ -118,6 +149,7 @@ LIBHEGEL = Component(
 )
 RUST = Component(
     path="frontends/rust",
+    name="Rust",
     manifests=("frontends/rust/Cargo.toml", "frontends/rust/macros/Cargo.toml"),
     crates=("hegeltest", "hegeltest-macros"),
     source_dirs=("frontends/rust/src/", "frontends/rust/macros/"),
@@ -125,6 +157,7 @@ RUST = Component(
 )
 PYTHON = Component(
     path="frontends/python",
+    name="Python",
     manifests=("frontends/python/Cargo.toml",),
     crates=("hegel-python",),
     source_dirs=(
@@ -137,6 +170,7 @@ PYTHON = Component(
 )
 TYPESCRIPT = Component(
     path="frontends/typescript",
+    name="TypeScript",
     manifests=(
         "frontends/typescript/package.json",
         "frontends/typescript/package-lock.json",
@@ -151,6 +185,7 @@ TYPESCRIPT = Component(
 # the release. Its version is the `project()` version in its CMakeLists.txt.
 CPP = Component(
     path="frontends/cpp",
+    name="C++",
     manifests=("frontends/cpp/CMakeLists.txt",),
     crates=("hegel-cpp",),
     source_dirs=(
@@ -164,6 +199,7 @@ CPP = Component(
 )
 JAVA = Component(
     path="frontends/java",
+    name="Java",
     # The parent pom carries the version; each module pom repeats it in its
     # <parent> element, which must move with the release.
     manifests=(
@@ -186,8 +222,24 @@ JAVA = Component(
     engine_bump_entry="This release updates the bundled libhegel engine to {version}.",
     install_docs=("frontends/java/README.md",),
 )
+# The C# frontend's version is the <Version> of Directory.Build.props, which
+# every project in the solution inherits: the `Hegel` package and the
+# `Hegel.FSharp` package that depends on it at the same version.
+CSHARP = Component(
+    path="frontends/csharp",
+    name="C#",
+    manifests=("frontends/csharp/Directory.Build.props",),
+    crates=("Hegel", "Hegel.FSharp", "Hegel.Xunit"),
+    source_dirs=(
+        "frontends/csharp/src/",
+        "frontends/csharp/Directory.Build.props",
+    ),
+    engine_bump_entry="This release updates the bundled libhegel engine to {version}.",
+    install_docs=("frontends/csharp/README.md",),
+)
 OCAML = Component(
     path="frontends/ocaml",
+    name="OCaml",
     manifests=(
         "frontends/ocaml/dune-project",
         "frontends/ocaml/hegel.opam",
@@ -203,6 +255,7 @@ OCAML = Component(
         "frontends/ocaml/dune-project",
     ),
     engine_bump_entry="This release updates the bundled libhegel engine to {version}.",
+    weekly=True,
 )
 # The Go frontend (the hegel.dev/go/hegel module). A Go module ships every
 # file under its directory, so any change there needs a release file (or the
@@ -214,6 +267,7 @@ OCAML = Component(
 # module embeds, which are empty on main.
 GO = Component(
     path="frontends/go",
+    name="Go",
     manifests=(),
     crates=(),
     source_dirs=("frontends/go/",),
@@ -221,7 +275,7 @@ GO = Component(
     tag_version_prefix="v",
     tagged_on_release_commit=False,
 )
-FRONTENDS = [RUST, PYTHON, TYPESCRIPT, CPP, JAVA, OCAML, GO]
+FRONTENDS = [RUST, PYTHON, TYPESCRIPT, CPP, JAVA, CSHARP, OCAML, GO]
 COMPONENTS = [LIBHEGEL, *FRONTENDS]
 
 
@@ -300,8 +354,9 @@ def current_version(manifest: Path) -> str:
     of a Cargo manifest, the `"version"` of an npm one, the `project()`
     version of a CMakeLists.txt, the first `<version>` of a Maven pom (the
     project's own in a parent pom, the parent reference in a module pom;
-    `modelVersion` is a different tag), the `(version ...)` of a dune-project
-    or the `version: "..."` of an opam file."""
+    `modelVersion` is a different tag), the `<Version>` of an MSBuild
+    `.props` file, the `(version ...)` of a dune-project or the
+    `version: "..."` of an opam file."""
     if manifest.suffix == ".json":
         return json.loads(manifest.read_text())["version"]
     if manifest.name == "CMakeLists.txt":
@@ -311,6 +366,11 @@ def current_version(manifest: Path) -> str:
         return m.group(2)
     if manifest.suffix == ".xml":
         return re.search(r"<version>([^<]+)</version>", manifest.read_text()).group(1)
+    if manifest.suffix == ".props":
+        m = re.search(r"<Version>([^<]+)</Version>", manifest.read_text())
+        if m is None:
+            raise ValueError(f"no <Version> in {manifest}")
+        return m.group(1)
     pattern, _ = version_pattern(manifest)
     m = re.search(pattern, manifest.read_text(), re.MULTILINE)
     return re.search(r"\d+\.\d+\.\d+", m.group(0)).group(0)
@@ -369,6 +429,15 @@ def set_version(manifest: Path, new_version: str) -> None:
                 count=1,
             )
         )
+        return
+    if manifest.suffix == ".props":
+        text = manifest.read_text()
+        new_text, count = re.subn(
+            r"<Version>[^<]+</Version>", f"<Version>{new_version}</Version>", text, count=1
+        )
+        if count != 1:
+            raise ValueError(f"no <Version> in {manifest}")
+        manifest.write_text(new_text)
         return
     text = manifest.read_text()
     pattern, replacement = version_pattern(manifest)
@@ -496,7 +565,9 @@ def plan_release(
     and must be republished against it; the Python frontend compiles libhegel
     into its wheels), and its changelog gets the auto-generated
     `engine_bump_entry`. That entry is only correct when there are no
-    functional frontend changes (see the changelog skill).
+    functional frontend changes (see the changelog skill). A `weekly`
+    frontend is the exception: it releases only by its release files, and
+    `defer_engine_bumps` gives it one for the engine.
 
     Returns `{component: (new_version, changelog_content)}` for the
     components that release; the others are absent.
@@ -512,7 +583,7 @@ def plan_release(
         release = releases.get(frontend)
         if release is not None:
             plan[frontend] = (bump_version(current[frontend], release[0]), release[1])
-        elif libhegel is not None:
+        elif libhegel is not None and not frontend.weekly:
             assert frontend.engine_bump_entry is not None
             plan[frontend] = (
                 bump_version(current[frontend], "patch"),
@@ -534,10 +605,28 @@ def combine_entries(entries: list[tuple[str, str]]) -> tuple[str, str]:
     return release_type, "\n\n".join(content for _, content in entries)
 
 
-def pending_release_files(root: Path) -> dict[Component, list[str]]:
-    """Every component with a release file in the tree, with its files."""
-    pending = {c: c.release_files(root) for c in COMPONENTS}
+def pending_release_files(root: Path, *, weekly: bool = False) -> dict[Component, list[str]]:
+    """Every component with a release file in the tree that this kind of run
+    releases, with its files: the `weekly` components for the weekly run,
+    the others for a push to main."""
+    pending = {c: c.release_files(root) for c in COMPONENTS if c.weekly == weekly}
     return {c: files for c, files in pending.items() if files}
+
+
+def defer_engine_bumps(root: Path, libhegel_version: str) -> list[str]:
+    """Write each `weekly` frontend's `engine_bump_file` for a libhegel
+    release, so that its next weekly release ships and names that engine.
+    Returns the files written, relative to `root`."""
+    written = []
+    for frontend in FRONTENDS:
+        if frontend.weekly:
+            assert frontend.engine_bump_entry is not None
+            path = root / frontend.engine_bump_file
+            path.parent.mkdir(parents=True, exist_ok=True)
+            entry = frontend.engine_bump_entry.format(version=libhegel_version)
+            path.write_text(f"RELEASE_TYPE: patch\n\n{entry}\n")
+            written.append(frontend.engine_bump_file)
+    return written
 
 
 def set_output(name: str, value: str) -> None:
@@ -548,8 +637,241 @@ def set_output(name: str, value: str) -> None:
             f.write(f"{name}={value}\n")
 
 
-def pending() -> None:
-    files = [f for fs in pending_release_files(ROOT).values() for f in fs]
+def component_of_tag(tag: str) -> tuple[Component, str]:
+    """The component a release tag belongs to, and the version it names."""
+    for component in COMPONENTS:
+        prefix = f"{component.path}/{component.tag_version_prefix}"
+        version = tag.removeprefix(prefix)
+        if tag.startswith(prefix) and re.fullmatch(r"\d+\.\d+\.\d+", version):
+            return component, version
+    raise ValueError(f"{tag} is not the release tag of any component")
+
+
+def changelog_entry(changelog: str, version: str) -> str:
+    """The body of the `## <version> - <date>` entry of a changelog."""
+    lines: list[str] = []
+    found = False
+    for line in changelog.splitlines():
+        if line.startswith("## "):
+            if found:
+                break
+            found = line.split()[1] == version
+        elif found:
+            lines.append(line)
+    entry = "\n".join(lines).strip()
+    if not entry:
+        raise ValueError(f"no {version} entry in the changelog")
+    return entry
+
+
+LFS_POINTER = b"version https://git-lfs.github.com/spec/"
+
+# What a source archive holds beside the frontend's own directory: the
+# engine, and the Cargo workspace it is built in.
+SOURCE_ARCHIVE_SHARED = ("Cargo.toml", "Cargo.lock", "LICENSE", LIBHEGEL.path)
+
+
+def prune_workspace_members(manifest: str, kept: list[str]) -> str:
+    """The workspace manifest with its `members` cut down to those under one
+    of the `kept` directories. A member whose directory is missing is an
+    error to cargo, and a source archive holds only some."""
+    match = re.search(r"^members = \[([^\]]*)\]$", manifest, re.MULTILINE)
+    if match is None:
+        raise ValueError("no `members = [...]` in the workspace manifest")
+    members = [
+        member
+        for member in re.findall(r'"([^"]+)"', match.group(1))
+        if any(member == d or member.startswith(d + "/") for d in kept)
+    ]
+    line = "members = [" + ", ".join(f'"{member}"' for member in members) + "]"
+    return manifest[: match.start()] + line + manifest[match.end() :]
+
+
+def pruned_lockfile(files: dict[str, bytes]) -> bytes:
+    """The `Cargo.lock` cargo writes for the tree `files` holds (paths to
+    contents, under one top-level directory with the workspace manifest),
+    whose own is that of a larger workspace. cargo keeps every version the
+    lockfile already pins and drops what the smaller workspace has no use
+    for, which depends on the features its crates turn on and so is cargo's
+    to work out. With the lockfile as cargo wants it, `cargo build --locked`
+    accepts the archive and no build rewrites it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        for name, content in files.items():
+            path = Path(tmp) / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        (workspace,) = Path(tmp).iterdir()
+        subprocess.run(
+            ["cargo", "metadata", "--format-version", "1"],
+            check=True,
+            cwd=workspace,
+            stdout=subprocess.DEVNULL,
+        )
+        return (workspace / "Cargo.lock").read_bytes()
+
+
+def build_source_archive(
+    root: Path, component: Component, version: str, rev: str, output_dir: Path
+) -> tuple[Path, Path]:
+    """Write the source archive of a frontend as of the commit `rev` into
+    `output_dir`, with its SHA-256 sidecar, and return the two paths.
+
+    The archive is `hegel-<frontend>-<version>.tar.gz`, one top-level
+    directory of the same name holding the monorepo cut down to what building
+    the frontend takes: the frontend's own directory, `libhegel/` (every
+    frontend builds the engine in the tree it is in), the licence, and the
+    Cargo workspace manifest and lockfile, pruned to the crates that are
+    there. The layout is the repository's, so the frontend builds from the
+    archive exactly as from a checkout, and a consumer that fetched the tag
+    with `SOURCE_SUBDIR frontends/cpp` fetches the archive the same way.
+
+    GitHub's own archive of a tag is the whole monorepo, website and its Git
+    LFS objects included, which GitHub generates on demand, slowly enough
+    that the download is often cut short, and with no promise that its bytes
+    stay the same. A release asset is stored once and served as uploaded.
+
+    The bytes depend only on the commit (its files, and its commit time as
+    every file's modification time), so that building the archive again
+    gives the same file. Pruning the lockfile takes cargo, and the crates.io
+    index when the workspace has dependencies. A Git LFS file is archived with its contents, which
+    takes git-lfs installed and the objects fetched; a pointer file in the
+    archive is an error.
+    """
+    if component.name is None:
+        raise ValueError(f"{component.path} releases no source archive")
+
+    stem = component.source_archive_stem(version)
+    source = subprocess.check_output(
+        [
+            "git",
+            "archive",
+            "--format=tar",
+            f"--prefix={stem}/",
+            f"{rev}^{{commit}}",
+            "--",
+            *SOURCE_ARCHIVE_SHARED,
+            component.path,
+        ],
+        cwd=root,
+    )
+
+    files: dict[str, bytes] = {}
+    with tarfile.open(fileobj=io.BytesIO(source)) as tar:
+        entries = tar.getmembers()
+        for entry in entries:
+            if entry.isfile():
+                files[entry.name] = tar.extractfile(entry).read()
+    for name, content in files.items():
+        if content.startswith(LFS_POINTER):
+            raise ValueError(
+                f"{name} is a Git LFS pointer: install git-lfs and fetch the "
+                f"objects of {rev} before archiving it"
+            )
+
+    manifest = prune_workspace_members(
+        files[f"{stem}/Cargo.toml"].decode(), [LIBHEGEL.path, component.path]
+    )
+    files[f"{stem}/Cargo.toml"] = manifest.encode()
+    files[f"{stem}/Cargo.lock"] = pruned_lockfile(files)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    archive = output_dir / f"{stem}.tar.gz"
+    with open(archive, "wb") as f:
+        with gzip.GzipFile(filename="", mode="wb", fileobj=f, mtime=0) as gz:
+            with tarfile.open(fileobj=gz, mode="w", format=tarfile.PAX_FORMAT) as tar:
+                for entry in entries:
+                    entry.pax_headers = {}
+                    if entry.isfile():
+                        entry.size = len(files[entry.name])
+                        tar.addfile(entry, io.BytesIO(files[entry.name]))
+                    else:
+                        tar.addfile(entry)
+    checksum = output_dir / f"{archive.name}.sha256"
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    checksum.write_text(f"{digest}  {archive.name}\n")
+    return archive, checksum
+
+
+def build_source_release(root: Path, tag: str, output_dir: Path) -> dict[str, str]:
+    """Write what the GitHub release of the frontend release `tag` names
+    holds into `output_dir`: its source archive and checksum (see
+    `build_source_archive`) and its notes. Returns the paths of the three
+    files, and the release's title."""
+    component, version = component_of_tag(tag)
+    archive, checksum = build_source_archive(root, component, version, tag, output_dir)
+
+    def show(rel: str) -> str:
+        return subprocess.check_output(["git", "show", f"{tag}:{rel}"], text=True, cwd=root)
+
+    engine = re.search(r'^version = "([^"]+)"', show(LIBHEGEL.manifests[0]), re.MULTILINE).group(1)
+    notes = output_dir / f"{archive.name.removesuffix('.tar.gz')}.md"
+    notes.write_text(
+        f"{changelog_entry(show(component.changelog), version)}\n\n"
+        f"`{archive.name}` is the source of this release: `{component.path}` at "
+        f"this tag with libhegel {engine}, the engine it builds, and none of "
+        "the rest of the repository.\n"
+    )
+    return {
+        "archive": str(archive),
+        "checksum": str(checksum),
+        "notes": str(notes),
+        "title": f"Hegel for {component.name} v{version}",
+    }
+
+
+def source_archive(tag: str, output_dir: Path) -> None:
+    for name, value in build_source_release(ROOT, tag, output_dir).items():
+        print(f"{name}: {value}")
+        set_output(name, value)
+
+
+def latest_frontend_tags(root: Path) -> list[str]:
+    """The highest release tag of each frontend in the repository at `root`,
+    in `FRONTENDS` order, read off its tags as `tagged_version` does."""
+    return [frontend.tag(tagged_version(root, frontend)) for frontend in FRONTENDS]
+
+
+def publish_source_archive(tag: str, output_dir: Path) -> None:
+    """Attach the source archive of the frontend release `tag` names to the
+    GitHub release on that tag, creating the release if there is none.
+
+    The assets go into a draft, which is then published: the repository's
+    releases are immutable, so a published release takes no more assets. A
+    release that is already published is left alone for the same reason,
+    which is what makes running this again harmless.
+    """
+    view = subprocess.run(
+        ["gh", "release", "view", tag, "--json", "isDraft", "--jq", ".isDraft"],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+    )
+    if view.returncode == 0 and view.stdout.strip() == "false":
+        print(f"The release of {tag} is already published.")
+        return
+    files = build_source_release(ROOT, tag, output_dir)
+    if view.returncode != 0:
+        subprocess.run(
+            [
+                "gh", "release", "create", tag,
+                "--draft",
+                "--verify-tag",
+                "--title", files["title"],
+                "--notes-file", files["notes"],
+            ],
+            check=True,
+            cwd=ROOT,
+        )
+    subprocess.run(
+        ["gh", "release", "upload", tag, files["archive"], files["checksum"], "--clobber"],
+        check=True,
+        cwd=ROOT,
+    )
+    subprocess.run(["gh", "release", "edit", tag, "--draft=false"], check=True, cwd=ROOT)
+
+
+def pending(weekly: bool) -> None:
+    files = [f for fs in pending_release_files(ROOT, weekly=weekly).values() for f in fs]
     print("\n".join(files) if files else "No release files pending.")
     set_output("skip", "false" if files else "true")
 
@@ -645,9 +967,34 @@ def existing_remote_tags(tags: list[str]) -> list[str]:
     return [tag for tag in tags if tag in remote]
 
 
-def release() -> None:
+WEEKLY_ATTEMPTS = 10
+
+
+def release(weekly: bool) -> None:
+    """Release what is pending: the `weekly` components' release files on the
+    weekly run, every other component's on a push to main.
+
+    A push's run releases the commit it tested or nothing (see
+    `release_head`). The weekly run has no later run to defer to, so when
+    main moves under it, it moves to the new head of main and cuts the
+    release again there.
+    """
+    if not weekly:
+        release_head(weekly)
+        return
+    for _ in range(WEEKLY_ATTEMPTS):
+        if release_head(weekly):
+            return
+        print("This is the weekly release, so it is cut again on the new head of main.")
+        git("fetch", "origin", "main", cwd=ROOT)
+        git("checkout", "--detach", "FETCH_HEAD", cwd=ROOT)
+    raise ValueError(f"main moved under the weekly release {WEEKLY_ATTEMPTS} times running.")
+
+
+def release_head(weekly: bool) -> bool:
     """Release everything pending on the commit checked out, if it is still
-    the head of main.
+    the head of main. False when it no longer is, in which case nothing was
+    tagged or published.
 
     The run for every push to main gets here, and two merges in quick
     succession give two runs whose trees both carry the first merge's release
@@ -658,11 +1005,11 @@ def release() -> None:
     tree is a superset of its release files, so nothing is lost. A failed
     release leaves its files on main for the next push's run to pick up.
     """
-    pending = pending_release_files(ROOT)
+    pending = pending_release_files(ROOT, weekly=weekly)
     if not pending:
         print("No release files pending.")
         set_output("released", "false")
-        return
+        return True
 
     releases: dict[Component, tuple[str, str] | None] = {
         component: (
@@ -688,10 +1035,12 @@ def release() -> None:
     apply_version_bump(ROOT, versions)
 
     # regenerate the lockfile after version bump
-    subprocess.run(["cargo", "update", "--workspace"], check=True, cwd=ROOT)
+    if any(m.endswith(".toml") for component in plan for m in component.manifests):
+        subprocess.run(["cargo", "update", "--workspace"], check=True, cwd=ROOT)
 
     for component, (version, content) in plan.items():
         add_changelog(ROOT / component.changelog, version=version, content=content)
+    deferred = defer_engine_bumps(ROOT, versions[LIBHEGEL]) if LIBHEGEL in plan else []
 
     app_slug = os.environ["HEGEL_RELEASE_APP_SLUG"]
     bot_user_id = subprocess.check_output(
@@ -704,7 +1053,7 @@ def release() -> None:
         f"{bot_user_id}+{app_slug}[bot]@users.noreply.github.com",
         cwd=ROOT,
     )
-    git("add", *RELEASE_PATHS, cwd=ROOT)
+    git("add", *RELEASE_PATHS, *deferred, cwd=ROOT)
     for files in pending.values():
         git("rm", "--quiet", *files, cwd=ROOT)
 
@@ -717,7 +1066,7 @@ def release() -> None:
             f"head releases instead. Nothing was tagged or published for {' and '.join(tags)}."
         )
         set_output("released", "false")
-        return
+        return False
 
     # Every released component gets its `<path>/<version>` tag. The GitHub
     # release carries the libhegel binaries, so it is the libhegel release:
@@ -755,6 +1104,7 @@ def release() -> None:
             cwd=ROOT,
         )
     set_output("released", "true")
+    return True
 
 
 def release_tags(versions: dict[Component, str]) -> list[str]:
@@ -784,13 +1134,30 @@ if __name__ == "__main__":
 
     check_parser = subparsers.add_parser("check")
     check_parser.add_argument("base_ref", help="Git ref to diff against.")
-    subparsers.add_parser("pending")
-    subparsers.add_parser("release")
+    for command in ("pending", "release"):
+        subparsers.add_parser(command).add_argument(
+            "--weekly",
+            action="store_true",
+            help="Act on the weekly components instead of the ones a push releases.",
+        )
+
+    for command in ("source-archive", "publish-source-archive"):
+        archive_parser = subparsers.add_parser(command)
+        archive_parser.add_argument("tag", help="The release tag of a frontend.")
+        archive_parser.add_argument("output_dir", type=Path, help="Where to write the archive.")
+
+    subparsers.add_parser("latest-frontend-tags")
 
     args = parser.parse_args()
-    if args.command == "check":
+    if args.command == "latest-frontend-tags":
+        print("\n".join(latest_frontend_tags(ROOT)))
+    elif args.command == "source-archive":
+        source_archive(args.tag, args.output_dir)
+    elif args.command == "publish-source-archive":
+        publish_source_archive(args.tag, args.output_dir)
+    elif args.command == "check":
         check(args.base_ref)
     elif args.command == "pending":
-        pending()
+        pending(args.weekly)
     elif args.command == "release":
-        release()
+        release(args.weekly)

@@ -429,3 +429,60 @@ fn cwd_reports_an_absolute_directory() {
     assert!(!dir.is_empty());
     assert!(fs::exists(&dir));
 }
+
+/// `body` as an executable `#!/bin/sh` script in `dir`, returning its path.
+/// A child shell writes it: a file this process wrote could still be open
+/// for writing in a sibling test's child between its fork and exec, and
+/// executing it would then fail with `ETXTBSY`.
+#[cfg(unix)]
+fn executable_script(dir: &TempDir, name: &str, body: &str) -> String {
+    let path = temp_path(dir, name);
+    let script = format!("#!/bin/sh\n{body}");
+    let write = "printf '%s\\n' \"$2\" > \"$1\" && chmod 755 \"$1\"";
+    assert_eq!(
+        process::run("/bin/sh", &["-c", write, "sh", &path, &script]).unwrap(),
+        0
+    );
+    path
+}
+
+#[cfg(unix)]
+#[test]
+fn process_run_reports_the_exit_status() {
+    assert_eq!(process::run("/bin/sh", &["-c", "exit 0"]).unwrap(), 0);
+    assert_eq!(process::run("/bin/sh", &["-c", "exit 7"]).unwrap(), 7);
+}
+
+#[cfg(unix)]
+#[test]
+fn process_run_passes_the_program_as_its_own_first_argument_then_the_rest() {
+    let dir = TempDir::new().unwrap();
+    let script = executable_script(
+        &dir,
+        "record",
+        "printf '%s\\n' \"$0\" \"$@\" > \"$(dirname \"$0\")/args\"",
+    );
+    assert_eq!(process::run(&script, &["--pause", "two words"]).unwrap(), 0);
+    assert_eq!(
+        fs::read(&temp_path(&dir, "args")).unwrap(),
+        format!("{script}\n--pause\ntwo words\n").into_bytes()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn process_run_fails_for_a_program_that_cannot_start() {
+    let dir = TempDir::new().unwrap();
+    assert!(process::run(&temp_path(&dir, "missing"), &[]).is_err());
+    let plain = temp_path(&dir, "plain");
+    fs::write(&plain, b"not executable").unwrap();
+    assert!(process::run(&plain, &[]).is_err());
+    assert!(process::run("/bin/sh\0", &[]).is_err());
+    assert!(process::run("/bin/sh", &["-c\0"]).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn process_run_fails_for_a_program_killed_by_a_signal() {
+    assert!(process::run("/bin/sh", &["-c", "kill -KILL $$"]).is_err());
+}

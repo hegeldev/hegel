@@ -573,6 +573,19 @@ impl TestCase {
         with_ctx(|ctx| check(unsafe { c::hegel_stop_span(ctx, self.tc(), discard) }))
     }
 
+    /// Pause fault injection on this test case until `unpause_faults`:
+    /// inside Antithesis, a stateful invariant declared with
+    /// `pause_faults` runs between the pair; outside Antithesis nothing
+    /// happens.
+    fn pause_faults(&self) -> PyResult<()> {
+        with_ctx(|ctx| check(unsafe { c::hegel_pause_faults(ctx, self.tc()) }))
+    }
+
+    /// Resume fault injection paused by `pause_faults`.
+    fn unpause_faults(&self) -> PyResult<()> {
+        with_ctx(|ctx| check(unsafe { c::hegel_unpause_faults(ctx, self.tc()) }))
+    }
+
     /// Append whole lines of text to this handle's print region. A dead
     /// region (the document was already read) is a silent no-op.
     fn note(&self, text: &str) -> PyResult<()> {
@@ -835,7 +848,7 @@ impl StateMachine {
     }
 
     /// Seal the declared rules and invariants and draw the concurrency
-    /// level, returning it.
+    /// level, returning `max_concurrency`: the number of workers to run.
     fn start(&self, tc: &TestCase) -> PyResult<i64> {
         let mut out = 0i64;
         with_ctx(|ctx| {
@@ -844,13 +857,23 @@ impl StateMachine {
         Ok(out)
     }
 
-    /// The next round's group id, or `None` once the machine is done.
-    fn next_group(&self, tc: &TestCase) -> PyResult<Option<i64>> {
+    /// The next round's group id and concurrency level, or `None` once the
+    /// machine is done.
+    fn next_group(&self, tc: &TestCase) -> PyResult<Option<(i64, i64)>> {
         let mut out = 0i64;
+        let mut concurrency = 0i64;
         with_ctx(|ctx| {
-            check(unsafe { c::hegel_state_machine_next_group(ctx, tc.tc(), self.raw.0, &mut out) })
+            check(unsafe {
+                c::hegel_state_machine_next_group(
+                    ctx,
+                    tc.tc(),
+                    self.raw.0,
+                    &mut out,
+                    &mut concurrency,
+                )
+            })
         })?;
-        Ok((out != c::HEGEL_STATE_MACHINE_DONE).then_some(out))
+        Ok((out != c::HEGEL_STATE_MACHINE_DONE).then_some((out, concurrency)))
     }
 
     /// The next rule index for `worker_index`, or `None` at the join point.

@@ -586,7 +586,8 @@ pub use hegel_macros::state_machine;
 /// the named concurrency groups; methods annotated `#[invariant]` become
 /// invariants, checked in full on the machine's initial and final state and
 /// sampled at the join points between rounds (`#[invariant(always_run)]`
-/// runs at every join point instead). Rules in the same
+/// runs at every join point instead, and `#[invariant(pause_faults = true)]`
+/// pauses fault injection while the invariant runs). Rules in the same
 /// group may run concurrently with each other; rules in different groups
 /// never overlap. A rule in several groups, `#[rule(groups = ["a", "b"])]`,
 /// runs whenever any of them is current, so it may overlap the rules of
@@ -767,6 +768,14 @@ pub use hegel_macros::test_helper;
 /// often meant to run for a long time, as when it drives a concurrent state
 /// machine — so it is never stopped as an overrun. See
 /// [`Settings::suppress_health_check`].
+///
+/// Inside [Antithesis](https://antithesis.com/) (detected from
+/// `ANTITHESIS_OUTPUT_DIR`), unless a database is configured, the test
+/// case's choices are not recorded, so the binary's memory does not grow
+/// with how long it runs. A failure is then reported as it happened, as the
+/// panic's location and message: it is not shrunk or replayed, the values
+/// it drew are not printed, and it has no reproduce blob. Antithesis
+/// reproduces the failure itself.
 ///
 /// Every setting but the test-case count is a CLI flag (with defaults
 /// taken from the attribute args), named after its `hegel.toml` key with

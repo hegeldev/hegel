@@ -20,7 +20,7 @@ These patterns are excluded without needing `// nocov`:
 - Structural syntax (closing braces, punctuation-only lines)
 - `#[cfg(test)]` modules
 - `todo!()` and `unreachable!()` calls
-- Continuation lines inside multi-line `unreachable!()`/`todo!()`/`assert!()` calls
+- Continuation lines inside multi-line `unreachable!()`/`todo!()`/`assert!()` calls, and inside multi-line `hegel_internal_assert!()` (with its `_eq`/`_ne`/`debug_` variants), `hegel_internal_unwrap!()` and `hegel_internal_error!()` calls. The line that opens the call is not exempt, and neither is any line of an `invalid_argument!()` call: that one reports a user error, so a test must trigger it.
 - `#[ignore]`d test bodies
 
 ## LCOV vs region coverage

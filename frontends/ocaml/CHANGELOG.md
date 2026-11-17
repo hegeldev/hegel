@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.27.2 - 2026-11-16
+
+This release updates the bundled libhegel engine to 0.51.6.
+
+This patch adds `?pause_faults` to `Stateful.Invariant.create`, and the matching `pause_faults` option of `[@@invariant]`, for an invariant that should observe the system under test with fault injection paused. Every run of such an invariant (on the initial state, after a sampled step or round, and on the final state) is bracketed with the engine's new `hegel_pause_faults` and `hegel_unpause_faults` calls, on sequential, concurrent and Async machines alike, and the unpause runs even when the invariant raises. The option combines with `always_check` in either order.
+
+```ocaml
+module%hegel_state_machine Stack = struct
+  type state = int list ref
+
+  let push tc stack =
+    let n = draw tc (integers ~min_value:0 ~max_value:9 ()) in
+    stack := n :: !stack
+  [@@rule]
+
+  let consistent _tc stack = assert (List.length !stack >= 0)
+  [@@invariant { always_check = true; pause_faults = true }]
+end
+```
+
+Outside [Antithesis](https://antithesis.com/) the option has no effect. `Stateful.Invariant.always_check` and `Stateful.Invariant.pause_faults` read the two flags back.
+
+## 0.27.1 - 2026-11-09
+
+This patch lets a long state-machine run explore more than one configuration. Between rounds, a state machine now occasionally redraws its value distribution, the rules each worker has enabled, and the concurrency level. Previously these were fixed for the whole test case, so a `let%hegel_main` binary kept one configuration for its whole run.
+
+A concurrent machine now always runs `max_concurrency` workers, and only the current concurrency level's worth of them run rules in a round. A failure report notes `Concurrency level: n` at the first round and whenever the level changes.
+
 ## 0.27.0 - 2026-11-03
 
 This release lets a rule of a concurrent state machine belong to several concurrency groups.

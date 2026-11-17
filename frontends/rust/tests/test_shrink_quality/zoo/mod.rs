@@ -1,5 +1,5 @@
-//! Shrink-quality cases distilled from bugs hegel found in real crates (the hegel-zoo), via
-//! <https://github.com/hegeldev/shrinking-workbench>. Each case replicates a failing zoo test's
+//! Shrink-quality cases distilled from bugs hegel found in real crates (the hegel-zoo,
+//! <https://github.com/hegeldev/hegel-zoo>). Each case replicates a failing zoo test's
 //! draw structure and predicate with no dependency on the upstream crate, and asserts the
 //! shortlex ideal: the smallest choice sequence that fails. Where a human would write something
 //! else, the case says so.

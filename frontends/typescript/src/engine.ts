@@ -333,6 +333,15 @@ export interface Engine {
   blockTestCase(ctx: ContextHandle, tc: TestCaseHandle, indent: number): TestCaseHandle;
   /** Attribute `tc`'s output lines to concurrent worker `index`. */
   setWorker(ctx: ContextHandle, tc: TestCaseHandle, index: number): void;
+  /**
+   * Pause fault injection on `tc` until the matching {@link unpauseFaults}:
+   * inside Antithesis, the fuzzer stops injecting faults for the duration
+   * of a stateful invariant declared with `pauseFaults`; elsewhere nothing
+   * happens.
+   */
+  pauseFaults(ctx: ContextHandle, tc: TestCaseHandle): void;
+  /** Resume fault injection paused by {@link pauseFaults} on `tc`. */
+  unpauseFaults(ctx: ContextHandle, tc: TestCaseHandle): void;
   note(ctx: ContextHandle, tc: TestCaseHandle, text: string): void;
   target(ctx: ContextHandle, tc: TestCaseHandle, value: number, label: string): void;
   event(ctx: ContextHandle, tc: TestCaseHandle, label: string): void;
@@ -587,18 +596,19 @@ export interface Engine {
   ): void;
   /**
    * Seal the declared rules and invariants and draw the concurrency level,
-   * returning it. No rule may be added, and no round driven, across this call.
+   * returning `maxConcurrency`: the number of workers to run. No rule may be
+   * added, and no round driven, across this call.
    */
   stateMachineStart(ctx: ContextHandle, tc: TestCaseHandle, machine: StateMachineHandle): number;
   /**
-   * Start the machine's next round, returning the round's group id, or `null`
-   * once the machine is finished.
+   * Start the machine's next round, returning the round's group id and
+   * concurrency level, or `null` once the machine is finished.
    */
   stateMachineNextGroup(
     ctx: ContextHandle,
     tc: TestCaseHandle,
     machine: StateMachineHandle,
-  ): number | null;
+  ): { group: number; concurrency: number } | null;
   /**
    * Draw the next rule index for `workerIndex` this round, or `null` at the
    * round's join point.

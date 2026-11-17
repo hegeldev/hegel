@@ -112,6 +112,7 @@ module Counter_machine = struct
     [ H.Stateful.Invariant.create
         ~name:"matches_model"
         ~always_check:true
+        ~pause_faults:true
         ~inv:(fun _tc s ->
           Counter.read s.counter
           >>| fun n -> if n <> s.model then failwithf "counter %d, model %d" n s.model ())
@@ -155,7 +156,11 @@ let stateful_accessors () =
   Alcotest.(check (list string))
     "invariant names"
     [ "matches_model"; "non_negative" ]
-    (List.map Counter_machine.invariants ~f:H.Stateful.Invariant.name)
+    (List.map Counter_machine.invariants ~f:H.Stateful.Invariant.name);
+  Alcotest.(check (list bool))
+    "invariant pause_faults"
+    [ true; false ]
+    (List.map Counter_machine.invariants ~f:(fun inv -> inv.pause_faults))
 ;;
 
 let () =

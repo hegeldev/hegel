@@ -21,6 +21,10 @@ module%hegel_state_machine [@async] Counter_machine = struct
   let non_negative _tc s = Scheduler.yield () >>| fun () -> assert (s.n >= 0)
   [@@invariant { always_check = true }]
   ;;
+
+  let bounded _tc s = Scheduler.yield () >>| fun () -> assert (s.n <= 5)
+  [@@invariant { pause_faults = true }]
+  ;;
 end
 
 let%hegel_test[@async] runs_machine tc =
@@ -42,8 +46,12 @@ let test_collects_rules_and_invariants () =
     (List.map Counter_machine.rules ~f:S.Rule.weight);
   Alcotest.(check (list string))
     "invariants"
-    [ "non_negative" ]
-    (List.map Counter_machine.invariants ~f:S.Invariant.name)
+    [ "non_negative"; "bounded" ]
+    (List.map Counter_machine.invariants ~f:S.Invariant.name);
+  Alcotest.(check (list bool))
+    "invariant pause_faults"
+    [ false; true ]
+    (List.map Counter_machine.invariants ~f:(fun inv -> inv.pause_faults))
 ;;
 
 let test_generated_run () = run_async runs_machine
