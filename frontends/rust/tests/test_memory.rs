@@ -1,10 +1,10 @@
 //! Memory a long-running test case keeps, measured as the live heap bytes
 //! of this test binary. The counting allocator sees the engine's
-//! allocations only when the engine is linked in (`static-engine`), and the
-//! fixture runs in a subprocess of its own (`exec::self_test`) so that no
-//! other test allocates while it measures.
+//! allocations because the engine is linked in, and the fixture runs in a
+//! subprocess of its own (`exec::self_test`) so that no other test
+//! allocates while it measures.
 
-#![cfg(all(feature = "static-engine", not(windows)))]
+#![cfg(not(windows))]
 
 mod common;
 
