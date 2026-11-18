@@ -276,43 +276,43 @@ val phase_to_string : phase -> string
 
 type t =
   { test_cases : int
-    (** Maximum number of valid test cases to generate. Cases rejected by
+  (** Maximum number of valid test cases to generate. Cases rejected by
         [assume] or a filter do not count. 100 in the [base] profile. *)
   ; verbosity : verbosity (** How much Hegel prints. [Normal] in the [base] profile. *)
   ; seed : int option
-    (** A fixed seed for reproducibility; [None]/[seed = "none"] in [hegel.toml]
+  (** A fixed seed for reproducibility; [None]/[seed = "none"] in [hegel.toml]
         draws a new random seed per run. *)
   ; derandomize : bool
-    (** Make the run reproducible by deriving its seed from the test's identity
+  (** Make the run reproducible by deriving its seed from the test's identity
         instead of fresh randomness. [true] in the [ci] profile. *)
   ; database : database
-    (** Where failing examples are stored. When set, Hegel replays test cases
+  (** Where failing examples are stored. When set, Hegel replays test cases
         from previous failed runs and records new failures as they occur.
         Disabled in the [ci] and [workload] profiles. *)
   ; suppress_health_check : health_check list
-    (** Health checks that should not fail the run. [[Too_slow]] in the [ci]
+  (** Health checks that should not fail the run. [[Too_slow]] in the [ci]
         profile, all four in [workload]. *)
   ; phases : phase list
-    (** The phases to run. All phases are run with the [base] profile. *)
+  (** The phases to run. All phases are run with the [base] profile. *)
   ; print_blob : bool
-    (** Print a [rerun with:] line whose base64 blob encodes the choices that
+  (** Print a [rerun with:] line whose base64 blob encodes the choices that
         led to a failure. [true] in the [base] settings. *)
   ; report_multiple_failures : bool
-    (** Report every distinct failure the run found. When [false] (the default),
+  (** Report every distinct failure the run found. When [false] (the default),
         only the smallest failure is shrunk and reported. Other failures are still
         stored in the database. *)
   ; stop_on_first_failure : bool
-    (** Stop at the first failure found and report it. When [false], the run
+  (** Stop at the first failure found and report it. When [false], the run
         uses its whole [test_cases] budget before reporting. [true] in the
         [base] profile. *)
   ; show_statistics : bool
-    (** Print an end-of-run statistics block aggregating [event] /
+  (** Print an end-of-run statistics block aggregating [event] /
         [event_value] observations. [false] by default. *)
   ; backend : backend
-    (** The source of randomness. [Default] in the [base] profile, [Urandom]
+  (** The source of randomness. [Default] in the [base] profile, [Urandom]
         in the [workload] profile. *)
   ; nondeterminism_strictness : Nondeterminism_strictness.t
-    (** How a run handles nondeterministic test behavior. [Quiet] in the
+  (** How a run handles nondeterministic test behavior. [Quiet] in the
         [base] profile. *)
   }
 

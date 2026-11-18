@@ -56,11 +56,11 @@ let draw_association_pairs
     Key-value pairs are generated one at a time via the collection protocol,
     with duplicate keys rejected client-side. *)
 let%template assoc_lists
-      (keys : ('a, printable) generator MODE(m))
-      (values : ('b, printable) generator MODE(m))
-      ?(min_size = 0)
-      ?(max_size : int option)
-      ()
+  (keys : ('a, printable) generator MODE(m))
+  (values : ('b, printable) generator MODE(m))
+  ?(min_size = 0)
+  ?(max_size : int option)
+  ()
   : (('a * 'b) list, printable) generator MODE(m)
   =
   validate_size_bounds ~min_size ~max_size;
@@ -81,13 +81,13 @@ let%template assoc_lists
 (** [make_hash_tables ~of_pairs ~sexp_of_t keys values ?min_size ?max_size ()]
     builds a hash-table generator over any table type ['t]. *)
 let%template make_hash_tables
-      ~(of_pairs : (('a * 'b) list -> 't) MODE(m))
-      ~(sexp_of_t : (('a -> Sexp.t) -> ('b -> Sexp.t) -> 't -> Sexp.t) MODE(m))
-      (keys : ('a, printable) generator MODE(m))
-      (values : ('b, printable) generator MODE(m))
-      ?(min_size = 0)
-      ?(max_size : int option)
-      ()
+  ~(of_pairs : (('a * 'b) list -> 't) MODE(m))
+  ~(sexp_of_t : (('a -> Sexp.t) -> ('b -> Sexp.t) -> 't -> Sexp.t) MODE(m))
+  (keys : ('a, printable) generator MODE(m))
+  (values : ('b, printable) generator MODE(m))
+  ?(min_size = 0)
+  ?(max_size : int option)
+  ()
   : ('t, printable) generator MODE(m)
   =
   validate_size_bounds ~min_size ~max_size;
@@ -108,11 +108,11 @@ let%template make_hash_tables
 (** [hash_tables keys values ?min_size ?max_size ()] creates a generator for
     polymorphic [Stdlib.Hashtbl.t] tables over printable [keys] and [values]. *)
 let%template hash_tables
-      (keys : ('a, printable) generator MODE(m))
-      (values : ('b, printable) generator MODE(m))
-      ?min_size
-      ?max_size
-      ()
+  (keys : ('a, printable) generator MODE(m))
+  (values : ('b, printable) generator MODE(m))
+  ?min_size
+  ?max_size
+  ()
   : (('a, 'b) Stdlib.Hashtbl.t, printable) generator MODE(m)
   =
   (make_hash_tables [@mode m])
@@ -138,11 +138,11 @@ let%template hash_tables
     {!Labels.list} span. When [unique] is [true], duplicate elements are
     rejected client-side so the generated list contains only distinct elements. *)
 let%template lists
-      (elements : ('a, printable) generator MODE(m))
-      ?(min_size = 0)
-      ?(max_size : int option)
-      ?(unique = false)
-      ()
+  (elements : ('a, printable) generator MODE(m))
+  ?(min_size = 0)
+  ?(max_size : int option)
+  ?(unique = false)
+  ()
   : ('a list, printable) generator MODE(m)
   =
   validate_size_bounds ~min_size ~max_size;
