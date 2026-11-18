@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.17.7 - 2026-11-18
+
+This release makes the engine print each test case's drawn values and notes as soon as they can no longer change, instead of Hegel for C++ reading them back after the test case ends. With `Verbosity::Verbose` or `Verbosity::Debug`, the output of a long-running or stateful test now appears while the test runs (a concurrent state machine prints round by round), and a test case no longer keeps all of its output in memory until it ends. Failure reports at `Verbosity::Normal` are unchanged.
+
+A failing test case is now followed by its diagnostic: at `Verbosity::Verbose`, one line with the exception's type and the first line of its message (for a failed GoogleTest assertion, its `file:line` and the first line of its message), and at `Verbosity::Debug` the whole message.
+
+## 0.17.6 - 2026-11-16
+
+This release updates the bundled libhegel engine to 0.51.6.
+
 ## 0.17.5 - 2026-11-13
 
 This patch adds a `pause_faults` flag to `hegel::stateful::InvariantParams`, next to `always_check`. An invariant declared with it asks the engine to pause fault injection for the duration of each of its checks, in sequential and concurrent state machines alike, so that inside Antithesis no fault lands in the middle of the check. Fault injection resumes when the check returns or throws.

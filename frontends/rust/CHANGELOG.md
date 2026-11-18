@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.53.1 - 2026-11-18
+
+This patch moves the printing of a test case's drawn values, notes and failure diagnostic into the engine. A verbose run now prints each test case's output as it happens rather than once the test case finishes, so a long-running or stateful test (a concurrent state machine round by round) shows its progress live, and a test case's output no longer accumulates in memory at any verbosity. Failure reports at the default verbosity are unchanged.
+
+A verbose run now follows each failing test case with its panic on one line, `thread '<name>' (<id>) panicked at file:line:col: message` (a message spanning several lines cut at its first line), instead of the full panic diagnostic. The full diagnostic, with a backtrace when `RUST_BACKTRACE` asks for one, is printed per failing test case at `Verbosity::Debug`, and in the failure report as before. A backtrace is now captured only when that full diagnostic will be shown.
+
+## 0.53.0 - 2026-11-17
+
+This release links Hegel's engine (`hegeltest-c`) into your tests as an ordinary Rust dependency again, instead of building it into a `libhegel_c` shared library from the build script and loading it at runtime. `hegeltest` no longer has a build script, so it no longer runs a nested `cargo build`, which deadlocked when cargo's `build.build-dir` was set to a shared directory and ignored offline, vendored and locked builds. Binaries built with hegeltest, such as a deployed `#[hegel::main]` fuzzer, are self-contained again and no longer need the library shipped next to them. The `HEGEL_C_LIB_DIR` environment variable no longer has any effect on hegeltest.
+
+The engine's dependencies now appear in your cargo graph. They are few and built with default features disabled.
+
+The `static-engine` feature is now a no-op, kept so that existing `Cargo.toml` files continue to build. You can remove it.
+
+## 0.52.7 - 2026-11-16
+
+This release updates the `hegeltest-c` dependency to 0.51.6.
+
 ## 0.52.6 - 2026-11-13
 
 This patch adds a `pause_faults` flag to stateful invariants. An invariant declared with it runs every check (on the initial state, at the sampled join points, and on the final state) with fault injection paused: inside [Antithesis](https://antithesis.com/), the fault injector is asked to stand down from just before the invariant's body until just after it returns or panics, so the check observes the system under test without a fault landing in the middle of it. The flag works on sequential and concurrent state machines alike, and combines with `always_run`:

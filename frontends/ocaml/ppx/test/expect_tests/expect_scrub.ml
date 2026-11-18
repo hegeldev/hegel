@@ -78,8 +78,28 @@ let scrub_draw_positions s =
   |> String.concat ~sep:"\n"
 ;;
 
+(* Backtrace frames differ between compilers; a run of them becomes one
+   <BACKTRACE> line. *)
+let scrub_backtraces s =
+  let open Core in
+  let is_frame line =
+    List.exists
+      [ "Raised at "; "Called from "; "Re-raised at "; "Raised by primitive operation" ]
+      ~f:(fun prefix -> String.is_prefix (String.lstrip line) ~prefix)
+  in
+  String.split s ~on:'\n'
+  |> List.fold ~init:[] ~f:(fun acc line ->
+    match is_frame line, acc with
+    | true, "<BACKTRACE>" :: _ -> acc
+    | true, _ -> "<BACKTRACE>" :: acc
+    | false, _ -> line :: acc)
+  |> List.rev
+  |> String.concat ~sep:"\n"
+;;
+
 let scrub_report ?(hide_draw_positions = true) s =
-  (if hide_draw_positions then scrub_draw_positions s else s)
+  scrub_backtraces s
+  |> (fun s -> if hide_draw_positions then scrub_draw_positions s else s)
   |> Expect_test_helpers_core.hide_positions_in_string
   |> scrub_numeric_after ~marker:".ml:" ~placeholder:"<LINE>"
   |> scrub_blobs

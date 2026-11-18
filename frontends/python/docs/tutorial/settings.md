@@ -44,7 +44,7 @@ Some settings you may want:
 
 `verbosity`
 : `"quiet"`, `"normal"`, `"verbose"` (print every test case as it runs) or
-  `"debug"`.
+  `"debug"` (also each failing test case's traceback).
 
 `seed`
 : A fixed seed, to make a run repeatable. `derandomize=True` instead derives

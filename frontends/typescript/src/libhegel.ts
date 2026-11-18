@@ -33,6 +33,7 @@ import {
   UINT64_MAX,
   doneOrIndex,
   type Engine,
+  type OutputSink,
   type ContextHandle,
   type SettingsHandle,
   type RunHandle,
@@ -136,6 +137,11 @@ const datetimeType: TypeObject = koffi.struct({ date: dateType, time: timeType }
 // hands back the raw pointer: the strings may contain interior NULs, so they
 // are read by `len`.
 const stringType: TypeObject = koffi.struct({ data: "uint8_t*", len: "size_t" });
+// hegel_output_callback_t. The engine's lines are UTF-8 with no interior NUL,
+// so koffi can decode `line` as a C string.
+const outputCallbackType: TypeObject = koffi.pointer(
+  koffi.proto("void", ["void*", "const char*", "size_t"]),
+);
 
 /**
  * The set of C functions bound from the shared library.
@@ -148,10 +154,10 @@ const stringType: TypeObject = koffi.struct({ data: "uint8_t*", len: "size_t" })
  * {@link bindLibrary}. `hegel_settings_new` and
  * `hegel_settings_new_for_profile` stay fallible: they resolve a settings
  * profile, which fails when the profile is unknown or a `hegel.toml` is
- * malformed. The output callback taken by
- * `hegel_run_start` / `hegel_run_start_blob` is likewise absorbed as NULL
- * (engine output stays on stderr), and so are the options of
- * `hegel_test_case_printer` and `hegel_printer_reflow` (the defaults: a
+ * malformed. The `user_data` of `hegel_run_start` / `hegel_run_start_blob`
+ * is absorbed as NULL: the callback, made by {@link Bindings.registerOutput},
+ * carries its destination itself. The options of `hegel_test_case_printer`
+ * and `hegel_printer_reflow` are absorbed as NULL too (the defaults: a
  * 79-column document).
  *
  * String arguments are marshalled to `hegel_string_t` views of their UTF-8
@@ -202,15 +208,22 @@ export interface Bindings {
   settingsGetBackend: (s: Ptr) => number;
   settingsGetNondeterminismStrictness: (s: Ptr) => number;
 
-  runStart: (ctx: Ptr, settings: Ptr, out: Ptr[]) => number;
-  runStartBlob: (ctx: Ptr, settings: Ptr, blob: string, out: Ptr[]) => number;
+  /**
+   * A `hegel_output_callback_t` passing each line to `output`, valid until
+   * {@link Bindings.unregisterOutput} releases it.
+   */
+  registerOutput: (output: OutputSink) => Ptr;
+  unregisterOutput: (callback: Ptr) => void;
+  runStart: (ctx: Ptr, settings: Ptr, callback: Ptr, out: Ptr[]) => number;
+  runStartBlob: (ctx: Ptr, settings: Ptr, blob: string, callback: Ptr, out: Ptr[]) => number;
   nextTestCase: (ctx: Ptr, run: Ptr, out: Ptr[]) => number;
   runResult: (ctx: Ptr, run: Ptr, out: Ptr[]) => number;
   runResultFree: (r: Ptr) => void;
   runFree: (run: Ptr) => void;
 
   testCaseFree: (tc: Ptr) => void;
-  testCaseShouldCapture: (ctx: Ptr, tc: Ptr, out: boolean[]) => number;
+  testCaseWantsOutput: (ctx: Ptr, tc: Ptr, out: boolean[]) => number;
+  testCaseWantsDetail: (ctx: Ptr, tc: Ptr, out: boolean[]) => number;
   testCaseClone: (ctx: Ptr, tc: Ptr, out: Ptr[]) => number;
   testCaseBlock: (ctx: Ptr, tc: Ptr, indent: number, out: Ptr[]) => number;
   testCaseSetWorker: (ctx: Ptr, tc: Ptr, index: number) => number;
@@ -325,7 +338,14 @@ export interface Bindings {
   repeatMore: (ctx: Ptr, tc: Ptr, repeat: Ptr, out: boolean[]) => number;
   repeatFailed: (ctx: Ptr, tc: Ptr, repeat: Ptr) => number;
   repeatFree: (repeat: Ptr) => void;
-  markComplete: (ctx: Ptr, tc: Ptr, status: number, origin: string | null) => number;
+  markComplete: (
+    ctx: Ptr,
+    tc: Ptr,
+    status: number,
+    origin: string | null,
+    summary: string | null,
+    detail: string | null,
+  ) => number;
 
   newPool: (ctx: Ptr, tc: Ptr, out: Ptr[]) => number;
   poolAdd: (ctx: Ptr, tc: Ptr, pool: Ptr, out: (number | bigint)[]) => number;
@@ -410,6 +430,7 @@ export interface Bindings {
   failureOrigin: (f: Ptr) => string;
   failureReproductionBlob: (f: Ptr) => string | null;
   failureCaveat: (f: Ptr) => string | null;
+  failureOutput: (f: Ptr) => string | null;
 
   version: () => string;
 }
@@ -543,14 +564,18 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     "int hegel_settings_get_nondeterminism_strictness(void* ctx, void* s, _Out_ uint32_t* out)",
   );
 
-  const runStart = f(
-    "int hegel_run_start(void* ctx, void* settings, void* callback, void* user_data, _Out_ void** out_run)",
-  );
+  const runStart = fs("hegel_run_start", [
+    "void*",
+    "void*",
+    outputCallbackType,
+    "void*",
+    koffi.out(koffi.pointer("void*")),
+  ]);
   const runStartBlob = fs("hegel_run_start_blob", [
     "void*",
     "void*",
     stringType,
-    "void*",
+    outputCallbackType,
     "void*",
     koffi.out(koffi.pointer("void*")),
   ]);
@@ -560,8 +585,11 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
   const runFree = f("int hegel_run_free(void* ctx, void* run)");
 
   const testCaseFree = f("int hegel_test_case_free(void* ctx, void* tc)");
-  const testCaseShouldCapture = f(
-    "int hegel_test_case_should_capture(void* ctx, void* tc, _Out_ bool* out)",
+  const testCaseWantsOutput = f(
+    "int hegel_test_case_wants_output(void* ctx, void* tc, _Out_ bool* out)",
+  );
+  const testCaseWantsDetail = f(
+    "int hegel_test_case_wants_detail(void* ctx, void* tc, _Out_ bool* out)",
   );
   const testCaseClone = f("int hegel_test_case_clone(void* ctx, void* tc, _Out_ void** out)");
   const testCaseBlock = f(
@@ -788,6 +816,8 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     "void*",
     "uint32_t",
     koffi.pointer(stringType),
+    koffi.pointer(stringType),
+    koffi.pointer(stringType),
   ]);
 
   const newPool = f("int hegel_new_pool(void* ctx, void* tc, _Out_ void** out_pool)");
@@ -872,6 +902,7 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     "int hegel_failure_reproduction_blob(void* ctx, void* f, _Out_ void** out)",
   );
   const failureCaveat = f("int hegel_failure_caveat(void* ctx, void* f, _Out_ void** out)");
+  const failureOutput = f("int hegel_failure_output(void* ctx, void* f, _Out_ void** out)");
   const version = fs("hegel_version", ["void*", koffi.out(koffi.pointer(stringType))]);
 
   const readString = (result: NativeBuffer): string => wtf8ToString(copyNativeBuffer(result));
@@ -1021,14 +1052,19 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
       );
       return out[0];
     },
-    runStart: (ctx, s, out) => runStart(ctx, s, null, null, out),
-    runStartBlob: (ctx, s, blob, out) => runStartBlob(ctx, s, nativeString(blob), null, null, out),
+    registerOutput: (output) =>
+      koffi.register((_userData: Ptr, line: string) => output(line), outputCallbackType),
+    unregisterOutput: (callback) => koffi.unregister(callback as bigint),
+    runStart: (ctx, s, callback, out) => runStart(ctx, s, callback, null, out),
+    runStartBlob: (ctx, s, blob, callback, out) =>
+      runStartBlob(ctx, s, nativeString(blob), callback, null, out),
     nextTestCase: (ctx, run, out) => nextTestCase(ctx, run, out),
     runResult: (ctx, run, out) => runResult(ctx, run, out),
     runResultFree: (r) => checked(runResultFree(null, r), "runResultFree"),
     runFree: (run) => checked(runFree(null, run), "runFree"),
     testCaseFree: (tc) => checked(testCaseFree(null, tc), "testCaseFree"),
-    testCaseShouldCapture: (ctx, tc, out) => testCaseShouldCapture(ctx, tc, out),
+    testCaseWantsOutput: (ctx, tc, out) => testCaseWantsOutput(ctx, tc, out),
+    testCaseWantsDetail: (ctx, tc, out) => testCaseWantsDetail(ctx, tc, out),
     testCaseClone: (ctx, tc, out) => testCaseClone(ctx, tc, out),
     testCaseBlock: (ctx, tc, indent, out) => testCaseBlock(ctx, tc, indent, out),
     testCaseSetWorker: (ctx, tc, index) => testCaseSetWorker(ctx, tc, index),
@@ -1163,8 +1199,15 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
     repeatMore: (ctx, tc, repeat, out) => repeatMore(ctx, tc, repeat, out),
     repeatFailed: (ctx, tc, repeat) => repeatFailed(ctx, tc, repeat),
     repeatFree: (repeat) => checked(repeatFree(null, repeat), "repeatFree"),
-    markComplete: (ctx, tc, status, origin) =>
-      markComplete(ctx, tc, status, optionalString(origin)),
+    markComplete: (ctx, tc, status, origin, summary, detail) =>
+      markComplete(
+        ctx,
+        tc,
+        status,
+        optionalString(origin),
+        optionalString(summary),
+        optionalString(detail),
+      ),
     newPool: (ctx, tc, out) => newPool(ctx, tc, out),
     poolAdd: (ctx, tc, pool, out) => poolAdd(ctx, tc, pool, out),
     poolGenerate: (ctx, tc, pool, consume, out) => poolGenerate(ctx, tc, pool, consume, out),
@@ -1239,6 +1282,11 @@ export function bindLibrary(lib: LibraryHandle): Bindings {
       checked(failureCaveat(null, fp, out), "failureCaveat");
       return readOptionalString(out[0]);
     },
+    failureOutput: (fp) => {
+      const out: Ptr[] = [null];
+      checked(failureOutput(null, fp, out), "failureOutput");
+      return readOptionalString(out[0]);
+    },
     version: () => {
       const out: NativeBuffer[] = [{ data: null, len: 0 }];
       checked(version(null, out), "version");
@@ -1265,6 +1313,7 @@ function copyNativeBuffer(result: NativeBuffer): Uint8Array {
 export class Libhegel implements Engine {
   private readonly fns: Bindings;
   private readonly pointers = new WeakMap<object, Ptr>();
+  private readonly outputs = new WeakMap<object, Ptr>();
 
   constructor(fns: Bindings) {
     this.fns = fns;
@@ -1480,25 +1529,47 @@ export class Libhegel implements Engine {
     return this.fns.settingsGetNondeterminismStrictness(this.ptr(s));
   }
 
-  /** Start a run. Throws {@link LibhegelError} on failure. */
-  runStart(ctx: Ptr, settings: Ptr): RunHandle {
-    const out: Ptr[] = [null];
-    this.check(ctx, this.fns.runStart(this.ptr(ctx), this.ptr(settings), out), "hegel_run_start");
-    return this.requireHandle<RunHandle>(out[0], "runStart");
+  /**
+   * Start a run printing to `output`. Throws {@link LibhegelError} on
+   * failure.
+   */
+  runStart(ctx: Ptr, settings: Ptr, output: OutputSink): RunHandle {
+    return this.startRun(ctx, output, "hegel_run_start", (callback, out) =>
+      this.fns.runStart(this.ptr(ctx), this.ptr(settings), callback, out),
+    );
   }
 
   /**
-   * Start a run replaying a reproduce blob. Throws {@link LibhegelError} for a
-   * blob that is not valid.
+   * Start a run replaying a reproduce blob, printing to `output`. Throws
+   * {@link LibhegelError} for a blob that is not valid.
    */
-  runStartBlob(ctx: Ptr, settings: Ptr, blob: string): RunHandle {
-    const out: Ptr[] = [null];
-    this.check(
-      ctx,
-      this.fns.runStartBlob(this.ptr(ctx), this.ptr(settings), blob, out),
-      "hegel_run_start_blob",
+  runStartBlob(ctx: Ptr, settings: Ptr, blob: string, output: OutputSink): RunHandle {
+    return this.startRun(ctx, output, "hegel_run_start_blob", (callback, out) =>
+      this.fns.runStartBlob(this.ptr(ctx), this.ptr(settings), blob, callback, out),
     );
-    return this.requireHandle<RunHandle>(out[0], "runStartBlob");
+  }
+
+  /**
+   * Register `output` as the run's output callback, kept until {@link freeRun}
+   * since the engine prints through it for as long as the run lives.
+   */
+  private startRun(
+    ctx: Ptr,
+    output: OutputSink,
+    op: string,
+    start: (callback: Ptr, out: Ptr[]) => number,
+  ): RunHandle {
+    const callback = this.fns.registerOutput(output);
+    try {
+      const out: Ptr[] = [null];
+      this.check(ctx, start(callback, out), op);
+      const run = this.requireHandle<RunHandle>(out[0], op);
+      this.outputs.set(run, callback);
+      return run;
+    } catch (error) {
+      this.fns.unregisterOutput(callback);
+      throw error;
+    }
   }
 
   /**
@@ -1534,19 +1605,37 @@ export class Libhegel implements Engine {
   }
 
   freeRun(run: Ptr): void {
-    this.release(run, (pointer) => this.fns.runFree(pointer));
+    try {
+      this.release(run, (pointer) => this.fns.runFree(pointer));
+    } finally {
+      const callback = this.outputs.get(run as object);
+      if (callback !== undefined) {
+        this.outputs.delete(run as object);
+        this.fns.unregisterOutput(callback);
+      }
+    }
   }
 
   freeTestCase(tc: Ptr): void {
     this.release(tc, (pointer) => this.fns.testCaseFree(pointer));
   }
 
-  shouldCapture(ctx: Ptr, tc: Ptr): boolean {
+  wantsOutput(ctx: Ptr, tc: Ptr): boolean {
     const out: boolean[] = [false];
     this.check(
       ctx,
-      this.fns.testCaseShouldCapture(this.ptr(ctx), this.ptr(tc), out),
-      "hegel_test_case_should_capture",
+      this.fns.testCaseWantsOutput(this.ptr(ctx), this.ptr(tc), out),
+      "hegel_test_case_wants_output",
+    );
+    return out[0];
+  }
+
+  wantsDetail(ctx: Ptr, tc: Ptr): boolean {
+    const out: boolean[] = [false];
+    this.check(
+      ctx,
+      this.fns.testCaseWantsDetail(this.ptr(ctx), this.ptr(tc), out),
+      "hegel_test_case_wants_detail",
     );
     return out[0];
   }
@@ -2198,10 +2287,17 @@ export class Libhegel implements Engine {
     this.release(repeat, (pointer) => this.fns.repeatFree(pointer));
   }
 
-  markComplete(ctx: Ptr, tc: Ptr, status: number, origin: string | null): void {
+  markComplete(
+    ctx: Ptr,
+    tc: Ptr,
+    status: number,
+    origin: string | null,
+    summary: string | null,
+    detail: string | null,
+  ): void {
     this.check(
       ctx,
-      this.fns.markComplete(this.ptr(ctx), this.ptr(tc), status, origin),
+      this.fns.markComplete(this.ptr(ctx), this.ptr(tc), status, origin, summary, detail),
       "hegel_mark_complete",
     );
   }
@@ -2552,5 +2648,9 @@ export class Libhegel implements Engine {
 
   failureCaveat(fp: Ptr): string | null {
     return this.fns.failureCaveat(this.ptr(fp));
+  }
+
+  failureOutput(fp: Ptr): string | null {
+    return this.fns.failureOutput(this.ptr(fp));
   }
 }

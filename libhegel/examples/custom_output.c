@@ -71,7 +71,7 @@ int main(void) {
         hegel_result_t rc = hegel_generate_integer(ctx, tc, 0, 100, &n);
         hegel_status_t status =
             rc == HEGEL_OK ? HEGEL_STATUS_VALID : HEGEL_STATUS_OVERRUN;
-        HEGEL_CHECK(hegel_mark_complete, ctx, tc, status, NULL);
+        HEGEL_CHECK(hegel_mark_complete, ctx, tc, status, NULL, NULL, NULL);
         HEGEL_CHECK(hegel_test_case_free, ctx, tc);
     }
 

@@ -360,29 +360,35 @@ internal sealed unsafe class Libhegel : ILibhegel
         }
     }
 
-    public nint RunStart(nint settings, Action<string> output)
-    {
-        var sink = GCHandle.Alloc(new OutputSink(output));
-        nint run;
-        var rc = NativeMethods.hegel_run_start(Ctx, settings, &OnOutput, GCHandle.ToIntPtr(sink), &run);
-        if (rc != Abi.Ok)
-        {
-            sink.Free();
-            throw Failure(rc, "hegel_run_start");
-        }
-        return RegisterRun(run, sink);
-    }
+    public nint RunStart(nint settings, Action<string>? output) =>
+        StartRun(output, "hegel_run_start", (callback, userData, run) =>
+            NativeMethods.hegel_run_start(Ctx, settings, callback, userData, run));
 
-    public nint RunStartBlob(nint settings, string blob, Action<string> output)
+    public nint RunStartBlob(nint settings, string blob, Action<string>? output)
     {
         using var a = new Arena();
+        var b = a.Str(blob);
+        return StartRun(output, "hegel_run_start_blob", (callback, userData, run) =>
+            NativeMethods.hegel_run_start_blob(Ctx, settings, b, callback, userData, run));
+    }
+
+    private delegate int RunStarter(delegate* unmanaged<nint, byte*, nuint, void> callback, nint userData, nint* run);
+
+    private nint StartRun(Action<string>? output, string op, RunStarter start)
+    {
+        if (output == null)
+        {
+            nint bare;
+            Require(start(null, 0, &bare), op);
+            return bare;
+        }
         var sink = GCHandle.Alloc(new OutputSink(output));
         nint run;
-        var rc = NativeMethods.hegel_run_start_blob(Ctx, settings, a.Str(blob), &OnOutput, GCHandle.ToIntPtr(sink), &run);
+        var rc = start(&OnOutput, GCHandle.ToIntPtr(sink), &run);
         if (rc != Abi.Ok)
         {
             sink.Free();
-            throw Failure(rc, "hegel_run_start_blob");
+            throw Failure(rc, op);
         }
         return RegisterRun(run, sink);
     }
@@ -422,10 +428,17 @@ internal sealed unsafe class Libhegel : ILibhegel
 
     public void TestCaseFree(nint testCase) => NativeMethods.hegel_test_case_free(Ctx, testCase);
 
-    public bool TestCaseShouldCapture(nint testCase)
+    public bool TestCaseWantsOutput(nint testCase)
     {
         byte o;
-        Require(NativeMethods.hegel_test_case_should_capture(Ctx, testCase, &o), "hegel_test_case_should_capture");
+        Require(NativeMethods.hegel_test_case_wants_output(Ctx, testCase, &o), "hegel_test_case_wants_output");
+        return o != 0;
+    }
+
+    public bool TestCaseWantsDetail(nint testCase)
+    {
+        byte o;
+        Require(NativeMethods.hegel_test_case_wants_detail(Ctx, testCase, &o), "hegel_test_case_wants_detail");
         return o != 0;
     }
 
@@ -988,10 +1001,10 @@ internal sealed unsafe class Libhegel : ILibhegel
         return NativeMethods.hegel_event_value(Ctx, testCase, value, a.Str(label));
     }
 
-    public int MarkComplete(nint testCase, int status, string? origin)
+    public int MarkComplete(nint testCase, int status, string? origin, string? summary, string? detail)
     {
         using var a = new Arena();
-        return NativeMethods.hegel_mark_complete(Ctx, testCase, (uint)status, a.StrPtr(origin));
+        return NativeMethods.hegel_mark_complete(Ctx, testCase, (uint)status, a.StrPtr(origin), a.StrPtr(summary), a.StrPtr(detail));
     }
 
     public int RunResultStatus(nint result)
@@ -1056,6 +1069,20 @@ internal sealed unsafe class Libhegel : ILibhegel
     {
         HegelString* o;
         Require(NativeMethods.hegel_failure_caveat(Ctx, f, &o), "hegel_failure_caveat");
+        return Borrowed(o);
+    });
+
+    public string? FailureOutput(nint result, ulong index) => WithFailure(result, index, f =>
+    {
+        HegelString* o;
+        Require(NativeMethods.hegel_failure_output(Ctx, f, &o), "hegel_failure_output");
+        return Borrowed(o);
+    });
+
+    public string? FailureDiagnostic(nint result, ulong index) => WithFailure(result, index, f =>
+    {
+        HegelString* o;
+        Require(NativeMethods.hegel_failure_diagnostic(Ctx, f, &o), "hegel_failure_diagnostic");
         return Borrowed(o);
     });
 

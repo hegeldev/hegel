@@ -103,7 +103,7 @@ func TestStringArraysAndOwnedResults(t *testing.T) {
 		}
 	}
 	const origin = "failure\x00日本語"
-	if err := tc.MarkComplete(ctx, STATUS_INTERESTING, origin); err != nil {
+	if err := tc.MarkComplete(ctx, STATUS_INTERESTING, origin, "failure", "failure detail"); err != nil {
 		t.Fatal(err)
 	}
 	for {
@@ -114,7 +114,7 @@ func TestStringArraysAndOwnedResults(t *testing.T) {
 		if tc == nil {
 			break
 		}
-		if err := tc.MarkComplete(ctx, STATUS_INTERESTING, origin); err != nil {
+		if err := tc.MarkComplete(ctx, STATUS_INTERESTING, origin, "failure", "failure detail"); err != nil {
 			t.Fatal(err)
 		}
 	}

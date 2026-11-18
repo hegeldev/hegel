@@ -70,7 +70,7 @@ let%hegel_test [@async] counter tc =
 
   let matches _tc s =
     Counter.read s.counter &gt;&gt;| fun n -&gt; if n &lt;&gt; s.model then failwith &quot;lost update&quot;
-  [@@invariant { always_check = true }]
+  [@@invariant { always_check = true; pause_faults = true }]
   ;;
 end
 
@@ -106,12 +106,14 @@ let%hegel_test [@async] counter tc =
       { name : string
       ; inv : Hegel.test_case -&gt; 'state -&gt; unit Async.Deferred.t
       ; always_check : bool
+      ; pause_faults : bool
       }
 
     val create
       :  name:string
       -&gt; inv:(Hegel.test_case -&gt; 'state -&gt; unit Async.Deferred.t)
       -&gt; ?always_check:bool
+      -&gt; ?pause_faults:bool
       -&gt; unit
       -&gt; 'state t
 

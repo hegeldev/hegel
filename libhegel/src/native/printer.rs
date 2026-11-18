@@ -88,6 +88,9 @@ pub enum PrinterError {
     UnresolvedDeferred,
     /// `resolve` was called with no deferred session outstanding.
     NothingToResolve,
+    /// `set_max_width` asked for a different width after
+    /// [`Printer::take_final`] had laid out part of the document.
+    WidthFixed,
 }
 
 impl core::fmt::Display for PrinterError {
@@ -98,6 +101,9 @@ impl core::fmt::Display for PrinterError {
             PrinterError::NoSpeculation => "commit or abort without an open speculative region",
             PrinterError::UnresolvedDeferred => "printer has unresolved deferred slots",
             PrinterError::NothingToResolve => "resolve called with no outstanding deferred slots",
+            PrinterError::WidthFixed => {
+                "max_width cannot change once part of the document is taken"
+            }
         })
     }
 }
@@ -107,8 +113,15 @@ impl core::error::Error for PrinterError {}
 /// A handle to a deferred hole opened by [`Printer::deferred`]. Content
 /// written to the slot is spliced in at the hole's position; after
 /// [`Printer::resolve`] the slot is dead and all further writes error.
+///
+/// The generation tells a reclaimed slot (see [`Printer::release`]) from a
+/// later slot at the same index. An id whose generation does not match names
+/// nothing, and its splice renders nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SlotId(usize);
+pub struct SlotId {
+    index: usize,
+    generation: u64,
+}
 
 /// Where a [`Printer`] operation writes: the main output, or a deferred slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -174,6 +187,10 @@ struct Group {
 
 #[derive(Debug)]
 struct Slot {
+    /// Where the slot's splice was recorded.
+    parent: Target,
+    /// How many handles write through this slot (see [`Printer::retain`]).
+    holders: usize,
     commands: Vec<Cmd>,
     speculation: Vec<Vec<Cmd>>,
     pending_notes: Vec<Vec<Cmd>>,
@@ -184,6 +201,81 @@ struct Slot {
     /// Whether the slot was opened at a hard line start of its parent, which
     /// is where its own first content stands until it has any.
     starts_line: bool,
+}
+
+#[derive(Debug)]
+struct SlotEntry {
+    generation: u64,
+    slot: Option<Slot>,
+}
+
+/// The slots of a document. A reclaimed slot's index is reused with the next
+/// generation.
+#[derive(Debug, Default)]
+struct Slots {
+    entries: Vec<SlotEntry>,
+    free: Vec<usize>,
+}
+
+impl Slots {
+    fn get(&self, id: SlotId) -> Option<&Slot> {
+        self.entries
+            .get(id.index)
+            .filter(|entry| entry.generation == id.generation)?
+            .slot
+            .as_ref()
+    }
+
+    fn get_mut(&mut self, id: SlotId) -> Option<&mut Slot> {
+        self.entries
+            .get_mut(id.index)
+            .filter(|entry| entry.generation == id.generation)?
+            .slot
+            .as_mut()
+    }
+
+    fn insert(&mut self, slot: Slot) -> SlotId {
+        let index = match self.free.pop() {
+            Some(index) => {
+                self.entries[index].slot = Some(slot);
+                index
+            }
+            None => {
+                self.entries.push(SlotEntry {
+                    generation: 0,
+                    slot: Some(slot),
+                });
+                self.entries.len() - 1
+            }
+        };
+        SlotId {
+            index,
+            generation: self.entries[index].generation,
+        }
+    }
+
+    fn remove(&mut self, id: SlotId) {
+        let entry = &mut self.entries[id.index];
+        entry.slot = None;
+        entry.generation += 1;
+        self.free.push(id.index);
+    }
+
+    fn iter_mut(&mut self) -> impl Iterator<Item = &mut Slot> {
+        self.entries
+            .iter_mut()
+            .filter_map(|entry| entry.slot.as_mut())
+    }
+
+    fn is_stale(&self, cmd: &Cmd) -> bool {
+        matches!(cmd, Cmd::Splice(id) if self.get(*id).is_none())
+    }
+
+    /// The last command of `cmds` that decides whether what follows starts
+    /// a line. Indentation shifts and splices of reclaimed slots do not count.
+    fn last_significant<'c>(&self, mut cmds: impl Iterator<Item = &'c Cmd>) -> Option<&'c Cmd> {
+        cmds.find(|cmd| !matches!(cmd, Cmd::ShiftIndent(_)) && !self.is_stale(cmd))
+    }
 }
 
 fn note_cmds(text: &str, line_prefix: Option<&str>) -> Vec<Cmd> {
@@ -200,21 +292,24 @@ fn note_cmds(text: &str, line_prefix: Option<&str>) -> Vec<Cmd> {
     cmds
 }
 
-fn splice_ids(cmds: &[Cmd]) -> Vec<usize> {
+fn splice_ids(cmds: &[Cmd]) -> Vec<SlotId> {
     cmds.iter()
         .filter_map(|cmd| match cmd {
-            Cmd::Splice(SlotId(id)) => Some(*id),
+            Cmd::Splice(id) => Some(*id),
             _ => None,
         })
         .collect()
 }
 
-fn mark_comment_groups(
-    slots: &[Slot],
-    cmds: &[Cmd],
-    force: &mut Vec<bool>,
-    stack: &mut Vec<usize>,
-) {
+/// The slot `id` names, unless it is dead or reclaimed.
+fn live_slot(slots: &mut Slots, id: SlotId) -> Result<&mut Slot, PrinterError> {
+    match slots.get_mut(id) {
+        Some(slot) if !slot.dead => Ok(slot),
+        _ => Err(PrinterError::DeadSlot),
+    }
+}
+
+fn mark_comment_groups(slots: &Slots, cmds: &[Cmd], force: &mut Vec<bool>, stack: &mut Vec<usize>) {
     for cmd in cmds {
         match cmd {
             Cmd::BeginGroup { .. } => {
@@ -229,13 +324,86 @@ fn mark_comment_groups(
                     force[id] = true;
                 }
             }
-            Cmd::Splice(SlotId(id)) => {
-                mark_comment_groups(slots, &slots[*id].commands, force, stack);
+            Cmd::Splice(id) => {
+                if let Some(slot) = slots.get(*id) {
+                    mark_comment_groups(slots, &slot.commands, force, stack);
+                }
             }
             _ => {}
         }
     }
 }
+
+/// What layout after a line start outside every group depends on from the
+/// lines before it: the break-point indentation in force, the padding the
+/// line started with, and the state of the outermost group, which spans the
+/// whole document — whether it broke, and whether it can still break.
+#[derive(Debug, Clone, Copy, Default)]
+struct Carry {
+    indentation: isize,
+    pad: isize,
+    root_broken: bool,
+    root_dequeued: bool,
+}
+
+/// How far [`Printer::take_final`] has looked into the main output, so that
+/// each of its commands is examined once however often the document is
+/// read. A slot spliced into it is examined whole once no handle writes
+/// through it any more. We accept that a final slot holding a slot still
+/// written through is examined again on every read until that one is final
+/// too: that is quadratic only in a large slot around a long-held one,
+/// which no frontend builds.
+#[derive(Debug, Default)]
+struct Scan {
+    /// Position in the main output.
+    pos: usize,
+    /// Groups open at the position.
+    depth: isize,
+    /// Whether the position is past content on its line.
+    mid_line: bool,
+    /// The longest prefix of the main output that ends at a line start
+    /// outside every group.
+    cut: usize,
+}
+
+impl Scan {
+    /// Follow `cmds` and the final slots they splice, and return whether
+    /// all of them could be followed: not past a slot that is not final, or
+    /// an `end_group` that closes no group, which makes the rest of the
+    /// document fail to lay out.
+    fn follow(&mut self, slots: &Slots, cmds: &[Cmd]) -> bool {
+        for cmd in cmds {
+            match cmd {
+                Cmd::Splice(id) => match slots.get(*id) {
+                    Some(slot) if slot.holders == 0 && slot.speculation.is_empty() => {
+                        if !self.follow(slots, &slot.commands) {
+                            return false;
+                        }
+                    }
+                    Some(_) => return false,
+                    None => {}
+                },
+                Cmd::EndGroup { .. } if self.depth == 0 => return false,
+                Cmd::BeginGroup { .. } => {
+                    self.depth += 1;
+                    self.mid_line = true;
+                }
+                Cmd::EndGroup { .. } => {
+                    self.depth -= 1;
+                    self.mid_line = true;
+                }
+                Cmd::HardBreak => self.mid_line = false,
+                Cmd::ShiftIndent(_) => {}
+                _ => self.mid_line = true,
+            }
+        }
+        true
+    }
+}
+
+/// The fewest stale splices a sweep waits for, so that a small document is
+/// not swept on every reclaimed slot.
+const MIN_SWEEP_THRESHOLD: usize = 64;
 
 /// The pretty printer. See the module docs for the printing model.
 #[derive(Debug)]
@@ -245,7 +413,21 @@ pub struct Printer {
     open_groups: isize,
     speculation: Vec<Vec<Cmd>>,
     pending_notes: Vec<Vec<Cmd>>,
-    slots: Vec<Slot>,
+    slots: Slots,
+    /// Whether a slot was ever opened. Groups can span holes from then on,
+    /// so group balance is not checked eagerly.
+    had_slots: bool,
+    /// An upper bound on the splices of reclaimed slots still in the
+    /// document. An aborted speculative region can discard some of them.
+    stale_splices: usize,
+    sweep_threshold: usize,
+    /// The layout state where the lines already taken by
+    /// [`Printer::take_final`] end.
+    carry: Carry,
+    scan: Scan,
+    /// Whether [`Printer::take_final`] has laid out any text, which fixes
+    /// the width.
+    taken: bool,
     pending_resolve: bool,
     sealed: bool,
     /// The laid-out document, rendered once on the first [`Printer::resolve`]
@@ -263,7 +445,13 @@ impl Printer {
             open_groups: 0,
             speculation: Vec::new(),
             pending_notes: Vec::new(),
-            slots: Vec::new(),
+            slots: Slots::default(),
+            had_slots: false,
+            stale_splices: 0,
+            sweep_threshold: MIN_SWEEP_THRESHOLD,
+            carry: Carry::default(),
+            scan: Scan::default(),
+            taken: false,
             pending_resolve: false,
             sealed: false,
             rendered: None,
@@ -275,12 +463,20 @@ impl Printer {
         self.max_width
     }
 
-    /// Change the width lines are laid out to. Safe at any time before
-    /// rendering: commands are recorded width-independently, and the width
-    /// is only consulted when the document is laid out.
-    pub fn set_max_width(&mut self, max_width: usize) {
-        self.max_width = max_width;
-        self.rendered = None;
+    /// Change the width lines are laid out to. Commands are recorded
+    /// width-independently and the width is only consulted when the document
+    /// is laid out, so this is safe until [`Printer::take_final`] lays out
+    /// part of the document: from then on the width is fixed, and a
+    /// different one is refused.
+    pub fn set_max_width(&mut self, max_width: usize) -> Result<(), PrinterError> {
+        if max_width != self.max_width {
+            if self.taken {
+                return Err(PrinterError::WidthFixed);
+            }
+            self.max_width = max_width;
+            self.rendered = None;
+        }
+        Ok(())
     }
 
     /// Emit literal, unbreakable text. Must not contain newlines.
@@ -379,20 +575,21 @@ impl Printer {
         if self.sealed {
             return Err(PrinterError::DeadSlot);
         }
-        if let Target::Slot(SlotId(id)) = target {
-            if self.slots[id].dead {
-                return Err(PrinterError::DeadSlot);
-            }
+        if let Target::Slot(id) = target {
+            live_slot(&mut self.slots, id)?;
         }
-        let slot = SlotId(self.slots.len());
-        self.slots.push(Slot {
+        let starts_line = self.at_line_start(target);
+        let slot = self.slots.insert(Slot {
+            parent: target,
+            holders: 1,
             commands: Vec::new(),
             speculation: Vec::new(),
             pending_notes: Vec::new(),
             dead: false,
             block_indent,
-            starts_line: self.at_line_start(target),
+            starts_line,
         });
+        self.had_slots = true;
         self.dispatch(target, Cmd::Splice(slot))?;
         Ok(slot)
     }
@@ -405,40 +602,34 @@ impl Printer {
     /// Break points are not line starts: whether one breaks is decided at
     /// layout time.
     pub fn at_line_start(&self, target: Target) -> bool {
-        let (commands, speculation) = match target {
-            Target::Main => (&self.main, &self.speculation),
-            Target::Slot(SlotId(id)) => (&self.slots[id].commands, &self.slots[id].speculation),
+        let (commands, speculation, starts_line): (&[Cmd], &[Vec<Cmd>], bool) = match target {
+            Target::Main => (&self.main, &self.speculation, true),
+            Target::Slot(id) => self.slots.get(id).map_or((&[], &[], true), |slot| {
+                (&slot.commands, &slot.speculation, slot.starts_line)
+            }),
         };
-        let last = speculation
-            .iter()
-            .rev()
-            .flat_map(|buf| buf.iter().rev())
-            .chain(commands.iter().rev())
-            .find(|cmd| !matches!(cmd, Cmd::ShiftIndent(_)));
+        let last = self.slots.last_significant(
+            speculation
+                .iter()
+                .rev()
+                .flat_map(|buf| buf.iter().rev())
+                .chain(commands.iter().rev()),
+        );
         match last {
             Some(cmd) => self.ends_line(cmd),
-            None => match target {
-                Target::Main => true,
-                Target::Slot(SlotId(id)) => self.slots[id].starts_line,
-            },
+            None => starts_line,
         }
     }
 
     fn ends_line(&self, cmd: &Cmd) -> bool {
         match cmd {
             Cmd::HardBreak => true,
-            Cmd::Splice(SlotId(id)) => {
-                let slot = &self.slots[*id];
-                match slot
-                    .commands
-                    .iter()
-                    .rev()
-                    .find(|cmd| !matches!(cmd, Cmd::ShiftIndent(_)))
-                {
+            Cmd::Splice(id) => self.slots.get(*id).is_some_and(|slot| {
+                match self.slots.last_significant(slot.commands.iter().rev()) {
                     Some(cmd) => self.ends_line(cmd),
                     None => slot.starts_line,
                 }
-            }
+            }),
             _ => false,
         }
     }
@@ -461,11 +652,8 @@ impl Printer {
         }
         match target {
             Target::Main => self.speculation.push(Vec::new()),
-            Target::Slot(SlotId(id)) => {
-                let slot = &mut self.slots[id];
-                if slot.dead {
-                    return Err(PrinterError::DeadSlot);
-                }
+            Target::Slot(id) => {
+                let slot = live_slot(&mut self.slots, id)?;
                 slot.speculation.push(Vec::new());
             }
         }
@@ -491,7 +679,7 @@ impl Printer {
                     self.speculation.last_mut().unwrap().extend(buf);
                     return Ok(());
                 }
-                let sound = self.slots.is_empty();
+                let sound = !self.had_slots;
                 let mut balance = self.open_groups;
                 for cmd in self.speculation.last().unwrap() {
                     match cmd {
@@ -512,11 +700,8 @@ impl Printer {
                 self.open_groups = balance;
                 self.main.extend(buf);
             }
-            Target::Slot(SlotId(id)) => {
-                let slot = &mut self.slots[id];
-                if slot.dead {
-                    return Err(PrinterError::DeadSlot);
-                }
+            Target::Slot(id) => {
+                let slot = live_slot(&mut self.slots, id)?;
                 let buf = slot.speculation.pop().ok_or(PrinterError::NoSpeculation)?;
                 if let Some(outer) = slot.speculation.last_mut() {
                     outer.extend(buf);
@@ -542,11 +727,8 @@ impl Printer {
                 let buf = self.speculation.pop().ok_or(PrinterError::NoSpeculation)?;
                 (buf, self.speculation.is_empty())
             }
-            Target::Slot(SlotId(id)) => {
-                let slot = &mut self.slots[id];
-                if slot.dead {
-                    return Err(PrinterError::DeadSlot);
-                }
+            Target::Slot(id) => {
+                let slot = live_slot(&mut self.slots, id)?;
                 let buf = slot.speculation.pop().ok_or(PrinterError::NoSpeculation)?;
                 (buf, slot.speculation.is_empty())
             }
@@ -559,15 +741,17 @@ impl Printer {
     }
 
     fn release_held_notes(&mut self, target: Target) {
-        let (notes, commands) = match target {
-            Target::Main => (core::mem::take(&mut self.pending_notes), &mut self.main),
-            Target::Slot(SlotId(id)) => {
-                let slot = &mut self.slots[id];
-                (core::mem::take(&mut slot.pending_notes), &mut slot.commands)
-            }
+        let held = match target {
+            Target::Main => Some((&mut self.pending_notes, &mut self.main)),
+            Target::Slot(id) => self
+                .slots
+                .get_mut(id)
+                .map(|slot| (&mut slot.pending_notes, &mut slot.commands)),
         };
-        for note in notes {
-            commands.extend(note);
+        if let Some((notes, commands)) = held {
+            for note in core::mem::take(notes) {
+                commands.extend(note);
+            }
         }
     }
 
@@ -614,7 +798,7 @@ impl Printer {
     /// blocking) the rendered output.
     fn seal(&mut self) {
         self.speculation.clear();
-        for slot in &mut self.slots {
+        for slot in self.slots.iter_mut() {
             slot.speculation.clear();
             slot.dead = true;
         }
@@ -623,7 +807,102 @@ impl Printer {
 
     /// Whether `slot` can still be written to.
     pub fn slot_is_live(&self, slot: SlotId) -> bool {
-        !self.slots[slot.0].dead
+        self.slots.get(slot).is_some_and(|slot| !slot.dead)
+    }
+
+    /// Record one more handle writing through `slot`. A slot starts with one
+    /// handle, the one that opened it.
+    pub fn retain(&mut self, slot: SlotId) {
+        if let Some(slot) = self.slots.get_mut(slot) {
+            slot.holders += 1;
+        }
+    }
+
+    /// Record that a handle writing through `slot` is gone. When the last
+    /// handle goes, abort the speculative regions still open on the slot,
+    /// because nothing can close them. Then reclaim the slot if it holds no
+    /// content, and each parent that this leaves empty with no handles. The
+    /// splice of a reclaimed slot renders nothing. A slot with no handles
+    /// left is final: [`Printer::take_final`] may take it, so it must not be
+    /// retained or written to any more.
+    pub fn release(&mut self, slot: SlotId) {
+        if self.sealed {
+            return;
+        }
+        let abandoned = self
+            .slots
+            .get_mut(slot)
+            .map(|released| {
+                released.holders = released.holders.saturating_sub(1);
+                if released.holders == 0 {
+                    core::mem::take(&mut released.speculation)
+                } else {
+                    Vec::new()
+                }
+            })
+            .unwrap_or_default();
+        if !abandoned.is_empty() {
+            for buf in &abandoned {
+                self.kill_splices(buf);
+            }
+            self.release_held_notes(Target::Slot(slot));
+        }
+        let mut id = slot;
+        let mut reclaimed = false;
+        while let Some(slot) = self.slots.get(id) {
+            if slot.holders > 0 || !self.is_blank(slot) {
+                break;
+            }
+            let parent = slot.parent;
+            self.slots.remove(id);
+            reclaimed = true;
+            match parent {
+                Target::Slot(parent) => id = parent,
+                Target::Main => break,
+            }
+        }
+        if reclaimed {
+            self.stale_splices += 1;
+            if self.stale_splices >= self.sweep_threshold {
+                self.sweep();
+            }
+        }
+    }
+
+    fn is_blank(&self, slot: &Slot) -> bool {
+        slot.speculation.is_empty()
+            && slot.pending_notes.is_empty()
+            && slot.commands.iter().all(|cmd| self.slots.is_stale(cmd))
+    }
+
+    /// Remove the splices of reclaimed slots from every command list. The
+    /// next sweep waits for as many stale splices as there are commands left,
+    /// so the cost of a sweep is proportional to the splices it removes.
+    fn sweep(&mut self) {
+        let live: Vec<Option<u64>> = self
+            .slots
+            .entries
+            .iter()
+            .map(|entry| entry.slot.as_ref().map(|_| entry.generation))
+            .collect();
+        let stale = |cmd: &Cmd| {
+            matches!(cmd, Cmd::Splice(id)
+                if live.get(id.index).copied().flatten() != Some(id.generation))
+        };
+        let mut remaining = 0;
+        let slot_buffers = self.slots.iter_mut().flat_map(|slot| {
+            core::iter::once(&mut slot.commands).chain(slot.speculation.iter_mut())
+        });
+        for buf in core::iter::once(&mut self.main)
+            .chain(self.speculation.iter_mut())
+            .chain(slot_buffers)
+        {
+            buf.retain(|cmd| !stale(cmd));
+            remaining += buf.len();
+        }
+        self.stale_splices = 0;
+        self.sweep_threshold = remaining.max(MIN_SWEEP_THRESHOLD);
+        self.scan = Scan::default();
     }
 
     /// Whether the main output can still be written to: `false` once the
@@ -656,11 +935,8 @@ impl Printer {
         }
         let held = match target {
             Target::Main => (!self.speculation.is_empty()).then_some(&mut self.pending_notes),
-            Target::Slot(SlotId(id)) => {
-                let slot = &mut self.slots[id];
-                if slot.dead {
-                    return Err(PrinterError::DeadSlot);
-                }
+            Target::Slot(id) => {
+                let slot = live_slot(&mut self.slots, id)?;
                 (!slot.speculation.is_empty()).then_some(&mut slot.pending_notes)
             }
         };
@@ -688,7 +964,7 @@ impl Printer {
                 match &cmd {
                     Cmd::BeginGroup { .. } => self.open_groups += 1,
                     Cmd::EndGroup { .. } => {
-                        if self.slots.is_empty() && self.open_groups == 0 {
+                        if !self.had_slots && self.open_groups == 0 {
                             return Err(PrinterError::UnbalancedGroup);
                         }
                         self.open_groups -= 1;
@@ -699,11 +975,8 @@ impl Printer {
                 self.main.push(cmd);
                 Ok(())
             }
-            Target::Slot(SlotId(id)) => {
-                let slot = &mut self.slots[id];
-                if slot.dead {
-                    return Err(PrinterError::DeadSlot);
-                }
+            Target::Slot(id) => {
+                let slot = live_slot(&mut self.slots, id)?;
                 if let Some(buf) = slot.speculation.last_mut() {
                     buf.push(cmd);
                 } else {
@@ -715,30 +988,105 @@ impl Printer {
     }
 
     fn kill_splices(&mut self, cmds: &[Cmd]) {
-        let mut work = splice_ids(cmds);
-        while let Some(id) = work.pop() {
-            let slot = &mut self.slots[id];
-            slot.dead = true;
-            work.extend(splice_ids(&slot.commands));
-            for buf in &slot.speculation {
-                work.extend(splice_ids(buf));
+        for id in self.subtree_ids(cmds) {
+            if let Some(slot) = self.slots.get_mut(id) {
+                slot.dead = true;
             }
         }
     }
 
+    /// The slots spliced into `cmds`, directly or through other slots.
+    fn subtree_ids(&self, cmds: &[Cmd]) -> Vec<SlotId> {
+        let mut ids = Vec::new();
+        let mut work = splice_ids(cmds);
+        while let Some(id) = work.pop() {
+            if let Some(slot) = self.slots.get(id) {
+                ids.push(id);
+                work.extend(splice_ids(&slot.commands));
+                for buf in &slot.speculation {
+                    work.extend(splice_ids(buf));
+                }
+            }
+        }
+        ids
+    }
+
     fn render(&self) -> Result<String, PrinterError> {
+        Ok(self.render_cmds(&self.main)?.finish())
+    }
+
+    fn render_cmds<'s>(&'s self, cmds: &'s [Cmd]) -> Result<Renderer<'s>, PrinterError> {
         let mut force = vec![false];
         let mut stack = Vec::new();
-        mark_comment_groups(&self.slots, &self.main, &mut force, &mut stack);
-        let mut renderer = Renderer::new(self.max_width, &self.slots, force);
-        renderer.run(&self.main)?;
-        Ok(renderer.finish())
+        mark_comment_groups(&self.slots, cmds, &mut force, &mut stack);
+        let mut renderer = Renderer::new(self.max_width, &self.slots, force, self.carry);
+        renderer.run(cmds)?;
+        Ok(renderer)
+    }
+
+    /// Lay out and remove the part of the main output that nothing can
+    /// change any more, returning its text. That is the longest prefix
+    /// ending at a line start outside every group whose slots have no
+    /// handle or speculative region left to write through them: later content
+    /// cannot change how it breaks. Reading the document piecewise this
+    /// way, and the rest with [`Printer::take_rest`], gives exactly what
+    /// [`Printer::value`] would have, while the document only keeps what
+    /// may still change. The prefix never holds an unmatched `end_group`,
+    /// so its layout does not fail in practice; an error is the layout's.
+    pub fn take_final(&mut self) -> Result<String, PrinterError> {
+        if self.sealed {
+            return Ok(String::new());
+        }
+        let cut = self.final_prefix_len();
+        if cut == 0 {
+            return Ok(String::new());
+        }
+        let (text, carry) = self.render_cmds(&self.main[..cut])?.finish_chunk();
+        self.carry = carry;
+        self.taken |= !text.is_empty();
+        self.scan.pos -= cut;
+        self.scan.cut = 0;
+        let prefix: Vec<Cmd> = self.main.drain(..cut).collect();
+        for id in self.subtree_ids(&prefix) {
+            self.slots.remove(id);
+        }
+        Ok(text)
+    }
+
+    /// Seal the document and lay out what [`Printer::take_final`] has not
+    /// taken.
+    pub fn take_rest(&mut self) -> Result<String, PrinterError> {
+        self.seal();
+        let text = self.render()?;
+        self.main.clear();
+        Ok(text)
+    }
+
+    /// Advance the scan as far as the document is final, and return the
+    /// length of the longest prefix of the main output it found that ends at
+    /// a line start outside every group.
+    fn final_prefix_len(&mut self) -> usize {
+        let Printer {
+            scan, slots, main, ..
+        } = self;
+        while let Some(cmd) = main.get(scan.pos) {
+            let (depth, mid_line) = (scan.depth, scan.mid_line);
+            if !scan.follow(slots, core::slice::from_ref(cmd)) {
+                (scan.depth, scan.mid_line) = (depth, mid_line);
+                break;
+            }
+            scan.pos += 1;
+            if scan.depth == 0 && !scan.mid_line {
+                scan.cut = scan.pos;
+            }
+        }
+        scan.cut
     }
 }
 
 struct Renderer<'a> {
     max_width: usize,
-    slots: &'a [Slot],
+    slots: &'a Slots,
     force_break: Vec<bool>,
     out: String,
     output_width: usize,
@@ -760,29 +1108,40 @@ struct Renderer<'a> {
 }
 
 impl<'a> Renderer<'a> {
-    fn new(max_width: usize, slots: &'a [Slot], force_break: Vec<bool>) -> Renderer<'a> {
+    /// A renderer for a document whose earlier lines were already laid out
+    /// (see [`Printer::take_final`]), leaving `carry` behind.
+    fn new(
+        max_width: usize,
+        slots: &'a Slots,
+        force_break: Vec<bool>,
+        carry: Carry,
+    ) -> Renderer<'a> {
         Renderer {
             max_width,
             slots,
             force_break,
             out: String::new(),
-            output_width: 0,
+            output_width: carry.pad.max(0) as usize,
             at_line_start: true,
-            pending_pad: Some(0),
+            pending_pad: Some(carry.pad),
             block_indent: 0,
             buffer: VecDeque::new(),
             buffer_width: 0,
             pending_comments: String::new(),
-            indentation: 0,
+            indentation: carry.indentation,
             groups: vec![Group {
                 depth: 0,
                 indent: 0,
                 pending: 0,
-                want_break: false,
+                want_break: carry.root_broken,
                 comment: false,
             }],
             group_stack: vec![0],
-            group_queue: vec![vec![0]],
+            group_queue: vec![if carry.root_dequeued {
+                Vec::new()
+            } else {
+                vec![0]
+            }],
         }
     }
 
@@ -803,15 +1162,41 @@ impl<'a> Renderer<'a> {
             Cmd::EndGroup { close } => return self.end_group(close),
             Cmd::ShiftIndent(delta) => self.indentation += delta,
             Cmd::Comment(s) => self.comment(s),
-            Cmd::Splice(SlotId(id)) => {
-                let slot = &self.slots[*id];
-                self.block_indent += slot.block_indent;
+            Cmd::Splice(id) => {
+                let Some(slot) = self.slots.get(*id) else {
+                    return Ok(());
+                };
+                self.set_block_indent(self.block_indent + slot.block_indent);
                 self.run(&slot.commands)?;
-                self.block_indent -= slot.block_indent;
+                self.set_block_indent(self.block_indent - slot.block_indent);
             }
             Cmd::LinePrefix(s) => self.line_prefix(s),
         }
         Ok(())
+    }
+
+    /// Enter or leave blocks. A line with no content yet is as wide as the
+    /// padding it will get, which includes the block indentation in force
+    /// when its content arrives.
+    fn set_block_indent(&mut self, block_indent: usize) {
+        self.block_indent = block_indent;
+        if let Some(indent) = self.pending_pad {
+            self.output_width = block_indent + indent.max(0) as usize;
+        }
+    }
+
+    /// The text laid out so far, ending at a line start, and the layout
+    /// state there. The line's padding is left to the renderer of what
+    /// follows.
+    fn finish_chunk(mut self) -> (String, Carry) {
+        self.flush();
+        let carry = Carry {
+            indentation: self.indentation,
+            pad: self.pending_pad.unwrap_or_default(),
+            root_broken: self.groups[0].want_break,
+            root_dequeued: !self.group_queue[0].contains(&0),
+        };
+        (self.out, carry)
     }
 
     fn finish(mut self) -> String {

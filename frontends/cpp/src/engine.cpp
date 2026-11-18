@@ -153,11 +153,10 @@ namespace hegel::impl {
         check_rc(ctx, hegel_settings_set_backend(ctx, s, backend));
     }
 
-    hegel_run_t* run_start(hegel_context_t* ctx, hegel_settings_t* s) {
+    hegel_run_t* run_start(hegel_context_t* ctx, hegel_settings_t* s,
+                           hegel_output_callback_t callback, void* user_data) {
         hegel_run_t* run = nullptr;
-        // A NULL output callback (and user data) keeps engine output on
-        // stderr.
-        check_rc(ctx, hegel_run_start(ctx, s, nullptr, nullptr, &run));
+        check_rc(ctx, hegel_run_start(ctx, s, callback, user_data, &run));
         return run;
     }
 
@@ -210,8 +209,8 @@ namespace hegel::impl {
 
     namespace {
 
-        // As check_rc, but ignores a write to a region whose document was
-        // already read: a straggler's output has nowhere left to go.
+        // As check_rc, but ignores a write to a region whose document is
+        // sealed: a straggler's output has nowhere left to go.
         void tolerate_dead_region(hegel_context_t* ctx, hegel_result_t rc) {
             if (rc == HEGEL_E_INVALID_HANDLE) {
                 return;
@@ -439,10 +438,12 @@ namespace hegel::impl {
     }
 
     hegel_run_t* run_start_blob(hegel_context_t* ctx, hegel_settings_t* s,
-                                std::string_view blob) {
+                                std::string_view blob,
+                                hegel_output_callback_t callback,
+                                void* user_data) {
         hegel_run_t* run = nullptr;
-        check_arg(ctx, hegel_run_start_blob(ctx, s, borrow(blob), nullptr,
-                                            nullptr, &run));
+        check_arg(ctx, hegel_run_start_blob(ctx, s, borrow(blob), callback,
+                                            user_data, &run));
         return run;
     }
 
@@ -508,23 +509,36 @@ namespace hegel::impl {
         check_rc(ctx, hegel_settings_set_database_key(ctx, s, &database_key));
     }
 
-    bool test_case_should_capture(hegel_context_t* ctx,
-                                  const hegel_test_case_t* tc) {
-        bool should_capture = false;
-        check_rc(ctx, hegel_test_case_should_capture(ctx, tc, &should_capture));
-        return should_capture;
+    bool test_case_wants_output(hegel_context_t* ctx,
+                                const hegel_test_case_t* tc) {
+        bool wants_output = false;
+        check_rc(ctx, hegel_test_case_wants_output(ctx, tc, &wants_output));
+        return wants_output;
+    }
+
+    bool test_case_wants_detail(hegel_context_t* ctx,
+                                const hegel_test_case_t* tc) {
+        bool wants_detail = false;
+        check_rc(ctx, hegel_test_case_wants_detail(ctx, tc, &wants_detail));
+        return wants_detail;
     }
 
     void mark_complete(hegel_context_t* ctx, hegel_test_case_t* tc,
                        hegel_status_t status,
-                       const std::optional<std::string>& origin) {
-        hegel_string_t origin_string{nullptr, 0};
-        if (origin.has_value()) {
-            origin_string = borrow(*origin);
-        }
-        check_rc(ctx, hegel_mark_complete(ctx, tc, status,
-                                          origin.has_value() ? &origin_string
-                                                             : nullptr));
+                       const std::optional<std::string>& origin,
+                       const std::optional<std::string>& summary,
+                       const std::optional<std::string>& detail) {
+        auto view = [](const std::optional<std::string>& text) {
+            return text.has_value() ? borrow(*text) : hegel_string_t{};
+        };
+        hegel_string_t origin_string = view(origin);
+        hegel_string_t summary_string = view(summary);
+        hegel_string_t detail_string = view(detail);
+        check_rc(ctx, hegel_mark_complete(
+                          ctx, tc, status,
+                          origin.has_value() ? &origin_string : nullptr,
+                          summary.has_value() ? &summary_string : nullptr,
+                          detail.has_value() ? &detail_string : nullptr));
     }
 
     std::optional<std::string>
@@ -554,6 +568,13 @@ namespace hegel::impl {
         const hegel_string_t* caveat = nullptr;
         check_rc(ctx, hegel_failure_caveat(ctx, failure, &caveat));
         return copy_optional(caveat);
+    }
+
+    std::optional<std::string> failure_output(hegel_context_t* ctx,
+                                              const hegel_failure_t* failure) {
+        const hegel_string_t* output = nullptr;
+        check_rc(ctx, hegel_failure_output(ctx, failure, &output));
+        return copy_optional(output);
     }
 
     void settings_set_test_location(hegel_context_t* ctx, hegel_settings_t* s,

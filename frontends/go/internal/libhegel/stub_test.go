@@ -357,6 +357,14 @@ func TestStubBlobAndFailureAccessors(t *testing.T) {
 		OK,               // failure_reproduction_blob result
 		"flaky",          // failure_caveat
 		OK,               // failure_caveat result
+		"x = 1",          // failure_output
+		OK,               // failure_output result
+		nil,              // failure_output: NULL
+		OK,               // failure_output result
+		"boom",           // failure_diagnostic
+		OK,               // failure_diagnostic result
+		nil,              // failure_diagnostic: NULL
+		OK,               // failure_diagnostic result
 	)
 
 	s := &Settings{pointer: pointer[settingsT]{syms: lib.syms, raw: 1}}
@@ -374,6 +382,18 @@ func TestStubBlobAndFailureAccessors(t *testing.T) {
 	}
 	if got := f.Caveat(lib); got != "flaky" {
 		t.Errorf("Caveat: got %q", got)
+	}
+	if got, present := f.Output(lib); got != "x = 1" || !present {
+		t.Errorf("Output: got %q, %v", got, present)
+	}
+	if got, present := f.Output(lib); got != "" || present {
+		t.Errorf("Output: got %q, %v, want absent", got, present)
+	}
+	if got := f.Diagnostic(lib); got != "boom" {
+		t.Errorf("Diagnostic: got %q", got)
+	}
+	if got := f.Diagnostic(lib); got != "" {
+		t.Errorf("Diagnostic: got %q, want none", got)
 	}
 }
 

@@ -8,6 +8,7 @@ extern crate std;
 #[cfg(target_family = "wasm")]
 use alloc::alloc::{alloc as allocate, dealloc as deallocate};
 use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
 use alloc::ffi::CString;
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -418,9 +419,8 @@ pub enum hegel_run_status_t {
     /// A failing nondeterministic run reports plain
     /// `HEGEL_RUN_STATUS_FAILED`: its failures carry a caveat
     /// (`hegel_failure_caveat`) and, when confirmed, a reproduce blob. A
-    /// blobless failure is reported from what the caller captured while
-    /// running the stamped test cases (see
-    /// `hegel_test_case_should_capture`).
+    /// blobless failure is reported from its output
+    /// (`hegel_failure_output`).
     HEGEL_RUN_STATUS_ERROR = 2,
 }
 
@@ -637,9 +637,16 @@ impl From<String> for StoredString {
     }
 }
 
+impl StoredString {
+    /// The string, without the terminator kept for C.
+    fn as_str(&self) -> &str {
+        &self.value[..self.string.len]
+    }
+}
+
 impl Clone for StoredString {
     fn clone(&self) -> Self {
-        self.value[..self.string.len].to_string().into()
+        self.as_str().to_string().into()
     }
 }
 
@@ -683,8 +690,8 @@ impl OutputTarget {
 }
 
 /// The engine [`Output`] destination for a run or blob replay: the supplied
-/// callback when one is given, stderr otherwise (including for a NULL
-/// `callback`, in which case `user_data` is ignored).
+/// callback when one is given, no destination for a NULL `callback` (in
+/// which case `user_data` is ignored).
 fn output_from_callback(callback: hegel_output_callback_t, user_data: *mut c_void) -> Output {
     match callback {
         Some(callback) => OutputTarget {
@@ -692,8 +699,39 @@ fn output_from_callback(callback: hegel_output_callback_t, user_data: *mut c_voi
             user_data,
         }
         .as_output(),
-        None => Output::stderr(),
+        None => Output::none(),
     }
+}
+
+/// An output callback that writes each line to the process's stderr (in a
+/// WebAssembly host, the `hegel_host.stderr_write` import). Pass it, with
+/// NULL `user_data`, to `hegel_run_start`, `hegel_run_start_blob` or
+/// `hegel_test_case_from_blob` to print there; a NULL callback is no
+/// destination.
+///
+/// # Safety
+/// `line` must point to `len` readable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_output_stderr(
+    _user_data: *mut c_void,
+    line: *const c_char,
+    len: usize,
+) {
+    if line.is_null() {
+        return;
+    }
+    // SAFETY: the caller guarantees `line` points to `len` readable bytes.
+    let bytes = unsafe { core::slice::from_raw_parts(line.cast::<u8>(), len) };
+    crate::sys::stderr_line(&String::from_utf8_lossy(bytes));
+}
+
+/// Returns `hegel_output_stderr` as a callback value, for a host that
+/// cannot take the address of an exported function itself (a WebAssembly
+/// host, where a callback is an index into the module's own function
+/// table).
+#[unsafe(no_mangle)]
+pub extern "C" fn hegel_output_stderr_callback() -> hegel_output_callback_t {
+    Some(hegel_output_stderr)
 }
 
 /// Returns a new error reporting context initialized with an empty message.
@@ -837,10 +875,9 @@ struct FamilyShared {
     completed: AtomicBool,
     /// The family's pretty-printer document, created (empty, at the default
     /// width) with the family so that every handle's print region can anchor
-    /// deterministically the moment the handle is cloned. Family-wide so the
-    /// client can keep appending to — and finally read — the document after
-    /// the case completes. Each handle writes into its own region of it; see
-    /// [`HegelTestCase::print_target`].
+    /// deterministically the moment the handle is cloned. Each handle writes
+    /// into its own region of it (see [`HegelTestCase::print_target`]), and
+    /// the engine prints it as it becomes final (see [`CaseOutput`]).
     printer: Arc<Mutex<Printer>>,
     /// Whether an explicit `max_width` has been configured through
     /// `hegel_test_case_printer` options. The first explicit configuration
@@ -856,9 +893,67 @@ struct FamilyShared {
     /// the whole test, and its outcome is the verdict. A run-owned family
     /// carries `None`; the run reports once its result is known.
     reporter: Option<Reporter>,
+    output: CaseOutput,
 }
 
 impl FamilyShared {
+    /// Send on the part of the document that can no longer change.
+    fn flush_output(&self) {
+        let text = self.printer.lock().take_final().unwrap_or_default();
+        self.output.deliver(&text);
+    }
+
+    /// Send on the rest of the document of the completed test case, its
+    /// diagnostic, and for a failure stamped for capture, keep it all as
+    /// the report of the failure's origin.
+    fn finish_output(&self, outcome: &TestCaseResult) {
+        let rest = match self.printer.lock().take_rest() {
+            Ok(rest) => rest,
+            Err(e) => format!(
+                "Failed to render this test case's printed output ({e}). This indicates \
+                 a bug in printing code the test uses: check for unbalanced \
+                 begin_group/end_group calls."
+            ),
+        };
+        self.output.deliver(&rest);
+        match outcome {
+            TestCaseResult::Interesting(failure) => {
+                let text = self.output.failure.lock().take();
+                let (summary, detail) = text.map_or((None, None), |t| (t.summary, t.detail));
+                if let Some(live) = &self.output.live {
+                    let shown = if self.output.live_detail {
+                        detail.as_ref().or(summary.as_ref())
+                    } else {
+                        summary.as_ref()
+                    };
+                    for line in shown.into_iter().flat_map(|text| text.lines()) {
+                        live.line(line);
+                    }
+                }
+                if let Some(captures) = &self.output.capture {
+                    let lines = core::mem::take(&mut *self.output.kept.lock());
+                    captures.lock().insert(
+                        failure.origin.clone(),
+                        Report {
+                            lines,
+                            diagnostic: detail,
+                        },
+                    );
+                }
+            }
+            TestCaseResult::Invalid | TestCaseResult::Overrun if self.output.stop_reasons => {
+                if let Some(live) = &self.output.live {
+                    live.line(if matches!(outcome, TestCaseResult::Invalid) {
+                        "Test case stopped: failed assumption"
+                    } else {
+                        "Test case stopped: out of data"
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Claim family-wide completion. First caller wins: it records `outcome`
     /// on the data source; every later call — a racing clone, or the run
     /// tearing down an in-flight case — is a no-op. This is the single home
@@ -873,17 +968,132 @@ impl FamilyShared {
             if let Some(reporter) = &self.reporter {
                 reporter.report(!matches!(outcome, TestCaseResult::Interesting(_)));
             }
+            self.finish_output(outcome);
+        }
+    }
+}
+
+/// What a run keeps of the latest test case stamped for capture that failed
+/// at an origin: the lines it printed, and its diagnostic.
+struct Report {
+    lines: Vec<String>,
+    diagnostic: Option<String>,
+}
+
+/// The report of each failing origin, kept by a run.
+type Captures = Mutex<BTreeMap<String, Report>>;
+
+/// Where a run sends the printed output of its test cases.
+#[derive(Clone)]
+struct RunOutputPolicy {
+    /// Streamed here as it becomes final: a verbose run's, when the run has
+    /// an output destination.
+    live: Option<Output>,
+    /// Whether a failing test case's `detail` is streamed rather than its
+    /// `summary`: a debug run's.
+    live_detail: bool,
+    /// Whether a quiet run keeps nothing for its failure reports.
+    quiet: bool,
+    captures: Arc<Captures>,
+}
+
+impl RunOutputPolicy {
+    fn new(settings: &Settings) -> Self {
+        let streams = settings.output.has_destination()
+            && matches!(settings.verbosity, Verbosity::Verbose | Verbosity::Debug);
+        RunOutputPolicy {
+            live: streams.then(|| settings.output.clone()),
+            live_detail: streams && settings.verbosity == Verbosity::Debug,
+            quiet: settings.verbosity == Verbosity::Quiet,
+            captures: Arc::new(Mutex::new(BTreeMap::new())),
+        }
+    }
+
+    /// The routing of a test case the engine did or did not stamp for
+    /// capture.
+    fn case(&self, stamped: bool) -> CaseOutput {
+        let capture = (stamped && !self.quiet).then(|| Arc::clone(&self.captures));
+        CaseOutput {
+            wants_detail: self.live_detail || capture.is_some(),
+            live: self.live.clone(),
+            live_detail: self.live_detail,
+            capture,
+            stop_reasons: self.live.is_some(),
+            stamped,
+            kept: Mutex::new(Vec::new()),
+            failure: Mutex::new(None),
+        }
+    }
+}
+
+/// How a failing test case failed, as passed to `hegel_mark_complete`.
+struct FailureText {
+    summary: Option<String>,
+    detail: Option<String>,
+}
+
+/// Where one test case's printed output goes, fixed when the case starts.
+/// The document is laid out as it becomes final (see
+/// [`Printer::take_final`]) and each line is streamed to `live` and kept
+/// for `capture`; when neither wants it, it is dropped, so a test case
+/// keeps only the part of its document that may still change.
+struct CaseOutput {
+    live: Option<Output>,
+    /// Whether a failure prints its `detail` on `live` instead of its
+    /// `summary`.
+    live_detail: bool,
+    /// Where the lines and diagnostic of a failing case are kept for the
+    /// failure report.
+    capture: Option<Arc<Captures>>,
+    /// Whether a rejected or overrun case says why it stopped on `live`.
+    stop_reasons: bool,
+    /// Whether the engine keeps this test case as the representative of
+    /// its failure, which a quiet run does without keeping its output.
+    stamped: bool,
+    /// Whether a failure must come with its `detail`.
+    wants_detail: bool,
+    kept: Mutex<Vec<String>>,
+    failure: Mutex<Option<FailureText>>,
+}
+
+impl CaseOutput {
+    /// A `hegel_test_case_from_blob` replay's: its output and failure are
+    /// printed in full to its own destination, unless the run is quiet.
+    fn replay(settings: &Settings) -> Self {
+        let live = (settings.verbosity != Verbosity::Quiet && settings.output.has_destination())
+            .then(|| settings.output.clone());
+        CaseOutput {
+            wants_detail: live.is_some(),
+            live_detail: true,
+            live,
+            capture: None,
+            stop_reasons: false,
+            stamped: false,
+            kept: Mutex::new(Vec::new()),
+            failure: Mutex::new(None),
+        }
+    }
+
+    fn wanted(&self) -> bool {
+        self.live.is_some() || self.stamped
+    }
+
+    fn deliver(&self, text: &str) {
+        for line in text.lines() {
+            if let Some(live) = &self.live {
+                live.line(line);
+            }
+            if self.capture.is_some() {
+                self.kept.lock().push(line.to_string());
+            }
         }
     }
 }
 
 /// Per-handle state guarded by the handle's own lock.
 struct LocalState {
-    /// Whether `hegel_mark_complete` has already been called on *this* handle.
-    /// Completing the family is first-caller-wins and family-wide (see
-    /// `FamilyShared::completed`), so a second handle completing is a safe
-    /// no-op; but completing the *same* handle twice is a usage error, which
-    /// this per-handle flag detects.
+    /// Whether `hegel_mark_complete` has already been called on this handle,
+    /// which only the root handle can be: calling it twice is a usage error.
     completed: bool,
 }
 
@@ -915,6 +1125,14 @@ pub struct HegelTestCase {
     /// own.
     worker: Arc<AtomicI64>,
     local: Mutex<LocalState>,
+}
+
+impl Drop for HegelTestCase {
+    fn drop(&mut self) {
+        if let PrinterTarget::Slot(slot) = self.print_target {
+            self.family.printer.lock().release(slot);
+        }
+    }
 }
 
 /// The `worker` value of a handle attributed to no worker.
@@ -987,6 +1205,7 @@ pub struct HegelRun {
     /// Reports the run's verdict to Antithesis when the result is known;
     /// `None` when the settings carried no test location.
     reporter: Option<Reporter>,
+    output: RunOutputPolicy,
 }
 
 impl HegelRun {
@@ -997,6 +1216,15 @@ impl HegelRun {
         if let Some(reporter) = &self.reporter {
             reporter.report(result.status() == hegel_run_status_t::HEGEL_RUN_STATUS_PASSED);
         }
+        let mut result = result;
+        let mut captures = self.output.captures.lock();
+        for failure in &mut result.failures {
+            if let Some(report) = captures.remove(failure.origin.as_str()) {
+                failure.output = Some(report.lines.join("\n").into());
+                failure.diagnostic = report.diagnostic.map(StoredString::from);
+            }
+        }
+        drop(captures);
         self.result = Some(result);
         self.engine = None;
     }
@@ -1074,6 +1302,13 @@ pub struct HegelFailure {
     /// nondeterminism, quoting the run's own replay evidence; `None` for
     /// a deterministic failure. Read via `hegel_failure_caveat`.
     caveat: Option<StoredString>,
+    /// What the failing test case printed, from the latest execution
+    /// stamped for capture that failed at this origin; `None` when there was
+    /// none. Read via `hegel_failure_output`.
+    output: Option<StoredString>,
+    /// That execution's `detail` (`hegel_mark_complete`). Read via
+    /// `hegel_failure_diagnostic`.
+    diagnostic: Option<StoredString>,
 }
 
 impl From<Failure> for HegelFailure {
@@ -1082,6 +1317,8 @@ impl From<Failure> for HegelFailure {
             origin: f.origin.into(),
             reproduce_blob: f.reproduce_blob.map(StoredString::from),
             caveat: f.caveat.map(StoredString::from),
+            output: None,
+            diagnostic: None,
         }
     }
 }
@@ -2439,8 +2676,9 @@ pub unsafe extern "C" fn hegel_settings_get_nondeterminism_strictness(
 /// Parameters:
 /// `settings`: The settings for this run. The caller can free the
 ///   settings after passing them in since libhegel copies the memory.
-/// `callback`: Where libhegel's output for this run goes. NULL leaves
-///   output on stderr.
+/// `callback`: Where libhegel's output for this run goes. NULL is no
+///   destination: nothing is printed, and the engine produces only what
+///   the failure report needs. Pass `hegel_output_stderr` for stderr.
 /// `user_data`: Passed through to `callback` verbatim. Ignored when
 ///   `callback` is NULL.
 /// `out_run`: Receives the run handle.
@@ -2450,10 +2688,14 @@ pub unsafe extern "C" fn hegel_settings_get_nondeterminism_strictness(
 /// `hegel_context_last_error`.
 ///
 /// This only sets up the run. No test case is generated until the first
-/// `hegel_next_test_case` call. libhegel emits while it runs inside that
-/// call, so the callback is invoked on whichever thread makes it. Because
-/// it runs inside `hegel_next_test_case`, the callback must not call back
-/// into libhegel on the same run.
+/// `hegel_next_test_case` call. libhegel emits from inside its own calls
+/// on the run and its test cases — `hegel_next_test_case`, and a verbose
+/// run's test-case output from the calls that print, join a state
+/// machine's workers, or complete the test case — so the callback is
+/// invoked on whichever thread makes them, and must not call back into
+/// libhegel on the same run. It must stay valid until `hegel_run_free`
+/// returns: freeing a run completes a test case still in flight, which may
+/// print.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_run_start(
     ctx: *mut HegelContext,
@@ -2481,6 +2723,7 @@ pub unsafe extern "C" fn hegel_run_start(
         .output(output_from_callback(callback, user_data));
     let database_key = handle.database_key.clone();
     let reporter = handle.reporter(&settings.output);
+    let output = RunOutputPolicy::new(&settings);
 
     let exchange = Arc::new(CaseExchange::new());
     let engine_exchange = Arc::clone(&exchange);
@@ -2494,6 +2737,7 @@ pub unsafe extern "C" fn hegel_run_start(
         current_family: None,
         result: None,
         reporter,
+        output,
     }));
     unsafe { *out_run = run };
     HEGEL_OK
@@ -2559,6 +2803,7 @@ pub unsafe extern "C" fn hegel_run_start_blob(
         .clone()
         .output(output_from_callback(callback, user_data));
     let reporter = handle.reporter(&settings.output);
+    let output = RunOutputPolicy::new(&settings);
 
     let exchange = Arc::new(CaseExchange::new());
     let engine_exchange = Arc::clone(&exchange);
@@ -2572,6 +2817,7 @@ pub unsafe extern "C" fn hegel_run_start_blob(
         current_family: None,
         result: None,
         reporter,
+        output,
     }));
     unsafe { *out_run = run };
     HEGEL_OK
@@ -2628,7 +2874,8 @@ pub unsafe extern "C" fn hegel_next_test_case(
     match poll_engine(engine) {
         Poll::Pending => match run.exchange.take() {
             Ok(ds) => {
-                let family = new_family(ds, None);
+                let output = run.output.case(ds.should_capture());
+                let family = new_family(ds, None, output);
                 let case = handle_from_family(Arc::clone(&family));
                 run.current_family = Some(family);
                 unsafe { *out_test_case = case };
@@ -2767,9 +3014,9 @@ pub unsafe extern "C" fn hegel_run_free(
 ///
 /// Parameters:
 /// `blob`: A base64 blob from `hegel_failure_reproduction_blob`.
-/// `callback` / `user_data`: Where this replay's output goes, with the
-///   same contract as `hegel_run_start`. The callback is only ever invoked
-///   on this thread and need not outlive the call.
+/// `callback` / `user_data`: Where this replay's output goes — what the
+///   test case prints, and its diagnostic — with the same contract as
+///   `hegel_run_start`. It must stay valid until the test case completes.
 /// `out_test_case`: Receives a caller-owned test-case handle. Released
 ///   like any other with `hegel_test_case_free`.
 ///
@@ -2813,7 +3060,8 @@ pub unsafe extern "C" fn hegel_test_case_from_blob(
         );
         return HEGEL_E_INVALID_ARG;
     };
-    let tc = handle_from_family(new_family(ds, handle.reporter(&settings.output)));
+    let output = CaseOutput::replay(&settings);
+    let tc = handle_from_family(new_family(ds, handle.reporter(&settings.output), output));
     unsafe { *out_test_case = tc };
     HEGEL_OK
 }
@@ -2845,33 +3093,73 @@ pub unsafe extern "C" fn hegel_test_case_free(
     HEGEL_OK
 }
 
-/// Returns whether the engine stamped this test case for capture: the
-/// caller should buffer the case's output and, if it fails, its rendered
-/// diagnostic, keyed by the failure's origin — a stamped failing
-/// execution is the material for that origin's failure report. The
-/// engine stamps the executions whose failures can become the report:
-/// the report-time final replay and each generation-discovered failure's
-/// first-check replays (both on deterministic runs too), every
-/// `hegel_run_start_blob` replay, and, under nondeterministic handling,
-/// confirmation batches, database-reuse replays, and generation-phase
-/// cases (whose failing origins may be reported unconfirmed). Read the
-/// stamp once at case start.
+/// Writes into `*out_wants_output` whether the engine will use what this
+/// test case prints: a verbose run streams it, a test case stamped for
+/// capture keeps it for the failure report (`hegel_failure_output`), and a
+/// `hegel_test_case_from_blob` replay streams it to its callback. When it
+/// is false, printing draws and notes is wasted work, and so is rendering
+/// a failure's diagnostic. Read it once at case start.
+///
+/// A quiet run prints and keeps nothing, but a test case it stamps still
+/// reports true: it is the execution the failure report represents.
+///
+/// The engine guarantees that each failure it reports is the last test case
+/// of that origin it runs, and that this test case reports true. So a
+/// frontend raising a failure's own exception keeps, per origin, the one
+/// from the latest failing test case that reported true, and it is the one
+/// the report describes.
+///
+/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for a NULL
+/// `out_wants_output`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn hegel_test_case_should_capture(
+pub unsafe extern "C" fn hegel_test_case_wants_output(
     ctx: *mut HegelContext,
     tc: *const HegelTestCase,
-    out_should_capture: *mut bool,
+    out_wants_output: *mut bool,
 ) -> hegel_result_t {
     clear_last_error(ctx);
-    let (tc, _guard) = match unsafe { tc_guard(ctx, "hegel_test_case_should_capture", tc) } {
+    let (tc, _guard) = match unsafe { tc_guard(ctx, "hegel_test_case_wants_output", tc) } {
         Ok(pair) => pair,
         Err(rc) => return rc,
     };
-    if out_should_capture.is_null() {
-        set_last_error(ctx, "hegel_test_case_should_capture: out parameter is null");
+    if out_wants_output.is_null() {
+        set_last_error(ctx, "hegel_test_case_wants_output: out parameter is null");
         return HEGEL_E_INVALID_ARG;
     }
-    unsafe { *out_should_capture = tc.stream.should_capture() };
+    unsafe { *out_wants_output = tc.family.output.wanted() };
+    HEGEL_OK
+}
+
+/// Writes into `*out_wants_detail` whether the engine will use the full
+/// diagnostic of this test case if it fails: at debug verbosity it is
+/// printed after the test case's output, and for a test case stamped for
+/// capture it is kept for the failure report (`hegel_failure_diagnostic`).
+/// It is true for every test case of a debug run, and in a normal or
+/// verbose run for the test cases stamped for capture; never in a quiet
+/// run, nor when the run has no output destination and the case is not
+/// stamped. When it is true, a failing test case must pass a `detail` to
+/// `hegel_mark_complete`; when it is false, rendering one (a stack trace, a
+/// backtrace) is wasted work. True implies `hegel_test_case_wants_output`.
+/// Read it once at case start.
+///
+/// Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for a NULL
+/// `out_wants_detail`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_test_case_wants_detail(
+    ctx: *mut HegelContext,
+    tc: *const HegelTestCase,
+    out_wants_detail: *mut bool,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    let (tc, _guard) = match unsafe { tc_guard(ctx, "hegel_test_case_wants_detail", tc) } {
+        Ok(pair) => pair,
+        Err(rc) => return rc,
+    };
+    if out_wants_detail.is_null() {
+        set_last_error(ctx, "hegel_test_case_wants_detail: out parameter is null");
+        return HEGEL_E_INVALID_ARG;
+    }
+    unsafe { *out_wants_detail = tc.family.output.wants_detail };
     HEGEL_OK
 }
 
@@ -2910,13 +3198,15 @@ pub unsafe extern "C" fn hegel_test_case_clone(
         Ok(stream) => stream,
         Err(e) => return translate_ds_error(ctx, e),
     };
-    let print_target = match src.family.printer.lock().deferred(src.print_target) {
+    let mut printer = src.family.printer.lock();
+    let print_target = match printer.deferred(src.print_target) {
         Ok(slot) => PrinterTarget::Slot(slot),
         // The source's region is already dead (the document was read while
         // this branch of the family straggled): share the dead region, so
         // the clone's prints are no-ops like its parent's.
-        Err(_) => src.print_target,
+        Err(_) => share_target(&mut printer, src.print_target),
     };
+    drop(printer);
     let clone = handle_from_stream(
         Arc::clone(&src.family),
         Arc::from(stream),
@@ -2973,15 +3263,12 @@ pub unsafe extern "C" fn hegel_test_case_block(
         set_last_error(ctx, "hegel_test_case_block: out parameter is null");
         return HEGEL_E_INVALID_ARG;
     }
-    let print_target = match src
-        .family
-        .printer
-        .lock()
-        .block(src.print_target, size_arg(indent))
-    {
+    let mut printer = src.family.printer.lock();
+    let print_target = match printer.block(src.print_target, size_arg(indent)) {
         Ok(slot) => PrinterTarget::Slot(slot),
-        Err(_) => src.print_target,
+        Err(_) => share_target(&mut printer, src.print_target),
     };
+    drop(printer);
     let block = handle_from_stream(
         Arc::clone(&src.family),
         Arc::clone(&src.stream),
@@ -3034,11 +3321,21 @@ pub unsafe extern "C" fn hegel_test_case_set_worker(
     HEGEL_OK
 }
 
+/// Count one more handle writing through `target`, for a handle that
+/// shares the region of an existing one.
+fn share_target(printer: &mut Printer, target: PrinterTarget) -> PrinterTarget {
+    if let PrinterTarget::Slot(slot) = target {
+        printer.retain(slot);
+    }
+    target
+}
+
 /// Allocate a fresh family from a data source, reporting its completion to
 /// Antithesis through `reporter` when given (see [`FamilyShared::reporter`]).
 fn new_family(
     ds: Box<dyn DataSource + Send + Sync>,
     reporter: Option<Reporter>,
+    output: CaseOutput,
 ) -> Arc<FamilyShared> {
     Arc::new(FamilyShared {
         ds: Arc::from(ds),
@@ -3049,6 +3346,7 @@ fn new_family(
         printer_width_configured: AtomicBool::new(false),
         started: crate::sys::Instant::now(),
         reporter,
+        output,
     })
 }
 
@@ -3114,12 +3412,11 @@ unsafe fn tc_guard<'a>(
 }
 
 /// Like [`tc_guard`] but for `hegel_mark_complete`: no family-completion
-/// check (completing must work on an already-complete family — a second clone
-/// completing it is a no-op — so `hegel_mark_complete` does its own per-handle
-/// and `compare_exchange` checks), and a *blocking* lock instead of
-/// `try_lock`. Completion is first-caller-wins and always succeeds, so an
-/// in-flight operation on the same handle is waited for rather than reported
-/// as `HEGEL_E_CONCURRENT_USE`. Returns `HEGEL_E_INVALID_HANDLE` for a null
+/// check (completing must work on a family the engine already completed, so
+/// `hegel_mark_complete` does its own per-handle and `compare_exchange`
+/// checks), and a *blocking* lock instead of `try_lock`. Completing always
+/// succeeds for valid arguments, so an in-flight operation on the same handle
+/// is waited for rather than reported as `HEGEL_E_CONCURRENT_USE`. Returns `HEGEL_E_INVALID_HANDLE` for a null
 /// pointer.
 unsafe fn tc_lock<'a>(
     ctx: *mut HegelContext,
@@ -4636,6 +4933,7 @@ pub unsafe extern "C" fn hegel_state_machine_next_group(
         set_last_error(ctx, "hegel_state_machine_next_group: out parameter is null");
         return HEGEL_E_INVALID_ARG;
     }
+    tc.family.flush_output();
     let mut machine = state_machine.machine.lock();
     match tc.stream.state_machine_next_group(&mut machine) {
         Ok(Some(group)) => {
@@ -6799,9 +7097,44 @@ pub struct HegelPrinter {
     /// test-case handle (and the deferred handles opened from it); `None`
     /// for a standalone document.
     attribution: Option<Arc<Attribution>>,
+    /// The test case whose document this handle writes into; `None` for a
+    /// standalone document. The engine prints a test case's document, so it
+    /// cannot be read back through the handle.
+    family: Option<Arc<FamilyShared>>,
+}
+
+impl Drop for HegelPrinter {
+    fn drop(&mut self) {
+        if let PrinterTarget::Slot(slot) = self.target {
+            self.inner.lock().release(slot);
+        }
+    }
 }
 
 impl HegelPrinter {
+    /// After an operation that may have finished a line of a test case's
+    /// main output, send on what can no longer change.
+    fn flush_output(&self) {
+        if let (Some(family), PrinterTarget::Main) = (&self.family, self.target) {
+            family.flush_output();
+        }
+    }
+
+    /// Refuse to read a test case's document back (`FN` names the caller).
+    fn readable(&self, ctx: *mut HegelContext, func: &str) -> Result<(), hegel_result_t> {
+        if self.family.is_some() {
+            set_last_error(
+                ctx,
+                &format!(
+                    "{func}: a test case's document is printed by the engine and cannot \
+                     be read back"
+                ),
+            );
+            return Err(HEGEL_E_INVALID_ARG);
+        }
+        Ok(())
+    }
+
     /// Run a content-recording operation on this handle's target, first
     /// stamping the line it starts with the worker prefix when the handle
     /// is attributed and the target is at a line start.
@@ -7031,6 +7364,7 @@ pub unsafe extern "C" fn hegel_printer_new(
         target: PrinterTarget::Main,
         busy: AtomicBool::new(false),
         attribution: None,
+        family: None,
     };
     unsafe { *out_printer = into_raw_send_sync(handle) };
     HEGEL_OK
@@ -7200,8 +7534,12 @@ pub unsafe extern "C" fn hegel_printer_hard_break(
         Ok(pair) => pair,
         Err(rc) => return rc,
     };
-    match handle.inner.lock().hard_break(handle.target) {
-        Ok(()) => HEGEL_OK,
+    let result = handle.inner.lock().hard_break(handle.target);
+    match result {
+        Ok(()) => {
+            handle.flush_output();
+            HEGEL_OK
+        }
         Err(e) => translate_printer_error(ctx, FN, e),
     }
 }
@@ -7425,6 +7763,7 @@ pub unsafe extern "C" fn hegel_printer_deferred(
                 target: PrinterTarget::Slot(slot),
                 busy: AtomicBool::new(false),
                 attribution: handle.attribution.clone(),
+                family: handle.family.clone(),
             };
             unsafe { *out_printer = into_raw_send_sync(child) };
             HEGEL_OK
@@ -7475,8 +7814,12 @@ pub unsafe extern "C" fn hegel_printer_commit_speculative(
         Ok(pair) => pair,
         Err(rc) => return rc,
     };
-    match handle.inner.lock().commit_speculative(handle.target) {
-        Ok(()) => HEGEL_OK,
+    let result = handle.inner.lock().commit_speculative(handle.target);
+    match result {
+        Ok(()) => {
+            handle.flush_output();
+            HEGEL_OK
+        }
         Err(e) => translate_printer_error(ctx, FN, e),
     }
 }
@@ -7498,8 +7841,12 @@ pub unsafe extern "C" fn hegel_printer_abort_speculative(
         Ok(pair) => pair,
         Err(rc) => return rc,
     };
-    match handle.inner.lock().abort_speculative(handle.target) {
-        Ok(()) => HEGEL_OK,
+    let result = handle.inner.lock().abort_speculative(handle.target);
+    match result {
+        Ok(()) => {
+            handle.flush_output();
+            HEGEL_OK
+        }
         Err(e) => translate_printer_error(ctx, FN, e),
     }
 }
@@ -7528,6 +7875,9 @@ pub unsafe extern "C" fn hegel_printer_resolve(
         Ok(pair) => pair,
         Err(rc) => return rc,
     };
+    if let Err(rc) = handle.readable(ctx, FN) {
+        return rc;
+    }
     if handle.target != PrinterTarget::Main {
         set_last_error(ctx, "hegel_printer_resolve: not the document's root handle");
         return HEGEL_E_INVALID_ARG;
@@ -7612,6 +7962,9 @@ pub unsafe extern "C" fn hegel_printer_value(
         set_last_error(ctx, "hegel_printer_value: out parameter is null");
         return HEGEL_E_INVALID_ARG;
     }
+    if let Err(rc) = handle.readable(ctx, FN) {
+        return rc;
+    }
     if handle.target != PrinterTarget::Main {
         set_last_error(ctx, "hegel_printer_value: not the document's root handle");
         return HEGEL_E_INVALID_ARG;
@@ -7665,17 +8018,20 @@ pub unsafe extern "C" fn hegel_printer_value_result_free(
 /// concurrent printing deterministic: a clone's output appears at its
 /// anchor point — where the clone was created — however the threads that
 /// produced it were scheduled, and two handles never interleave within one
-/// region. The document remains readable after the case completes, so the
-/// client can assemble output while drawing and read it back after
-/// `hegel_mark_complete` (through a root-handle printer).
+/// region. The engine prints the document, wherever
+/// `hegel_test_case_wants_output` says it goes, as it becomes final; it
+/// cannot be read back through the handle (`hegel_printer_resolve` and
+/// `hegel_printer_value` refuse), and completing the test case seals it.
 ///
 /// `options` may be NULL for defaults (see `hegel_printer_options_t`). The
 /// first call that explicitly configures `max_width` fixes the document's
 /// width; later calls may restate it, but a *different* explicit width is
 /// an error — the width of the shared document cannot be two things.
 /// Content printed before the width is configured (`hegel_note` never
-/// configures it) still renders at the configured width: layout happens
-/// when the document is read.
+/// configures it) renders at the configured width. The engine prints each
+/// part of the document as soon as nothing can change it any more, and
+/// once it has printed any, the width is fixed: configuring a different one
+/// is an error too.
 ///
 /// Returns `HEGEL_E_INVALID_HANDLE` for a NULL `tc` and
 /// `HEGEL_E_INVALID_ARG` — with a diagnostic — for a NULL `out_printer` or a
@@ -7698,15 +8054,12 @@ pub unsafe extern "C" fn hegel_test_case_printer(
     }
     let options = unsafe { options.as_ref() };
     let inner = Arc::clone(&tc.family.printer);
+    let mut printer = inner.lock();
     if let Some(requested) = options.and_then(|o| o.max_width) {
-        let mut printer = inner.lock();
-        if !tc.family.printer_width_configured.load(Ordering::Acquire) {
-            printer.set_max_width(size_arg(requested));
-            tc.family
-                .printer_width_configured
-                .store(true, Ordering::Release);
-        } else if printer.max_width() != size_arg(requested) {
-            let actual = printer.max_width();
+        let width = size_arg(requested);
+        let actual = printer.max_width();
+        let configured = tc.family.printer_width_configured.load(Ordering::Acquire);
+        if (configured && actual != width) || printer.set_max_width(width).is_err() {
             set_last_error(
                 ctx,
                 &format!(
@@ -7716,7 +8069,12 @@ pub unsafe extern "C" fn hegel_test_case_printer(
             );
             return HEGEL_E_INVALID_ARG;
         }
+        tc.family
+            .printer_width_configured
+            .store(true, Ordering::Release);
     }
+    share_target(&mut printer, tc.print_target);
+    drop(printer);
     let handle = HegelPrinter {
         inner,
         target: tc.print_target,
@@ -7725,6 +8083,7 @@ pub unsafe extern "C" fn hegel_test_case_printer(
             worker: Arc::clone(&tc.worker),
             started: tc.family.started,
         })),
+        family: Some(Arc::clone(&tc.family)),
     };
     unsafe { *out_printer = into_raw_send_sync(handle) };
     HEGEL_OK
@@ -7771,93 +8130,167 @@ pub unsafe extern "C" fn hegel_note(
         started: tc.family.started,
     };
     let prefix = attribution.line_prefix();
-    match tc
+    let result = tc
         .family
         .printer
         .lock()
-        .note(tc.print_target, &text, prefix.as_deref())
-    {
-        Ok(()) => HEGEL_OK,
+        .note(tc.print_target, &text, prefix.as_deref());
+    match result {
+        Ok(()) => {
+            if tc.print_target == PrinterTarget::Main {
+                tc.family.flush_output();
+            }
+            HEGEL_OK
+        }
         Err(e) => translate_printer_error(ctx, FN, e),
     }
 }
 
 /// Parameters:
 /// `status`: A `hegel_status_t` value describing how the test case ended.
-/// `origin`: Identifies the origin of a failure. Used only when `status`
-///   is `HEGEL_STATUS_INTERESTING`; NULL otherwise.
+/// `origin`: Identifies the bug. libhegel groups failures by their origin:
+///   two failures with identical origins are the same bug and get shrunk
+///   together, and each new origin is a new bug. Pass a stable value, such
+///   as the location of the failing assertion. Required for
+///   `HEGEL_STATUS_INTERESTING`; NULL otherwise.
+/// `summary`: The failure in one line, without newlines: the error's type
+///   and message, a message spanning several lines cut at its first line and
+///   followed by ` …`. Include the location in the user's test when it is
+///   known, for example leading with it as a compiler diagnostic does:
+///   `tests/baseline.rs:16:5: x too big: 331`. Printed after the test case's
+///   output in a verbose run. Required for `HEGEL_STATUS_INTERESTING` when
+///   `hegel_test_case_wants_output` is true; may be NULL otherwise.
+/// `detail`: The complete diagnostic as the frontend's language would print
+///   the error on its own — message included, stack trace or backtrace where
+///   there is one. Standalone: the engine never prints it together with
+///   `summary`. Printed after the test case's output at debug verbosity and
+///   kept for the failure report (`hegel_failure_diagnostic`). Required for
+///   `HEGEL_STATUS_INTERESTING` when `hegel_test_case_wants_detail` is true;
+///   may be NULL otherwise. A frontend with nothing beyond the summary
+///   passes the error's full message.
 ///
-/// Returns `HEGEL_OK`, or `HEGEL_E_ALREADY_COMPLETE` if called twice on the
-/// same handle.
+/// `tc` must be the test case's root handle — the one `hegel_next_test_case`,
+/// `hegel_test_case_from_blob` or `hegel_run_start_blob` handed out — never a
+/// clone: a frontend whose concurrent workers fail hands the failure to the
+/// root's thread, which completes the test case once its workers are done.
+/// Only completing from that thread keeps everything the engine prints for
+/// the test case on one thread and in document order.
 ///
-/// Completion is first-caller-wins and applies to the whole test case: the
-/// first call from any handle records the outcome, and a later call on a
-/// different handle is a safe no-op. This function never returns
-/// `HEGEL_E_CONCURRENT_USE`: if another thread is mid-operation on the
-/// handle it waits, then completes.
+/// Returns `HEGEL_OK`; `HEGEL_E_ALREADY_COMPLETE` if called twice; or
+/// `HEGEL_E_INVALID_ARG`, with a diagnostic naming the argument, when:
+/// - `tc` is a clone;
+/// - the status is not `HEGEL_STATUS_INTERESTING` and any of `origin`,
+///   `summary`, `detail` is non-NULL;
+/// - the status is `HEGEL_STATUS_INTERESTING` and `origin` is NULL or empty;
+/// - `summary` is NULL or empty while it is required, or contains a newline;
+/// - `detail` is NULL or empty while it is required;
+/// - a string is not valid UTF-8, or the status is unknown.
 ///
-/// Choosing an origin string: libhegel groups failures by their `origin`. Two failures with identical
-/// origins are the same bug and get shrunk together. Each new origin is a
-/// new bug.
+/// A rejected call completes nothing: the test case stays in flight, so
+/// `hegel_next_test_case` returns `HEGEL_E_NOT_COMPLETE` until a valid call
+/// completes it. The arguments are validated before anything else, also
+/// when the engine has already completed the test case on its own (for
+/// example after the choice budget ran out).
 ///
-/// A library must pass a stable value for the origin, such as the location
-/// of the failing assertion.
+/// Completion applies to the whole test case, clones included. This
+/// function never returns `HEGEL_E_CONCURRENT_USE`: if another thread is
+/// mid-operation on the handle it waits, then completes. Completing seals the test case's
+/// document: everything the test case prints must be printed before.
+///
+/// What the engine prints of a failure, after the test case's own output:
+/// nothing in a quiet or normal run; `summary` in a verbose run; `detail` at
+/// debug verbosity. The failure report carries the output of the test case
+/// the run reports (`hegel_failure_output`) and its `detail`
+/// (`hegel_failure_diagnostic`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn hegel_mark_complete(
     ctx: *mut HegelContext,
     tc: *mut HegelTestCase,
     status: u32,
     origin: *const hegel_string_t,
+    summary: *const hegel_string_t,
+    detail: *const hegel_string_t,
 ) -> hegel_result_t {
     clear_last_error(ctx);
-    let (tc, mut guard) = match unsafe { tc_lock(ctx, "hegel_mark_complete", tc) } {
+    const FN: &str = "hegel_mark_complete";
+    let (tc, mut guard) = match unsafe { tc_lock(ctx, FN, tc) } {
         Ok(pair) => pair,
         Err(rc) => return rc,
     };
+    let fail = |message: &str| {
+        set_last_error(ctx, &format!("{FN}: {message}"));
+        HEGEL_E_INVALID_ARG
+    };
+    if tc.print_target != PrinterTarget::Main {
+        return fail("tc is a clone; only the test case's root handle can complete it");
+    }
+    let read = |name: &str, s: *const hegel_string_t| -> Result<Option<String>, String> {
+        if s.is_null() {
+            return Ok(None);
+        }
+        match unsafe { (*s).as_str() } {
+            Ok(text) => Ok(Some(text.to_string())),
+            Err(_) => Err(format!("{name} is not valid UTF-8")),
+        }
+    };
+    let (origin, summary, detail) = match (
+        read("origin", origin),
+        read("summary", summary),
+        read("detail", detail),
+    ) {
+        (Ok(o), Ok(s), Ok(d)) => (o, s, d),
+        (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => return fail(&e),
+    };
 
+    let interesting = status == hegel_status_t::HEGEL_STATUS_INTERESTING as u32;
+    if !interesting && (origin.is_some() || summary.is_some() || detail.is_some()) {
+        return fail(
+            "origin, summary and detail must be NULL unless the status is HEGEL_STATUS_INTERESTING",
+        );
+    }
+    let mut failure_text = None;
+    let outcome = match status {
+        x if x == hegel_status_t::HEGEL_STATUS_VALID as u32 => TestCaseResult::Valid,
+        x if x == hegel_status_t::HEGEL_STATUS_INVALID as u32 => TestCaseResult::Invalid,
+        x if x == hegel_status_t::HEGEL_STATUS_OVERRUN as u32 => TestCaseResult::Overrun,
+        _ if interesting => {
+            let output = &tc.family.output;
+            let Some(origin) = origin.filter(|o| !o.is_empty()) else {
+                return fail("origin is required for HEGEL_STATUS_INTERESTING");
+            };
+            if summary.as_deref().is_some_and(|s| s.contains(['\n', '\r'])) {
+                return fail("summary must be a single line");
+            }
+            if output.wanted() && summary.as_deref().is_none_or(str::is_empty) {
+                return fail(
+                    "summary is required: hegel_test_case_wants_output is true for this test case",
+                );
+            }
+            if output.wants_detail && detail.as_deref().is_none_or(str::is_empty) {
+                return fail(
+                    "detail is required: hegel_test_case_wants_detail is true for this test case",
+                );
+            }
+            failure_text = Some(FailureText { summary, detail });
+            TestCaseResult::Interesting(Failure {
+                origin,
+                reproduce_blob: None,
+                caveat: None,
+            })
+        }
+        _ => return fail(&format!("unknown status {status}")),
+    };
     // Completing the *same* handle twice is a usage error. (A different handle
     // in the family completing after this one is handled below: it is a no-op,
     // not an error.)
     if guard.completed {
         return HEGEL_E_ALREADY_COMPLETE;
     }
-
-    let outcome = match status {
-        x if x == hegel_status_t::HEGEL_STATUS_VALID as u32 => TestCaseResult::Valid,
-        x if x == hegel_status_t::HEGEL_STATUS_INVALID as u32 => TestCaseResult::Invalid,
-        x if x == hegel_status_t::HEGEL_STATUS_OVERRUN as u32 => TestCaseResult::Overrun,
-        x if x == hegel_status_t::HEGEL_STATUS_INTERESTING as u32 => {
-            let origin_str = if origin.is_null() {
-                "Panic at <unknown>".to_string()
-            } else {
-                match unsafe { (*origin).as_str() } {
-                    Ok(s) => s.to_string(),
-                    Err(_) => {
-                        set_last_error(ctx, "hegel_mark_complete: origin is not valid UTF-8");
-                        return HEGEL_E_INVALID_ARG;
-                    }
-                }
-            };
-            TestCaseResult::Interesting(Failure {
-                origin: origin_str,
-                reproduce_blob: None,
-                caveat: None,
-            })
-        }
-        _ => {
-            set_last_error(
-                ctx,
-                &format!("hegel_mark_complete: unknown status {status}"),
-            );
-            return HEGEL_E_INVALID_ARG;
-        }
-    };
-
     guard.completed = true;
+    if failure_text.is_some() {
+        *tc.family.output.failure.lock() = failure_text;
+    }
 
-    // First handle in the family to complete wins: it records the outcome and
-    // unblocks the run. A later clone completing the (already-complete) family
-    // is a safe no-op, so concurrent clones don't race to an error.
     tc.family.complete(&outcome);
     HEGEL_OK
 }
@@ -8169,6 +8602,69 @@ pub unsafe extern "C" fn hegel_failure_caveat(
         };
     }
     HEGEL_OK
+}
+
+/// Parameters:
+/// `out_output`: Receives what the failing test case printed — its drawn
+///   values and notes — lines separated by `\n` (empty when it printed
+///   nothing), or NULL when no execution of the failure was stamped for
+///   capture (or the run was quiet). Borrowed from `f`.
+///
+/// Returns `HEGEL_OK`.
+///
+/// This is what to show with the failure: attach it to the error the
+/// frontend raises, or print it before raising, followed by the diagnostic
+/// (`hegel_failure_diagnostic`) unless raising the error shows it already.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_failure_output(
+    ctx: *mut HegelContext,
+    f: *const HegelFailure,
+    out_output: *mut *const hegel_string_t,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    let f = match unsafe { failure_ref(ctx, f, "hegel_failure_output") } {
+        Ok(f) => f,
+        Err(rc) => return rc,
+    };
+    if out_output.is_null() {
+        set_last_error(ctx, "hegel_failure_output: out parameter is null");
+        return HEGEL_E_INVALID_ARG;
+    }
+    unsafe { *out_output = stored_or_null(f.output.as_ref()) };
+    HEGEL_OK
+}
+
+/// Parameters:
+/// `out_diagnostic`: Receives the `detail` the execution reported by
+///   `hegel_failure_output` passed to `hegel_mark_complete`, or NULL when
+///   there is no such execution (none was stamped for capture, or the run
+///   was quiet). Borrowed from `f`.
+///
+/// Returns `HEGEL_OK`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn hegel_failure_diagnostic(
+    ctx: *mut HegelContext,
+    f: *const HegelFailure,
+    out_diagnostic: *mut *const hegel_string_t,
+) -> hegel_result_t {
+    clear_last_error(ctx);
+    let f = match unsafe { failure_ref(ctx, f, "hegel_failure_diagnostic") } {
+        Ok(f) => f,
+        Err(rc) => return rc,
+    };
+    if out_diagnostic.is_null() {
+        set_last_error(ctx, "hegel_failure_diagnostic: out parameter is null");
+        return HEGEL_E_INVALID_ARG;
+    }
+    unsafe { *out_diagnostic = stored_or_null(f.diagnostic.as_ref()) };
+    HEGEL_OK
+}
+
+/// The C view of an optional stored string: NULL for `None`.
+fn stored_or_null(stored: Option<&StoredString>) -> *const hegel_string_t {
+    stored.map_or(ptr::null(), |stored| {
+        &stored.string as *const hegel_string_t
+    })
 }
 
 /// Parameters:

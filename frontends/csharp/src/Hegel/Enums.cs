@@ -9,9 +9,9 @@ public enum Verbosity
     Quiet = Abi.VerbosityQuiet,
     /// <summary>Failures and the engine's own warnings.</summary>
     Normal = Abi.VerbosityNormal,
-    /// <summary>Every test case's draws as it runs.</summary>
+    /// <summary>Every test case's draws as it runs, and a one-line summary of each failure.</summary>
     Verbose = Abi.VerbosityVerbose,
-    /// <summary>Everything, including the engine's internal decisions.</summary>
+    /// <summary>Everything, including the engine's internal decisions and each failure's full exception with its stack trace.</summary>
     Debug = Abi.VerbosityDebug,
 }
 

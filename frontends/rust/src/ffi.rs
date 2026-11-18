@@ -37,9 +37,8 @@ struct Context {
 
 impl Context {
     fn new() -> Self {
-        // SAFETY: hegel_context_new never returns null.
         let context = Context {
-            raw: unsafe { hegel_c::hegel_context_new() },
+            raw: hegel_c::hegel_context_new(),
         };
         UNICODE_VERSION_SET.call_once(|| {
             let version = unicode_version();
@@ -565,9 +564,11 @@ pub(crate) fn register_profile(name: &str, settings: &Settings) -> Result<(), St
 /// Engine-output trampoline passed to `hegel_run_start` /
 /// `hegel_run_start_blob`: `user_data` points at the [`OutputSink`] the
 /// run resolved at start, and each engine output line is forwarded to it. The
-/// engine invokes this while it runs between test cases; the sink is
-/// `Send + Sync`, and the pointee stays alive for as long as the engine can
-/// emit — owned by the [`RunHandle`].
+/// engine invokes this from inside its calls on the run and its test cases —
+/// between test cases, and with a test case's printed output from whichever
+/// thread prints, joins a state machine's workers, or completes the case —
+/// so the sink is `Send + Sync`, and the pointee stays alive for as long as
+/// the engine can emit — owned by the [`RunHandle`].
 unsafe extern "C" fn engine_output_trampoline(
     user_data: *mut c_void,
     line: *const c_char,
@@ -579,15 +580,15 @@ unsafe extern "C" fn engine_output_trampoline(
 }
 
 /// The `(callback, user_data)` pair to pass to a creation call for output
-/// going to the [`OutputSink`] at `sink_ptr`, or `(None, null)` to leave
-/// output on stderr when `sink_ptr` is `None`. The pointee must stay valid
+/// going to the [`OutputSink`] at `sink_ptr`, or to libhegel's own stderr
+/// writer (`hegel_output_stderr`) when `sink_ptr` is `None`. The pointee must stay valid
 /// for as long as the engine can emit through it (the caller's concern).
 fn output_args(
     sink_ptr: Option<*const OutputSink>,
 ) -> (hegel_c::hegel_output_callback_t, *mut c_void) {
     match sink_ptr {
         Some(p) => (Some(engine_output_trampoline), p.cast_mut().cast()),
-        None => (None, ptr::null_mut()),
+        None => (hegel_c::hegel_output_stderr_callback(), ptr::null_mut()),
     }
 }
 
@@ -742,16 +743,29 @@ impl CTestCase {
         CTestCase { raw }
     }
 
-    /// Whether the engine stamped this test case for capture
-    /// (`hegel_test_case_should_capture`): buffer its output and, on
-    /// failure, its diagnostic for the failure report. The engine stamps
-    /// the case before it starts, so the answer is stable for the case's
-    /// whole lifetime; blob-replay cases are always stamped.
-    pub(crate) fn should_capture(&self) -> bool {
+    /// Whether the engine will use what this test case prints
+    /// (`hegel_test_case_wants_output`): a verbose run streams it, and a case
+    /// stamped for capture keeps it for its failure report. The answer is
+    /// fixed when the case starts.
+    pub(crate) fn wants_output(&self) -> bool {
         let mut out = false;
         // SAFETY: self.raw is a live handle; &mut out is a valid out-param.
         require_ok(with_context(|ctx| unsafe {
-            hegel_c::hegel_test_case_should_capture(ctx, self.raw, &mut out)
+            hegel_c::hegel_test_case_wants_output(ctx, self.raw, &mut out)
+        }));
+        out
+    }
+
+    /// Whether the engine will use this test case's full diagnostic if it
+    /// fails (`hegel_test_case_wants_detail`): printed at debug verbosity,
+    /// and kept for the failure report of a case stamped for capture. Only
+    /// then is a backtrace worth capturing. Implies
+    /// [`wants_output`](Self::wants_output); fixed when the case starts.
+    pub(crate) fn wants_detail(&self) -> bool {
+        let mut out = false;
+        // SAFETY: self.raw is a live handle; &mut out is a valid out-param.
+        require_ok(with_context(|ctx| unsafe {
+            hegel_c::hegel_test_case_wants_detail(ctx, self.raw, &mut out)
         }));
         out
     }
@@ -1448,19 +1462,42 @@ impl CTestCase {
         }))
     }
 
-    /// Report the test case's outcome. `origin` is supplied only for an
-    /// interesting (failing) status; libhegel ignores it otherwise.
+    /// Report the test case's outcome, with the [`FailureReport`] of an
+    /// interesting (failing) status and `None` for any other. The engine
+    /// rejects an incomplete call (`HEGEL_E_INVALID_ARG`), completing
+    /// nothing.
     pub(crate) fn mark_complete(
         &self,
         status: hegel_c::hegel_status_t,
-        origin: Option<&str>,
+        failure: Option<&FailureReport<'_>>,
     ) -> Result<(), hegel_result_t> {
-        let origin_string = origin.map(|s| view(s.as_bytes()));
-        let origin_ptr = origin_string.as_ref().map_or(ptr::null(), |s| s);
+        let as_view = |s: Option<&str>| s.map(|s| view(s.as_bytes()));
+        let origin = as_view(failure.map(|f| f.origin));
+        let summary = as_view(failure.and_then(|f| f.summary));
+        let detail = as_view(failure.and_then(|f| f.detail));
+        let as_ptr = |s: &Option<hegel_c::hegel_string_t>| s.as_ref().map_or(ptr::null(), |s| s);
+        // SAFETY: self.raw is a live handle; each string view borrows bytes
+        // that outlive the call, which copies them.
         rc_to_unit(with_context(|ctx| unsafe {
-            hegel_c::hegel_mark_complete(ctx, self.raw, status as u32, origin_ptr)
+            hegel_c::hegel_mark_complete(
+                ctx,
+                self.raw,
+                status as u32,
+                as_ptr(&origin),
+                as_ptr(&summary),
+                as_ptr(&detail),
+            )
         }))
     }
+}
+
+/// What a failing test case hands [`CTestCase::mark_complete`]: its origin,
+/// its one-line summary when the engine wants the case's output, and its
+/// complete diagnostic when the engine wants its detail.
+pub(crate) struct FailureReport<'a> {
+    pub(crate) origin: &'a str,
+    pub(crate) summary: Option<&'a str>,
+    pub(crate) detail: Option<&'a str>,
 }
 
 impl Drop for CTestCase {
@@ -2239,16 +2276,22 @@ impl RunResult {
         let mut origin = hegel_c::hegel_string_t::default();
         let mut blob = ptr::null();
         let mut caveat = ptr::null();
+        let mut output = ptr::null();
+        let mut diagnostic = ptr::null();
         // SAFETY: f is the failure snapshot allocated above; it is freed
         // exactly once, after the strings have been copied out by string_value.
         with_context(|ctx| unsafe {
             require_ok(hegel_c::hegel_failure_origin(ctx, f, &mut origin));
             require_ok(hegel_c::hegel_failure_reproduction_blob(ctx, f, &mut blob));
             require_ok(hegel_c::hegel_failure_caveat(ctx, f, &mut caveat));
+            require_ok(hegel_c::hegel_failure_output(ctx, f, &mut output));
+            require_ok(hegel_c::hegel_failure_diagnostic(ctx, f, &mut diagnostic));
             let failure = Failure {
                 origin: string_value(origin),
                 reproduce_blob: optional_string(blob),
                 caveat: optional_string(caveat),
+                output: optional_string(output),
+                diagnostic: optional_string(diagnostic),
             };
             require_ok(hegel_c::hegel_failure_free(ctx, f));
             failure
@@ -2265,12 +2308,16 @@ impl Drop for RunResult {
 
 /// A distinct failure read out of a finished run: the origin it was
 /// grouped under (matching the origin the client reported the failing
-/// cases with), the reproduce blob when the engine produced one, and the
-/// confirmation caveat when the run handled nondeterminism.
+/// cases with), the reproduce blob when the engine produced one, the
+/// confirmation caveat when the run handled nondeterminism, and what the
+/// engine kept of a failing execution stamped for capture — its printed
+/// lines and its diagnostic — when there was one.
 pub(crate) struct Failure {
     pub(crate) origin: String,
     pub(crate) reproduce_blob: Option<String>,
     pub(crate) caveat: Option<String>,
+    pub(crate) output: Option<String>,
+    pub(crate) diagnostic: Option<String>,
 }
 
 fn rc_to_unit(rc: hegel_result_t) -> Result<(), hegel_result_t> {

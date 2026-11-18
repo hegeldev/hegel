@@ -12,10 +12,12 @@ module Ffi = Hegel_ffi.Ffi
 
 #ifdef OXCAML
 #define LOCAL(x) (x @ local)
+#define NONTAIL [@nontail]
 #define PORTABLE @@ portable
 #define KIND(k) : k
 #else
 #define LOCAL(x) x
+#define NONTAIL
 #define PORTABLE
 #define KIND(k)
 #endif
@@ -62,14 +64,14 @@ type owned_state =
 type owned = owned_state Locked.t
 
 (** Per-test-case state passed explicitly to the test function. Holds the
-    native test-case handle, the final-replay flag, whether verbose output is
-    on, abort state, the current generation-span depth (used to print only the
+    native test-case handle, whether the engine uses what the case prints, the
+    run's verbosity, abort state, the current generation-span depth (used to print only the
     outermost drawn value), the {!draw_state} numbering repeatable draws,
     and the {!type:owned} engine resources. *)
 type test_case KIND(value mod portable contended) =
   { handle : Ffi.test_case
   ; context : Ffi.context
-  ; should_capture : bool
+  ; wants_output : bool
   ; verbosity : Settings.verbosity
   ; test_aborted : bool Atomic.t
   ; draw_depth : int Atomic.t
@@ -107,16 +109,9 @@ let own_clone (tc : test_case) context handle =
   Locked.protect tc.owned (fun owned -> owned.clones <- (context, handle) :: owned.clones)
 ;;
 
-(** [owned_clone_count tc] is the number of clone handles the case currently
-    owns. *)
-let owned_clone_count (tc : test_case) =
-  Locked.protect tc.owned (fun owned -> List.length owned.clones)
-;;
-
 let draw_depth (tc : test_case) = Atomic.get tc.draw_depth
 let incr_draw_depth (tc : test_case) = Atomic.incr tc.draw_depth
 let decr_draw_depth (tc : test_case) = Atomic.decr tc.draw_depth
-let set_test_aborted (tc : test_case) v = Atomic.set tc.test_aborted v
 
 (** [clone tc] forks a fresh {!test_case} onto an independent choice stream of the
     same underlying native test case (see {!Ffi.test_case_clone}), paired with its
@@ -136,7 +131,7 @@ let clone (tc : test_case) =
   own_clone tc context handle;
   { handle
   ; context
-  ; should_capture = tc.should_capture
+  ; wants_output = tc.wants_output
   ; verbosity = tc.verbosity
   ; test_aborted = Atomic.make false
   ; draw_depth = Atomic.make (Atomic.get tc.draw_depth)
@@ -153,7 +148,7 @@ let with_block (tc : test_case) ~indent LOCAL(f) =
   let b =
     { handle
     ; context
-      ; should_capture = tc.should_capture
+    ; wants_output = tc.wants_output
     ; verbosity = tc.verbosity
     ; test_aborted = Atomic.make false
     ; draw_depth = Atomic.make 0
@@ -181,8 +176,8 @@ let set_worker_index tc worker_index =
 (** Domain-local flag to detect nested test cases. *)
 let in_test_context : bool DLS.key = DLS.new_key (fun () -> false)
 
-(** [extract_origin exn] extracts an InterestingOrigin string from an exception.
-    Uses the backtrace if available. The origin is derived from the exception
+(** [user_location bt] is the location of the innermost user frame of [bt],
+    from which {!origin_of} builds an exception's InterestingOrigin. The origin is derived from the exception
     type plus the {e innermost user frame}, so the shrinker
     groups probes for the same bug while keeping failures at distinct source
     lines apart (see {!Ffi.mark_complete}).
@@ -190,8 +185,7 @@ let in_test_context : bool DLS.key = DLS.new_key (fun () -> false)
     Frames of the stdlib and of the hegel libraries are skipped. Their code
     paths can change between replays of the same failure, and the engine then
     treats the failure as nondeterministic. *)
-let extract_origin exn =
-  let bt = Stdlib.Printexc.get_raw_backtrace () in
+let user_location bt =
   let library_modules =
     [ "Hegel"; "Hegel_ffi"; "Hegel_jane"; "Hegel_jane_async"; "Hegel_jane_concurrent" ]
   in
@@ -204,22 +198,27 @@ let extract_origin exn =
             || String.starts_with name ~prefix:(m ^ "__"))
          library_modules
   in
-  let user_location =
-    match Stdlib.Printexc.backtrace_slots bt with
-    | None -> None
-    | Some slots ->
-      Array.find_map
-        (fun slot ->
-           match Stdlib.Printexc.Slot.(name slot, location slot) with
-           | Some name, Some (loc : Stdlib.Printexc.location)
-             when not (is_library_frame name) -> Some (loc.filename, loc.line_number)
-           | _ -> None)
-        slots
-  in
-  match user_location with
+  match Stdlib.Printexc.backtrace_slots bt with
+  | None -> None
+  | Some slots ->
+    Array.find_map
+      (fun slot ->
+         match Stdlib.Printexc.Slot.(name slot, location slot) with
+         | Some name, Some (loc : Stdlib.Printexc.location)
+           when not (is_library_frame name) -> Some loc
+         | _ -> None)
+      slots
+;;
+
+let origin_of exn bt =
+  match user_location bt with
   | None -> Printf.sprintf "%s at :0" (Stdlib.Printexc.exn_slot_name exn)
-  | Some (file, line) ->
-    Printf.sprintf "%s at %s:%d" (Stdlib.Printexc.exn_slot_name exn) file line
+  | Some loc ->
+    Printf.sprintf
+      "%s at %s:%d"
+      (Stdlib.Printexc.exn_slot_name exn)
+      loc.filename
+      loc.line_number
 ;;
 
 exception Usage_error = Ffi.Usage_error
@@ -227,7 +226,7 @@ exception Internal_error = Ffi.Internal_error
 
 (** [with_stop_guard tc f] marks the test case aborted on engine control
     exceptions and propagates them unchanged. *)
-let with_stop_guard tc f =
+let with_stop_guard tc LOCAL(f) =
   try f () with
   | (Stop_test | Assume_rejected | Usage_error _) as exn ->
     Atomic.set tc.test_aborted true;
@@ -243,14 +242,15 @@ let with_stop_guard tc f =
     [true]. If [forced] is [Some b] the value is forced to [b]. Raises
     {!Stop_test} on StopTest. *)
 let generate_boolean tc p forced =
-  with_stop_guard tc (fun () -> Ffi.generate_boolean tc.context tc.handle p forced)
+  with_stop_guard tc (fun () ->
+    Ffi.generate_boolean tc.context tc.handle p forced) NONTAIL
 ;;
 
 (** [generate_integer tc ~min_value ~max_value] draws an integer in the inclusive
     range. Raises {!Stop_test} on StopTest. *)
 let generate_integer tc ~min_value ~max_value =
   with_stop_guard tc (fun () ->
-    Ffi.generate_integer tc.context tc.handle ~min_value ~max_value)
+    Ffi.generate_integer tc.context tc.handle ~min_value ~max_value) NONTAIL
 ;;
 
 (** [generate_float tc ...] draws a width-64 float under the given policy. Raises
@@ -275,26 +275,100 @@ let generate_float
       ~allow_infinity
       ~exclude_min
       ~exclude_max
-      ~smallest_nonzero_magnitude)
+      ~smallest_nonzero_magnitude) NONTAIL
 ;;
 
 (** [generate_bytes tc ~min_size ~max_size] draws a byte string. Raises
     {!Stop_test} on StopTest. *)
 let generate_bytes tc ~min_size ~max_size =
   with_stop_guard tc (fun () ->
-    Ffi.generate_bytes tc.context tc.handle ~min_size ~max_size)
+    Ffi.generate_bytes tc.context tc.handle ~min_size ~max_size) NONTAIL
 ;;
 
-(** [with_string_generator tc make draw] builds a string-generator handle with
-    [make tc.context], draws from it with [draw], and always frees the handle.
-    Raises {!Stop_test} on StopTest and {!Assume_rejected} when the draw
-    rejects itself. *)
-let with_string_generator tc make =
+type string_generator_key =
+  | Text of
+      { min_size : int
+      ; max_size : int option
+      ; codec : string option
+      ; min_codepoint : int
+      ; max_codepoint : int
+      ; categories : string list option
+      ; exclude_categories : string list option
+      ; include_characters : string option
+      ; exclude_characters : string option
+      }
+  | Regex of
+      { pattern : string
+      ; fullmatch : bool
+      }
+  | Email
+  | Url
+  | Domain_name of int
+
+let string_generator_buckets = 64
+let max_string_generators_per_bucket = 4
+
+(* The string generators built so far, hashed into buckets of at most
+   [max_string_generators_per_bucket], shared by every test case and never
+   freed. *)
+let string_generators
+  : (string_generator_key * Ffi.string_generator) list Atomic.t Immutable_array.t
+  =
+  Immutable_array.init string_generator_buckets (fun _ -> Atomic.make [])
+;;
+
+let new_string_generator ctx = function
+  | Text
+      { min_size
+      ; max_size
+      ; codec
+      ; min_codepoint
+      ; max_codepoint
+      ; categories
+      ; exclude_categories
+      ; include_characters
+      ; exclude_characters
+      } ->
+    Ffi.string_generator_text
+      ctx
+      ~min_size
+      ~max_size
+      ~codec
+      ~min_codepoint
+      ~max_codepoint
+      ~categories
+      ~exclude_categories
+      ~include_characters
+      ~exclude_characters
+  | Regex { pattern; fullmatch } -> Ffi.string_generator_regex ctx ~pattern ~fullmatch
+  | Email -> Ffi.string_generator_email ctx
+  | Url -> Ffi.string_generator_url ctx
+  | Domain_name max_length -> Ffi.string_generator_domain ctx ~max_length
+;;
+
+(** [generate_string tc key] draws from the string generator described by
+    [key], building it on first use. Raises {!Stop_test} on StopTest and
+    {!Assume_rejected} when the draw rejects itself. *)
+let generate_string tc key =
   with_stop_guard tc (fun () ->
-    let sg = make tc.context in
-    Fun.protect
-      ~finally:(fun () -> Ffi.string_generator_free tc.context sg)
-      (fun () -> Ffi.generate_string tc.context tc.handle sg))
+    let ctx = tc.context in
+    let bucket =
+      Immutable_array.get
+        string_generators
+        (Hashtbl.hash key land (string_generator_buckets - 1))
+    in
+    let cached = Atomic.get bucket in
+    match List.assoc_opt key cached with
+    | Some sg -> Ffi.generate_string ctx tc.handle sg
+    | None ->
+      let sg = new_string_generator ctx key in
+      if List.length cached < max_string_generators_per_bucket
+         && Atomic.compare_and_set bucket cached ((key, sg) :: cached)
+      then Ffi.generate_string ctx tc.handle sg
+      else
+        Fun.protect
+          ~finally:(fun () -> Ffi.string_generator_free ctx sg)
+          (fun () -> Ffi.generate_string ctx tc.handle sg)) NONTAIL
 ;;
 
 (** [generate_text tc ...] draws a text string over the described alphabet. *)
@@ -310,35 +384,32 @@ let generate_text
       ~include_characters
       ~exclude_characters
   =
-  with_string_generator tc (fun ctx ->
-    Ffi.string_generator_text
-      ctx
-      ~min_size
-      ~max_size
-      ~codec
-      ~min_codepoint
-      ~max_codepoint
-      ~categories
-      ~exclude_categories
-      ~include_characters
-      ~exclude_characters)
+  generate_string
+    tc
+    (Text
+       { min_size
+       ; max_size
+       ; codec
+       ; min_codepoint
+       ; max_codepoint
+       ; categories
+       ; exclude_categories
+       ; include_characters
+       ; exclude_characters
+       })
 ;;
 
 (** [generate_regex tc ~pattern ~fullmatch] draws a string matching [pattern]. *)
-let generate_regex tc ~pattern ~fullmatch =
-  with_string_generator tc (fun ctx -> Ffi.string_generator_regex ctx ~pattern ~fullmatch)
-;;
+let generate_regex tc ~pattern ~fullmatch = generate_string tc (Regex { pattern; fullmatch })
 
 (** [generate_email tc] draws an RFC 5321/5322 email address. *)
-let generate_email tc = with_string_generator tc Ffi.string_generator_email
+let generate_email tc = generate_string tc Email
 
 (** [generate_url tc] draws an RFC 3986 http/https URL. *)
-let generate_url tc = with_string_generator tc Ffi.string_generator_url
+let generate_url tc = generate_string tc Url
 
 (** [generate_domain tc ~max_length] draws an RFC 1035 domain name. *)
-let generate_domain tc ~max_length =
-  with_string_generator tc (fun ctx -> Ffi.string_generator_domain ctx ~max_length)
-;;
+let generate_domain tc ~max_length = generate_string tc (Domain_name max_length)
 
 (** A proleptic Gregorian calendar date, as drawn by {!generate_date}. *)
 type date = Ffi.date =
@@ -359,31 +430,31 @@ type time = Ffi.time =
     inclusive range. *)
 let generate_date tc ~min_value ~max_value =
   with_stop_guard tc (fun () ->
-    Ffi.generate_date tc.context tc.handle ~min_value ~max_value)
+    Ffi.generate_date tc.context tc.handle ~min_value ~max_value) NONTAIL
 ;;
 
 (** [generate_time tc ~min_value ~max_value] draws a time in the inclusive
     range. *)
 let generate_time tc ~min_value ~max_value =
   with_stop_guard tc (fun () ->
-    Ffi.generate_time tc.context tc.handle ~min_value ~max_value)
+    Ffi.generate_time tc.context tc.handle ~min_value ~max_value) NONTAIL
 ;;
 
 (** [generate_datetime tc ~min_value ~max_value] draws a naive datetime in the
     inclusive range as a [(date, time)] pair. *)
 let generate_datetime tc ~min_value ~max_value =
   with_stop_guard tc (fun () ->
-    Ffi.generate_datetime tc.context tc.handle ~min_value ~max_value)
+    Ffi.generate_datetime tc.context tc.handle ~min_value ~max_value) NONTAIL
 ;;
 
 (** [generate_ipv4 tc] draws an IPv4 address as its 4 network-order bytes. *)
 let generate_ipv4 tc =
-  with_stop_guard tc (fun () -> Ffi.generate_ipv4 tc.context tc.handle)
+  with_stop_guard tc (fun () -> Ffi.generate_ipv4 tc.context tc.handle) NONTAIL
 ;;
 
 (** [generate_ipv6 tc] draws an IPv6 address as its 16 network-order bytes. *)
 let generate_ipv6 tc =
-  with_stop_guard tc (fun () -> Ffi.generate_ipv6 tc.context tc.handle)
+  with_stop_guard tc (fun () -> Ffi.generate_ipv6 tc.context tc.handle) NONTAIL
 ;;
 
 (* ------------------------------------------------------------------ *)
@@ -423,20 +494,15 @@ let stderr_color code s =
     {!Assume_rejected}) and does not consult [tc]. *)
 let assume _tc condition = if not condition then raise Assume_rejected
 
-(** [should_print tc] says whether {!note} output is visible for this test
-    case under the run's {!type:verbosity}: never under [Quiet], only on the
-    final (failing) replay under [Normal], and on every test case under
+(** [should_print tc] says whether the engine uses what this test case prints
+    (see {!Ffi.test_case_wants_output}): never under [Quiet], on the cases the
+    engine stamps for capture under [Normal], and on every test case under
     [Verbose] or [Debug]. *)
-let should_print tc =
-  match tc.verbosity with
-  | Quiet -> false
-  | Normal -> tc.should_capture
-  | Verbose | Debug -> true
-;;
+let should_print tc = tc.wants_output
 
 (** [note tc message] appends [message] to the test case's
     print region of the engine's family document, subject to {!should_print};
-    the document is printed once the case completes (see [capture_document]). *)
+    the engine prints the document as it becomes final. *)
 let note tc message = if should_print tc then Ffi.note tc.context tc.handle message
 
 (** [render_sexp ctx printer sexp] writes [sexp] to [printer] in s-expression
@@ -460,11 +526,13 @@ type draw_segment =
   | Text of string
   | Value of Sexp.t
 
-(** [print_line tc segments] appends one line assembled from [segments] to the
-    test case's print region. *)
-let print_line tc segments =
+(** [print_line tc segments] appends one line assembled from [segments ()] to
+    the test case's print region. [segments] is only called when the line is
+    printed. *)
+let print_line tc LOCAL(segments) =
   if should_print tc
   then (
+    let segments = segments () in
     let ctx = tc.context in
     let printer = Ffi.test_case_printer ctx tc.handle None in
     Fun.protect
@@ -501,31 +569,33 @@ let draw_display_name tc ~label ~repeatable =
 (** [target tc ~label ~value] records a targeting observation to guide the search
     engine toward higher values. *)
 let target tc ~label ~value =
-  with_stop_guard tc (fun () -> Ffi.target tc.context tc.handle value label)
+  with_stop_guard tc (fun () -> Ffi.target tc.context tc.handle value label) NONTAIL
 ;;
 
 (** [event tc ~label] records [label] as observed on this test case for the
     end-of-run statistics report. *)
-let event tc ~label = with_stop_guard tc (fun () -> Ffi.event tc.context tc.handle label)
+let event tc ~label =
+  with_stop_guard tc (fun () -> Ffi.event tc.context tc.handle label) NONTAIL
+;;
 
 (** [event_value tc ~label ~value] records the finite observation [value] under
     [label] for the end-of-run statistics report. *)
 let event_value tc ~label ~value =
-  with_stop_guard tc (fun () -> Ffi.event_value tc.context tc.handle value label)
+  with_stop_guard tc (fun () -> Ffi.event_value tc.context tc.handle value label) NONTAIL
 ;;
 
 (** [start_span ?label tc] starts a generation span for better shrinking. *)
 let start_span ?(label = 0L) tc =
   if Atomic.get tc.test_aborted
-  then ()
-  else with_stop_guard tc (fun () -> Ffi.start_span tc.context tc.handle label)
+  then () [@coverage off]
+  else with_stop_guard tc (fun () -> Ffi.start_span tc.context tc.handle label) NONTAIL
 ;;
 
 (** [stop_span ?discard tc] ends the current generation span. *)
 let stop_span ?(discard = false) tc =
   if Atomic.get tc.test_aborted
   then ()
-  else with_stop_guard tc (fun () -> Ffi.stop_span tc.context tc.handle discard)
+  else with_stop_guard tc (fun () -> Ffi.stop_span tc.context tc.handle discard) NONTAIL
 ;;
 
 type collection = Ffi.collection
@@ -586,33 +656,34 @@ let new_state_machine_with_concurrency
     | concurrency -> state_machine, concurrency
     | exception exn ->
       Ffi.state_machine_free tc.context state_machine;
-      raise exn)
+      raise exn) NONTAIL
 ;;
 
 (** [new_collection tc ~min_size ~max_size] starts an engine-managed collection.
     Release it with {!collection_free}. Raises {!Stop_test} on StopTest. *)
 let new_collection tc ~min_size ~max_size =
   with_stop_guard tc (fun () ->
-    Ffi.new_collection tc.context tc.handle ~min_size ~max_size)
+    Ffi.new_collection tc.context tc.handle ~min_size ~max_size) NONTAIL
 ;;
 
 (** [collection_more tc ~collection] returns whether the engine wants another
     element. Raises {!Stop_test} on StopTest. *)
 let collection_more tc ~collection =
-  with_stop_guard tc (fun () -> Ffi.collection_more tc.context tc.handle collection)
+  with_stop_guard tc (fun () ->
+    Ffi.collection_more tc.context tc.handle collection) NONTAIL
 ;;
 
 (** [collection_reject tc ~collection] rejects the collection's last element.
     Raises {!Stop_test} on StopTest. *)
 let collection_reject tc ~collection =
   with_stop_guard tc (fun () ->
-    Ffi.collection_reject tc.context tc.handle collection None)
+    Ffi.collection_reject tc.context tc.handle collection None) NONTAIL
 ;;
 
 let collection_free tc ~collection = Ffi.collection_free tc.context collection
 
 let new_pool tc =
-  let pool = with_stop_guard tc (fun () -> Ffi.new_pool tc.context tc.handle) in
+  let pool = with_stop_guard tc (fun () -> Ffi.new_pool tc.context tc.handle) NONTAIL in
   Locked.protect tc.owned (fun owned -> owned.pools <- pool :: owned.pools);
   pool
 ;;
@@ -620,36 +691,41 @@ let new_pool tc =
 (** [pool_add tc ~pool] adds a fresh variable to [pool] and returns the new
     variable id. *)
 let pool_add tc ~pool =
-  with_stop_guard tc (fun () -> Ffi.pool_add tc.context tc.handle ~pool)
+  with_stop_guard tc (fun () -> Ffi.pool_add tc.context tc.handle ~pool) NONTAIL
 ;;
 
-(** [pool_generate tc ~pool ?consume ()] draws a variable id from [pool]. When
+(** [pool_generate tc ~pool ~consume] draws a variable id from [pool]. When
     [consume] is [true], the variable is also removed from the pool. Drawing
     from an empty pool raises {!Assume_rejected}. *)
-let pool_generate tc ~pool ?(consume = false) () =
-  with_stop_guard tc (fun () -> Ffi.pool_generate tc.context tc.handle ~pool ~consume)
+let pool_generate tc ~pool ~consume =
+  with_stop_guard tc (fun () ->
+    Ffi.pool_generate tc.context tc.handle ~pool ~consume) NONTAIL
 ;;
 
 (** [pool_restore tc ~pool ~variable_id] puts back a variable that a consuming
     {!pool_generate} removed from [pool]. *)
 let pool_restore tc ~pool ~variable_id =
   with_stop_guard tc (fun () ->
-    Ffi.pool_restore tc.context tc.handle ~pool ~variable_id)
+    Ffi.pool_restore tc.context tc.handle ~pool ~variable_id) NONTAIL
 ;;
 
 let state_machine_next_group tc ~state_machine =
   with_stop_guard tc (fun () ->
-    Ffi.state_machine_next_group tc.context tc.handle ~state_machine)
+    Ffi.state_machine_next_group tc.context tc.handle ~state_machine) NONTAIL
 ;;
 
 let state_machine_next_rule_for_worker tc ~state_machine ~worker_index =
   with_stop_guard tc (fun () ->
-    Ffi.state_machine_next_rule tc.context tc.handle ~state_machine ~worker_index)
+    Ffi.state_machine_next_rule tc.context tc.handle ~state_machine ~worker_index) NONTAIL
 ;;
 
 let state_machine_rule_rejected_for_worker tc ~state_machine ~worker_index =
   with_stop_guard tc (fun () ->
-    Ffi.state_machine_rule_rejected tc.context tc.handle ~state_machine ~worker_index)
+    Ffi.state_machine_rule_rejected
+      tc.context
+      tc.handle
+      ~state_machine
+      ~worker_index) NONTAIL
 ;;
 
 (** [state_machine_should_check_invariant tc ~state_machine ~invariant_index]
@@ -661,7 +737,7 @@ let state_machine_should_check_invariant tc ~state_machine ~invariant_index =
       tc.context
       tc.handle
       ~state_machine
-      ~invariant_index)
+      ~invariant_index) NONTAIL
 ;;
 
 let state_machine_free tc ~state_machine = Ffi.state_machine_free tc.context state_machine
@@ -709,26 +785,39 @@ type result =
   | Overrun
   | Failed of interesting_case
 
-type case_outcome =
-  { result : result
-  ; output : string
-  ; should_capture : bool
-  }
+(** [render_diagnostic exn] is the line a failure report shows for [exn]. *)
+let render_diagnostic exn = Printf.sprintf "Exception: %s" (Stdlib.Printexc.to_string exn)
 
-(** [capture_document tc] renders the document of a test case, its clones,
-    and blocks.. *)
-let capture_document (tc : test_case) =
-  if not (should_print tc)
-  then ""
-  else (
-    let printer = Ffi.test_case_printer tc.context tc.handle None in
-    Fun.protect
-      ~finally:(fun () -> Ffi.printer_free tc.context printer)
-      (fun () ->
-         (* Resolve splices from clone documents. *)
-         match Ffi.printer_resolve tc.context printer with
-         | () -> Ffi.printer_value tc.context printer
-         | exception Usage_error _ -> Ffi.printer_value tc.context printer))
+(** [render_summary exn bt] is the one-line summary of a failure: its
+    {!render_diagnostic} cut at the first line break, led by the innermost
+    user frame of [bt] when a backtrace was recorded and [exn] does not carry
+    its own location. *)
+let render_summary exn bt =
+  let diagnostic = render_diagnostic exn in
+  let message =
+    let line_breaks_unified =
+      String.map
+        (function
+          | '\r' -> '\n'
+          | c -> c)
+        diagnostic
+    in
+    match String.index_opt line_breaks_unified '\n' with
+    | None -> diagnostic
+    | Some i -> String.sub diagnostic 0 i ^ " \u{2026}"
+  in
+  match exn, user_location bt with
+  | (Assert_failure _ | Match_failure _), _ | _, None -> message
+  | _, Some loc ->
+    Printf.sprintf "%s:%d:%d: %s" loc.filename loc.line_number loc.start_char message
+;;
+
+(** [render_detail exn bt] is the complete diagnostic of a failure: its
+    {!render_diagnostic} followed by the backtrace [bt], when one was recorded. *)
+let render_detail exn bt =
+  match String.trim (Stdlib.Printexc.raw_backtrace_to_string bt) with
+  | "" -> render_diagnostic exn
+  | trace -> render_diagnostic exn ^ "\n" ^ trace
 ;;
 
 (** Width the framed failure report's header rule is padded to. *)
@@ -751,9 +840,14 @@ type rerun_hint =
   | Attribute
   | Command_line
 
+(** [print_failure_body ~settings ~rerun_hint ~blob ~caveat ~exn ~output]
+    prints a failure's report: the lines its test case printed, set off by
+    blank lines, then its exception. *)
 let print_failure_body ~(settings : Settings.t) ~rerun_hint ~blob ~caveat ~exn ~output =
-  if not (String.equal output "") then Printf.eprintf "\n%s\n%!" output;
-  Printf.eprintf "Exception: %s\n%!" (Stdlib.Printexc.to_string exn);
+  (match output with
+   | Some lines when not (String.equal lines "") -> Printf.eprintf "\n%s\n\n%!" lines
+   | Some _ | None -> ());
+  Printf.eprintf "%s\n%!" (render_diagnostic exn);
   Option.iter (fun caveat -> Printf.eprintf "note: %s\n%!" caveat) caveat;
   if settings.print_blob
   then
@@ -824,13 +918,14 @@ let run_test
   in
   let ctx = Ffi.context_new () in
   let ffi_settings = build_ffi_settings ctx settings ~database_key ~test_location in
-  let captured = Hashtbl.create 4 in
+  let failures = Hashtbl.create 4 in
   let run_case handle =
-    let should_capture = Ffi.test_case_should_capture ctx handle in
+    let wants_output = Ffi.test_case_wants_output ctx handle in
+    let wants_detail = Ffi.test_case_wants_detail ctx handle in
     let (tc : test_case) =
       { handle
       ; context = ctx
-      ; should_capture
+      ; wants_output
       ; verbosity = settings.verbosity
       ; test_aborted = Atomic.make false
       ; draw_depth = Atomic.make 0
@@ -847,7 +942,7 @@ let run_test
       | exception ((Usage_error _ | Internal_error _) as control) -> raise control
       | exception exn ->
         let backtrace = Printexc.get_raw_backtrace () in
-        Failed { origin = extract_origin exn; exn; backtrace }
+        Failed { origin = origin_of exn backtrace; exn; backtrace }
     in
     DLS.set in_test_context true;
     let result =
@@ -857,32 +952,34 @@ let run_test
           free_owned tc)
         run_body
     in
-    let status, origin =
+    let status, origin, summary, detail =
       match result with
-      | Valid -> Ffi.Valid, None
-      | Invalid -> Ffi.Invalid, None
-      | Overrun -> Ffi.Overrun, None
-      | Failed failure -> Ffi.Interesting, Some failure.origin
+      | Valid -> Ffi.Valid, None, None, None
+      | Invalid -> Ffi.Invalid, None, None, None
+      | Overrun -> Ffi.Overrun, None, None, None
+      | Failed { origin; exn; backtrace } ->
+        ( Ffi.Interesting
+        , Some origin
+        , (if wants_output then Some (render_summary exn backtrace) else None)
+        , if wants_detail then Some (render_detail exn backtrace) else None )
     in
-    Ffi.mark_complete ctx handle status origin;
-    { result; output = capture_document tc; should_capture }
-  in
-  (* Keep the newest stamped failure of each origin for the report. *)
-  let update_captured failure outcome =
-    match Hashtbl.find_opt captured failure.origin with
-    | Some (_, curr_outcome) when curr_outcome.should_capture && not outcome.should_capture -> ()
-    | Some _ | None -> Hashtbl.replace captured failure.origin (failure, outcome)
+    Ffi.mark_complete ctx handle status ~origin ~summary ~detail;
+    (* Keep the exception of the failure the engine reports for each origin
+       (its newest stamped one), so the exception raised matches the report. *)
+    match result with
+    | Failed failure when wants_output || not (Hashtbl.mem failures failure.origin) ->
+      Hashtbl.replace failures failure.origin failure
+    | Failed _ | Valid | Invalid | Overrun -> ()
   in
   let report_failure failure =
-    let origin = Ffi.failure_origin ctx failure in
-    let failure_case, outcome = Hashtbl.find captured origin in
+    let failure_case = Hashtbl.find failures (Ffi.failure_origin ctx failure) in
     print_failure_body
       ~settings
       ~rerun_hint
       ~blob:(Ffi.failure_blob ctx failure)
       ~caveat:(Ffi.failure_caveat ctx failure)
       ~exn:failure_case.exn
-      ~output:outcome.output;
+      ~output:(Ffi.failure_output ctx failure);
     failure_case
   in
   let handle_result ~is_replay result =
@@ -915,10 +1012,10 @@ let run_test
              List.iteri
                (fun i failure ->
                   Printf.eprintf
-                    "\n%s%!"
-                    (stderr_color
-                       ansi_red
-                       (Printf.sprintf "Failure %d of %d:" (i + 1) count));
+                      "\n%s%!"
+                      (stderr_color
+                         ansi_red
+                         (Printf.sprintf "Failure %d of %d:" (i + 1) count));
                   (* print failure messages but don't reraise exn *)
                   ignore (report_failure failure : interesting_case))
                failures;
@@ -934,17 +1031,9 @@ let run_test
            | None -> ()
            | Some handle ->
              (* Free the case before moving on to the next one. *)
-             let outcome =
-               Fun.protect
-                 ~finally:(fun () -> Ffi.test_case_free ctx handle)
-                 (fun () -> run_case handle)
-             in
-             (match settings.verbosity with
-              | Verbose | Debug -> Printf.eprintf "%s%!" outcome.output
-              | Quiet | Normal -> ());
-             (match outcome.result with
-              | Failed failure -> update_captured failure outcome
-              | Valid | Invalid | Overrun -> ());
+             Fun.protect
+               ~finally:(fun () -> Ffi.test_case_free ctx handle)
+               (fun () -> run_case handle);
              loop ()
          in
          loop ();
@@ -959,7 +1048,8 @@ let run_test
       Ffi.context_free ctx)
     (fun () -> match failure_blobs with
     | [] -> drive ~is_replay:false (Ffi.run_start ctx ffi_settings)
-    | blob :: _ -> drive ~is_replay:true (Ffi.run_start_blob ctx ffi_settings blob))
+    | blob :: _ ->
+      drive ~is_replay:true (Ffi.run_start_blob ctx ffi_settings blob))
 ;;
 
 (** [run_hegel_test ?settings ?test_location ?database_key ?failure_blobs test_fn]

@@ -71,7 +71,14 @@ class ReproduceFailureTest {
         long[] tc = new long[1];
         assertEquals(Abi.OK, lib.testCaseFromBlob(settings[0], blob, lines::add, tc));
         assertTrue(tc[0] != 0);
-        assertEquals(Abi.OK, lib.markComplete(tc[0], Abi.STATUS_VALID, null));
+        assertTrue(lib.testCaseWantsOutput(tc[0]));
+        assertTrue(lib.testCaseWantsDetail(tc[0]));
+        assertEquals(List.of(), lines);
+        // The replay's callback outlives the call: the engine prints the detail through it when
+        // the test case completes.
+        assertEquals(
+                Abi.OK, lib.markComplete(tc[0], Abi.STATUS_INTERESTING, "origin", "Here: boom", "boom\n\tat here"));
+        assertEquals(List.of("boom", "\tat here"), lines);
         lib.testCaseFree(tc[0]);
         lib.settingsFree(settings[0]);
     }

@@ -44,7 +44,7 @@ func TestLibhegelEndToEnd(t *testing.T) {
 		if value < 0 || value > 100 {
 			t.Fatalf("generate returned out-of-range value %d", value)
 		}
-		if err := tc.MarkComplete(ctx, STATUS_VALID, ""); err != nil {
+		if err := tc.MarkComplete(ctx, STATUS_VALID, "", "", ""); err != nil {
 			t.Fatalf("mark_complete err=%v ", err)
 		}
 		cases++

@@ -168,18 +168,27 @@ impl Backend {
     }
 }
 
-/// Where engine-emitted output (verbose / debug progress traces, warnings)
-/// is written.
+/// Where engine-emitted output (verbose / debug progress traces, warnings,
+/// test-case output) is written.
 ///
 /// The default is stderr. [`Output::callback`] redirects every line to a
 /// caller-supplied sink instead — this is what backs the output callback the
 /// C ABI's `hegel_run_start` / `hegel_test_case_from_blob` accept, letting
-/// embeddings (e.g. a Go `testing.T`) capture engine output in-process. Lines
-/// are delivered without a trailing newline. The engine emits from its worker
-/// thread, so the sink must be `Send + Sync`.
+/// embeddings (e.g. a Go `testing.T`) capture engine output in-process — and
+/// [`Output::none`] is no destination at all, which the engine can see and
+/// produce nothing for. Lines are delivered without a trailing newline, on
+/// the thread making the C ABI call that prints them, which need not be the
+/// thread that created the sink, so the sink must be `Send + Sync`.
 #[derive(Clone)]
 pub struct Output {
-    sink: Option<OutputSink>,
+    sink: Sink,
+}
+
+#[derive(Clone)]
+enum Sink {
+    Stderr,
+    Callback(OutputSink),
+    None,
 }
 
 /// A caller-supplied destination for engine output lines.
@@ -188,31 +197,44 @@ type OutputSink = alloc::sync::Arc<dyn Fn(&str) + Send + Sync>;
 impl Output {
     /// The default destination: each line is written to stderr.
     pub fn stderr() -> Self {
-        Output { sink: None }
+        Output { sink: Sink::Stderr }
     }
 
     /// Deliver each line to `sink` instead of stderr.
     pub fn callback(sink: impl Fn(&str) + Send + Sync + 'static) -> Self {
         Output {
-            sink: Some(alloc::sync::Arc::new(sink)),
+            sink: Sink::Callback(alloc::sync::Arc::new(sink)),
         }
+    }
+
+    /// No destination: nothing is written, and the engine produces no output
+    /// that would only be thrown away.
+    pub fn none() -> Self {
+        Output { sink: Sink::None }
+    }
+
+    /// Whether lines written here go anywhere.
+    pub(crate) fn has_destination(&self) -> bool {
+        !matches!(self.sink, Sink::None)
     }
 
     /// Emit one line of output to this destination.
     pub(crate) fn line(&self, line: &str) {
         match &self.sink {
-            Some(sink) => sink(line),
-            None => crate::sys::stderr_line(line),
+            Sink::Callback(sink) => sink(line),
+            Sink::Stderr => crate::sys::stderr_line(line),
+            Sink::None => {}
         }
     }
 }
 
 impl core::fmt::Debug for Output {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self.sink {
-            Some(_) => f.write_str("Output(callback)"),
-            None => f.write_str("Output(stderr)"),
-        }
+        f.write_str(match self.sink {
+            Sink::Callback(_) => "Output(callback)",
+            Sink::Stderr => "Output(stderr)",
+            Sink::None => "Output(none)",
+        })
     }
 }
 

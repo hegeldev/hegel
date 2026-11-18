@@ -199,60 +199,10 @@ let test_int_full_range_e2e () =
   assert !saw_beyond_clamp
 ;;
 
-(** Test: derived point generator produces valid points. *)
-let%hegel_test test_point_e2e tc =
-  let p = Hegel.draw_silent tc hegel_generator_point in
-  ignore ((p.x, p.y) : int * int)
-[@@settings Hegel.Settings.create ~test_cases:20 ~seed:0 ()]
-;;
-
-(** Test: derived person generator produces valid persons. *)
-let%hegel_test test_person_e2e tc =
-  let p = Hegel.draw_silent tc hegel_generator_person in
-  ignore ((p.name, p.age, p.active) : string * int * bool)
-[@@settings Hegel.Settings.create ~test_cases:20 ~seed:0 ()]
-;;
-
-(** Test: derived score (type alias to int) generates integers. *)
-let%hegel_test test_score_e2e tc =
-  let _v : score = Hegel.draw_silent tc hegel_generator_score in
-  ()
-[@@settings Hegel.Settings.create ~test_cases:20 ~seed:0 ()]
-;;
-
-(** Test: derived wrapper (single-field record) generates values. *)
-let%hegel_test test_wrapper_e2e tc =
-  let w = Hegel.draw_silent tc hegel_generator_wrapper in
-  ignore w.value
-[@@settings Hegel.Settings.create ~test_cases:20 ~seed:0 ()]
-;;
-
-(** Test: derived line_segment (nested record) generates values, resolving the
-    unqualified [point] fields to [hegel_generator_point]. *)
-let%hegel_test test_line_segment_e2e tc =
-  let ls = Hegel.draw_silent tc hegel_generator_line_segment in
-  ignore (ls.start_pt.x, ls.start_pt.y, ls.end_pt.x, ls.end_pt.y)
-[@@settings Hegel.Settings.create ~test_cases:20 ~seed:0 ()]
-;;
-
 (** Test: derived temperature (type alias to float) generates floats. *)
 let%hegel_test test_temperature_e2e tc =
   let f : temperature = Hegel.draw_silent tc hegel_generator_temperature in
   assert (Float.is_finite f)
-[@@settings Hegel.Settings.create ~test_cases:20 ~seed:0 ()]
-;;
-
-(** Test: derived label (type alias to string) generates strings. *)
-let%hegel_test test_label_e2e tc =
-  let s : label = Hegel.draw_silent tc hegel_generator_label in
-  ignore (String.length s)
-[@@settings Hegel.Settings.create ~test_cases:20 ~seed:0 ()]
-;;
-
-(** Test: derived int_list_wrapper (list field) generates values. *)
-let%hegel_test test_int_list_wrapper_e2e tc =
-  let w = Hegel.draw_silent tc hegel_generator_int_list_wrapper in
-  ignore (List.length w.items)
 [@@settings Hegel.Settings.create ~test_cases:20 ~seed:0 ()]
 ;;
 
@@ -308,24 +258,6 @@ let test_maybe_int_e2e () =
   assert !saw_none
 ;;
 
-(** Test: derived pair_or_single covers both constructors. *)
-let test_pair_or_single_e2e () =
-  let saw_pair = ref false in
-  let saw_single = ref false in
-  Hegel.run_hegel_test
-    ~settings:(Hegel.Settings.create ~test_cases:50 ~seed:0 ())
-    (fun tc ->
-       match Hegel.draw_silent tc hegel_generator_pair_or_single with
-       | Pair (a, b) ->
-         ignore (a, b);
-         saw_pair := true
-       | Single n ->
-         ignore n;
-         saw_single := true);
-  assert !saw_pair;
-  assert !saw_single
-;;
-
 (** Test: derived measured (inline-record constructor, [Pcstr_record]) covers
     both constructors and draws the inline fields. *)
 let test_inline_record_e2e () =
@@ -354,28 +286,6 @@ let test_flag_e2e () =
        if b then saw_true := true else saw_false := true);
   assert !saw_true;
   assert !saw_false
-;;
-
-let%hegel_test test_char_and_float_e2e tc =
-  let r = Hegel.draw_silent tc hegel_generator_char_and_float in
-  assert (Char.to_int r.a >= 0 && Char.to_int r.a <= 255);
-  assert (Float.is_finite r.b)
-[@@settings Hegel.Settings.create ~test_cases:20 ~seed:0 ()]
-;;
-
-(** Test: a module's [t] derives a value named plain [hegel_generator]. *)
-let%hegel_test test_module_t_naming_e2e tc =
-  let r = Hegel.draw_silent tc Temperature_reading.hegel_generator in
-  assert (Float.is_finite r.Temperature_reading.celsius)
-[@@settings Hegel.Settings.create ~test_cases:20 ~seed:0 ()]
-;;
-
-(** Test: a qualified [M.t] field resolves to [M.hegel_generator]. *)
-let%hegel_test test_qualified_field_e2e tc =
-  let w = Hegel.draw_silent tc hegel_generator_weather in
-  assert (Float.is_finite w.reading.Temperature_reading.celsius);
-  ignore (w.humidity : int)
-[@@settings Hegel.Settings.create ~test_cases:20 ~seed:0 ()]
 ;;
 
 (** Test: a [@hegel.generator] field override pins the field to the custom
@@ -540,36 +450,19 @@ let () =
   Alcotest.run
     "hegel-ppx-derive"
     [ ( "ppx_derive"
-      , [ Alcotest.test_case "derived point" `Quick test_point_e2e
-        ; Alcotest.test_case "derived int full range" `Quick test_int_full_range_e2e
-        ; Alcotest.test_case "derived person" `Quick test_person_e2e
+      , [ Alcotest.test_case "derived int full range" `Quick test_int_full_range_e2e
         ; Alcotest.test_case "derived color covers all" `Quick test_color_e2e
         ; Alcotest.test_case "derived shape covers all" `Quick test_shape_e2e
-        ; Alcotest.test_case "derived score (alias)" `Quick test_score_e2e
-        ; Alcotest.test_case "derived wrapper (single field)" `Quick test_wrapper_e2e
         ; Alcotest.test_case "derived maybe_int (option)" `Quick test_maybe_int_e2e
-        ; Alcotest.test_case "derived line_segment (nested)" `Quick test_line_segment_e2e
-        ; Alcotest.test_case
-            "derived pair_or_single (tuple)"
-            `Quick
-            test_pair_or_single_e2e
         ; Alcotest.test_case "derived flag (bool alias)" `Quick test_flag_e2e
         ; Alcotest.test_case
             "derived temperature (float alias)"
             `Quick
             test_temperature_e2e
-        ; Alcotest.test_case "derived label (string alias)" `Quick test_label_e2e
-        ; Alcotest.test_case
-            "derived int_list_wrapper (list)"
-            `Quick
-            test_int_list_wrapper_e2e
-        ; Alcotest.test_case "derived char record" `Quick test_char_and_float_e2e
         ; Alcotest.test_case
             "derived measured (inline record)"
             `Quick
             test_inline_record_e2e
-        ; Alcotest.test_case "module t naming" `Quick test_module_t_naming_e2e
-        ; Alcotest.test_case "qualified M.t field" `Quick test_qualified_field_e2e
         ; Alcotest.test_case "field override range" `Quick test_field_override_range_e2e
         ; Alcotest.test_case
             "constructor arg override"

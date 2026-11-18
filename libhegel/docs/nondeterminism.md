@@ -329,11 +329,11 @@ the measurement replays and how many failed — the only sub-Debug surface
 that reveals a quiet flip and its cost.
 
 Executions whose failure can become the report are **stamped**
-(`hegel_test_case_should_capture`): confirmation batches, database-reuse
-and blob replays, first-check replays, the final replay, and generation
-cases once the run has flipped. The client captures a stamped case's
-output, diagnostic, and backtrace per origin and prints each reported
-failure from its freshest best capture — a dry final replay prints the
+(`hegel_test_case_wants_detail` reports them): confirmation batches,
+database-reuse and blob replays, first-check replays, the final replay, and
+generation cases once the run has flipped. The engine keeps a stamped
+case's output and diagnostic per origin and reports each failure from its
+freshest stamped capture — a dry final replay prints the
 confirmation-time capture while the blob carries the shrunk incumbent.
 Shrink, gauntlet, and boost probes stay unstamped and cheap.
 

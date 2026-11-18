@@ -49,7 +49,7 @@ int main(void) {
     HEGEL_CHECK(hegel_settings_set_seed, ctx, s, 0x5ca1ab1e, true);
 
     hegel_run_t *run;
-    HEGEL_CHECK(hegel_run_start, ctx, s, NULL, NULL, &run);
+    HEGEL_CHECK(hegel_run_start, ctx, s, hegel_output_stderr, NULL, &run);
 
     size_t total = 0;
     size_t rule_counts[NUM_RULES] = { 0 };
@@ -71,7 +71,7 @@ int main(void) {
         }
         if (hegel_state_machine_start(ctx, tc, machine, &concurrency) != HEGEL_OK) {
             HEGEL_CHECK(hegel_state_machine_free, ctx, machine);
-            HEGEL_CHECK(hegel_mark_complete, ctx, tc, HEGEL_STATUS_OVERRUN, NULL);
+            HEGEL_CHECK(hegel_mark_complete, ctx, tc, HEGEL_STATUS_OVERRUN, NULL, NULL, NULL);
             HEGEL_CHECK(hegel_test_case_free, ctx, tc);
             continue;
         }
@@ -112,18 +112,18 @@ int main(void) {
         HEGEL_CHECK(hegel_state_machine_free, ctx, machine);
 
         if (bad) {
-            HEGEL_CHECK(hegel_mark_complete, ctx, tc, HEGEL_STATUS_INTERESTING, &STRING("invariant violated"));
+            HEGEL_CHECK(hegel_mark_complete, ctx, tc, HEGEL_STATUS_INTERESTING, &STRING("invariant violated"), &STRING("invariant violated"), &STRING("invariant violated"));
             HEGEL_CHECK(hegel_test_case_free, ctx, tc);
             ok = false;
             continue;
         }
         if (overran) {
-            HEGEL_CHECK(hegel_mark_complete, ctx, tc, HEGEL_STATUS_OVERRUN, NULL);
+            HEGEL_CHECK(hegel_mark_complete, ctx, tc, HEGEL_STATUS_OVERRUN, NULL, NULL, NULL);
             HEGEL_CHECK(hegel_test_case_free, ctx, tc);
             continue;
         }
         total++;
-        HEGEL_CHECK(hegel_mark_complete, ctx, tc, HEGEL_STATUS_VALID, NULL);
+        HEGEL_CHECK(hegel_mark_complete, ctx, tc, HEGEL_STATUS_VALID, NULL, NULL, NULL);
         /* The caller owns every handle from hegel_next_test_case and must free it. */
         HEGEL_CHECK(hegel_test_case_free, ctx, tc);
     }

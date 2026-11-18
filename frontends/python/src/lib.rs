@@ -13,7 +13,7 @@ use pyo3::exceptions::{PyBaseException, PyException};
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 use std::ffi::{c_char, c_void};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 mod grammar;
 mod printer;
@@ -195,21 +195,34 @@ impl<T> SendPtr<T> {
     }
 }
 
-/// Lines emitted by the engine through its output callback, drained by the
-/// Python layer after each engine call.
-#[derive(Default)]
-pub(crate) struct OutputBuffer(Mutex<Vec<String>>);
+/// Where the engine's output lines for one run go: a Python callable taking
+/// each line.
+pub(crate) struct OutputSink(Py<PyAny>);
 
-impl OutputBuffer {
-    pub(crate) fn push(&self, line: String) {
-        self.0.lock().unwrap_or_else(|e| e.into_inner()).push(line);
+impl OutputSink {
+    pub(crate) fn new(sink: Py<PyAny>) -> Arc<Self> {
+        Arc::new(OutputSink(sink))
     }
 
-    pub(crate) fn drain(&self) -> Vec<String> {
-        std::mem::take(&mut *self.0.lock().unwrap_or_else(|e| e.into_inner()))
+    pub(crate) fn user_data(self: &Arc<Self>) -> *mut c_void {
+        Arc::as_ptr(self) as *mut c_void
     }
 }
 
+/// The output callback and its user data for a run printing to `output`;
+/// no sink is no destination, so the engine prints nothing.
+pub(crate) fn output_callback(
+    output: Option<&Arc<OutputSink>>,
+) -> (c::hegel_output_callback_t, SendPtr<c_void>) {
+    match output {
+        Some(output) => (Some(output_trampoline), SendPtr(output.user_data())),
+        None => (None, SendPtr(std::ptr::null_mut())),
+    }
+}
+
+/// Invoked from inside libhegel calls on the calling thread, with or
+/// without the GIL held. An exception from the sink cannot propagate into
+/// the engine, so it is reported as unraisable.
 pub(crate) unsafe extern "C" fn output_trampoline(
     user_data: *mut c_void,
     line: *const c_char,
@@ -218,20 +231,21 @@ pub(crate) unsafe extern "C" fn output_trampoline(
     if user_data.is_null() {
         return;
     }
-    // SAFETY: user_data is the Arc<OutputBuffer> pointer registered with the
+    // SAFETY: user_data is the Arc<OutputSink> pointer registered with the
     // run (kept alive until the run is freed); line is valid for len bytes
     // for the duration of the call.
-    let buffer = unsafe { &*(user_data as *const OutputBuffer) };
+    let sink = unsafe { &*(user_data as *const OutputSink) };
     let bytes = if line.is_null() {
         &[][..]
     } else {
         unsafe { std::slice::from_raw_parts(line as *const u8, len) }
     };
-    buffer.push(String::from_utf8_lossy(bytes).into_owned());
-}
-
-pub(crate) fn output_user_data(buffer: &Arc<OutputBuffer>) -> *mut c_void {
-    Arc::as_ptr(buffer) as *mut c_void
+    let text = String::from_utf8_lossy(bytes);
+    Python::attach(|py| {
+        if let Err(error) = sink.0.call1(py, (text.as_ref(),)) {
+            error.write_unraisable(py, Some(sink.0.bind(py)));
+        }
+    });
 }
 
 pub(crate) fn big_to_le(value: &BigInt) -> Vec<u8> {

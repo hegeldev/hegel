@@ -239,7 +239,9 @@ type grammarDrawT uintptr    // Equivalent of hegel_grammar_draw_t
 // (void (*)(void *user_data, const char *line, size_t len)) delivering one
 // line of engine output per call. purego represents a callback argument as a
 // uintptr; a real one comes from purego.NewCallback (see newOutputFn), and 0
-// (NULL) leaves engine output on stderr.
+// (NULL) is no destination: the engine prints nothing. hegel_output_stderr and
+// hegel_output_stderr_callback are not bound: every destination is an
+// io.Writer, so stderr is os.Stderr through this callback.
 type outputCallbackT uintptr
 
 // Date mirrors hegel_date_t: a Gregorian calendar date passed to / returned
@@ -333,8 +335,7 @@ type symbols struct {
 
 	// RunStart and TestCaseFromBlob take a hegel_output_callback_t plus its
 	// void* user_data ahead of the trailing out-param. The wrapper methods
-	// forward both; every hegel-package caller passes NULL, leaving engine
-	// output on stderr. user_data is a plain void* (uintptr); the callback
+	// forward both; a NULL callback is no destination. user_data is a plain void* (uintptr); the callback
 	// carries its own type (see outputCallbackT).
 	RunStart     func(ctxT, settingsT, outputCallbackT, uintptr, out[runT]) Error
 	RunStartBlob func(ctxT, settingsT, stringT, outputCallbackT, uintptr, out[runT]) Error
@@ -342,10 +343,11 @@ type symbols struct {
 	NextTestCase func(ctxT, runT, out[testCaseT]) Error
 	RunResult    func(ctxT, runT, out[resultT]) Error
 
-	TestCaseFromBlob      func(ctxT, settingsT, stringT, outputCallbackT, uintptr, out[testCaseT]) Error
-	TestCaseClone         func(ctxT, testCaseT, out[testCaseT]) Error
-	TestCaseFree          func(ctxT, testCaseT) Error
-	TestCaseShouldCapture func(ctxT, testCaseT, out[bool]) Error
+	TestCaseFromBlob    func(ctxT, settingsT, stringT, outputCallbackT, uintptr, out[testCaseT]) Error
+	TestCaseClone       func(ctxT, testCaseT, out[testCaseT]) Error
+	TestCaseFree        func(ctxT, testCaseT) Error
+	TestCaseWantsOutput func(ctxT, testCaseT, out[bool]) Error
+	TestCaseWantsDetail func(ctxT, testCaseT, out[bool]) Error
 
 	StartSpan                func(ctxT, testCaseT, Label) Error
 	StopSpan                 func(ctxT, testCaseT, bool) Error
@@ -376,7 +378,7 @@ type symbols struct {
 	StateMachineRuleRejected func(ctxT, testCaseT, stateMachineT, int64) Error
 	StateMachineFree         func(ctxT, stateMachineT) Error
 	Target                   func(ctxT, testCaseT, float64, stringT) Error
-	MarkComplete             func(ctxT, testCaseT, Status, *stringT) Error
+	MarkComplete             func(ctxT, testCaseT, Status, *stringT, *stringT, *stringT) Error
 
 	// Typed primitive draws (0.27.0 replaced the generic schema-driven
 	// hegel_generate with these).
@@ -428,6 +430,8 @@ type symbols struct {
 	FailureOrigin           func(ctxT, failureT, out[stringT]) Error
 	FailureReproductionBlob func(ctxT, failureT, out[*stringT]) Error
 	FailureCaveat           func(ctxT, failureT, out[*stringT]) Error
+	FailureOutput           func(ctxT, failureT, out[*stringT]) Error
+	FailureDiagnostic       func(ctxT, failureT, out[*stringT]) Error
 
 	SettingsSetShowStatistics        func(ctxT, settingsT, bool) Error
 	SettingsSetStopOnFirstFailure    func(ctxT, settingsT, bool) Error
@@ -805,7 +809,8 @@ func tryOpen(path string) (syms *symbols, err error) {
 		{"hegel_test_case_from_blob", &syms.TestCaseFromBlob},
 		{"hegel_test_case_clone", &syms.TestCaseClone},
 		{"hegel_test_case_free", &syms.TestCaseFree},
-		{"hegel_test_case_should_capture", &syms.TestCaseShouldCapture},
+		{"hegel_test_case_wants_output", &syms.TestCaseWantsOutput},
+		{"hegel_test_case_wants_detail", &syms.TestCaseWantsDetail},
 
 		{"hegel_start_span", &syms.StartSpan},
 		{"hegel_stop_span", &syms.StopSpan},
@@ -883,6 +888,8 @@ func tryOpen(path string) (syms *symbols, err error) {
 		{"hegel_failure_origin", &syms.FailureOrigin},
 		{"hegel_failure_reproduction_blob", &syms.FailureReproductionBlob},
 		{"hegel_failure_caveat", &syms.FailureCaveat},
+		{"hegel_failure_output", &syms.FailureOutput},
+		{"hegel_failure_diagnostic", &syms.FailureDiagnostic},
 
 		{"hegel_set_unicode_version", &syms.SetUnicodeVersion},
 		{"hegel_version", &syms.Version},
@@ -1206,9 +1213,9 @@ func (s *Settings) SetFromString(ctx *Context, key, value string) error {
 	})
 }
 
-// RunStart starts a run against these settings. callback and userData set the
-// engine-output destination (see [outputCallbackT]); pass a nil writer to leave
-// output on stderr, which every hegel-package caller currently does.
+// RunStart starts a run against these settings. out receives the run's engine
+// output, including what its test cases print in a verbose run, until the run
+// is released; a nil writer is no destination, so the engine prints nothing.
 func (s *Settings) RunStart(ctx *Context, out io.Writer) (*Run, error) {
 	callback, handle := newOutputFn(out)
 	r := new(Run)
@@ -1216,21 +1223,20 @@ func (s *Settings) RunStart(ctx *Context, out io.Writer) (*Run, error) {
 		e := s.syms.RunStart(ctx, s.raw, callback, uintptr(handle), raw)
 		runtime.KeepAlive(s)
 		return e
-	}, s.syms.RunFree)
+	}, withOutputFn(s.syms.RunFree, handle))
 	if !ok {
-		freeOutputFn[runT](nil, handle)
+		deleteOutputFn(handle)
 		return nil, err
 	}
-	freeOutputFn(&r.pointer, handle)
 	return r, nil
 }
 
 // RunStartBlob starts a run that replays a base64 reproduction blob (from
 // [Failure.ReproductionBlob]) instead of exploring, but is otherwise driven
 // exactly like [Settings.RunStart]. A reproducing replay is the run's failure; a
-// run with no failures means the blob is stale. callback and userData set the
-// engine-output destination (see [outputCallbackT]); pass a nil writer to leave
-// output on stderr, which every hegel-package caller currently does.
+// run with no failures means the blob is stale. out receives the run's engine
+// output until the run is released; a nil writer is no destination, so the
+// engine prints nothing.
 func (s *Settings) RunStartBlob(ctx *Context, blob string, out io.Writer) (*Run, error) {
 	callback, handle := newOutputFn(out)
 	r := new(Run)
@@ -1238,12 +1244,11 @@ func (s *Settings) RunStartBlob(ctx *Context, blob string, out io.Writer) (*Run,
 		e := s.syms.RunStartBlob(ctx, s.raw, cString(blob), callback, uintptr(handle), raw)
 		runtime.KeepAlive(s)
 		return e
-	}, s.syms.RunFree)
+	}, withOutputFn(s.syms.RunFree, handle))
 	if !ok {
-		freeOutputFn[runT](nil, handle)
+		deleteOutputFn(handle)
 		return nil, err
 	}
-	freeOutputFn(&r.pointer, handle)
 	return r, nil
 }
 
@@ -1251,18 +1256,19 @@ func (s *Settings) RunStartBlob(ctx *Context, blob string, out io.Writer) (*Run,
 // encoded in a base64 failure blob (from [Failure.ReproductionBlob]). Unlike
 // test cases from [Run.NextTestCase], the returned handle is owned by the
 // caller and is freed automatically via the GC unless [TestCase.Free] releases
-// it first. A rejected blob surfaces as a nil test case and a non-nil error. callback and userData set the
-// engine-output destination for the replay (see [outputCallbackT]); pass a nil
-// writer to leave output on stderr, which every hegel-package caller currently does.
+// it first. A rejected blob surfaces as a nil test case and a non-nil error.
+// out receives the replay's engine output, including what the test case prints
+// and its diagnostic, until the test case is released; a nil writer is no
+// destination, so the engine prints nothing.
 func (s *Settings) TestCaseFromBlob(ctx *Context, blob string, out io.Writer) (tc *TestCase, err error) {
 	callback, handle := newOutputFn(out)
 	ptr, err := allocate(ctx, "hegel_test_case_from_blob", func(ctx ctxT, raw *testCaseT) Error {
 		e := s.syms.TestCaseFromBlob(ctx, s.raw, cString(blob), callback, uintptr(handle), raw)
 		runtime.KeepAlive(s)
 		return e
-	}, s.syms.TestCaseFree)
-	freeOutputFn(ptr, handle)
+	}, withOutputFn(s.syms.TestCaseFree, handle))
 	if ptr == nil {
+		deleteOutputFn(handle)
 		return nil, err
 	}
 	return &TestCase{pointer: ptr}, err
@@ -1368,14 +1374,31 @@ func (tc *TestCase) Clone(ctx *Context) (*TestCase, error) {
 	return &TestCase{pointer: ptr}, err
 }
 
-// ShouldCapture reports whether the caller should capture this test case's
-// output while running it. A blobless (nondeterministic) failure is reported
-// from what the caller captured while running the stamped test cases, so a true
-// result means this case's output must be buffered in case it turns out to be
-// that failure.
-func (tc *TestCase) ShouldCapture(ctx *Context) (bool, error) {
-	err := ctx.invoke("hegel_test_case_should_capture", func(ctx ctxT) Error {
-		e := tc.syms.TestCaseShouldCapture(ctx, tc.raw, &tc.outBool)
+// WantsOutput reports whether the engine will use what this test case prints.
+// A verbose run streams it, a test case stamped for capture keeps it for the
+// failure report ([Failure.Output]), and a [Settings.TestCaseFromBlob] replay
+// streams it to its writer.
+//
+// When it is false, printing draws and notes and rendering a failure's
+// diagnostic is wasted work. Read it once at case start.
+func (tc *TestCase) WantsOutput(ctx *Context) (bool, error) {
+	err := ctx.invoke("hegel_test_case_wants_output", func(ctx ctxT) Error {
+		e := tc.syms.TestCaseWantsOutput(ctx, tc.raw, &tc.outBool)
+		runtime.KeepAlive(tc)
+		return e
+	})
+	return tc.outBool, err
+}
+
+// WantsDetail reports whether the engine will use the full diagnostic of this
+// test case if it fails: a debug run prints it, and a test case stamped for
+// capture keeps it for the failure report ([Failure.Diagnostic]). When it is
+// true, a failure must pass a detail to [TestCase.MarkComplete]; when it is
+// false, rendering one is wasted work. True implies [TestCase.WantsOutput].
+// Read it once at case start.
+func (tc *TestCase) WantsDetail(ctx *Context) (bool, error) {
+	err := ctx.invoke("hegel_test_case_wants_detail", func(ctx ctxT) Error {
+		e := tc.syms.TestCaseWantsDetail(ctx, tc.raw, &tc.outBool)
 		runtime.KeepAlive(tc)
 		return e
 	})
@@ -1974,9 +1997,18 @@ func (tc *TestCase) Target(ctx *Context, value float64, label string) error {
 	})
 }
 
-func (tc *TestCase) MarkComplete(ctx *Context, status Status, origin string) error {
+// MarkComplete records how this test case ended. origin, summary and detail
+// describe a [STATUS_INTERESTING] failure and must be "" (passed as NULL) for
+// any other status. summary is the failure in one line, required when
+// [TestCase.WantsOutput] is true; detail is its complete diagnostic, required
+// when [TestCase.WantsDetail] is true.
+//
+// Returns an error wrapping [E_INVALID_ARG] when a required string is missing,
+// summary spans several lines, or a string is passed for another status; the
+// test case then stays in flight.
+func (tc *TestCase) MarkComplete(ctx *Context, status Status, origin, summary, detail string) error {
 	return ctx.invoke("hegel_mark_complete", func(ctx ctxT) Error {
-		e := tc.syms.MarkComplete(ctx, tc.raw, status, stringPointer(origin))
+		e := tc.syms.MarkComplete(ctx, tc.raw, status, absentIfEmpty(origin), absentIfEmpty(summary), absentIfEmpty(detail))
 		runtime.KeepAlive(tc)
 		return e
 	})
@@ -2112,6 +2144,37 @@ func (f *Failure) Caveat(ctx *Context) string {
 	return value
 }
 
+// Output returns what the failing test case printed, its drawn values and
+// notes, with lines separated by "\n".
+//
+// present is false when no execution of the failure was stamped for capture,
+// or the run was quiet; an execution that printed nothing yields "" and true.
+func (f *Failure) Output(ctx *Context) (report string, present bool) {
+	_ = ctx.invoke("hegel_failure_output", func(ctx ctxT) Error {
+		e := f.syms.FailureOutput(ctx, f.raw, &f.outBytes)
+		runtime.KeepAlive(f)
+		return e
+	})
+	present = f.outBytes != nil
+	report = optionalGoString(f.outBytes)
+	runtime.KeepAlive(f)
+	return report, present
+}
+
+// Diagnostic returns the detail that the execution reported by
+// [Failure.Output] passed to [TestCase.MarkComplete], or the empty string if
+// there is none.
+func (f *Failure) Diagnostic(ctx *Context) string {
+	_ = ctx.invoke("hegel_failure_diagnostic", func(ctx ctxT) Error {
+		e := f.syms.FailureDiagnostic(ctx, f.raw, &f.outBytes)
+		runtime.KeepAlive(f)
+		return e
+	})
+	value := optionalGoString(f.outBytes)
+	runtime.KeepAlive(f)
+	return value
+}
+
 // StringGenerator wraps a hegel_string_generator_t: the immutable
 // alphabet-and-shape spec passed to [TestCase.GenerateString]. Build one with a
 // Context constructor; it is released automatically via the GC.
@@ -2199,6 +2262,14 @@ func cString(s string) stringT {
 func stringPointer(s string) *stringT {
 	view := cString(s)
 	return &view
+}
+
+// absentIfEmpty passes "" as NULL and any other string as a present value.
+func absentIfEmpty(s string) *stringT {
+	if s == "" {
+		return nil
+	}
+	return stringPointer(s)
 }
 
 // cStringArrayArg distinguishes an absent array from a present empty array.

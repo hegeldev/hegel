@@ -2,6 +2,7 @@ package libhegel
 
 import (
 	"errors"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -220,7 +221,11 @@ func TestNativeBlockSharesChoiceSequence(t *testing.T) {
 	if err := settings.Database(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
-	run, err := settings.RunStart(ctx, nil)
+	if err := settings.Verbosity(ctx, VERBOSITY_VERBOSE); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	run, err := settings.RunStart(ctx, &out)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,17 +250,17 @@ func TestNativeBlockSharesChoiceSequence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := printer.Resolve(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if got, err := printer.Value(ctx); got != "  inside\noutside\n" || err != nil {
-		t.Fatalf("document = %q, %v", got, err)
+	if err := printer.Resolve(ctx); !errors.Is(err, E_INVALID_ARG) {
+		t.Fatalf("resolving a test case's document = %v", err)
 	}
 	if err := tc.SetWorker(ctx, 3); err != nil {
 		t.Fatal(err)
 	}
-	if err := tc.MarkComplete(ctx, STATUS_VALID, ""); err != nil {
+	if err := tc.MarkComplete(ctx, STATUS_VALID, "", "", ""); err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "  inside\noutside\n") {
+		t.Fatalf("document = %q", out.String())
 	}
 }
 
@@ -285,7 +290,7 @@ func TestPauseFaults(t *testing.T) {
 	if err := tc.UnpauseFaults(ctx); err != nil {
 		t.Fatalf("unpause = %v", err)
 	}
-	if err := tc.MarkComplete(ctx, STATUS_VALID, ""); err != nil {
+	if err := tc.MarkComplete(ctx, STATUS_VALID, "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -339,5 +344,41 @@ func TestDerivedLabels(t *testing.T) {
 	}
 	if _, err := ctx.LabelCombine(nil); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestWantsDetail(t *testing.T) {
+	for _, tt := range []struct {
+		verbosity Verbosity
+		out       io.Writer
+		want      bool
+	}{
+		{VERBOSITY_DEBUG, io.Discard, true},
+		{VERBOSITY_VERBOSE, io.Discard, false},
+		{VERBOSITY_DEBUG, nil, false},
+	} {
+		ctx := NewContext()
+		settings, err := ctx.SettingsNew()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := settings.Verbosity(ctx, tt.verbosity); err != nil {
+			t.Fatal(err)
+		}
+		run, err := settings.RunStart(ctx, tt.out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tc, err := run.NextTestCase(ctx)
+		if err != nil || tc == nil {
+			t.Fatalf("case = %v, %v", tc, err)
+		}
+		if got, err := tc.WantsDetail(ctx); got != tt.want || err != nil {
+			t.Errorf("verbosity %v, writer %v: wants detail = %v, %v; want %v", tt.verbosity, tt.out, got, err, tt.want)
+		}
+		if err := tc.MarkComplete(ctx, STATUS_VALID, "", "", ""); err != nil {
+			t.Fatal(err)
+		}
+		run.Free()
 	}
 }

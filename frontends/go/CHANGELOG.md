@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.38 - 2026-11-18
+
+This patch moves printing a test case's output (its draws, notes and failure diagnostic) into the bundled libhegel engine. A run with `WithVerbosity(hegel.VerbosityVerbose)` now prints every test case's draws and notes as they happen, a state machine round by round, and says when a test case was stopped by a failed assumption or by running out of data. The memory of a long-running or stateful test case no longer grows with what it prints.
+
+A failing test case in a verbose run is now summarised in one line, the line of your test that failed and the first line of its message (`sample_test.go:27: panic: x too big`), instead of a full stack trace per test case. `WithVerbosity(hegel.VerbosityDebug)` prints the full stack trace of every failing test case, and the stack trace is only rendered when it will be printed.
+
+The report of a failure at the default verbosity is unchanged. A run with `WithVerbosity(hegel.VerbosityQuiet)` no longer prints the draws and diagnostic of its failures.
+
+Panic failures now identify the user code that panicked, so distinct panic sites remain separate during shrinking.
+
+## 0.9.37 - 2026-11-16
+
+This release updates the bundled libhegel engine to 0.51.6.
+
 ## 0.9.36 - 2026-11-13
 
 This patch adds `WithPauseFaultsInvariants`, a `RunStateful` option naming invariants that run with fault injection paused. Each time such an invariant runs (on the initial state, at a sampled join point, or on the final state, with or without `WithConcurrency`) the engine is asked to pause fault injection immediately before the invariant and to resume it immediately after, even when the invariant fails, so the invariant observes the system under test without a fault landing in the middle of the check.

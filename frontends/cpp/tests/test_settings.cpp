@@ -544,6 +544,7 @@ int engine_cases_of_a_failing_run() {
     hegel_run_t* run = nullptr;
     hegel_run_start(ctx, s, nullptr, nullptr, &run);
     hegel_string_t origin{"failure", 7};
+    hegel_string_t summary{"fail", 4};
     int cases = 0;
     while (true) {
         hegel_test_case_t* tc = nullptr;
@@ -552,7 +553,8 @@ int engine_cases_of_a_failing_run() {
             break;
         }
         cases++;
-        hegel_mark_complete(ctx, tc, HEGEL_STATUS_INTERESTING, &origin);
+        hegel_mark_complete(ctx, tc, HEGEL_STATUS_INTERESTING, &origin,
+                            &summary, &summary);
         hegel_test_case_free(ctx, tc);
     }
     hegel_run_free(ctx, run);

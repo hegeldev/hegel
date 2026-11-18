@@ -758,10 +758,42 @@ fn verbose_failing_explicit_case(tc: TestCase) {
 }
 
 #[test]
-fn test_verbose_failing_explicit_case_prints_its_lines_and_diagnostic() {
+fn test_verbose_failing_explicit_case_prints_its_lines_and_summary() {
     let (lines, result) = capture_hegel_output(verbose_failing_explicit_case);
     assert_eq!(panic_text(&result.unwrap_err()), "explicit failed");
     assert_eq!(lines[0], "let x = 1;");
-    assert!(lines[1].starts_with("thread '"), "{lines:?}");
+    assert!(
+        lines[1].starts_with("thread '")
+            && lines[1].contains(&format!("panicked at {}", file!()))
+            && lines[1].ends_with(": explicit failed"),
+        "{lines:?}"
+    );
     assert_eq!(lines.iter().filter(|l| *l == "let x = 1;").count(), 2);
+    assert_eq!(
+        lines.iter().filter(|l| *l == "explicit failed").count(),
+        1,
+        "only the report prints the full diagnostic: {lines:?}"
+    );
+}
+
+#[hegel::standalone_function(
+    verbosity = hegel::Verbosity::Debug,
+    test_cases = 1,
+    database = None
+)]
+#[hegel::explicit_test_case(x = 1)]
+fn debug_failing_explicit_case(tc: TestCase) {
+    let x: i32 = tc.draw(generators::integers());
+    if x == 1 {
+        panic!("explicit failed");
+    }
+}
+
+#[test]
+fn test_debug_failing_explicit_case_prints_its_lines_and_diagnostic() {
+    let (lines, result) = capture_hegel_output(debug_failing_explicit_case);
+    assert_eq!(panic_text(&result.unwrap_err()), "explicit failed");
+    let first = lines.iter().position(|l| l == "let x = 1;").unwrap();
+    assert!(lines[first + 1].starts_with("thread '"), "{lines:?}");
+    assert_eq!(lines[first + 2], "explicit failed", "{lines:?}");
 }

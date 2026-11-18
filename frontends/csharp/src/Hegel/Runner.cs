@@ -10,10 +10,7 @@ internal static class Runner
     internal const string StaleBlob =
         "ReproduceFailure: no supplied failure blob reproduced a failure. The failure may have been fixed — or, for a nondeterministic blob, it may not have recurred within the replay budget. Re-run to retry, or remove the blob once the failure is fixed.";
 
-    private sealed record CaseRun(bool Captured, IReadOnlyList<string> Output, IReadOnlyDictionary<string, object?> Draws, Exception? Interesting, string? Origin)
-    {
-        internal int Rank => Captured ? 1 : 0;
-    }
+    private sealed record CaseRun(bool WantedOutput, IReadOnlyDictionary<string, object?> Draws, Exception? Interesting, string? Origin);
 
     private sealed record Verdict(IReadOnlyList<Failure> Failures, RunReport? Error);
 
@@ -42,7 +39,7 @@ internal static class Runner
                     return ReportFailures(reporter, counts, explicitFailures, null);
                 }
             }
-            var verdict = Drive(lib, lib.RunStart(s, reporter.EngineOutput), effective, body, reporter, counts, explicitFailures);
+            var verdict = Drive(lib, lib.RunStart(s, reporter.EngineSink), effective, body, reporter, counts, explicitFailures);
             var failures = explicitFailures.Concat(verdict.Failures).ToList();
             if (failures.Count == 0)
             {
@@ -60,7 +57,7 @@ internal static class Runner
         RunReport? error = null;
         foreach (var blob in settings.ReproduceFailure)
         {
-            var verdict = Drive(lib, lib.RunStartBlob(s, blob, reporter.EngineOutput), settings, body, reporter, counts, failures);
+            var verdict = Drive(lib, lib.RunStartBlob(s, blob, reporter.EngineSink), settings, body, reporter, counts, failures);
             failures.AddRange(verdict.Failures);
             error = verdict.Error;
             if (error != null)
@@ -215,7 +212,7 @@ internal static class Runner
     {
         try
         {
-            var captures = new Dictionary<string, CaseRun>();
+            var failing = new Dictionary<string, CaseRun>();
             while (true)
             {
                 var tc = lib.NextTestCase(run);
@@ -224,18 +221,15 @@ internal static class Runner
                     break;
                 }
                 var caseRun = DriveOneCase(lib, tc, body, settings, reporter, counts);
-                if (caseRun.Interesting != null)
+                if (caseRun.Interesting != null && (caseRun.WantedOutput || !failing.ContainsKey(caseRun.Origin!)))
                 {
-                    if (!captures.TryGetValue(caseRun.Origin!, out var stored) || caseRun.Rank >= stored.Rank)
-                    {
-                        captures[caseRun.Origin!] = caseRun;
-                    }
+                    failing[caseRun.Origin!] = caseRun;
                 }
             }
             var result = lib.RunResult(run);
             try
             {
-                return VerdictOf(lib, result, counts, captures, reported);
+                return VerdictOf(lib, result, counts, failing, reported);
             }
             finally
             {
@@ -248,7 +242,7 @@ internal static class Runner
         }
     }
 
-    private static Verdict VerdictOf(ILibhegel lib, nint result, RunStatistics.Counter counts, Dictionary<string, CaseRun> captures, IReadOnlyList<Failure> reported)
+    private static Verdict VerdictOf(ILibhegel lib, nint result, RunStatistics.Counter counts, Dictionary<string, CaseRun> failing, IReadOnlyList<Failure> reported)
     {
         switch (lib.RunResultStatus(result))
         {
@@ -258,11 +252,11 @@ internal static class Runner
                 var kind = EnumCodes.ErrorKindFrom(lib.RunResultErrorKind(result, out var healthCheck));
                 return new Verdict([], new RunReport(RunStatus.Error, counts.Snapshot(), lib.RunResultError(result), kind, EnumCodes.HealthCheckFrom(healthCheck), []));
             default:
-                return new Verdict(EngineFailures(lib, result, captures, reported), null);
+                return new Verdict(EngineFailures(lib, result, failing, reported), null);
         }
     }
 
-    private static IReadOnlyList<Failure> EngineFailures(ILibhegel lib, nint result, Dictionary<string, CaseRun> captures, IReadOnlyList<Failure> alreadyReported)
+    private static IReadOnlyList<Failure> EngineFailures(ILibhegel lib, nint result, Dictionary<string, CaseRun> failing, IReadOnlyList<Failure> alreadyReported)
     {
         var reported = alreadyReported.Select(f => f.Origin).ToHashSet();
         var count = lib.RunResultFailureCount(result);
@@ -270,15 +264,16 @@ internal static class Runner
         for (ulong i = 0; i < count; i++)
         {
             var origin = lib.FailureOrigin(result, i);
-            if (!captures.Remove(origin, out var capture))
+            if (!failing.Remove(origin, out var caseRun))
             {
-                throw new HegelException($"internal error: failure {i} ({origin}) has no captured failing execution");
+                throw new HegelException($"internal error: failure {i} ({origin}) has no failing execution");
             }
             if (reported.Contains(origin))
             {
                 continue;
             }
-            failures.Add(new Failure(origin, lib.FailureBlob(result, i), lib.FailureCaveat(result, i), capture.Interesting!, capture.Draws, capture.Output));
+            var output = Printer.Lines(lib.FailureOutput(result, i) ?? "");
+            failures.Add(new Failure(origin, lib.FailureBlob(result, i), lib.FailureCaveat(result, i), caseRun.Interesting!, caseRun.Draws, output));
         }
         return failures;
     }
@@ -308,7 +303,8 @@ internal static class Runner
         var source = new LiveDataSource(lib, tc);
         try
         {
-            var testCase = new TestCase(source, lib.TestCaseShouldCapture(tc), settings.Verbosity >= Verbosity.Verbose);
+            var wantsOutput = lib.TestCaseWantsOutput(tc);
+            var testCase = new TestCase(source, wantsOutput);
             try
             {
                 return RunBody(lib, tc, source, testCase, body, settings, reporter, counts);
@@ -370,37 +366,16 @@ internal static class Runner
             origin = null;
             interesting = null;
         }
-        var output = Output(testCase, interesting);
-        if (settings.Verbosity >= Verbosity.Verbose)
-        {
-            foreach (var line in output)
-            {
-                reporter.CaseOutput(line, false);
-            }
-        }
-        var rc = lib.MarkComplete(tc, (int)outcome, origin);
+        var summary = interesting != null && testCase.WantsOutput ? SummaryOf(interesting, settings.InfrastructureNamespaces) : null;
+        var detail = interesting != null && lib.TestCaseWantsDetail(tc) ? interesting.ToString() : null;
+        var rc = lib.MarkComplete(tc, (int)outcome, origin, summary, detail);
         if (rc != Abi.Ok)
         {
             throw new HegelException($"hegel_mark_complete failed (rc={rc}): {lib.LastErrorMessage()}");
         }
         counts.Record(outcome);
         reporter.CaseFinished(outcome, false);
-        return testCase.IsFinal
-            ? new CaseRun(true, output, testCase.Draws(), interesting, origin)
-            : new CaseRun(false, [], new Dictionary<string, object?>(), interesting, origin);
-    }
-
-    private static IReadOnlyList<string> Output(TestCase testCase, Exception? interesting)
-    {
-        try
-        {
-            return testCase.Output();
-        }
-        catch (Exception e) when (interesting != null)
-        {
-            interesting.Data["HegelOutputError"] = e;
-            return [];
-        }
+        return new CaseRun(testCase.WantsOutput, testCase.Draws(), interesting, origin);
     }
 
     internal static void ApplySettings(ILibhegel lib, nint s, Settings st)
@@ -433,20 +408,32 @@ internal static class Runner
         }
     }
 
-    internal static string OriginOf(Exception e, IReadOnlyList<string> infrastructureNamespaces)
+    internal static string OriginOf(Exception e, IReadOnlyList<string> infrastructureNamespaces) =>
+        UserFrame(e, infrastructureNamespaces) is { } frame
+            ? $"{e.GetType().Name} at {Path.GetFileName(frame.GetFileName())}:{frame.GetFileLineNumber()}"
+            : e.GetType().FullName ?? e.GetType().Name;
+
+    internal static string SummaryOf(Exception e, IReadOnlyList<string> infrastructureNamespaces)
     {
-        foreach (var frame in new StackTrace(e, true).GetFrames())
+        var message = e.Message;
+        var newline = message.IndexOfAny(['\n', '\r']);
+        if (newline >= 0)
         {
-            var type = frame.GetMethod()?.DeclaringType;
-            var file = frame.GetFileName();
-            if (type == null || file == null || !IsUserFrame(type, infrastructureNamespaces))
-            {
-                continue;
-            }
-            return $"{e.GetType().Name} at {Path.GetFileName(file)}:{frame.GetFileLineNumber()}";
+            message = (message[..newline].TrimEnd() + " …").TrimStart();
         }
-        return e.GetType().FullName ?? e.GetType().Name;
+        var text = message.Length == 0 ? e.GetType().Name : $"{e.GetType().Name}: {message}";
+        if (UserFrame(e, infrastructureNamespaces) is not { } frame)
+        {
+            return text;
+        }
+        var column = frame.GetFileColumnNumber();
+        var location = column > 0 ? $"{frame.GetFileLineNumber()}:{column}" : $"{frame.GetFileLineNumber()}";
+        return $"{frame.GetFileName()}:{location}: {text}";
     }
+
+    private static StackFrame? UserFrame(Exception e, IReadOnlyList<string> infrastructureNamespaces) =>
+        new StackTrace(e, true).GetFrames().FirstOrDefault(frame =>
+            frame.GetMethod()?.DeclaringType is { } type && frame.GetFileName() != null && IsUserFrame(type, infrastructureNamespaces));
 
     internal static bool IsUserFrame(Type type, IReadOnlyList<string> infrastructureNamespaces)
     {

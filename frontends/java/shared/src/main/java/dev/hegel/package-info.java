@@ -171,8 +171,6 @@
  *       replay of a failing case.
  *   <li>{@link dev.hegel.TestCase#target(double, String) target} reports a score so the search can
  *       hill-climb toward interesting inputs.
- *   <li>{@link dev.hegel.TestCase#isFinal() isFinal} tells whether this run of the body is the
- *       final replay of a minimal counterexample, where expensive diagnostics are worth doing.
  * </ul>
  *
  * <pre>{@code

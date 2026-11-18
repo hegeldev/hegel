@@ -94,7 +94,8 @@ internal static unsafe partial class NativeMethods
     [LibraryImport(Library)] internal static partial int hegel_run_result_free(nint ctx, nint r);
     [LibraryImport(Library)] internal static partial int hegel_run_free(nint ctx, nint run);
     [LibraryImport(Library)] internal static partial int hegel_test_case_free(nint ctx, nint tc);
-    [LibraryImport(Library)] internal static partial int hegel_test_case_should_capture(nint ctx, nint tc, byte* o);
+    [LibraryImport(Library)] internal static partial int hegel_test_case_wants_output(nint ctx, nint tc, byte* o);
+    [LibraryImport(Library)] internal static partial int hegel_test_case_wants_detail(nint ctx, nint tc, byte* o);
     [LibraryImport(Library)] internal static partial int hegel_test_case_clone(nint ctx, nint tc, nint* o);
     [LibraryImport(Library)] internal static partial int hegel_test_case_block(nint ctx, nint tc, ulong indent, nint* o);
     [LibraryImport(Library)] internal static partial int hegel_test_case_set_worker(nint ctx, nint tc, long workerIndex);
@@ -195,7 +196,7 @@ internal static unsafe partial class NativeMethods
     [LibraryImport(Library)] internal static partial int hegel_printer_value_result_free(nint ctx, HegelString* r);
     [LibraryImport(Library)] internal static partial int hegel_test_case_printer(nint ctx, nint tc, nint options, nint* o);
     [LibraryImport(Library)] internal static partial int hegel_note(nint ctx, nint tc, HegelString text);
-    [LibraryImport(Library)] internal static partial int hegel_mark_complete(nint ctx, nint tc, uint status, HegelString* origin);
+    [LibraryImport(Library)] internal static partial int hegel_mark_complete(nint ctx, nint tc, uint status, HegelString* origin, HegelString* summary, HegelString* detail);
 
     [LibraryImport(Library)] internal static partial int hegel_run_result_status(nint ctx, nint r, int* o);
     [LibraryImport(Library)] internal static partial int hegel_run_result_error(nint ctx, nint r, HegelString** o);
@@ -206,5 +207,7 @@ internal static unsafe partial class NativeMethods
     [LibraryImport(Library)] internal static partial int hegel_failure_origin(nint ctx, nint f, HegelString* o);
     [LibraryImport(Library)] internal static partial int hegel_failure_reproduction_blob(nint ctx, nint f, HegelString** o);
     [LibraryImport(Library)] internal static partial int hegel_failure_caveat(nint ctx, nint f, HegelString** o);
+    [LibraryImport(Library)] internal static partial int hegel_failure_output(nint ctx, nint f, HegelString** o);
+    [LibraryImport(Library)] internal static partial int hegel_failure_diagnostic(nint ctx, nint f, HegelString** o);
     [LibraryImport(Library)] internal static partial int hegel_version(nint ctx, HegelString* o);
 }

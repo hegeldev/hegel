@@ -117,3 +117,214 @@ let%expect_test "a multiline drawn value aligns under its name" =
     rerun with: ~failure_blobs:[ "<BLOB>" ]
     |}]
 ;;
+
+let run_boom verbosity body =
+  match
+    Hegel.run_hegel_test
+      ~settings:
+        { (Hegel.Settings.create ~test_cases:1 ~seed:0 ()) with
+          database = Hegel.Settings.Disabled
+        ; verbosity
+        }
+      body
+  with
+  | () -> print_endline "passed"
+  | exception Failure message -> print_endline message
+;;
+
+let boom _tc =
+  if Sys.opaque_identity true then failwith "boom";
+  ()
+;;
+
+let%expect_test "a verbose run prints each failure's summary with its location" =
+  run_boom Hegel.Settings.Verbose boom;
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    Starting phase: Generate
+    Running test case
+    ppx/test/expect_tests/test_failure_report.ml:<LINE>LINE:COL: Exception: Failure("boom")
+    Running test case
+    ppx/test/expect_tests/test_failure_report.ml:<LINE>LINE:COL: Exception: Failure("boom")
+    Running test case
+    ppx/test/expect_tests/test_failure_report.ml:<LINE>LINE:COL: Exception: Failure("boom")
+    Running test case
+    ppx/test/expect_tests/test_failure_report.ml:<LINE>LINE:COL: Exception: Failure("boom")
+    Running test case
+    ppx/test/expect_tests/test_failure_report.ml:<LINE>LINE:COL: Exception: Failure("boom")
+    Ending phase: Generate
+    Starting phase: Shrink
+    Running test case
+    ppx/test/expect_tests/test_failure_report.ml:<LINE>LINE:COL: Exception: Failure("boom")
+    Ending phase: Shrink
+    Running test case
+    ppx/test/expect_tests/test_failure_report.ml:<LINE>LINE:COL: Exception: Failure("boom")
+    --- Failure --------------------------------------------------------------------
+    Exception: Failure("boom")
+    rerun with: ~failure_blobs:[ "<BLOB>" ]
+    boom
+    |}]
+;;
+
+let%expect_test "a debug run prints each failure's exception and backtrace" =
+  run_boom Hegel.Settings.Debug boom;
+  Expect_scrub.scrub_report [%expect.output]
+  |> String.split_on_char '\n'
+  |> List.filter (fun line ->
+    List.exists
+      (fun prefix -> String.starts_with ~prefix line)
+      [ "Exception"; "<BACKTRACE>"; "---"; "test case #" ])
+  |> List.iter print_endline;
+  [%expect
+    {|
+    Exception: Failure("boom")
+    <BACKTRACE>
+    test case #1: status = Interesting, choices = 0
+    Exception: Failure("boom")
+    <BACKTRACE>
+    Exception: Failure("boom")
+    <BACKTRACE>
+    Exception: Failure("boom")
+    <BACKTRACE>
+    Exception: Failure("boom")
+    <BACKTRACE>
+    Exception: Failure("boom")
+    <BACKTRACE>
+    ---------------------
+    ---------------------
+    Exception: Failure("boom")
+    <BACKTRACE>
+    --- Failure --------------------------------------------------------------------
+    Exception: Failure("boom")
+    |}]
+;;
+
+exception Two_lines
+
+let () =
+  Printexc.register_printer (function
+    | Two_lines -> Some "first line\r\nsecond line"
+    | _ -> None)
+;;
+
+let%expect_test "a summary keeps the first line of a multi-line message" =
+  let recording = Printexc.backtrace_status () in
+  Printexc.record_backtrace false;
+  Fun.protect
+    ~finally:(fun () -> Printexc.record_backtrace recording)
+    (fun () ->
+       try run_boom Hegel.Settings.Verbose (fun _tc -> raise Two_lines) with
+       | Two_lines -> print_endline "raised");
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    Starting phase: Generate
+    Running test case
+    Exception: first line …
+    Running test case
+    Exception: first line …
+    Running test case
+    Exception: first line …
+    Running test case
+    Exception: first line …
+    Running test case
+    Exception: first line …
+    Ending phase: Generate
+    Starting phase: Shrink
+    Running test case
+    Exception: first line …
+    Ending phase: Shrink
+    Running test case
+    Exception: first line …
+    --- Failure --------------------------------------------------------------------
+    Exception: first line
+    second line
+    rerun with: ~failure_blobs:[ "<BLOB>" ]
+    raised
+    |}]
+;;
+
+let%expect_test "a quiet run reports the exception" =
+  run_boom Hegel.Settings.Quiet (fun _tc -> failwith "boom");
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    --- Failure --------------------------------------------------------------------
+    Exception: Failure("boom")
+    rerun with: ~failure_blobs:[ "<BLOB>" ]
+    boom
+    |}]
+;;
+
+let%expect_test "a summary of an exception with its own location adds none" =
+  (try
+     run_boom Hegel.Settings.Verbose (fun tc ->
+       match[@warning "-8"] Hegel.draw_silent tc (Hegel.just 1) with
+       | 0 -> ())
+   with
+   | Match_failure _ -> print_endline "raised");
+  print_string (Expect_scrub.scrub_report [%expect.output]);
+  [%expect
+    {|
+    Starting phase: Generate
+    Running test case
+    Exception: File "ppx/test/expect_tests/test_failure_report.ml", line LINE, characters C1-C2: Pattern matching failed
+    Running test case
+    Exception: File "ppx/test/expect_tests/test_failure_report.ml", line LINE, characters C1-C2: Pattern matching failed
+    Running test case
+    Exception: File "ppx/test/expect_tests/test_failure_report.ml", line LINE, characters C1-C2: Pattern matching failed
+    Running test case
+    Exception: File "ppx/test/expect_tests/test_failure_report.ml", line LINE, characters C1-C2: Pattern matching failed
+    Running test case
+    Exception: File "ppx/test/expect_tests/test_failure_report.ml", line LINE, characters C1-C2: Pattern matching failed
+    Ending phase: Generate
+    Starting phase: Shrink
+    Running test case
+    Exception: File "ppx/test/expect_tests/test_failure_report.ml", line LINE, characters C1-C2: Pattern matching failed
+    Ending phase: Shrink
+    Running test case
+    Exception: File "ppx/test/expect_tests/test_failure_report.ml", line LINE, characters C1-C2: Pattern matching failed
+    --- Failure --------------------------------------------------------------------
+    Exception: File "ppx/test/expect_tests/test_failure_report.ml", line LINE, characters C1-C2: Pattern matching failed
+    rerun with: ~failure_blobs:[ "<BLOB>" ]
+    raised
+    |}]
+;;
+
+(* Any other HEGEL_COLOR value follows whether stderr is a terminal, which it is
+   not under ppx_expect. *)
+let%expect_test "HEGEL_COLOR=1 colors the report's rule red; HEGEL_COLOR=0 does not" =
+  let saved = Sys.getenv_opt "HEGEL_COLOR" in
+  let report color =
+    Core_unix.putenv ~key:"HEGEL_COLOR" ~data:color;
+    try
+      Hegel.run_hegel_test
+        ~settings:
+          { (Hegel.Settings.create ~test_cases:1 ()) with
+            database = Hegel.Settings.Disabled
+          ; print_blob = false
+          }
+        (fun _tc -> failwith "boom")
+    with
+    | _ -> ()
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      match saved with
+      | Some v -> Core_unix.putenv ~key:"HEGEL_COLOR" ~data:v
+      | None -> Core_unix.unsetenv "HEGEL_COLOR")
+    (fun () ->
+       report "1";
+       print_string (String.escaped [%expect.output]);
+       [%expect
+         {| \027[31m--- Failure --------------------------------------------------------------------\027[0m\nException: Failure(\"boom\")\n |}];
+       report "0";
+       print_string (String.escaped [%expect.output]);
+       [%expect
+         {| --- Failure --------------------------------------------------------------------\nException: Failure(\"boom\")\n |}];
+       report "junk";
+       print_string (String.escaped [%expect.output]);
+       [%expect
+         {| --- Failure --------------------------------------------------------------------\nException: Failure(\"boom\")\n |}])
+;;

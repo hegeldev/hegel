@@ -33,6 +33,8 @@ describe("runnerCore engine fault classification and cleanup", () => {
         testCase,
         Status.INVALID,
         null,
+        null,
+        null,
       );
       expect(engine.freeTestCase).toHaveBeenCalledExactlyOnceWith(testCase);
       expect(engine.freeRun).toHaveBeenCalledTimes(1);
@@ -130,7 +132,14 @@ describe("runnerCore engine fault classification and cleanup", () => {
         }
       }),
     ).toThrow("persistent fault");
-    expect(engine.markComplete).toHaveBeenCalledWith(context, testCase, Status.INVALID, null);
+    expect(engine.markComplete).toHaveBeenCalledWith(
+      context,
+      testCase,
+      Status.INVALID,
+      null,
+      null,
+      null,
+    );
   });
 
   it.each([new AssumeError(), new StopTestError()])(
@@ -145,6 +154,8 @@ describe("runnerCore engine fault classification and cleanup", () => {
         context,
         testCase,
         error instanceof AssumeError ? Status.INVALID : Status.OVERRUN,
+        null,
+        null,
         null,
       );
     },
@@ -168,7 +179,14 @@ describe("runnerCore engine fault classification and cleanup", () => {
     ).toThrow(fault);
     expect(check).not.toHaveBeenCalled();
     expect(engine.unpauseFaults).not.toHaveBeenCalled();
-    expect(engine.markComplete).toHaveBeenCalledWith(context, testCase, Status.INVALID, null);
+    expect(engine.markComplete).toHaveBeenCalledWith(
+      context,
+      testCase,
+      Status.INVALID,
+      null,
+      null,
+      null,
+    );
   });
 
   it("does not treat an engine fault thrown by the test itself as a failure", () => {
@@ -179,14 +197,21 @@ describe("runnerCore engine fault classification and cleanup", () => {
         throw fault;
       }),
     ).toThrow(fault);
-    expect(engine.markComplete).toHaveBeenCalledWith(context, testCase, Status.INVALID, null);
+    expect(engine.markComplete).toHaveBeenCalledWith(
+      context,
+      testCase,
+      Status.INVALID,
+      null,
+      null,
+      null,
+    );
   });
 
   it("rejects duplicate completion attempts before calling the engine", () => {
     const engine = fakeEngine();
     const ds = new EngineDataSource(engine, context, testCase);
-    ds.markComplete(Status.VALID, null);
-    expect(() => ds.markComplete(Status.VALID, null)).toThrow("already attempted");
+    ds.markComplete(Status.VALID, null, null, null);
+    expect(() => ds.markComplete(Status.VALID, null, null, null)).toThrow("already attempted");
     expect(engine.markComplete).toHaveBeenCalledTimes(1);
     ds.dispose();
   });
@@ -242,7 +267,14 @@ describe("runnerCore engine fault classification and cleanup", () => {
         tc.stopSpan();
       }),
     ).toThrow("stop span");
-    expect(engine.markComplete).toHaveBeenCalledWith(context, testCase, Status.INVALID, null);
+    expect(engine.markComplete).toHaveBeenCalledWith(
+      context,
+      testCase,
+      Status.INVALID,
+      null,
+      null,
+      null,
+    );
   });
 });
 
@@ -274,7 +306,8 @@ describe("runnerCore run results", () => {
     const engine = fakeEngine();
     engine.runStatus.mockReturnValue(RunStatus.FAILED);
     engine.failureOrigin.mockReturnValue("<unknown>");
-    engine.shouldCapture.mockReturnValue(true);
+    engine.wantsOutput.mockReturnValue(true);
+    engine.failureOutput.mockReturnValue("const draw_1 = true;");
     const runtime = fakeRuntime(engine);
     const thrown = "not an error";
     let caught: unknown;
@@ -327,10 +360,17 @@ describe("runnerCore origin formats", () => {
       () => {
         throw error;
       },
-      false,
+      {},
     );
     expect(result.status).toBe("interesting");
-    expect(engine.markComplete).toHaveBeenCalledWith(context, testCase, Status.INTERESTING, origin);
+    expect(engine.markComplete).toHaveBeenCalledWith(
+      context,
+      testCase,
+      Status.INTERESTING,
+      origin,
+      null,
+      null,
+    );
     ds.dispose();
   });
 });
@@ -352,20 +392,108 @@ it("EngineDataSource disposes its own cache after collection cleanup fails", () 
   ds.dispose();
 });
 
-it("runTestCaseAsync reports an interesting case with its origin", async () => {
+it("runTestCaseAsync reports a failure's summary and detail where the engine wants them", async () => {
   const engine = fakeEngine();
   const ds = new EngineDataSource(engine, context, testCase);
-  const result = await runTestCaseAsync(ds, () => {
-    throw new Error("user failure");
-  });
-  expect(result.status).toBe("interesting");
-  expect(engine.markComplete).toHaveBeenCalledWith(
-    context,
-    testCase,
-    Status.INTERESTING,
-    expect.any(String),
+  const root = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+  const result = await runTestCaseAsync(
+    ds,
+    () => {
+      throw new Error("user failure");
+    },
+    { emit: true, detail: true, root },
   );
+  expect(result.status).toBe("interesting");
+  const [, , status, origin, summary, detail] = engine.markComplete.mock.calls[0];
+  expect(status).toBe(Status.INTERESTING);
+  expect(origin).toMatch(/runnerCore\.test\.ts:\d+:\d+\)?$/);
+  expect(summary).toMatch(/^tests\/runnerCore\.test\.ts:\d+:\d+: Error: user failure$/);
+  expect(detail).toMatch(/^Error: user failure\n {4}at .*runnerCore\.test\.ts:\d+:\d+/);
   ds.dispose();
+});
+
+describe("runnerCore failure descriptions", () => {
+  const describeFailure = (thrown: unknown): [string | null, string | null] => {
+    const engine = fakeEngine();
+    const ds = new EngineDataSource(engine, context, testCase);
+    runTestCase(
+      ds,
+      () => {
+        throw thrown;
+      },
+      { emit: true, detail: true, root: "/project" },
+    );
+    ds.dispose();
+    const [, , , , summary, detail] = engine.markComplete.mock.calls[0];
+    return [summary, detail];
+  };
+  const withStack = (error: Error, stack: string | undefined): Error => {
+    error.stack = stack;
+    return error;
+  };
+
+  it.each<[string, unknown, string, string]>([
+    [
+      "a V8 stack",
+      withStack(
+        new TypeError("bad"),
+        "TypeError: bad\n    at property (file:///project/tests/a.test.ts:4:5)\n\n",
+      ),
+      "tests/a.test.ts:4:5: TypeError: bad",
+      "TypeError: bad\n    at property (file:///project/tests/a.test.ts:4:5)",
+    ],
+    [
+      "a multi-line message",
+      withStack(
+        new Error("first\nsecond"),
+        "Error: first\nsecond\n    at /project/tests/a.test.ts:8:1",
+      ),
+      "tests/a.test.ts:8:1: Error: first …",
+      "Error: first\nsecond\n    at /project/tests/a.test.ts:8:1",
+    ],
+    [
+      "a stack without a header",
+      withStack(new RangeError("out\r\nof range"), "property@https://host/tests/a.test.ts:2:3"),
+      "/tests/a.test.ts:2:3: RangeError: out …",
+      "RangeError: out\r\nof range\nproperty@https://host/tests/a.test.ts:2:3",
+    ],
+    [
+      "a frame without a column",
+      withStack(new Error("m"), "Error: m\n    at native"),
+      "Error: m",
+      "Error: m\n    at native",
+    ],
+    ["no stack", withStack(new Error("m"), undefined), "Error: m", "Error: m"],
+    ["a blank stack", withStack(new Error("m"), " "), "Error: m", "Error: m"],
+    ["an empty message", withStack(new Error(), undefined), "Error", "Error"],
+    ["an empty name", Object.assign(withStack(new Error("m"), undefined), { name: "" }), "m", "m"],
+    [
+      "an empty name and message",
+      Object.assign(withStack(new Error(), undefined), { name: "" }),
+      "Error",
+      "Error",
+    ],
+    ["a thrown string", "line\nbreak", 'Thrown: "line\\nbreak"', 'Thrown: "line\\nbreak"'],
+    ["a thrown number", 7, "Thrown: 7", "Thrown: 7"],
+    [
+      "a value with no string form",
+      Object.create(null),
+      "Thrown: [object Object]",
+      "Thrown: [object Object]",
+    ],
+  ])("describes %s", (_, thrown, summary, detail) => {
+    expect(describeFailure(thrown)).toEqual([summary, detail]);
+  });
+
+  it("leaves out what the engine does not want", () => {
+    const engine = fakeEngine();
+    const ds = new EngineDataSource(engine, context, testCase);
+    runTestCase(ds, () => {
+      throw new Error("unwanted");
+    });
+    ds.dispose();
+    expect(engine.markComplete.mock.calls[0].slice(4)).toEqual([null, null]);
+  });
 });
 
 it("retains a run error through multiple failing outer destructors", () => {

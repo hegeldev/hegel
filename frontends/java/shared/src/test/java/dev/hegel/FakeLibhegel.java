@@ -50,6 +50,8 @@ final class FakeLibhegel implements Libhegel {
     String runError = "run error";
     final List<String> failureBlobs = new ArrayList<>(); // one entry per distinct failure
     final List<String> failureCaveats = new ArrayList<>(); // parallel to failureBlobs; missing = null
+    final List<String> failureOutputs = new ArrayList<>(); // parallel to failureBlobs; missing = null
+    final List<String> failureDiagnostics = new ArrayList<>(); // parallel to failureBlobs; missing = null
     // The origin of each distinct failure. Like the engine, the fake echoes back the origins marked
     // interesting, distinct and in first-seen order; an explicit entry here overrides that.
     final List<String> failureOrigins = new ArrayList<>();
@@ -57,14 +59,18 @@ final class FakeLibhegel implements Libhegel {
     final List<String> replayedBlobs = new ArrayList<>();
     String startedBlob; // what runStartBlob received; null = the run explored
     Consumer<String> output; // the callback runStart / runStartBlob registered
-    // The engine's capture stamp per served case: the i-th case is stamped when captureSequence
-    // has an i-th entry and it is true; past the end of the sequence every case is stamped, so
-    // the default stamps everything.
-    boolean[] captureSequence = {};
+    // Whether the engine wants each served case's output: the i-th case does when
+    // wantsOutputSequence has an i-th entry and it is true; past the end of the sequence every case
+    // does, so the default wants everything.
+    boolean[] wantsOutputSequence = {};
+    // Whether the engine wants each served case's detail, indexed like wantsOutputSequence.
+    boolean[] wantsDetailSequence = {};
 
     // Recorded outcomes and teardown.
     final List<Integer> markedStatuses = new ArrayList<>();
     final List<String> markedOrigins = new ArrayList<>();
+    final List<String> markedSummaries = new ArrayList<>();
+    final List<String> markedDetails = new ArrayList<>();
     int markCompleteRc = Abi.OK;
     int freedTestCases;
     int freedStringGenerators;
@@ -349,9 +355,15 @@ final class FakeLibhegel implements Libhegel {
     }
 
     @Override
-    public boolean testCaseShouldCapture(long tc) {
+    public boolean testCaseWantsOutput(long tc) {
         int index = casesServed - 1;
-        return index >= captureSequence.length || captureSequence[index];
+        return index >= wantsOutputSequence.length || wantsOutputSequence[index];
+    }
+
+    @Override
+    public boolean testCaseWantsDetail(long tc) {
+        int index = casesServed - 1;
+        return index >= wantsDetailSequence.length || wantsDetailSequence[index];
     }
 
     @Override
@@ -755,9 +767,11 @@ final class FakeLibhegel implements Libhegel {
     }
 
     @Override
-    public int markComplete(long tc, int status, String origin) {
+    public int markComplete(long tc, int status, String origin, String summary, String detail) {
         markedStatuses.add(status);
         markedOrigins.add(origin);
+        markedSummaries.add(summary);
+        markedDetails.add(detail);
         return markCompleteRc;
     }
 
@@ -798,6 +812,16 @@ final class FakeLibhegel implements Libhegel {
     @Override
     public String failureCaveat(long result, long index) {
         return index < failureCaveats.size() ? failureCaveats.get((int) index) : null;
+    }
+
+    @Override
+    public String failureOutput(long result, long index) {
+        return index < failureOutputs.size() ? failureOutputs.get((int) index) : null;
+    }
+
+    @Override
+    public String failureDiagnostic(long result, long index) {
+        return index < failureDiagnostics.size() ? failureDiagnostics.get((int) index) : null;
     }
 
     @Override
