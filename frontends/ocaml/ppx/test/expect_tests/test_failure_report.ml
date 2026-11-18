@@ -291,3 +291,40 @@ let%expect_test "a summary of an exception with its own location adds none" =
     raised
     |}]
 ;;
+
+(* Any other HEGEL_COLOR value follows whether stderr is a terminal, which it is
+   not under ppx_expect. *)
+let%expect_test "HEGEL_COLOR=1 colors the report's rule red; HEGEL_COLOR=0 does not" =
+  let saved = Sys.getenv_opt "HEGEL_COLOR" in
+  let report color =
+    Core_unix.putenv ~key:"HEGEL_COLOR" ~data:color;
+    try
+      Hegel.run_hegel_test
+        ~settings:
+          { (Hegel.Settings.create ~test_cases:1 ()) with
+            database = Hegel.Settings.Disabled
+          ; print_blob = false
+          }
+        (fun _tc -> failwith "boom")
+    with
+    | _ -> ()
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      match saved with
+      | Some v -> Core_unix.putenv ~key:"HEGEL_COLOR" ~data:v
+      | None -> Core_unix.unsetenv "HEGEL_COLOR")
+    (fun () ->
+       report "1";
+       print_string (String.escaped [%expect.output]);
+       [%expect
+         {| \027[31m--- Failure --------------------------------------------------------------------\027[0m\nException: Failure(\"boom\")\n |}];
+       report "0";
+       print_string (String.escaped [%expect.output]);
+       [%expect
+         {| --- Failure --------------------------------------------------------------------\nException: Failure(\"boom\")\n |}];
+       report "junk";
+       print_string (String.escaped [%expect.output]);
+       [%expect
+         {| --- Failure --------------------------------------------------------------------\nException: Failure(\"boom\")\n |}])
+;;

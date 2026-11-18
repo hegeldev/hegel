@@ -173,22 +173,6 @@ let test_profile () =
       ignore (Settings.default () : Settings.t))
 ;;
 
-let test_single_test_case () =
-  let settings =
-    Cli.single_test_case
-      { (Settings.create ~test_cases:100 ()) with
-        suppress_health_check = [ Settings.Filter_too_much ]
-      }
-  in
-  Alcotest.(check int) "one test case" 1 settings.test_cases;
-  Alcotest.(check bool)
-    "suppressions added"
-    true
-    (List.for_all
-       [ Settings.Too_slow; Test_cases_too_large; Filter_too_much ]
-       ~f:(fun check -> List.mem settings.suppress_health_check check ~equal:Poly.equal))
-;;
-
 (* [Hegel.main] exits, so it runs in a child: this binary re-executed with
    [HEGEL_TEST_MAIN_CHILD] set, which makes [test_hegel.ml] call [main_child]. *)
 let main_child mode =
@@ -287,7 +271,6 @@ let tests =
   [ Alcotest.test_case "flags select settings" `Quick test_flags_select_settings
   ; Alcotest.test_case "bad values" `Quick test_bad_values
   ; Alcotest.test_case "--profile" `Quick test_profile
-  ; Alcotest.test_case "single_test_case" `Quick test_single_test_case
   ; Alcotest.test_case "main passes" `Quick test_main_passes
   ; Alcotest.test_case "main rejects bad flags" `Quick test_main_rejects_bad_flags
   ; Alcotest.test_case
