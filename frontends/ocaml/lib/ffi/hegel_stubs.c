@@ -38,6 +38,8 @@ typedef int (*next_group_fn)(void *, void *, void *, int64_t *, int64_t *);
 typedef int (*next_rule_fn)(void *, void *, void *, int64_t, int64_t *);
 typedef int (*rule_rejected_fn)(void *, void *, void *, int64_t);
 typedef int (*should_check_invariant_fn)(void *, void *, void *, int64_t, bool *);
+typedef int (*generate_string_fn)(void *, void *, void *, hegel_string_t *);
+typedef int (*owned_string_free_fn)(void *, hegel_string_t *);
 
 #define HEGEL_E_INTERNAL (-8)
 #define STATE_MACHINE_DONE (-1000)
@@ -68,6 +70,23 @@ intnat hegel_ocaml_generate_boolean(intnat fn, intnat ctx, intnat tc, double p,
   int rc = ((generate_boolean_fn)fn)(PTR(ctx), PTR(tc), p, forced == 1, forced >= 0,
                                      &out);
   return rc != 0 ? rc : out;
+}
+
+value hegel_ocaml_generate_string(intnat fn, intnat free_fn, intnat ctx, intnat tc,
+                                  intnat generator) {
+  hegel_string_t s = {NULL, 0};
+  int rc = ((generate_string_fn)fn)(PTR(ctx), PTR(tc), PTR(generator), &s);
+  if (rc != 0) raise_status(rc);
+  value out = caml_alloc_initialized_string(s.len, s.data);
+  ((owned_string_free_fn)free_fn)(PTR(ctx), &s);
+  return out;
+}
+
+value hegel_ocaml_generate_string_byte(value fn, value free_fn, value ctx, value tc,
+                                       value generator) {
+  return hegel_ocaml_generate_string(Nativeint_val(fn), Nativeint_val(free_fn),
+                                     Nativeint_val(ctx), Nativeint_val(tc),
+                                     Nativeint_val(generator));
 }
 
 value hegel_ocaml_generate_boolean_byte(value fn, value ctx, value tc, value p,

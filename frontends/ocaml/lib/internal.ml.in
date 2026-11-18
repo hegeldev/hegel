@@ -294,16 +294,90 @@ let generate_bytes tc ~min_size ~max_size =
     Ffi.generate_bytes tc.context tc.handle ~min_size ~max_size) NONTAIL
 ;;
 
-(** [with_string_generator tc make draw] builds a string-generator handle with
-    [make tc.context], draws from it with [draw], and always frees the handle.
-    Raises {!Stop_test} on StopTest and {!Assume_rejected} when the draw
-    rejects itself. *)
-let with_string_generator tc make =
+type string_generator_key =
+  | Text of
+      { min_size : int
+      ; max_size : int option
+      ; codec : string option
+      ; min_codepoint : int
+      ; max_codepoint : int
+      ; categories : string list option
+      ; exclude_categories : string list option
+      ; include_characters : string option
+      ; exclude_characters : string option
+      }
+  | Regex of
+      { pattern : string
+      ; fullmatch : bool
+      }
+  | Email
+  | Url
+  | Domain_name of int
+
+let string_generator_buckets = 64
+let max_string_generators_per_bucket = 4
+
+(* The string generators built so far, hashed into buckets of at most
+   [max_string_generators_per_bucket], shared by every test case and never
+   freed. *)
+let string_generators
+  : (string_generator_key * Ffi.string_generator) list Atomic.t Immutable_array.t
+  =
+  Immutable_array.init string_generator_buckets (fun _ -> Atomic.make [])
+;;
+
+let new_string_generator ctx = function
+  | Text
+      { min_size
+      ; max_size
+      ; codec
+      ; min_codepoint
+      ; max_codepoint
+      ; categories
+      ; exclude_categories
+      ; include_characters
+      ; exclude_characters
+      } ->
+    Ffi.string_generator_text
+      ctx
+      ~min_size
+      ~max_size
+      ~codec
+      ~min_codepoint
+      ~max_codepoint
+      ~categories
+      ~exclude_categories
+      ~include_characters
+      ~exclude_characters
+  | Regex { pattern; fullmatch } -> Ffi.string_generator_regex ctx ~pattern ~fullmatch
+  | Email -> Ffi.string_generator_email ctx
+  | Url -> Ffi.string_generator_url ctx
+  | Domain_name max_length -> Ffi.string_generator_domain ctx ~max_length
+;;
+
+(** [generate_string tc key] draws from the string generator described by
+    [key], building it on first use. Raises {!Stop_test} on StopTest and
+    {!Assume_rejected} when the draw rejects itself. *)
+let generate_string tc key =
   with_stop_guard tc (fun () ->
-    let sg = make tc.context in
-    Fun.protect
-      ~finally:(fun () -> Ffi.string_generator_free tc.context sg)
-      (fun () -> Ffi.generate_string tc.context tc.handle sg)) NONTAIL
+    let ctx = tc.context in
+    let bucket =
+      Immutable_array.get
+        string_generators
+        (Hashtbl.hash key land (string_generator_buckets - 1))
+    in
+    let cached = Atomic.get bucket in
+    match List.assoc_opt key cached with
+    | Some sg -> Ffi.generate_string ctx tc.handle sg
+    | None ->
+      let sg = new_string_generator ctx key in
+      if List.length cached < max_string_generators_per_bucket
+         && Atomic.compare_and_set bucket cached ((key, sg) :: cached)
+      then Ffi.generate_string ctx tc.handle sg
+      else
+        Fun.protect
+          ~finally:(fun () -> Ffi.string_generator_free ctx sg)
+          (fun () -> Ffi.generate_string ctx tc.handle sg)) NONTAIL
 ;;
 
 (** [generate_text tc ...] draws a text string over the described alphabet. *)
@@ -319,35 +393,32 @@ let generate_text
       ~include_characters
       ~exclude_characters
   =
-  with_string_generator tc (fun ctx ->
-    Ffi.string_generator_text
-      ctx
-      ~min_size
-      ~max_size
-      ~codec
-      ~min_codepoint
-      ~max_codepoint
-      ~categories
-      ~exclude_categories
-      ~include_characters
-      ~exclude_characters)
+  generate_string
+    tc
+    (Text
+       { min_size
+       ; max_size
+       ; codec
+       ; min_codepoint
+       ; max_codepoint
+       ; categories
+       ; exclude_categories
+       ; include_characters
+       ; exclude_characters
+       })
 ;;
 
 (** [generate_regex tc ~pattern ~fullmatch] draws a string matching [pattern]. *)
-let generate_regex tc ~pattern ~fullmatch =
-  with_string_generator tc (fun ctx -> Ffi.string_generator_regex ctx ~pattern ~fullmatch)
-;;
+let generate_regex tc ~pattern ~fullmatch = generate_string tc (Regex { pattern; fullmatch })
 
 (** [generate_email tc] draws an RFC 5321/5322 email address. *)
-let generate_email tc = with_string_generator tc Ffi.string_generator_email
+let generate_email tc = generate_string tc Email
 
 (** [generate_url tc] draws an RFC 3986 http/https URL. *)
-let generate_url tc = with_string_generator tc Ffi.string_generator_url
+let generate_url tc = generate_string tc Url
 
 (** [generate_domain tc ~max_length] draws an RFC 1035 domain name. *)
-let generate_domain tc ~max_length =
-  with_string_generator tc (fun ctx -> Ffi.string_generator_domain ctx ~max_length)
-;;
+let generate_domain tc ~max_length = generate_string tc (Domain_name max_length)
 
 (** A proleptic Gregorian calendar date, as drawn by {!generate_date}. *)
 type date = Ffi.date =

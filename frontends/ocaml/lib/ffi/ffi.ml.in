@@ -496,16 +496,6 @@ let c_string_generator_free =
   foreign "hegel_string_generator_free" (handle_t @-> handle_t @-> returning int)
 ;;
 
-let c_generate_string =
-  foreign
-    "hegel_generate_string"
-    (handle_t @-> handle_t @-> handle_t @-> ptr Str.t @-> returning int)
-;;
-
-let c_owned_string_free =
-  foreign "hegel_owned_string_free" (handle_t @-> ptr Str.t @-> returning int)
-;;
-
 let c_generate_date =
   foreign
     "hegel_generate_date"
@@ -992,6 +982,8 @@ let s_state_machine_should_check_invariant =
   symbol "hegel_state_machine_should_check_invariant"
 ;;
 
+let s_generate_string = symbol "hegel_generate_string"
+let s_owned_string_free = symbol "hegel_owned_string_free"
 let s_pause_faults = symbol "hegel_pause_faults"
 let s_unpause_faults = symbol "hegel_unpause_faults"
 
@@ -1061,6 +1053,15 @@ external stub_collection_more
   -> (int[@untagged])
   = "hegel_ocaml_collection_more_byte" "hegel_ocaml_collection_more"
 [@@noalloc]
+
+external stub_generate_string
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> string
+  = "hegel_ocaml_generate_string_byte" "hegel_ocaml_generate_string"
 
 external stub_call_handle
   :  (nativeint[@unboxed])
@@ -1566,11 +1567,16 @@ let string_generator_domain ctx ~max_length =
 let string_generator_free ctx sg = ignore (c_string_generator_free ctx sg : int)
 
 let generate_string ctx tc sg =
-  let result = make Str.t in
-  check_rc ctx (c_generate_string ctx tc sg (addr result));
-  let s = string_of_str result in
-  ignore (c_owned_string_free ctx (addr result) : int);
-  s
+  match
+    stub_generate_string
+      (s_generate_string ())
+      (s_owned_string_free ())
+      (address_of ctx)
+      (address_of tc)
+      (address_of sg)
+  with
+  | s -> s
+  | exception Engine_status rc -> raise (error_of_rc ctx rc)
 ;;
 
 type date =

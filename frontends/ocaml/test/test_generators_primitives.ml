@@ -210,6 +210,26 @@ let test_text_default_e2e () =
     assert (String.is_valid_utf_8 s))
 ;;
 
+let test_text_many_distinct_generators () =
+  Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:5 ()) (fun tc ->
+    for i = 0 to 299 do
+      let codepoint = 0x100 + i in
+      let s =
+        Hegel.draw
+          tc
+          (text
+             ~min_codepoint:codepoint
+             ~max_codepoint:codepoint
+             ~min_size:1
+             ~max_size:1
+             ())
+      in
+      let expected = Buffer.create 2 in
+      Buffer.add_utf_8_uchar expected (Uchar.of_int codepoint);
+      Alcotest.(check string) "codepoint" (Buffer.contents expected) s
+    done)
+;;
+
 (** Smoke test: the engine accepts a binary generator without a size limit. *)
 let test_binary_default_e2e () =
   Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:20 ()) (fun tc ->
@@ -567,6 +587,10 @@ let tests =
   ; Alcotest.test_case "text alphabet with filters" `Quick test_text_alphabet_with_filters
   ; Alcotest.test_case "floats default e2e" `Quick test_floats_default_e2e
   ; Alcotest.test_case "text default e2e" `Quick test_text_default_e2e
+  ; Alcotest.test_case
+      "text many distinct generators"
+      `Quick
+      test_text_many_distinct_generators
   ; Alcotest.test_case "binary default e2e" `Quick test_binary_default_e2e
   ; Alcotest.test_case "just e2e" `Quick test_just_e2e
   ; Alcotest.test_case "from_regex e2e" `Quick test_from_regex_e2e
