@@ -68,7 +68,7 @@ internal static class Gen
             {
                 throw new Boom();
             }
-        }, Engines.Quiet, Reporter.Silent);
+        }, Engines.Reported, Reporter.Silent);
         Assert.Equal(RunStatus.Failed, report.Status);
         return Assert.Single(report.Failures);
     }

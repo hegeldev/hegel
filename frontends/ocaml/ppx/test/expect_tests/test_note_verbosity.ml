@@ -77,17 +77,22 @@ let%expect_test "Debug notes on every case (not just the final replay)" =
     {|
     no config file loaded
     Starting phase: Generate
+    Running test case
     draw_1 = 0
     NOTE_MARKER
+    Running test case
     draw_1 = 55
     NOTE_MARKER
     test case #2: status = Valid, choices = 1
+    Running test case
     draw_1 = 79
     NOTE_MARKER
     test case #3: status = Valid, choices = 1
+    Running test case
     draw_1 = 98
     NOTE_MARKER
     test case #4: status = Valid, choices = 1
+    Running test case
     draw_1 = 39
     NOTE_MARKER
     test case #5: status = Valid, choices = 1

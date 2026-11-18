@@ -39,8 +39,10 @@ jobs:
           symbols=$("$nm" -u target/wasm32-unknown-unknown/release/libhegel_c.a)
           grep -q 'hegel_host_entropy_fill' <<<"$symbols"
           grep -q 'hegel_host_monotonic_nanos' <<<"$symbols"
+          grep -q 'hegel_host_stderr_write' <<<"$symbols"
           if grep -Eq '_RN.*host_entropy_fill' <<<"$symbols"; then exit 1; fi
           if grep -Eq '_RN.*host_monotonic_nanos' <<<"$symbols"; then exit 1; fi
+          if grep -Eq '_RN.*host_stderr_write' <<<"$symbols"; then exit 1; fi
       - name: Smoke-test the WebAssembly host and string ABI
         run: node libhegel/scripts/test-wasm-abi.mjs target/wasm32-unknown-unknown/release/hegel_c.wasm
 

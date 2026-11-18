@@ -32,24 +32,6 @@ namespace hegel::impl::test_case {
         }
     }
 
-    std::vector<std::string> rendered_output(const TestCaseData& data) {
-        struct RootPrinter {
-            hegel_context_t* ctx;
-            hegel_printer_t* handle;
-            ~RootPrinter() { printer_free(ctx, handle); }
-        };
-        hegel_context_t* ctx = thread_context();
-        RootPrinter root{ctx, test_case_printer(ctx, data.tc)};
-        std::string document = read_document(ctx, root.handle);
-        std::vector<std::string> lines;
-        std::istringstream in(document);
-        std::string line;
-        while (std::getline(in, line)) {
-            lines.push_back(line);
-        }
-        return lines;
-    }
-
 } // namespace hegel::impl::test_case
 
 namespace hegel {

@@ -155,6 +155,6 @@ public sealed class Failure
     /// <summary>The minimal test case's draws, by name, in order.</summary>
     public IReadOnlyDictionary<string, object?> Draws { get; }
 
-    /// <summary>The minimal test case's printed output, line by line.</summary>
+    /// <summary>The minimal test case's printed output, line by line; empty in a quiet run.</summary>
     public IReadOnlyList<string> Output { get; }
 }

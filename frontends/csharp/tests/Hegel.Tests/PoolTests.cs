@@ -256,7 +256,7 @@ public class PoolTests
             var a = tc.Draw(pool.Reusable(), "a");
             var b = tc.Draw(pool.Consuming().Filter(s => s.Length > 0), "b");
             throw new InvalidOperationException(a + b);
-        }, Quick);
+        }, Engines.Reported with { TestCases = 20 }, Reporter.Silent);
         Assert.Equal(RunStatus.Failed, report.Status);
         var failure = Assert.Single(report.Failures);
         Assert.Equal(["var a_1 = \"seven\";", "var b_1 = \"seven\";"], failure.Output);

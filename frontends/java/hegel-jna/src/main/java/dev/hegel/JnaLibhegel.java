@@ -36,7 +36,11 @@ import java.util.function.Consumer;
 final class JnaLibhegel implements Libhegel {
     // hegel_run_start registers the output callback with the engine until hegel_run_free, so a
     // strong reference is held per run (JNA frees the native thunk when the Callback is collected).
-    private final Map<Long, LineCallback> runCallbacks = new ConcurrentHashMap<>();
+    private final Map<Long, OutputCallback> runCallbacks = new ConcurrentHashMap<>();
+
+    // hegel_test_case_from_blob's callback must stay valid until the test case completes, so it is
+    // held per handle until testCaseFree.
+    private final Map<Long, OutputCallback> blobCaseCallbacks = new ConcurrentHashMap<>();
 
     private final HegelNative lib;
     private final ThreadLocal<Pointer> context;
@@ -101,13 +105,13 @@ final class JnaLibhegel implements Libhegel {
         int hegel_settings_get_nondeterminism_strictness(Pointer ctx, Pointer s, IntByReference out);
 
         int hegel_run_start(
-                Pointer ctx, Pointer settings, LineCallback callback, Pointer userData, PointerByReference out);
+                Pointer ctx, Pointer settings, OutputCallback callback, Pointer userData, PointerByReference out);
 
         int hegel_run_start_blob(
                 Pointer ctx,
                 Pointer settings,
                 HegelString.ByValue blob,
-                LineCallback callback,
+                OutputCallback callback,
                 Pointer userData,
                 PointerByReference out);
 
@@ -123,13 +127,17 @@ final class JnaLibhegel implements Libhegel {
                 Pointer ctx,
                 Pointer settings,
                 HegelString.ByValue blob,
-                LineCallback callback,
+                OutputCallback callback,
                 Pointer userData,
                 PointerByReference out);
 
         int hegel_test_case_free(Pointer ctx, Pointer tc);
 
-        int hegel_test_case_should_capture(Pointer ctx, Pointer tc, ByteByReference out);
+        int hegel_test_case_wants_output(Pointer ctx, Pointer tc, ByteByReference out);
+
+        int hegel_test_case_wants_detail(Pointer ctx, Pointer tc, ByteByReference out);
+
+        OutputCallback hegel_output_stderr_callback();
 
         int hegel_test_case_clone(Pointer ctx, Pointer tc, PointerByReference out);
 
@@ -257,7 +265,8 @@ final class JnaLibhegel implements Libhegel {
 
         int hegel_target(Pointer ctx, Pointer tc, double value, HegelString.ByValue label);
 
-        int hegel_mark_complete(Pointer ctx, Pointer tc, int status, HegelString origin);
+        int hegel_mark_complete(
+                Pointer ctx, Pointer tc, int status, HegelString origin, HegelString summary, HegelString detail);
 
         int hegel_run_result_status(Pointer ctx, Pointer result, IntByReference out);
 
@@ -276,6 +285,10 @@ final class JnaLibhegel implements Libhegel {
         int hegel_failure_origin(Pointer ctx, Pointer failure, HegelString out);
 
         int hegel_failure_caveat(Pointer ctx, Pointer failure, PointerByReference out);
+
+        int hegel_failure_output(Pointer ctx, Pointer failure, PointerByReference out);
+
+        int hegel_failure_diagnostic(Pointer ctx, Pointer failure, PointerByReference out);
 
         int hegel_version(Pointer ctx, HegelString out);
     }
@@ -366,6 +379,22 @@ final class JnaLibhegel implements Libhegel {
         } catch (Throwable t) {
             // Deliberately dropped: output delivery must never unwind into the engine.
         }
+    }
+
+    /**
+     * The {@code hegel_output_callback_t} for {@code output}: NULL (no destination) for {@code
+     * null}, libhegel's {@code hegel_output_stderr} for {@link Libhegel#STDERR} (a callback JNA
+     * got from native code crosses back as the original function pointer), and otherwise a {@link
+     * LineCallback}.
+     */
+    private OutputCallback callback(Consumer<String> output) {
+        if (output == null) {
+            return null;
+        }
+        if (output == Libhegel.STDERR) {
+            return lib.hegel_output_stderr_callback();
+        }
+        return new LineCallback(output);
     }
 
     private Pointer ctx() {
@@ -592,7 +621,7 @@ final class JnaLibhegel implements Libhegel {
 
     @Override
     public long runStart(long settings, Consumer<String> output) {
-        LineCallback callback = output == null ? null : new LineCallback(output);
+        OutputCallback callback = callback(output);
         PointerByReference out = new PointerByReference();
         int code = lib.hegel_run_start(ctx(), pointer(settings), callback, null, out);
         if (code != Abi.OK) {
@@ -608,7 +637,7 @@ final class JnaLibhegel implements Libhegel {
 
     @Override
     public long runStartBlob(long settings, String blob, Consumer<String> output) {
-        LineCallback callback = output == null ? null : new LineCallback(output);
+        OutputCallback callback = callback(output);
         PointerByReference out = new PointerByReference();
         int code = lib.hegel_run_start_blob(ctx(), pointer(settings), str(blob), callback, null, out);
         if (code != Abi.OK) {
@@ -651,13 +680,14 @@ final class JnaLibhegel implements Libhegel {
 
     @Override
     public int testCaseFromBlob(long settings, String blob, Consumer<String> output, long[] out) {
-        // The blob replay's output is emitted synchronously during this call, so the callback only
-        // needs to live for its duration.
-        LineCallback callback = output == null ? null : new LineCallback(output);
+        OutputCallback callback = callback(output);
         PointerByReference outRef = new PointerByReference();
         int code = lib.hegel_test_case_from_blob(ctx(), pointer(settings), str(blob), callback, null, outRef);
         if (code == Abi.OK) {
             out[0] = address(outRef.getValue());
+            if (callback != null) {
+                blobCaseCallbacks.put(out[0], callback);
+            }
         }
         return code;
     }
@@ -665,12 +695,20 @@ final class JnaLibhegel implements Libhegel {
     @Override
     public void testCaseFree(long tc) {
         check("hegel_test_case_free", lib.hegel_test_case_free(ctx(), pointer(tc)));
+        blobCaseCallbacks.remove(tc);
     }
 
     @Override
-    public boolean testCaseShouldCapture(long tc) {
+    public boolean testCaseWantsOutput(long tc) {
         ByteByReference out = new ByteByReference();
-        check("hegel_test_case_should_capture", lib.hegel_test_case_should_capture(ctx(), pointer(tc), out));
+        check("hegel_test_case_wants_output", lib.hegel_test_case_wants_output(ctx(), pointer(tc), out));
+        return out.getValue() != 0;
+    }
+
+    @Override
+    public boolean testCaseWantsDetail(long tc) {
+        ByteByReference out = new ByteByReference();
+        check("hegel_test_case_wants_detail", lib.hegel_test_case_wants_detail(ctx(), pointer(tc), out));
         return out.getValue() != 0;
     }
 
@@ -1100,8 +1138,8 @@ final class JnaLibhegel implements Libhegel {
     }
 
     @Override
-    public int markComplete(long tc, int status, String origin) {
-        return lib.hegel_mark_complete(ctx(), pointer(tc), status, strPtr(origin));
+    public int markComplete(long tc, int status, String origin, String summary, String detail) {
+        return lib.hegel_mark_complete(ctx(), pointer(tc), status, strPtr(origin), strPtr(summary), strPtr(detail));
     }
 
     // --- results ---
@@ -1161,6 +1199,30 @@ final class JnaLibhegel implements Libhegel {
         String caveat = readStringAt(caveatOut.getValue());
         check("hegel_failure_free", lib.hegel_failure_free(ctx(), failure));
         return caveat;
+    }
+
+    @Override
+    public String failureOutput(long result, long index) {
+        PointerByReference failureOut = new PointerByReference();
+        check("hegel_run_result_failure", lib.hegel_run_result_failure(ctx(), pointer(result), index, failureOut));
+        Pointer failure = failureOut.getValue();
+        PointerByReference outputOut = new PointerByReference();
+        check("hegel_failure_output", lib.hegel_failure_output(ctx(), failure, outputOut));
+        String output = readStringAt(outputOut.getValue());
+        check("hegel_failure_free", lib.hegel_failure_free(ctx(), failure));
+        return output;
+    }
+
+    @Override
+    public String failureDiagnostic(long result, long index) {
+        PointerByReference failureOut = new PointerByReference();
+        check("hegel_run_result_failure", lib.hegel_run_result_failure(ctx(), pointer(result), index, failureOut));
+        Pointer failure = failureOut.getValue();
+        PointerByReference diagnosticOut = new PointerByReference();
+        check("hegel_failure_diagnostic", lib.hegel_failure_diagnostic(ctx(), failure, diagnosticOut));
+        String diagnostic = readStringAt(diagnosticOut.getValue());
+        check("hegel_failure_free", lib.hegel_failure_free(ctx(), failure));
+        return diagnostic;
     }
 
     // --- diagnostics ---

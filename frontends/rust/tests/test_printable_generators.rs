@@ -1030,7 +1030,7 @@ fn a_broken_printing_impl_degrades_the_report_instead_of_aborting_the_run() {
     });
     assert_eq!(lines.len(), 1, "{lines:?}");
     assert!(
-        lines[0].starts_with("Failed to render this test case's drawn values"),
+        lines[0].starts_with("Failed to render this test case's printed output"),
         "{lines:?}"
     );
 }

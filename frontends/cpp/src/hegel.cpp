@@ -189,6 +189,26 @@ namespace hegel {
             framework_hooks().run_case(body);
         }
 
+        // Whether a failure is the framework's report of failed assertions.
+        bool is_assertion_failure(const std::exception& e) {
+            return framework_hooks().is_assertion_failure != nullptr &&
+                   framework_hooks().is_assertion_failure(e);
+        }
+
+        // Prints each line of `text` to stderr, as the engine prints its own.
+        void print_stderr(const std::string& text) {
+            std::string::size_type start = 0;
+            while (true) {
+                std::string::size_type end = text.find('\n', start);
+                std::string line = text.substr(start, end - start);
+                hegel_output_stderr(nullptr, line.c_str(), line.size());
+                if (end == std::string::npos) {
+                    return;
+                }
+                start = end + 1;
+            }
+        }
+
         // What a run reads from its resolved engine settings.
         struct RunConfig {
             Verbosity verbosity;
@@ -196,36 +216,100 @@ namespace hegel {
             bool report_multiple_failures;
         };
 
+        // What the engine uses of a test case: what it prints, and the full
+        // diagnostic of its failure.
+        struct Wants {
+            bool output;
+            bool detail;
+        };
+
+        // A failure's diagnostic: one line, and in full.
+        struct FailureText {
+            std::optional<std::string> summary;
+            std::optional<std::string> detail;
+        };
+
+        // The first line of `text`, followed by " …" when there are more.
+        std::string first_line(const std::string& text) {
+            std::string::size_type end = text.find_first_of("\r\n");
+            if (end == std::string::npos) {
+                return text;
+            }
+            return text.substr(0, end) + " …";
+        }
+
+        // The forms of a failure whose full diagnostic is `full` that `wants`
+        // asks for.
+        FailureText describe_failure(const std::string& full, Wants wants) {
+            FailureText text;
+            if (wants.output) {
+                text.summary = first_line(full);
+            }
+            if (wants.detail) {
+                text.detail = full;
+            }
+            return text;
+        }
+
+        // The full diagnostic of an exception: an assertion failure's message
+        // names where each assertion failed; any other exception is its type
+        // and message.
+        std::string diagnostic_of(const std::exception& e,
+                                  const std::string& type) {
+            std::string message = e.what();
+            if (is_assertion_failure(e)) {
+                return message;
+            }
+            return message.empty() ? type : type + ": " + message;
+        }
+
         struct BodyOutcome {
             hegel_status_t status;
             std::string origin;
             std::exception_ptr exception;
+            FailureText text;
         };
 
-        // The outcome of a failing test case and, when the engine stamped
-        // the case for capture, its output. The report of each failure is
-        // built from these: every interesting case stores one so the report
-        // always has an outcome to re-raise, and a capture with output is
-        // never replaced by one without (the case that first reveals
-        // nondeterminism is unstamped).
+        // The outcome of a failing test case and the lines its report
+        // prints.
         struct CapturedFailure {
             BodyOutcome outcome;
             std::vector<std::string> lines;
         };
-        using Captures = std::map<std::string, CapturedFailure>;
 
-        void store_capture(Captures& captures, const BodyOutcome& outcome,
-                           std::vector<std::string> lines) {
-            auto existing = captures.find(outcome.origin);
-            if (existing != captures.end() && !existing->second.lines.empty() &&
-                lines.empty()) {
-                return;
+        // The outcome to re-raise for each failing origin. Every interesting
+        // case stores one so the report always has an outcome to re-raise. A
+        // case whose output the engine uses replaces the stored one, as the
+        // engine's report of the origin comes from its latest such case.
+        using Outcomes = std::map<std::string, BodyOutcome>;
+
+        void store_outcome(Outcomes& outcomes, const BodyOutcome& outcome,
+                           bool wants_output) {
+            auto existing = outcomes.find(outcome.origin);
+            if (existing == outcomes.end() || wants_output) {
+                outcomes[outcome.origin] = outcome;
             }
-            captures[outcome.origin] =
-                CapturedFailure{outcome, std::move(lines)};
         }
 
-        // A failure as the report prints it: what was captured for it, the
+        // Splits the engine's report of a failure into its lines.
+        std::vector<std::string>
+        split_lines(const std::optional<std::string>& text) {
+            std::vector<std::string> lines;
+            if (!text.has_value() || text->empty()) {
+                return lines;
+            }
+            std::string::size_type start = 0;
+            std::string::size_type end = text->find('\n');
+            while (end != std::string::npos) {
+                lines.push_back(text->substr(start, end - start));
+                start = end + 1;
+                end = text->find('\n', start);
+            }
+            lines.push_back(text->substr(start));
+            return lines;
+        }
+
+        // A failure as the report prints it: what the engine kept for it, the
         // engine's caveat and the blob that reproduces it. An explicit test
         // case's failure, and a run error reported among the failures, have
         // neither.
@@ -289,18 +373,18 @@ namespace hegel {
         // origin is demangled here, before it reaches the engine, so the
         // engine's failure origins are readable as reported.
         BodyOutcome run_body(const std::function<void(TestCase&)>& test_fn,
-                             TestCase& tc) {
+                             TestCase& tc, Wants wants) {
             try {
                 run_case([&] { test_fn(tc); });
-                return {HEGEL_STATUS_VALID, "", nullptr};
+                return {HEGEL_STATUS_VALID, "", nullptr, {}};
             } catch (const internal::UsageError&) {
                 throw;
             } catch (const internal::HegelStopTest&) {
-                return {HEGEL_STATUS_OVERRUN, "", nullptr};
+                return {HEGEL_STATUS_OVERRUN, "", nullptr, {}};
             } catch (const internal::HegelLoopDone&) {
-                return {HEGEL_STATUS_VALID, "", nullptr};
+                return {HEGEL_STATUS_VALID, "", nullptr, {}};
             } catch (const internal::HegelReject&) {
-                return {HEGEL_STATUS_INVALID, "", nullptr};
+                return {HEGEL_STATUS_INVALID, "", nullptr, {}};
             } catch (const std::exception& e) {
                 std::string type = demangle(typeid(e).name());
                 std::string origin;
@@ -312,7 +396,8 @@ namespace hegel {
                         origin_of(dynamic_cast<const FailureOrigin*>(&e), type);
                 }
                 return {HEGEL_STATUS_INTERESTING, origin,
-                        std::current_exception()};
+                        std::current_exception(),
+                        describe_failure(diagnostic_of(e, type), wants)};
             } catch (...) {
                 // Only user code runs inside the try, so anything caught
                 // here is a test failure — including a foreign (non-C++)
@@ -338,7 +423,8 @@ namespace hegel {
                         "test body raised a foreign (non-C++) exception"));
                     // GCOVR_EXCL_STOP
                 }
-                return {HEGEL_STATUS_INTERESTING, origin, exception};
+                return {HEGEL_STATUS_INTERESTING, origin, exception,
+                        describe_failure(type, wants)};
             }
         }
 
@@ -348,38 +434,13 @@ namespace hegel {
             if (!outcome.origin.empty()) {
                 origin = outcome.origin;
             }
-            impl::mark_complete(ctx, tc, outcome.status, origin);
-        }
-
-        // Whether a test case records its notes and drawn values: when it
-        // is the final replay or the engine stamped it for capture, unless
-        // quiet, and every case when verbose.
-        bool records_output(Verbosity verbosity, bool shown) {
-            switch (verbosity) {
-            case Verbosity::Quiet:
-                return false;
-            case Verbosity::Normal:
-                return shown;
-            case Verbosity::Verbose:
-            case Verbosity::Debug:
-            default:
-                return true;
-            }
+            impl::mark_complete(ctx, tc, outcome.status, origin,
+                                outcome.text.summary, outcome.text.detail);
         }
 
         void print_lines(const std::vector<std::string>& lines) {
             for (const std::string& line : lines) {
-                std::fprintf(stderr, "%s\n", line.c_str());
-            }
-        }
-
-        // The verbose line saying why a test case stopped short of its
-        // end, for one that did.
-        void print_stop_reason(hegel_status_t status) {
-            if (status == HEGEL_STATUS_INVALID) {
-                std::fprintf(stderr, "Test case stopped: failed assumption\n");
-            } else if (status == HEGEL_STATUS_OVERRUN) {
-                std::fprintf(stderr, "Test case stopped: out of data\n");
+                print_stderr(line);
             }
         }
 
@@ -387,29 +448,25 @@ namespace hegel {
                               const std::optional<TestLocation>& location,
                               const std::string& blob) {
             if (rerun_form == RerunForm::Annotation && location.has_value()) {
-                std::fprintf(stderr,
-                             "\nTo reproduce this failure, add this line above "
-                             "HEGEL_TEST(%s):\n"
-                             "    HEGEL_REPRODUCE_FAILURE(%s, \"%s\")\n",
-                             location->name.c_str(), location->name.c_str(),
-                             blob.c_str());
+                print_stderr("\nTo reproduce this failure, add this line above "
+                             "HEGEL_TEST(" +
+                             location->name +
+                             "):\n    HEGEL_REPRODUCE_FAILURE(" +
+                             location->name + ", \"" + blob + "\")");
                 return;
             }
             if (rerun_form == RerunForm::Option) {
-                std::fprintf(stderr,
-                             "\nTo reproduce this failure, run the program "
-                             "with:\n    --failure-blob %s\n",
-                             blob.c_str());
+                print_stderr("\nTo reproduce this failure, run the program "
+                             "with:\n    --failure-blob " +
+                             blob);
                 return;
             }
-            const char* arguments = rerun_form == RerunForm::Location
+            std::string arguments = rerun_form == RerunForm::Location
                                         ? "test_fn, location, settings"
                                         : "test_fn, settings";
-            std::fprintf(stderr,
-                         "\nTo reproduce this failure, pass its blob to "
-                         "hegel::test():\n"
-                         "    hegel::test(%s, {\"%s\"})\n",
-                         arguments, blob.c_str());
+            print_stderr("\nTo reproduce this failure, pass its blob to "
+                         "hegel::test():\n    hegel::test(" +
+                         arguments + ", {\"" + blob + "\"})");
         }
 
         hegel_verbosity_t to_engine(Verbosity verbosity) {
@@ -633,38 +690,26 @@ namespace hegel {
 
         // Pulls every test case off `run`, then acts on its verdict: returns
         // nothing for a pass, throws the RunError subclass for a run error,
-        // and for a failure returns each distinct failure, built from what
-        // the run captured for its origin, for print_report().
+        // and for a failure returns each distinct failure, with the report
+        // the engine kept for it, for print_report().
         std::vector<ReportedFailure> drive_run(
             const std::function<void(TestCase&)>& test_fn, hegel_context_t* ctx,
             hegel_run_t* run, const RunConfig& config,
             const std::optional<TestLocation>& location, RerunForm rerun_form) {
-            bool verbose = config.verbosity == Verbosity::Verbose ||
-                           config.verbosity == Verbosity::Debug;
-            Captures captures;
+            Outcomes outcomes;
 
             while (true) {
                 hegel_test_case_t* handle = impl::next_test_case(ctx, run);
                 if (handle == nullptr) {
                     break;
                 }
-                bool stamped = impl::test_case_should_capture(ctx, handle);
+                Wants wants{impl::test_case_wants_output(ctx, handle),
+                            impl::test_case_wants_detail(ctx, handle)};
                 TestCase tc_obj(std::make_unique<impl::test_case::TestCaseData>(
-                    handle, records_output(config.verbosity, stamped)));
-                BodyOutcome outcome = run_body(test_fn, tc_obj);
-                std::vector<std::string> lines;
-                if (tc_obj.data()->emit) {
-                    lines = impl::test_case::rendered_output(*tc_obj.data());
-                }
-                if (verbose) {
-                    print_lines(lines);
-                    print_stop_reason(outcome.status);
-                }
+                    handle, wants.output));
+                BodyOutcome outcome = run_body(test_fn, tc_obj, wants);
                 if (outcome.status == HEGEL_STATUS_INTERESTING) {
-                    if (!stamped) {
-                        lines.clear();
-                    }
-                    store_capture(captures, outcome, std::move(lines));
+                    store_outcome(outcomes, outcome, wants.output);
                 }
                 mark_complete(ctx, tc_obj.data()->tc, outcome);
             }
@@ -693,14 +738,16 @@ namespace hegel {
                     impl::run_result_failure(ctx, result, i);
                 const hegel_failure_t* failure = failure_guard.failure;
                 failures.push_back(ReportedFailure{
-                    captures.at(impl::failure_origin(ctx, failure)),
+                    CapturedFailure{
+                        outcomes.at(impl::failure_origin(ctx, failure)),
+                        split_lines(impl::failure_output(ctx, failure))},
                     impl::failure_caveat(ctx, failure),
                     impl::failure_reproduction_blob(ctx, failure)});
             }
             return failures;
         }
 
-        // Prints the report of each failure: its captured lines, its caveat
+        // Prints the report of each failure: its lines, its caveat
         // and its rerun line, under a count header when there are several.
         void print_report(const RunConfig& config,
                           const std::optional<TestLocation>& location,
@@ -709,18 +756,17 @@ namespace hegel {
             bool quiet = config.verbosity == Verbosity::Quiet;
             bool multiple = failures.size() > 1;
             if (multiple && !quiet) {
-                std::fprintf(
-                    stderr,
-                    "Property-based test failed with %zu distinct failures.\n",
-                    failures.size());
+                print_stderr("Property-based test failed with " +
+                             std::to_string(failures.size()) +
+                             " distinct failures.");
             }
             for (const ReportedFailure& failure : failures) {
                 if (multiple && !quiet) {
-                    std::fprintf(stderr, "\n");
+                    print_stderr("");
                 }
                 print_lines(failure.captured.lines);
                 if (failure.caveat.has_value() && !quiet) {
-                    std::fprintf(stderr, "note: %s\n", failure.caveat->c_str());
+                    print_stderr("note: " + *failure.caveat);
                 }
                 if (config.print_blob && failure.blob.has_value()) {
                     print_reproducer(rerun_form, location, *failure.blob);
@@ -804,8 +850,8 @@ namespace hegel {
             const std::function<void(TestCase&)>& test_fn,
             const RunConfig& config,
             const std::vector<ExplicitTestCase>& explicit_cases) {
-            bool verbose = config.verbosity == Verbosity::Verbose ||
-                           config.verbosity == Verbosity::Debug;
+            bool debug = config.verbosity == Verbosity::Debug;
+            bool verbose = config.verbosity == Verbosity::Verbose || debug;
             bool quiet = config.verbosity == Verbosity::Quiet;
             std::vector<CapturedFailure> failures;
             for (const ExplicitTestCase& test_case : explicit_cases) {
@@ -815,9 +861,14 @@ namespace hegel {
                     std::make_shared<impl::test_case::ExplicitState>(test_case);
                 data->explicit_state = state;
                 TestCase tc(std::move(data));
-                BodyOutcome outcome = run_body(test_fn, tc);
+                BodyOutcome outcome = run_body(test_fn, tc, {verbose, debug});
                 if (verbose) {
                     print_lines(state->lines);
+                    const std::optional<std::string>& text =
+                        debug ? outcome.text.detail : outcome.text.summary;
+                    if (outcome.status == HEGEL_STATUS_INTERESTING && text) {
+                        print_stderr(*text);
+                    }
                 }
                 if (outcome.status == HEGEL_STATUS_INVALID) {
                     throw internal::UsageError(
@@ -865,7 +916,8 @@ namespace hegel {
             std::vector<ReportedFailure> failures;
             for (const std::string& blob : failure_blobs) {
                 RunGuard run_guard{ctx};
-                run_guard.run = impl::run_start_blob(ctx, s, blob);
+                run_guard.run = impl::run_start_blob(
+                    ctx, s, blob, &hegel_output_stderr, nullptr);
                 for (ReportedFailure& failure :
                      drive_run(test_fn, ctx, run_guard.run, config, location,
                                rerun_form)) {
@@ -893,7 +945,8 @@ namespace hegel {
                              RerunForm rerun_form,
                              std::vector<CapturedFailure> explicit_failures) {
             RunGuard run_guard{ctx};
-            run_guard.run = impl::run_start(ctx, s);
+            run_guard.run =
+                impl::run_start(ctx, s, &hegel_output_stderr, nullptr);
             std::vector<ReportedFailure> failures;
             failures.reserve(explicit_failures.size());
             for (const CapturedFailure& failure : explicit_failures) {
@@ -913,8 +966,10 @@ namespace hegel {
                     lines.emplace_back(error.what());
                 }
                 failures.push_back(ReportedFailure{
-                    CapturedFailure{BodyOutcome{HEGEL_STATUS_INTERESTING, "",
-                                                std::current_exception()},
+                    CapturedFailure{BodyOutcome{HEGEL_STATUS_INTERESTING,
+                                                "",
+                                                std::current_exception(),
+                                                {}},
                                     std::move(lines)},
                     std::nullopt, std::nullopt});
                 report_and_raise(config, location, rerun_form,
@@ -1308,8 +1363,8 @@ yes or no. Values use the vocabulary of the matching hegel.toml key.
         // to, so it prints the exception after the failure report.
         void print_exception(const std::string& type,
                              const std::string& message) {
-            std::fprintf(stderr, "Exception: %s%s\n", type.c_str(),
-                         message.empty() ? "" : (": " + message).c_str());
+            print_stderr("Exception: " + type +
+                         (message.empty() ? "" : ": " + message));
         }
     } // namespace
 

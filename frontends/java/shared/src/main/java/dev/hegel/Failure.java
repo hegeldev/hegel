@@ -11,8 +11,7 @@ import java.util.Optional;
  * One distinct counterexample of a failed run, as observed on the freshest failing execution the
  * engine stamped for capture.
  *
- * <p>The engine runs every failure it is about to report one final time, stamped for capture ({@link
- * TestCase#isFinal()}); the runner keeps that execution's exception and every top-level draw and
+ * <p>The engine runs every failure it is about to report one final time, stamped for capture; the runner keeps that execution's exception and every top-level draw and
  * note, and that capture is what this class carries. A {@linkplain #nondeterministic()
  * nondeterministic} failure — one whose test does not fail every time the same choices are
  * replayed — additionally carries the engine's {@linkplain #caveat() caveat} quoting how reliably it
@@ -25,6 +24,7 @@ public final class Failure {
     private final Throwable exception;
     private final Map<String, Object> draws;
     private final List<String> notes;
+    private final String diagnostic;
 
     Failure(
             String origin,
@@ -32,13 +32,15 @@ public final class Failure {
             String caveat,
             Throwable exception,
             Map<String, Object> draws,
-            List<String> notes) {
+            List<String> notes,
+            String diagnostic) {
         this.origin = origin;
         this.reproduceBlob = reproduceBlob;
         this.caveat = caveat;
         this.exception = exception;
         this.draws = Collections.unmodifiableMap(new LinkedHashMap<>(draws));
         this.notes = Collections.unmodifiableList(new ArrayList<>(notes));
+        this.diagnostic = diagnostic;
     }
 
     /**
@@ -119,5 +121,14 @@ public final class Failure {
      */
     public List<String> notes() {
         return notes;
+    }
+
+    /**
+     * The stack trace the engine kept for this failure: that of its latest failing execution
+     * stamped for capture. {@code null} when no such execution failed there, or on a {@link
+     * Verbosity#QUIET} run.
+     */
+    String diagnostic() {
+        return diagnostic;
     }
 }

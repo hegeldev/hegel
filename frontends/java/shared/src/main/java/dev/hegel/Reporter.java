@@ -34,7 +34,11 @@ public interface Reporter {
 
     /**
      * One line of engine output: progress at higher {@link Verbosity} levels, health-check notices,
-     * shrinker traces. Lines arrive without a trailing newline.
+     * shrinker traces, and on a {@linkplain Verbosity#VERBOSE verbose} run a one-line summary of
+     * each failing case (its exception and the line of the test it was thrown from, after its draws
+     * and notes, before {@link #caseFinished}; at {@link Verbosity#DEBUG} its full stack trace
+     * instead) and a {@code Test case stopped: ...} line for each case rejected by an assumption or
+     * out of data. Lines arrive without a trailing newline.
      *
      * @param line the line
      */
@@ -120,11 +124,12 @@ public interface Reporter {
 
     /**
      * A reporter that ignores everything. Pair it with {@link Hegel#run} to consume the {@link
-     * RunReport} programmatically.
+     * RunReport} programmatically. The run gets no output destination, so the engine renders
+     * nothing for it whatever the run's {@link Verbosity}.
      *
      * @return a no-op reporter
      */
     static Reporter silent() {
-        return new Reporter() {};
+        return SilentReporter.INSTANCE;
     }
 }

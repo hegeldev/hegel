@@ -52,10 +52,9 @@ namespace hegel::impl::test_case {
         TestCaseData& operator=(const TestCaseData&) = delete;
 
         hegel_test_case_t* tc;
-        // Whether notes and drawn values are recorded in the engine's
-        // document for this case: when its output can be shown (the final
-        // replay, a case the engine stamped for capture, or any case at
-        // Verbosity::Verbose and above), and never under Verbosity::Quiet.
+        // Whether notes and drawn values are printed into the engine's
+        // document for this case: when the engine uses its output
+        // (hegel_test_case_wants_output).
         bool emit;
         // Draws in progress on this handle. Only an outermost draw prints.
         int draw_depth = 0;
@@ -66,10 +65,6 @@ namespace hegel::impl::test_case {
         // Set for an explicit test case, which has no engine handle.
         std::shared_ptr<ExplicitState> explicit_state;
     };
-
-    // Reads the document of drawn values and notes that `data`'s test case
-    // recorded, one entry per line. `data` must hold the case's root handle.
-    std::vector<std::string> rendered_output(const TestCaseData& data);
 
 } // namespace hegel::impl::test_case
 

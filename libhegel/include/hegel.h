@@ -351,9 +351,8 @@ typedef enum {
      A failing nondeterministic run reports plain
      `HEGEL_RUN_STATUS_FAILED`: its failures carry a caveat
      (`hegel_failure_caveat`) and, when confirmed, a reproduce blob. A
-     blobless failure is reported from what the caller captured while
-     running the stamped test cases (see
-     `hegel_test_case_should_capture`).
+     blobless failure is reported from its output
+     (`hegel_failure_output`).
      */
     HEGEL_RUN_STATUS_ERROR = 2,
 } hegel_run_status_t;
@@ -855,6 +854,16 @@ typedef struct hegel_string_generator_t hegel_string_generator_t;
 typedef struct hegel_test_case_t hegel_test_case_t;
 
 /*
+ Per-line output callback, passed to `hegel_run_start` /
+ `hegel_test_case_from_blob` (see there for the full contract). `user_data`
+ is the pointer supplied alongside the callback; `line` is one line of
+ engine output, NUL-terminated UTF-8 of `len` bytes (not counting the
+ terminator) without a trailing newline, valid only for the duration of
+ the call.
+ */
+typedef void (*hegel_output_callback_t)(void *user_data, const char *line, size_t len);
+
+/*
  A UTF-8 string view. Ownership is documented by each function.
  `len` counts bytes. Inputs need no NUL
  terminator; zero length accepts any pointer, including NULL. Output
@@ -870,16 +879,6 @@ typedef struct {
     const char *data;
     size_t len;
 } hegel_string_t;
-
-/*
- Per-line output callback, passed to `hegel_run_start` /
- `hegel_test_case_from_blob` (see there for the full contract). `user_data`
- is the pointer supplied alongside the callback; `line` is one line of
- engine output, NUL-terminated UTF-8 of `len` bytes (not counting the
- terminator) without a trailing newline, valid only for the duration of
- the call.
- */
-typedef void (*hegel_output_callback_t)(void *user_data, const char *line, size_t len);
 
 /*
  An engine-allocated byte buffer returned by `hegel_generate_bytes`.
@@ -957,6 +956,26 @@ typedef struct {
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
+
+/*
+ An output callback that writes each line to the process's stderr (in a
+ WebAssembly host, the `hegel_host.stderr_write` import). Pass it, with
+ NULL `user_data`, to `hegel_run_start`, `hegel_run_start_blob` or
+ `hegel_test_case_from_blob` to print there; a NULL callback is no
+ destination.
+
+ # Safety
+ `line` must point to `len` readable bytes.
+ */
+void hegel_output_stderr(void *_user_data, const char *line, size_t len);
+
+/*
+ Returns `hegel_output_stderr` as a callback value, for a host that
+ cannot take the address of an exported function itself (a WebAssembly
+ host, where a callback is an index into the module's own function
+ table).
+ */
+hegel_output_callback_t hegel_output_stderr_callback(void);
 
 /*
  Returns a new error reporting context initialized with an empty message.
@@ -1574,8 +1593,9 @@ hegel_result_t hegel_settings_get_nondeterminism_strictness(hegel_context_t *ctx
  Parameters:
  `settings`: The settings for this run. The caller can free the
    settings after passing them in since libhegel copies the memory.
- `callback`: Where libhegel's output for this run goes. NULL leaves
-   output on stderr.
+ `callback`: Where libhegel's output for this run goes. NULL is no
+   destination: nothing is printed, and the engine produces only what
+   the failure report needs. Pass `hegel_output_stderr` for stderr.
  `user_data`: Passed through to `callback` verbatim. Ignored when
    `callback` is NULL.
  `out_run`: Receives the run handle.
@@ -1585,10 +1605,14 @@ hegel_result_t hegel_settings_get_nondeterminism_strictness(hegel_context_t *ctx
  `hegel_context_last_error`.
 
  This only sets up the run. No test case is generated until the first
- `hegel_next_test_case` call. libhegel emits while it runs inside that
- call, so the callback is invoked on whichever thread makes it. Because
- it runs inside `hegel_next_test_case`, the callback must not call back
- into libhegel on the same run.
+ `hegel_next_test_case` call. libhegel emits from inside its own calls
+ on the run and its test cases — `hegel_next_test_case`, and a verbose
+ run's test-case output from the calls that print, join a state
+ machine's workers, or complete the test case — so the callback is
+ invoked on whichever thread makes them, and must not call back into
+ libhegel on the same run. It must stay valid until `hegel_run_free`
+ returns: freeing a run completes a test case still in flight, which may
+ print.
  */
 hegel_result_t hegel_run_start(hegel_context_t *ctx,
                                const hegel_settings_t *settings,
@@ -1697,9 +1721,9 @@ hegel_result_t hegel_run_free(hegel_context_t *ctx, hegel_run_t *run);
 
  Parameters:
  `blob`: A base64 blob from `hegel_failure_reproduction_blob`.
- `callback` / `user_data`: Where this replay's output goes, with the
-   same contract as `hegel_run_start`. The callback is only ever invoked
-   on this thread and need not outlive the call.
+ `callback` / `user_data`: Where this replay's output goes — what the
+   test case prints, and its diagnostic — with the same contract as
+   `hegel_run_start`. It must stay valid until the test case completes.
  `out_test_case`: Receives a caller-owned test-case handle. Released
    like any other with `hegel_test_case_free`.
 
@@ -1732,21 +1756,48 @@ hegel_result_t hegel_test_case_from_blob(hegel_context_t *ctx,
 hegel_result_t hegel_test_case_free(hegel_context_t *ctx, hegel_test_case_t *tc);
 
 /*
- Returns whether the engine stamped this test case for capture: the
- caller should buffer the case's output and, if it fails, its rendered
- diagnostic, keyed by the failure's origin — a stamped failing
- execution is the material for that origin's failure report. The
- engine stamps the executions whose failures can become the report:
- the report-time final replay and each generation-discovered failure's
- first-check replays (both on deterministic runs too), every
- `hegel_run_start_blob` replay, and, under nondeterministic handling,
- confirmation batches, database-reuse replays, and generation-phase
- cases (whose failing origins may be reported unconfirmed). Read the
- stamp once at case start.
+ Writes into `*out_wants_output` whether the engine will use what this
+ test case prints: a verbose run streams it, a test case stamped for
+ capture keeps it for the failure report (`hegel_failure_output`), and a
+ `hegel_test_case_from_blob` replay streams it to its callback. When it
+ is false, printing draws and notes is wasted work, and so is rendering
+ a failure's diagnostic. Read it once at case start.
+
+ A quiet run prints and keeps nothing, but a test case it stamps still
+ reports true: it is the execution the failure report represents.
+
+ The engine guarantees that each failure it reports is the last test case
+ of that origin it runs, and that this test case reports true. So a
+ frontend raising a failure's own exception keeps, per origin, the one
+ from the latest failing test case that reported true, and it is the one
+ the report describes.
+
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for a NULL
+ `out_wants_output`.
  */
-hegel_result_t hegel_test_case_should_capture(hegel_context_t *ctx,
-                                              const hegel_test_case_t *tc,
-                                              bool *out_should_capture);
+hegel_result_t hegel_test_case_wants_output(hegel_context_t *ctx,
+                                            const hegel_test_case_t *tc,
+                                            bool *out_wants_output);
+
+/*
+ Writes into `*out_wants_detail` whether the engine will use the full
+ diagnostic of this test case if it fails: at debug verbosity it is
+ printed after the test case's output, and for a test case stamped for
+ capture it is kept for the failure report (`hegel_failure_diagnostic`).
+ It is true for every test case of a debug run, and in a normal or
+ verbose run for the test cases stamped for capture; never in a quiet
+ run, nor when the run has no output destination and the case is not
+ stamped. When it is true, a failing test case must pass a `detail` to
+ `hegel_mark_complete`; when it is false, rendering one (a stack trace, a
+ backtrace) is wasted work. True implies `hegel_test_case_wants_output`.
+ Read it once at case start.
+
+ Returns `HEGEL_OK`, or `HEGEL_E_INVALID_ARG` for a NULL
+ `out_wants_detail`.
+ */
+hegel_result_t hegel_test_case_wants_detail(hegel_context_t *ctx,
+                                            const hegel_test_case_t *tc,
+                                            bool *out_wants_detail);
 
 /*
  Parameters:
@@ -3508,17 +3559,20 @@ hegel_result_t hegel_printer_value_result_free(hegel_context_t *ctx,
  concurrent printing deterministic: a clone's output appears at its
  anchor point — where the clone was created — however the threads that
  produced it were scheduled, and two handles never interleave within one
- region. The document remains readable after the case completes, so the
- client can assemble output while drawing and read it back after
- `hegel_mark_complete` (through a root-handle printer).
+ region. The engine prints the document, wherever
+ `hegel_test_case_wants_output` says it goes, as it becomes final; it
+ cannot be read back through the handle (`hegel_printer_resolve` and
+ `hegel_printer_value` refuse), and completing the test case seals it.
 
  `options` may be NULL for defaults (see `hegel_printer_options_t`). The
  first call that explicitly configures `max_width` fixes the document's
  width; later calls may restate it, but a *different* explicit width is
  an error — the width of the shared document cannot be two things.
  Content printed before the width is configured (`hegel_note` never
- configures it) still renders at the configured width: layout happens
- when the document is read.
+ configures it) renders at the configured width. The engine prints each
+ part of the document as soon as nothing can change it any more, and
+ once it has printed any, the width is fixed: configuring a different one
+ is an error too.
 
  Returns `HEGEL_E_INVALID_HANDLE` for a NULL `tc` and
  `HEGEL_E_INVALID_ARG` — with a diagnostic — for a NULL `out_printer` or a
@@ -3556,29 +3610,67 @@ hegel_result_t hegel_note(hegel_context_t *ctx, hegel_test_case_t *tc, hegel_str
 /*
  Parameters:
  `status`: A `hegel_status_t` value describing how the test case ended.
- `origin`: Identifies the origin of a failure. Used only when `status`
-   is `HEGEL_STATUS_INTERESTING`; NULL otherwise.
+ `origin`: Identifies the bug. libhegel groups failures by their origin:
+   two failures with identical origins are the same bug and get shrunk
+   together, and each new origin is a new bug. Pass a stable value, such
+   as the location of the failing assertion. Required for
+   `HEGEL_STATUS_INTERESTING`; NULL otherwise.
+ `summary`: The failure in one line, without newlines: the error's type
+   and message, a message spanning several lines cut at its first line and
+   followed by ` …`. Include the location in the user's test when it is
+   known, for example leading with it as a compiler diagnostic does:
+   `tests/baseline.rs:16:5: x too big: 331`. Printed after the test case's
+   output in a verbose run. Required for `HEGEL_STATUS_INTERESTING` when
+   `hegel_test_case_wants_output` is true; may be NULL otherwise.
+ `detail`: The complete diagnostic as the frontend's language would print
+   the error on its own — message included, stack trace or backtrace where
+   there is one. Standalone: the engine never prints it together with
+   `summary`. Printed after the test case's output at debug verbosity and
+   kept for the failure report (`hegel_failure_diagnostic`). Required for
+   `HEGEL_STATUS_INTERESTING` when `hegel_test_case_wants_detail` is true;
+   may be NULL otherwise. A frontend with nothing beyond the summary
+   passes the error's full message.
 
- Returns `HEGEL_OK`, or `HEGEL_E_ALREADY_COMPLETE` if called twice on the
- same handle.
+ `tc` must be the test case's root handle — the one `hegel_next_test_case`,
+ `hegel_test_case_from_blob` or `hegel_run_start_blob` handed out — never a
+ clone: a frontend whose concurrent workers fail hands the failure to the
+ root's thread, which completes the test case once its workers are done.
+ Only completing from that thread keeps everything the engine prints for
+ the test case on one thread and in document order.
 
- Completion is first-caller-wins and applies to the whole test case: the
- first call from any handle records the outcome, and a later call on a
- different handle is a safe no-op. This function never returns
- `HEGEL_E_CONCURRENT_USE`: if another thread is mid-operation on the
- handle it waits, then completes.
+ Returns `HEGEL_OK`; `HEGEL_E_ALREADY_COMPLETE` if called twice; or
+ `HEGEL_E_INVALID_ARG`, with a diagnostic naming the argument, when:
+ - `tc` is a clone;
+ - the status is not `HEGEL_STATUS_INTERESTING` and any of `origin`,
+   `summary`, `detail` is non-NULL;
+ - the status is `HEGEL_STATUS_INTERESTING` and `origin` is NULL or empty;
+ - `summary` is NULL or empty while it is required, or contains a newline;
+ - `detail` is NULL or empty while it is required;
+ - a string is not valid UTF-8, or the status is unknown.
 
- Choosing an origin string: libhegel groups failures by their `origin`. Two failures with identical
- origins are the same bug and get shrunk together. Each new origin is a
- new bug.
+ A rejected call completes nothing: the test case stays in flight, so
+ `hegel_next_test_case` returns `HEGEL_E_NOT_COMPLETE` until a valid call
+ completes it. The arguments are validated before anything else, also
+ when the engine has already completed the test case on its own (for
+ example after the choice budget ran out).
 
- A library must pass a stable value for the origin, such as the location
- of the failing assertion.
+ Completion applies to the whole test case, clones included. This
+ function never returns `HEGEL_E_CONCURRENT_USE`: if another thread is
+ mid-operation on the handle it waits, then completes. Completing seals the test case's
+ document: everything the test case prints must be printed before.
+
+ What the engine prints of a failure, after the test case's own output:
+ nothing in a quiet or normal run; `summary` in a verbose run; `detail` at
+ debug verbosity. The failure report carries the output of the test case
+ the run reports (`hegel_failure_output`) and its `detail`
+ (`hegel_failure_diagnostic`).
  */
 hegel_result_t hegel_mark_complete(hegel_context_t *ctx,
                                    hegel_test_case_t *tc,
                                    uint32_t status,
-                                   const hegel_string_t *origin);
+                                   const hegel_string_t *origin,
+                                   const hegel_string_t *summary,
+                                   const hegel_string_t *detail);
 
 /*
  Parameters:
@@ -3704,6 +3796,36 @@ hegel_result_t hegel_failure_reproduction_blob(hegel_context_t *ctx,
 hegel_result_t hegel_failure_caveat(hegel_context_t *ctx,
                                     const hegel_failure_t *f,
                                     const hegel_string_t **out_caveat);
+
+/*
+ Parameters:
+ `out_output`: Receives what the failing test case printed — its drawn
+   values and notes — lines separated by `\n` (empty when it printed
+   nothing), or NULL when no execution of the failure was stamped for
+   capture (or the run was quiet). Borrowed from `f`.
+
+ Returns `HEGEL_OK`.
+
+ This is what to show with the failure: attach it to the error the
+ frontend raises, or print it before raising, followed by the diagnostic
+ (`hegel_failure_diagnostic`) unless raising the error shows it already.
+ */
+hegel_result_t hegel_failure_output(hegel_context_t *ctx,
+                                    const hegel_failure_t *f,
+                                    const hegel_string_t **out_output);
+
+/*
+ Parameters:
+ `out_diagnostic`: Receives the `detail` the execution reported by
+   `hegel_failure_output` passed to `hegel_mark_complete`, or NULL when
+   there is no such execution (none was stamped for capture, or the run
+   was quiet). Borrowed from `f`.
+
+ Returns `HEGEL_OK`.
+ */
+hegel_result_t hegel_failure_diagnostic(hegel_context_t *ctx,
+                                        const hegel_failure_t *f,
+                                        const hegel_string_t **out_diagnostic);
 
 /*
  Parameters:

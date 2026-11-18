@@ -1,9 +1,12 @@
 //! Browser WebAssembly backend for [`crate::sys`].
 //!
-//! The raw module imports entropy and monotonic time from the `hegel_host`
-//! WebAssembly import module. A random-fill function returns nonzero on
-//! success and zero on failure. The clock returns nanoseconds, or a negative
-//! value when no monotonic clock is available.
+//! The raw module imports entropy, monotonic time and an error stream from
+//! the `hegel_host` WebAssembly import module. A random-fill function
+//! returns nonzero on success and zero on failure. The clock returns
+//! nanoseconds, or a negative value when no monotonic clock is available.
+//! The error stream receives UTF-8 bytes in pieces (a line's text and its
+//! `\n` may arrive in separate calls), so a host that prints by line
+//! buffers up to each newline; it is where output with no callback goes.
 
 use alloc::string::String;
 use core::sync::atomic::AtomicU32;
@@ -20,6 +23,9 @@ unsafe extern "C" {
 
     #[link_name = "monotonic_nanos"]
     fn host_monotonic_nanos() -> i64;
+
+    #[link_name = "stderr_write"]
+    fn host_stderr_write(ptr: *const u8, len: usize);
 }
 
 #[cfg(all(feature = "wasm-static", not(test)))]
@@ -29,6 +35,9 @@ unsafe extern "C" {
 
     #[link_name = "hegel_host_monotonic_nanos"]
     fn host_monotonic_nanos() -> i64;
+
+    #[link_name = "hegel_host_stderr_write"]
+    fn host_stderr_write(ptr: *const u8, len: usize);
 }
 
 type HostFill = unsafe extern "C" fn(*mut u8, usize) -> i32;
@@ -70,7 +79,11 @@ pub(super) fn env_var(_name: &str) -> Option<String> {
     None
 }
 
-pub(super) fn stderr_write(_bytes: &[u8]) {}
+pub(super) fn stderr_write(bytes: &[u8]) {
+    // SAFETY: `bytes` is readable for its length. The host import contract
+    // does not retain the pointer after returning.
+    unsafe { host_stderr_write(bytes.as_ptr(), bytes.len()) }
+}
 
 pub(super) fn park(_word: &AtomicU32, _expected: u32) {}
 

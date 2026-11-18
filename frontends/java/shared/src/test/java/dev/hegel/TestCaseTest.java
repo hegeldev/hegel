@@ -19,7 +19,7 @@ class TestCaseTest {
     }
 
     /**
-     * A TestCase over a fake binding, both stamped for capture and reporting live (verbose) when
+     * A TestCase over a fake binding, both wanting output and reporting live (verbose) when
      * {@code reporting}; only the reporting/target plumbing is under test here.
      */
     private TestCase newCase(FakeLibhegel fake, boolean reporting, ByteArrayOutputStream buf) {
@@ -81,7 +81,7 @@ class TestCaseTest {
     @Test
     void capturedCaseRecordsDrawsAndNotesAndReplaysThem() {
         TestCase tc = newCase(new FakeLibhegel(), true, new ByteArrayOutputStream());
-        assertTrue(tc.isFinal());
+        assertTrue(tc.wantsOutput());
         tc.draw(constant(1), "x");
         tc.note("first");
         tc.draw(constant(2));
@@ -98,7 +98,7 @@ class TestCaseTest {
         tc.replayTo(reporter);
         assertEquals("x = 1;\nfirst\ndraw_1 = 2;\n", text(replay));
 
-        // A case stamped for capture but not verbose records without reporting live.
+        // A case whose output is wanted on a run that is not verbose records without reporting live.
         ByteArrayOutputStream silent = new ByteArrayOutputStream();
         TestCase captured = new TestCase(
                 new LiveDataSource(new FakeLibhegel(), FakeLibhegel.TC),
@@ -111,7 +111,7 @@ class TestCaseTest {
         assertEquals(List.of("kept"), captured.notes());
 
         TestCase exploring = newCase(new FakeLibhegel(), false, new ByteArrayOutputStream());
-        assertTrue(!exploring.isFinal());
+        assertTrue(!exploring.wantsOutput());
         exploring.draw(constant(1), "x");
         exploring.note("ignored");
         assertTrue(exploring.draws().isEmpty());
@@ -165,22 +165,6 @@ class TestCaseTest {
         };
         assertThrows(IllegalStateException.class, () -> tc.draw(failing, "v"));
         assertEquals("about to fail\n", text(buf));
-    }
-
-    @Test
-    void verboseCasesReportWithoutRecording() {
-        ByteArrayOutputStream buf = new ByteArrayOutputStream();
-        TestCase tc = new TestCase(
-                new LiveDataSource(new FakeLibhegel(), FakeLibhegel.TC),
-                false,
-                true,
-                Reporter.printing(new PrintStream(buf, true, StandardCharsets.UTF_8)));
-        assertTrue(!tc.isFinal());
-        tc.draw(constant(1), "x");
-        tc.note("n");
-        assertEquals("x = 1;\nn\n", text(buf));
-        assertTrue(tc.draws().isEmpty());
-        assertTrue(tc.notes().isEmpty());
     }
 
     @Test

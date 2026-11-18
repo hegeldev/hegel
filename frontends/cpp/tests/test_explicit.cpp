@@ -182,6 +182,38 @@ TEST(Explicit, VerboseRunsPrintEachCase) {
     EXPECT_EQ(output.rfind("auto draw_1 = true;\n", 0), 0u) << output;
 }
 
+TEST(Explicit, VerboseFailurePrintsItsSummary) {
+    testing::internal::CaptureStderr();
+    EXPECT_THROW(hegel::test(
+                     [](hegel::TestCase& tc) {
+                         (void)tc.draw(gs::booleans());
+                         throw std::runtime_error("bad case\nmore");
+                     },
+                     hegel::Settings{.test_cases = 1,
+                                     .verbosity = hegel::Verbosity::Verbose,
+                                     .database = hegel::Database::disabled()},
+                     {}, {hegel::ExplicitTestCase(true)}),
+                 std::runtime_error);
+    EXPECT_EQ(testing::internal::GetCapturedStderr(),
+              "auto draw_1 = true;\nstd::runtime_error: bad case …\n");
+}
+
+TEST(Explicit, DebugFailurePrintsItsDetail) {
+    testing::internal::CaptureStderr();
+    EXPECT_THROW(hegel::test(
+                     [](hegel::TestCase& tc) {
+                         (void)tc.draw(gs::booleans());
+                         throw std::runtime_error("bad case\nmore");
+                     },
+                     hegel::Settings{.test_cases = 1,
+                                     .verbosity = hegel::Verbosity::Debug,
+                                     .database = hegel::Database::disabled()},
+                     {}, {hegel::ExplicitTestCase(true)}),
+                 std::runtime_error);
+    EXPECT_EQ(testing::internal::GetCapturedStderr(),
+              "auto draw_1 = true;\nstd::runtime_error: bad case\nmore\n");
+}
+
 TEST(Explicit, SkippedWithoutTheExplicitPhase) {
     bool saw_explicit = false;
     hegel::test(

@@ -534,30 +534,19 @@ impl PrettyPrinter {
     }
 
     /// Splice in any outstanding deferred content, flush pending break
-    /// points, and return everything printed so far. Only ever called by an
-    /// owner of the document — [`Document::finish`], or the run lifecycle
-    /// reading a test case's document — never by printing code, which only
-    /// sees the write surface. Panics on a layout error in the printed
-    /// content (an unbalanced `end_group` that could only be detected once
-    /// the whole document was assembled).
+    /// points, and return everything printed so far. Only ever called by
+    /// [`Document::finish`], never by printing code, which only sees the
+    /// write surface. Panics on a layout error in the printed content (an
+    /// unbalanced `end_group` that could only be detected once the whole
+    /// document was assembled).
     pub(crate) fn value(&mut self) -> String {
-        self.try_value()
-            .unwrap_or_else(|message| panic!("{message}"))
-    }
-
-    /// [`value`](PrettyPrinter::value), reporting a layout error in the
-    /// printed content as an `Err` instead of panicking — for the run
-    /// lifecycle, which renders the output of user printing code after the
-    /// test body's panic handling has finished and must not let a printing
-    /// bug take down the whole run.
-    pub(crate) fn try_value(&mut self) -> Result<String, String> {
         let Some(handle) = &self.handle else {
             unreachable!("only rendering printers have their value read");
         };
         let _ = handle.resolve();
         match handle.value() {
-            Ok(rendered) => Ok(rendered),
-            Err(PrinterCallError::Other(message)) => Err(message),
+            Ok(rendered) => rendered,
+            Err(PrinterCallError::Other(message)) => panic!("{message}"),
             Err(PrinterCallError::DeadRegion) => {
                 unreachable!("a document's own region never dies before it renders")
             }

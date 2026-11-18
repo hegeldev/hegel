@@ -62,14 +62,14 @@ type owned_state =
 type owned = owned_state Locked.t
 
 (** Per-test-case state passed explicitly to the test function. Holds the
-    native test-case handle, the final-replay flag, whether verbose output is
-    on, abort state, the current generation-span depth (used to print only the
+    native test-case handle, whether the engine uses what the case prints, the
+    run's verbosity, abort state, the current generation-span depth (used to print only the
     outermost drawn value), the {!draw_state} numbering repeatable draws,
     and the {!type:owned} engine resources. *)
 type test_case KIND(value mod portable contended) =
   { handle : Ffi.test_case
   ; context : Ffi.context
-  ; should_capture : bool
+  ; wants_output : bool
   ; verbosity : Settings.verbosity
   ; test_aborted : bool Atomic.t
   ; draw_depth : int Atomic.t
@@ -136,7 +136,7 @@ let clone (tc : test_case) =
   own_clone tc context handle;
   { handle
   ; context
-  ; should_capture = tc.should_capture
+  ; wants_output = tc.wants_output
   ; verbosity = tc.verbosity
   ; test_aborted = Atomic.make false
   ; draw_depth = Atomic.make (Atomic.get tc.draw_depth)
@@ -153,7 +153,7 @@ let with_block (tc : test_case) ~indent LOCAL(f) =
   let b =
     { handle
     ; context
-      ; should_capture = tc.should_capture
+    ; wants_output = tc.wants_output
     ; verbosity = tc.verbosity
     ; test_aborted = Atomic.make false
     ; draw_depth = Atomic.make 0
@@ -190,8 +190,7 @@ let in_test_context : bool DLS.key = DLS.new_key (fun () -> false)
     Frames of the stdlib and of the hegel libraries are skipped. Their code
     paths can change between replays of the same failure, and the engine then
     treats the failure as nondeterministic. *)
-let extract_origin exn =
-  let bt = Stdlib.Printexc.get_raw_backtrace () in
+let user_location bt =
   let library_modules =
     [ "Hegel"; "Hegel_ffi"; "Hegel_jane"; "Hegel_jane_async"; "Hegel_jane_concurrent" ]
   in
@@ -204,23 +203,30 @@ let extract_origin exn =
             || String.starts_with name ~prefix:(m ^ "__"))
          library_modules
   in
-  let user_location =
-    match Stdlib.Printexc.backtrace_slots bt with
-    | None -> None
-    | Some slots ->
-      Array.find_map
-        (fun slot ->
-           match Stdlib.Printexc.Slot.(name slot, location slot) with
-           | Some name, Some (loc : Stdlib.Printexc.location)
-             when not (is_library_frame name) -> Some (loc.filename, loc.line_number)
-           | _ -> None)
-        slots
-  in
-  match user_location with
-  | None -> Printf.sprintf "%s at :0" (Stdlib.Printexc.exn_slot_name exn)
-  | Some (file, line) ->
-    Printf.sprintf "%s at %s:%d" (Stdlib.Printexc.exn_slot_name exn) file line
+  match Stdlib.Printexc.backtrace_slots bt with
+  | None -> None
+  | Some slots ->
+    Array.find_map
+      (fun slot ->
+         match Stdlib.Printexc.Slot.(name slot, location slot) with
+         | Some name, Some (loc : Stdlib.Printexc.location)
+           when not (is_library_frame name) -> Some loc
+         | _ -> None)
+      slots
 ;;
+
+let origin_of exn bt =
+  match user_location bt with
+  | None -> Printf.sprintf "%s at :0" (Stdlib.Printexc.exn_slot_name exn)
+  | Some loc ->
+    Printf.sprintf
+      "%s at %s:%d"
+      (Stdlib.Printexc.exn_slot_name exn)
+      loc.filename
+      loc.line_number
+;;
+
+let extract_origin exn = origin_of exn (Stdlib.Printexc.get_raw_backtrace ())
 
 exception Usage_error = Ffi.Usage_error
 exception Internal_error = Ffi.Internal_error
@@ -423,20 +429,15 @@ let stderr_color code s =
     {!Assume_rejected}) and does not consult [tc]. *)
 let assume _tc condition = if not condition then raise Assume_rejected
 
-(** [should_print tc] says whether {!note} output is visible for this test
-    case under the run's {!type:verbosity}: never under [Quiet], only on the
-    final (failing) replay under [Normal], and on every test case under
+(** [should_print tc] says whether the engine uses what this test case prints
+    (see {!Ffi.test_case_wants_output}): never under [Quiet], on the cases the
+    engine stamps for capture under [Normal], and on every test case under
     [Verbose] or [Debug]. *)
-let should_print tc =
-  match tc.verbosity with
-  | Quiet -> false
-  | Normal -> tc.should_capture
-  | Verbose | Debug -> true
-;;
+let should_print tc = tc.wants_output
 
 (** [note tc message] appends [message] to the test case's
     print region of the engine's family document, subject to {!should_print};
-    the document is printed once the case completes (see [capture_document]). *)
+    the engine prints the document as it becomes final. *)
 let note tc message = if should_print tc then Ffi.note tc.context tc.handle message
 
 (** [render_sexp ctx printer sexp] writes [sexp] to [printer] in s-expression
@@ -709,26 +710,39 @@ type result =
   | Overrun
   | Failed of interesting_case
 
-type case_outcome =
-  { result : result
-  ; output : string
-  ; should_capture : bool
-  }
+(** [render_diagnostic exn] is the line a failure report shows for [exn]. *)
+let render_diagnostic exn = Printf.sprintf "Exception: %s" (Stdlib.Printexc.to_string exn)
 
-(** [capture_document tc] renders the document of a test case, its clones,
-    and blocks.. *)
-let capture_document (tc : test_case) =
-  if not (should_print tc)
-  then ""
-  else (
-    let printer = Ffi.test_case_printer tc.context tc.handle None in
-    Fun.protect
-      ~finally:(fun () -> Ffi.printer_free tc.context printer)
-      (fun () ->
-         (* Resolve splices from clone documents. *)
-         match Ffi.printer_resolve tc.context printer with
-         | () -> Ffi.printer_value tc.context printer
-         | exception Usage_error _ -> Ffi.printer_value tc.context printer))
+(** [render_summary exn bt] is the one-line summary of a failure: its
+    {!render_diagnostic} cut at the first line break, led by the innermost
+    user frame of [bt] when a backtrace was recorded and [exn] does not carry
+    its own location. *)
+let render_summary exn bt =
+  let diagnostic = render_diagnostic exn in
+  let message =
+    let line_breaks_unified =
+      String.map
+        (function
+          | '\r' -> '\n'
+          | c -> c)
+        diagnostic
+    in
+    match String.index_opt line_breaks_unified '\n' with
+    | None -> diagnostic
+    | Some i -> String.sub diagnostic 0 i ^ " \u{2026}"
+  in
+  match exn, user_location bt with
+  | (Assert_failure _ | Match_failure _), _ | _, None -> message
+  | _, Some loc ->
+    Printf.sprintf "%s:%d:%d: %s" loc.filename loc.line_number loc.start_char message
+;;
+
+(** [render_detail exn bt] is the complete diagnostic of a failure: its
+    {!render_diagnostic} followed by the backtrace [bt], when one was recorded. *)
+let render_detail exn bt =
+  match String.trim (Stdlib.Printexc.raw_backtrace_to_string bt) with
+  | "" -> render_diagnostic exn
+  | trace -> render_diagnostic exn ^ "\n" ^ trace
 ;;
 
 (** Width the framed failure report's header rule is padded to. *)
@@ -751,9 +765,14 @@ type rerun_hint =
   | Attribute
   | Command_line
 
+(** [print_failure_body ~settings ~rerun_hint ~blob ~caveat ~exn ~output]
+    prints a failure's report: the lines its test case printed, set off by
+    blank lines, then its exception. *)
 let print_failure_body ~(settings : Settings.t) ~rerun_hint ~blob ~caveat ~exn ~output =
-  if not (String.equal output "") then Printf.eprintf "\n%s\n%!" output;
-  Printf.eprintf "Exception: %s\n%!" (Stdlib.Printexc.to_string exn);
+  (match output with
+   | Some lines when not (String.equal lines "") -> Printf.eprintf "\n%s\n\n%!" lines
+   | Some _ | None -> ());
+  Printf.eprintf "%s\n%!" (render_diagnostic exn);
   Option.iter (fun caveat -> Printf.eprintf "note: %s\n%!" caveat) caveat;
   if settings.print_blob
   then
@@ -824,13 +843,14 @@ let run_test
   in
   let ctx = Ffi.context_new () in
   let ffi_settings = build_ffi_settings ctx settings ~database_key ~test_location in
-  let captured = Hashtbl.create 4 in
+  let failures = Hashtbl.create 4 in
   let run_case handle =
-    let should_capture = Ffi.test_case_should_capture ctx handle in
+    let wants_output = Ffi.test_case_wants_output ctx handle in
+    let wants_detail = Ffi.test_case_wants_detail ctx handle in
     let (tc : test_case) =
       { handle
       ; context = ctx
-      ; should_capture
+      ; wants_output
       ; verbosity = settings.verbosity
       ; test_aborted = Atomic.make false
       ; draw_depth = Atomic.make 0
@@ -847,7 +867,7 @@ let run_test
       | exception ((Usage_error _ | Internal_error _) as control) -> raise control
       | exception exn ->
         let backtrace = Printexc.get_raw_backtrace () in
-        Failed { origin = extract_origin exn; exn; backtrace }
+        Failed { origin = origin_of exn backtrace; exn; backtrace }
     in
     DLS.set in_test_context true;
     let result =
@@ -857,32 +877,34 @@ let run_test
           free_owned tc)
         run_body
     in
-    let status, origin =
+    let status, origin, summary, detail =
       match result with
-      | Valid -> Ffi.Valid, None
-      | Invalid -> Ffi.Invalid, None
-      | Overrun -> Ffi.Overrun, None
-      | Failed failure -> Ffi.Interesting, Some failure.origin
+      | Valid -> Ffi.Valid, None, None, None
+      | Invalid -> Ffi.Invalid, None, None, None
+      | Overrun -> Ffi.Overrun, None, None, None
+      | Failed { origin; exn; backtrace } ->
+        ( Ffi.Interesting
+        , Some origin
+        , (if wants_output then Some (render_summary exn backtrace) else None)
+        , if wants_detail then Some (render_detail exn backtrace) else None )
     in
-    Ffi.mark_complete ctx handle status origin;
-    { result; output = capture_document tc; should_capture }
-  in
-  (* Keep the newest stamped failure of each origin for the report. *)
-  let update_captured failure outcome =
-    match Hashtbl.find_opt captured failure.origin with
-    | Some (_, curr_outcome) when curr_outcome.should_capture && not outcome.should_capture -> ()
-    | Some _ | None -> Hashtbl.replace captured failure.origin (failure, outcome)
+    Ffi.mark_complete ctx handle status ~origin ~summary ~detail;
+    (* Keep the exception of the failure the engine reports for each origin
+       (its newest stamped one), so the exception raised matches the report. *)
+    match result with
+    | Failed failure when wants_output || not (Hashtbl.mem failures failure.origin) ->
+      Hashtbl.replace failures failure.origin failure
+    | Failed _ | Valid | Invalid | Overrun -> ()
   in
   let report_failure failure =
-    let origin = Ffi.failure_origin ctx failure in
-    let failure_case, outcome = Hashtbl.find captured origin in
+    let failure_case = Hashtbl.find failures (Ffi.failure_origin ctx failure) in
     print_failure_body
       ~settings
       ~rerun_hint
       ~blob:(Ffi.failure_blob ctx failure)
       ~caveat:(Ffi.failure_caveat ctx failure)
       ~exn:failure_case.exn
-      ~output:outcome.output;
+      ~output:(Ffi.failure_output ctx failure);
     failure_case
   in
   let handle_result ~is_replay result =
@@ -915,10 +937,10 @@ let run_test
              List.iteri
                (fun i failure ->
                   Printf.eprintf
-                    "\n%s%!"
-                    (stderr_color
-                       ansi_red
-                       (Printf.sprintf "Failure %d of %d:" (i + 1) count));
+                      "\n%s%!"
+                      (stderr_color
+                         ansi_red
+                         (Printf.sprintf "Failure %d of %d:" (i + 1) count));
                   (* print failure messages but don't reraise exn *)
                   ignore (report_failure failure : interesting_case))
                failures;
@@ -934,17 +956,9 @@ let run_test
            | None -> ()
            | Some handle ->
              (* Free the case before moving on to the next one. *)
-             let outcome =
-               Fun.protect
-                 ~finally:(fun () -> Ffi.test_case_free ctx handle)
-                 (fun () -> run_case handle)
-             in
-             (match settings.verbosity with
-              | Verbose | Debug -> Printf.eprintf "%s%!" outcome.output
-              | Quiet | Normal -> ());
-             (match outcome.result with
-              | Failed failure -> update_captured failure outcome
-              | Valid | Invalid | Overrun -> ());
+             Fun.protect
+               ~finally:(fun () -> Ffi.test_case_free ctx handle)
+               (fun () -> run_case handle);
              loop ()
          in
          loop ();
@@ -959,7 +973,8 @@ let run_test
       Ffi.context_free ctx)
     (fun () -> match failure_blobs with
     | [] -> drive ~is_replay:false (Ffi.run_start ctx ffi_settings)
-    | blob :: _ -> drive ~is_replay:true (Ffi.run_start_blob ctx ffi_settings blob))
+    | blob :: _ ->
+      drive ~is_replay:true (Ffi.run_start_blob ctx ffi_settings blob))
 ;;
 
 (** [run_hegel_test ?settings ?test_location ?database_key ?failure_blobs test_fn]

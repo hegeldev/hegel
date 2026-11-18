@@ -51,6 +51,11 @@ final class RealLibhegel implements Libhegel {
     // runFree. Runs are started and freed on the same thread (the Runner's), matching confinement.
     private final Map<Long, Arena> runArenas = new ConcurrentHashMap<>();
 
+    // hegel_test_case_from_blob's callback must stay valid until the test case completes, so the
+    // stub's arena is kept per handle and closed in testCaseFree. Shared: the handle may be freed
+    // on another thread than the one that created it.
+    private final Map<Long, Arena> blobCaseArenas = new ConcurrentHashMap<>();
+
     private final ThreadLocal<MemorySegment> context;
 
     // struct hegel_date_t { int32_t year; uint8_t month; uint8_t day; }
@@ -129,7 +134,9 @@ final class RealLibhegel implements Libhegel {
     private final MethodHandle runFree;
     private final MethodHandle testCaseFromBlob;
     private final MethodHandle testCaseFree;
-    private final MethodHandle testCaseShouldCapture;
+    private final MethodHandle testCaseWantsOutput;
+    private final MethodHandle testCaseWantsDetail;
+    private final MemorySegment outputStderr;
     private final MethodHandle testCaseClone;
     private final MethodHandle testCaseSetWorker;
     private final MethodHandle generateBoolean;
@@ -180,6 +187,8 @@ final class RealLibhegel implements Libhegel {
     private final MethodHandle failureReproductionBlob;
     private final MethodHandle failureOrigin;
     private final MethodHandle failureCaveat;
+    private final MethodHandle failureOutput;
+    private final MethodHandle failureDiagnostic;
     private final MethodHandle version;
 
     RealLibhegel(Path libraryPath) {
@@ -316,11 +325,17 @@ final class RealLibhegel implements Libhegel {
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, STRING_LAYOUT, ADDRESS, ADDRESS, ADDRESS));
         this.testCaseFree =
                 h(linker, lookup, "hegel_test_case_free", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
-        this.testCaseShouldCapture = h(
+        this.testCaseWantsOutput = h(
                 linker,
                 lookup,
-                "hegel_test_case_should_capture",
+                "hegel_test_case_wants_output",
                 FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+        this.testCaseWantsDetail = h(
+                linker,
+                lookup,
+                "hegel_test_case_wants_detail",
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+        this.outputStderr = findSymbol(lookup, "hegel_output_stderr");
         this.testCaseClone =
                 h(linker, lookup, "hegel_test_case_clone", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
         this.testCaseSetWorker = h(
@@ -514,7 +529,7 @@ final class RealLibhegel implements Libhegel {
                 linker,
                 lookup,
                 "hegel_mark_complete",
-                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT, ADDRESS));
+                FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
         this.runResultStatus = h(
                 linker, lookup, "hegel_run_result_status", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
         this.runResultError =
@@ -539,6 +554,10 @@ final class RealLibhegel implements Libhegel {
                 h(linker, lookup, "hegel_failure_origin", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
         this.failureCaveat =
                 h(linker, lookup, "hegel_failure_caveat", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+        this.failureOutput =
+                h(linker, lookup, "hegel_failure_output", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
+        this.failureDiagnostic = h(
+                linker, lookup, "hegel_failure_diagnostic", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS, ADDRESS));
         this.version = h(linker, lookup, "hegel_version", FunctionDescriptor.of(JAVA_INT, ADDRESS, ADDRESS));
         this.context = ThreadLocal.withInitial(() -> (MemorySegment) invoke(contextNew));
     }
@@ -648,7 +667,18 @@ final class RealLibhegel implements Libhegel {
         }
     }
 
-    private MemorySegment upcallStub(Arena arena, Consumer<String> output) {
+    /**
+     * The {@code hegel_output_callback_t} for {@code output}: NULL (no destination) for {@code
+     * null}, libhegel's {@code hegel_output_stderr} for {@link Libhegel#STDERR}, and otherwise an
+     * upcall stub living as long as {@code arena}.
+     */
+    private MemorySegment callback(Arena arena, Consumer<String> output) {
+        if (output == null) {
+            return MemorySegment.NULL;
+        }
+        if (output == Libhegel.STDERR) {
+            return outputStderr;
+        }
         return linker.upcallStub(EMIT_LINE.bindTo(output), OUTPUT_CALLBACK_DESC, arena);
     }
 
@@ -790,7 +820,7 @@ final class RealLibhegel implements Libhegel {
     @Override
     public long runStart(long settings, Consumer<String> output) {
         Arena arena = Arena.ofConfined();
-        MemorySegment callback = output == null ? MemorySegment.NULL : upcallStub(arena, output);
+        MemorySegment callback = callback(arena, output);
         MemorySegment out = arena.allocate(ADDRESS);
         int code = rc(runStart, segment(settings), callback, MemorySegment.NULL, out);
         if (code != Abi.OK) {
@@ -806,7 +836,7 @@ final class RealLibhegel implements Libhegel {
     @Override
     public long runStartBlob(long settings, String blob, Consumer<String> output) {
         Arena arena = Arena.ofConfined();
-        MemorySegment callback = output == null ? MemorySegment.NULL : upcallStub(arena, output);
+        MemorySegment callback = callback(arena, output);
         MemorySegment out = arena.allocate(ADDRESS);
         int code = rc(runStartBlob, segment(settings), str(arena, blob), callback, MemorySegment.NULL, out);
         if (code != Abi.OK) {
@@ -849,28 +879,39 @@ final class RealLibhegel implements Libhegel {
 
     @Override
     public int testCaseFromBlob(long settings, String blob, Consumer<String> output, long[] out) {
-        // The blob replay's output is emitted synchronously during this call, so the stub only
-        // needs to live for its duration.
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment callback = output == null ? MemorySegment.NULL : upcallStub(arena, output);
-            MemorySegment outSeg = arena.allocate(ADDRESS);
-            int code = rc(testCaseFromBlob, segment(settings), str(arena, blob), callback, MemorySegment.NULL, outSeg);
-            if (code == Abi.OK) {
-                out[0] = outSeg.get(ADDRESS, 0).address();
-            }
+        Arena arena = Arena.ofShared();
+        MemorySegment callback = callback(arena, output);
+        MemorySegment outSeg = arena.allocate(ADDRESS);
+        int code = rc(testCaseFromBlob, segment(settings), str(arena, blob), callback, MemorySegment.NULL, outSeg);
+        if (code != Abi.OK) {
+            arena.close();
             return code;
         }
+        out[0] = outSeg.get(ADDRESS, 0).address();
+        blobCaseArenas.put(out[0], arena);
+        return code;
     }
 
     @Override
     public void testCaseFree(long tc) {
         check("hegel_test_case_free", rc(testCaseFree, segment(tc)));
+        Arena arena = blobCaseArenas.remove(tc);
+        if (arena != null) {
+            arena.close();
+        }
     }
 
     @Override
-    public boolean testCaseShouldCapture(long tc) {
+    public boolean testCaseWantsOutput(long tc) {
         MemorySegment out = Arena.ofAuto().allocate(JAVA_BOOLEAN);
-        check("hegel_test_case_should_capture", rc(testCaseShouldCapture, segment(tc), out));
+        check("hegel_test_case_wants_output", rc(testCaseWantsOutput, segment(tc), out));
+        return out.get(JAVA_BOOLEAN, 0);
+    }
+
+    @Override
+    public boolean testCaseWantsDetail(long tc) {
+        MemorySegment out = Arena.ofAuto().allocate(JAVA_BOOLEAN);
+        check("hegel_test_case_wants_detail", rc(testCaseWantsDetail, segment(tc), out));
         return out.get(JAVA_BOOLEAN, 0);
     }
 
@@ -1331,9 +1372,15 @@ final class RealLibhegel implements Libhegel {
     }
 
     @Override
-    public int markComplete(long tc, int status, String origin) {
+    public int markComplete(long tc, int status, String origin, String summary, String detail) {
         try (Arena arena = Arena.ofConfined()) {
-            return rc(markComplete, segment(tc), status, strPtr(arena, origin));
+            return rc(
+                    markComplete,
+                    segment(tc),
+                    status,
+                    strPtr(arena, origin),
+                    strPtr(arena, summary),
+                    strPtr(arena, detail));
         }
     }
 
@@ -1373,6 +1420,16 @@ final class RealLibhegel implements Libhegel {
     @Override
     public String failureCaveat(long result, long index) {
         return readFailureString(result, index, failureCaveat, "hegel_failure_caveat", true);
+    }
+
+    @Override
+    public String failureOutput(long result, long index) {
+        return readFailureString(result, index, failureOutput, "hegel_failure_output", true);
+    }
+
+    @Override
+    public String failureDiagnostic(long result, long index) {
+        return readFailureString(result, index, failureDiagnostic, "hegel_failure_diagnostic", true);
     }
 
     /**
