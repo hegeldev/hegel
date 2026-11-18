@@ -109,16 +109,9 @@ let own_clone (tc : test_case) context handle =
   Locked.protect tc.owned (fun owned -> owned.clones <- (context, handle) :: owned.clones)
 ;;
 
-(** [owned_clone_count tc] is the number of clone handles the case currently
-    owns. *)
-let owned_clone_count (tc : test_case) =
-  Locked.protect tc.owned (fun owned -> List.length owned.clones)
-;;
-
 let draw_depth (tc : test_case) = Atomic.get tc.draw_depth
 let incr_draw_depth (tc : test_case) = Atomic.incr tc.draw_depth
 let decr_draw_depth (tc : test_case) = Atomic.decr tc.draw_depth
-let set_test_aborted (tc : test_case) v = Atomic.set tc.test_aborted v
 
 (** [clone tc] forks a fresh {!test_case} onto an independent choice stream of the
     same underlying native test case (see {!Ffi.test_case_clone}), paired with its
@@ -183,8 +176,8 @@ let set_worker_index tc worker_index =
 (** Domain-local flag to detect nested test cases. *)
 let in_test_context : bool DLS.key = DLS.new_key (fun () -> false)
 
-(** [extract_origin exn] extracts an InterestingOrigin string from an exception.
-    Uses the backtrace if available. The origin is derived from the exception
+(** [user_location bt] is the location of the innermost user frame of [bt],
+    from which {!origin_of} builds an exception's InterestingOrigin. The origin is derived from the exception
     type plus the {e innermost user frame}, so the shrinker
     groups probes for the same bug while keeping failures at distinct source
     lines apart (see {!Ffi.mark_complete}).
@@ -227,8 +220,6 @@ let origin_of exn bt =
       loc.filename
       loc.line_number
 ;;
-
-let extract_origin exn = origin_of exn (Stdlib.Printexc.get_raw_backtrace ())
 
 exception Usage_error = Ffi.Usage_error
 exception Internal_error = Ffi.Internal_error
@@ -602,7 +593,7 @@ let event_value tc ~label ~value =
 (** [start_span ?label tc] starts a generation span for better shrinking. *)
 let start_span ?(label = 0L) tc =
   if Atomic.get tc.test_aborted
-  then ()
+  then () [@coverage off]
   else with_stop_guard tc (fun () -> Ffi.start_span tc.context tc.handle label) NONTAIL
 ;;
 
@@ -709,10 +700,10 @@ let pool_add tc ~pool =
   with_stop_guard tc (fun () -> Ffi.pool_add tc.context tc.handle ~pool) NONTAIL
 ;;
 
-(** [pool_generate tc ~pool ?consume ()] draws a variable id from [pool]. When
+(** [pool_generate tc ~pool ~consume] draws a variable id from [pool]. When
     [consume] is [true], the variable is also removed from the pool. Drawing
     from an empty pool raises {!Assume_rejected}. *)
-let pool_generate tc ~pool ?(consume = false) () =
+let pool_generate tc ~pool ~consume =
   with_stop_guard tc (fun () ->
     Ffi.pool_generate tc.context tc.handle ~pool ~consume) NONTAIL
 ;;

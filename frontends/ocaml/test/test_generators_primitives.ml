@@ -194,13 +194,18 @@ let test_text_alphabet_with_filters () =
 
 (* ==== E2E tests ==== *)
 
-(** Test: default floats() E2E — the unbounded default (where allow_nan and
-    allow_infinity default to true) produces a draw the engine accepts.
-    The value may be NaN/infinity, so we only require that a draw succeeds. *)
+(** Test: default floats() E2E — NaN and infinity are allowed by default. *)
 let test_floats_default_e2e () =
-  Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:20 ()) (fun tc ->
-    let (_ : float) = Hegel.draw tc (floats ()) in
-    ())
+  let saw_nan = ref false in
+  let saw_infinite = ref false in
+  Hegel.run_hegel_test
+    ~settings:(Hegel.Settings.create ~test_cases:1000 ~seed:0 ())
+    (fun tc ->
+       let v = Hegel.draw tc (floats ()) in
+       if Float.is_nan v then saw_nan := true;
+       if Float.abs v = Float.infinity then saw_infinite := true);
+  Alcotest.(check bool) "saw NaN" true !saw_nan;
+  Alcotest.(check bool) "saw infinity" true !saw_infinite
 ;;
 
 (** Test: default text() E2E — the default form omits max_size *)
@@ -230,11 +235,11 @@ let test_text_many_distinct_generators () =
     done)
 ;;
 
-(** Smoke test: the engine accepts a binary generator without a size limit. *)
-let test_binary_default_e2e () =
+(** Test: binary respects its size bounds. *)
+let test_binary_size_bounds_e2e () =
   Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:20 ()) (fun tc ->
-    let (_ : string) = Hegel.draw tc (binary ()) in
-    ())
+    let v = Hegel.draw tc (binary ~min_size:2 ~max_size:4 ()) in
+    assert (String.length v >= 2 && String.length v <= 4))
 ;;
 
 (** Test: just always returns the constant. *)
@@ -424,11 +429,11 @@ let tests =
   ; Alcotest.test_case "text alphabet with filters" `Quick test_text_alphabet_with_filters
   ; Alcotest.test_case "floats default e2e" `Quick test_floats_default_e2e
   ; Alcotest.test_case "text default e2e" `Quick test_text_default_e2e
+  ; Alcotest.test_case "binary size bounds e2e" `Quick test_binary_size_bounds_e2e
   ; Alcotest.test_case
       "text many distinct generators"
       `Quick
       test_text_many_distinct_generators
-  ; Alcotest.test_case "binary default e2e" `Quick test_binary_default_e2e
   ; Alcotest.test_case "just e2e" `Quick test_just_e2e
   ; Alcotest.test_case "from_regex e2e" `Quick test_from_regex_e2e
   ; Alcotest.test_case "from_regex NUL e2e" `Quick test_from_regex_nul_e2e

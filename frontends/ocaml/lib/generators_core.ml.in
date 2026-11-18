@@ -325,13 +325,11 @@ let discardable_group label data f =
 
 (** A collection handle for generating variable-length sequences.
 
-    Collections ask the engine when to stop generating elements. The [finished]
-    flag short-circuits subsequent {!collection_more} calls once the engine
-    signals completion. The engine-side collection is created on first use and
-    released when the {!with_collection} scope that owns it ends. *)
+    Collections ask the engine when to stop generating elements. The
+    engine-side collection is created on first use and released when the
+    {!with_collection} scope that owns it ends. *)
 type collection =
-  { mutable finished : bool
-  ; mutable handle : Internal.collection option
+  { mutable handle : Internal.collection option
   ; min_size : int
   ; max_size : int option
   }
@@ -352,7 +350,7 @@ let get_collection coll data =
 (** [with_collection ~min_size ?max_size data f] runs [f coll] with a new
     collection and releases the engine-side handle after. *)
 let with_collection ~min_size ?max_size data f =
-  let coll = { finished = false; handle = None; min_size; max_size } in
+  let coll = { handle = None; min_size; max_size } in
   Fun.protect
     ~finally:(fun () ->
       Option.iter
@@ -362,30 +360,20 @@ let with_collection ~min_size ?max_size data f =
 ;;
 
 (** [collection_more coll data] returns [true] if more elements should be
-    generated, [false] when the collection is complete. Once it returns [false],
-    subsequent calls return [false] immediately. Raises
+    generated, [false] when the collection is complete. Raises
     {!Internal.Stop_test} on StopTest. *)
 let collection_more coll data =
-  if coll.finished
-  then false
-  else (
-    let collection = get_collection coll data in
-    let more = Internal.collection_more data ~collection in
-    if not more then coll.finished <- true;
-    more)
+  let collection = get_collection coll data in
+  Internal.collection_more data ~collection
 ;;
 
 (** [collection_reject coll data] rejects the last element of the collection.
-    No-op if the collection is already finished. Raises
-    {!Internal.Stop_test} on StopTest. *)
+    Raises {!Internal.Stop_test} on StopTest. *)
 let collection_reject coll data =
-  if not coll.finished
-  then (
-    let collection = get_collection coll data in
-    Internal.collection_reject data ~collection)
+  let collection = get_collection coll data in
+  Internal.collection_reject data ~collection
 ;;
 
-(* separated out for unit testing *)
 let resolve_pool_draw ~find ~remove ~consume variable_id =
   match find variable_id with
   | Some v ->
@@ -394,12 +382,12 @@ let resolve_pool_draw ~find ~remove ~consume variable_id =
   | None ->
     (* State diverged between the engine and the client, or a bug in the pool
        bookkeeping. *)
-    raise Internal.Flaky_strategy
+    (raise Internal.Flaky_strategy) [@coverage off]
 ;;
 
 let pick tc ~find ~remove ~is_empty pool ~consume =
   Internal.assume tc (not (is_empty ()));
-  let variable_id = Internal.pool_generate tc ~pool ~consume () in
+  let variable_id = Internal.pool_generate tc ~pool ~consume in
   variable_id, resolve_pool_draw ~find ~remove ~consume variable_id
 ;;
 
@@ -452,17 +440,6 @@ module Int_table = Stdlib.Hashtbl.MakePortable (Int_key)
 #else
 module Int_table = Stdlib.Hashtbl.Make (Int_key)
 #endif
-
-(** [resolve_draw values ~consume variable_id] resolves a drawn pool id against
-    an OCaml-side table, removing it when [consume]. Raises [Internal.Flaky_strategy] 
-    on an unknown id. *)
-let resolve_draw values ~consume variable_id =
-  resolve_pool_draw
-    ~find:(fun id -> Int_table.find_opt values id)
-    ~remove:(fun id -> Int_table.remove values id)
-    ~consume
-    variable_id
-;;
 
 (** [all_values values clone] lists the [clone] of each value in [values], in
     no particular order. *)

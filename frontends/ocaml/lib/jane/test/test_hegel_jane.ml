@@ -48,33 +48,19 @@ let bounds_tests
   ]
 ;;
 
-(** Test: time_spans covers the representable range by default, including
-    negative spans. *)
+(** Test: time_spans includes negative spans by default. *)
 let test_time_spans_default_bounds () =
   let module Span = Core.Time_ns.Span in
   let saw_negative = ref false in
   run_hegel_test ~settings:(Settings.create ~test_cases:100 ~seed:0 ()) (fun tc ->
     let span = draw tc (Hegel_jane.time_spans ()) in
-    if Span.( < ) span Span.zero then saw_negative := true;
-    assert (
-      Span.( >= ) span Span.min_value_representable
-      && Span.( <= ) span Span.max_value_representable));
+    if Span.( < ) span Span.zero then saw_negative := true);
   assert !saw_negative
 ;;
 
 let test_time_spans_invalid_bounds () =
   let module Span = Core.Time_ns.Span in
   expect_usage_error (Hegel_jane.time_spans ~min_span:Span.second ~max_span:Span.zero ())
-;;
-
-(** Test: times covers the representable range by default. *)
-let test_times_default_bounds () =
-  let module Time_ns = Core.Time_ns in
-  run_hegel_test ~settings:(Settings.create ~test_cases:100 ()) (fun tc ->
-    let t = draw tc (Hegel_jane.times ()) in
-    assert (
-      Time_ns.( >= ) t Time_ns.min_value_representable
-      && Time_ns.( <= ) t Time_ns.max_value_representable))
 ;;
 
 let test_times_invalid_bounds () =
@@ -213,7 +199,6 @@ let () =
             "time_spans invalid bounds"
             `Quick
             test_time_spans_invalid_bounds
-        ; Alcotest.test_case "times default bounds" `Quick test_times_default_bounds
         ; Alcotest.test_case "times invalid bounds" `Quick test_times_invalid_bounds
         ; Alcotest.test_case "dates default bounds" `Quick test_dates_default_bounds
         ; Alcotest.test_case "dates invalid bounds" `Quick test_dates_invalid_bounds

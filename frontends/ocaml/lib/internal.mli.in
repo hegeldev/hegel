@@ -45,7 +45,6 @@ val should_print : test_case -> bool
 val draw_depth : test_case -> int
 val incr_draw_depth : test_case -> unit
 val decr_draw_depth : test_case -> unit
-val set_test_aborted : test_case -> bool -> unit
 
 (** [clone tc] forks a fresh clone of [tc] on an independent choice stream (its
     own native handle and context), owned and freed by the test case once it
@@ -60,17 +59,8 @@ val clone : test_case -> test_case
     [f]. *)
 val with_block : test_case -> indent:int -> (test_case -> 'a) MODE(local) -> 'a
 
-(** [owned_clone_count tc] is the number of clone handles the test case
-    currently owns; they are freed together once the case completes. *)
-val owned_clone_count : test_case -> int
-
 (** Tags subsequent output from [tc] with a concurrent worker index. *)
 val set_worker_index : test_case -> int -> unit
-
-(** [extract_origin exn] extracts an InterestingOrigin string from an exception.
-    Uses the backtrace if available; derived from the assertion's location so
-    the shrinker can group probes for the same bug. *)
-val extract_origin : exn -> string
 
 exception Usage_error of string
 exception Internal_error of string
@@ -162,15 +152,6 @@ val assume : test_case -> bool -> unit
 val note : test_case -> string -> unit
 
 (**/**)
-
-(** [color_enabled ~override ~isatty] decides whether ANSI colors are on: an
-    [override] of ["1"]/["0"] (the [HEGEL_COLOR] variable) forces it on/off;
-    otherwise follow [isatty]. *)
-val color_enabled : override:string option -> isatty:bool -> bool
-
-(** [stderr_color_enabled ()] is {!color_enabled} for the failure report's
-    stream, reading the environment and stderr's tty state afresh. *)
-val stderr_color_enabled : unit -> bool
 
 (** [stderr_color code s] wraps [s] in the ANSI SGR [code] when colors are
     enabled for stderr, else returns [s] unchanged. *)
@@ -284,12 +265,11 @@ val new_pool : test_case -> pool
     variable id. *)
 val pool_add : test_case -> pool:pool -> int
 
-(** [pool_generate tc ~pool ?consume ()] draws a variable id from [pool]. When
-    [consume] is [true] (default [false]), the variable is also removed from the
-    pool. Drawing from an empty pool raises {!Assume_rejected} (the engine
+(** [pool_generate tc ~pool ~consume] draws a variable id from [pool]. When
+    [consume] is [true], the variable is also removed from the pool. Drawing from an empty pool raises {!Assume_rejected} (the engine
     returns [HEGEL_E_ASSUME]). Inside a rule this rejects the rule. Otherwise,
     it rejects the test case. *)
-val pool_generate : test_case -> pool:pool -> ?consume:bool -> unit -> int
+val pool_generate : test_case -> pool:pool -> consume:bool -> int
 
 (** [pool_restore tc ~pool ~variable_id] puts back a variable that a consuming
     {!pool_generate} removed from [pool], so it can be drawn again. Raises

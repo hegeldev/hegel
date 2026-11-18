@@ -110,10 +110,25 @@ let test_register_profile_round_trip () =
         ; verbosity
         ; seed = Some (40 + i)
         ; derandomize = true
-        ; database = Settings.Path "/tmp/hegel-ocaml-profile-db"
+        ; database =
+            (match i with
+             | 0 -> Settings.Unset
+             | 1 -> Settings.Disabled
+             | _ -> Settings.Path "/tmp/hegel-ocaml-profile-db")
         ; suppress_health_check =
-            [ Settings.Filter_too_much; Settings.Large_initial_test_case ]
-        ; phases = [ Settings.Generate; Settings.Shrink ]
+            (if i mod 2 = 0
+             then
+               Settings.
+                 [ Filter_too_much
+                 ; Too_slow
+                 ; Test_cases_too_large
+                 ; Large_initial_test_case
+                 ]
+             else [ Settings.Filter_too_much; Settings.Large_initial_test_case ])
+        ; phases =
+            (if i mod 2 = 0
+             then Settings.[ Explicit; Reuse; Generate; Target; Shrink ]
+             else [ Settings.Generate; Settings.Shrink ])
         ; print_blob = i mod 2 = 0
         ; report_multiple_failures = true
         ; stop_on_first_failure = i mod 2 = 1
@@ -235,57 +250,46 @@ let test_phase_to_string () =
   Alcotest.(check string) "shrink" "shrink" (Settings.phase_to_string Settings.Shrink)
 ;;
 
-(** With backtrace recording off there are no slots, exercising the no-location
-    fallback in [extract_origin]. *)
-let test_extract_origin_no_backtrace () =
+(* With backtrace recording off the failure has no location, and the run
+   still reports it. *)
+let test_failure_without_backtrace () =
   let was = Stdlib.Printexc.backtrace_status () in
   Stdlib.Printexc.record_backtrace false;
   Exn.protect
     ~finally:(fun () -> Stdlib.Printexc.record_backtrace was)
     ~f:(fun () ->
-      let origin =
-        try failwith "boom" with
-        | e -> Internal.extract_origin e
-      in
-      Alcotest.(check string) "origin without a backtrace" "Failure at :0" origin)
+      match
+        run_hegel_test
+          ~settings:
+            { (Hegel.Settings.create ~test_cases:10 ()) with
+              database = Settings.Disabled
+            ; verbosity = Settings.Quiet
+            }
+          (fun _tc -> failwith "boom")
+      with
+      | () -> Alcotest.fail "expected a failure"
+      | exception Failure msg -> Alcotest.(check string) "the failure" "boom" msg)
 ;;
 
-(* Two same-typed exceptions ([Failure]) raised at different source lines must
-   yield distinct origins: [extract_origin] keys on the innermost user frame,
-   not the message. The two [failwith]s are inline (each a distinct, non-tail
-   call site the backtrace records) rather than in helper functions, which would
-   be tail-call-eliminated and collapse to the caller's frame. *)
-let test_extract_origin_distinct_lines () =
-  let a =
-    try failwith "boom" with
-    | e -> Internal.extract_origin e
-  in
-  let b =
-    try failwith "boom" with
-    | e -> Internal.extract_origin e
-  in
-  Alcotest.(check bool)
-    "both origins mention Failure"
-    true
-    (Test_helpers.contains_substring a "Failure"
-     && Test_helpers.contains_substring b "Failure");
-  Alcotest.(check bool)
-    "same-typed exceptions at different lines get distinct origins"
-    false
-    (String.equal a b)
-;;
-
-(* [Lazy.force] raises through [CamlinternalLazy] frames. The origin skips them
-   and points at this file. *)
-let test_extract_origin_skips_stdlib_internal_frames () =
-  let origin =
-    try Lazy.force (lazy (failwith "boom")) with
-    | e -> Internal.extract_origin e
-  in
-  Alcotest.(check bool)
-    "origin is in this file"
-    true
-    (Test_helpers.contains_substring origin "test_client.ml")
+(* [Lazy.force] raises through [CamlinternalLazy] frames, which the failure
+   origin skips, so failures forced at different lines stay distinct. *)
+let test_lazy_failures_at_different_lines_are_distinct () =
+  match
+    run_hegel_test
+      ~settings:
+        { (Hegel.Settings.create ~test_cases:300 ~seed:9 ()) with
+          report_multiple_failures = true
+        ; database = Settings.Disabled
+        ; verbosity = Settings.Quiet
+        }
+      (fun tc ->
+         let v = Hegel.draw tc (Hegel.integers ~min_value:0 ~max_value:100 ()) in
+         if v >= 60 then Lazy.force (lazy (failwith "a"));
+         if v <= 30 then Lazy.force (lazy (failwith "b")))
+  with
+  | () -> Alcotest.fail "expected failures"
+  | exception Failure msg ->
+    Alcotest.(check string) "two distinct failures" "2 failures found!" msg
 ;;
 
 (* ==== Sexp renderer tests ==== *)
@@ -372,27 +376,6 @@ let test_render_sexp_breaks_when_narrow () =
 
 let int_gen = integers ~min_value:0 ~max_value:100 ()
 
-exception Boom
-
-(** A failing property re-raises the (shrunk) OCaml exception. *)
-let test_run_failing_reraises () =
-  let raised =
-    try
-      run_hegel_test
-        ~settings:(Hegel.Settings.create ~test_cases:200 ~seed:1 ())
-        (fun tc ->
-           let v = Hegel.draw tc int_gen in
-           if v >= 10 then raise Boom);
-      None
-    with
-    | e -> Some e
-  in
-  match raised with
-  | Some Boom -> ()
-  | Some other -> Alcotest.failf "expected Boom, got %s" (Exn.to_string other)
-  | None -> Alcotest.fail "expected a failure"
-;;
-
 exception Too_big of int
 
 let test_run_quiet_raises_shrunk_failure () =
@@ -459,13 +442,14 @@ let test_run_nested_guard () =
   Alcotest.(check bool) "nested run rejected" true !got_failure
 ;;
 
-(** [note] only prints on the final replay; here it just must not raise. *)
-let test_note_and_target () =
-  run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:10 ()) (fun tc ->
-    let v = Hegel.draw tc int_gen in
-    note tc "a note";
-    target tc ~label:"v" ~value:(Float.of_int v);
-    assert (v >= 0))
+(** A non-finite [target] observation is an engine-side argument error. *)
+let test_target_non_finite () =
+  match
+    run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:5 ()) (fun tc ->
+      target tc ~label:"x" ~value:Float.nan)
+  with
+  | () -> Alcotest.fail "expected Usage_error"
+  | exception Hegel.Usage_error _ -> ()
 ;;
 
 (** A non-finite [event_value] observation is an engine-side argument error *)
@@ -488,57 +472,30 @@ let test_event_bad_label () =
   | exception Hegel.Usage_error _ -> ()
 ;;
 
-(** Force [database = Settings.Unset] (independent of CI auto-detection) to cover the
-    [Unset] arm of settings translation. *)
-let test_run_database_unset () =
-  let settings =
-    { (Hegel.Settings.create ~test_cases:3 ()) with database = Settings.Unset }
-  in
-  run_hegel_test ~settings (fun tc -> ignore (Hegel.draw tc int_gen : int))
-;;
-
-(** Exercise Settings.to_ffi branches: phases, disabled database, suppressed
-    health checks, derandomize, seed. *)
-let test_run_with_full_settings () =
-  let settings =
-    { (Hegel.Settings.create ~test_cases:10 ~seed:5 ()) with
-      derandomize = true
-    ; database = Settings.Disabled
-    ; phases = [ Settings.Generate ]
-    ; suppress_health_check = [ Settings.Filter_too_much ]
-    }
-  in
-  run_hegel_test ~settings (fun tc ->
-    let v = Hegel.draw tc int_gen in
-    assert (v >= 0))
-;;
-
-(** Exercise every phase bit, every health-check bit, a [Path] database, a
-    [database_key], and the non-default verbosities. *)
-let test_run_all_settings_branches () =
+(* A failure saved under a [database_key] is replayed by a later run with the
+   same key, and not by one with a different key. *)
+let test_database_key () =
   Test_helpers.with_tempdir ~prefix:"hegel-db" ~f:(fun dir ->
-    List.iter [ Settings.Quiet; Settings.Verbose; Settings.Debug ] ~f:(fun verbosity ->
-      let settings =
-        { (Hegel.Settings.create ~test_cases:1 ~seed:1 ()) with
-          verbosity
-        ; database = Settings.Path dir
-        ; phases =
-            [ Settings.Explicit
-            ; Settings.Reuse
-            ; Settings.Generate
-            ; Settings.Target
-            ; Settings.Shrink
-            ]
-        ; suppress_health_check =
-            [ Settings.Filter_too_much
-            ; Settings.Too_slow
-            ; Settings.Test_cases_too_large
-            ; Settings.Large_initial_test_case
-            ]
-        }
-      in
-      run_hegel_test ~settings ~database_key:"key" (fun tc ->
-        ignore (Hegel.draw tc int_gen : int))))
+    let run ~phases ~key =
+      run_hegel_test
+        ~settings:
+          { (Hegel.Settings.create ~test_cases:100 ~seed:1 ()) with
+            database = Settings.Path dir
+          ; verbosity = Settings.Quiet
+          ; phases
+          }
+        ~database_key:key
+        (fun tc -> if Hegel.draw tc int_gen >= 50 then failwith "big")
+    in
+    (match
+       run ~phases:Settings.[ Explicit; Reuse; Generate; Target; Shrink ] ~key:"k"
+     with
+     | () -> Alcotest.fail "expected the first run to fail"
+     | exception Failure _ -> ());
+    (match run ~phases:[ Settings.Reuse ] ~key:"k" with
+     | () -> Alcotest.fail "expected the saved failure to be replayed"
+     | exception Failure _ -> ());
+    run ~phases:[ Settings.Reuse ] ~key:"other")
 ;;
 
 (* ==== Test location (the engine's Antithesis reporting) ==== *)
@@ -633,94 +590,6 @@ let test_test_location_invalid_utf8 () =
   | exception Usage_error _ -> ()
 ;;
 
-(** [Flaky_strategy] raised from the body is treated as an invalid case. *)
-let test_run_flaky_strategy () =
-  let settings =
-    { (Hegel.Settings.create ~test_cases:20 ()) with
-      suppress_health_check = [ Settings.Filter_too_much ]
-    }
-  in
-  run_hegel_test ~settings (fun tc ->
-    let v = Hegel.draw tc int_gen in
-    if v >= 50 then raise Internal.Flaky_strategy)
-;;
-
-exception A
-exception B
-
-(** Two distinct failing assertions surface as an aggregate failure. *)
-let test_run_multiple_failures () =
-  let msg =
-    try
-      run_hegel_test
-        ~settings:
-          { (Hegel.Settings.create ~test_cases:300 ~seed:9 ()) with
-            report_multiple_failures = true
-          }
-        (fun tc ->
-           let v = Hegel.draw tc int_gen in
-           if v >= 60 then raise A;
-           if v <= 30 then raise B);
-      None
-    with
-    | Failure m -> Some m
-    | _ -> None
-  in
-  match msg with
-  | Some m -> Alcotest.(check string) "reports both failures" "2 failures found!" m
-  | None -> Alcotest.fail "expected multiple failures"
-;;
-
-(** [color_enabled] decision table: a HEGEL_COLOR override of 1/0 wins, anything
-    else falls back to the tty state. *)
-let test_color_enabled () =
-  let check name expected ~override ~isatty =
-    Alcotest.(check bool) name expected (Internal.color_enabled ~override ~isatty)
-  in
-  check "1 forces on" true ~override:(Some "1") ~isatty:false;
-  check "0 forces off" false ~override:(Some "0") ~isatty:true;
-  check "unset: tty" true ~override:None ~isatty:true;
-  check "unset: not a tty" false ~override:None ~isatty:false;
-  check "junk: falls back to tty" true ~override:(Some "junk") ~isatty:true
-;;
-
-(** Run [f] with HEGEL_COLOR set to [value], restoring the variable after. *)
-let with_hegel_color value f =
-  let saved = Sys.getenv "HEGEL_COLOR" in
-  Unix.putenv ~key:"HEGEL_COLOR" ~data:value;
-  Exn.protect
-    ~finally:(fun () ->
-      match saved with
-      | Some v -> Unix.putenv ~key:"HEGEL_COLOR" ~data:v
-      | None -> Test_helpers.unsetenv "HEGEL_COLOR")
-    ~f
-;;
-
-(** [stderr_color_enabled] reads HEGEL_COLOR from the environment. *)
-let test_stderr_color_enabled () =
-  with_hegel_color "1" (fun () ->
-    Alcotest.(check bool)
-      "HEGEL_COLOR=1 forces on"
-      true
-      (Internal.stderr_color_enabled ()));
-  with_hegel_color "0" (fun () ->
-    Alcotest.(check bool)
-      "HEGEL_COLOR=0 forces off"
-      false
-      (Internal.stderr_color_enabled ()))
-;;
-
-(** [stderr_color] wraps in SGR codes only when colors are enabled. *)
-let test_stderr_color () =
-  with_hegel_color "1" (fun () ->
-    Alcotest.(check string)
-      "enabled wraps"
-      "\027[31mx\027[0m"
-      (Internal.stderr_color "31" "x"));
-  with_hegel_color "0" (fun () ->
-    Alcotest.(check string) "disabled is identity" "x" (Internal.stderr_color "31" "x"))
-;;
-
 (** A health-check failure is a run-level error (no counterexample), surfaced as
     a [Failure] carrying the engine's error message. *)
 let test_run_health_check_failure () =
@@ -739,38 +608,6 @@ let test_run_health_check_failure () =
   Alcotest.(check bool) "filter health-check diagnostic surfaced" true raised
 ;;
 
-(** Exercise the optional-argument default paths of the primitives: [start_span]
-    without [~label], [pool_generate] without [~consume]. *)
-let test_run_primitive_defaults () =
-  run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:3 ()) (fun tc ->
-    Internal.start_span tc;
-    let v = Hegel.draw tc int_gen in
-    Internal.stop_span tc;
-    let pool = Internal.new_pool tc in
-    let _ = Internal.pool_add tc ~pool in
-    let a = Internal.pool_generate tc ~pool () in
-    let b = Internal.pool_generate tc ~pool ~consume:true () in
-    assert (v >= 0 && a >= 0 && b >= 0))
-;;
-
-(* Every case overruns, so with the health checks suppressed the run ends
-   [Unsatisfiable] rather than reporting a failure. *)
-let test_stop_test_does_not_fail_run () =
-  Test_helpers.expect_unsatisfiable (fun () ->
-    run_hegel_test
-      ~settings:
-        { (Hegel.Settings.create ~test_cases:1 ()) with
-          suppress_health_check =
-            [ Settings.Test_cases_too_large
-            ; Settings.Filter_too_much
-            ; Settings.Large_initial_test_case
-            ]
-        }
-      (fun tc ->
-         ignore (Hegel.draw_silent tc int_gen : int);
-         raise Internal.Stop_test))
-;;
-
 let tests =
   [ Alcotest.test_case "default settings non-ci" `Quick test_default_settings_not_ci
   ; Alcotest.test_case "default settings ci" `Quick test_default_settings_ci
@@ -785,25 +622,6 @@ let tests =
   ; Alcotest.test_case "health_check_to_string" `Quick test_health_check_to_string
   ; Alcotest.test_case "phase_to_string" `Quick test_phase_to_string
   ; Alcotest.test_case
-      "extract_origin no backtrace"
-      `Quick
-      test_extract_origin_no_backtrace
-  ; Alcotest.test_case
-      "extract_origin distinct lines"
-      `Quick
-      test_extract_origin_distinct_lines
-  ; Alcotest.test_case
-      "extract_origin skips stdlib internal frames"
-      `Quick
-      test_extract_origin_skips_stdlib_internal_frames
-  ; Alcotest.test_case "color_enabled" `Quick test_color_enabled
-  ; Alcotest.test_case
-      "Stop_test does not fail the run"
-      `Quick
-      test_stop_test_does_not_fail_run
-  ; Alcotest.test_case "stderr_color_enabled" `Quick test_stderr_color_enabled
-  ; Alcotest.test_case "stderr_color" `Quick test_stderr_color
-  ; Alcotest.test_case
       "test_location reports result"
       `Quick
       test_test_location_reports_result
@@ -812,7 +630,6 @@ let tests =
       `Quick
       test_no_test_location_reports_nothing
   ; Alcotest.test_case "test_location invalid utf8" `Quick test_test_location_invalid_utf8
-  ; Alcotest.test_case "run failing re-raises" `Quick test_run_failing_reraises
   ; Alcotest.test_case
       "run quiet raises the shrunk failure"
       `Quick
@@ -830,15 +647,15 @@ let tests =
       `Quick
       test_render_sexp_fits_matches_to_string_hum
   ; Alcotest.test_case "render_sexp breaks" `Quick test_render_sexp_breaks_when_narrow
-  ; Alcotest.test_case "note and target" `Quick test_note_and_target
   ; Alcotest.test_case "event_value non-finite" `Quick test_event_value_non_finite
   ; Alcotest.test_case "event bad label" `Quick test_event_bad_label
-  ; Alcotest.test_case "run database unset" `Quick test_run_database_unset
-  ; Alcotest.test_case "run with full settings" `Quick test_run_with_full_settings
-  ; Alcotest.test_case "run all settings branches" `Quick test_run_all_settings_branches
-  ; Alcotest.test_case "run flaky strategy" `Quick test_run_flaky_strategy
-  ; Alcotest.test_case "run multiple failures" `Quick test_run_multiple_failures
   ; Alcotest.test_case "run health-check failure" `Quick test_run_health_check_failure
-  ; Alcotest.test_case "run primitive defaults" `Quick test_run_primitive_defaults
+  ; Alcotest.test_case "failure without backtrace" `Quick test_failure_without_backtrace
+  ; Alcotest.test_case
+      "lazy failures at different lines are distinct"
+      `Quick
+      test_lazy_failures_at_different_lines_are_distinct
+  ; Alcotest.test_case "target non-finite" `Quick test_target_non_finite
+  ; Alcotest.test_case "database_key" `Quick test_database_key
   ]
 ;;

@@ -1177,7 +1177,7 @@ guards the syntax upstream cannot parse (`@ m`, kind annotations).
   its own `Alcotest.test_case` list from the PPX-produced functions, same as
   any other consumer would. `ppx/test/expect_tests/` stays
   package-less and dev-only (`enabled_if (<> %{profile} release)`)
-- 100% branch and line coverage is mandatory — no exceptions, no `[@coverage off]`
+- 100% branch and line coverage is mandatory
 
 ### Error Handling
 
@@ -1220,7 +1220,7 @@ from and freed for that one draw.
 - 100% line coverage is mandatory on library code
 - `scripts/check-coverage.py` parses `bisect-ppx-report summary` output
 - Unreachable engine-contract violations use `failwith "..."` (tested via unit tests on the transform)
-- `[@coverage off]` annotations are never used
+- Never add `[@coverage off]` (the OCaml `// nocov`) without explicit human permission
 - Only the instrumented `hegel` library and the `hegel.jane` sublibrary are measured; the `hegel_ffi` bindings, examples, and PPX code are not
 
 ## Lessons Learned
