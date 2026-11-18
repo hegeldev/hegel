@@ -624,38 +624,8 @@ let c_state_machine_start =
     (handle_t @-> handle_t @-> handle_t @-> ptr int64_t @-> returning int)
 ;;
 
-let c_state_machine_next_group =
-  foreign
-    "hegel_state_machine_next_group"
-    (handle_t @-> handle_t @-> handle_t @-> ptr int64_t @-> ptr int64_t @-> returning int)
-;;
-
-let c_state_machine_next_rule =
-  foreign
-    "hegel_state_machine_next_rule"
-    (handle_t @-> handle_t @-> handle_t @-> int64_t @-> ptr int64_t @-> returning int)
-;;
-
-let c_state_machine_rule_rejected =
-  foreign
-    "hegel_state_machine_rule_rejected"
-    (handle_t @-> handle_t @-> handle_t @-> int64_t @-> returning int)
-;;
-
-let c_state_machine_should_check_invariant =
-  foreign
-    "hegel_state_machine_should_check_invariant"
-    (handle_t @-> handle_t @-> handle_t @-> int64_t @-> ptr bool @-> returning int)
-;;
-
 let c_state_machine_free =
   foreign "hegel_state_machine_free" (handle_t @-> handle_t @-> returning int)
-;;
-
-let c_pause_faults = foreign "hegel_pause_faults" (handle_t @-> handle_t @-> returning int)
-
-let c_unpause_faults =
-  foreign "hegel_unpause_faults" (handle_t @-> handle_t @-> returning int)
 ;;
 
 let c_target =
@@ -979,7 +949,11 @@ let check_rc ctx rc = if rc <> ok then raise (error_of_rc ctx rc)
 
 exception Engine_status of int
 
+#ifdef OXCAML
+let () = Callback.Safe.register_exception "hegel_ffi_status" (Engine_status 0)
+#else
 let () = Callback.register_exception "hegel_ffi_status" (Engine_status 0)
+#endif
 
 let symbol name =
   let address = memoize (fun () -> Dl.dlsym ~handle:(lib ()) ~symbol:name) in
@@ -1010,6 +984,16 @@ let s_test_case_wants_output = symbol "hegel_test_case_wants_output"
 let s_test_case_wants_detail = symbol "hegel_test_case_wants_detail"
 let s_mark_complete = symbol "hegel_mark_complete"
 let s_test_case_free = symbol "hegel_test_case_free"
+let s_state_machine_next_group = symbol "hegel_state_machine_next_group"
+let s_state_machine_next_rule = symbol "hegel_state_machine_next_rule"
+let s_state_machine_rule_rejected = symbol "hegel_state_machine_rule_rejected"
+
+let s_state_machine_should_check_invariant =
+  symbol "hegel_state_machine_should_check_invariant"
+;;
+
+let s_pause_faults = symbol "hegel_pause_faults"
+let s_unpause_faults = symbol "hegel_unpause_faults"
 
 external stub_generate_integer
   :  (nativeint[@unboxed])
@@ -1078,12 +1062,12 @@ external stub_collection_more
   = "hegel_ocaml_collection_more_byte" "hegel_ocaml_collection_more"
 [@@noalloc]
 
-external stub_handle_free
+external stub_call_handle
   :  (nativeint[@unboxed])
   -> (nativeint[@unboxed])
   -> (nativeint[@unboxed])
   -> (int[@untagged])
-  = "hegel_ocaml_handle_free_byte" "hegel_ocaml_handle_free"
+  = "hegel_ocaml_call_handle_byte" "hegel_ocaml_call_handle"
 [@@noalloc]
 
 external stub_next_test_case
@@ -1112,6 +1096,49 @@ external stub_mark_complete
   -> (int[@untagged])
   = "hegel_ocaml_mark_complete_byte" "hegel_ocaml_mark_complete"
 [@@noalloc]
+
+external stub_state_machine_next_group
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (int[@untagged])
+  = "hegel_ocaml_state_machine_next_group_byte" "hegel_ocaml_state_machine_next_group"
+[@@noalloc]
+
+external stub_state_machine_next_rule
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (int[@untagged])
+  -> (int[@untagged])
+  = "hegel_ocaml_state_machine_next_rule_byte" "hegel_ocaml_state_machine_next_rule"
+[@@noalloc]
+
+external stub_state_machine_rule_rejected
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (int[@untagged])
+  -> (int[@untagged])
+  = "hegel_ocaml_state_machine_rule_rejected_byte"
+    "hegel_ocaml_state_machine_rule_rejected"
+[@@noalloc]
+
+external stub_state_machine_should_check_invariant
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (int[@untagged])
+  -> (int[@untagged])
+  = "hegel_ocaml_state_machine_should_check_invariant_byte"
+    "hegel_ocaml_state_machine_should_check_invariant"
+[@@noalloc]
+
+let state_machine_done = -1000
 
 (* ------------------------------------------------------------------ *)
 (* Diagnostics                                                         *)
@@ -1326,7 +1353,7 @@ let run_free ctx run = check_rc ctx (c_run_free ctx run)
 let run_result_free ctx r = check_rc ctx (c_run_result_free ctx r)
 let failure_free ctx f = check_rc ctx (c_failure_free ctx f)
 let test_case_free ctx tc =
-  check_rc ctx (stub_handle_free (s_test_case_free ()) (address_of ctx) (address_of tc))
+  check_rc ctx (stub_call_handle (s_test_case_free ()) (address_of ctx) (address_of tc))
 ;;
 
 let test_case_clone ctx tc =
@@ -1698,7 +1725,7 @@ let collection_reject ctx tc collection why =
 let collection_free ctx collection =
   check_rc
     ctx
-    (stub_handle_free (s_collection_free ()) (address_of ctx) (address_of collection))
+    (stub_call_handle (s_collection_free ()) (address_of ctx) (address_of collection))
 ;;
 
 let new_pool ctx tc =
@@ -1766,49 +1793,68 @@ let state_machine_start ctx tc ~state_machine =
 (* [HEGEL_STATE_MACHINE_DONE]: written to the out parameter by
    [hegel_state_machine_next_group] when the state machine has terminated and by
    [hegel_state_machine_next_rule] when the worker's round is over. *)
-let state_machine_done = Int64.min_int
-
-let read_index out =
-  let v = !@out in
-  if Int64.equal v state_machine_done then None else Some (Int64.to_int v)
+let check_state_machine_index ctx r =
+  if r >= 0
+  then Some r
+  else if r = state_machine_done
+  then None
+  else raise (error_of_rc ctx r)
 ;;
 
 let state_machine_next_group ctx tc ~state_machine =
-  let out = allocate int64_t 0L in
-  let concurrency = allocate int64_t 0L in
-  check_rc ctx (c_state_machine_next_group ctx tc state_machine out concurrency);
-  Option.map (fun group -> group, Int64.to_int !@concurrency) (read_index out)
+  match
+    check_state_machine_index
+      ctx
+      (stub_state_machine_next_group
+         (s_state_machine_next_group ())
+         (address_of ctx)
+         (address_of tc)
+         (address_of state_machine))
+  with
+  | None -> None
+  | Some packed -> Some (packed land 0xFFFF_FFFF, packed lsr 32)
 ;;
 
 let state_machine_next_rule ctx tc ~state_machine ~worker_index =
-  let out = allocate int64_t 0L in
-  check_rc
+  check_state_machine_index
     ctx
-    (c_state_machine_next_rule ctx tc state_machine (Int64.of_int worker_index) out);
-  read_index out
+    (stub_state_machine_next_rule
+       (s_state_machine_next_rule ())
+       (address_of ctx)
+       (address_of tc)
+       (address_of state_machine)
+       worker_index)
 ;;
 
 let state_machine_rule_rejected ctx tc ~state_machine ~worker_index =
   check_rc
     ctx
-    (c_state_machine_rule_rejected ctx tc state_machine (Int64.of_int worker_index))
+    (stub_state_machine_rule_rejected
+       (s_state_machine_rule_rejected ())
+       (address_of ctx)
+       (address_of tc)
+       (address_of state_machine)
+       worker_index)
 ;;
 
 let state_machine_should_check_invariant ctx tc ~state_machine ~invariant_index =
-  let out = allocate bool false in
-  check_rc
+  check_flag
     ctx
-    (c_state_machine_should_check_invariant
-       ctx
-       tc
-       state_machine
-       (Int64.of_int invariant_index)
-       out);
-  !@out
+    (stub_state_machine_should_check_invariant
+       (s_state_machine_should_check_invariant ())
+       (address_of ctx)
+       (address_of tc)
+       (address_of state_machine)
+       invariant_index)
 ;;
 
-let pause_faults ctx tc = check_rc ctx (c_pause_faults ctx tc)
-let unpause_faults ctx tc = check_rc ctx (c_unpause_faults ctx tc)
+let pause_faults ctx tc =
+  check_rc ctx (stub_call_handle (s_pause_faults ()) (address_of ctx) (address_of tc))
+;;
+
+let unpause_faults ctx tc =
+  check_rc ctx (stub_call_handle (s_unpause_faults ()) (address_of ctx) (address_of tc))
+;;
 let state_machine_free ctx state_machine =
   check_rc ctx (c_state_machine_free ctx state_machine)
 ;;

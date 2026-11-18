@@ -297,20 +297,26 @@ deliberately NOT bisect_ppx-instrumented, keeping its
 mechanical marshalling out of the 100%-coverage gate (no `[@coverage off]`).
 
 **Direct C stubs.** A ctypes `Foreign` call costs about 160 ns and 260 words of
-allocation before libhegel does any work, so the calls made on every draw or
-test case bypass it: `generate_integer`/`boolean`/`float`, `start_span`,
-`stop_span`, `new_collection`, `collection_more`, `collection_free`,
-`next_test_case`, `test_case_should_capture`, `mark_complete` and
-`test_case_free` are `external`s into `lib/ffi/hegel_stubs.c`. Each stub takes the
+allocation before libhegel does any work, so the calls made on every draw, test
+case or state-machine step bypass it: `generate_integer`/`boolean`/`float`,
+`start_span`, `stop_span`, `new_collection`, `collection_more`,
+`collection_free`, `next_test_case`, `test_case_wants_output`,
+`test_case_wants_detail`, `mark_complete`, `test_case_free`,
+`state_machine_next_group`, `state_machine_next_rule`,
+`state_machine_rule_rejected`, `state_machine_should_check_invariant`,
+`pause_faults` and `unpause_faults` are `external`s into `lib/ffi/hegel_stubs.c`. Each stub takes the
 libhegel function's address (from `Dl.dlsym` on the same library handle, looked up
 with the ctypes bindings by `initialize`, so loading stays lazy) and the handles'
 raw addresses (`raw_address_of_ptr`, a field read) as unboxed `nativeint`s. Stubs
 for a bool, unit or handle result are `[@@noalloc]` and return a negative libhegel
 return code on failure (handles are never negative); the integer and float draws,
 whose every value is valid, raise `Engine_status rc` from C instead, and the
-wrapper maps either through `error_of_rc`. The `next_test_case` stub releases the
+wrapper maps either through `error_of_rc`. The rule and group stubs return the
+index, `-1000` for `HEGEL_STATE_MACHINE_DONE` (which does not fit an OCaml int),
+or a negative return code; `next_group` packs the round's concurrency level above
+the group's low 32 bits. The `next_test_case` stub releases the
 runtime lock around the engine call. Every stub has a bytecode variant. Move a
-call here only if it runs per draw or per test case; the rest stay on ctypes.
+call here only if it runs per draw, test case or step; the rest stay on ctypes.
 
 `lib/protocol.ml`, `lib/connection.ml`, `lib/cbor/`, `lib/cbor_helpers.ml`, and
 the old Python-subprocess install flow were removed in the native-backend and

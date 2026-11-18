@@ -29,11 +29,18 @@ typedef int (*start_span_fn)(void *, void *, uint64_t);
 typedef int (*stop_span_fn)(void *, void *, bool);
 typedef int (*new_collection_fn)(void *, void *, uint64_t, uint64_t, void **);
 typedef int (*collection_more_fn)(void *, void *, void *, bool *);
-typedef int (*handle_free_fn)(void *, void *);
+typedef int (*call_handle_fn)(void *, void *);
 typedef int (*next_test_case_fn)(void *, void *, void **);
 typedef int (*test_case_flag_fn)(void *, void *, bool *);
 typedef int (*mark_complete_fn)(void *, void *, uint32_t, const hegel_string_t *,
                                 const hegel_string_t *, const hegel_string_t *);
+typedef int (*next_group_fn)(void *, void *, void *, int64_t *, int64_t *);
+typedef int (*next_rule_fn)(void *, void *, void *, int64_t, int64_t *);
+typedef int (*rule_rejected_fn)(void *, void *, void *, int64_t);
+typedef int (*should_check_invariant_fn)(void *, void *, void *, int64_t, bool *);
+
+#define HEGEL_E_INTERNAL (-8)
+#define STATE_MACHINE_DONE (-1000)
 
 #define PTR(x) ((void *)(x))
 
@@ -132,12 +139,12 @@ value hegel_ocaml_collection_more_byte(value fn, value ctx, value tc, value coll
                                               Nativeint_val(tc), Nativeint_val(coll)));
 }
 
-intnat hegel_ocaml_handle_free(intnat fn, intnat ctx, intnat handle) {
-  return ((handle_free_fn)fn)(PTR(ctx), PTR(handle));
+intnat hegel_ocaml_call_handle(intnat fn, intnat ctx, intnat handle) {
+  return ((call_handle_fn)fn)(PTR(ctx), PTR(handle));
 }
 
-value hegel_ocaml_handle_free_byte(value fn, value ctx, value handle) {
-  return Val_long(hegel_ocaml_handle_free(Nativeint_val(fn), Nativeint_val(ctx),
+value hegel_ocaml_call_handle_byte(value fn, value ctx, value handle) {
+  return Val_long(hegel_ocaml_call_handle(Nativeint_val(fn), Nativeint_val(ctx),
                                           Nativeint_val(handle)));
 }
 
@@ -189,4 +196,72 @@ value hegel_ocaml_mark_complete_byte(value *argv, int argn) {
   return Val_long(hegel_ocaml_mark_complete(
       Nativeint_val(argv[0]), Nativeint_val(argv[1]), Nativeint_val(argv[2]),
       Long_val(argv[3]), argv[4], argv[5], argv[6]));
+}
+
+/* Returns the group in the low 32 bits and the round's concurrency level in
+   the bits above, STATE_MACHINE_DONE once the machine is done, or a negative
+   libhegel return code. */
+intnat hegel_ocaml_state_machine_next_group(intnat fn, intnat ctx, intnat tc,
+                                            intnat machine) {
+  int64_t group = 0;
+  int64_t concurrency = 0;
+  int rc = ((next_group_fn)fn)(PTR(ctx), PTR(tc), PTR(machine), &group, &concurrency);
+  if (rc != 0) return rc;
+  if (group == INT64_MIN) return STATE_MACHINE_DONE;
+  if (group < 0 || group > UINT32_MAX || concurrency < 0 || concurrency >= (1 << 30))
+    return HEGEL_E_INTERNAL;
+  return (intnat)((concurrency << 32) | group);
+}
+
+value hegel_ocaml_state_machine_next_group_byte(value fn, value ctx, value tc,
+                                                value machine) {
+  return Val_long(hegel_ocaml_state_machine_next_group(
+      Nativeint_val(fn), Nativeint_val(ctx), Nativeint_val(tc),
+      Nativeint_val(machine)));
+}
+
+intnat hegel_ocaml_state_machine_next_rule(intnat fn, intnat ctx, intnat tc,
+                                           intnat machine, intnat worker) {
+  int64_t rule = 0;
+  int rc = ((next_rule_fn)fn)(PTR(ctx), PTR(tc), PTR(machine), worker, &rule);
+  if (rc != 0) return rc;
+  if (rule == INT64_MIN) return STATE_MACHINE_DONE;
+  if (rule < 0 || rule > UINT32_MAX) return HEGEL_E_INTERNAL;
+  return (intnat)rule;
+}
+
+value hegel_ocaml_state_machine_next_rule_byte(value fn, value ctx, value tc,
+                                               value machine, value worker) {
+  return Val_long(hegel_ocaml_state_machine_next_rule(
+      Nativeint_val(fn), Nativeint_val(ctx), Nativeint_val(tc),
+      Nativeint_val(machine), Long_val(worker)));
+}
+
+intnat hegel_ocaml_state_machine_rule_rejected(intnat fn, intnat ctx, intnat tc,
+                                               intnat machine, intnat worker) {
+  return ((rule_rejected_fn)fn)(PTR(ctx), PTR(tc), PTR(machine), worker);
+}
+
+value hegel_ocaml_state_machine_rule_rejected_byte(value fn, value ctx, value tc,
+                                                   value machine, value worker) {
+  return Val_long(hegel_ocaml_state_machine_rule_rejected(
+      Nativeint_val(fn), Nativeint_val(ctx), Nativeint_val(tc),
+      Nativeint_val(machine), Long_val(worker)));
+}
+
+intnat hegel_ocaml_state_machine_should_check_invariant(intnat fn, intnat ctx,
+                                                        intnat tc, intnat machine,
+                                                        intnat index) {
+  bool out = false;
+  int rc = ((should_check_invariant_fn)fn)(PTR(ctx), PTR(tc), PTR(machine), index,
+                                           &out);
+  return rc != 0 ? rc : out;
+}
+
+value hegel_ocaml_state_machine_should_check_invariant_byte(value fn, value ctx,
+                                                            value tc, value machine,
+                                                            value index) {
+  return Val_long(hegel_ocaml_state_machine_should_check_invariant(
+      Nativeint_val(fn), Nativeint_val(ctx), Nativeint_val(tc),
+      Nativeint_val(machine), Long_val(index)));
 }
