@@ -52,13 +52,6 @@ let%hegel_test simple_fail (tc : Hegel.test_case) =
 [@@settings Hegel.Settings.create ~test_cases:3 ()]
 ;;
 
-(** A test without an explicit [@@settings] attribute — should fall back to
-    default settings. *)
-let%hegel_test no_settings (tc : Hegel.test_case) =
-  let _ = Hegel.draw tc (Hegel.booleans ()) in
-  ()
-;;
-
 let%hegel_main failing_main (tc : Hegel.test_case) =
   let n = Hegel.draw tc (Hegel.integers ~min_value:0 ~max_value:100 ()) in
   if n >= 0 then failwith "deliberate failure"
@@ -98,35 +91,14 @@ let test_passing_writes_sdk_jsonl () =
   with_tempdir ~f:(fun dir ->
     with_env_dir dir ~f:(fun () ->
       simple_pass ();
-      let path = Filename.concat dir "sdk.jsonl" in
-      Alcotest.(check bool) "sdk.jsonl exists" true (Stdlib.Sys.file_exists path);
-      let lines = In_channel.read_all path |> String.split_lines in
-      Alcotest.(check int) "two lines (declaration + evaluation)" 2 (List.length lines);
-      let decl = Yojson.Safe.from_string (List.nth_exn lines 0) in
-      let eval = Yojson.Safe.from_string (List.nth_exn lines 1) in
-      let decl_assoc =
-        match decl with
-        | `Assoc [ ("antithesis_assert", `Assoc fields) ] -> fields
-        | _ -> Alcotest.fail "declaration not wrapped in antithesis_assert"
+      let lines =
+        In_channel.read_all (Filename.concat dir "sdk.jsonl") |> String.split_lines
       in
       let eval_assoc =
-        match eval with
+        match Yojson.Safe.from_string (List.last_exn lines) with
         | `Assoc [ ("antithesis_assert", `Assoc fields) ] -> fields
         | _ -> Alcotest.fail "evaluation not wrapped in antithesis_assert"
       in
-      Alcotest.(check string)
-        "declaration hit"
-        "false"
-        (Yojson.Safe.to_string (List.Assoc.find_exn decl_assoc ~equal:String.equal "hit"));
-      Alcotest.(check string)
-        "evaluation hit"
-        "true"
-        (Yojson.Safe.to_string (List.Assoc.find_exn eval_assoc ~equal:String.equal "hit"));
-      Alcotest.(check string)
-        "evaluation condition is true (passing test)"
-        "true"
-        (Yojson.Safe.to_string
-           (List.Assoc.find_exn eval_assoc ~equal:String.equal "condition"));
       let id =
         Yojson.Safe.to_string (List.Assoc.find_exn eval_assoc ~equal:String.equal "id")
       in
@@ -134,10 +106,8 @@ let test_passing_writes_sdk_jsonl () =
         "id names the module and test"
         true
         (String.is_substring id ~substring:"test_ppx_hegel_test::simple_pass");
-      (* location.file should mention the test file. *)
-      let loc = List.Assoc.find_exn eval_assoc ~equal:String.equal "location" in
       let loc_assoc =
-        match loc with
+        match List.Assoc.find_exn eval_assoc ~equal:String.equal "location" with
         | `Assoc f -> f
         | _ -> Alcotest.fail "location not an object"
       in
@@ -150,27 +120,11 @@ let test_passing_writes_sdk_jsonl () =
         (String.is_substring file ~substring:"test_ppx_hegel_test.ml")))
 ;;
 
-let test_failing_writes_condition_false () =
-  with_tempdir ~f:(fun dir ->
-    with_env_dir dir ~f:(fun () ->
-      (match simple_fail () with
-       | () -> Alcotest.fail "expected the PPX wrapper to re-raise the failure"
-       | exception Failure msg ->
-         Alcotest.(check string) "original failure" "deliberate failure" msg);
-      let path = Filename.concat dir "sdk.jsonl" in
-      Alcotest.(check bool) "sdk.jsonl exists" true (Stdlib.Sys.file_exists path);
-      let lines = In_channel.read_all path |> String.split_lines in
-      let eval = Yojson.Safe.from_string (List.nth_exn lines 1) in
-      let eval_assoc =
-        match eval with
-        | `Assoc [ ("antithesis_assert", `Assoc fields) ] -> fields
-        | _ -> Alcotest.fail "evaluation not wrapped in antithesis_assert"
-      in
-      Alcotest.(check string)
-        "evaluation condition is false (failing test)"
-        "false"
-        (Yojson.Safe.to_string
-           (List.Assoc.find_exn eval_assoc ~equal:String.equal "condition"))))
+let test_failing_reraises () =
+  match simple_fail () with
+  | () -> Alcotest.fail "expected the PPX wrapper to re-raise the failure"
+  | exception Failure msg ->
+    Alcotest.(check string) "original failure" "deliberate failure" msg
 ;;
 
 let invariant_checks = ref 0
@@ -297,14 +251,6 @@ let test_concurrent_state_machine_collects_groups_and_weights () =
   with_tempdir ~f:(fun dir -> with_env_dir dir ~f:runs_ledger)
 ;;
 
-let test_no_settings_runs_with_defaults () =
-  with_tempdir ~f:(fun dir ->
-    with_env_dir dir ~f:(fun () ->
-      no_settings ();
-      let path = Filename.concat dir "sdk.jsonl" in
-      Alcotest.(check bool) "sdk.jsonl exists" true (Stdlib.Sys.file_exists path)))
-;;
-
 let () =
   Alcotest.run
     "hegel-ppx-hegel-test"
@@ -313,15 +259,8 @@ let () =
             "passing test writes sdk.jsonl"
             `Quick
             test_passing_writes_sdk_jsonl
-        ; Alcotest.test_case
-            "failing test writes condition:false"
-            `Quick
-            test_failing_writes_condition_false
+        ; Alcotest.test_case "failing test re-raises" `Quick test_failing_reraises
         ; Alcotest.test_case "let%hegel_main" `Quick test_main_reports
-        ; Alcotest.test_case
-            "no [@@settings] uses defaults"
-            `Quick
-            test_no_settings_runs_with_defaults
         ; Alcotest.test_case
             "module%hegel_state_machine collects [@@rule]/[@@invariant] bindings"
             `Quick

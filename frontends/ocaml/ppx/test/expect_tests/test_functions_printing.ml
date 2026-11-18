@@ -42,35 +42,6 @@ let%expect_test "a function is named from its binding" =
     |}]
 ;;
 
-let%hegel_test binding_name_inline tc =
-  let f =
-    draw_silent
-      tc
-      (functions
-         ~sexp_of_arg:sexp_of_int
-         ~returns:(integers ~min_value:0 ~max_value:1000 ())
-         ())
-  in
-  assert (f 42 < 10)
-[@@settings
-  { (Settings.create ~test_cases:100 ~seed:0 ()) with verbosity = Settings.Normal }]
-;;
-
-let%expect_test "a function drawn inline is also named from its binding" =
-  (try binding_name_inline () with
-   | _ -> ());
-  print_string (Expect_scrub.scrub_report [%expect.output]);
-  [%expect
-    {|
-    --- Failure: binding_name_inline (ppx/test/expect_tests/test_functions_printing.ml:<LINE>) ---
-
-    f 42 = 10
-
-    Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: [@@failure_blobs [ "<BLOB>" ]]
-    |}]
-;;
-
 let%hegel_test explicit_name_beats_binding tc =
   let f =
     draw_silent

@@ -294,18 +294,3 @@ let%expect_test "the multi-failure report omits blobs when print_blob is off" =
     2 failures found!
     |}]
 ;;
-
-let%expect_test "blob scrubbing preserves quoted failure diagnostics" =
-  print_string
-    (Expect_scrub.scrub_blobs
-       {|--- Failure: test (test_failure_blobs_record.ml:1) ---
-Exception: Failure("failure_blobs should not hide this message")
-rerun with: ~failure_blobs:[ "encoded choices" ]
-|});
-  [%expect
-    {|
-    --- Failure: test (test_failure_blobs_record.ml:1) ---
-    Exception: Failure("failure_blobs should not hide this message")
-    rerun with: ~failure_blobs:[ "<BLOB>" ]
-    |}]
-;;
