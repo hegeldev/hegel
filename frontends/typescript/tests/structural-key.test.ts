@@ -52,6 +52,8 @@ describe("structural keys", () => {
     ["undefined and null", undefined, null],
     ["a string and a boolean spelt alike", "true", true],
     ["arrays of different lengths", [1], [1, 1]],
+    ["an empty array and a one-hole array", [], new Array(1)],
+    ["a hole and undefined", new Array(1), [undefined]],
     ["objects with different values", { a: 1 }, { a: 2 }],
     ["an object and an array", {}, []],
     ["an empty map and an empty set", new Map(), new Set()],
@@ -119,6 +121,29 @@ describe("unique arrays compare elements structurally", () => {
           }),
         );
         expect(new Set(xs.map((x) => x % 3)).size).toBe(xs.length);
+      },
+      { testCases: 30 },
+    ));
+});
+
+describe("sets and maps compare elements structurally", () => {
+  const byte = gs.binary({ maxSize: 1 });
+  const contents = (bytes: Iterable<Uint8Array>) => new Set([...bytes].map((b) => b.join(",")));
+
+  test("sets of byte arrays", () =>
+    hegel.test(
+      (tc) => {
+        const s = tc.draw(gs.sets(byte, { minSize: 2, maxSize: 4 }));
+        expect(contents(s).size).toBe(s.size);
+      },
+      { testCases: 30 },
+    ));
+
+  test("maps keyed by byte arrays", () =>
+    hegel.test(
+      (tc) => {
+        const m = tc.draw(gs.maps(byte, gs.booleans(), { minSize: 2, maxSize: 4 }));
+        expect(contents(m.keys()).size).toBe(m.size);
       },
       { testCases: 30 },
     ));

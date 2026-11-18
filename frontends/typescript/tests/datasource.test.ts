@@ -344,26 +344,6 @@ describe("Generator parse error paths", () => {
     expect(() => tc.draw(gs.arrays(gs.integers()))).toThrow("Expected array");
   });
 
-  it("sets parse throws on non-array", () => {
-    const ds = new FakeDataSource({ generates: ["not array"] });
-    const tc = new TestCase(ds, false);
-    expect(() => tc.draw(gs.sets(gs.integers()))).toThrow("Expected array");
-  });
-
-  it("maps parse throws on non-array", () => {
-    const ds = new FakeDataSource({ generates: ["not array"] });
-    const tc = new TestCase(ds, false);
-    expect(() => tc.draw(gs.maps(gs.integers(), gs.integers()))).toThrow("Expected array");
-  });
-
-  it("maps parse throws on invalid entry", () => {
-    const ds = new FakeDataSource({ generates: [["not a pair"]] });
-    const tc = new TestCase(ds, false);
-    expect(() => tc.draw(gs.maps(gs.integers(), gs.integers()))).toThrow(
-      "Expected [key, value] pair",
-    );
-  });
-
   it("oneOf parse throws on non-array", () => {
     const ds = new FakeDataSource({ generates: ["not array"] });
     const tc = new TestCase(ds, false);

@@ -1,6 +1,6 @@
 /**
- * Unit tests for the schema interpreter's pure helpers (value formatting and
- * uniqueness keys) and its schema-validation errors. The draw paths themselves
+ * Unit tests for the schema interpreter's pure helpers (value formatting) and
+ * its schema-validation errors. The draw paths themselves
  * are covered by the generator integration tests against the real engine.
  */
 
@@ -12,7 +12,6 @@ import {
   formatUuid,
   formatIpv4,
   formatIpv6,
-  valueKey,
   generateValue,
 } from "../src/generate.js";
 import type { Engine, ContextHandle, TestCaseHandle } from "../src/engine.js";
@@ -117,36 +116,6 @@ describe("formatIpv6", () => {
 
   it("renders the IPv4-mapped range in mixed notation", () => {
     expect(formatIpv6(ip(0, 0, 0, 0, 0, 0xffff, 0xc0a8, 0x0001))).toBe("::ffff:192.168.0.1");
-  });
-});
-
-describe("valueKey", () => {
-  it("gives equal-valued numbers and bigints the same key", () => {
-    expect(valueKey(5)).toBe(valueKey(5n));
-    expect(valueKey(5)).not.toBe(valueKey(6));
-    expect(valueKey(5.5)).not.toBe(valueKey(5));
-  });
-
-  it("distinguishes values of different kinds", () => {
-    const keys = [
-      valueKey(null),
-      valueKey(1),
-      valueKey("1"),
-      valueKey(true),
-      valueKey(Uint8Array.from([1])),
-      valueKey([1]),
-    ];
-    expect(new Set(keys).size).toBe(keys.length);
-  });
-
-  it("keys byte strings by content", () => {
-    expect(valueKey(Uint8Array.from([1, 2]))).toBe(valueKey(new Uint8Array([1, 2])));
-    expect(valueKey(Uint8Array.from([1, 2]))).not.toBe(valueKey(Uint8Array.from([1, 3])));
-  });
-
-  it("keys arrays recursively", () => {
-    expect(valueKey([1, [true, null]])).toBe(valueKey([1, [true, null]]));
-    expect(valueKey([1, [true, null]])).not.toBe(valueKey([1, [false, null]]));
   });
 });
 

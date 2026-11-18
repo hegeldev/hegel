@@ -82,7 +82,6 @@ const schemaSpecs = new WeakMap<object, LabelSpec>();
 
 const SCHEMA_NAMES: Record<string, string> = {
   list: LabelNames.LISTS,
-  dict: LabelNames.DICTS,
   tuple: LabelNames.TUPLES,
   one_of: LabelNames.ONE_OF,
 };
@@ -96,13 +95,11 @@ export function schemaLabelSpec(schema: Record<string, unknown>): LabelSpec {
     const children: Record<string, unknown>[] =
       type === "list"
         ? [schema["elements"] as Record<string, unknown>]
-        : type === "dict"
-          ? [schema["keys"] as Record<string, unknown>, schema["values"] as Record<string, unknown>]
-          : type === "tuple"
-            ? (schema["elements"] as Record<string, unknown>[])
-            : type === "one_of"
-              ? (schema["generators"] as Record<string, unknown>[])
-              : [];
+        : type === "tuple"
+          ? (schema["elements"] as Record<string, unknown>[])
+          : type === "one_of"
+            ? (schema["generators"] as Record<string, unknown>[])
+            : [];
     spec = labelSpec(name, ...children.map(schemaLabelSpec));
     schemaSpecs.set(schema, spec);
   }
