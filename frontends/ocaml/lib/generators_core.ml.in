@@ -652,6 +652,17 @@ let rec do_draw : type a. a core -> Internal.test_case -> a =
   | Function { build; _ } -> build ~name:None data
 ;;
 
+let print_draw tc ?loc name sexp_of value =
+  Internal.print_line tc (fun () ->
+    let location =
+      Option.fold
+        ~none:""
+        ~some:(fun (loc : Lexing.position) ->
+          Printf.sprintf " @ %s:%s" loc.pos_fname (string_of_int loc.pos_lnum))
+        loc
+    in
+    [ Text (name ^ location ^ " = "); Value (sexp_of value) ])
+;;
 
 (** [draw_named ~label ~repeatable tc gen] is the naming-aware draw the
     [let%hegel_test] PPX rewrites bindings to; it is not intended for direct use
@@ -671,29 +682,20 @@ let draw_named
     -> (a, printable) generator
     -> a
   =
-  let open Lexing in
   fun ~label ?loc ~repeatable tc gen ->
-    let location =
-      Option.fold
-        ~none:""
-        ~some:(fun loc ->
-          Printf.sprintf " @ %s:%s" loc.pos_fname (string_of_int loc.pos_lnum))
-        loc
-    in
     match gen with
     | Printable { core = Function { build; _ }; sexp_of } ->
-      let name = Internal.draw_display_name tc ~label ~repeatable in
-      let value = build ~name:(Some name) tc in
-      if Internal.draw_depth tc = 0
-      then
-        Internal.print_line tc [ Text (name ^ location ^ " = "); Value (sexp_of value) ];
-      value
-    | Printable { core; sexp_of } ->
-      let value = do_draw core tc in
-      if Internal.draw_depth tc = 0
+      if Internal.should_print tc
       then (
         let name = Internal.draw_display_name tc ~label ~repeatable in
-        Internal.print_line tc [ Text (name ^ location ^ " = "); Value (sexp_of value) ]);
+        let value = build ~name:(Some name) tc in
+        if Internal.draw_depth tc = 0 then print_draw tc ?loc name sexp_of value;
+        value)
+      else build ~name:None tc
+    | Printable { core; sexp_of } ->
+      let value = do_draw core tc in
+      if Internal.should_print tc && Internal.draw_depth tc = 0
+      then print_draw tc ?loc (Internal.draw_display_name tc ~label ~repeatable) sexp_of value;
       value
     | _ -> .
 ;;
