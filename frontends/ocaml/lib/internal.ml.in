@@ -12,10 +12,12 @@ module Ffi = Hegel_ffi.Ffi
 
 #ifdef OXCAML
 #define LOCAL(x) (x @ local)
+#define NONTAIL [@nontail]
 #define PORTABLE @@ portable
 #define KIND(k) : k
 #else
 #define LOCAL(x) x
+#define NONTAIL
 #define PORTABLE
 #define KIND(k)
 #endif
@@ -224,7 +226,7 @@ exception Internal_error = Ffi.Internal_error
 
 (** [with_stop_guard tc f] marks the test case aborted on engine control
     exceptions and propagates them unchanged. *)
-let with_stop_guard tc f =
+let with_stop_guard tc LOCAL(f) =
   try f () with
   | (Stop_test | Assume_rejected | Usage_error _) as exn ->
     Atomic.set tc.test_aborted true;
@@ -240,14 +242,15 @@ let with_stop_guard tc f =
     [true]. If [forced] is [Some b] the value is forced to [b]. Raises
     {!Stop_test} on StopTest. *)
 let generate_boolean tc p forced =
-  with_stop_guard tc (fun () -> Ffi.generate_boolean tc.context tc.handle p forced)
+  with_stop_guard tc (fun () ->
+    Ffi.generate_boolean tc.context tc.handle p forced) NONTAIL
 ;;
 
 (** [generate_integer tc ~min_value ~max_value] draws an integer in the inclusive
     range. Raises {!Stop_test} on StopTest. *)
 let generate_integer tc ~min_value ~max_value =
   with_stop_guard tc (fun () ->
-    Ffi.generate_integer tc.context tc.handle ~min_value ~max_value)
+    Ffi.generate_integer tc.context tc.handle ~min_value ~max_value) NONTAIL
 ;;
 
 (** [generate_float tc ...] draws a width-64 float under the given policy. Raises
@@ -272,26 +275,100 @@ let generate_float
       ~allow_infinity
       ~exclude_min
       ~exclude_max
-      ~smallest_nonzero_magnitude)
+      ~smallest_nonzero_magnitude) NONTAIL
 ;;
 
 (** [generate_bytes tc ~min_size ~max_size] draws a byte string. Raises
     {!Stop_test} on StopTest. *)
 let generate_bytes tc ~min_size ~max_size =
   with_stop_guard tc (fun () ->
-    Ffi.generate_bytes tc.context tc.handle ~min_size ~max_size)
+    Ffi.generate_bytes tc.context tc.handle ~min_size ~max_size) NONTAIL
 ;;
 
-(** [with_string_generator tc make draw] builds a string-generator handle with
-    [make tc.context], draws from it with [draw], and always frees the handle.
-    Raises {!Stop_test} on StopTest and {!Assume_rejected} when the draw
-    rejects itself. *)
-let with_string_generator tc make =
+type string_generator_key =
+  | Text of
+      { min_size : int
+      ; max_size : int option
+      ; codec : string option
+      ; min_codepoint : int
+      ; max_codepoint : int
+      ; categories : string list option
+      ; exclude_categories : string list option
+      ; include_characters : string option
+      ; exclude_characters : string option
+      }
+  | Regex of
+      { pattern : string
+      ; fullmatch : bool
+      }
+  | Email
+  | Url
+  | Domain_name of int
+
+let string_generator_buckets = 64
+let max_string_generators_per_bucket = 4
+
+(* The string generators built so far, hashed into buckets of at most
+   [max_string_generators_per_bucket], shared by every test case and never
+   freed. *)
+let string_generators
+  : (string_generator_key * Ffi.string_generator) list Atomic.t Immutable_array.t
+  =
+  Immutable_array.init string_generator_buckets (fun _ -> Atomic.make [])
+;;
+
+let new_string_generator ctx = function
+  | Text
+      { min_size
+      ; max_size
+      ; codec
+      ; min_codepoint
+      ; max_codepoint
+      ; categories
+      ; exclude_categories
+      ; include_characters
+      ; exclude_characters
+      } ->
+    Ffi.string_generator_text
+      ctx
+      ~min_size
+      ~max_size
+      ~codec
+      ~min_codepoint
+      ~max_codepoint
+      ~categories
+      ~exclude_categories
+      ~include_characters
+      ~exclude_characters
+  | Regex { pattern; fullmatch } -> Ffi.string_generator_regex ctx ~pattern ~fullmatch
+  | Email -> Ffi.string_generator_email ctx
+  | Url -> Ffi.string_generator_url ctx
+  | Domain_name max_length -> Ffi.string_generator_domain ctx ~max_length
+;;
+
+(** [generate_string tc key] draws from the string generator described by
+    [key], building it on first use. Raises {!Stop_test} on StopTest and
+    {!Assume_rejected} when the draw rejects itself. *)
+let generate_string tc key =
   with_stop_guard tc (fun () ->
-    let sg = make tc.context in
-    Fun.protect
-      ~finally:(fun () -> Ffi.string_generator_free tc.context sg)
-      (fun () -> Ffi.generate_string tc.context tc.handle sg))
+    let ctx = tc.context in
+    let bucket =
+      Immutable_array.get
+        string_generators
+        (Hashtbl.hash key land (string_generator_buckets - 1))
+    in
+    let cached = Atomic.get bucket in
+    match List.assoc_opt key cached with
+    | Some sg -> Ffi.generate_string ctx tc.handle sg
+    | None ->
+      let sg = new_string_generator ctx key in
+      if List.length cached < max_string_generators_per_bucket
+         && Atomic.compare_and_set bucket cached ((key, sg) :: cached)
+      then Ffi.generate_string ctx tc.handle sg
+      else
+        Fun.protect
+          ~finally:(fun () -> Ffi.string_generator_free ctx sg)
+          (fun () -> Ffi.generate_string ctx tc.handle sg)) NONTAIL
 ;;
 
 (** [generate_text tc ...] draws a text string over the described alphabet. *)
@@ -307,35 +384,32 @@ let generate_text
       ~include_characters
       ~exclude_characters
   =
-  with_string_generator tc (fun ctx ->
-    Ffi.string_generator_text
-      ctx
-      ~min_size
-      ~max_size
-      ~codec
-      ~min_codepoint
-      ~max_codepoint
-      ~categories
-      ~exclude_categories
-      ~include_characters
-      ~exclude_characters)
+  generate_string
+    tc
+    (Text
+       { min_size
+       ; max_size
+       ; codec
+       ; min_codepoint
+       ; max_codepoint
+       ; categories
+       ; exclude_categories
+       ; include_characters
+       ; exclude_characters
+       })
 ;;
 
 (** [generate_regex tc ~pattern ~fullmatch] draws a string matching [pattern]. *)
-let generate_regex tc ~pattern ~fullmatch =
-  with_string_generator tc (fun ctx -> Ffi.string_generator_regex ctx ~pattern ~fullmatch)
-;;
+let generate_regex tc ~pattern ~fullmatch = generate_string tc (Regex { pattern; fullmatch })
 
 (** [generate_email tc] draws an RFC 5321/5322 email address. *)
-let generate_email tc = with_string_generator tc Ffi.string_generator_email
+let generate_email tc = generate_string tc Email
 
 (** [generate_url tc] draws an RFC 3986 http/https URL. *)
-let generate_url tc = with_string_generator tc Ffi.string_generator_url
+let generate_url tc = generate_string tc Url
 
 (** [generate_domain tc ~max_length] draws an RFC 1035 domain name. *)
-let generate_domain tc ~max_length =
-  with_string_generator tc (fun ctx -> Ffi.string_generator_domain ctx ~max_length)
-;;
+let generate_domain tc ~max_length = generate_string tc (Domain_name max_length)
 
 (** A proleptic Gregorian calendar date, as drawn by {!generate_date}. *)
 type date = Ffi.date =
@@ -356,31 +430,31 @@ type time = Ffi.time =
     inclusive range. *)
 let generate_date tc ~min_value ~max_value =
   with_stop_guard tc (fun () ->
-    Ffi.generate_date tc.context tc.handle ~min_value ~max_value)
+    Ffi.generate_date tc.context tc.handle ~min_value ~max_value) NONTAIL
 ;;
 
 (** [generate_time tc ~min_value ~max_value] draws a time in the inclusive
     range. *)
 let generate_time tc ~min_value ~max_value =
   with_stop_guard tc (fun () ->
-    Ffi.generate_time tc.context tc.handle ~min_value ~max_value)
+    Ffi.generate_time tc.context tc.handle ~min_value ~max_value) NONTAIL
 ;;
 
 (** [generate_datetime tc ~min_value ~max_value] draws a naive datetime in the
     inclusive range as a [(date, time)] pair. *)
 let generate_datetime tc ~min_value ~max_value =
   with_stop_guard tc (fun () ->
-    Ffi.generate_datetime tc.context tc.handle ~min_value ~max_value)
+    Ffi.generate_datetime tc.context tc.handle ~min_value ~max_value) NONTAIL
 ;;
 
 (** [generate_ipv4 tc] draws an IPv4 address as its 4 network-order bytes. *)
 let generate_ipv4 tc =
-  with_stop_guard tc (fun () -> Ffi.generate_ipv4 tc.context tc.handle)
+  with_stop_guard tc (fun () -> Ffi.generate_ipv4 tc.context tc.handle) NONTAIL
 ;;
 
 (** [generate_ipv6 tc] draws an IPv6 address as its 16 network-order bytes. *)
 let generate_ipv6 tc =
-  with_stop_guard tc (fun () -> Ffi.generate_ipv6 tc.context tc.handle)
+  with_stop_guard tc (fun () -> Ffi.generate_ipv6 tc.context tc.handle) NONTAIL
 ;;
 
 (* ------------------------------------------------------------------ *)
@@ -452,11 +526,13 @@ type draw_segment =
   | Text of string
   | Value of Sexp.t
 
-(** [print_line tc segments] appends one line assembled from [segments] to the
-    test case's print region. *)
-let print_line tc segments =
+(** [print_line tc segments] appends one line assembled from [segments ()] to
+    the test case's print region. [segments] is only called when the line is
+    printed. *)
+let print_line tc LOCAL(segments) =
   if should_print tc
   then (
+    let segments = segments () in
     let ctx = tc.context in
     let printer = Ffi.test_case_printer ctx tc.handle None in
     Fun.protect
@@ -493,31 +569,33 @@ let draw_display_name tc ~label ~repeatable =
 (** [target tc ~label ~value] records a targeting observation to guide the search
     engine toward higher values. *)
 let target tc ~label ~value =
-  with_stop_guard tc (fun () -> Ffi.target tc.context tc.handle value label)
+  with_stop_guard tc (fun () -> Ffi.target tc.context tc.handle value label) NONTAIL
 ;;
 
 (** [event tc ~label] records [label] as observed on this test case for the
     end-of-run statistics report. *)
-let event tc ~label = with_stop_guard tc (fun () -> Ffi.event tc.context tc.handle label)
+let event tc ~label =
+  with_stop_guard tc (fun () -> Ffi.event tc.context tc.handle label) NONTAIL
+;;
 
 (** [event_value tc ~label ~value] records the finite observation [value] under
     [label] for the end-of-run statistics report. *)
 let event_value tc ~label ~value =
-  with_stop_guard tc (fun () -> Ffi.event_value tc.context tc.handle value label)
+  with_stop_guard tc (fun () -> Ffi.event_value tc.context tc.handle value label) NONTAIL
 ;;
 
 (** [start_span ?label tc] starts a generation span for better shrinking. *)
 let start_span ?(label = 0L) tc =
   if Atomic.get tc.test_aborted
   then () [@coverage off]
-  else with_stop_guard tc (fun () -> Ffi.start_span tc.context tc.handle label)
+  else with_stop_guard tc (fun () -> Ffi.start_span tc.context tc.handle label) NONTAIL
 ;;
 
 (** [stop_span ?discard tc] ends the current generation span. *)
 let stop_span ?(discard = false) tc =
   if Atomic.get tc.test_aborted
   then ()
-  else with_stop_guard tc (fun () -> Ffi.stop_span tc.context tc.handle discard)
+  else with_stop_guard tc (fun () -> Ffi.stop_span tc.context tc.handle discard) NONTAIL
 ;;
 
 type collection = Ffi.collection
@@ -578,33 +656,34 @@ let new_state_machine_with_concurrency
     | concurrency -> state_machine, concurrency
     | exception exn ->
       Ffi.state_machine_free tc.context state_machine;
-      raise exn)
+      raise exn) NONTAIL
 ;;
 
 (** [new_collection tc ~min_size ~max_size] starts an engine-managed collection.
     Release it with {!collection_free}. Raises {!Stop_test} on StopTest. *)
 let new_collection tc ~min_size ~max_size =
   with_stop_guard tc (fun () ->
-    Ffi.new_collection tc.context tc.handle ~min_size ~max_size)
+    Ffi.new_collection tc.context tc.handle ~min_size ~max_size) NONTAIL
 ;;
 
 (** [collection_more tc ~collection] returns whether the engine wants another
     element. Raises {!Stop_test} on StopTest. *)
 let collection_more tc ~collection =
-  with_stop_guard tc (fun () -> Ffi.collection_more tc.context tc.handle collection)
+  with_stop_guard tc (fun () ->
+    Ffi.collection_more tc.context tc.handle collection) NONTAIL
 ;;
 
 (** [collection_reject tc ~collection] rejects the collection's last element.
     Raises {!Stop_test} on StopTest. *)
 let collection_reject tc ~collection =
   with_stop_guard tc (fun () ->
-    Ffi.collection_reject tc.context tc.handle collection None)
+    Ffi.collection_reject tc.context tc.handle collection None) NONTAIL
 ;;
 
 let collection_free tc ~collection = Ffi.collection_free tc.context collection
 
 let new_pool tc =
-  let pool = with_stop_guard tc (fun () -> Ffi.new_pool tc.context tc.handle) in
+  let pool = with_stop_guard tc (fun () -> Ffi.new_pool tc.context tc.handle) NONTAIL in
   Locked.protect tc.owned (fun owned -> owned.pools <- pool :: owned.pools);
   pool
 ;;
@@ -612,36 +691,41 @@ let new_pool tc =
 (** [pool_add tc ~pool] adds a fresh variable to [pool] and returns the new
     variable id. *)
 let pool_add tc ~pool =
-  with_stop_guard tc (fun () -> Ffi.pool_add tc.context tc.handle ~pool)
+  with_stop_guard tc (fun () -> Ffi.pool_add tc.context tc.handle ~pool) NONTAIL
 ;;
 
 (** [pool_generate tc ~pool ~consume] draws a variable id from [pool]. When
     [consume] is [true], the variable is also removed from the pool. Drawing
     from an empty pool raises {!Assume_rejected}. *)
 let pool_generate tc ~pool ~consume =
-  with_stop_guard tc (fun () -> Ffi.pool_generate tc.context tc.handle ~pool ~consume)
+  with_stop_guard tc (fun () ->
+    Ffi.pool_generate tc.context tc.handle ~pool ~consume) NONTAIL
 ;;
 
 (** [pool_restore tc ~pool ~variable_id] puts back a variable that a consuming
     {!pool_generate} removed from [pool]. *)
 let pool_restore tc ~pool ~variable_id =
   with_stop_guard tc (fun () ->
-    Ffi.pool_restore tc.context tc.handle ~pool ~variable_id)
+    Ffi.pool_restore tc.context tc.handle ~pool ~variable_id) NONTAIL
 ;;
 
 let state_machine_next_group tc ~state_machine =
   with_stop_guard tc (fun () ->
-    Ffi.state_machine_next_group tc.context tc.handle ~state_machine)
+    Ffi.state_machine_next_group tc.context tc.handle ~state_machine) NONTAIL
 ;;
 
 let state_machine_next_rule_for_worker tc ~state_machine ~worker_index =
   with_stop_guard tc (fun () ->
-    Ffi.state_machine_next_rule tc.context tc.handle ~state_machine ~worker_index)
+    Ffi.state_machine_next_rule tc.context tc.handle ~state_machine ~worker_index) NONTAIL
 ;;
 
 let state_machine_rule_rejected_for_worker tc ~state_machine ~worker_index =
   with_stop_guard tc (fun () ->
-    Ffi.state_machine_rule_rejected tc.context tc.handle ~state_machine ~worker_index)
+    Ffi.state_machine_rule_rejected
+      tc.context
+      tc.handle
+      ~state_machine
+      ~worker_index) NONTAIL
 ;;
 
 (** [state_machine_should_check_invariant tc ~state_machine ~invariant_index]
@@ -653,7 +737,7 @@ let state_machine_should_check_invariant tc ~state_machine ~invariant_index =
       tc.context
       tc.handle
       ~state_machine
-      ~invariant_index)
+      ~invariant_index) NONTAIL
 ;;
 
 let state_machine_free tc ~state_machine = Ffi.state_machine_free tc.context state_machine

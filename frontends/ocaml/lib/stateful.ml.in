@@ -105,7 +105,7 @@ let run_rules tc ~state_machine ~worker_index LOCAL_CTX ~heading ~rule =
     | None -> rejected
     | Some rule_index ->
       let name, body = rule rule_index in
-      Internal.note tc (heading name);
+      if Internal.should_print tc then Internal.note tc (heading name);
       (match
          if Internal.should_print tc
          then Internal.with_block tc ~indent:2 (fun tc -> body tc ctx)
@@ -266,7 +266,8 @@ let run_machine
   in
   let print_state () =
     Option.iter
-      (fun sexp_of -> Internal.print_line tc [ Text "state = "; Value (sexp_of init) ])
+      (fun sexp_of ->
+         Internal.print_line tc (fun () -> [ Text "state = "; Value (sexp_of init) ]))
       sexp_of_state
   in
   let check_invariants ~where ~sample =
@@ -288,7 +289,9 @@ let run_machine
            | () -> if invariant.pause_faults then Internal.unpause_faults tc
            | exception e ->
              if invariant.pause_faults then Internal.unpause_faults tc;
-             Internal.note tc (Printf.sprintf "Invariant %s violated %s." invariant.name where);
+             Internal.note
+               tc
+               (Printf.sprintf "Invariant %s violated %s." invariant.name (where ()));
              raise e))
       0
       invariants NONTAIL
@@ -297,9 +300,9 @@ let run_machine
   let free () = Internal.state_machine_free tc ~state_machine in
   let run_test () =
     print_state ();
-    check_invariants ~where:"in the initial state" ~sample:false;
+    check_invariants ~where:(Fun.const "in the initial state") ~sample:false;
     run_steps ~state_machine ~num_workers ~print_state ~check_invariants;
-    check_invariants ~where:"in the final state" ~sample:false
+    check_invariants ~where:(Fun.const "in the final state") ~sample:false
   in
   match run_test () with
   | () -> free ()
@@ -335,7 +338,7 @@ let run_internal ~init ~rules ~invariants ?sexp_of_state ?(step_count = 50) tc =
         in
         Internal.stop_span ~discard:rejected tc;
         print_state ();
-        check_invariants ~where:(Printf.sprintf "after step %d" step) ~sample:true;
+        check_invariants ~where:(fun () -> Printf.sprintf "after step %d" step) ~sample:true;
         loop check_invariants step
     in
     loop check_invariants 0
@@ -402,20 +405,24 @@ let run_concurrent_core
       match Internal.state_machine_next_group tc ~state_machine with
       | None -> ()
       | Some (group, level) ->
-        if noted_level <> Some level
-        then Internal.note tc (Printf.sprintf "Concurrency level: %d" level);
-        Internal.note
-          tc
-          (Printf.sprintf
-             "---------------- Round %d: group %S ----------------"
-             round
-             (List.nth group_names group));
+        if Internal.should_print tc
+        then (
+          if noted_level <> level
+          then Internal.note tc (Printf.sprintf "Concurrency level: %d" level);
+          Internal.note
+            tc
+            (Printf.sprintf
+               "---------------- Round %d: group %S ----------------"
+               round
+               (List.nth group_names group)));
         reraise_worker_failure (run_round ~state_machine ~num_workers);
         print_state ();
-        check_invariants ~where:(Printf.sprintf "after round %d" round) ~sample:true;
-        loop run_round check_invariants (round + 1) (Some level)
+        check_invariants
+          ~where:(fun () -> Printf.sprintf "after round %d" round)
+          ~sample:true;
+        loop run_round check_invariants (round + 1) level
     in
-    loop run_round check_invariants 1 None
+    loop run_round check_invariants 1 (-1)
   in
   run_machine
     tc

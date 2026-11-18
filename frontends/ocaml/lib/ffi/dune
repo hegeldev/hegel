@@ -7,7 +7,10 @@
 (library
  (name hegel_ffi)
  (package hegel)
- (libraries ctypes ctypes-foreign unix dune-site))
+ (libraries ctypes ctypes-foreign unix dune-site)
+ (foreign_stubs
+  (language c)
+  (names hegel_stubs)))
 
 ; Generates the `Hegel_sites` module exposing `Hegel_sites.Sites.libhegel`: the
 ; directories of the `libhegel` site. Release tarballs install the matching

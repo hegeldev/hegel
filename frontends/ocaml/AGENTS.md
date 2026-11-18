@@ -95,11 +95,13 @@ lib/                         # Library source
     locked.capsule.ml        #   locked.mutex.ml (Mutex + value). Core-free.
                              #   locked.capsule.ml is OxCaml syntax and listed in
                              #   .ocamlformat-ignore
-  ffi/                       # ctypes bindings to native libhegel (NOT instrumented)
+  ffi/                       # bindings to native libhegel (NOT instrumented)
     ffi.ml                   # dlopen + 1:1 C-ABI wrappers; settings/run/test_case
                              #   handles; typed draws + string-generator handles;
                              #   events; the pretty-printer document (printer_*,
                              #   test_case_printer, note)
+    hegel_stubs.c            # direct C stubs for the per-draw and per-test-case
+                             #   calls, through dlsym'd function pointers
     loader.ml                # locate libhegel at runtime (env > site > the
                              #   checkout's in-tree target/ build (libhegel_c.<ext>))
   cli.ml / cli.mli           # Hegel.main: cmdliner flags (--profile applied
@@ -257,7 +259,8 @@ README.md                    # Project overview, install, quick-start
 
 There is no subprocess, socket, or wire protocol. The engine is the native
 `libhegel` C library (`../../libhegel`, header `libhegel/include/hegel.h`), called
-in-process via ctypes. `Hegel_ffi.Loader` resolves the shared library at runtime:
+in-process via ctypes, except for the calls made on every draw or test case (see
+Direct C stubs below). `Hegel_ffi.Loader` resolves the shared library at runtime:
 `$HEGEL_LIBHEGEL_PATH`, then the `libhegel` dune-site of an installed package
 (the opam release tarball bundles the host's library there, see Releases),
 then the in-tree cargo build — `target/{release,debug}/libhegel_c.<ext>` (the
@@ -292,6 +295,31 @@ engine work between test cases on the calling thread, so its binding releases
 the OCaml runtime lock for the call's duration. The `ffi` library is
 deliberately NOT bisect_ppx-instrumented, keeping its
 mechanical marshalling out of the 100%-coverage gate (no `[@coverage off]`).
+
+**Direct C stubs.** A ctypes `Foreign` call costs about 160 ns and 260 words of
+allocation before libhegel does any work, so the calls made on every draw, test
+case or state-machine step bypass it: `generate_integer`/`boolean`/`float`,
+`start_span`, `stop_span`, `new_collection`, `collection_more`,
+`collection_free`, `next_test_case`, `test_case_wants_output`,
+`test_case_wants_detail`, `mark_complete`, `test_case_free`,
+`state_machine_next_group`, `state_machine_next_rule`,
+`state_machine_rule_rejected`, `state_machine_should_check_invariant`,
+`pause_faults`, `unpause_faults` and `generate_string` (with
+`owned_string_free`) are `external`s into `lib/ffi/hegel_stubs.c`. Each stub takes the
+libhegel function's address (from `Dl.dlsym` on the same library handle, looked up
+with the ctypes bindings by `initialize`, so loading stays lazy) and the handles'
+raw addresses (`raw_address_of_ptr`, a field read) as unboxed `nativeint`s. Stubs
+for a bool, unit or handle result are `[@@noalloc]` and return a negative libhegel
+return code on failure (handles are never negative); the integer and float draws,
+whose every value is valid, and `generate_string`, which copies the drawn
+string into the OCaml heap and frees libhegel's copy, raise `Engine_status rc`
+from C instead, and the
+wrapper maps either through `error_of_rc`. The rule and group stubs return the
+index, `-1000` for `HEGEL_STATE_MACHINE_DONE` (which does not fit an OCaml int),
+or a negative return code; `next_group` packs the round's concurrency level above
+the group's low 32 bits. The `next_test_case` stub releases the
+runtime lock around the engine call. Every stub has a bytecode variant. Move a
+call here only if it runs per draw, test case or step; the rest stay on ctypes.
 
 `lib/protocol.ml`, `lib/connection.ml`, `lib/cbor/`, `lib/cbor_helpers.ml`, and
 the old Python-subprocess install flow were removed in the native-backend and
@@ -1107,8 +1135,18 @@ typed FFI call (`Hegel_ffi.Ffi` / `Internal.generate_*`):
 - `just` → a Leaf whose `draw` ignores the engine and returns the constant
 - `one_of` / `optional` / tuples / `lists` / `hashmaps` → `Composite`/`CompositeList` cores that draw an index or drive the collection protocol, calling sub-generators' draws directly
 
-String-generator handles are context-bound: built from `tc.context`, used for the
-draw, and always freed (`Internal.with_string_generator`).
+`Internal.generate_string` builds a string-generator handle the first time a
+parameter set (`string_generator_key`) is drawn from and keeps it, never freed,
+in a process-wide table: 64 buckets chosen by `Hashtbl.hash`, each an `Atomic`
+list of at most 4 entries. Building a handle costs over 1 µs, mostly in libhegel,
+and `draw tc (text ())` creates a new generator value on every draw, so the cache
+is keyed by parameters, not by generator value. Lookups take no lock, so
+concurrent workers on several domains draw strings in parallel; a `Locked`
+`Hashtbl` serialized them and made 4 workers 5× slower. The bucket array is an
+`Immutable_array` (a dune `select` like `Locked`: `stdlib_stable`'s `iarray` under
+OxCaml, so portable code can read it, and a plain array elsewhere). When a
+bucket is full, or the compare-and-set loses a race, the handle is built, drawn
+from and freed for that one draw.
 
 ### Coverage Rules
 
