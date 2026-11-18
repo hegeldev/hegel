@@ -459,7 +459,7 @@ public class TemporalGeneratorTests
         var dates = Generators.Temporal.Dates().Weekdays(DayOfWeek.Monday);
         var spans = Generators.Temporal.Spans().Days(1, 2);
         using var run = new RawRun();
-        var tc = run.Case(captured: false, lib: new DelegatingLibhegel(Engines.Real));
+        var tc = run.Case(wantsOutput: false, lib: new DelegatingLibhegel(Engines.Real));
         Assert.Equal(DayOfWeek.Monday, tc.DrawSilent(dates).DayOfWeek);
         Assert.InRange(tc.DrawSilent(spans).Days, 1, 2);
     }

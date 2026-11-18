@@ -143,7 +143,7 @@ int main(void) {
     HEGEL_CHECK(hegel_settings_set_database, ctx, s, &STRING(""));
     HEGEL_CHECK(hegel_settings_set_derandomize, ctx, s, true);
     hegel_run_t *run;
-    HEGEL_CHECK(hegel_run_start, ctx, s, NULL, NULL, &run);
+    HEGEL_CHECK(hegel_run_start, ctx, s, hegel_output_stderr, NULL, &run);
 
     int cases = 0;
     for (;;) {
@@ -175,7 +175,7 @@ int main(void) {
             fprintf(stderr, "a zoned draw failed: rc=%d %.*s\n", (int)rc, (int)err.len, err.data);
             failures++;
         }
-        HEGEL_CHECK(hegel_mark_complete, ctx, tc, rc == HEGEL_OK ? HEGEL_STATUS_VALID : HEGEL_STATUS_OVERRUN, NULL);
+        HEGEL_CHECK(hegel_mark_complete, ctx, tc, rc == HEGEL_OK ? HEGEL_STATUS_VALID : HEGEL_STATUS_OVERRUN, NULL, NULL, NULL);
         HEGEL_CHECK(hegel_test_case_free, ctx, tc);
     }
     expect(cases > 0, "at least one test case");

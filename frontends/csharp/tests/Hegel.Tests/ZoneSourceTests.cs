@@ -402,7 +402,7 @@ public class ZoneSourceTests
         var source = ZoneSource.FromTimeZones(fixedZone);
         using (var run = new RawRun())
         {
-            var tc = run.Case(captured: false, lib: new DelegatingLibhegel(Engines.Real));
+            var tc = run.Case(wantsOutput: false, lib: new DelegatingLibhegel(Engines.Real));
             Assert.Same(fixedZone, tc.DrawSilent(Generators.Temporal.Zones().Source(source)));
             Assert.Same(fixedZone, tc.DrawSilent(Generators.Temporal.ZonedDateTimes().Source(source)).Zone);
         }

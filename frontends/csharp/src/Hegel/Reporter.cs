@@ -10,13 +10,19 @@ public abstract class Reporter
     /// <summary>The run is starting with the effective <paramref name="settings"/>.</summary>
     public virtual void RunStarted(Settings settings) { }
 
-    /// <summary>The engine printed <paramref name="line"/> (a warning, statistics, a replay note).</summary>
+    /// <summary>
+    /// The engine printed <paramref name="line"/>: a warning, statistics, a replay note, or in a
+    /// verbose run what each test case prints, as it prints it.
+    /// </summary>
     public virtual void EngineOutput(string line) { }
 
     /// <summary>A test case is starting; <paramref name="finalReplay"/> when it is a failure's final report.</summary>
     public virtual void CaseStarted(bool finalReplay) { }
 
-    /// <summary>A test case printed <paramref name="line"/> (a draw or a note).</summary>
+    /// <summary>
+    /// A test case printed <paramref name="line"/> (a draw or a note): a line of a failure's report,
+    /// or in a verbose run a line of an explicit example.
+    /// </summary>
     public virtual void CaseOutput(string line, bool finalReplay) { }
 
     /// <summary>A test case ended with <paramref name="outcome"/>.</summary>
@@ -34,11 +40,17 @@ public abstract class Reporter
     /// <summary>The standard report, written to <paramref name="output"/>.</summary>
     public static Reporter Printing(TextWriter output) => new PrintingReporter(output);
 
-    /// <summary>A reporter that discards everything.</summary>
+    /// <summary>
+    /// A reporter that discards everything. The engine is told the run has no output destination,
+    /// so it prints nothing and spends nothing on verbose or debug output.
+    /// </summary>
     public static Reporter Silent { get; } = new SilentReporter();
+
+    internal virtual Action<string>? EngineSink => EngineOutput;
 
     private sealed class SilentReporter : Reporter
     {
+        internal override Action<string>? EngineSink => null;
     }
 }
 
@@ -47,7 +59,6 @@ internal sealed class PrintingReporter : Reporter
     private readonly TextWriter _out;
     private bool _printBlob;
     private bool _quiet;
-    private bool _verbose;
     private bool _multiple;
 
     internal PrintingReporter(TextWriter output)
@@ -59,7 +70,6 @@ internal sealed class PrintingReporter : Reporter
     {
         _printBlob = settings.PrintBlob;
         _quiet = settings.Verbosity == Verbosity.Quiet;
-        _verbose = settings.Verbosity >= Verbosity.Verbose;
     }
 
     public override void EngineOutput(string line) => _out.WriteLine(line);
@@ -77,22 +87,6 @@ internal sealed class PrintingReporter : Reporter
         if (!_quiet)
         {
             _out.WriteLine(line);
-        }
-    }
-
-    public override void CaseFinished(CaseOutcome outcome, bool finalReplay)
-    {
-        if (!_verbose || finalReplay)
-        {
-            return;
-        }
-        if (outcome == CaseOutcome.Invalid)
-        {
-            _out.WriteLine("Test case stopped: failed assumption");
-        }
-        else if (outcome == CaseOutcome.Overrun)
-        {
-            _out.WriteLine("Test case stopped: out of data");
         }
     }
 

@@ -96,7 +96,7 @@ int main(void) {
     HEGEL_CHECK(hegel_settings_set_seed, ctx, s, 0xfeedface, true);
 
     hegel_run_t *run;
-    HEGEL_CHECK(hegel_run_start, ctx, s, NULL, NULL, &run);
+    HEGEL_CHECK(hegel_run_start, ctx, s, hegel_output_stderr, NULL, &run);
 
     const uint64_t MIN_SIZE = 0;
     const uint64_t MAX_SIZE = 8;
@@ -110,20 +110,20 @@ int main(void) {
 
         int n = draw_bool_list(ctx, tc, MIN_SIZE, MAX_SIZE);
         if (n < 0) {
-            HEGEL_CHECK(hegel_mark_complete, ctx, tc, HEGEL_STATUS_OVERRUN, NULL);
+            HEGEL_CHECK(hegel_mark_complete, ctx, tc, HEGEL_STATUS_OVERRUN, NULL, NULL, NULL);
             HEGEL_CHECK(hegel_test_case_free, ctx, tc);
             continue;
         }
         if ((uint64_t)n < MIN_SIZE || (uint64_t)n > MAX_SIZE) {
             char origin[64];
             snprintf(origin, sizeof origin, "size %d out of range", n);
-            HEGEL_CHECK(hegel_mark_complete, ctx, tc, HEGEL_STATUS_INTERESTING, &HEGEL_STRING(origin, strlen(origin)));
+            HEGEL_CHECK(hegel_mark_complete, ctx, tc, HEGEL_STATUS_INTERESTING, &HEGEL_STRING(origin, strlen(origin)), &HEGEL_STRING(origin, strlen(origin)), &HEGEL_STRING(origin, strlen(origin)));
             HEGEL_CHECK(hegel_test_case_free, ctx, tc);
             continue;
         }
         total++;
         if ((size_t)n > max_seen) max_seen = (size_t)n;
-        HEGEL_CHECK(hegel_mark_complete, ctx, tc, HEGEL_STATUS_VALID, NULL);
+        HEGEL_CHECK(hegel_mark_complete, ctx, tc, HEGEL_STATUS_VALID, NULL, NULL, NULL);
         /* The caller owns every handle from hegel_next_test_case and must free it. */
         HEGEL_CHECK(hegel_test_case_free, ctx, tc);
     }

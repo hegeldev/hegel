@@ -60,6 +60,8 @@ describe("integer wire-format helpers", () => {
 // be driven into (NULL returns, specific result codes, null string getters).
 // ---------------------------------------------------------------------------
 
+const discard = (_line: string): void => undefined;
+
 function fakeBindings(overrides: Partial<Bindings>): Bindings {
   const noop = (): void => undefined;
   const base: Bindings = {
@@ -107,11 +109,13 @@ function fakeBindings(overrides: Partial<Bindings>): Bindings {
     settingsGetUnboundedChoices: () => false,
     settingsGetBackend: () => 0,
     settingsGetNondeterminismStrictness: () => 0,
-    runStart: (_ctx, _settings, out) => {
+    registerOutput: () => ({}) as Ptr,
+    unregisterOutput: noop,
+    runStart: (_ctx, _settings, _callback, out) => {
       out[0] = {} as Ptr;
       return 0;
     },
-    runStartBlob: (_ctx, _settings, _blob, out) => {
+    runStartBlob: (_ctx, _settings, _blob, _callback, out) => {
       out[0] = {} as Ptr;
       return 0;
     },
@@ -126,7 +130,8 @@ function fakeBindings(overrides: Partial<Bindings>): Bindings {
     runResultFree: noop,
     runFree: noop,
     testCaseFree: noop,
-    testCaseShouldCapture: () => 0,
+    testCaseWantsOutput: () => 0,
+    testCaseWantsDetail: () => 0,
     testCaseClone: (_ctx, _tc, out) => {
       out[0] = {} as Ptr;
       return 0;
@@ -321,6 +326,7 @@ function fakeBindings(overrides: Partial<Bindings>): Bindings {
     failureOrigin: () => "",
     failureReproductionBlob: () => null,
     failureCaveat: () => null,
+    failureOutput: () => null,
     version: () => "0.0.0",
     tzdbVersion: () => "1999z",
     ...overrides,
@@ -332,7 +338,7 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
   it("throws when run_start returns an error code", () => {
     const lib = new Libhegel(
       fakeBindings({
-        runStart: (_ctx, _settings, out) => {
+        runStart: (_ctx, _settings, _callback, out) => {
           out[0] = null;
           return -3;
         },
@@ -340,7 +346,7 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
       }),
     );
     const h = lib.newContext();
-    expect(() => lib.runStart(h, h)).toThrow(/hegel_run_start failed: boom/);
+    expect(() => lib.runStart(h, h, discard)).toThrow(/hegel_run_start failed: boom/);
   });
 
   it("nextTestCase returns null at normal completion (OK code, NULL out)", () => {
@@ -406,7 +412,7 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
   it("throws when run_start_blob returns an error code", () => {
     const lib = new Libhegel(
       fakeBindings({
-        runStartBlob: (_ctx, _s, _blob, out) => {
+        runStartBlob: (_ctx, _s, _blob, _callback, out) => {
           out[0] = null;
           return -5;
         },
@@ -414,7 +420,77 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
       }),
     );
     const h = lib.newContext();
-    expect(() => lib.runStartBlob(h, h, "x")).toThrow(/hegel_run_start_blob failed: bad blob/);
+    expect(() => lib.runStartBlob(h, h, "x", discard)).toThrow(
+      /hegel_run_start_blob failed: bad blob/,
+    );
+  });
+
+  it("keeps a run's output callback registered until the run is freed", () => {
+    const callback = {} as Ptr;
+    const registered: Ptr[] = [];
+    const unregistered: Ptr[] = [];
+    const lib = new Libhegel(
+      fakeBindings({
+        registerOutput: () => {
+          registered.push(callback);
+          return callback;
+        },
+        unregisterOutput: (c) => unregistered.push(c),
+        runStart: (_ctx, _settings, given, out) => {
+          expect(given).toBe(callback);
+          out[0] = {} as Ptr;
+          return 0;
+        },
+      }),
+    );
+    const h = lib.newContext();
+    const run = lib.runStart(h, h, discard);
+    expect(registered).toEqual([callback]);
+    expect(unregistered).toEqual([]);
+    lib.freeRun(run);
+    expect(unregistered).toEqual([callback]);
+  });
+
+  it("releases the output callback of a run that fails to start", () => {
+    const unregistered: Ptr[] = [];
+    const callback = {} as Ptr;
+    const lib = new Libhegel(
+      fakeBindings({
+        registerOutput: () => callback,
+        unregisterOutput: (c) => unregistered.push(c),
+        runStartBlob: (_ctx, _s, _blob, _callback, out) => {
+          out[0] = null;
+          return -5;
+        },
+      }),
+    );
+    const h = lib.newContext();
+    expect(() => lib.runStartBlob(h, h, "x", discard)).toThrow(/hegel_run_start_blob failed/);
+    expect(unregistered).toEqual([callback]);
+  });
+
+  it("releases a run's output callback even when freeing the run fails", () => {
+    const unregistered: Ptr[] = [];
+    const lib = new Libhegel(
+      fakeBindings({
+        unregisterOutput: (c) => unregistered.push(c),
+        runFree: () => {
+          throw new Error("free failed");
+        },
+      }),
+    );
+    const h = lib.newContext();
+    const run = lib.runStart(h, h, discard);
+    expect(() => lib.freeRun(run)).toThrow("free failed");
+    expect(unregistered).toHaveLength(1);
+  });
+
+  it("frees a run handle it never registered output for", () => {
+    const unregistered: Ptr[] = [];
+    const lib = new Libhegel(fakeBindings({ unregisterOutput: (c) => unregistered.push(c) }));
+    const h = lib.newContext();
+    expect(() => lib.freeRun(h)).not.toThrow();
+    expect(unregistered).toEqual([]);
   });
 
   it("maps STOP_TEST to StopTestError", () => {
@@ -467,6 +543,7 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
     expect(lib.lastError(h)).toBe("diagnostic");
     expect(lib.failureOrigin(h)).toBe("origin");
     expect(lib.reproductionBlob(h)).toBeNull();
+    expect(lib.failureOutput(h)).toBeNull();
     expect(lib.runError(h)).toBeNull();
   });
 
@@ -585,7 +662,7 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
     lib.setReportMultipleFailures(h, true);
     lib.collectionReject(h, h, h, "dup");
     lib.freeCollection(lib.newContext());
-    lib.markComplete(h, h, Status.VALID, null);
+    lib.markComplete(h, h, Status.VALID, null, null, null);
     lib.freePool(lib.newPool(h, h));
     expect(lib.poolAdd(h, h, h)).toBe(0n);
     expect(lib.poolGenerate(h, h, h, true)).toBe(0n);
@@ -599,13 +676,13 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
     lib.unpauseFaults(h, h);
     lib.freeRunResult(lib.runResult(h, h));
     lib.freeFailure(lib.failure(h, 0));
-    lib.freeRun(lib.runStart(h, h));
-    lib.freeRun(lib.runStartBlob(h, h, "blob"));
+    lib.freeRun(lib.runStart(h, h, discard));
+    lib.freeRun(lib.runStartBlob(h, h, "blob", discard));
     expect(lib.getVerbosity(h)).toBe(0);
     expect(lib.getPhases(h)).toBe(0);
     expect(lib.getPrintBlob(h)).toBe(false);
     expect(lib.getReportMultipleFailures(h)).toBe(false);
-    expect(lib.shouldCapture(h, h)).toBe(false);
+    expect(lib.wantsOutput(h, h)).toBe(false);
     lib.freeTestCase(lib.cloneTestCase(h, h));
     lib.freeTestCase(lib.blockTestCase(h, h, 2));
     lib.setWorker(h, h, 1);
@@ -742,7 +819,7 @@ function driveIntegerRun(
     lib.setSeed(settings, 12345n);
     lib.setDatabase(ctx, settings, ""); // disable persistence
     lib.setSuppressHealthCheck(settings, 0);
-    run = lib.runStart(ctx, settings);
+    run = lib.runStart(ctx, settings, discard);
 
     for (;;) {
       const tc = lib.nextTestCase(ctx, run);
@@ -762,7 +839,14 @@ function driveIntegerRun(
           throw e;
         }
       }
-      lib.markComplete(ctx, tc, status, origin);
+      lib.markComplete(
+        ctx,
+        tc,
+        status,
+        origin,
+        origin && "Error: failed",
+        origin && "Error: failed",
+      );
       lib.freeTestCase(tc);
     }
 
@@ -825,12 +909,12 @@ describe("Libhegel against the real library", () => {
     const settings = lib.newSettings(ctx);
     lib.setDatabase(ctx, settings, "");
     lib.setVerbosity(settings, NativeVerbosity.QUIET);
-    const run = lib.runStart(ctx, settings);
+    const run = lib.runStart(ctx, settings, discard);
     const tc = lib.nextTestCase(ctx, run)!;
     try {
       lib.pauseFaults(ctx, tc);
       lib.unpauseFaults(ctx, tc);
-      lib.markComplete(ctx, tc, Status.VALID, null);
+      lib.markComplete(ctx, tc, Status.VALID, null, null, null);
     } finally {
       lib.freeTestCase(tc);
       lib.freeRun(run);
@@ -863,12 +947,12 @@ describe("Libhegel against the real library", () => {
     const settings = lib.newSettings(ctx);
     lib.setVerbosity(settings, NativeVerbosity.QUIET);
     lib.setDatabase(ctx, settings, "");
-    const run = lib.runStart(ctx, settings);
+    const run = lib.runStart(ctx, settings, discard);
     try {
       const tc = lib.nextTestCase(ctx, run);
       expect(tc).not.toBeNull();
       expect(() => lib.generateInteger(ctx, tc, 10n, -10n)).toThrow(LibhegelError);
-      lib.markComplete(ctx, tc, Status.INVALID, null);
+      lib.markComplete(ctx, tc, Status.INVALID, null, null, null);
       lib.freeTestCase(tc);
     } finally {
       lib.freeRun(run);
@@ -882,13 +966,13 @@ describe("Libhegel against the real library", () => {
     const settings = lib.newSettings(ctx);
     lib.setVerbosity(settings, NativeVerbosity.QUIET);
     lib.setDatabase(ctx, settings, "");
-    const run = lib.runStart(ctx, settings);
+    const run = lib.runStart(ctx, settings, discard);
     try {
       const tc = lib.nextTestCase(ctx, run);
       expect(tc).not.toBeNull();
       // Misuse: pull again without marking the first complete.
       expect(() => lib.nextTestCase(ctx, run)).toThrow(LibhegelError);
-      lib.markComplete(ctx, tc, Status.VALID, null);
+      lib.markComplete(ctx, tc, Status.VALID, null, null, null);
       lib.freeTestCase(tc);
     } finally {
       lib.freeRun(run);
@@ -903,7 +987,7 @@ describe("Libhegel against the real library", () => {
     lib.setTestCases(settings, 20);
     lib.setVerbosity(settings, NativeVerbosity.QUIET);
     lib.setDatabase(ctx, settings, "");
-    const run = lib.runStart(ctx, settings);
+    const run = lib.runStart(ctx, settings, discard);
     try {
       let rejectedOnce = false;
       for (;;) {
@@ -926,10 +1010,10 @@ describe("Libhegel against the real library", () => {
             lib.freeCollection(collection);
           }
           lib.stopSpan(ctx, tc, false);
-          lib.markComplete(ctx, tc, Status.VALID, null);
+          lib.markComplete(ctx, tc, Status.VALID, null, null, null);
         } catch (e) {
           if (e instanceof StopTestError) {
-            lib.markComplete(ctx, tc, Status.OVERRUN, null);
+            lib.markComplete(ctx, tc, Status.OVERRUN, null, null, null);
           } else {
             throw e;
           }
@@ -1073,7 +1157,7 @@ describe("Libhegel ABI 0.42.4 regressions", () => {
     const settings = lib.newSettings(ctx);
     lib.setDatabase(ctx, settings, "");
     lib.setVerbosity(settings, NativeVerbosity.QUIET);
-    const run = lib.runStart(ctx, settings);
+    const run = lib.runStart(ctx, settings, discard);
     const tc = lib.nextTestCase(ctx, run);
     try {
       const date = { year: -12345, month: 6, day: 17 };
@@ -1089,7 +1173,7 @@ describe("Libhegel ABI 0.42.4 regressions", () => {
       expect(uuid[6] >> 4).toBe(4);
       expect(uuid[8] >> 6).toBe(2);
     } finally {
-      lib.markComplete(ctx, tc, Status.VALID, null);
+      lib.markComplete(ctx, tc, Status.VALID, null, null, null);
       lib.freeTestCase(tc);
       lib.freeRun(run);
       lib.freeSettings(settings);

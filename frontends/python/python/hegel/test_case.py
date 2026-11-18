@@ -51,19 +51,15 @@ def _generator_class() -> type:
     return Generator
 
 
-def _discard(_line: str) -> None:
-    pass
-
-
 class _Global:
     """State shared by every handle onto one test case: whether drawn
-    values are reported, and where."""
+    values and notes are printed (the engine reports them), and the
+    explicit case supplying its values, if any."""
 
-    __slots__ = ("emit", "explicit", "sink")
+    __slots__ = ("emit", "explicit")
 
-    def __init__(self, emit: bool, sink: OutputSink | None, explicit: Any) -> None:
+    def __init__(self, emit: bool, explicit: Any) -> None:
         self.emit = emit
-        self.sink: OutputSink = sink if (emit and sink is not None) else _discard
         self.explicit = explicit
 
 
@@ -116,11 +112,10 @@ class TestCase:
         self,
         handle: _native.TestCase,
         emit: bool = False,
-        sink: OutputSink | None = None,
         explicit: Any = None,
     ) -> None:
         self._handle = handle
-        self._global = _Global(emit, sink, explicit)
+        self._global = _Global(emit, explicit)
         self._span_depth = 0
         self._span_frames: list[tuple[Any, int]] = []
         self._printing_depth = 0
@@ -501,24 +496,6 @@ class TestCase:
         if self._printer is None:
             self._printer = PrettyPrinter(self._handle.printer(DEFAULT_MAX_WIDTH))
         return self._printer
-
-    def _emit_rendered_output(self) -> None:
-        """Render this instance's document and push it, line by line,
-        through the output sink."""
-        if not self._global.emit:
-            return
-        try:
-            output = PrettyPrinter(self._handle.printer(DEFAULT_MAX_WIDTH))._value()
-        except Exception as error:  # nocov
-            self._global.sink(
-                "Failed to render this test case's drawn values "
-                f"({error}). This indicates a bug in printing code the test "
-                "uses: check any do_draw_and_print method for unbalanced "
-                "begin_group/end_group calls."
-            )
-            return
-        for line in output.splitlines():
-            self._global.sink(line)
 
     # -- spans -----------------------------------------------------------
 

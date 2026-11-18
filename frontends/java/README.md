@@ -163,10 +163,9 @@ for (Failure f : report.failures()) {   // one per distinct counterexample
 }
 ```
 
-`TestCase.isFinal()` identifies the executions the engine stamped for the failure report (the
-final replay of a counterexample among them), `TestCase.span` and `Label` let custom composite
-generators tell the engine about their structure, and `Settings.infrastructurePackages` keeps a
-frontend's own stack frames out of failure origins.
+`TestCase.span` and `Label` let custom composite generators tell the engine about their
+structure, and `Settings.infrastructurePackages` keeps a frontend's own stack frames out of
+failure origins.
 
 ## Binding Hegel yourself
 

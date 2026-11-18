@@ -97,6 +97,8 @@ unsafe fn complete_valid(ctx: *mut HegelContext, tc: *mut HegelTestCase) {
             tc,
             hegel_status_t::HEGEL_STATUS_VALID as u32,
             ptr::null(),
+            ptr::null(),
+            ptr::null(),
         ));
         ok(hegel_c::hegel_test_case_free(ctx, tc));
     }

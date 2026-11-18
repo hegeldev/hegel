@@ -37,8 +37,9 @@ The layers, and what an ABI change usually touches:
   shape or a new one replaces schema-level behaviour.
 - **`src/runnerCore.ts` / `src/session.ts`** — the run lifecycle
   (`run_start` or `run_start_blob` → `next_test_case` → `mark_complete` →
-  `run_result`, with each stamped test case's report read from its printer
-  document) and the process-global
+  `run_result`, with each failure's report read from `hegel_failure_output`
+  and the engine printing a run's output through its callback, or on Wasm
+  through the `hegel_host.stderr_write` import) and the process-global
   library handle with its `major.minor` version check. Touch only if the
   lifecycle protocol itself changes.
 - **`src/wtf8.ts`** — decodes engine-returned string bytes. Touch only if

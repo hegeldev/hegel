@@ -73,6 +73,8 @@ unsafe fn complete_valid(ctx: *mut HegelContext, tc: *mut HegelTestCase) {
             tc,
             hegel_status_t::HEGEL_STATUS_VALID as u32,
             ptr::null(),
+            ptr::null(),
+            ptr::null(),
         ));
         ok(hegel_c::hegel_test_case_free(ctx, tc));
     }
@@ -647,6 +649,8 @@ fn float_draws_respect_spec_and_validate_arguments() {
                     ctx,
                     tc,
                     hegel_status_t::HEGEL_STATUS_OVERRUN as u32,
+                    ptr::null(),
+                    ptr::null(),
                     ptr::null(),
                 ));
                 ok(hegel_c::hegel_test_case_free(ctx, tc));
@@ -1431,6 +1435,8 @@ fn regex_email_url_domain_generators_draw_valid_values() {
                         tc,
                         hegel_status_t::HEGEL_STATUS_VALID as u32,
                         ptr::null(),
+                        ptr::null(),
+                        ptr::null(),
                     ));
                 }
                 HEGEL_E_ASSUME => {
@@ -1438,6 +1444,8 @@ fn regex_email_url_domain_generators_draw_valid_values() {
                         ctx,
                         tc,
                         hegel_status_t::HEGEL_STATUS_INVALID as u32,
+                        ptr::null(),
+                        ptr::null(),
                         ptr::null(),
                     ));
                 }
@@ -1486,6 +1494,8 @@ fn regex_pattern_may_contain_nul() {
                 ctx,
                 tc,
                 hegel_status_t::HEGEL_STATUS_VALID as u32,
+                ptr::null(),
+                ptr::null(),
                 ptr::null(),
             ));
             ok(hegel_c::hegel_test_case_free(ctx, tc));
@@ -1542,6 +1552,8 @@ fn generate_string_validates_handles_and_reports_stop_test() {
             ctx,
             tc,
             hegel_status_t::HEGEL_STATUS_OVERRUN as u32,
+            ptr::null(),
+            ptr::null(),
             ptr::null(),
         ));
         ok(hegel_c::hegel_test_case_free(ctx, tc));
@@ -1778,6 +1790,8 @@ fn structured_draws_produce_valid_values_and_validate_arguments() {
                     tc,
                     hegel_status_t::HEGEL_STATUS_OVERRUN as u32,
                     ptr::null(),
+                    ptr::null(),
+                    ptr::null(),
                 ));
                 ok(hegel_c::hegel_test_case_free(ctx, tc));
             } else {
@@ -1876,6 +1890,8 @@ fn structured_draws_after_overrun_report_stop_test() {
             tc,
             hegel_status_t::HEGEL_STATUS_OVERRUN as u32,
             ptr::null(),
+            ptr::null(),
+            ptr::null(),
         ));
         ok(hegel_c::hegel_test_case_free(ctx, tc));
         drain(ctx, run);
@@ -1958,6 +1974,8 @@ fn typed_draws_after_overrun_report_stop_test() {
             ctx,
             tc,
             hegel_status_t::HEGEL_STATUS_OVERRUN as u32,
+            ptr::null(),
+            ptr::null(),
             ptr::null(),
         ));
         ok(hegel_c::hegel_test_case_free(ctx, tc));
@@ -2205,6 +2223,8 @@ fn grammar_draws_strings_of_the_grammar() {
             tc,
             hegel_status_t::HEGEL_STATUS_VALID as u32,
             ptr::null(),
+            ptr::null(),
+            ptr::null(),
         ));
         ok(hegel_c::hegel_test_case_free(ctx, tc));
         drain(ctx, run);
@@ -2236,6 +2256,8 @@ fn a_grammar_draw_may_be_capped_below_the_grammar() {
             ctx,
             tc,
             hegel_status_t::HEGEL_STATUS_VALID as u32,
+            ptr::null(),
+            ptr::null(),
             ptr::null(),
         ));
         ok(hegel_c::hegel_test_case_free(ctx, tc));
@@ -2344,6 +2366,8 @@ fn grammar_draws_reject_the_test_case_when_values_never_fit() {
             ctx,
             tc,
             hegel_status_t::HEGEL_STATUS_INVALID as u32,
+            ptr::null(),
+            ptr::null(),
             ptr::null(),
         ));
         ok(hegel_c::hegel_test_case_free(ctx, tc));
@@ -2541,6 +2565,8 @@ fn grammar_placeholders_stand_for_explicit_terminals() {
             tc,
             hegel_status_t::HEGEL_STATUS_VALID as u32,
             ptr::null(),
+            ptr::null(),
+            ptr::null(),
         ));
         ok(hegel_c::hegel_test_case_free(ctx, tc));
         drain(ctx, run);
@@ -2692,6 +2718,8 @@ unsafe fn draw_once(ctx: *mut HegelContext, g: *const HegelGrammar) -> String {
             ctx,
             tc,
             hegel_status_t::HEGEL_STATUS_VALID as u32,
+            ptr::null(),
+            ptr::null(),
             ptr::null(),
         ));
         ok(hegel_c::hegel_test_case_free(ctx, tc));
@@ -2959,6 +2987,8 @@ fn generate_grammar_validates_handles_and_reports_stop_test() {
             ctx,
             tc,
             hegel_status_t::HEGEL_STATUS_OVERRUN as u32,
+            ptr::null(),
+            ptr::null(),
             ptr::null(),
         ));
         ok(hegel_c::hegel_test_case_free(ctx, tc));

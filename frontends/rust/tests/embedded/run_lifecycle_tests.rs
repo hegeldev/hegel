@@ -168,49 +168,6 @@ fn reproducer_line_points_a_builder_run_at_the_builder() {
     );
 }
 
-#[test]
-fn capture_rank_orders_diagnostic_lines_bare() {
-    let diagnostic = Some("thread panicked".to_string());
-    let lines = vec!["let x = 1;".to_string()];
-    assert_eq!(capture_rank(&diagnostic, &lines), 2);
-    assert_eq!(capture_rank(&diagnostic, &[]), 2);
-    assert_eq!(capture_rank(&None, &lines), 1);
-    assert_eq!(capture_rank(&None, &[]), 0);
-}
-
-fn report(diagnostic: Option<&str>, lines: &[&str], payload: &'static str) -> CapturedReport {
-    CapturedReport {
-        lines: lines.iter().map(|l| l.to_string()).collect(),
-        diagnostic: diagnostic.map(str::to_string),
-        payload: Box::new(payload),
-    }
-}
-
-#[test]
-fn a_bare_capture_never_replaces_a_ranked_one() {
-    let mut captured = HashMap::new();
-    let origin = "Panic at a.rs:1:1".to_string();
-    store_capture(
-        &mut captured,
-        origin.clone(),
-        report(Some("ranked diagnostic"), &["let x = 1;"], "ranked"),
-    );
-    store_capture(&mut captured, origin.clone(), report(None, &[], "bare"));
-    let kept = &captured[&origin];
-    assert_eq!(kept.diagnostic.as_deref(), Some("ranked diagnostic"));
-    assert_eq!(kept.lines, ["let x = 1;"]);
-    assert_eq!(kept.payload.downcast_ref::<&str>(), Some(&"ranked"));
-
-    store_capture(
-        &mut captured,
-        origin.clone(),
-        report(Some("newer diagnostic"), &[], "newer"),
-    );
-    let kept = &captured[&origin];
-    assert_eq!(kept.diagnostic.as_deref(), Some("newer diagnostic"));
-    assert_eq!(kept.payload.downcast_ref::<&str>(), Some(&"newer"));
-}
-
 /// Settings for the single-case runs below.
 fn test_settings() -> Settings {
     Settings::new()
@@ -219,34 +176,45 @@ fn test_settings() -> Settings {
         .seed(Some(1))
 }
 
-/// Run one real test case from a fresh engine run through `run_test_case`,
-/// passing `is_final` / `verbosity` straight through to exercise its emit and
-/// backtrace gating. The body decides the outcome; the engine supplies a real,
-/// working handle (so `mark_complete` and any draws are real).
+/// Run the first test case of a fresh engine run at `verbosity` through
+/// `run_test_case`, with the run's output going wherever a run started now
+/// would send it. The body decides the outcome; the engine supplies a real,
+/// working handle (so `mark_complete` and any draws are real) and decides
+/// whether it wants the case's output.
 fn run_one_case(
-    is_final: bool,
     verbosity: Verbosity,
     body: &mut dyn FnMut(TestCase),
-) -> (
-    TestCaseResult,
-    Option<Box<dyn std::any::Any + Send>>,
-    Option<String>,
-) {
+) -> (TestCaseResult, Option<Box<dyn std::any::Any + Send>>, bool) {
     init_panic_hook();
-    let c_settings = SettingsHandle::build(&test_settings(), None, None);
-    let run = RunHandle::start(&c_settings, None).expect("the engine starts");
+    let c_settings = SettingsHandle::build(&test_settings().verbosity(verbosity), None, None);
+    let output = RunOutput::resolve();
+    let run = RunHandle::start(&c_settings, output.sink()).expect("the engine starts");
     let c_tc = run
         .next_test_case()
         .expect("the engine schedules at least one case");
-    run_test_case(c_tc, body, is_final, verbosity, &RunOutput::resolve(), None)
+    run_test_case(c_tc, body)
 }
 
-fn run_case_capturing(
-    is_final: bool,
-    verbosity: Verbosity,
-    body: &mut dyn FnMut(TestCase),
-) -> TestCaseResult {
-    run_one_case(is_final, verbosity, body).0
+fn run_case(verbosity: Verbosity, body: &mut dyn FnMut(TestCase)) -> TestCaseResult {
+    run_one_case(verbosity, body).0
+}
+
+/// Drive a real run of `body` with its output captured, returning every
+/// line the run printed.
+fn drive_lines(body: impl FnMut(TestCase), settings: &Settings) -> Vec<String> {
+    use std::sync::Mutex;
+
+    let lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let writer = lines.clone();
+    let sink: crate::test_case::OutputSink =
+        Arc::new(move |s: &str| writer.lock().unwrap().push(s.to_string()));
+    let result = crate::test_case::with_output_override(sink, || {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            drive(body, settings, None, None, None, Vec::new())
+        }))
+    });
+    assert!(result.is_err(), "the run should fail");
+    lines.lock().unwrap().clone()
 }
 
 /// Drive a real run of `body` and return the message it panics with.
@@ -378,7 +346,7 @@ fn stateful_overrun_mid_rule_is_reported_as_overrun() {
             vec![]
         }
     }
-    let result = run_case_capturing(false, Verbosity::Normal, &mut |tc| {
+    let result = run_case(Verbosity::Normal, &mut |tc| {
         crate::stateful::machine(Hungry).run(tc);
         panic!("unreachable: the endless rule must exhaust the choice budget");
     });
@@ -390,12 +358,12 @@ fn stateful_overrun_mid_rule_is_reported_as_overrun() {
 
 #[test]
 fn stale_panic_info_is_not_attributed_to_a_later_hook_skipping_panic() {
-    let result = run_case_capturing(false, Verbosity::Normal, &mut |_tc| {
+    let result = run_case(Verbosity::Normal, &mut |_tc| {
         let _ = std::panic::catch_unwind(|| panic!("handled internally"));
     });
     assert!(matches!(result, TestCaseResult::Valid));
 
-    let result = run_case_capturing(false, Verbosity::Normal, &mut |_tc| {
+    let result = run_case(Verbosity::Normal, &mut |_tc| {
         std::panic::resume_unwind(Box::new("hook-skipping panic".to_string()));
     });
     match result {
@@ -411,28 +379,62 @@ fn stale_panic_info_is_not_attributed_to_a_later_hook_skipping_panic() {
 
 #[test]
 fn discarded_failures_skip_backtrace_capture() {
-    run_case_capturing(false, Verbosity::Normal, &mut |_tc| panic!("{}", "boom"));
+    let (_, _, wants_output) = run_one_case(Verbosity::Normal, &mut |_tc| panic!("{}", "boom"));
+    assert!(!wants_output);
     assert!(
         !capture_flag(),
-        "a discarded (non-final) failure must not pay for a backtrace"
+        "a failure whose output is not wanted must not pay for a backtrace"
     );
+}
+
+/// Whether each execution of a failing test, run to its failure report at
+/// `verbosity`, had backtrace capture enabled.
+fn capture_flags_of_failing_run(verbosity: Verbosity) -> Vec<bool> {
+    use std::sync::Mutex;
+
+    let flags: Arc<Mutex<Vec<bool>>> = Arc::default();
+    let writer = flags.clone();
+    drive_lines(
+        move |_tc| {
+            writer.lock().unwrap().push(backtrace_capture_enabled());
+            panic!("{}", "boom");
+        },
+        &test_settings().verbosity(verbosity),
+    );
+    flags.lock().unwrap().clone()
 }
 
 #[test]
 fn shown_failures_enable_backtrace_capture() {
-    run_case_capturing(true, Verbosity::Normal, &mut |_tc| panic!("{}", "boom"));
-    assert!(capture_flag());
+    assert!(capture_flags_of_failing_run(Verbosity::Normal).contains(&true));
 }
 
 #[test]
-fn quiet_final_replay_skips_backtrace_capture() {
-    run_case_capturing(true, Verbosity::Quiet, &mut |_tc| panic!("{}", "boom"));
-    assert!(!capture_flag());
+fn a_quiet_run_raises_the_panic_of_the_minimal_failure() {
+    let msg = drive_panic_message(
+        |tc| {
+            let x: i32 = tc.draw(gs::integers().min_value(0));
+            assert!(x < 10, "boom x={x}");
+        },
+        &test_settings().verbosity(Verbosity::Quiet),
+    );
+    assert_eq!(msg, "boom x=10");
 }
 
 #[test]
-fn verbose_mode_enables_backtrace_capture_for_non_final_failures() {
-    run_case_capturing(false, Verbosity::Verbose, &mut |_tc| panic!("{}", "boom"));
+fn verbose_mode_skips_backtrace_capture() {
+    let (_, _, wants_output) = run_one_case(Verbosity::Verbose, &mut |_tc| panic!("{}", "boom"));
+    assert!(wants_output);
+    assert!(
+        !capture_flag(),
+        "a verbose run prints a failure's summary, which needs no backtrace"
+    );
+}
+
+#[test]
+fn debug_mode_enables_backtrace_capture() {
+    let (_, _, wants_output) = run_one_case(Verbosity::Debug, &mut |_tc| panic!("{}", "boom"));
+    assert!(wants_output);
     assert!(capture_flag());
 }
 
@@ -471,7 +473,7 @@ fn hook_captures_backtrace_only_when_flagged() {
 fn control_flow_unwinds_never_reach_the_panic_hook() {
     init_panic_hook();
     take_panic_info();
-    let (result, payload, _) = run_one_case(true, Verbosity::Normal, &mut |tc| {
+    let (result, payload, _) = run_one_case(Verbosity::Normal, &mut |tc| {
         tc.assume(false);
     });
     assert!(matches!(result, TestCaseResult::Invalid));
@@ -483,8 +485,8 @@ fn control_flow_unwinds_never_reach_the_panic_hook() {
 }
 
 #[test]
-fn verbose_non_final_diagnostic_flows_through_the_sink_without_duplicating_notes() {
-    use std::sync::{Arc, Mutex};
+fn verbose_diagnostic_flows_through_the_sink_without_duplicating_notes() {
+    use std::sync::Mutex;
 
     let lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let writer = lines.clone();
@@ -492,7 +494,7 @@ fn verbose_non_final_diagnostic_flows_through_the_sink_without_duplicating_notes
         Arc::new(move |s: &str| writer.lock().unwrap().push(s.to_string()));
 
     crate::test_case::with_output_override(sink, || {
-        run_case_capturing(false, Verbosity::Verbose, &mut |tc| {
+        run_case(Verbosity::Verbose, &mut |tc| {
             tc.note("the noted line");
             panic!("{}", "boom");
         })
@@ -505,51 +507,127 @@ fn verbose_non_final_diagnostic_flows_through_the_sink_without_duplicating_notes
         "the live note must appear exactly once, got {lines:?}"
     );
     assert!(
-        lines.iter().any(|l| l.contains("panicked at")),
-        "the diagnostic must flow through the sink, got {lines:?}"
+        lines.iter().any(|l| l.starts_with("thread '")
+            && l.contains(&format!("panicked at {}", file!()))
+            && l.ends_with(": boom")),
+        "the summary must flow through the sink, got {lines:?}"
     );
-}
-
-#[test]
-fn final_replay_sink_receives_output_but_not_the_diagnostic() {
-    use std::sync::{Arc, Mutex};
-
-    let lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    let writer = lines.clone();
-    let sink: crate::test_case::OutputSink =
-        Arc::new(move |s: &str| writer.lock().unwrap().push(s.to_string()));
-
-    crate::test_case::with_output_override(sink, || {
-        run_case_capturing(true, Verbosity::Normal, &mut |tc| {
-            tc.note("the noted line");
-            panic!("{}", "boom");
-        })
-    });
-
-    assert_eq!(lines.lock().unwrap().as_slice(), ["the noted line"]);
-}
-
-#[test]
-fn quiet_final_replay_emits_no_draw_or_note_output() {
-    use std::sync::{Arc, Mutex};
-
-    let lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    let writer = lines.clone();
-    let sink: crate::test_case::OutputSink =
-        Arc::new(move |s: &str| writer.lock().unwrap().push(s.to_string()));
-
-    crate::test_case::with_output_override(sink, || {
-        run_case_capturing(true, Verbosity::Quiet, &mut |tc| {
-            tc.note("the noted line");
-            panic!("{}", "boom");
-        })
-    });
-
     assert!(
-        lines.lock().unwrap().is_empty(),
-        "quiet mode must suppress final-replay output, got {:?}",
-        lines.lock().unwrap()
+        !lines.iter().any(|l| l == "boom"),
+        "a verbose run prints the summary, not the full diagnostic, got {lines:?}"
     );
+}
+
+#[test]
+fn a_debug_run_prints_the_full_diagnostic() {
+    use std::sync::Mutex;
+
+    let lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let writer = lines.clone();
+    let sink: crate::test_case::OutputSink =
+        Arc::new(move |s: &str| writer.lock().unwrap().push(s.to_string()));
+
+    crate::test_case::with_output_override(sink, || {
+        run_case(Verbosity::Debug, &mut |_tc| panic!("{}", "boom"))
+    });
+
+    let lines = lines.lock().unwrap();
+    let panicked = lines
+        .iter()
+        .position(|l| l.contains("panicked at"))
+        .unwrap();
+    assert_eq!(lines[panicked + 1], "boom", "{lines:?}");
+}
+
+#[test]
+fn a_summary_is_the_panic_line_and_the_message() {
+    assert_eq!(
+        render_summary("main", "1", "a.rs:1:2", "boom"),
+        "thread 'main' (1) panicked at a.rs:1:2: boom"
+    );
+}
+
+#[test]
+fn a_summary_cuts_a_multi_line_message_at_its_first_line() {
+    assert_eq!(
+        render_summary("main", "1", "a.rs:1:2", "first\nsecond\n"),
+        "thread 'main' (1) panicked at a.rs:1:2: first …"
+    );
+    assert_eq!(
+        render_summary("main", "1", "a.rs:1:2", "only\n"),
+        "thread 'main' (1) panicked at a.rs:1:2: only"
+    );
+}
+
+#[test]
+fn a_summary_of_an_empty_message_is_the_panic_line() {
+    assert_eq!(
+        render_summary("main", "1", "a.rs:1:2", ""),
+        "thread 'main' (1) panicked at a.rs:1:2:"
+    );
+}
+
+#[test]
+fn an_outcome_the_engine_rejects_is_an_internal_error() {
+    let c_settings =
+        SettingsHandle::build(&test_settings().verbosity(Verbosity::Verbose), None, None);
+    let run = RunHandle::start(&c_settings, None).unwrap();
+    let c_tc = run.next_test_case().unwrap();
+    let failure = TestCaseResult::Interesting(Failure {
+        origin: "Panic at a.rs:1:1".to_string(),
+    });
+    let payload = catch_unwind(AssertUnwindSafe(|| {
+        report_outcome(&c_tc, &failure, None, None)
+    }))
+    .unwrap_err();
+    let message = panic_message(&payload);
+    assert!(
+        message.contains("Internal error in hegel")
+            && message.contains("rejected a test case's outcome"),
+        "{message}"
+    );
+    report_outcome(&c_tc, &failure, Some("a.rs:1:1: boom"), None);
+}
+
+#[test]
+fn a_failure_report_prints_the_cases_output_then_its_diagnostic_once() {
+    let lines = drive_lines(
+        |tc| {
+            tc.note("the noted line");
+            panic!("{}", "boom");
+        },
+        &test_settings(),
+    );
+    let noted = lines.iter().position(|l| l == "the noted line").unwrap();
+    let panicked = lines
+        .iter()
+        .position(|l| l.contains("panicked at"))
+        .unwrap();
+    assert!(noted < panicked, "{lines:?}");
+    assert_eq!(
+        lines.iter().filter(|l| *l == "the noted line").count(),
+        1,
+        "{lines:?}"
+    );
+    assert_eq!(
+        lines.iter().filter(|l| l.contains("panicked at")).count(),
+        1,
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn a_quiet_failing_run_prints_nothing() {
+    let lines = drive_lines(
+        |tc| {
+            tc.note("the noted line");
+            panic!("{}", "boom");
+        },
+        &test_settings()
+            .verbosity(Verbosity::Quiet)
+            .print_blob(false),
+    );
+    assert!(lines.is_empty(), "{lines:?}");
 }
 
 #[test]
@@ -623,9 +701,9 @@ fn reporting_an_outcome_for_a_completed_case_panics() {
     let c_settings = SettingsHandle::build(&test_settings(), None, None);
     let run = RunHandle::start(&c_settings, None).unwrap();
     let c_tc = run.next_test_case().unwrap();
-    report_outcome(&c_tc, &TestCaseResult::Valid);
+    report_outcome(&c_tc, &TestCaseResult::Valid, None, None);
     let payload = catch_unwind(AssertUnwindSafe(|| {
-        report_outcome(&c_tc, &TestCaseResult::Valid)
+        report_outcome(&c_tc, &TestCaseResult::Valid, None, None)
     }))
     .unwrap_err();
     assert!(

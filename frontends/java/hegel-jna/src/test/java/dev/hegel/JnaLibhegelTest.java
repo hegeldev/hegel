@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.sun.jna.Memory;
 import com.sun.jna.Pointer;
 import dev.hegel.lowlevel.Abi;
+import dev.hegel.lowlevel.Libhegel;
 import dev.hegel.lowlevel.LibraryLoader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -82,7 +83,8 @@ class JnaLibhegelTest {
         assertThrows(HegelException.class, () -> lib.runResultStatus(0));
         assertThrows(HegelException.class, () -> lib.runStart(0, null));
         assertThrows(HegelException.class, () -> lib.runStartBlob(0, "blob", null));
-        assertThrows(HegelException.class, () -> lib.testCaseShouldCapture(0));
+        assertThrows(HegelException.class, () -> lib.testCaseWantsOutput(0));
+        assertThrows(HegelException.class, () -> lib.testCaseWantsDetail(0));
         assertThrows(HegelException.class, () -> lib.testCaseSetWorker(0, 0));
         long[] clone = {7};
         assertEquals(Abi.E_INVALID_HANDLE, lib.testCaseClone(0, clone));
@@ -213,7 +215,7 @@ class JnaLibhegelTest {
         JnaLibhegel lib = real();
         long s = newSettings(lib);
         long[] out = new long[1];
-        // A null output callback leaves replay output on stderr; the garbage blob is rejected.
+        // A null output callback is no destination; the garbage blob is rejected.
         assertEquals(Abi.E_INVALID_ARG, lib.testCaseFromBlob(s, "not-a-blob!!!", null, out));
         lib.settingsFree(s);
     }
@@ -231,19 +233,23 @@ class JnaLibhegelTest {
         String blob = report.failures().get(0).reproduceBlob().orElseThrow();
         long s = newSettings(lib);
         lib.settingsDatabase(s, "");
-        // A null output callback leaves the run's output on stderr. Marking every replay valid
+        // Libhegel.STDERR hands the engine its own stderr writer. Marking every replay valid
         // pumps the run dry without a failure, which is the engine's "stale blob" verdict.
-        long run = lib.runStartBlob(s, blob, null);
+        long run = lib.runStartBlob(s, blob, Libhegel.STDERR);
         assertNotEquals(0, run);
         long tc;
         while ((tc = lib.nextTestCase(run)) != 0) {
-            assertEquals(Abi.OK, lib.markComplete(tc, Abi.STATUS_VALID, null));
+            assertEquals(Abi.OK, lib.markComplete(tc, Abi.STATUS_VALID, null, null, null));
             lib.testCaseFree(tc);
         }
         long result = lib.runResult(run);
         assertEquals(Abi.RUN_STATUS_PASSED, lib.runResultStatus(result));
         lib.runResultFree(result);
         lib.runFree(run);
+        long[] replay = new long[1];
+        assertEquals(Abi.OK, lib.testCaseFromBlob(s, blob, null, replay));
+        assertEquals(Abi.OK, lib.markComplete(replay[0], Abi.STATUS_VALID, null, null, null));
+        lib.testCaseFree(replay[0]);
         lib.settingsFree(s);
     }
 
@@ -316,9 +322,17 @@ class JnaLibhegelTest {
             int code = lib.generateInteger(tc, 0, 10, value);
             if (code == Abi.OK) {
                 assertEquals(Abi.OK, lib.target(tc, value[0], "héllo wörld"));
-                assertEquals(Abi.OK, lib.markComplete(tc, Abi.STATUS_INTERESTING, "origin ✓"));
+                assertEquals(
+                        Abi.E_INVALID_ARG,
+                        lib.markComplete(tc, Abi.STATUS_INTERESTING, "origin ✓", "two\nlines", "detail"));
+                assertTrue(lib.lastErrorMessage().contains("summary"), lib.lastErrorMessage());
+                assertEquals(lib.testCaseWantsOutput(tc), lib.testCaseWantsDetail(tc));
+                assertEquals(
+                        Abi.OK,
+                        lib.markComplete(
+                                tc, Abi.STATUS_INTERESTING, "origin ✓", "summary ✓", "diagnostic ✓\nat line 2"));
             } else {
-                assertEquals(Abi.OK, lib.markComplete(tc, Abi.STATUS_OVERRUN, null));
+                assertEquals(Abi.OK, lib.markComplete(tc, Abi.STATUS_OVERRUN, null, null, null));
             }
             lib.testCaseFree(tc);
         }
@@ -329,6 +343,8 @@ class JnaLibhegelTest {
         assertEquals("origin ✓", lib.failureOrigin(result, 0));
         assertNotNull(lib.failureBlob(result, 0));
         assertNull(lib.failureCaveat(result, 0));
+        assertEquals("", lib.failureOutput(result, 0));
+        assertEquals("diagnostic ✓\nat line 2", lib.failureDiagnostic(result, 0));
         lib.runResultFree(result);
         lib.runFree(run);
         lib.settingsFree(s);
@@ -360,7 +376,7 @@ class JnaLibhegelTest {
             assertEquals(0, group[0]);
             assertEquals(1, level[0]);
             lib.stateMachineFree(id[0]);
-            assertEquals(Abi.OK, lib.markComplete(tc, Abi.STATUS_VALID, null));
+            assertEquals(Abi.OK, lib.markComplete(tc, Abi.STATUS_VALID, null, null, null));
             lib.testCaseFree(tc);
         }
         lib.runFree(run);

@@ -162,11 +162,16 @@ namespace hegel::impl {
     uint64_t label_combine(hegel_context_t* ctx,
                            const std::vector<uint64_t>& labels);
 
-    hegel_run_t* run_start(hegel_context_t* ctx, hegel_settings_t* s);
-    /// A run that replays `blob`. An invalid blob throws
-    /// std::invalid_argument.
+    /// A run printing its output through `callback`, or nowhere when it is
+    /// NULL. The callback must stay valid until the run is freed.
+    hegel_run_t* run_start(hegel_context_t* ctx, hegel_settings_t* s,
+                           hegel_output_callback_t callback, void* user_data);
+    /// A run that replays `blob`, printing as run_start does. An invalid
+    /// blob throws std::invalid_argument.
     hegel_run_t* run_start_blob(hegel_context_t* ctx, hegel_settings_t* s,
-                                std::string_view blob);
+                                std::string_view blob,
+                                hegel_output_callback_t callback,
+                                void* user_data);
     /// NULL once the engine has no more cases to hand out. The returned
     /// handle is caller-owned; release it with hegel_test_case_free.
     hegel_test_case_t* next_test_case(hegel_context_t* ctx, hegel_run_t* run);
@@ -175,13 +180,21 @@ namespace hegel::impl {
     /// returned handle is caller-owned; release it with hegel_test_case_free.
     hegel_test_case_t* test_case_clone(hegel_context_t* ctx,
                                        const hegel_test_case_t* tc);
-    /// Whether the engine stamped `tc` for capture: its output and, if it
-    /// fails, its diagnostic are the material for that origin's report.
-    bool test_case_should_capture(hegel_context_t* ctx,
-                                  const hegel_test_case_t* tc);
+    /// Whether the engine uses what `tc` prints: it streams it on a verbose
+    /// run, and keeps it for the report of a failure it stamped for capture.
+    bool test_case_wants_output(hegel_context_t* ctx,
+                                const hegel_test_case_t* tc);
+    /// Whether the engine uses the full diagnostic of `tc` if it fails: at
+    /// Debug it prints it, and it keeps it for a case stamped for capture.
+    bool test_case_wants_detail(hegel_context_t* ctx,
+                                const hegel_test_case_t* tc);
+    /// Completes `tc`. `origin`, `summary` and `detail` describe a failure
+    /// and are nullopt for any other status.
     void mark_complete(hegel_context_t* ctx, hegel_test_case_t* tc,
                        hegel_status_t status,
-                       const std::optional<std::string>& origin);
+                       const std::optional<std::string>& origin,
+                       const std::optional<std::string>& summary,
+                       const std::optional<std::string>& detail);
 
     /// Caller-owned result snapshot; release with hegel_run_result_free.
     hegel_test_case_t* test_case_block(hegel_context_t* ctx,
@@ -192,7 +205,7 @@ namespace hegel::impl {
     hegel_printer_t* test_case_printer(hegel_context_t* ctx,
                                        hegel_test_case_t* tc);
     // Appends a note to `tc`'s region of its document. A note on a region
-    // whose document was already read is dropped.
+    // whose document is sealed is dropped.
     void note(hegel_context_t* ctx, hegel_test_case_t* tc,
               std::string_view text);
     void printer_free(hegel_context_t* ctx, hegel_printer_t* printer);
@@ -234,6 +247,10 @@ namespace hegel::impl {
     /// The failure's standing under the run's nondeterministic handling, or
     /// nullopt for a deterministic failure.
     std::optional<std::string> failure_caveat(hegel_context_t* ctx,
+                                              const hegel_failure_t* failure);
+    // What the failing test case printed for `failure`'s report, or nothing
+    // when the engine kept no output for it.
+    std::optional<std::string> failure_output(hegel_context_t* ctx,
                                               const hegel_failure_t* failure);
 
     // String-generator construction. Each validates its parameters

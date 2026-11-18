@@ -24,7 +24,8 @@ type TestCase interface {
 	// Assume rejects the current test case if condition is false.
 	Assume(condition bool)
 
-	// Note prints message during the final (replay) test case. Output is routed
+	// Note prints message during the final (replay) test case, and during
+	// every test case of a verbose run (see [WithVerbosity]). Output is routed
 	// to t.Log for [Test], or stdout for [Run].
 	Note(message string)
 
@@ -50,7 +51,7 @@ type TestCase interface {
 	// FailNow marks the test case as failed and stops the test body.
 	FailNow()
 
-	// Log routes the message through Note (only emitted on final replay).
+	// Log routes the message through Note.
 	Log(args ...any)
 
 	// log writes framework-generated output without user call-site attribution.

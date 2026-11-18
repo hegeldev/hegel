@@ -571,9 +571,6 @@ let c_settings_suppress_health_check =
     (handle_t @-> handle_t @-> uint32_t @-> returning int)
 ;;
 
-(* [hegel_run_start]'s [callback]/[user_data] (the third and fourth arguments)
-   redirect the engine's own output off stderr. We always pass NULL for both,
-   keeping it on stderr. *)
 let c_run_start =
   foreign
     "hegel_run_start"
@@ -614,9 +611,15 @@ let c_test_case_free =
   foreign "hegel_test_case_free" (handle_t @-> handle_t @-> returning int)
 ;;
 
-let c_test_case_should_capture =
+let c_test_case_wants_output =
   foreign
-    "hegel_test_case_should_capture"
+    "hegel_test_case_wants_output"
+    (handle_t @-> handle_t @-> ptr bool @-> returning int)
+;;
+
+let c_test_case_wants_detail =
+  foreign
+    "hegel_test_case_wants_detail"
     (handle_t @-> handle_t @-> ptr bool @-> returning int)
 ;;
 
@@ -1354,7 +1357,7 @@ let c_note = foreign "hegel_note" text_typ
 let c_mark_complete =
   foreign
     "hegel_mark_complete"
-    (handle_t @-> handle_t @-> int @-> str_opt @-> returning int)
+    (handle_t @-> handle_t @-> int @-> str_opt @-> str_opt @-> str_opt @-> returning int)
 ;;
 
 let c_result_status =
@@ -1388,6 +1391,12 @@ let c_failure_blob =
 let c_failure_caveat =
   foreign
     "hegel_failure_caveat"
+    (handle_t @-> handle_t @-> ptr str_opt @-> returning int)
+;;
+
+let c_failure_output =
+  foreign
+    "hegel_failure_output"
     (handle_t @-> handle_t @-> ptr str_opt @-> returning int)
 ;;
 
@@ -1755,15 +1764,20 @@ let settings_get_nondeterminism_strictness ctx s =
 (* Run lifecycle                                                       *)
 (* ------------------------------------------------------------------ *)
 
+let output_stderr =
+  memoize (fun () ->
+    H (ptr_of_raw_address (Dl.dlsym ~handle:(lib ()) ~symbol:"hegel_output_stderr")))
+;;
+
 let run_start ctx s =
   let out = allocate handle_t null_handle in
-  check_rc ctx (c_run_start ctx s null_handle null_handle out);
+  check_rc ctx (c_run_start ctx s (output_stderr ()) null_handle out);
   !@out
 ;;
 
 let run_start_blob ctx s blob =
   let out = allocate handle_t null_handle in
-  check_rc ctx (c_run_start_blob ctx s blob null_handle null_handle out);
+  check_rc ctx (c_run_start_blob ctx s blob (output_stderr ()) null_handle out);
   !@out
 ;;
 
@@ -1800,9 +1814,15 @@ let test_case_block ctx tc ~indent =
   !@out
 ;;
 
-let test_case_should_capture ctx tc =
+let test_case_wants_output ctx tc =
   let out = allocate bool false in
-  check_rc ctx (c_test_case_should_capture ctx tc out);
+  check_rc ctx (c_test_case_wants_output ctx tc out);
+  !@out
+;;
+
+let test_case_wants_detail ctx tc =
+  let out = allocate bool false in
+  check_rc ctx (c_test_case_wants_detail ctx tc out);
   !@out
 ;;
 
@@ -2864,8 +2884,12 @@ let test_case_printer ctx tc options =
 
 let note ctx tc text = check_rc ctx (c_note ctx tc text)
 
-let mark_complete ctx tc status origin =
-  check_rc ctx (c_mark_complete ctx tc (status_to_int status) origin)
+(* A rejected completion is the frontend's fault, never the user's. *)
+let mark_complete ctx tc status ~origin ~summary ~detail =
+  let rc = c_mark_complete ctx tc (status_to_int status) origin summary detail in
+  if rc = e_invalid_arg
+  then raise (Internal_error ("invalid completion: " ^ c_last_error_message ctx))
+  else check_rc ctx rc
 ;;
 
 (* ------------------------------------------------------------------ *)
@@ -2907,6 +2931,12 @@ let result_failures ctx r =
     match result_failure ctx r i with
     | Some f -> f
     | None -> raise (Internal_error "hegel: failure disappeared mid-iteration"))
+;;
+
+let failure_output ctx f =
+  let out = allocate str_opt None in
+  check_rc ctx (c_failure_output ctx f out);
+  !@out
 ;;
 
 let failure_origin ctx f =
@@ -2981,7 +3011,8 @@ let test_case_free = Obj.magic_portable test_case_free
 let test_case_clone = Obj.magic_portable test_case_clone
 let test_case_block = Obj.magic_portable test_case_block
 let test_case_set_worker = Obj.magic_portable test_case_set_worker
-let test_case_should_capture = Obj.magic_portable test_case_should_capture
+let test_case_wants_output = Obj.magic_portable test_case_wants_output
+let test_case_wants_detail = Obj.magic_portable test_case_wants_detail
 let generate_boolean = Obj.magic_portable generate_boolean
 let generate_integer = Obj.magic_portable generate_integer
 let generate_float = Obj.magic_portable generate_float
@@ -3115,5 +3146,6 @@ let result_failure = Obj.magic_portable result_failure
 let result_failures = Obj.magic_portable result_failures
 let failure_blob = Obj.magic_portable failure_blob
 let failure_caveat = Obj.magic_portable failure_caveat
+let failure_output = Obj.magic_portable failure_output
 let failure_origin = Obj.magic_portable failure_origin
 #endif

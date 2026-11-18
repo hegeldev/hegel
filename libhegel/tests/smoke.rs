@@ -141,8 +141,14 @@ type FnRunResultFree = unsafe extern "C" fn(*mut u8, *mut u8) -> c_int;
 type FnFailureFree = unsafe extern "C" fn(*mut u8, *mut u8) -> c_int;
 type FnRunFree = unsafe extern "C" fn(*mut u8, *mut u8) -> c_int;
 type FnGenerateInteger = unsafe extern "C" fn(*mut u8, *mut u8, i64, i64, *mut i64) -> c_int;
-type FnMarkComplete =
-    unsafe extern "C" fn(*mut u8, *mut u8, CStatus, *const hegel_string_t) -> c_int;
+type FnMarkComplete = unsafe extern "C" fn(
+    *mut u8,
+    *mut u8,
+    CStatus,
+    *const hegel_string_t,
+    *const hegel_string_t,
+    *const hegel_string_t,
+) -> c_int;
 type FnNewPool = unsafe extern "C" fn(*mut u8, *mut u8, *mut *mut u8) -> c_int;
 type FnPoolAdd = unsafe extern "C" fn(*mut u8, *mut u8, *mut u8, *mut i64) -> c_int;
 type FnPoolGenerate = unsafe extern "C" fn(*mut u8, *mut u8, *mut u8, bool, *mut i64) -> c_int;
@@ -408,9 +414,18 @@ impl Api<'_> {
         status: CStatus,
         origin: *const c_char,
     ) {
-        let rc = unsafe {
-            (self.mark_complete)(ctx, tc, status, test_optional(&c_string_from_ptr(origin)))
+        let origin = unsafe { c_string_from_ptr(origin) };
+        let origin = test_optional(&origin);
+        let failed = hegel_string_t {
+            data: c"failed".as_ptr(),
+            len: 6,
         };
+        let failed: *const hegel_string_t = if origin.is_null() {
+            ptr::null()
+        } else {
+            &failed
+        };
+        let rc = unsafe { (self.mark_complete)(ctx, tc, status, origin, failed, failed) };
         unsafe { self.expect_ok(ctx, rc, "hegel_mark_complete") };
     }
     unsafe fn test_case_free(&self, ctx: *mut u8, tc: *mut u8) {

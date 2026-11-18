@@ -37,7 +37,7 @@ int main(void) {
     HEGEL_CHECK(hegel_settings_set_seed, ctx, s, 42, true);
 
     hegel_run_t *run;
-    HEGEL_CHECK(hegel_run_start, ctx, s, NULL, NULL, &run);
+    HEGEL_CHECK(hegel_run_start, ctx, s, hegel_output_stderr, NULL, &run);
 
     size_t cases = 0;
     while (true) {
@@ -49,14 +49,14 @@ int main(void) {
         int64_t n;
         hegel_result_t rc = hegel_generate_integer(ctx, tc, 0, 100, &n);
         if (rc == HEGEL_E_STOP_TEST) {
-            HEGEL_CHECK(hegel_mark_complete, ctx, tc, HEGEL_STATUS_OVERRUN, NULL);
+            HEGEL_CHECK(hegel_mark_complete, ctx, tc, HEGEL_STATUS_OVERRUN, NULL, NULL, NULL);
             HEGEL_CHECK(hegel_test_case_free, ctx, tc);
             continue;
         }
         if (rc != HEGEL_OK) {
             hegel_string_t err = hegel_context_last_error(ctx);
             fprintf(stderr, "hegel_generate_integer failed: rc=%d %.*s\n", rc, (int)err.len, err.data);
-            HEGEL_CHECK(hegel_mark_complete, ctx, tc, HEGEL_STATUS_VALID, NULL);
+            HEGEL_CHECK(hegel_mark_complete, ctx, tc, HEGEL_STATUS_VALID, NULL, NULL, NULL);
             HEGEL_CHECK(hegel_test_case_free, ctx, tc);
             continue;
         }
@@ -64,10 +64,10 @@ int main(void) {
         if (n < 0 || n > 100) {
             char origin[64];
             snprintf(origin, sizeof origin, "out-of-range value %lld", (long long)n);
-            HEGEL_CHECK(hegel_mark_complete, ctx, tc, HEGEL_STATUS_INTERESTING, &HEGEL_STRING(origin, strlen(origin)));
+            HEGEL_CHECK(hegel_mark_complete, ctx, tc, HEGEL_STATUS_INTERESTING, &HEGEL_STRING(origin, strlen(origin)), &HEGEL_STRING(origin, strlen(origin)), &HEGEL_STRING(origin, strlen(origin)));
         } else {
             cases++;
-            HEGEL_CHECK(hegel_mark_complete, ctx, tc, HEGEL_STATUS_VALID, NULL);
+            HEGEL_CHECK(hegel_mark_complete, ctx, tc, HEGEL_STATUS_VALID, NULL, NULL, NULL);
         }
         /* Every handle hegel_next_test_case hands back is owned by the caller
            and must be released, even though the run keeps its own reference. */

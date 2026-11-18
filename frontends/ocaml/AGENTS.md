@@ -127,9 +127,9 @@ lib/                         # Library source
                              #   default ()/from_profile/create materialized from
                              #   the engine's settings profiles (to_ffi/of_ffi)
   internal.ml.in             # Test runner + run lifecycle + typed-draw wrappers on
-                             #   top of Hegel_ffi.Ffi; note/print_line/render_sexp +
-                             #   capture_document (engine-side output, see Pretty
-                             #   printing); events (cppo → internal.ml)
+                             #   top of Hegel_ffi.Ffi; note/print_line/render_sexp
+                             #   (engine-side output, see Pretty printing); events
+                             #   (cppo → internal.ml)
   generators.ml.in           # Re-export shim: include the generators_* modules,
                              #   plus module Temporal = Generators_temporal
                              #   (cppo → generators.ml; generators.mli.in likewise)
@@ -692,22 +692,37 @@ checkout, not the published reference at <https://hegel.dev/reference/libhegel>.
 ### Pretty printing (engine-side layout)
 
 All user-visible test output — notes, drawn values, stateful traces — is assembled in libhegel's per-test-case *document*
-(`hegel_test_case_printer` / `hegel_note`), not streamed to stderr as it
-happens. `Internal.note` appends verbatim (pre-indented, possibly multi-line)
+(`hegel_test_case_printer` / `hegel_note`), which the engine prints itself. `Internal.note` appends verbatim (pre-indented, possibly multi-line)
 lines; `Internal.print_line` assembles a draw line from `Text`/`Value`
 segments, laying each sexp out engine-side with `Internal.render_sexp`: an
 atom is its `Sexp.to_string` escaping (except an atom made by `Internal.raw_text`, which is printed verbatim: `raw_text` records the atom's physical identity in a `Locked` ephemeron table, so the mark survives embedding in a larger sexp and is invisible to everything else; the `Temporal` printers use it), a list is a group — `(`, children
 separated by breakable spaces, `)` — so a value that fits the line prints
 inline (byte-identical to `Sexp.to_string_hum`; pinned by a test) and one
 that doesn't breaks all-or-nothing, one child per line (unlike `pp_hum`'s
-fill style), at the document's default width 79. After `mark_complete`,
-`run_case` reads the document back (`capture_document`:
-`printer_resolve` — required when clone regions exist, an argument error
-otherwise, hence the catch — then `printer_value`); the runner keeps it with
-the failure (see Test Runner) and prints it inside the client-drawn failure
-frame. Verbosity gating stays client-side (`should_print`): under Quiet, or at
-Normal a case the engine did not stamp (`should_capture`), nothing is appended
-and the read is skipped.
+fill style), at the document's default width 79. The client never reads the
+document back (a test case's printer refuses
+`printer_resolve`/`printer_value`, and `mark_complete` seals it). The engine
+lays out each part of it as soon as nothing can change it — after a note or
+line break in the root region, at state-machine join points, at completion —
+and sends it through the run's output callback under Verbose/Debug, keeps it
+as the report of the failure for a case it stamped for capture, and drops it
+otherwise. The callback is always libhegel's `hegel_output_stderr` (`Ffi.run_start`
+passes it; there is no setting for it, and the frontend never passes NULL,
+which the engine would treat as no destination), and `run_test` prints the
+failure report to stderr itself. A failing case passes
+`mark_complete` its origin, a one-line `summary` (`render_summary`:
+`Exception: <exn>` cut at its first line break, led by
+`file:line:col: ` of the innermost user frame when a backtrace is recorded,
+except for `Assert_failure`/`Match_failure`, which carry their own location)
+when `wants_output`, and a `detail` (`render_detail`: `Exception: <exn>` plus
+the recorded backtrace) when `wants_detail`; the engine prints the summary
+after the case's lines in a verbose run and the detail in a debug run. Both
+gates are the engine's (`hegel_test_case_wants_output` /
+`hegel_test_case_wants_detail`, read once per case; `should_print` returns
+`wants_output`): under Quiet, or at Normal a case the engine did not stamp,
+nothing is appended or rendered. `Ffi.mark_complete` raises `Internal_error`
+when the engine rejects the call. The engine also prints a verbose run's
+"Test case stopped" lines.
 Clones write into their own region, anchored where the clone was made, so
 concurrent output assembles deterministically regardless of scheduling.
 Indentation is engine-side too (libhegel 0.37.10 block handles):
@@ -723,8 +738,8 @@ and on `Assume_rejected` reports the rejection to the engine. It only creates th
 block when `should_print tc` holds; a non-printing case runs the body on `tc` itself, since
 a block per step costs a native handle and a context, which
 measured as 50% more wall time and 20x the major collections on a
-200-case x 500-step machine. `print_failure_body` sets the captured output
-off with blank lines inside the frame. The client prepends no spaces anywhere. Mirroring
+200-case x 500-step machine. `print_failure_body` sets the case's printed
+lines off with blank lines inside the frame, before the exception. The client prepends no spaces anywhere. Mirroring
 hegel-rust's `TestCase::child`, a block starts at span depth 0 and opens a
 fresh `draw_state` (a rule's draw names are scoped to that one invocation: a
 `[@@rule]` body's `let n = draw ..` prints as `n` in every step, and a
@@ -848,18 +863,21 @@ new failure, confirmation under nondeterministic handling, and the
 report-time replay of each failure it reports all come out of
 `next_test_case` like any other case. There is no client-side final replay,
 no `is_final`, and no client flaky check. The engine stamps the executions a
-report can be built from (`hegel_test_case_should_capture`, read once per
-case into `should_capture` and `case_outcome.should_capture`); stamped cases
-print (see `should_print`). The run keeps one capture per origin in
-`captured`, a table local to `run_test`: the failure (origin, exception,
-backtrace) with its `case_outcome`. A newer capture replaces an older one,
-except that an unstamped one never replaces a stamped one — when the
-report-time replay does not fail, the newest failing execution may be a silent
-shrink probe. After the loop, each `Ffi.run_result` failure is printed from
-its capture: the output, the exception, `note: <caveat>`
+report can be built from and keeps what the newest stamped failing
+execution of each origin printed as that failure's output
+(`hegel_failure_output`).
+The run keeps one failure per origin in `failures`, a table local to
+`run_test`: the origin, exception and backtrace to raise. A newer failure
+replaces an older one when its case wanted output (`wants_output`) or none is
+stored yet, mirroring the engine, so the raised exception is the one the
+report shows — when the report-time replay does not fail, the newest failing
+execution may be a silent shrink probe. After the loop, each
+`Ffi.run_result` failure is printed: its output (`Ffi.failure_output`, when
+there is any), `Exception: <exn>` (never the engine's detail: the test runner
+shows the raised exception's backtrace itself), `note: <caveat>`
 (`hegel_failure_caveat`, only under nondeterministic handling), and
 `rerun with:` when the failure has a blob (an unconfirmed failure has none).
-A single failure re-raises its captured exception with its backtrace; several
+A single failure re-raises its stored exception with its backtrace; several
 are aggregated into "N failures found!". `?on_failure` runs after the report and
 before that raise; `Hegel.main` exits 1 from it (the exit cannot live in the
 portable `Internal`), so a binary prints only the report. Run and usage errors

@@ -49,7 +49,6 @@ import { runError, DidNotReproduceError } from "./errors.js";
 import { resolveLabel, type LabelSpec } from "./labels.js";
 import {
   EngineDocument,
-  anyLive,
   enginePrinter,
   installDocumentEngine,
   printedLine,
@@ -57,7 +56,7 @@ import {
   type Printer,
 } from "./pretty.js";
 import { ExplicitDataSource } from "./explicit.js";
-import { callSite, databaseKeyOf, locationOf, type CallSite } from "./callSite.js";
+import { callSite, databaseKeyOf, frameLocation, locationOf, type CallSite } from "./callSite.js";
 
 export {
   Verbosity,
@@ -92,7 +91,7 @@ interface Family {
   fault: EngineError | undefined;
   /** The deferred printer regions opened in the test case's document. */
   readonly regions: PrinterHandle[];
-  /** Whether the document has been read or released: printing then does nothing. */
+  /** Whether the test case has completed, sealing its document: printing then does nothing. */
   released: boolean;
 }
 
@@ -186,10 +185,16 @@ export class EngineDataSource implements DataSource {
     this.call(() => this.lib.repeatFailed(this.ctx, this.tc, this.family.repeats[repeatId]));
   }
 
-  markComplete(status: number, origin: string | null): void {
+  markComplete(
+    status: number,
+    origin: string | null,
+    summary: string | null,
+    detail: string | null,
+  ): void {
     if (this.completed) throw new EngineError("Test case completion was already attempted");
     this.completed = true;
-    this.call(() => this.lib.markComplete(this.ctx, this.tc, status, origin));
+    this.family.released = true;
+    this.call(() => this.lib.markComplete(this.ctx, this.tc, status, origin, summary, detail));
   }
 
   newPool(): number {
@@ -369,12 +374,6 @@ export class EngineDataSource implements DataSource {
     this.call(() => this.lib.setWorker(this.ctx, this.tc, index));
   }
 
-  private newPrinter(): PrinterHandle {
-    const handle = this.call(() => this.lib.testCasePrinter(this.ctx, this.tc));
-    this.family.printers.push(handle);
-    return handle;
-  }
-
   printer(): Printer {
     const family = this.family;
     return enginePrinter(
@@ -390,25 +389,28 @@ export class EngineDataSource implements DataSource {
     );
   }
 
-  /** Whether the engine stamped this test case for capture. */
-  shouldCapture(): boolean {
-    return this.call(() => this.lib.shouldCapture(this.ctx, this.tc));
+  private newPrinter(): PrinterHandle {
+    const handle = this.call(() => this.lib.testCasePrinter(this.ctx, this.tc));
+    this.family.printers.push(handle);
+    return handle;
   }
 
   /**
-   * The test case's printed draws and notes, one line per element: its whole
-   * document, with every clone's and block's region spliced in. Reading
-   * seals the document.
+   * Whether the engine uses what this test case prints: it streams the
+   * output of a verbose run and keeps that of a test case it stamped for
+   * capture as its failure's report.
    */
-  render(): string[] {
-    const handle = this.newPrinter();
-    this.family.released = true;
-    return this.call(() => {
-      if (this.family.derived.length > 0 || anyLive(this.lib, this.ctx, this.family.regions)) {
-        this.lib.printerResolve(this.ctx, handle);
-      }
-      return splitLines(this.lib.printerValue(this.ctx, handle));
-    });
+  wantsOutput(): boolean {
+    return this.call(() => this.lib.wantsOutput(this.ctx, this.tc));
+  }
+
+  /**
+   * Whether the engine uses this test case's full diagnostic if it fails: it
+   * prints it at debug verbosity and keeps it with a stamped test case's
+   * report.
+   */
+  wantsDetail(): boolean {
+    return this.call(() => this.lib.wantsDetail(this.ctx, this.tc));
   }
 
   assertHealthy(): void {
@@ -477,14 +479,26 @@ const RESULT_TO_STATUS: Record<TestCaseResult["status"], number> = {
 };
 
 /**
- * Extract a stable origin for a thrown error: the first stack frame outside
- * `node_modules` (the user's test code). The shrinker groups failing inputs by
- * this origin, so it must be stable across calls.
+ * What a test case run reports to the engine beyond its status. `emit`
+ * prints its draws and notes and describes a failure in one line; `detail`
+ * also describes a failure in full; `explicit` serves an explicit example's
+ * values to its draws; `root` is the directory a failure's location is shown
+ * relative to.
  */
-function extractOrigin(error: unknown): string {
-  if (!(error instanceof Error) || !error.stack) return "<unknown>";
-  const lines = error.stack.split("\n");
-  for (const line of lines) {
+export interface TestCaseOptions {
+  emit?: boolean;
+  detail?: boolean;
+  explicit?: ExplicitValues | null;
+  root?: string;
+}
+
+/**
+ * The first stack frame of a thrown error outside `node_modules` (the
+ * user's test code), or `null` when it has none.
+ */
+function userFrame(error: unknown): string | null {
+  if (!(error instanceof Error) || !error.stack) return null;
+  for (const line of error.stack.split("\n")) {
     const trimmed = line.trim();
     if (
       (trimmed.startsWith("at ") || /@.+:\d+(?::\d+)?$/.test(trimmed)) &&
@@ -493,7 +507,52 @@ function extractOrigin(error: unknown): string {
       return trimmed;
     }
   }
-  return "<unknown>";
+  return null;
+}
+
+/** `String(value)`, or its tag for a value that cannot be converted. */
+function safeString(value: unknown): string {
+  try {
+    return String(value);
+  } catch {
+    return Object.prototype.toString.call(value);
+  }
+}
+
+/** A thrown value as its error type and message: `TypeError: x is not a function`. */
+function describeThrown(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return `Thrown: ${typeof error === "string" ? JSON.stringify(error) : safeString(error)}`;
+  }
+  const name = safeString(error.name);
+  const message = safeString(error.message);
+  return (message === "" ? name : name === "" ? message : `${name}: ${message}`) || "Error";
+}
+
+/**
+ * A failure in one line: its error type and message, a message of several
+ * lines cut at its first, after the location of its user frame when it has
+ * one.
+ */
+function failureSummary(error: unknown, frame: string | null, root: string): string {
+  const [first, ...rest] = describeThrown(error).split(/\r\n|\r|\n/);
+  const text = rest.length > 0 ? `${first} …` : first;
+  const location = frame === null ? null : frameLocation(frame, root);
+  return location === null ? text : `${location}: ${text}`;
+}
+
+/**
+ * A failure in full, as its stack prints it: an error's `stack`, headed by
+ * its type and message where the runtime leaves them out (SpiderMonkey,
+ * JavaScriptCore).
+ */
+function failureDetail(error: unknown): string {
+  const description = describeThrown(error);
+  if (!(error instanceof Error) || typeof error.stack !== "string" || error.stack.trim() === "") {
+    return description;
+  }
+  const stack = error.stack.replace(/\n+$/, "");
+  return frameLocation(stack.split("\n")[0], "") === null ? stack : `${description}\n${stack}`;
 }
 
 function classifyResult(e: unknown): TestCaseResult {
@@ -501,16 +560,20 @@ function classifyResult(e: unknown): TestCaseResult {
   if (e instanceof StopTestError) return { status: "overrun" };
   if (e instanceof LoopDone) return { status: "valid" };
   if (e instanceof EngineError) throw e;
-  return { status: "interesting", error: e, origin: extractOrigin(e) };
+  return { status: "interesting", error: e, origin: userFrame(e) ?? "<unknown>" };
 }
 
-function finishTestCase(dataSource: DataSource, outcome: () => TestCaseResult): TestCaseResult {
+function finishTestCase(
+  dataSource: DataSource,
+  options: TestCaseOptions,
+  outcome: () => TestCaseResult,
+): TestCaseResult {
   let result: TestCaseResult;
   try {
     result = outcome();
   } catch (fault) {
     try {
-      dataSource.markComplete(Status.INVALID, null);
+      dataSource.markComplete(Status.INVALID, null, null, null);
     } catch (completionError) {
       throw new AggregateError([fault, completionError], "Engine failure during case completion", {
         cause: completionError,
@@ -518,32 +581,37 @@ function finishTestCase(dataSource: DataSource, outcome: () => TestCaseResult): 
     }
     throw fault;
   }
-  dataSource.markComplete(
-    RESULT_TO_STATUS[result.status],
-    result.status === "interesting" ? result.origin : null,
-  );
+  if (result.status === "interesting") {
+    const { error, origin } = result;
+    dataSource.markComplete(
+      Status.INTERESTING,
+      origin,
+      options.emit ? failureSummary(error, userFrame(error), options.root ?? "") : null,
+      options.detail ? failureDetail(error) : null,
+    );
+  } else {
+    dataSource.markComplete(RESULT_TO_STATUS[result.status], null, null, null);
+  }
   return result;
 }
 
 /**
  * Run the test body once against `dataSource`, classify how it ended, and
- * report that to the engine. `emit` is whether its draws and notes are
- * printed; `explicit` serves an explicit example's values to its draws.
+ * report that to the engine as `options` asks.
  */
 export async function runTestCaseAsync(
   dataSource: DataSource,
   testFn: (tc: TestCase) => void | Promise<void>,
-  emit = false,
-  explicit: ExplicitValues | null = null,
+  options: TestCaseOptions = {},
 ): Promise<TestCaseResult> {
-  const tc = new TestCase(dataSource, emit, explicit);
+  const tc = new TestCase(dataSource, options.emit, options.explicit ?? null);
   let thrown: { error: unknown } | null = null;
   try {
     await testFn(tc);
   } catch (error: unknown) {
     thrown = { error };
   }
-  return finishTestCase(dataSource, () => {
+  return finishTestCase(dataSource, options, () => {
     dataSource.assertHealthy?.();
     return thrown === null ? { status: "valid" } : classifyResult(thrown.error);
   });
@@ -553,17 +621,16 @@ export async function runTestCaseAsync(
 export function runTestCase(
   dataSource: DataSource,
   testFn: (tc: TestCase) => void,
-  emit = false,
-  explicit: ExplicitValues | null = null,
+  options: TestCaseOptions = {},
 ): TestCaseResult {
-  const tc = new TestCase(dataSource, emit, explicit);
+  const tc = new TestCase(dataSource, options.emit, options.explicit ?? null);
   let thrown: { error: unknown } | null = null;
   try {
     testFn(tc);
   } catch (error: unknown) {
     thrown = { error };
   }
-  return finishTestCase(dataSource, () => {
+  return finishTestCase(dataSource, options, () => {
     dataSource.assertHealthy?.();
     return thrown === null ? { status: "valid" } : classifyResult(thrown.error);
   });
@@ -598,13 +665,14 @@ function throwFailures(errors: unknown[]): never {
 function readFailure(
   lib: Engine,
   failure: FailureHandle,
-): { origin: string; blob: string | null; caveat: string | null } {
+): { origin: string; blob: string | null; caveat: string | null; lines: string[] } {
   const errors: unknown[] = [];
   try {
     return {
       origin: lib.failureOrigin(failure),
       blob: lib.reproductionBlob(failure),
       caveat: lib.failureCaveat(failure),
+      lines: splitLines(lib.failureOutput(failure) ?? ""),
     };
   } catch (error) {
     errors.push(error);
@@ -640,32 +708,8 @@ function describeExample(lib: Engine, ctx: ContextHandle, example: ExplicitExamp
 interface Step {
   ds: DataSource;
   emit: boolean;
+  detail: boolean;
   explicit: ExplicitValues | null;
-}
-
-/**
- * One failure origin's report material, captured as the test cases ran: the
- * printed lines of the case, whether the engine stamped it, and the error to
- * throw. A capture replaces an earlier one of the same origin unless that one
- * ranks higher, so a stamped execution's report survives later unstamped
- * shrink probes while, at equal rank, the newest wins.
- */
-interface Captured {
-  lines: string[];
-  stamped: boolean;
-  error: unknown;
-}
-
-function rank(capture: Captured): number {
-  if (capture.stamped) return 2;
-  return capture.lines.length > 0 ? 1 : 0;
-}
-
-/** The verbose line saying why a test case stopped short of its end, for one that did. */
-function stopReason(outcome: TestCaseResult): string | null {
-  if (outcome.status === "invalid") return "Test case stopped: failed assumption";
-  if (outcome.status === "overrun") return "Test case stopped: out of data";
-  return null;
 }
 
 /** What one engine run concluded. */
@@ -844,9 +888,9 @@ export class Hegel {
     return this.site === null ? null : locationOf(this.site, this.testFn);
   }
 
-  private output(line: string): void {
+  private readonly output = (line: string): void => {
     this.runtime.output(line);
-  }
+  };
 
   /**
    * Generator that drives a test, yielding a {@link Step} for each test case
@@ -910,16 +954,14 @@ export class Hegel {
     settings: SettingsHandle,
     cache: HandleCache,
   ): Generator<Step, void, TestCaseResult> {
-    const verbosity = lib.getVerbosity(settings);
-    const quiet = verbosity === NativeVerbosity.QUIET;
-    const verbose = verbosity === NativeVerbosity.VERBOSE || verbosity === NativeVerbosity.DEBUG;
+    const quiet = lib.getVerbosity(settings) === NativeVerbosity.QUIET;
     const printBlob = lib.getPrintBlob(settings);
 
     if (this._blobs.length > 0) {
       const errors: unknown[] = [];
       for (const blob of this._blobs) {
-        const run = lib.runStartBlob(ctx, settings, blob);
-        const outcome = yield* this.driveRun(lib, ctx, run, cache, quiet, verbose, false);
+        const run = lib.runStartBlob(ctx, settings, blob, this.output);
+        const outcome = yield* this.driveRun(lib, ctx, run, cache, quiet, false);
         errors.push(...outcome.errors);
       }
       if (errors.length === 0) throw new DidNotReproduceError(DID_NOT_REPRODUCE);
@@ -939,7 +981,7 @@ export class Hegel {
         const errors: unknown[] = [];
         try {
           const ds = new ExplicitDataSource(document);
-          const outcome = yield { ds, emit: true, explicit: example };
+          const outcome = yield { ds, emit: true, detail: false, explicit: example };
           if (outcome.status === "invalid") {
             throw new ExplicitExampleError(
               `Explicit test cases must not be rejected, but ${example.description} was rejected by tc.assume or tc.reject`,
@@ -965,8 +1007,8 @@ export class Hegel {
 
     let outcome: RunOutcome;
     try {
-      const run = lib.runStart(ctx, settings);
-      outcome = yield* this.driveRun(lib, ctx, run, cache, quiet, verbose, printBlob);
+      const run = lib.runStart(ctx, settings, this.output);
+      outcome = yield* this.driveRun(lib, ctx, run, cache, quiet, printBlob);
     } catch (error) {
       if (failures.length === 0) throw error;
       throwFailures([...failures, error]);
@@ -975,13 +1017,16 @@ export class Hegel {
   }
 
   /**
-   * Pull every test case off `run`, capturing each failure origin's report
-   * material, then act on the run's verdict: return when it passed, throw a
+   * Pull every test case off `run`, keeping each failure origin's error, then
+   * act on the run's verdict: return when it passed, throw a
    * {@link RunError} when it errored, and print each failure's report when it
    * failed, returning the errors to throw. The engine owns the whole
-   * exploration, the final replay of each reported failure included: it
-   * stamps the executions a report can be built from, and those print their
-   * draws and notes.
+   * exploration, the final replay of each reported failure included, and
+   * prints each test case's draws and notes where they are wanted: it
+   * streams a verbose run's, and keeps those of the executions it stamped
+   * for capture as their failure's report. An origin's error is that of its
+   * latest execution whose output the engine wanted, else its first, so that
+   * it matches the report.
    */
   private *driveRun(
     lib: Engine,
@@ -989,32 +1034,21 @@ export class Hegel {
     run: RunHandle,
     cache: HandleCache,
     quiet: boolean,
-    verbose: boolean,
     printBlob: boolean,
   ): Generator<Step, RunOutcome, TestCaseResult> {
     const runErrors: unknown[] = [];
     try {
-      const captured = new Map<string, Captured>();
+      const thrown = new Map<string, unknown>();
       for (;;) {
         const tc = lib.nextTestCase(ctx, run);
         if (tc === null) break;
         const ds = new EngineDataSource(lib, ctx, tc, cache, false);
         try {
-          const stamped = ds.shouldCapture();
-          const emit = (stamped && !quiet) || verbose;
-          const outcome = yield { ds, emit, explicit: null };
-          const lines = emit ? ds.render() : [];
-          if (verbose) {
-            for (const line of lines) this.output(line);
-            const reason = stopReason(outcome);
-            if (reason !== null) this.output(reason);
-          }
-          if (outcome.status === "interesting") {
-            const capture: Captured = { lines, stamped, error: outcome.error };
-            const stored = captured.get(outcome.origin);
-            if (stored === undefined || rank(capture) >= rank(stored)) {
-              captured.set(outcome.origin, capture);
-            }
+          const emit = ds.wantsOutput();
+          const detail = ds.wantsDetail();
+          const outcome = yield { ds, emit, detail, explicit: null };
+          if (outcome.status === "interesting" && (emit || !thrown.has(outcome.origin))) {
+            thrown.set(outcome.origin, outcome.error);
           }
         } finally {
           finishCleanup(
@@ -1042,20 +1076,19 @@ export class Hegel {
         }
         const errors: unknown[] = [];
         for (let i = 0; i < count; i++) {
-          const { origin, blob, caveat } = readFailure(lib, lib.failure(result, i));
-          const report = captured.get(origin);
-          if (report === undefined) {
+          const { origin, blob, caveat, lines } = readFailure(lib, lib.failure(result, i));
+          if (!thrown.has(origin)) {
             throw new EngineError(`Hegel failure ${origin} was never seen by the test`);
           }
           if (count > 1 && !quiet) this.output("");
-          for (const line of report.lines) this.output(line);
+          for (const line of lines) this.output(line);
           if (caveat !== null && !quiet) this.output(`note: ${caveat}`);
           if (blob !== null && printBlob) {
             this.output("");
             this.output("To reproduce this failure, replay it with the Hegel builder:");
             this.output(`    .reproduceFailure(${JSON.stringify(blob)})`);
           }
-          errors.push(report.error);
+          errors.push(thrown.get(origin));
         }
         return { failed: true, errors };
       } catch (error) {
@@ -1072,6 +1105,10 @@ export class Hegel {
     }
   }
 
+  private options({ emit, detail, explicit }: Step): TestCaseOptions {
+    return { emit, detail, explicit, root: this.runtime.projectRoot };
+  }
+
   /** Run the test, awaiting an asynchronous test body. */
   async run(): Promise<void> {
     const gen = this.runSteps();
@@ -1079,8 +1116,7 @@ export class Hegel {
     try {
       let next = gen.next();
       while (!next.done) {
-        const { ds, emit, explicit } = next.value;
-        const result = await runTestCaseAsync(ds, this.testFn, emit, explicit);
+        const result = await runTestCaseAsync(next.value.ds, this.testFn, this.options(next.value));
         next = gen.next(result);
       }
     } catch (error) {
@@ -1099,8 +1135,11 @@ export class Hegel {
     try {
       let next = gen.next();
       while (!next.done) {
-        const { ds, emit, explicit } = next.value;
-        const result = runTestCase(ds, this.testFn as (tc: TestCase) => void, emit, explicit);
+        const result = runTestCase(
+          next.value.ds,
+          this.testFn as (tc: TestCase) => void,
+          this.options(next.value),
+        );
         next = gen.next(result);
       }
     } catch (error) {

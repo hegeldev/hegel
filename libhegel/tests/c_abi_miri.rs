@@ -17,7 +17,7 @@ use string_helpers::test_string;
 
 mod common;
 
-use common::ok;
+use common::{complete_case, ok};
 use hegel_c::hegel_result_t::*;
 use hegel_c::{
     HegelCollection, HegelContext, HegelPool, HegelRepeat, HegelRun, HegelRunResult, HegelSettings,
@@ -122,16 +122,7 @@ fn clones_and_root_free_independently_in_any_order() {
         assert_eq!(hegel_test_case_free(ctx, root), HEGEL_OK);
         alive(ctx, c2);
 
-        // Complete via the surviving clone, then free it (the last handle).
-        assert_eq!(
-            hegel_mark_complete(
-                ctx,
-                c2,
-                hegel_status_t::HEGEL_STATUS_VALID as u32,
-                ptr::null()
-            ),
-            HEGEL_OK
-        );
+        // Free the last handle; freeing the run completes the case.
         assert_eq!(hegel_test_case_free(ctx, c2), HEGEL_OK);
 
         ok(hegel_run_free(ctx, run));
@@ -183,6 +174,8 @@ fn two_clones_used_concurrently_then_freed() {
             root,
             hegel_status_t::HEGEL_STATUS_VALID as u32,
             ptr::null(),
+            ptr::null(),
+            ptr::null(),
         ));
         ok(hegel_test_case_free(ctx, c1));
         ok(hegel_test_case_free(ctx, c2));
@@ -193,13 +186,11 @@ fn two_clones_used_concurrently_then_freed() {
     }
 }
 
-/// Two clones race to complete the same test case from two threads. Completion
-/// is first-caller-wins and family-wide, so *neither* call errors — the winner
-/// records the outcome and the loser is a safe no-op (both return `HEGEL_OK`).
-/// Run under Miri this checks the concurrent `compare_exchange` / `ds`
-/// completion / ack path is race- and UB-free.
+/// Two clones try to complete the test case from two threads while the root
+/// completes it: only the root can, and the clones' calls are refused. Run
+/// under Miri this checks the concurrent completion path is race- and UB-free.
 #[test]
-fn concurrent_mark_complete_from_two_clones_is_safe() {
+fn only_the_root_completes_while_clones_try_concurrently() {
     use std::sync::{Arc, Barrier};
 
     unsafe {
@@ -210,7 +201,7 @@ fn concurrent_mark_complete_from_two_clones_is_safe() {
         let mut c2: *mut HegelTestCase = ptr::null_mut();
         assert_eq!(hegel_test_case_clone(ctx, root, &mut c2), HEGEL_OK);
 
-        let barrier = Arc::new(Barrier::new(2));
+        let barrier = Arc::new(Barrier::new(3));
         let handles: Vec<_> = [SendPtr(c1), SendPtr(c2)]
             .into_iter()
             .map(|cp| {
@@ -224,15 +215,25 @@ fn concurrent_mark_complete_from_two_clones_is_safe() {
                         cp.0,
                         hegel_status_t::HEGEL_STATUS_VALID as u32,
                         ptr::null(),
+                        ptr::null(),
+                        ptr::null(),
                     );
                     ok(hegel_context_free(tctx));
                     rc
                 })
             })
             .collect();
+        barrier.wait();
+        ok(hegel_mark_complete(
+            ctx,
+            root,
+            hegel_status_t::HEGEL_STATUS_VALID as u32,
+            ptr::null(),
+            ptr::null(),
+            ptr::null(),
+        ));
         for h in handles {
-            // Neither racing clone errors: winner sets the result, loser no-ops.
-            assert_eq!(h.join().unwrap(), HEGEL_OK);
+            assert_eq!(h.join().unwrap(), HEGEL_E_INVALID_ARG);
         }
 
         ok(hegel_test_case_free(ctx, c1));
@@ -293,6 +294,8 @@ fn object_handles_outlive_the_run_and_free_in_any_order() {
             ctx,
             tc,
             hegel_status_t::HEGEL_STATUS_VALID as u32,
+            ptr::null(),
+            ptr::null(),
             ptr::null(),
         ));
         ok(hegel_test_case_free(ctx, tc));
@@ -498,6 +501,8 @@ fn temporal_handles_keep_their_source_alive_and_release_its_loader() {
             tc,
             hegel_status_t::HEGEL_STATUS_VALID as u32,
             ptr::null(),
+            ptr::null(),
+            ptr::null(),
         ));
         ok(hegel_test_case_free(ctx, tc));
         ok(hegel_run_free(ctx, run));
@@ -565,7 +570,7 @@ fn full_run_generates_fails_and_shrinks() {
             } else {
                 hegel_status_t::HEGEL_STATUS_OVERRUN as u32
             };
-            ok(hegel_mark_complete(ctx, tc, status, ptr::null()));
+            ok(complete_case(ctx, tc, status, &"failure".into()));
             ok(hegel_test_case_free(ctx, tc));
         }
 

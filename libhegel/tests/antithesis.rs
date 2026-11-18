@@ -13,16 +13,16 @@ use string_helpers::test_string;
 
 mod common;
 
-use common::{last_error, make_settings, next_case, ok, start};
+use common::{complete_case, last_error, make_settings, next_case, ok, start};
 use hegel_c::hegel_result_t::{HEGEL_E_INVALID_ARG, HEGEL_OK};
 use hegel_c::{
     HegelContext, HegelFailure, HegelRun, HegelRunResult, HegelSettings, HegelTestCase,
     hegel_context_free, hegel_context_new, hegel_failure_free, hegel_failure_reproduction_blob,
-    hegel_generate_integer, hegel_mark_complete, hegel_run_free, hegel_run_result,
-    hegel_run_result_failure, hegel_run_result_status, hegel_run_start, hegel_run_start_blob,
-    hegel_run_status_t, hegel_settings_free, hegel_settings_new_for_profile,
-    hegel_settings_set_database, hegel_settings_set_test_location, hegel_status_t,
-    hegel_test_case_free, hegel_test_case_from_blob,
+    hegel_generate_integer, hegel_run_free, hegel_run_result, hegel_run_result_failure,
+    hegel_run_result_status, hegel_run_start, hegel_run_start_blob, hegel_run_status_t,
+    hegel_settings_free, hegel_settings_new_for_profile, hegel_settings_set_database,
+    hegel_settings_set_test_location, hegel_status_t, hegel_test_case_free,
+    hegel_test_case_from_blob,
 };
 use std::ffi::{CStr, CString};
 use std::path::PathBuf;
@@ -117,7 +117,7 @@ unsafe fn drive(
             } else {
                 hegel_status_t::HEGEL_STATUS_OVERRUN
             };
-            ok(hegel_mark_complete(
+            ok(complete_case(
                 ctx,
                 tc,
                 status as u32,
@@ -203,7 +203,7 @@ fn a_failing_run_reports_a_false_condition_and_its_blob_replays_do_too() {
             let mut value = 0i64;
             ok(hegel_generate_integer(ctx, tc, 0, 100, &mut value));
             assert!(!sdk.exists(), "nothing is reported before completion");
-            ok(hegel_mark_complete(
+            ok(complete_case(
                 ctx,
                 tc,
                 status as u32,

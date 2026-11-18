@@ -43,6 +43,14 @@ const VALID: hegel_c::hegel_status_t = hegel_c::hegel_status_t::HEGEL_STATUS_VAL
 const OVERRUN: hegel_c::hegel_status_t = hegel_c::hegel_status_t::HEGEL_STATUS_OVERRUN;
 const INTERESTING: hegel_c::hegel_status_t = hegel_c::hegel_status_t::HEGEL_STATUS_INTERESTING;
 
+fn failing(origin: &str) -> FailureReport<'_> {
+    FailureReport {
+        origin,
+        summary: Some(origin),
+        detail: Some(origin),
+    }
+}
+
 /// Run `f` per test case, treating a `HEGEL_E_STOP_TEST` anywhere inside it
 /// as an overrun (completing the case accordingly).
 fn drive_run(run: &RunHandle, mut f: impl FnMut(&CTestCase) -> Result<(), hegel_result_t>) {
@@ -361,7 +369,8 @@ fn ffi_reports_failure_with_blob_then_replays_it() {
         match tc.generate_integer(0, 100) {
             Ok(n) => {
                 if n != 0 {
-                    tc.mark_complete(INTERESTING, Some(origin)).unwrap();
+                    tc.mark_complete(INTERESTING, Some(&failing(origin)))
+                        .unwrap();
                 } else {
                     tc.mark_complete(VALID, None).unwrap();
                 }
@@ -393,7 +402,9 @@ fn ffi_reports_failure_with_blob_then_replays_it() {
         1,
         "the blob replays the minimal counterexample"
     );
-    replay.mark_complete(INTERESTING, Some(origin)).unwrap();
+    replay
+        .mark_complete(INTERESTING, Some(&failing(origin)))
+        .unwrap();
     assert!(replay_run.next_test_case().is_none());
     let replay_result = replay_run.result();
     assert!(

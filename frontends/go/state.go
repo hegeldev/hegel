@@ -89,7 +89,7 @@ func (t *T) Failed() bool {
 
 // Log routes the message through the embedded [*testing.T].
 func (t *T) Log(args ...any) {
-	if t.printer != nil {
+	if t.wantsOutput {
 		t.Helper()
 		t.T.Log(fmt.Sprint(args...))
 	}
@@ -97,7 +97,7 @@ func (t *T) Log(args ...any) {
 
 // Logf routes the formatted message through the embedded [*testing.T].
 func (t *T) Logf(format string, args ...any) {
-	if t.printer != nil {
+	if t.wantsOutput {
 		t.Helper()
 		t.T.Logf(format, args...)
 	}

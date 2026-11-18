@@ -145,7 +145,8 @@
 //		})
 //	}
 //
-// Notes only appear when Hegel replays the minimal failing example.
+// Notes only appear when Hegel replays the minimal failing example, or for
+// every test case when run with [VerbosityVerbose].
 //
 // # Change the number of test cases
 //

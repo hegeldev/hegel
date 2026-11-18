@@ -295,9 +295,7 @@ def test_collection_more_propagates_errors():
 def test_test_case_without_emit_discards_output():
     def body(tc):
         tc.note("never shown")
-        assert tc._global.sink("x") is None
         assert tc._allocate_display_name(DrawName("x", False)) is None
-        tc._emit_rendered_output()
 
     run_test(body, verbosity=hegel.Verbosity.quiet, test_cases=1)
 

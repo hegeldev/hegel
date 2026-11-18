@@ -50,14 +50,15 @@ internal class DelegatingLibhegel : ILibhegel
     public virtual void SettingsSuppressHealthCheck(nint settings, int mask) => Inner.SettingsSuppressHealthCheck(settings, mask);
     public virtual void SettingsPrintBlob(nint settings, bool yes) => Inner.SettingsPrintBlob(settings, yes);
     public virtual void SettingsNondeterminismStrictness(nint settings, int strictness) => Inner.SettingsNondeterminismStrictness(settings, strictness);
-    public virtual nint RunStart(nint settings, Action<string> output) => Inner.RunStart(settings, output);
-    public virtual nint RunStartBlob(nint settings, string blob, Action<string> output) => Inner.RunStartBlob(settings, blob, output);
+    public virtual nint RunStart(nint settings, Action<string>? output) => Inner.RunStart(settings, output);
+    public virtual nint RunStartBlob(nint settings, string blob, Action<string>? output) => Inner.RunStartBlob(settings, blob, output);
     public virtual nint NextTestCase(nint run) => Inner.NextTestCase(run);
     public virtual nint RunResult(nint run) => Inner.RunResult(run);
     public virtual void RunResultFree(nint result) => Inner.RunResultFree(result);
     public virtual void RunFree(nint run) => Inner.RunFree(run);
     public virtual void TestCaseFree(nint testCase) => Inner.TestCaseFree(testCase);
-    public virtual bool TestCaseShouldCapture(nint testCase) => Inner.TestCaseShouldCapture(testCase);
+    public virtual bool TestCaseWantsOutput(nint testCase) => Inner.TestCaseWantsOutput(testCase);
+    public virtual bool TestCaseWantsDetail(nint testCase) => Inner.TestCaseWantsDetail(testCase);
     public virtual int TestCaseClone(nint testCase, out nint clone) => Inner.TestCaseClone(testCase, out clone);
     public virtual void TestCaseSetWorker(nint testCase, long workerIndex) => Inner.TestCaseSetWorker(testCase, workerIndex);
     public virtual int TestCaseBlock(nint testCase, ulong indent, out nint block) => Inner.TestCaseBlock(testCase, indent, out block);
@@ -204,7 +205,7 @@ internal class DelegatingLibhegel : ILibhegel
     public virtual int Target(nint testCase, double value, string label) => Inner.Target(testCase, value, label);
     public virtual int Event(nint testCase, string label) => Inner.Event(testCase, label);
     public virtual int EventValue(nint testCase, double value, string label) => Inner.EventValue(testCase, value, label);
-    public virtual int MarkComplete(nint testCase, int status, string? origin) => Inner.MarkComplete(testCase, status, origin);
+    public virtual int MarkComplete(nint testCase, int status, string? origin, string? summary, string? detail) => Inner.MarkComplete(testCase, status, origin, summary, detail);
     public virtual int RunResultStatus(nint result) => Inner.RunResultStatus(result);
     public virtual string RunResultError(nint result) => Inner.RunResultError(result);
     public virtual int RunResultErrorKind(nint result, out int healthCheck) => Inner.RunResultErrorKind(result, out healthCheck);
@@ -212,6 +213,8 @@ internal class DelegatingLibhegel : ILibhegel
     public virtual string? FailureBlob(nint result, ulong index) => Inner.FailureBlob(result, index);
     public virtual string FailureOrigin(nint result, ulong index) => Inner.FailureOrigin(result, index);
     public virtual string? FailureCaveat(nint result, ulong index) => Inner.FailureCaveat(result, index);
+    public virtual string? FailureOutput(nint result, ulong index) => Inner.FailureOutput(result, index);
+    public virtual string? FailureDiagnostic(nint result, ulong index) => Inner.FailureDiagnostic(result, index);
     public virtual ulong LabelFromName(string name) => Inner.LabelFromName(name);
     public virtual ulong LabelCombine(ulong[] labels) => Inner.LabelCombine(labels);
 }

@@ -85,7 +85,13 @@ func Stub(tb testingTB, returns ...any) *Context {
 					handles.track(h.Interface())
 					arg.Elem().Set(h)
 				case in == reflect.TypeFor[out[*stringT]]():
-					view := cString(retval().(string))
+					// A scripted nil is the NULL "no string" result.
+					value, present := retval().(string)
+					if !present {
+						arg.Elem().Set(reflect.Zero(in.Elem()))
+						continue
+					}
+					view := cString(value)
 					arg.Elem().Set(reflect.ValueOf(&view))
 				case in == reflect.TypeFor[out[byte]]():
 					// *byte: a fixed-width buffer the engine fills in place.

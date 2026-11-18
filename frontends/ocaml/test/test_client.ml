@@ -393,6 +393,24 @@ let test_run_failing_reraises () =
   | None -> Alcotest.fail "expected a failure"
 ;;
 
+exception Too_big of int
+
+let test_run_quiet_raises_shrunk_failure () =
+  match
+    run_hegel_test
+      ~settings:
+        { (Hegel.Settings.create ~test_cases:200 ~seed:1 ()) with
+          verbosity = Hegel.Settings.Quiet
+        ; database = Hegel.Settings.Disabled
+        }
+      (fun tc ->
+         let v = Hegel.draw tc int_gen in
+         if v >= 10 then raise (Too_big v))
+  with
+  | () -> Alcotest.fail "expected a failure"
+  | exception Too_big v -> Alcotest.(check int) "the shrunk value" 10 v
+;;
+
 let test_run_usage_error_propagates () =
   match
     run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:1 ()) (fun _tc ->
@@ -795,6 +813,10 @@ let tests =
       test_no_test_location_reports_nothing
   ; Alcotest.test_case "test_location invalid utf8" `Quick test_test_location_invalid_utf8
   ; Alcotest.test_case "run failing re-raises" `Quick test_run_failing_reraises
+  ; Alcotest.test_case
+      "run quiet raises the shrunk failure"
+      `Quick
+      test_run_quiet_raises_shrunk_failure
   ; Alcotest.test_case "run Usage_error propagates" `Quick test_run_usage_error_propagates
   ; Alcotest.test_case
       "run Internal_error propagates"

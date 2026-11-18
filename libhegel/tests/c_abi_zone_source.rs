@@ -1169,6 +1169,8 @@ fn zoned_datetimes_are_drawn_through_a_loader_and_an_oracle() {
                 tc,
                 hegel_status_t::HEGEL_STATUS_VALID as u32,
                 ptr::null(),
+                ptr::null(),
+                ptr::null(),
             ));
             ok(hegel_test_case_free(ctx, tc));
         }

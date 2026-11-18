@@ -178,7 +178,7 @@ public class ZonedDateTimeTests
         var impostor = Fixed("Test/Fixed", TimeSpan.FromHours(3));
         var generator = Generators.Temporal.ZonedDateTimes().Zones(Generators.Just(impostor)).Source(source);
         using var run = new RawRun();
-        Assert.Throws<AssumeRejected>(() => run.Case(captured: false).DrawSilent(generator));
+        Assert.Throws<AssumeRejected>(() => run.Case(wantsOutput: false).DrawSilent(generator));
     }
 
     [Fact]
@@ -188,19 +188,19 @@ public class ZonedDateTimeTests
         var west = ZoneSource.FromTimeZones(Fixed("Test/West", TimeSpan.FromHours(-9)));
         using (var run = new RawRun())
         {
-            Assert.Throws<AssumeRejected>(() => run.Case(captured: false).DrawSilent(Generators.Temporal.ZonedDateTimes().Source(east).Max(DateTime.MinValue)));
+            Assert.Throws<AssumeRejected>(() => run.Case(wantsOutput: false).DrawSilent(Generators.Temporal.ZonedDateTimes().Source(east).Max(DateTime.MinValue)));
         }
         using (var run = new RawRun())
         {
-            Assert.Throws<AssumeRejected>(() => run.Case(captured: false).DrawSilent(Generators.Temporal.ZonedDateTimes().Source(west).Min(DateTime.MaxValue)));
+            Assert.Throws<AssumeRejected>(() => run.Case(wantsOutput: false).DrawSilent(Generators.Temporal.ZonedDateTimes().Source(west).Min(DateTime.MaxValue)));
         }
         using (var run = new RawRun())
         {
-            Assert.Throws<AssumeRejected>(() => run.Case(captured: false).DrawSilent(Generators.Temporal.ZonedDateTimes().Source(east).Min(DateTimeOffset.MaxValue)));
+            Assert.Throws<AssumeRejected>(() => run.Case(wantsOutput: false).DrawSilent(Generators.Temporal.ZonedDateTimes().Source(east).Min(DateTimeOffset.MaxValue)));
         }
         using (var run = new RawRun())
         {
-            Assert.Throws<AssumeRejected>(() => run.Case(captured: false).DrawSilent(Generators.Temporal.ZonedDateTimes().Source(west).Max(DateTimeOffset.MinValue)));
+            Assert.Throws<AssumeRejected>(() => run.Case(wantsOutput: false).DrawSilent(Generators.Temporal.ZonedDateTimes().Source(west).Max(DateTimeOffset.MinValue)));
         }
         Gen.All(Generators.Temporal.ZonedDateTimes().Source(west).Max(DateTime.MinValue), value => value.Instant.UtcDateTime == DateTime.MinValue.AddHours(9), 3);
     }

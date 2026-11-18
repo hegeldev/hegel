@@ -910,7 +910,9 @@ describe("WasmEngine real run lifecycle", () => {
       reports.push(lines.map((line) => line.replace(/\+\d+\.\d+ms/, "+TIME")));
     }
     expect(reports[0]).toEqual(reports[1]);
-    expect(reports[0].slice(0, 6)).toEqual([
+    expect(reports[0][0]).toBe("Statistics (over 2 test cases):");
+    const report = reports[0].indexOf("[worker 2 +TIME] const draw_1 = false;");
+    expect(reports[0].slice(report, report + 6)).toEqual([
       "[worker 2 +TIME] const draw_1 = false;",
       "first line",
       "second line",
@@ -918,6 +920,38 @@ describe("WasmEngine real run lifecycle", () => {
       "// Repetition #1",
       "  const draw_2 = 3;",
     ]);
+  });
+
+  it("streams each verbose run's output to its own destination", async () => {
+    const body = (name: string) => async (tc: import("../src/testCase.js").TestCase) => {
+      tc.note(name);
+      await Promise.resolve();
+      tc.note(`${name} again`);
+      tc.assume(tc.draw(gs.booleans()));
+    };
+    const settings = {
+      database: Database.disabled,
+      derandomize: true,
+      testCases: 3,
+      verbosity: Verbosity.Verbose,
+    };
+    const runtime = browserRuntime(wasmFixture().engine);
+    const run = (name: string): [string[], Promise<void>] => {
+      const lines: string[] = [];
+      const runner = createRunner({ ...runtime, output: (line) => lines.push(line) });
+      return [lines, runner.testAsync(body(name), settings)];
+    };
+    const [[a, first], [b, second]] = [run("a"), run("b")];
+    await Promise.all([first, second]);
+    expect(a.slice(0, 6)).toEqual([
+      "Starting phase: Generate",
+      "Running test case",
+      "a",
+      "a again",
+      "const draw_1 = false;",
+      "Test case stopped: failed assumption",
+    ]);
+    expect(b).toEqual(a.map((line) => line.replace(/^a\b/, "b")));
   });
 
   it("lays out structured values the same as the native engine", () => {
@@ -1062,7 +1096,7 @@ describe("WasmEngine real run lifecycle", () => {
           for (let i = 0; i <= 1 << 20; i++) adapter.generateBoolean(ctx, tc, 0.5);
         }).toThrow(StopTestError);
         expect(() => adapter.newCollection(ctx, tc, 0, 5)).toThrow(StopTestError);
-        adapter.markComplete(ctx, tc, Status.OVERRUN, null);
+        adapter.markComplete(ctx, tc, Status.OVERRUN, null, null, null);
       });
     const ctx = engine.newContext(),
       settings = engine.newSettings(ctx);
@@ -1079,10 +1113,17 @@ describe("WasmEngine real run lifecycle", () => {
     while ((tc = engine.nextTestCase(ctx, run)) !== null) {
       try {
         engine.generateInteger(ctx, tc, 42n, 42n);
-        engine.markComplete(ctx, tc, Status.INTERESTING, "origin");
+        engine.markComplete(
+          ctx,
+          tc,
+          Status.INTERESTING,
+          "origin",
+          "Error: failed",
+          "Error: failed",
+        );
       } catch (error) {
         if (!(error instanceof StopTestError)) throw error;
-        engine.markComplete(ctx, tc, Status.OVERRUN, null);
+        engine.markComplete(ctx, tc, Status.OVERRUN, null, null, null);
       } finally {
         engine.freeTestCase(tc);
       }
@@ -1101,7 +1142,7 @@ describe("WasmEngine real run lifecycle", () => {
     let replayed = 0;
     while ((tc = engine.nextTestCase(ctx, replay)) !== null) {
       expect(engine.generateInteger(ctx, tc, 42n, 42n)).toBe(42n);
-      engine.markComplete(ctx, tc, Status.INTERESTING, "origin");
+      engine.markComplete(ctx, tc, Status.INTERESTING, "origin", "Error: failed", "Error: failed");
       engine.freeTestCase(tc);
       replayed++;
     }
@@ -1201,6 +1242,8 @@ describe("WasmEngine error and ownership boundaries", () => {
       expect.anything(),
       expect.anything(),
       Status.INVALID,
+      null,
+      null,
       null,
     );
     expect(free).toHaveBeenCalledTimes(1);

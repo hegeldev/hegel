@@ -79,15 +79,14 @@ public class TestCaseTests
     }
 
     [Fact]
-    public void OrdinaryRunsAreNotFinalAndPrintNothing()
+    public void OrdinaryRunsDoNotWantOutputAndPrintNothing()
     {
         var finals = 0;
         var report = Runs.Passing(tc =>
         {
             tc.Draw(Generators.Integers(), "x");
             tc.Note("quiet");
-            Assert.Empty(tc.Output());
-            if (tc.IsFinal)
+            if (tc.WantsOutput)
             {
                 finals++;
             }
@@ -97,12 +96,12 @@ public class TestCaseTests
     }
 
     [Fact]
-    public void TheFailingReplayIsFinal()
+    public void TheFailingReplayWantsOutput()
     {
         var finals = 0;
         Runs.Failing(tc =>
         {
-            if (tc.IsFinal)
+            if (tc.WantsOutput)
             {
                 finals++;
             }
@@ -220,12 +219,10 @@ public class TestCaseTests
     {
         var lib = new CountingLib();
         using var run = new RawRun();
-        run.Case(captured: false, lib: lib).Note("dropped");
+        run.Case(wantsOutput: false, lib: lib).Note("dropped");
         Assert.Equal(0, lib.Notes);
-        run.Case(captured: false, verbose: true, lib: lib).Note("kept");
+        run.Case(wantsOutput: true, lib: lib).Note("kept");
         Assert.Equal(1, lib.Notes);
-        run.Case(captured: true, lib: lib).Note("kept");
-        Assert.Equal(2, lib.Notes);
     }
 
     [Fact]
@@ -287,7 +284,7 @@ public class TestCaseTests
             tc.Target(1);
             tc.Event("e");
             tc.EventValue("v", 2);
-            Assert.True(tc.IsFinal);
+            Assert.True(tc.WantsOutput);
             tc.Draw(Generators.Integers(), "n");
         }, Explicit(Example.Of(7)));
         Assert.Equal(["hello", "var n_1 = 7;"], failure.Output);
@@ -439,7 +436,7 @@ public class TestCaseTests
     [Fact]
     public void BlocksIndentAndAreReleasedUnlessPinned()
     {
-        using var run = new RawRun();
+        using var run = RawRun.Verbose();
         var tc = run.Case();
         tc.Note("top");
         var released = tc.Block(2);
@@ -453,8 +450,7 @@ public class TestCaseTests
         pinned.EndBlock();
         pinned.Draw(Generators.Just(3), "c");
         tc.Pin();
-        Assert.Equal(["top", "  var a_1 = 1;", "    var c_1 = 3;"], tc.Output());
-        tc.ReleaseAll();
+        Assert.Equal(["top", "  var a_1 = 1;", "    var c_1 = 3;"], run.Complete());
         error = Assert.Throws<HegelUsageException>(() => pinned.Draw(Generators.Just(4), "d"));
         Assert.Equal(LiveDataSource.ReleasedMessage, error.Message);
     }
@@ -462,12 +458,12 @@ public class TestCaseTests
     [Fact]
     public void ForWorkerGivesAnAttributedClone()
     {
-        using var run = new RawRun();
+        using var run = RawRun.Verbose();
         var tc = run.Case();
         var worker = tc.ForWorker(1);
         worker.Note("from worker");
         worker.Release();
-        var line = Assert.Single(tc.Output());
+        var line = Assert.Single(run.Complete());
         Assert.Matches(@"^\[worker 1 \+[\d.]+ms\] from worker$", line);
     }
 
@@ -499,7 +495,7 @@ public class TestCaseTests
     public void EnginePrimitivesDrawThroughTheSource()
     {
         using var run = new RawRun();
-        var tc = run.Case(captured: false);
+        var tc = run.Case(wantsOutput: false);
         Assert.True(tc.GenerateBoolean(1.0));
         Assert.Equal(3, tc.GenerateInteger(3, 3));
         var big = BigInteger.Pow(2, 100);
@@ -560,19 +556,22 @@ public class TestCaseTests
     }
 
     [Fact]
-    public void VerboseNonFinalDrawsArePrintedButNotRecorded()
+    public void DrawsAreRecordedAndPrintedOnlyWhenOutputIsWanted()
     {
-        using var run = new RawRun();
-        var tc = run.Case(captured: false, verbose: true);
-        Assert.Equal(1, tc.Draw(Generators.Just(1), "x"));
-        Assert.Empty(tc.Draws());
-        Assert.Equal(["var x_1 = 1;"], tc.Output());
+        using var run = RawRun.Verbose();
+        var unwanted = run.Case(wantsOutput: false);
+        Assert.Equal(1, unwanted.Draw(Generators.Just(1), "x"));
+        Assert.Empty(unwanted.Draws());
+        var wanted = run.Case(wantsOutput: true);
+        Assert.Equal(2, wanted.Draw(Generators.Just(2), "y"));
+        Assert.Equal(2, wanted.Draws()["y_1"]);
+        Assert.Equal(["var y_1 = 2;"], run.Complete());
     }
 
     [Fact]
     public void DrawNamesThatCollideAcrossBlocksAreSuffixed()
     {
-        using var run = new RawRun();
+        using var run = RawRun.Verbose();
         var tc = run.Case();
         tc.Draw(Generators.Just(1), "a");
         var block = tc.Block(2);
@@ -581,7 +580,7 @@ public class TestCaseTests
         block.EndBlock();
         Assert.Equal(["a_1", "a_1_2", "a_2"], tc.Draws().Keys);
         Assert.Equal([1, 2, 3], tc.Draws().Values.Cast<int>());
-        Assert.Equal(["var a_1 = 1;", "  var a_1 = 2;", "  var a_2 = 3;"], tc.Output());
+        Assert.Equal(["var a_1 = 1;", "  var a_1 = 2;", "  var a_2 = 3;"], run.Complete());
     }
 
     [Fact]
@@ -596,7 +595,7 @@ public class TestCaseTests
     public void RecursionRetryIsForwarded()
     {
         using var run = new RawRun();
-        var tc = run.Case(captured: false);
+        var tc = run.Case(wantsOutput: false);
         var recursion = tc.NewRecursion(3, 2);
         tc.RecursionBranch(recursion, 0);
         tc.RecursionRetry(recursion);

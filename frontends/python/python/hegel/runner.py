@@ -12,6 +12,7 @@ import threading
 import traceback
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
+from types import TracebackType
 from typing import Any, NoReturn, TypeVar
 
 from hegel import _native
@@ -62,7 +63,8 @@ def _stderr_line(line: str) -> None:
 
 
 class RunOutput:
-    """Where a run's output goes: the installed override, or stderr."""
+    """Where a run's output goes: the installed override, or stderr. A
+    ``None`` sink is nowhere: nothing is printed."""
 
     __slots__ = ("sink",)
 
@@ -71,10 +73,11 @@ class RunOutput:
 
     @classmethod
     def resolve(cls) -> RunOutput:
-        return cls(getattr(_output_override, "sink", None))
+        return cls(getattr(_output_override, "sink", _stderr_line))
 
     def line(self, message: str) -> None:
-        (self.sink or _stderr_line)(message)
+        if self.sink is not None:
+            self.sink(message)
 
     def block(self, text: str) -> None:
         self.lines(text.rstrip("\n").split("\n"))
@@ -83,15 +86,17 @@ class RunOutput:
         for line in lines:
             self.line(line)
 
-    def resolved_sink(self) -> OutputSink:
-        return self.sink or _stderr_line
-
 
 @contextlib.contextmanager
-def with_output_override(sink: OutputSink) -> Iterator[None]:
+def with_output_override(sink: OutputSink | None) -> Iterator[None]:
     """Route all of Hegel's output on this thread through ``sink`` (called
-    once per line) instead of stderr, for the duration of the block."""
-    previous = getattr(_output_override, "sink", None)
+    once per line) instead of stderr, for the duration of the block, or
+    nowhere when ``sink`` is ``None``. A run started in the block calls
+    ``sink`` as it prints, which may be from the test's own threads; an
+    exception ``sink`` raises goes to :func:`sys.unraisablehook`. With no
+    destination, the engine prints nothing and does no work for verbose
+    output."""
+    previous = getattr(_output_override, "sink", _stderr_line)
     _output_override.sink = sink
     try:
         yield
@@ -104,16 +109,47 @@ class _CaseOutcome:
     status: int
     origin: str | None
     exception: BaseException | None
-    stamped: bool
+    wants_output: bool = False
+
+
+def _user_frame(exception: BaseException) -> traceback.FrameSummary | None:
+    """The innermost traceback frame outside Hegel, or the innermost frame
+    when every frame is Hegel's."""
+    found = None
+    for frame in traceback.extract_tb(exception.__traceback__):
+        if found is None or not _inside_hegel(frame.filename):
+            found = frame
+    return found
 
 
 def _user_location(exception: BaseException) -> str:
-    """``file:line`` of the innermost traceback frame outside Hegel."""
-    location = None
-    for frame in traceback.extract_tb(exception.__traceback__):
-        if location is None or not _inside_hegel(frame.filename):
-            location = f"{frame.filename}:{frame.lineno}"
-    return location or "<unknown>"
+    """``file:line`` of :func:`_user_frame`."""
+    frame = _user_frame(exception)
+    return f"{frame.filename}:{frame.lineno}" if frame else "<unknown>"
+
+
+def _summary(exception: BaseException) -> str:
+    """The one-line form of a failure the engine prints after a failing
+    test case in a verbose run: the traceback's line for the frame it was
+    raised in, as Python prints it, then its type and the first line of its
+    message, `` …`` marking a message cut short."""
+    kind = type(exception)
+    name = kind.__qualname__
+    if kind.__module__ not in ("builtins", "__main__"):
+        name = f"{kind.__module__}.{name}"
+    try:
+        message = str(exception)
+    except Exception:
+        message = "<exception str() failed>"
+    first, *rest = message.strip().splitlines() or [""]
+    frame = _user_frame(exception)
+    summary = f'File "{frame.filename}", line {frame.lineno}, in {frame.name}: ' if frame else ""
+    summary += name
+    if first:
+        summary += f": {first}"
+    if rest:
+        summary += " …"
+    return summary
 
 
 def _origin(exception: BaseException, seen: tuple[BaseException, ...] = ()) -> str:
@@ -144,30 +180,25 @@ def _inside_hegel(filename: str) -> bool:
 
 
 def _format_exception(exception: BaseException) -> str:
-    return "".join(traceback.format_exception(exception)).rstrip("\n")
+    """The full traceback of ``exception``, as Python prints it, starting
+    in the user's code (see :func:`_trim_traceback`)."""
+    formatted = traceback.format_exception(type(exception), exception, _user_traceback(exception))
+    return "".join(formatted).rstrip("\n")
 
 
-def _run_test_case(
-    handle: _native.TestCase,
-    test_fn: Callable[[TestCase], Any],
-    verbosity: Verbosity,
-    output: RunOutput,
-    case_sink: OutputSink | None,
-) -> _CaseOutcome:
+def _run_test_case(handle: _native.TestCase, test_fn: Callable[[TestCase], Any]) -> _CaseOutcome:
     """Run one engine-scheduled test case to completion.
 
-    The engine stamps the cases a failure report can be built from (the
-    final replay of each failure it is about to report, confirmation
-    replays, and generation cases under nondeterministic handling); a
-    stamped case records its draws and notes for the report. Other cases
-    run silently unless the run is verbose.
+    The engine decides whether what the case prints is used (streamed by a
+    verbose run, or kept for the failure report of a case it stamped for
+    capture) and prints it itself; the case prints its draws and notes, and
+    the one-line summary of its failure, only when it is, and formats the
+    failure's traceback only when the engine wants that too.
     """
-    verbose = verbosity in (Verbosity.verbose, Verbosity.debug)
-    quiet = verbosity is Verbosity.quiet
-    stamped = handle.should_capture()
-    should_emit = (stamped and not quiet) or verbose
-    tc = TestCase(handle, should_emit, case_sink or output.resolved_sink())
-    outcome = _CaseOutcome(_native.STATUS_VALID, None, None, stamped)
+    wants_output = handle.wants_output()
+    wants_detail = handle.wants_detail()
+    tc = TestCase(handle, wants_output)
+    outcome = _CaseOutcome(_native.STATUS_VALID, None, None, wants_output)
     try:
         _call_test(test_fn, tc)
     except (AssumeFailed, LoopDone) as signal:
@@ -175,10 +206,7 @@ def _run_test_case(
             outcome.status = _native.STATUS_INVALID
     except StopTest:
         outcome.status = _native.STATUS_OVERRUN
-    except (InvalidArgument, InternalError):
-        tc._emit_rendered_output()
-        raise
-    except (KeyboardInterrupt, SystemExit):
+    except (InvalidArgument, InternalError, KeyboardInterrupt, SystemExit):
         raise
     except _skip_exceptions():
         raise
@@ -186,14 +214,12 @@ def _run_test_case(
         outcome.status = _native.STATUS_INTERESTING
         outcome.origin = _origin(exception)
         outcome.exception = exception
-        if verbose:
-            output.block(_format_exception(exception))
-    tc._emit_rendered_output()
-    if verbose:
-        reason = _stop_reason(outcome.status)
-        if reason is not None:
-            output.line(reason)
-    handle.mark_complete(outcome.status, outcome.origin)
+    summary = detail = None
+    if outcome.exception is not None and wants_output:
+        summary = _summary(outcome.exception)
+        if wants_detail:
+            detail = _format_exception(outcome.exception)
+    handle.mark_complete(outcome.status, outcome.origin, summary, detail)
     return outcome
 
 
@@ -259,16 +285,6 @@ def _skip_exceptions() -> tuple[type[BaseException], ...]:
     return tuple(found)
 
 
-def _stop_reason(status: int) -> str | None:
-    """The verbose line saying why a test case stopped short of its end,
-    for one that did."""
-    if status == _native.STATUS_INVALID:
-        return "Test case stopped: failed assumption"
-    if status == _native.STATUS_OVERRUN:
-        return "Test case stopped: out of data"
-    return None
-
-
 Reproducer = Callable[[str], str]
 
 
@@ -282,11 +298,11 @@ def default_reproducer(blob: str) -> str:
 
 
 def _annotate(
-    exception: BaseException, lines: list[str], caveat: str | None, reproducer: str | None
+    exception: BaseException, lines: str, caveat: str | None, reproducer: str | None
 ) -> None:
     notes = []
     if lines:
-        notes.append("\n".join(lines))
+        notes.append(lines)
     if caveat is not None:
         notes.append(f"note: {caveat}")
     if reproducer is not None:
@@ -300,31 +316,16 @@ def _trim_traceback(exception: BaseException) -> None:
     from ``exception``'s traceback, so it starts in the user's code. A
     traceback with no frame outside Hegel (an error in Hegel itself) is
     left whole."""
+    exception.__traceback__ = _user_traceback(exception)
+
+
+def _user_traceback(exception: BaseException) -> TracebackType | None:
+    """``exception``'s traceback from its first frame outside Hegel, or
+    whole when it has none."""
     tb = exception.__traceback__
     while tb is not None and _inside_hegel(tb.tb_frame.f_code.co_filename):
         tb = tb.tb_next
-    if tb is not None:
-        exception.__traceback__ = tb
-
-
-@dataclass
-class _Captured:
-    """One origin's failure report material, captured as the case ran:
-    its buffered draw and note lines (empty under quiet verbosity), whether
-    the engine stamped the case, and the exception to re-raise. Captures
-    are ranked so that an unstamped shrink probe's bare capture cannot
-    replace a stamped one, while at equal rank the newest wins: final
-    replay over confirmation over discovery."""
-
-    lines: list[str]
-    stamped: bool
-    exception: BaseException
-
-    @property
-    def rank(self) -> int:
-        if self.stamped:
-            return 2
-        return 1 if self.lines else 0
+    return tb or exception.__traceback__
 
 
 def _drive(
@@ -337,8 +338,8 @@ def _drive(
     __tracebackhide__ = True
     output = RunOutput.resolve()
     native_settings = settings._build(database_key, test_location)
-    run = _native.Run.start(native_settings)
-    failures = _drive_run(run, test_fn, native_settings, output, reproducer)
+    run = _native.Run.start(native_settings, output.sink)
+    failures = _drive_run(run, test_fn, native_settings, reproducer)
     if failures:
         _raise_failures(failures, None)
 
@@ -361,8 +362,8 @@ def _drive_blob_replay(
     failures: list[BaseException] = []
     for blob in blobs:
         native_settings = settings._build(database_key, test_location)
-        run = _native.Run.start_blob(native_settings, blob)
-        failures += _drive_run(run, test_fn, native_settings, output, reproducer)
+        run = _native.Run.start_blob(native_settings, blob, output.sink)
+        failures += _drive_run(run, test_fn, native_settings, reproducer)
     if not failures:
         prefix = "reproduce_failure: " if suggestion is None else ""
         if suggestion is None:
@@ -409,50 +410,29 @@ def _drive_run(
     run: _native.Run,
     test_fn: Callable[[TestCase], Any],
     settings: _native.Settings,
-    output: RunOutput,
     reproducer: Reproducer,
 ) -> list[BaseException]:
-    """Pull every test case off ``run``, capturing report material per
-    failure origin, then act on the verdict. The engine owns the whole
-    exploration, the final replay of each reported failure included, so
-    the report is assembled from the freshest stamped capture of each
-    origin, and attached to the exception as notes. Returns the failures
-    to raise, none for a passing run; a run ending in error raises."""
+    """Pull every test case off ``run``, keeping the exception to raise for
+    each failure origin, then act on the verdict. The engine owns the whole
+    exploration, the final replay of each reported failure included, and
+    prints each test case's output itself: it keeps the lines of the latest
+    failing execution it stamped for capture as the origin's report, which
+    is attached to the exception as a note (the exception shows its own
+    traceback). Returns the
+    failures to raise, none for a passing run; a run ending in error
+    raises."""
     __tracebackhide__ = True
-    verbosity = Verbosity(settings.get_verbosity())
     print_blob = settings.get_print_blob()
-    quiet = verbosity is Verbosity.quiet
-    verbose = verbosity in (Verbosity.verbose, Verbosity.debug)
-    captured: dict[str, _Captured] = {}
+    quiet = Verbosity(settings.get_verbosity()) is Verbosity.quiet
+    failing: dict[str, BaseException] = {}
 
-    def flush() -> None:
-        output.lines(run.drain_output())
-
-    while True:
-        handle = run.next_test_case()
-        flush()
-        if handle is None:
-            break
-        buffer: list[str] = []
-        case_sink: OutputSink | None = None
-        if not quiet:
-
-            def case_sink(line: str, buffer: list[str] = buffer) -> None:
-                if verbose:
-                    output.line(line)
-                buffer.append(line)
-
-        outcome = _run_test_case(handle, test_fn, verbosity, output, case_sink)
-        flush()
-        if outcome.status == _native.STATUS_INTERESTING and outcome.exception is not None:
-            report = _Captured(buffer, outcome.stamped, outcome.exception)
-            origin = outcome.origin or ""
-            stored = captured.get(origin)
-            if stored is None or report.rank >= stored.rank:
-                captured[origin] = report
+    while (handle := run.next_test_case()) is not None:
+        outcome = _run_test_case(handle, test_fn)
+        origin = outcome.origin or ""
+        if outcome.exception is not None and (outcome.wants_output or origin not in failing):
+            failing[origin] = outcome.exception
 
     result = run.result()
-    flush()
     status = result.status()
     if status == _native.RUN_STATUS_PASSED:
         return []
@@ -461,14 +441,14 @@ def _drive_run(
     count = result.failure_count()
     exceptions: list[BaseException] = []
     for index in range(count):
-        origin, blob, caveat = result.failure(index)
-        if origin not in captured:
+        origin, blob, caveat, report = result.failure(index)
+        if origin not in failing:
             raise InternalError(f"failure {index} ({origin}) was never seen by the test")
-        report = captured.pop(origin)
+        exception = failing.pop(origin)
         note = reproducer(blob) if print_blob and blob is not None else None
-        _annotate(report.exception, report.lines, None if quiet else caveat, note)
-        _trim_traceback(report.exception)
-        exceptions.append(report.exception)
+        _annotate(exception, report or "", None if quiet else caveat, note)
+        _trim_traceback(exception)
+        exceptions.append(exception)
     return exceptions
 
 
@@ -482,11 +462,12 @@ def _run_explicit(
     rather than raised, annotated with the case's drawn values and notes
     (none under quiet verbosity), so the caller can raise it or collect it
     with further failures. A verbose run reports the case as it does a
-    generated one: the drawn values, then the exception when it failed."""
+    generated one: the drawn values, then the failure's summary when it
+    failed, or its traceback at debug verbosity."""
     verbose = verbosity in (Verbosity.verbose, Verbosity.debug)
     explicit = ExplicitTestCase(case)
-    tc = TestCase(NO_HANDLE, True, output.resolved_sink(), explicit)
-    outcome = _CaseOutcome(_native.STATUS_VALID, None, None, True)
+    tc = TestCase(NO_HANDLE, True, explicit)
+    outcome = _CaseOutcome(_native.STATUS_VALID, None, None)
     try:
         _check_not_awaitable(test_fn(tc))
     except LoopDone:
@@ -506,11 +487,12 @@ def _run_explicit(
     if verbose:
         output.lines(explicit.lines)
         if outcome.exception is not None:
-            output.block(_format_exception(outcome.exception))
+            debug = verbosity is Verbosity.debug
+            output.block((_format_exception if debug else _summary)(outcome.exception))
     if outcome.exception is None:
         explicit.check_consumed()
         return outcome
-    lines = [] if verbosity is Verbosity.quiet else explicit.lines
+    lines = "" if verbosity is Verbosity.quiet else "\n".join(explicit.lines)
     _annotate(outcome.exception, lines, None, None)
     _trim_traceback(outcome.exception)
     return outcome

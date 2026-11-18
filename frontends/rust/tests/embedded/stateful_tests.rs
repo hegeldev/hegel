@@ -1,7 +1,7 @@
 use super::*;
 use crate::ffi::{RunHandle, SettingsHandle};
 use crate::generators as gs;
-use crate::runner::Settings;
+use crate::runner::{Settings, Verbosity};
 use crate::test_case::OutputSink;
 use std::backtrace::Backtrace;
 use std::sync::Arc;
@@ -9,14 +9,13 @@ use std::sync::atomic::{AtomicI64, Ordering};
 
 type Captured = Arc<Mutex<Vec<String>>>;
 
-/// Start a real engine run and hand back its first live test case with an
-/// emitting sink that captures every draw/note line, alongside the owning
-/// [`RunHandle`].
+/// Start a real verbose engine run whose output goes to a sink capturing
+/// every line, and hand back its first live test case alongside the owning
+/// [`RunHandle`] and the lines the test case prints from now on (see
+/// [`printed`]).
 fn capturing_test_case() -> (RunHandle, TestCase, Captured) {
-    let settings = Settings::new().database(None);
+    let settings = Settings::new().database(None).verbosity(Verbosity::Verbose);
     let c_settings = SettingsHandle::build(&settings, None, None);
-    let run = RunHandle::start(&c_settings, None).unwrap();
-    let c_tc = run.next_test_case().unwrap();
     let lines: Captured = Arc::default();
     let sink_lines = Arc::clone(&lines);
     let sink: OutputSink = Arc::new(move |msg: &str| {
@@ -25,8 +24,19 @@ fn capturing_test_case() -> (RunHandle, TestCase, Captured) {
             .unwrap_or_else(|e| e.into_inner())
             .push(msg.to_string());
     });
-    let tc = TestCase::new(Arc::new(c_tc), true, Some(sink));
+    let run = RunHandle::start(&c_settings, Some(&sink)).unwrap();
+    let c_tc = run.next_test_case().unwrap();
+    lines.lock().unwrap().clear();
+    let tc = TestCase::new(Arc::new(c_tc), true);
     (run, tc, lines)
+}
+
+/// Complete `tc` as a passing test case, so the engine prints the rest of
+/// its output, and return every line it printed.
+fn printed(tc: &TestCase, lines: &Captured) -> Vec<String> {
+    tc.with_ctc(|ctc| ctc.mark_complete(crate::ffi::sys::hegel_status_t::HEGEL_STATUS_VALID, None))
+        .unwrap();
+    lines.lock().unwrap().clone()
 }
 
 /// Register a single-group, concurrency-`concurrency` machine over `rules`
@@ -78,8 +88,7 @@ fn note_panic_trailer_notes_real_panics_and_skips_control_unwinds() {
     note_panic_trailer(&tc, assume.as_ref(), "unwanted");
     note_panic_trailer(&tc, stop.as_ref(), "unwanted");
     note_panic_trailer(&tc, string_panic("boom").as_ref(), "Invariant x failed:");
-    tc.reporter().emit_rendered_output();
-    assert_eq!(*lines.lock().unwrap(), vec!["Invariant x failed:"]);
+    assert_eq!(printed(&tc, &lines), vec!["Invariant x failed:"]);
 }
 
 #[test]
@@ -103,8 +112,7 @@ fn apply_invariant_pauses_faults_only_when_asked_and_unpauses_on_unwind() {
 fn resolve_round_with_all_workers_done_returns_normally() {
     let (_run, tc, lines) = capturing_test_case();
     resolve_round(vec![WorkerEvent::RoundDone, WorkerEvent::RoundDone], &tc);
-    tc.reporter().emit_rendered_output();
-    assert!(lines.lock().unwrap().is_empty());
+    assert!(printed(&tc, &lines).is_empty());
 }
 
 #[test]
@@ -129,8 +137,7 @@ fn resolve_round_overrun_wins_over_panic_and_notes_the_dropped_panic() {
     ];
     let payload = resolve_round_unwind(events, &tc);
     assert!(payload.downcast_ref::<StopTest>().is_some());
-    tc.reporter().emit_rendered_output();
-    let lines = lines.lock().unwrap();
+    let lines = printed(&tc, &lines);
     assert_eq!(lines.len(), 1);
     assert!(
         lines[0].contains("Dropped concurrent panic from worker 0 at b.rs:2:2: induced panic"),
@@ -144,8 +151,7 @@ fn resolve_round_invalid_wins_over_panic_and_raises_assume_failed() {
     let events = vec![WorkerEvent::Invalid, panicked_event("induced panic", None)];
     let payload = resolve_round_unwind(events, &tc);
     assert!(payload.downcast_ref::<AssumeFailed>().is_some());
-    tc.reporter().emit_rendered_output();
-    assert_eq!(lines.lock().unwrap().len(), 1);
+    assert_eq!(printed(&tc, &lines).len(), 1);
 }
 
 #[test]
@@ -162,8 +168,7 @@ fn resolve_round_lowest_worker_index_panic_wins_and_losers_are_noted() {
     let (thread_name, _, location, _) = run_lifecycle::take_panic_info().unwrap();
     assert_eq!(thread_name, "worker-thread");
     assert_eq!(location, "winner.rs:1:1");
-    tc.reporter().emit_rendered_output();
-    let lines = lines.lock().unwrap();
+    let lines = printed(&tc, &lines);
     assert_eq!(lines.len(), 1);
     assert!(
         lines[0].contains("Dropped concurrent panic from worker 2 at loser.rs:9:9: the loser"),
@@ -260,11 +265,8 @@ fn run_worker_round_executes_the_rounds_rule_and_finishes() {
     let event = with_test_context(|| run_worker_round(0, &tc, &m, &rules, &machine));
     assert!(matches!(event, WorkerEvent::RoundDone));
     assert_eq!(m.hits.load(Ordering::SeqCst), 1);
-    tc.reporter().emit_rendered_output();
     assert!(
-        lines
-            .lock()
-            .unwrap()
+        printed(&tc, &lines)
             .iter()
             .any(|line| line.contains("Rule: hit"))
     );
@@ -289,11 +291,8 @@ fn run_worker_round_ferries_a_rule_panic_with_its_capture() {
     assert_eq!(run_lifecycle::panic_message(&payload), "rule boom");
     let (_, _, location, _) = info.unwrap();
     assert!(location.contains("stateful_tests.rs"), "{location}");
-    tc.reporter().emit_rendered_output();
     assert!(
-        lines
-            .lock()
-            .unwrap()
+        printed(&tc, &lines)
             .iter()
             .any(|line| line.contains("Rule boom failed:"))
     );

@@ -1432,10 +1432,16 @@ fn a_verbose_nondeterministic_run_streams_every_cases_output_live() {
         draw_lines > 3,
         "the generation cases and the confirmation replays all stream live: {lines:?}"
     );
-    let diagnostics = lines.iter().filter(|l| l.contains("panicked at")).count();
+    let summaries = lines
+        .iter()
+        .filter(|l| {
+            l.contains(&format!("panicked at {}", file!()))
+                && l.contains(": boom on the third case")
+        })
+        .count();
     assert_eq!(
-        diagnostics, 1,
-        "the diagnostic prints live at discovery; the caveat-only report \
+        summaries, 1,
+        "the summary prints live at discovery; the caveat-only report \
          has no reproducing capture to reprint: {lines:?}"
     );
 }

@@ -110,8 +110,13 @@ There is no engine version pin to keep in step in this directory.
   exception with its original stack (`ExceptionDispatchInfo`), or a
   `MultipleFailuresException`, `HealthCheckFailure`, `FlakyTestException`,
   `UnsatisfiableException`, `DidNotReproduceException` or `HegelRunException`
-  as the run's outcome says. `Reporter` is the output hook; `PrintingReporter`
-  writes what the other frontends write, with the same wording.
+  as the run's outcome says. A failing test case hands the engine a one-line
+  summary (`Runner.SummaryOf`: the user frame's `file:line:col`, the exception's
+  type and the first line of its message) when it wants output, and
+  `exception.ToString()` as its detail only when it wants detail.
+  `Reporter` is the output hook; `PrintingReporter`
+  writes what the other frontends write, with the same wording, and
+  `Reporter.Silent` gives the engine a NULL callback (no destination).
 - `TestCase`, `LiveDataSource`, `ExplicitDraws`, `DataSource` — the draw
   surface. `TestCase` names draws (`label_1`, `draw_1` per naming scope),
   prints them through the generator (speculatively, so a draw that fails

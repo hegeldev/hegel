@@ -42,7 +42,7 @@ let ``test with settings throws and run with settings reports`` () =
     Assert.Throws<Xunit.Sdk.EqualException>(fun () -> Hegel.test (quiet, body) |> ignore)
     |> ignore
 
-    let report = Hegel.run (quiet, body)
+    let report = Hegel.run (reported, Reporter.Silent, body)
     Assert.Equal(RunStatus.Failed, report.Status)
     Assert.False report.Passed
     let failure = Seq.exactlyOne report.Failures

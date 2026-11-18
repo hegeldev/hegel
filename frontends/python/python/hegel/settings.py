@@ -33,8 +33,11 @@ class Verbosity(enum.Enum):
     - ``normal``: the default. A failing test's drawn values and notes,
       attached to the exception, and any warnings.
     - ``verbose``: also every test case's drawn values and notes as it
-      runs, and the start and end of each phase.
-    - ``debug``: also the engine's own diagnostics.
+      runs, a failing test case's exception on one line (where it was
+      raised, its type and the first line of its message), and the start
+      and end of each phase.
+    - ``debug``: also a failing test case's full traceback, in place of
+      that line, and the engine's own diagnostics.
 
     Settings accept a member or its name: ``verbosity="verbose"``.
     """

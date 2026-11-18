@@ -3,6 +3,7 @@ import {
   UINT64_MAX,
   doneOrIndex,
   type Engine,
+  type OutputSink,
   type ContextHandle,
   type SettingsHandle,
   type RunHandle,
@@ -48,6 +49,7 @@ import { bigIntToTwosComplementLE, twosComplementLEToBigInt } from "../bytes.js"
 import { wtf8ToString } from "../wtf8.js";
 import { WasmAbi, u32, u64, type Operation, type Argument } from "./abi.js";
 import { WasmArena, WasmMemory } from "./arena.js";
+import type { HostStderr } from "./host.js";
 
 /** The engine-allocated buffer results, each with the destructor that releases it. */
 const BUFFER_FREE = {
@@ -58,11 +60,22 @@ const BUFFER_FREE = {
   generate_timezone: "owned_string_free",
 } as const;
 
+/**
+ * {@link Engine} over the raw Wasm exports. The module cannot call back into
+ * JavaScript, so each run prints through the engine's `hegel_output_stderr`
+ * to the host's error stream (`stderr`): each run's context and run handle
+ * carry the run's destination, and a call given either routes the stream
+ * there.
+ */
 export class WasmEngine implements Engine {
   private readonly handles = new WeakMap<object, number>();
+  private readonly outputs = new WeakMap<object, OutputSink>();
   private readonly memory: WasmMemory;
 
-  constructor(private readonly abi: WasmAbi) {
+  constructor(
+    private readonly abi: WasmAbi,
+    private readonly stderr: HostStderr,
+  ) {
     this.memory = new WasmMemory(abi.memory);
   }
 
@@ -70,6 +83,8 @@ export class WasmEngine implements Engine {
     const ptr = this.handles.get(handle);
     if (ptr === undefined) throw new EngineError("Foreign, freed or invalid engine handle");
     this.memory.bytes(ptr, 1);
+    const output = this.outputs.get(handle);
+    if (output !== undefined) this.stderr.sink = output;
     return ptr;
   }
 
@@ -387,15 +402,46 @@ export class WasmEngine implements Engine {
       a.pointer(p),
     );
   }
-  runStart(ctx: ContextHandle, settings: SettingsHandle): RunHandle {
+  runStart(ctx: ContextHandle, settings: SettingsHandle, output: OutputSink): RunHandle {
     const c = this.ptr(ctx);
-    return this.handle(c, "run_start", [c, this.ptr(settings), 0, 0]);
+    return this.printingTo(
+      ctx,
+      output,
+      this.handle(c, "run_start", [c, this.ptr(settings), this.stderrCallback(), 0]),
+    );
   }
-  runStartBlob(ctx: ContextHandle, settings: SettingsHandle, blob: string): RunHandle {
+  runStartBlob(
+    ctx: ContextHandle,
+    settings: SettingsHandle,
+    blob: string,
+    output: OutputSink,
+  ): RunHandle {
     return WasmArena.scoped(this.abi, (a) => {
       const c = this.ptr(ctx);
-      return this.handle(c, "run_start_blob", [c, this.ptr(settings), a.text(blob), 0, 0]);
+      return this.printingTo(
+        ctx,
+        output,
+        this.handle(c, "run_start_blob", [
+          c,
+          this.ptr(settings),
+          a.text(blob),
+          this.stderrCallback(),
+          0,
+        ]),
+      );
     });
+  }
+  /**
+   * `hegel_output_stderr`, which writes through the `hegel_host.stderr_write`
+   * import that {@link HostStderr} routes to the run's destination.
+   */
+  private stderrCallback(): number {
+    return this.abi.call("output_stderr_callback");
+  }
+  private printingTo(ctx: ContextHandle, output: OutputSink, run: RunHandle): RunHandle {
+    this.outputs.set(ctx, output);
+    this.outputs.set(run, output);
+    return run;
   }
   nextTestCase(ctx: ContextHandle, run: RunHandle): TestCaseHandle | null {
     const c = this.ptr(ctx);
@@ -417,9 +463,15 @@ export class WasmEngine implements Engine {
   freeTestCase(tc: TestCaseHandle): void {
     this.free("test_case_free", tc);
   }
-  shouldCapture(ctx: ContextHandle, tc: TestCaseHandle): boolean {
+  wantsOutput(ctx: ContextHandle, tc: TestCaseHandle): boolean {
     const c = this.ptr(ctx);
-    return this.output(c, "test_case_should_capture", [c, this.ptr(tc)], 1, 1, (a, p) =>
+    return this.output(c, "test_case_wants_output", [c, this.ptr(tc)], 1, 1, (a, p) =>
+      a.boolean(p),
+    );
+  }
+  wantsDetail(ctx: ContextHandle, tc: TestCaseHandle): boolean {
+    const c = this.ptr(ctx);
+    return this.output(c, "test_case_wants_detail", [c, this.ptr(tc)], 1, 1, (a, p) =>
       a.boolean(p),
     );
   }
@@ -1328,10 +1380,19 @@ export class WasmEngine implements Engine {
     tc: TestCaseHandle,
     status: number,
     origin: string | null,
+    summary: string | null,
+    detail: string | null,
   ): void {
     WasmArena.scoped(this.abi, (a) => {
       const c = this.ptr(ctx);
-      this.check(c, "mark_complete", [c, this.ptr(tc), u32(status), a.text(origin)]);
+      this.check(c, "mark_complete", [
+        c,
+        this.ptr(tc),
+        u32(status),
+        a.text(origin),
+        a.text(summary),
+        a.text(detail),
+      ]);
     });
   }
   newPool(ctx: ContextHandle, tc: TestCaseHandle): PoolHandle {
@@ -1591,6 +1652,9 @@ export class WasmEngine implements Engine {
   }
   failureCaveat(fp: FailureHandle): string | null {
     return this.optionalString("failure_caveat", [0, this.ptr(fp)]);
+  }
+  failureOutput(fp: FailureHandle): string | null {
+    return this.optionalString("failure_output", [0, this.ptr(fp)]);
   }
 }
 

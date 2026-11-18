@@ -22,8 +22,8 @@ type Callable = AnyFunction | (abstract new (...args: any[]) => unknown);
 
 type CaptureStackTrace = (target: object, above?: Callable) => void;
 
-const V8_FRAME = /^\s*at (?:async )?(?:(.+?) \()?(.+?):(\d+):\d+\)?$/;
-const GECKO_FRAME = /^(.*?)@(.+?):(\d+):\d+$/;
+const V8_FRAME = /^\s*at (?:async )?(?:(.+?) \()?(.+?):(\d+):(\d+)\)?$/;
+const GECKO_FRAME = /^(.*?)@(.+?):(\d+):(\d+)$/;
 
 /** The path of a `file://` URL, percent-decoded; any other location as it is. */
 function filePath(location: string): string {
@@ -42,6 +42,18 @@ export function parseFrame(line: string): CallSite | null {
   if (match === null) return null;
   const [, name, file, lineNumber] = match;
   return { file: filePath(file), line: Number(lineNumber), name: name || null };
+}
+
+/**
+ * Where one line of `Error.stack` points, as `file:line:column` with the
+ * file as {@link projectPath} shows it, or `null` for a line that is not a
+ * frame.
+ */
+export function frameLocation(line: string, root: string): string | null {
+  const match = V8_FRAME.exec(line) ?? GECKO_FRAME.exec(line);
+  if (match === null) return null;
+  const [, , file, lineNumber, column] = match;
+  return `${projectPath(filePath(file), root)}:${lineNumber}:${column}`;
 }
 
 /**

@@ -107,6 +107,21 @@ describe("the report of a failing example", () => {
     expect(lines).toEqual([]);
   });
 
+  it("raises the shrunk failure of a quiet run", () => {
+    const { lines, runner } = capturing();
+    const error = thrownBy(() =>
+      runner.test(
+        (tc) => {
+          const n = tc.draw(gs.integers({ minValue: 0, maxValue: 1000 }));
+          if (n >= 10) throw new Error(`too big: ${n}`);
+        },
+        { ...deterministic, verbosity: Verbosity.Quiet, printBlob: false },
+      ),
+    );
+    expect((error as Error).message).toBe("too big: 10");
+    expect(lines).toEqual([]);
+  });
+
   it("prints every test case of a verbose run", () => {
     const { lines, runner } = capturing();
     runner.test(

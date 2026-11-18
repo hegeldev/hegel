@@ -415,7 +415,7 @@ dependencies = [
 
 [[package]]
 name = "hegeltest"
-version = "0.52.7"
+version = "0.53.0"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -465,7 +465,7 @@ dependencies = [
 
 [[package]]
 name = "hegeltest-macros"
-version = "0.52.7"
+version = "0.53.0"
 dependencies = [
  "proc-macro2",
  "quote",

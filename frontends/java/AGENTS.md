@@ -167,7 +167,15 @@ aliases. The public
   (`hegel_owned_string_free`, `hegel_generate_bytes_result_free`), and bridge
   the per-run output callback (`hegel_output_callback_t`) to a
   `Consumer<String>` — an FFM upcall stub whose arena lives until `runFree`, or
-  a JNA `Callback` strongly referenced until `runFree`. In the JNA binding, C
+  a JNA `Callback` strongly referenced until `runFree`; a
+  `hegel_test_case_from_blob` callback is kept the same way until that handle's
+  `testCaseFree`, since the engine prints the replay's output when the test
+  case completes. A `null` consumer crosses as a NULL callback, which the
+  engine takes as no destination (it prints nothing and renders as at normal
+  verbosity); `Reporter.silent()` maps to it. `Libhegel.STDERR` crosses as
+  libhegel's `hegel_output_stderr` (FFM looks the symbol up; JNA gets it from
+  `hegel_output_stderr_callback`, and a native-born `Callback` passes back as
+  the original pointer). In the JNA binding, C
   `bool` crosses as `byte` (JNA's default boolean mapping is a 32-bit int) and
   `size_t` as `long` (the bundled natives are all 64-bit). `Abi` (lowlevel)
   holds the C constants; `Label` (shared) holds the frontend's span labels —
@@ -198,12 +206,28 @@ aliases. The public
   engine owns the *whole* run — generation, shrinking, the replays that confirm
   a failure, and the final replay of every failure it is about to report — so
   the runner never replays anything itself. It reads
-  `hegel_test_case_should_capture` once per case: a *stamped* case's `TestCase`
-  records its top-level draws and notes (`isFinal()` exposes the stamp), and
-  every interesting case's exception is kept per origin in a capture map (a
-  stamped capture outranks an unstamped one, newest wins at equal rank — the
-  unstamped discovery of a failure that never fails again is all there is for
-  an *unconfirmed* nondeterministic failure). After the loop drains,
+  `hegel_test_case_wants_output` and `hegel_test_case_wants_detail` once per
+  case. A case whose output is wanted (every case of a verbose run, and the
+  engine's stamped executions, quiet runs included) has its `TestCase` record
+  its top-level draws and notes (`wantsOutput()`), reported live
+  when verbose, and if it fails it completes with a one-line `summary`
+  (`Runner.summary`: `File.java:line: ` of the frame `originOf` picks, then the
+  exception's `toString()` cut at its first line plus ` …`). A case whose
+  detail is wanted (every case of a debug run, and the stamped executions of a
+  normal or verbose one) also passes its stack trace (`Runner.diagnostic`) as
+  the `detail`; the trace is rendered only then. A rejected
+  `hegel_mark_complete` is a `HegelException`. Java's draws and notes never go
+  into the engine's document — they are Java values the `Reporter` and
+  `Failure` expose — so the engine's output for a failing case is only the
+  summary (verbose) or detail (debug), streamed after the case's lines (with
+  its own `Test case stopped: …` lines), and `hegel_failure_diagnostic`
+  returns the detail for the failure (`hegel_failure_output`, the printed
+  lines, is always empty). Every
+  interesting case is kept per origin in a capture map, replacing the stored
+  one when its output was wanted or none is stored yet (mirroring the engine's
+  latest stamped execution; the discovery of a failure that never fails again
+  is all there is for an *unconfirmed* nondeterministic failure). After the
+  loop drains,
   `hegel_run_result` yields PASSED, FAILED, or ERROR. On FAILED each distinct
   failure is built from its origin's capture: the recorded draws/notes are
   replayed to the reporter (`caseStarted(true)` … `caseFinished(true)`), and
@@ -211,7 +235,9 @@ aliases. The public
   (`hegel_failure_reproduction_blob`, null for an unconfirmed failure and for a
   blob replay) and the **caveat** (`hegel_failure_caveat`, non-null for a
   failure the run saw fail to reproduce — `Failure.nondeterministic()`; the
-  printing reporter prints it as `note: …`). A failure whose origin has no
+  printing reporter prints it as `note: …`), plus the diagnostic the engine
+  kept (package-private `Failure.diagnostic()`, which `Hegel.main`'s reporter prints in
+  place of the stack trace when present). A failure whose origin has no
   capture is an internal error. `Settings.reproduceFailure` drives the same
   loop over `hegel_run_start_blob` (the engine replays until a replay fails,
   under its budget): PASSED → `Runner.STALE_BLOB` `HegelException`, ERROR →
@@ -377,7 +403,7 @@ aliases. The public
   `IllegalArgumentException` that reports the failing call carries it as its
   cause (`EngineAccess.argumentError`).
 - **Public API** — `Hegel.test`/`Hegel.run`, `TestCase`
-  (`draw`/`assume`/`note`/`target`/`isFinal`/`span`), `Label` (span labels;
+  (`draw`/`assume`/`note`/`target`/`span`), `Label` (span labels;
   `Label.of(name)` mints FNV-1a labels), `Reporter`, `RunReport`,
   `Settings.infrastructurePackages` (extra class-name prefixes skipped by
   `Runner.originOf`), the `@HegelTest` annotation + `HegelTestExtension` (a

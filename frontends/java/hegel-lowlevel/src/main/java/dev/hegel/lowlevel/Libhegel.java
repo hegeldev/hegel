@@ -55,6 +55,14 @@ import java.util.function.Consumer;
  */
 public interface Libhegel {
     /**
+     * The output destination {@code hegel_output_stderr}: passed as the {@code output} of {@link
+     * #runStart}, {@link #runStartBlob} or {@link #testCaseFromBlob}, a binding hands the engine
+     * libhegel's own stderr writer instead of a Java callback. Called directly, it prints the line
+     * to {@link System#err}.
+     */
+    Consumer<String> STDERR = line -> System.err.println(line);
+
+    /**
      * Resolve {@code libhegel} (see {@link LibraryLoader}) and open it with the binding registered
      * on the classpath.
      *
@@ -190,9 +198,12 @@ public interface Libhegel {
     // Run lifecycle.
 
     /**
-     * Start a run. Engine output (progress lines, verbose traces) is delivered per line to {@code
-     * output}; {@code null} leaves it on stderr. The callback stays registered until {@link
-     * #runFree}.
+     * Start a run. Engine output (progress lines, a verbose run's test-case output and failure
+     * summaries, a debug run's failure details and its "Test case stopped" lines) is delivered per
+     * line to {@code output}. {@code null} is no destination: the engine prints nothing and renders
+     * as at normal verbosity, while the failure report keeps its data; {@link #STDERR} prints to
+     * the process's stderr from the engine. The callback stays registered until {@link #runFree},
+     * and is invoked on whichever thread makes the libhegel call that emits.
      */
     long runStart(long settings, Consumer<String> output);
 
@@ -220,21 +231,35 @@ public interface Libhegel {
     /**
      * Replay a base64 reproduce blob as a standalone test case, in a single attempt. Returns the raw
      * rc ({@link Abi#E_INVALID_ARG} for a corrupt or incompatible blob); on OK, {@code out[0]}
-     * receives the caller-owned handle. {@code output} has the same contract as in {@link #runStart}
-     * but need not outlive the call. A nondeterministic blob may need several attempts to fail, so
-     * reproduce-failure features should prefer {@link #runStartBlob}.
+     * receives the caller-owned handle. {@code output} receives what the test case prints and its
+     * failure's summary or detail, as in {@link #runStart}; the binding keeps it registered until the handle is
+     * released with {@link #testCaseFree}, so free the handle only once the test case is complete.
+     * A nondeterministic blob may need several attempts to fail, so reproduce-failure features
+     * should prefer {@link #runStartBlob}.
      */
     int testCaseFromBlob(long settings, String blob, Consumer<String> output, long[] out);
 
     void testCaseFree(long tc);
 
     /**
-     * {@code hegel_test_case_should_capture}: whether the engine stamped this case for capture — the
-     * caller should keep the case's output and, if it fails, its exception, keyed by the failure's
-     * origin, because a stamped failing execution is the material for that origin's failure report.
-     * Read once at case start.
+     * {@code hegel_test_case_wants_output}: whether the engine will use what this case prints — a
+     * verbose run streams it, a case stamped for capture keeps it for its failure's report ({@link
+     * #failureOutput}), a {@link #testCaseFromBlob} replay prints it. When true, a failing case
+     * must pass a {@code summary} to {@link #markComplete}; when false, printing draws and notes
+     * and rendering a summary are wasted work. A quiet run prints and keeps nothing, but
+     * its stamped cases still report true, so the latest failing case that reported true is the
+     * one whose exception to raise. Read once at case start.
      */
-    boolean testCaseShouldCapture(long tc);
+    boolean testCaseWantsOutput(long tc);
+
+    /**
+     * {@code hegel_test_case_wants_detail}: whether the engine will use the full diagnostic of
+     * this case if it fails — a debug run prints it, a case stamped for capture keeps it for its
+     * failure's report ({@link #failureDiagnostic}). When true, a failing case must pass a {@code
+     * detail} to {@link #markComplete}; when false, rendering one (a stack trace) is wasted work.
+     * True implies {@link #testCaseWantsOutput}. Read once at case start.
+     */
+    boolean testCaseWantsDetail(long tc);
 
     /**
      * {@code hegel_test_case_clone}: a caller-owned handle onto an independent choice stream of
@@ -731,7 +756,18 @@ public interface Libhegel {
 
     int target(long tc, double value, String label);
 
-    int markComplete(long tc, int status, String origin);
+    /**
+     * {@code hegel_mark_complete}: complete the case with {@code status}. For {@link
+     * Abi#STATUS_INTERESTING}, {@code origin} identifies the bug (failures with equal origins are
+     * shrunk together), {@code summary} is the failure in one line without newlines (required when
+     * {@link #testCaseWantsOutput}; printed after the case in a verbose run), and {@code detail} is
+     * the complete diagnostic, stack trace included (required when {@link #testCaseWantsDetail};
+     * printed at debug verbosity and kept for {@link #failureDiagnostic}). All three are {@code
+     * null} for any other status. Returns the raw rc: {@link Abi#E_INVALID_ARG}, with the
+     * argument named in {@link #lastErrorMessage()}, for a call that leaves out what the engine
+     * needs, which completes nothing.
+     */
+    int markComplete(long tc, int status, String origin, String summary, String detail);
 
     // Results.
     int runResultStatus(long result);
@@ -756,6 +792,20 @@ public interface Libhegel {
      * {@code null} for a deterministic failure.
      */
     String failureCaveat(long result, long index);
+
+    /**
+     * {@code hegel_failure_output}: what the {@code index}-th distinct failure's latest failing
+     * execution stamped for capture printed into the engine's document, lines joined with {@code
+     * \n} ({@code ""} when it printed nothing), or {@code null} when no such execution failed there
+     * (or the run was quiet).
+     */
+    String failureOutput(long result, long index);
+
+    /**
+     * {@code hegel_failure_diagnostic}: the {@code detail} the execution {@link #failureOutput}
+     * reports passed to {@link #markComplete}, or {@code null} when there is no such execution.
+     */
+    String failureDiagnostic(long result, long index);
 
     // Diagnostics.
     String lastErrorMessage();

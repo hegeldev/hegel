@@ -5,9 +5,9 @@ use crate::time::{
     duration_from_c, duration_to_c, time_from_c, time_to_c, timestamp_from_c, timestamp_to_c,
 };
 use crate::{
-    InternalError, OutputBuffer, SendPtr, Settings, StringGenerator, ZoneSource, big_from_le,
-    big_to_le, check, hstr, hstr_bytes, max_size_arg, opt_string_from, output_trampoline,
-    output_user_data, string_from, with_ctx,
+    InternalError, OutputSink, SendPtr, Settings, StringGenerator, ZoneSource, big_from_le,
+    big_to_le, check, hstr, hstr_bytes, last_error, max_size_arg, opt_string_from, output_callback,
+    string_from, with_ctx,
 };
 use hegel_c as c;
 use hegel_c::hegel_result_t as Rc;
@@ -18,11 +18,12 @@ use std::ptr;
 use std::sync::Arc;
 
 /// One property-test run: the engine's generate/shrink loop, driven through
-/// `next_test_case`.
+/// `next_test_case`. Its output lines go to the `sink` it was started
+/// with, as the engine prints them.
 #[pyclass(frozen, name = "Run", module = "hegel._native")]
 pub(crate) struct Run {
     raw: SendPtr<c::HegelRun>,
-    output: Arc<OutputBuffer>,
+    _output: Option<Arc<OutputSink>>,
 }
 
 impl Drop for Run {
@@ -36,9 +37,10 @@ impl Drop for Run {
 #[pymethods]
 impl Run {
     #[staticmethod]
-    fn start(py: Python<'_>, settings: &Settings) -> PyResult<Self> {
-        let output = Arc::new(OutputBuffer::default());
-        let user_data = SendPtr(output_user_data(&output));
+    #[pyo3(signature = (settings, sink))]
+    fn start(py: Python<'_>, settings: &Settings, sink: Option<Py<PyAny>>) -> PyResult<Self> {
+        let output = sink.map(OutputSink::new);
+        let (callback, user_data) = output_callback(output.as_ref());
         let settings_ptr = SendPtr(settings.raw() as *mut c::HegelSettings);
         let mut raw: *mut c::HegelRun = ptr::null_mut();
         let raw_out = SendPtr(&mut raw as *mut *mut c::HegelRun);
@@ -47,7 +49,7 @@ impl Run {
                 c::hegel_run_start(
                     ctx,
                     settings_ptr.get(),
-                    Some(output_trampoline),
+                    callback,
                     user_data.get(),
                     raw_out.get(),
                 )
@@ -55,7 +57,7 @@ impl Run {
         });
         let run = Run {
             raw: SendPtr(raw),
-            output,
+            _output: output,
         };
         check(rc)?;
         Ok(run)
@@ -65,9 +67,15 @@ impl Run {
     /// instead of exploring. A run with no failures means the blob is
     /// stale.
     #[staticmethod]
-    fn start_blob(py: Python<'_>, settings: &Settings, blob: &str) -> PyResult<Self> {
-        let output = Arc::new(OutputBuffer::default());
-        let user_data = SendPtr(output_user_data(&output));
+    #[pyo3(signature = (settings, blob, sink))]
+    fn start_blob(
+        py: Python<'_>,
+        settings: &Settings,
+        blob: &str,
+        sink: Option<Py<PyAny>>,
+    ) -> PyResult<Self> {
+        let output = sink.map(OutputSink::new);
+        let (callback, user_data) = output_callback(output.as_ref());
         let settings_ptr = SendPtr(settings.raw() as *mut c::HegelSettings);
         let blob_ptr = SendPtr(blob.as_ptr() as *mut u8);
         let blob_len = blob.len();
@@ -82,7 +90,7 @@ impl Run {
                     ctx,
                     settings_ptr.get(),
                     blob,
-                    Some(output_trampoline),
+                    callback,
                     user_data.get(),
                     raw_out.get(),
                 )
@@ -90,7 +98,7 @@ impl Run {
         });
         let run = Run {
             raw: SendPtr(raw),
-            output,
+            _output: output,
         };
         check(rc)?;
         Ok(run)
@@ -106,11 +114,6 @@ impl Run {
         });
         check(rc)?;
         Ok((!raw.is_null()).then(|| TestCase { raw: SendPtr(raw) }))
-    }
-
-    /// Engine output lines emitted since the last drain.
-    fn drain_output(&self) -> Vec<String> {
-        self.output.drain()
     }
 
     fn result(&self, py: Python<'_>) -> PyResult<RunResult> {
@@ -175,26 +178,34 @@ impl RunResult {
     }
 
     /// The `index`-th distinct failure as `(origin, reproduction_blob,
-    /// caveat)`. The blob is absent for a failure the engine could not
-    /// confirm, and the caveat for a deterministic one.
+    /// caveat, output)`. The blob is absent for a failure the engine could
+    /// not confirm, the caveat for a deterministic one, and the output (the
+    /// failing test case's printed lines, without its diagnostic) when no
+    /// execution stamped for capture failed there.
     #[allow(clippy::type_complexity)]
-    fn failure(&self, index: usize) -> PyResult<(String, Option<String>, Option<String>)> {
+    fn failure(
+        &self,
+        index: usize,
+    ) -> PyResult<(String, Option<String>, Option<String>, Option<String>)> {
         let mut f: *mut c::HegelFailure = ptr::null_mut();
         with_ctx(|ctx| {
             check(unsafe { c::hegel_run_result_failure(ctx, self.raw.0, index, &mut f) })?;
             let mut origin = c::hegel_string_t::default();
             let mut blob: *const c::hegel_string_t = ptr::null();
             let mut caveat: *const c::hegel_string_t = ptr::null();
+            let mut output: *const c::hegel_string_t = ptr::null();
             let result = check(unsafe { c::hegel_failure_origin(ctx, f, &mut origin) })
                 .and_then(|()| {
                     check(unsafe { c::hegel_failure_reproduction_blob(ctx, f, &mut blob) })
                 })
                 .and_then(|()| check(unsafe { c::hegel_failure_caveat(ctx, f, &mut caveat) }))
+                .and_then(|()| check(unsafe { c::hegel_failure_output(ctx, f, &mut output) }))
                 .map(|()| {
                     (
                         string_from(origin),
                         opt_string_from(blob),
                         opt_string_from(caveat),
+                        opt_string_from(output),
                     )
                 });
             let _ = unsafe { c::hegel_failure_free(ctx, f) };
@@ -267,37 +278,69 @@ impl TestCase {
         })
     }
 
-    /// Whether the engine stamped this case for capture: its output and,
-    /// if it fails, its diagnostic may become the failure report.
-    fn should_capture(&self) -> PyResult<bool> {
+    /// Whether the engine will use what this test case prints (its draws,
+    /// notes and failure diagnostic): streamed by a verbose run, or kept
+    /// for the failure report of a case stamped for capture.
+    fn wants_output(&self) -> PyResult<bool> {
         let mut out = false;
         with_ctx(|ctx| {
-            check(unsafe { c::hegel_test_case_should_capture(ctx, self.tc(), &mut out) })
+            check(unsafe { c::hegel_test_case_wants_output(ctx, self.tc(), &mut out) })
         })?;
         Ok(out)
     }
 
-    #[pyo3(signature = (status, origin))]
-    fn mark_complete(&self, py: Python<'_>, status: u32, origin: Option<&str>) -> PyResult<()> {
-        let origin_ptr = SendPtr(origin.map_or(ptr::null(), |s| s.as_ptr()) as *mut u8);
-        let origin_len = origin.map_or(0, |s| s.len());
+    /// Whether the engine will use a failure's full diagnostic (its
+    /// traceback): at debug verbosity, or for a case stamped for capture.
+    /// Implies `wants_output`.
+    fn wants_detail(&self) -> PyResult<bool> {
+        let mut out = false;
+        with_ctx(|ctx| {
+            check(unsafe { c::hegel_test_case_wants_detail(ctx, self.tc(), &mut out) })
+        })?;
+        Ok(out)
+    }
+
+    /// Complete the test case. A failure (`STATUS_INTERESTING`) passes its
+    /// `origin`, its one-line `summary` when output is wanted and its full
+    /// `detail` when detail is wanted; every other status passes none.
+    #[pyo3(signature = (status, origin=None, summary=None, detail=None))]
+    fn mark_complete(
+        &self,
+        py: Python<'_>,
+        status: u32,
+        origin: Option<&str>,
+        summary: Option<&str>,
+        detail: Option<&str>,
+    ) -> PyResult<()> {
+        let views =
+            [origin, summary, detail].map(|s| s.map(|s| (SendPtr(s.as_ptr() as *mut u8), s.len())));
         let tc = self.raw;
         let rc = py.detach(move || {
-            // SAFETY: `origin` outlives this call; the view is rebuilt here so
-            // the closure captures only Send wrappers.
-            let origin = (!origin_ptr.get().is_null()).then(|| {
-                hstr_bytes(unsafe { std::slice::from_raw_parts(origin_ptr.get(), origin_len) })
+            // SAFETY: the strings outlive this call; the views are rebuilt
+            // here so the closure captures only Send wrappers.
+            let [origin, summary, detail] = views.map(|view| {
+                view.map(|(p, len)| hstr_bytes(unsafe { std::slice::from_raw_parts(p.get(), len) }))
             });
+            let arg =
+                |s: &Option<c::hegel_string_t>| s.as_ref().map_or(ptr::null(), |s| s as *const _);
             with_ctx(|ctx| unsafe {
                 c::hegel_mark_complete(
                     ctx,
                     tc.get(),
                     status,
-                    origin.as_ref().map_or(ptr::null(), |s| s as *const _),
+                    arg(&origin),
+                    arg(&summary),
+                    arg(&detail),
                 )
             })
         });
-        check(rc)
+        match rc {
+            Rc::HEGEL_E_INVALID_ARG => Err(InternalError::new_err(format!(
+                "libhegel rejected a test case's completion: {}",
+                last_error()
+            ))),
+            rc => check(rc),
+        }
     }
 
     #[pyo3(signature = (p, forced=None))]
