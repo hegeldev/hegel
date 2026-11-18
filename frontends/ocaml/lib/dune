@@ -15,9 +15,17 @@
    locked.ml
    from
    (capsule0.prim capsule0.blocking_sync -> locked.capsule.ml)
-   (-> locked.mutex.ml)))
+   (-> locked.mutex.ml))
+  ; Immutable_array: an immutable array under OxCaml, so portable code can read
+  ; it; elsewhere a plain array.
+  (select
+   immutable_array.ml
+   from
+   (stdlib_stable -> immutable_array.iarray.ml)
+   (-> immutable_array.array.ml)))
  (private_modules
   io
+  immutable_array
   locked
   hegel_version
   generators_core
