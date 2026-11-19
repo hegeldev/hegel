@@ -1,0 +1,55 @@
+#ifdef OXCAML
+#define MODE(m) @ m
+#else
+#define MODE(m)
+#endif
+
+(** @canonical Hegel.Concurrency.t *)
+type 'ctx t
+
+type outcome = (exn * Printexc.raw_backtrace) option
+
+type 'ctx workers =
+  { spawn_join_n :
+      n:int
+      -> (f:('ctx MODE(local) -> int -> outcome) MODE(portable)
+          -> outcome list MODE(contended))
+         MODE(local)
+  }
+
+#ifdef OXCAML
+val of_workers : 'ctx workers MODE(local) -> 'ctx t MODE(local) @@ portable
+#endif
+
+val with_scope
+  :  'ctx t MODE(local)
+  -> f:('ctx workers MODE(local) -> 'a) MODE(local)
+  -> 'a
+
+val spawn_join_n
+  :  'ctx t
+  -> n:int
+  -> f:('ctx MODE(local) -> int -> outcome) MODE(portable)
+  -> outcome list MODE(contended)
+
+val thread_pool : create:((unit -> unit) -> unit -> Thread.t) -> unit t
+
+#ifndef OXCAML
+val domain_pool
+  :  max_domains:int
+  -> create_thread:((unit -> unit) -> unit -> Thread.t)
+  -> spawn_domain:((unit -> unit) -> unit Domain.t)
+  -> unit t
+#endif
+val create
+  :  spawn_join_n:
+       (n:int
+        -> (f:('ctx MODE(local) -> int -> outcome) MODE(portable)
+            -> outcome list MODE(contended))
+           MODE(local))
+  -> 'ctx t
+
+val threads : unit t
+#ifndef OXCAML
+val domains : unit t
+#endif

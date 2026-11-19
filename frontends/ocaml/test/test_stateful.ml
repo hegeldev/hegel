@@ -978,11 +978,9 @@ let concurrent_always_check_invariant_test () =
        let invariants_checked = ref 0 in
        let rounds = ref 0 in
        let counting : unit Hegel.Concurrency.t =
-         { spawn_join_n =
-             (fun ~n ~f ->
-               incr rounds;
-               Hegel.Concurrency.threads.spawn_join_n ~n ~f)
-         }
+         Hegel.Concurrency.create ~spawn_join_n:(fun ~n ~f ->
+           incr rounds;
+           Hegel.Concurrency.Private.spawn_join_n Hegel.Concurrency.threads ~n ~f)
        in
        let step = S.Concurrent_rule.create ~name:"step" ~step:(fun _tc () () -> ()) () in
        let invariant =
@@ -1129,11 +1127,9 @@ let concurrent_custom_concurrency_test () =
   let module S = Hegel.Stateful in
   let calls = ref [] in
   let sequential : unit Hegel.Concurrency.t =
-    { spawn_join_n =
-        (fun ~n ~f ->
-          calls := n :: !calls;
-          List.init n ~f:(fun i -> f () i))
-    }
+    Hegel.Concurrency.create ~spawn_join_n:(fun ~n ~f ->
+      calls := n :: !calls;
+      List.init n ~f:(fun i -> f () i))
   in
   let ran = Atomic.make 0 in
   let step =

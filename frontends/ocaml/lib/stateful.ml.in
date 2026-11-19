@@ -469,27 +469,29 @@ let run_concurrent_internal
   ?step_count
   tc
   =
-  run_concurrent_core
-    ~init
-    ~rules:
-      (List.map
-         (fun (rule : _ Concurrent_rule.t) : rule_info ->
-           { name = rule.name; groups = rule.groups; weight = rule.weight })
-         rules)
-    ~invariants:(to_inv_record invariants)
-    ~check_invariant:(fun i tc -> (List.nth invariants i).Invariant.inv tc init)
-    ~run_round:(fun ~state_machine ~num_workers ->
-      let work LOCAL(ctx) ~worker_index tc =
-        run_worker tc ~state_machine ~worker_index ~ctx ~rule:(fun rule_index ->
-          let rule = List.nth rules rule_index in
-          rule.Concurrent_rule.name, fun tc ctx -> rule.Concurrent_rule.step tc ctx init)
-      in
-      (dispatch_round [@mode portable]) concurrency.spawn_join_n tc ~num_workers ~work)
-    ?min_concurrency
-    ?max_concurrency
-    ?sexp_of_state
-    ?step_count
-    tc NONTAIL
+  Concurrency_internal.with_scope concurrency ~f:(fun concurrency ->
+    run_concurrent_core
+      ~init
+      ~rules:
+        (List.map
+           (fun (rule : _ Concurrent_rule.t) : rule_info ->
+             { name = rule.name; groups = rule.groups; weight = rule.weight })
+           rules)
+      ~invariants:(to_inv_record invariants)
+      ~check_invariant:(fun i tc -> (List.nth invariants i).Invariant.inv tc init)
+      ~run_round:(fun ~state_machine ~num_workers ->
+        let work LOCAL(ctx) ~worker_index tc =
+          run_worker tc ~state_machine ~worker_index ~ctx ~rule:(fun rule_index ->
+            let rule = List.nth rules rule_index in
+            rule.Concurrent_rule.name, fun tc ctx -> rule.Concurrent_rule.step tc ctx init)
+        in
+        (dispatch_round [@mode portable]) concurrency.spawn_join_n tc ~num_workers ~work)
+      ?min_concurrency
+      ?max_concurrency
+      ?sexp_of_state
+      ?step_count
+      tc NONTAIL)
+  NONTAIL
 ;;
 
 let run_concurrent
