@@ -44,8 +44,8 @@ type outcome = (exn * Printexc.raw_backtrace) option
 
 (** [create ~spawn_join_n] runs the test's concurrent bodies through your
     scheduler. Hegel supplies [n] and [f]. Call [f ctx i] once for every
-    index from [0] to [n - 1]. Wait for every body to finish and return 
-    their outcomes in index order. Exceptions raised by a body should be 
+    index from [0] to [n - 1]. Wait for every body to finish and return
+    their outcomes in index order. Exceptions raised by a body should be
     its outcome.
 
     Pass the result as the test's [~concurrency] argument. *)

@@ -4,8 +4,7 @@
 #define MODE(m)
 #endif
 
-(** @canonical Hegel.Concurrency.t *)
-type 'ctx t
+type 'ctx t (** @canonical Hegel.Concurrency.t *)
 
 type outcome = (exn * Printexc.raw_backtrace) option
 
@@ -26,12 +25,6 @@ val with_scope
   -> f:('ctx workers MODE(local) -> 'a) MODE(local)
   -> 'a
 
-val spawn_join_n
-  :  'ctx t
-  -> n:int
-  -> f:('ctx MODE(local) -> int -> outcome) MODE(portable)
-  -> outcome list MODE(contended)
-
 val thread_pool : create:((unit -> unit) -> unit -> Thread.t) -> unit t
 
 #ifndef OXCAML
@@ -40,6 +33,7 @@ val domain_pool
   -> create_thread:((unit -> unit) -> unit -> Thread.t)
   -> spawn_domain:((unit -> unit) -> unit Domain.t)
   -> unit t
+
 #endif
 val create
   :  spawn_join_n:
@@ -50,6 +44,7 @@ val create
   -> 'ctx t
 
 val threads : unit t
+
 #ifndef OXCAML
 val domains : unit t
 #endif

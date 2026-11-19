@@ -116,9 +116,7 @@ end
 let pooled start =
   let with_scope ~f =
     let pool = ref None in
-    let closed = ref false in
     let close () =
-      closed := true;
       Option.iter
         (fun (workers, join) ->
           Worker_pool.stop workers;
@@ -126,7 +124,6 @@ let pooled start =
         !pool
     in
     let spawn_join_n ~n ~f =
-      if !closed then raise (Invalid_argument "Concurrency: scope has ended");
       let workers, _ =
         match !pool with
         | Some pool -> pool
@@ -137,8 +134,6 @@ let pooled start =
           pool := Some started;
           started
       in
-      if n <> List.length workers
-      then raise (Invalid_argument "Concurrency: worker count changed within a scope");
       Worker_pool.dispatch workers ~f
     in
     match f { spawn_join_n } with
@@ -232,8 +227,3 @@ let of_workers (workers @ local) = exclave_ { with_scope = (fun ~f -> f workers)
 #endif
 
 let with_scope (capability MODE(local)) ~f = capability.with_scope ~f
-
-let spawn_join_n capability ~n ~f =
-  capability.with_scope ~f:(fun workers -> workers.spawn_join_n ~n ~f)
-;;
-

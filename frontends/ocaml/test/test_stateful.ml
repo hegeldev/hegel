@@ -980,7 +980,9 @@ let concurrent_always_check_invariant_test () =
        let counting : unit Hegel.Concurrency.t =
          Hegel.Concurrency.create ~spawn_join_n:(fun ~n ~f ->
            incr rounds;
-           Hegel.Concurrency.Private.spawn_join_n Hegel.Concurrency.threads ~n ~f)
+           Hegel.Concurrency_internal.with_scope
+             Hegel.Concurrency.threads
+             ~f:(fun workers -> workers.spawn_join_n ~n ~f))
        in
        let step = S.Concurrent_rule.create ~name:"step" ~step:(fun _tc () () -> ()) () in
        let invariant =

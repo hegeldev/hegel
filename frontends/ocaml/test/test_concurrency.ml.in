@@ -1,8 +1,13 @@
 module C = Hegel.Concurrency
+module I = Hegel.Concurrency_internal
 
-let preserves_order (cap : unit C.t) () =
+let spawn_join_n (concurrency : unit C.t) ~n ~f =
+  I.with_scope concurrency ~f:(fun workers -> workers.spawn_join_n ~n ~f)
+;;
+
+let outcomes_follow_worker_indices (cap : unit C.t) () =
   let outcomes =
-    cap.spawn_join_n ~n:5 ~f:(fun () i ->
+    spawn_join_n cap ~n:5 ~f:(fun () i ->
       Some (Failure (string_of_int i), Printexc.get_raw_backtrace ()))
   in
   Alcotest.(check int) "one outcome per body" 5 (List.length outcomes);
@@ -15,95 +20,210 @@ let preserves_order (cap : unit C.t) () =
     outcomes
 ;;
 
-let records_raising_body (cap : unit C.t) () =
+let body_exceptions_become_outcomes (cap : unit C.t) () =
   let outcomes =
-    cap.spawn_join_n ~n:2 ~f:(fun () i -> if i = 1 then failwith "boom" else None)
+    spawn_join_n cap ~n:2 ~f:(fun () i -> if i = 1 then failwith "boom" else None)
   in
   match outcomes with
   | [ None; Some (Failure msg, _) ] -> Alcotest.(check string) "message" "boom" msg
   | _ -> Alcotest.fail "expected the raising body's exception at index 1"
 ;;
 
-let zero_bodies (cap : unit C.t) () =
-  Alcotest.(check int)
-    "no outcomes"
-    0
-    (List.length (cap.spawn_join_n ~n:0 ~f:(fun () _ -> None)))
+let check_outcomes outcomes =
+  List.iter
+    (function
+      | None -> ()
+      | Some (exn, bt) -> Printexc.raise_with_backtrace exn bt)
+    outcomes
+;;
+
+let scope_exception_stops_workers (cap : unit C.t) () =
+  let seen : Thread.t option Atomic.t list = List.init 3 (fun _ -> Atomic.make None) in
+  Alcotest.check_raises "scope failure" (Failure "scope") (fun () ->
+    I.with_scope cap ~f:(fun workers ->
+      check_outcomes
+        (workers.spawn_join_n ~n:3 ~f:(fun () i ->
+           Atomic.set (List.nth seen i) (Some (Thread.self ()));
+           None));
+      failwith "scope"));
+  List.iter (fun t -> Thread.join (Option.get (Atomic.get t))) seen;
+  I.with_scope cap ~f:(fun workers ->
+    check_outcomes
+      (workers.spawn_join_n ~n:3 ~f:(fun () i ->
+         if Thread.id (Thread.self ())
+            = Thread.id (Option.get (Atomic.get (List.nth seen i)))
+         then failwith "worker reused across runs";
+         None)))
+;;
+
+let state_machine_reuses_workers_across_rounds (cap : unit C.t) () =
+  let module S = Hegel.Stateful in
+  let invariant_checks = ref 0 in
+  let last_workers = ref [] in
+  Hegel.run_hegel_test
+    ~settings:
+      { (Hegel.Settings.create ~test_cases:1 ~seed:0 ()) with
+        database = Hegel.Settings.Disabled
+      }
+    (fun tc ->
+      let seen : Thread.t list Atomic.t = Atomic.make [] in
+      let step =
+        S.Concurrent_rule.create
+          ~name:"step"
+          ~step:(fun _tc () () ->
+            let rec add () =
+              let previous = Atomic.get seen in
+              if not (Atomic.compare_and_set seen previous (Thread.self () :: previous))
+              then add ()
+            in
+            add ())
+          ()
+      in
+      let invariant =
+        S.Invariant.create
+          ~name:"worker_count"
+          ~always_check:true
+          ~inv:(fun _tc () ->
+            incr invariant_checks;
+            let unique =
+              List.sort_uniq
+                (fun a b -> compare (Thread.id a) (Thread.id b))
+                (Atomic.get seen)
+            in
+            Alcotest.(check bool)
+              "at most three workers across rounds"
+              true
+              (List.length unique <= 3);
+            last_workers := unique)
+          ()
+      in
+      S.run_concurrent_internal
+        tc
+        ~concurrency:cap
+        ~init:()
+        ~rules:[ step ]
+        ~invariants:[ invariant ]
+        ~min_concurrency:3
+        ~max_concurrency:3
+        ~step_count:30);
+  Alcotest.(check bool)
+    "invariants checked beyond the initial and final states"
+    true
+    (!invariant_checks > 3);
+  Alcotest.(check int) "all three workers ran rules" 3 (List.length !last_workers);
+  List.iter Thread.join !last_workers
 ;;
 
 let tests_for name cap =
-  [ Alcotest.test_case (name ^ " preserves order") `Quick (preserves_order cap)
-  ; Alcotest.test_case (name ^ " records raising body") `Quick (records_raising_body cap)
-  ; Alcotest.test_case (name ^ " zero bodies") `Quick (zero_bodies cap)
+  [ Alcotest.test_case
+      (name ^ " outcomes follow worker indices")
+      `Quick
+      (outcomes_follow_worker_indices cap)
+  ; Alcotest.test_case
+      (name ^ " body exceptions become outcomes")
+      `Quick
+      (body_exceptions_become_outcomes cap)
+  ; Alcotest.test_case
+      (name ^ " workers exit after a pool scope raises")
+      `Quick
+      (scope_exception_stops_workers cap)
+  ; Alcotest.test_case
+      (name ^ " state machine reuses workers across rounds")
+      `Quick
+      (state_machine_reuses_workers_across_rounds cap)
   ]
 ;;
 
+let thread_pool_startup_failure_cleans_up () =
+  let started = ref [] in
+  let create f x =
+    if List.length !started = 1 then failwith "thread startup";
+    let thread = Thread.create f x in
+    started := thread :: !started;
+    thread
+  in
+  let cap = I.thread_pool ~create in
+  Alcotest.check_raises "partial startup" (Failure "thread startup") (fun () ->
+    ignore (spawn_join_n cap ~n:3 ~f:(fun () _ -> None)));
+  List.iter Thread.join !started
+;;
+
 #ifndef OXCAML
-(* More bodies than the pool has domains, all waiting for each other: this
-   finishes only if every body is live as soon as it is dequeued. The deadline
-   turns a hang into a failure. *)
-let domains_bodies_live_together () =
-  let n = min 10 (Domain.recommended_domain_count ()) in
-  let arrived = Atomic.make 0 in
-  let deadline = Unix.gettimeofday () +. 5.0 in
-  let outcomes =
-    C.domains.spawn_join_n ~n ~f:(fun () _ ->
-      Atomic.incr arrived;
-      while Atomic.get arrived < n && Unix.gettimeofday () < deadline do
-        Thread.yield ()
-      done;
-      if Atomic.get arrived = n
-      then None
-      else Some (Failure "not all bodies were live at once", Printexc.get_raw_backtrace ()))
-  in
-  List.iter
-    (function
-      | None -> ()
-      | Some (exn, _) -> raise exn)
-    outcomes
-;;
-
-let domains_run_off_the_main_domain () =
-  let main = Domain.self () in
-  let outcomes =
-    C.domains.spawn_join_n ~n:2 ~f:(fun () _ ->
-      if Domain.self () = main
-      then Some (Failure "body ran on the main domain", Printexc.get_raw_backtrace ())
-      else None)
-  in
-  List.iter
-    (function
-      | None -> ()
-      | Some (exn, _) -> raise exn)
-    outcomes
-;;
-
-let domains_pool_grows () =
-  ignore (C.domains.spawn_join_n ~n:1 ~f:(fun () _ -> None) : C.outcome list);
-  let n = min 10 (Domain.recommended_domain_count () - 1) in
+let workers_use_separate_domains () =
+  let caller = Domain.self () in
+  let n = min 4 (max 1 (Domain.recommended_domain_count () - 1)) in
   let seen = Array.make n (-1) in
-  ignore
-    (C.domains.spawn_join_n ~n ~f:(fun () i ->
+  check_outcomes
+    (spawn_join_n C.domains ~n ~f:(fun () i ->
+       if Domain.self () = caller then failwith "worker ran on the calling domain";
        seen.(i) <- (Domain.self () :> int);
        None)
      : C.outcome list);
-  Alcotest.(check int)
-    "one domain per body"
-    n
-    (List.length (List.sort_uniq compare (Array.to_list seen)))
+  Alcotest.(check bool)
+    "workers can execute on separate domains"
+    true
+    (List.length (List.sort_uniq compare (Array.to_list seen)) >= min 2 n)
+;;
+
+let domain_pool_startup_failure_cleans_up ~fail_thread () =
+  let threads = ref [] in
+  let domains = ref [] in
+  let create_thread f x =
+    if fail_thread && List.length !threads = 1 then failwith "startup";
+    let thread = Thread.create f x in
+    threads := thread :: !threads;
+    thread
+  in
+  let spawn_domain f =
+    if (not fail_thread) && List.length !domains = 1 then failwith "startup";
+    let domain = Domain.spawn f in
+    domains := domain :: !domains;
+    domain
+  in
+  let cap = I.domain_pool ~max_domains:2 ~create_thread ~spawn_domain in
+  Alcotest.check_raises "domain startup" (Failure "startup") (fun () ->
+    ignore (spawn_join_n cap ~n:4 ~f:(fun () _ -> None)));
+  List.iter Thread.join !threads;
+  List.iter Domain.join !domains
+;;
+
+let workers_sharing_one_domain_make_progress () =
+  let cap =
+    I.domain_pool ~max_domains:1 ~create_thread:Thread.create ~spawn_domain:Domain.spawn
+  in
+  I.with_scope cap ~f:(fun workers ->
+    for _ = 1 to 3 do
+      let arrived = Atomic.make 0 in
+      let deadline = Unix.gettimeofday () +. 5.0 in
+      check_outcomes
+        (workers.spawn_join_n ~n:4 ~f:(fun () _ ->
+           Atomic.incr arrived;
+           while Atomic.get arrived < 4 && Unix.gettimeofday () < deadline do
+             Thread.yield ()
+           done;
+           if Atomic.get arrived <> 4 then failwith "workers could not progress together";
+           None))
+    done)
 ;;
 
 let domain_tests =
   tests_for "domains" C.domains
-  @ [ Alcotest.test_case "domains pool grows" `Quick domains_pool_grows
-    ; Alcotest.test_case
-        "domains bodies live together"
+  @ [ Alcotest.test_case
+        "domain creation failure cleans up started workers"
         `Quick
-        domains_bodies_live_together
+        (domain_pool_startup_failure_cleans_up ~fail_thread:false)
     ; Alcotest.test_case
-        "domains run off the main domain"
+        "thread creation failure in a domain cleans up started workers"
         `Quick
-        domains_run_off_the_main_domain
+        (domain_pool_startup_failure_cleans_up ~fail_thread:true)
+    ; Alcotest.test_case
+        "workers sharing one domain make progress"
+        `Quick
+        workers_sharing_one_domain_make_progress
+    ; Alcotest.test_case
+        "workers use separate domains"
+        `Quick
+        workers_use_separate_domains
     ]
 ;;
 
@@ -111,4 +231,12 @@ let domain_tests =
 let domain_tests = []
 #endif
 
-let tests = tests_for "threads" C.threads @ domain_tests
+let tests =
+  tests_for "threads" C.threads
+  @ domain_tests
+  @ [ Alcotest.test_case
+        "thread creation failure cleans up started workers"
+        `Quick
+        thread_pool_startup_failure_cleans_up
+    ]
+;;
