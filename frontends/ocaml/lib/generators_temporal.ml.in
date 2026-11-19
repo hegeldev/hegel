@@ -127,6 +127,22 @@ let u8 n = saturated ~min:0 ~max:0xff n
 let u16 n = saturated ~min:0 ~max:0xffff n
 let u32 n = saturated ~min:0 ~max:0xffff_ffff n
 let i32 n = saturated ~min:(-0x8000_0000) ~max:0x7fff_ffff n
+let u8_range = 0, 0xff
+let u32_range = 0, 0xffff_ffff
+let i32_range = -0x8000_0000, 0x7fff_ffff
+
+(* Rejects a bound field the C struct cannot hold, which [saturated] would
+   otherwise change before the engine reported it. *)
+let out_of_range (min, max) n = n < min || n > max
+
+let check_field bound kind field range n =
+  if out_of_range range n
+  then
+    raise
+      (Internal.Usage_error
+         (Printf.sprintf "%s is not a valid %s: the %s is %d" bound kind field n))
+;;
+
 let text format value = Internal.with_context (fun ctx -> format ctx value)
 
 module Value = struct
@@ -140,6 +156,13 @@ module Value = struct
     let min_value = { year = -999_999; month = 1; day = 1 }
     let max_value = { year = 999_999; month = 12; day = 31 }
     let raw { year; month; day } = { year = i32 year; month = u8 month; day = u8 day }
+
+    let check ?(kind = "date") bound { year; month; day } =
+      check_field bound kind "year" i32_range year;
+      check_field bound kind "month" u8_range month;
+      check_field bound kind "day" u8_range day
+    ;;
+
     let to_string date = text Ffi.format_date (raw date)
     let pp formatter date = Format.pp_print_string formatter (to_string date)
     let sexp_of_t date = Internal.raw_text (to_string date)
@@ -166,6 +189,13 @@ module Value = struct
       }
     ;;
 
+    let check ?(kind = "time") bound { hour; minute; second; nanosecond } =
+      check_field bound kind "hour" u8_range hour;
+      check_field bound kind "minute" u8_range minute;
+      check_field bound kind "second" u8_range second;
+      check_field bound kind "nanosecond" u32_range nanosecond
+    ;;
+
     let to_string time = text Ffi.format_time (raw time)
     let pp formatter time = Format.pp_print_string formatter (to_string time)
     let sexp_of_t time = Internal.raw_text (to_string time)
@@ -182,6 +212,12 @@ module Value = struct
     let min_value = { date = Date.min_value; time = Time.min_value }
     let max_value = { date = Date.max_value; time = Time.max_value }
     let raw { date; time } = { date = Date.raw date; time = Time.raw time }
+
+    let check bound { date; time } =
+      Date.check ~kind:"datetime" bound date;
+      Time.check ~kind:"datetime" bound time
+    ;;
+
     let to_string datetime = text Ffi.format_datetime (raw datetime)
     let pp formatter datetime = Format.pp_print_string formatter (to_string datetime)
     let sexp_of_t datetime = Internal.raw_text (to_string datetime)
@@ -198,6 +234,11 @@ module Value = struct
     let min_value = { second = -31_619_087_596_800; nanosecond = 0 }
     let max_value = { second = 31_494_784_780_799; nanosecond = 999_999_999 }
     let raw { second; nanosecond } = { second; nanosecond = u32 nanosecond }
+
+    let check bound { second = _; nanosecond } =
+      check_field bound "instant" "nanosecond" u32_range nanosecond
+    ;;
+
     let to_string instant = text Ffi.format_timestamp (raw instant)
     let pp formatter instant = Format.pp_print_string formatter (to_string instant)
     let sexp_of_t instant = Internal.raw_text (to_string instant)
@@ -234,6 +275,11 @@ module Value = struct
     let min_value = { seconds = -max_int; nanoseconds = -999_999_999 }
     let max_value = { seconds = max_int; nanoseconds = 999_999_999 }
     let raw { seconds; nanoseconds } = { seconds; nanoseconds = i32 nanoseconds }
+
+    let check bound { seconds = _; nanoseconds } =
+      check_field bound "duration" "nanoseconds" i32_range nanoseconds
+    ;;
+
     let to_string duration = text Ffi.format_duration (raw duration)
     let pp formatter duration = Format.pp_print_string formatter (to_string duration)
     let sexp_of_t duration = Internal.raw_text (to_string duration)
@@ -763,6 +809,8 @@ let dates
   ()
   : _ MODE(portable)
   =
+  Date.check "min_value" min_value;
+  Date.check "max_value" max_value;
   let min_value = Date.raw min_value in
   let max_value = Date.raw max_value in
   let weekdays = mask weekday_bit weekdays in
@@ -792,6 +840,8 @@ let times
   ()
   : _ MODE(portable)
   =
+  Time.check "min_value" min_value;
+  Time.check "max_value" max_value;
   let min_value = Time.raw min_value in
   let max_value = Time.raw max_value in
   let precision = precision_code precision in
@@ -810,6 +860,8 @@ let datetimes
   ()
   : _ MODE(portable)
   =
+  Datetime.check "min_value" min_value;
+  Datetime.check "max_value" max_value;
   let min_value = Datetime.raw min_value in
   let max_value = Datetime.raw max_value in
   let precision = precision_code precision in
@@ -828,6 +880,8 @@ let instants
   ()
   : _ MODE(portable)
   =
+  Instant.check "min_value" min_value;
+  Instant.check "max_value" max_value;
   let min_value = Instant.raw min_value in
   let max_value = Instant.raw max_value in
   let precision = precision_code precision in
@@ -847,6 +901,13 @@ let offsets
   ()
   : _ MODE(portable)
   =
+  List.iter
+    (fun (bound, n) ->
+      if out_of_range i32_range n
+      then
+        raise
+          (Internal.Usage_error (Printf.sprintf "%s %d is not a valid offset" bound n)))
+    [ "min_value", min_value; "max_value", max_value ];
   let min_value = i32 min_value in
   let max_value = i32 max_value in
   let granularity = granularity_code granularity in
@@ -932,10 +993,14 @@ type zoned_options =
 let zoned_bounds min_value max_value min_instant max_instant =
   match (min_value, max_value), (min_instant, max_instant) with
   | (lo, hi), (None, None) ->
+    Option.iter (Datetime.check "min_value") lo;
+    Option.iter (Datetime.check "max_value") hi;
     Civil
       ( Datetime.raw (Option.value lo ~default:Datetime.min_value)
       , Datetime.raw (Option.value hi ~default:Datetime.max_value) )
   | (None, None), (lo, hi) ->
+    Option.iter (Instant.check "min_instant") lo;
+    Option.iter (Instant.check "max_instant") hi;
     Instants
       ( Instant.raw (Option.value lo ~default:Instant.min_value)
       , Instant.raw (Option.value hi ~default:Instant.max_value) )
@@ -1054,6 +1119,8 @@ let durations
   ()
   : _ MODE(portable)
   =
+  Duration.check "min_value" min_value;
+  Duration.check "max_value" max_value;
   let min_value = Duration.raw min_value in
   let max_value = Duration.raw max_value in
   let precision = precision_code precision in

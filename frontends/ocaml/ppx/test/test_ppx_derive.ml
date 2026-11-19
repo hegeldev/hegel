@@ -317,8 +317,9 @@ let%hegel_test test_temporal_fields_e2e tc =
     ; Temporal.Datetime.to_string a.reminder
     ]
     ~f:(fun text -> assert (String.is_substring printed ~substring:text));
-  assert (Temporal.Zoned_datetime.equal a.meeting a.meeting);
-  assert (Temporal.Span.equal a.repeats a.repeats)
+  List.iter
+    [ Temporal.Zoned_datetime.sexp_of_t a.meeting; Temporal.Span.sexp_of_t a.repeats ]
+    ~f:(fun sexp -> assert (String.is_substring printed ~substring:(Sexp.to_string sexp)))
 [@@settings Hegel.Settings.create ~test_cases:20 ~seed:0 ()]
 ;;
 

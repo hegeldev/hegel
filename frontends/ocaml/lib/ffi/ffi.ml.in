@@ -702,79 +702,6 @@ let c_date_options_set_months =
     (handle_t @-> handle_t @-> uint32_t @-> returning int)
 ;;
 
-let c_generate_date =
-  foreign
-    "hegel_generate_date"
-    (handle_t
-     @-> handle_t
-     @-> Date_struct.t
-     @-> Date_struct.t
-     @-> handle_t
-     @-> ptr Date_struct.t
-     @-> returning int)
-;;
-
-let c_generate_time =
-  foreign
-    "hegel_generate_time"
-    (handle_t
-     @-> handle_t
-     @-> Time_struct.t
-     @-> Time_struct.t
-     @-> uint32_t
-     @-> ptr Time_struct.t
-     @-> returning int)
-;;
-
-let c_generate_datetime =
-  foreign
-    "hegel_generate_datetime"
-    (handle_t
-     @-> handle_t
-     @-> Datetime_struct.t
-     @-> Datetime_struct.t
-     @-> uint32_t
-     @-> ptr Datetime_struct.t
-     @-> returning int)
-;;
-
-let c_generate_timestamp =
-  foreign
-    "hegel_generate_timestamp"
-    (handle_t
-     @-> handle_t
-     @-> Timestamp_struct.t
-     @-> Timestamp_struct.t
-     @-> uint32_t
-     @-> ptr Timestamp_struct.t
-     @-> returning int)
-;;
-
-let c_generate_offset =
-  foreign
-    "hegel_generate_offset"
-    (handle_t
-     @-> handle_t
-     @-> int32_t
-     @-> int32_t
-     @-> uint32_t
-     @-> bool
-     @-> ptr Offset_struct.t
-     @-> returning int)
-;;
-
-let c_generate_duration =
-  foreign
-    "hegel_generate_duration"
-    (handle_t
-     @-> handle_t
-     @-> Duration_struct.t
-     @-> Duration_struct.t
-     @-> uint32_t
-     @-> ptr Duration_struct.t
-     @-> returning int)
-;;
-
 let c_span_spec_new =
   foreign "hegel_span_spec_new" (handle_t @-> ptr handle_t @-> returning int)
 ;;
@@ -795,12 +722,6 @@ let c_span_spec_set_sign =
 
 let c_span_spec_validate =
   foreign "hegel_span_spec_validate" (handle_t @-> handle_t @-> returning int)
-;;
-
-let c_generate_span =
-  foreign
-    "hegel_generate_span"
-    (handle_t @-> handle_t @-> handle_t @-> ptr Span_struct.t @-> returning int)
 ;;
 
 let c_tzdb_version = foreign "hegel_tzdb_version" (handle_t @-> ptr str @-> returning int)
@@ -950,12 +871,6 @@ let c_timezone_spec_validate =
   foreign "hegel_timezone_spec_validate" (handle_t @-> handle_t @-> returning int)
 ;;
 
-let c_generate_timezone =
-  foreign
-    "hegel_generate_timezone"
-    (handle_t @-> handle_t @-> handle_t @-> ptr Str.t @-> returning int)
-;;
-
 let c_zoned_spec_new =
   foreign "hegel_zoned_spec_new" (handle_t @-> ptr handle_t @-> returning int)
 ;;
@@ -996,30 +911,6 @@ let c_zoned_spec_set_ambiguous =
 
 let c_zoned_spec_validate =
   foreign "hegel_zoned_spec_validate" (handle_t @-> handle_t @-> returning int)
-;;
-
-let c_generate_zoned_datetime =
-  foreign
-    "hegel_generate_zoned_datetime"
-    (handle_t
-     @-> handle_t
-     @-> handle_t
-     @-> handle_t
-     @-> ptr Zoned_struct.t
-     @-> ptr Str.t
-     @-> returning int)
-;;
-
-let c_generate_zoned_datetime_for_zone =
-  foreign
-    "hegel_generate_zoned_datetime_for_zone"
-    (handle_t
-     @-> handle_t
-     @-> handle_t
-     @-> str
-     @-> handle_t
-     @-> ptr Zoned_struct.t
-     @-> returning int)
 ;;
 
 let c_format_date =
@@ -1511,6 +1402,16 @@ let s_state_machine_should_check_invariant =
 
 let s_generate_string = symbol "hegel_generate_string"
 let s_owned_string_free = symbol "hegel_owned_string_free"
+let s_generate_date = symbol "hegel_generate_date"
+let s_generate_time = symbol "hegel_generate_time"
+let s_generate_datetime = symbol "hegel_generate_datetime"
+let s_generate_timestamp = symbol "hegel_generate_timestamp"
+let s_generate_offset = symbol "hegel_generate_offset"
+let s_generate_duration = symbol "hegel_generate_duration"
+let s_generate_span = symbol "hegel_generate_span"
+let s_generate_timezone = symbol "hegel_generate_timezone"
+let s_generate_zoned_datetime = symbol "hegel_generate_zoned_datetime"
+let s_generate_zoned_datetime_for_zone = symbol "hegel_generate_zoned_datetime_for_zone"
 let s_pause_faults = symbol "hegel_pause_faults"
 let s_unpause_faults = symbol "hegel_unpause_faults"
 
@@ -1589,6 +1490,95 @@ external stub_generate_string
   -> (nativeint[@unboxed])
   -> string
   = "hegel_ocaml_generate_string_byte" "hegel_ocaml_generate_string"
+
+external stub_generate_date
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> Temporal_types.Date.t
+  -> Temporal_types.Date.t
+  -> (nativeint[@unboxed])
+  -> Temporal_types.Date.t
+  = "hegel_ocaml_generate_date_byte" "hegel_ocaml_generate_date"
+
+external stub_generate_time
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> Temporal_types.Time.t
+  -> Temporal_types.Time.t
+  -> (int[@untagged])
+  -> Temporal_types.Time.t
+  = "hegel_ocaml_generate_time_byte" "hegel_ocaml_generate_time"
+
+external stub_generate_datetime
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> Temporal_types.Datetime.t
+  -> Temporal_types.Datetime.t
+  -> (int[@untagged])
+  -> Temporal_types.Datetime.t
+  = "hegel_ocaml_generate_datetime_byte" "hegel_ocaml_generate_datetime"
+
+external stub_generate_timestamp
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> Temporal_types.Instant.t
+  -> Temporal_types.Instant.t
+  -> (int[@untagged])
+  -> Temporal_types.Instant.t
+  = "hegel_ocaml_generate_timestamp_byte" "hegel_ocaml_generate_timestamp"
+
+external stub_generate_duration
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> Temporal_types.Duration.t
+  -> Temporal_types.Duration.t
+  -> (int[@untagged])
+  -> Temporal_types.Duration.t
+  = "hegel_ocaml_generate_duration_byte" "hegel_ocaml_generate_duration"
+
+external stub_generate_offset
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (int[@untagged])
+  -> (int[@untagged])
+  -> (int[@untagged])
+  -> (int[@untagged])
+  -> Temporal_types.Offset.t
+  = "hegel_ocaml_generate_offset_byte" "hegel_ocaml_generate_offset"
+
+external stub_generate_span
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> Temporal_types.Span.t
+  = "hegel_ocaml_generate_span_byte" "hegel_ocaml_generate_span"
+
+external stub_generate_zoned
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> Temporal_types.Zoned.t * string
+  = "hegel_ocaml_generate_zoned_byte" "hegel_ocaml_generate_zoned"
+
+external stub_generate_zoned_for_zone
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> string
+  -> (nativeint[@unboxed])
+  -> Temporal_types.Zoned.t
+  = "hegel_ocaml_generate_zoned_for_zone_byte" "hegel_ocaml_generate_zoned_for_zone"
 
 external stub_call_handle
   :  (nativeint[@unboxed])
@@ -2202,63 +2192,9 @@ let make_zoned (z : T.Zoned.t) =
   value
 ;;
 
-let read_date d : T.Date.t =
-  { year = Int32.to_int (getf d Date_struct.year)
-  ; month = Unsigned.UInt8.to_int (getf d Date_struct.month)
-  ; day = Unsigned.UInt8.to_int (getf d Date_struct.day)
-  }
-;;
-
-let read_time t : T.Time.t =
-  { hour = Unsigned.UInt8.to_int (getf t Time_struct.hour)
-  ; minute = Unsigned.UInt8.to_int (getf t Time_struct.minute)
-  ; second = Unsigned.UInt8.to_int (getf t Time_struct.second)
-  ; nanosecond = Unsigned.UInt32.to_int (getf t Time_struct.nanosecond)
-  }
-;;
-
-let read_datetime dt : T.Datetime.t =
-  { date = read_date (getf dt Datetime_struct.date)
-  ; time = read_time (getf dt Datetime_struct.time)
-  }
-;;
-
 let read_timestamp t : T.Instant.t =
   { second = Int64.to_int (getf t Timestamp_struct.second)
   ; nanosecond = Unsigned.UInt32.to_int (getf t Timestamp_struct.nanosecond)
-  }
-;;
-
-let read_duration d : T.Duration.t =
-  { seconds = Int64.to_int (getf d Duration_struct.seconds)
-  ; nanoseconds = Int32.to_int (getf d Duration_struct.nanoseconds)
-  }
-;;
-
-let read_span span : T.Span.t =
-  let get i = Int64.to_int (getf span (List.nth Span_struct.units i)) in
-  { years = get 0
-  ; months = get 1
-  ; weeks = get 2
-  ; days = get 3
-  ; hours = get 4
-  ; minutes = get 5
-  ; seconds = get 6
-  ; milliseconds = get 7
-  ; microseconds = get 8
-  ; nanoseconds = get 9
-  }
-;;
-
-let read_zoned value : T.Zoned.t =
-  { civil = read_datetime (getf value Zoned_struct.civil)
-  ; offset_seconds = Int32.to_int (getf value Zoned_struct.offset_seconds)
-  ; offset_known = getf value Zoned_struct.offset_known
-  ; fold = getf value Zoned_struct.fold
-  ; kind = Unsigned.UInt32.to_int (getf value Zoned_struct.kind)
-  ; offset_before = Int32.to_int (getf value Zoned_struct.offset_before)
-  ; offset_after = Int32.to_int (getf value Zoned_struct.offset_after)
-  ; timestamp = read_timestamp (getf value Zoned_struct.timestamp)
   }
 ;;
 
@@ -2302,90 +2238,88 @@ let date_options_set_months ctx options mask =
 ;;
 
 let generate_date ctx tc ~min_value ~max_value options =
-  let result = make Date_struct.t in
-  check_rc
-    ctx
-    (c_generate_date
-       ctx
-       tc
-       (make_date min_value)
-       (make_date max_value)
-       options
-       (addr result));
-  read_date result
+  match
+    stub_generate_date
+      (s_generate_date ())
+      (address_of ctx)
+      (address_of tc)
+      min_value
+      max_value
+      (address_of options)
+  with
+  | value -> value
+  | exception Engine_status rc -> raise (error_of_rc ctx rc)
 ;;
 
 let generate_time ctx tc ~min_value ~max_value ~precision =
-  let result = make Time_struct.t in
-  check_rc
-    ctx
-    (c_generate_time
-       ctx
-       tc
-       (make_time min_value)
-       (make_time max_value)
-       (u32 precision)
-       (addr result));
-  read_time result
+  match
+    stub_generate_time
+      (s_generate_time ())
+      (address_of ctx)
+      (address_of tc)
+      min_value
+      max_value
+      precision
+  with
+  | value -> value
+  | exception Engine_status rc -> raise (error_of_rc ctx rc)
 ;;
 
 let generate_datetime ctx tc ~min_value ~max_value ~precision =
-  let result = make Datetime_struct.t in
-  check_rc
-    ctx
-    (c_generate_datetime
-       ctx
-       tc
-       (make_datetime min_value)
-       (make_datetime max_value)
-       (u32 precision)
-       (addr result));
-  read_datetime result
+  match
+    stub_generate_datetime
+      (s_generate_datetime ())
+      (address_of ctx)
+      (address_of tc)
+      min_value
+      max_value
+      precision
+  with
+  | value -> value
+  | exception Engine_status rc -> raise (error_of_rc ctx rc)
 ;;
 
 let generate_timestamp ctx tc ~min_value ~max_value ~precision =
-  let result = make Timestamp_struct.t in
-  check_rc
-    ctx
-    (c_generate_timestamp
-       ctx
-       tc
-       (make_timestamp min_value)
-       (make_timestamp max_value)
-       (u32 precision)
-       (addr result));
-  read_timestamp result
+  match
+    stub_generate_timestamp
+      (s_generate_timestamp ())
+      (address_of ctx)
+      (address_of tc)
+      min_value
+      max_value
+      precision
+  with
+  | value -> value
+  | exception Engine_status rc -> raise (error_of_rc ctx rc)
 ;;
 
-let generate_offset ctx tc ~min_value ~max_value ~granularity ~allow_unknown : T.Offset.t =
-  let result = make Offset_struct.t in
-  check_rc
-    ctx
-    (c_generate_offset
-       ctx
-       tc
-       (Int32.of_int min_value)
-       (Int32.of_int max_value)
-       (u32 granularity)
-       allow_unknown
-       (addr result));
-  { seconds = Int32.to_int (getf result Offset_struct.seconds)
-  ; known = getf result Offset_struct.known
-  }
+let generate_offset ctx tc ~min_value ~max_value ~granularity ~allow_unknown =
+  match
+    stub_generate_offset
+      (s_generate_offset ())
+      (address_of ctx)
+      (address_of tc)
+      min_value
+      max_value
+      granularity
+      (Bool.to_int allow_unknown)
+  with
+  | value -> value
+  | exception Engine_status rc -> raise (error_of_rc ctx rc)
 ;;
 
 let generate_duration ctx tc ~min_value ~max_value ~precision =
-  let result = make Duration_struct.t in
-  check_rc
-    ctx
-    (c_generate_duration
-       ctx
-       tc
-       (make_duration min_value)
-       (make_duration max_value)
-       (u32 precision)
-       (addr result));
-  read_duration result
+  match
+    stub_generate_duration
+      (s_generate_duration ())
+      (address_of ctx)
+      (address_of tc)
+      min_value
+      max_value
+      precision
+  with
+  | value -> value
+  | exception Engine_status rc -> raise (error_of_rc ctx rc)
 ;;
 
 let span_spec_new ctx = new_handle ctx c_span_spec_new
@@ -2409,9 +2343,15 @@ let span_spec_set_sign ctx spec sign =
 let span_spec_validate ctx spec = check_rc ctx (c_span_spec_validate ctx spec)
 
 let generate_span ctx tc spec =
-  let result = make Span_struct.t in
-  check_rc ctx (c_generate_span ctx tc spec (addr result));
-  read_span result
+  match
+    stub_generate_span
+      (s_generate_span ())
+      (address_of ctx)
+      (address_of tc)
+      (address_of spec)
+  with
+  | value -> value
+  | exception Engine_status rc -> raise (error_of_rc ctx rc)
 ;;
 
 let format_date ctx value = owned_string ctx (c_format_date ctx (make_date value))
@@ -2688,7 +2628,20 @@ let timezone_spec_set_source ctx spec source =
 ;;
 
 let timezone_spec_validate ctx spec = check_rc ctx (c_timezone_spec_validate ctx spec)
-let generate_timezone ctx tc spec = owned_string ctx (c_generate_timezone ctx tc spec)
+
+let generate_timezone ctx tc spec =
+  match
+    stub_generate_string
+      (s_generate_timezone ())
+      (s_owned_string_free ())
+      (address_of ctx)
+      (address_of tc)
+      (address_of spec)
+  with
+  | value -> value
+  | exception Engine_status rc -> raise (error_of_rc ctx rc)
+;;
+
 let zoned_spec_new ctx = new_handle ctx c_zoned_spec_new
 let zoned_spec_free spec = ignore (c_zoned_spec_free null_handle spec : int)
 
@@ -2727,18 +2680,31 @@ let zoned_spec_set_ambiguous ctx spec ambiguous =
 let zoned_spec_validate ctx spec = check_rc ctx (c_zoned_spec_validate ctx spec)
 
 let generate_zoned_datetime ctx tc zones spec =
-  let value = make Zoned_struct.t in
-  let name = make Str.t in
-  check_rc ctx (c_generate_zoned_datetime ctx tc zones spec (addr value) (addr name));
-  let zone = string_of_str name in
-  ignore (c_owned_string_free ctx (addr name) : int);
-  read_zoned value, zone
+  match
+    stub_generate_zoned
+      (s_generate_zoned_datetime ())
+      (s_owned_string_free ())
+      (address_of ctx)
+      (address_of tc)
+      (address_of zones)
+      (address_of spec)
+  with
+  | value -> value
+  | exception Engine_status rc -> raise (error_of_rc ctx rc)
 ;;
 
 let generate_zoned_datetime_for_zone ctx tc source name spec =
-  let value = make Zoned_struct.t in
-  check_rc ctx (c_generate_zoned_datetime_for_zone ctx tc source name spec (addr value));
-  read_zoned value
+  match
+    stub_generate_zoned_for_zone
+      (s_generate_zoned_datetime_for_zone ())
+      (address_of ctx)
+      (address_of tc)
+      (address_of source)
+      name
+      (address_of spec)
+  with
+  | value -> value
+  | exception Engine_status rc -> raise (error_of_rc ctx rc)
 ;;
 
 let generate_ip_bytes ctx tc c_fn n =
