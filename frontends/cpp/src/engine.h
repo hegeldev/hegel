@@ -78,12 +78,26 @@ namespace hegel::impl {
     void settings_register_profile(hegel_context_t* ctx, std::string_view name,
                                    const hegel_settings_t* s);
     void set_default_profile(hegel_context_t* ctx, std::string_view name);
-    /// Sets the `hegel.toml` key `key` from its text form. Returns the
-    /// engine's diagnostic when the key or the value is not accepted.
-    std::optional<std::string> settings_set_from_string(hegel_context_t* ctx,
-                                                        hegel_settings_t* s,
-                                                        std::string_view key,
-                                                        std::string_view value);
+    /// Why `hegel_settings_set_from_string` rejected a key and value.
+    struct InvalidSetting {
+        enum class Kind {
+            /// `HEGEL_E_UNKNOWN_SETTING`: the key names no setting.
+            UnknownSetting,
+            /// `HEGEL_E_INVALID_ARG`: the value is outside its key's
+            /// vocabulary.
+            InvalidValue,
+        };
+        Kind kind;
+        /// The engine's diagnostic for an `InvalidValue`; empty for an
+        /// `UnknownSetting`.
+        std::string message;
+    };
+    /// Sets the `hegel.toml` key `key` from its text form. Returns why the
+    /// engine rejected the key or the value, and throws for any other
+    /// failure.
+    std::optional<InvalidSetting>
+    settings_set_from_string(hegel_context_t* ctx, hegel_settings_t* s,
+                             std::string_view key, std::string_view value);
     std::string engine_version(hegel_context_t* ctx);
     void settings_set_show_statistics(hegel_context_t* ctx, hegel_settings_t* s,
                                       bool yes);
