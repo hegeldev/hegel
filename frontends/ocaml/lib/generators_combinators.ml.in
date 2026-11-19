@@ -26,7 +26,9 @@ let%template sampled_from ABSTRACT(a, value mod c) (options : a list MODE(m))
   =
   let n = List.length options in
   if n = 0 then raise (Internal.Usage_error "sampled_from requires at least one element");
-  (map [@mode m]) (fun i -> List.nth options i) (integers ~min_value:0 ~max_value:(n - 1) ())
+  (map [@mode m])
+    (fun i -> List.nth options i)
+    (integers ~min_value:0 ~max_value:(n - 1) ())
 [@@mode (m, c) = ((nonportable, uncontended), (portable, contended))]
 ;;
 
@@ -69,7 +71,9 @@ let%template one_of (generators : ('a, printable) generator list MODE(m))
     {!Labels.optional}-spanned draw that yields [None] or [Some] of [element]
     with equal probability. Shared with [Derive.generate_option] so derived
     option fields go through the same machinery. *)
-let%template optional_core (element : 'a core MODE(m)) : 'a option core MODE(m) =
+let%template optional_core (element : 'a core MODE(m))
+  : 'a option core MODE(m)
+  =
   Composite
     { label = Labels.combine [ Labels.optional; label_of_core element ]
     ; generate_fn =
@@ -102,6 +106,7 @@ let%template optional (element : ('a, printable) generator MODE(m))
 let ipaddr_to_string = Obj.magic_portable Ipaddr.to_string
 let ipaddr_v4_of_octets_exn = Obj.magic_portable Ipaddr.V4.of_octets_exn
 let ipaddr_v6_of_octets_exn = Obj.magic_portable Ipaddr.V6.of_octets_exn
+
 #else
 let ipaddr_to_string = Ipaddr.to_string
 let ipaddr_v4_of_octets_exn = Ipaddr.V4.of_octets_exn
@@ -133,9 +138,9 @@ let ip_addresses ?version () : _ MODE(portable) =
 (** [tuples2 g1 g2] creates a generator for 2-element tuples of printable
     components: each element is drawn in sequence inside a {!Labels.tuple} span. *)
 let%template tuples2
-      (type a b)
-      (g1 : (a, printable) generator MODE(m))
-      (g2 : (b, printable) generator MODE(m))
+  (type a b)
+  (g1 : (a, printable) generator MODE(m))
+  (g2 : (b, printable) generator MODE(m))
   : (a * b, printable) generator MODE(m)
   =
   let p1 = (printer [@mode m]) g1
@@ -158,10 +163,10 @@ let%template tuples2
 (** [tuples3 g1 g2 g3] creates a generator for 3-element tuples of printable
     components. *)
 let%template tuples3
-      (type a b c)
-      (g1 : (a, printable) generator MODE(m))
-      (g2 : (b, printable) generator MODE(m))
-      (g3 : (c, printable) generator MODE(m))
+  (type a b c)
+  (g1 : (a, printable) generator MODE(m))
+  (g2 : (b, printable) generator MODE(m))
+  (g3 : (c, printable) generator MODE(m))
   : (a * b * c, printable) generator MODE(m)
   =
   let p1 = (printer [@mode m]) g1
@@ -186,11 +191,11 @@ let%template tuples3
 (** [tuples4 g1 g2 g3 g4] creates a generator for 4-element tuples of printable
     components. *)
 let%template tuples4
-      (type a b c d)
-      (g1 : (a, printable) generator MODE(m))
-      (g2 : (b, printable) generator MODE(m))
-      (g3 : (c, printable) generator MODE(m))
-      (g4 : (d, printable) generator MODE(m))
+  (type a b c d)
+  (g1 : (a, printable) generator MODE(m))
+  (g2 : (b, printable) generator MODE(m))
+  (g3 : (c, printable) generator MODE(m))
+  (g4 : (d, printable) generator MODE(m))
   : (a * b * c * d, printable) generator MODE(m)
   =
   let p1 = (printer [@mode m]) g1

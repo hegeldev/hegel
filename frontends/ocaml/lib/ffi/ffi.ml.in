@@ -9,7 +9,7 @@
 open Ctypes
 
 (* ------------------------------------------------------------------ *)
-(* Locating and opening the shared library                            *)
+(* Locating and opening the shared library *)
 (* ------------------------------------------------------------------ *)
 
 (* [memoize] is a thread-safe lazy value, used to avoid an eager dlopen in code
@@ -40,9 +40,7 @@ let lib =
 let binding_initializers = ref []
 
 let foreign name typ =
-  let binding =
-    memoize (fun () -> Foreign.foreign ~from:(lib ()) name typ)
-  in
+  let binding = memoize (fun () -> Foreign.foreign ~from:(lib ()) name typ) in
   let initialize () =
     let (_ : _ -> _) = binding () in
     ()
@@ -54,7 +52,7 @@ let foreign name typ =
 ;;
 
 (* ------------------------------------------------------------------ *)
-(* Handles                                                            *)
+(* Handles *)
 (* ------------------------------------------------------------------ *)
 
 (* In OxCaml they cross portability and contention since libhegel's threading
@@ -63,8 +61,9 @@ let foreign name typ =
    so we need to wrap it in a type with the kind value mod portable contended to keep
    portability and contention. *)
 #ifdef OXCAML
-type handle : value mod portable contended = H of unit ptr
+type handle : value mod contended portable = H of unit ptr
 [@@unboxed] [@@unsafe_allow_any_mode_crossing]
+
 #else
 type handle = H of unit ptr [@@unboxed]
 #endif
@@ -74,7 +73,7 @@ let handle_t : handle typ = view ~read:(fun p -> H p) ~write:raw (ptr void)
 let null_handle = H null
 
 (* ------------------------------------------------------------------ *)
-(* C structs returned by the typed draws                              *)
+(* C structs returned by the typed draws *)
 (* ------------------------------------------------------------------ *)
 
 (* [hegel_generate_bytes_result_t]: an engine-allocated byte buffer, freed with
@@ -179,14 +178,14 @@ module Datetime_struct = struct
 end
 
 (* ------------------------------------------------------------------ *)
-(* Test context                                                        *)
+(* Test context *)
 (* ------------------------------------------------------------------ *)
 
 let c_context_new = foreign "hegel_context_new" (void @-> returning handle_t)
 let c_context_free = foreign "hegel_context_free" (handle_t @-> returning int)
 
 (* ------------------------------------------------------------------ *)
-(* Raw bindings                                                        *)
+(* Raw bindings *)
 (* ------------------------------------------------------------------ *)
 
 let c_settings_new =
@@ -625,9 +624,7 @@ let c_target =
 let c_event = foreign "hegel_event" (handle_t @-> handle_t @-> str @-> returning int)
 
 let c_event_value =
-  foreign
-    "hegel_event_value"
-    (handle_t @-> handle_t @-> double @-> str @-> returning int)
+  foreign "hegel_event_value" (handle_t @-> handle_t @-> double @-> str @-> returning int)
 ;;
 
 let text_typ = handle_t @-> handle_t @-> str @-> returning int
@@ -749,31 +746,22 @@ let c_failure_blob =
 ;;
 
 let c_failure_caveat =
-  foreign
-    "hegel_failure_caveat"
-    (handle_t @-> handle_t @-> ptr str_opt @-> returning int)
+  foreign "hegel_failure_caveat" (handle_t @-> handle_t @-> ptr str_opt @-> returning int)
 ;;
 
 let c_failure_output =
-  foreign
-    "hegel_failure_output"
-    (handle_t @-> handle_t @-> ptr str_opt @-> returning int)
+  foreign "hegel_failure_output" (handle_t @-> handle_t @-> ptr str_opt @-> returning int)
 ;;
 
 let c_failure_origin =
-  foreign
-    "hegel_failure_origin"
-    (handle_t @-> handle_t @-> ptr str @-> returning int)
+  foreign "hegel_failure_origin" (handle_t @-> handle_t @-> ptr str @-> returning int)
 ;;
 
-let c_last_error_message =
-  foreign "hegel_context_last_error" (handle_t @-> returning str)
-;;
-
+let c_last_error_message = foreign "hegel_context_last_error" (handle_t @-> returning str)
 let c_version = foreign "hegel_version" (handle_t @-> ptr str @-> returning int)
 
 (* ------------------------------------------------------------------ *)
-(* Public types                                                        *)
+(* Public types *)
 (* ------------------------------------------------------------------ *)
 
 type context = handle
@@ -846,7 +834,7 @@ let hc_test_cases_too_large = 1 lsl 2
 let hc_large_initial_test_case = 1 lsl 3
 
 (* ------------------------------------------------------------------ *)
-(* Helpers                                                             *)
+(* Helpers *)
 (* ------------------------------------------------------------------ *)
 
 let backend_to_int = function
@@ -880,7 +868,8 @@ let nondeterminism_strictness_of_int = function
   | 1 -> Nondeterminism_warn
   | 2 -> Nondeterminism_error
   | n ->
-    raise (Internal_error (Printf.sprintf "hegel: unknown nondeterminism strictness %d" n))
+    raise
+      (Internal_error (Printf.sprintf "hegel: unknown nondeterminism strictness %d" n))
 ;;
 
 let backend_of_int = function
@@ -929,18 +918,19 @@ let error_of_rc ctx rc =
 let check_rc ctx rc = if rc <> ok then raise (error_of_rc ctx rc)
 
 (* ------------------------------------------------------------------ *)
-(* Direct C stubs (hegel_stubs.c) for the calls made on every draw or  *)
+(* Direct C stubs (hegel_stubs.c) for the calls made on every draw or *)
 (* test case. Each calls libhegel through a function pointer looked up *)
-(* from the same library handle as the ctypes bindings. A stub that    *)
-(* returns a bool, nothing, or a handle returns a negative libhegel    *)
-(* return code on failure; the integer and float draws raise           *)
-(* [Engine_status] instead.                                            *)
+(* from the same library handle as the ctypes bindings. A stub that *)
+(* returns a bool, nothing, or a handle returns a negative libhegel *)
+(* return code on failure; the integer and float draws raise *)
+(* [Engine_status] instead. *)
 (* ------------------------------------------------------------------ *)
 
 exception Engine_status of int
 
 #ifdef OXCAML
 let () = Callback.Safe.register_exception "hegel_ffi_status" (Engine_status 0)
+
 #else
 let () = Callback.register_exception "hegel_ffi_status" (Engine_status 0)
 #endif
@@ -953,7 +943,6 @@ let symbol name =
 ;;
 
 let address_of h = raw_address_of_ptr (raw h)
-
 let check_flag ctx r = if r < 0 then raise (error_of_rc ctx r) else r = 1
 
 let check_handle ctx r =
@@ -1142,7 +1131,7 @@ external stub_state_machine_should_check_invariant
 let state_machine_done = -1000
 
 (* ------------------------------------------------------------------ *)
-(* Diagnostics                                                         *)
+(* Diagnostics *)
 (* ------------------------------------------------------------------ *)
 
 let version ctx =
@@ -1152,7 +1141,7 @@ let version ctx =
 ;;
 
 (* ------------------------------------------------------------------ *)
-(* Test context                                                       *)
+(* Test context *)
 (* ------------------------------------------------------------------ *)
 
 let context_free ctx = ignore (c_context_free ctx : int)
@@ -1170,7 +1159,7 @@ let context_new () =
 ;;
 
 (* ------------------------------------------------------------------ *)
-(* Settings                                                            *)
+(* Settings *)
 (* ------------------------------------------------------------------ *)
 
 let settings_new ctx =
@@ -1249,6 +1238,7 @@ let settings_register_profile ctx name s =
 
 let set_default_profile ctx name =
   check_rc ctx (c_set_default_profile ctx (Option.value name ~default:""))
+;;
 
 let settings_get_test_cases ctx s =
   let out = allocate uint64_t Unsigned.UInt64.zero in
@@ -1319,7 +1309,7 @@ let settings_get_nondeterminism_strictness ctx s =
 ;;
 
 (* ------------------------------------------------------------------ *)
-(* Run lifecycle                                                       *)
+(* Run lifecycle *)
 (* ------------------------------------------------------------------ *)
 
 let output_stderr =
@@ -1353,6 +1343,7 @@ let run_result ctx run =
 let run_free ctx run = check_rc ctx (c_run_free ctx run)
 let run_result_free ctx r = check_rc ctx (c_run_result_free ctx r)
 let failure_free ctx f = check_rc ctx (c_failure_free ctx f)
+
 let test_case_free ctx tc =
   check_rc ctx (stub_call_handle (s_test_case_free ()) (address_of ctx) (address_of tc))
 ;;
@@ -1374,17 +1365,14 @@ let test_case_block ctx tc ~indent =
 ;;
 
 let test_case_flag ctx tc symbol =
-  check_flag
-    ctx
-    (stub_test_case_flag (symbol ()) (address_of ctx) (address_of tc))
+  check_flag ctx (stub_test_case_flag (symbol ()) (address_of ctx) (address_of tc))
 ;;
 
 let test_case_wants_output ctx tc = test_case_flag ctx tc s_test_case_wants_output
 let test_case_wants_detail ctx tc = test_case_flag ctx tc s_test_case_wants_detail
-;;
 
 (* ------------------------------------------------------------------ *)
-(* Per-test-case primitives                                            *)
+(* Per-test-case primitives *)
 (* ------------------------------------------------------------------ *)
 
 (* Marshal an OCaml string list into a [const hegel_string_t *] paired with a GC
@@ -1433,15 +1421,15 @@ let generate_integer ctx tc ~min_value ~max_value =
 ;;
 
 let generate_float
-      ctx
-      tc
-      ~min_value
-      ~max_value
-      ~allow_nan
-      ~allow_infinity
-      ~exclude_min
-      ~exclude_max
-      ~smallest_nonzero_magnitude
+  ctx
+  tc
+  ~min_value
+  ~max_value
+  ~allow_nan
+  ~allow_infinity
+  ~exclude_min
+  ~exclude_max
+  ~smallest_nonzero_magnitude
   =
   let flags =
     Bool.to_int allow_nan
@@ -1497,16 +1485,16 @@ let optional_string_array = function
 ;;
 
 let string_generator_text
-      ctx
-      ~min_size
-      ~max_size
-      ~codec
-      ~min_codepoint
-      ~max_codepoint
-      ~categories
-      ~exclude_categories
-      ~include_characters
-      ~exclude_characters
+  ctx
+  ~min_size
+  ~max_size
+  ~codec
+  ~min_codepoint
+  ~max_codepoint
+  ~categories
+  ~exclude_categories
+  ~include_characters
+  ~exclude_characters
   =
   let max_u =
     match max_size with
@@ -1540,9 +1528,7 @@ let string_generator_text
 
 let string_generator_regex ctx ~pattern ~fullmatch =
   let out = allocate handle_t null_handle in
-  check_rc
-    ctx
-    (c_string_generator_regex ctx pattern fullmatch null_handle out);
+  check_rc ctx (c_string_generator_regex ctx pattern fullmatch null_handle out);
   !@out
 ;;
 
@@ -1861,6 +1847,7 @@ let pause_faults ctx tc =
 let unpause_faults ctx tc =
   check_rc ctx (stub_call_handle (s_unpause_faults ()) (address_of ctx) (address_of tc))
 ;;
+
 let state_machine_free ctx state_machine =
   check_rc ctx (c_state_machine_free ctx state_machine)
 ;;
@@ -1870,7 +1857,7 @@ let event ctx tc label = check_rc ctx (c_event ctx tc label)
 let event_value ctx tc value label = check_rc ctx (c_event_value ctx tc value label)
 
 (* ------------------------------------------------------------------ *)
-(* Pretty printer                                                      *)
+(* Pretty printer *)
 (* ------------------------------------------------------------------ *)
 
 let opt_handle = function
@@ -1900,17 +1887,13 @@ let printer_new ctx options =
 
 let printer_free ctx printer = check_rc ctx (c_printer_free ctx printer)
 let printer_text ctx p s = check_rc ctx (c_printer_text ctx p s)
-
 let printer_breakable ctx p sep = check_rc ctx (c_printer_breakable ctx p sep)
-
 let printer_if_break ctx p s = check_rc ctx (c_printer_if_break ctx p s)
 let printer_comment ctx p s = check_rc ctx (c_printer_comment ctx p s)
 let printer_hard_break ctx p = check_rc ctx (c_printer_hard_break ctx p)
 
 let printer_begin_group ctx p ~indent open_ =
-  check_rc
-    ctx
-    (c_printer_begin_group ctx p (Unsigned.UInt64.of_int indent) open_)
+  check_rc ctx (c_printer_begin_group ctx p (Unsigned.UInt64.of_int indent) open_)
 ;;
 
 let printer_end_group ctx p close = check_rc ctx (c_printer_end_group ctx p close)
@@ -1972,7 +1955,7 @@ let mark_complete ctx tc status ~origin ~summary ~detail =
 ;;
 
 (* ------------------------------------------------------------------ *)
-(* Result inspection                                                   *)
+(* Result inspection *)
 (* ------------------------------------------------------------------ *)
 
 (* [HEGEL_RUN_STATUS_*] values. The catch-all maps any unknown future status to
@@ -2050,10 +2033,18 @@ let settings_free = Obj.magic_portable settings_free
 let settings_backend = Obj.magic_portable settings_backend
 let settings_test_cases = Obj.magic_portable settings_test_cases
 let settings_verbosity = Obj.magic_portable settings_verbosity
-let settings_nondeterminism_strictness = Obj.magic_portable settings_nondeterminism_strictness
+
+let settings_nondeterminism_strictness =
+  Obj.magic_portable settings_nondeterminism_strictness
+;;
+
 let settings_seed = Obj.magic_portable settings_seed
 let settings_derandomize = Obj.magic_portable settings_derandomize
-let settings_report_multiple_failures = Obj.magic_portable settings_report_multiple_failures
+
+let settings_report_multiple_failures =
+  Obj.magic_portable settings_report_multiple_failures
+;;
+
 let settings_stop_on_first_failure = Obj.magic_portable settings_stop_on_first_failure
 let settings_show_statistics = Obj.magic_portable settings_show_statistics
 let settings_database = Obj.magic_portable settings_database
@@ -2068,9 +2059,19 @@ let settings_get_seed = Obj.magic_portable settings_get_seed
 let settings_get_derandomize = Obj.magic_portable settings_get_derandomize
 let settings_get_database = Obj.magic_portable settings_get_database
 let settings_get_phases = Obj.magic_portable settings_get_phases
-let settings_get_suppress_health_check = Obj.magic_portable settings_get_suppress_health_check
-let settings_get_report_multiple_failures = Obj.magic_portable settings_get_report_multiple_failures
-let settings_get_stop_on_first_failure = Obj.magic_portable settings_get_stop_on_first_failure
+
+let settings_get_suppress_health_check =
+  Obj.magic_portable settings_get_suppress_health_check
+;;
+
+let settings_get_report_multiple_failures =
+  Obj.magic_portable settings_get_report_multiple_failures
+;;
+
+let settings_get_stop_on_first_failure =
+  Obj.magic_portable settings_get_stop_on_first_failure
+;;
+
 let settings_get_show_statistics = Obj.magic_portable settings_get_show_statistics
 let settings_get_print_blob = Obj.magic_portable settings_get_print_blob
 let settings_get_backend = Obj.magic_portable settings_get_backend
@@ -2128,7 +2129,11 @@ let state_machine_start = Obj.magic_portable state_machine_start
 let state_machine_next_group = Obj.magic_portable state_machine_next_group
 let state_machine_next_rule = Obj.magic_portable state_machine_next_rule
 let state_machine_rule_rejected = Obj.magic_portable state_machine_rule_rejected
-let state_machine_should_check_invariant = Obj.magic_portable state_machine_should_check_invariant
+
+let state_machine_should_check_invariant =
+  Obj.magic_portable state_machine_should_check_invariant
+;;
+
 let state_machine_free = Obj.magic_portable state_machine_free
 let pause_faults = Obj.magic_portable pause_faults
 let unpause_faults = Obj.magic_portable unpause_faults
