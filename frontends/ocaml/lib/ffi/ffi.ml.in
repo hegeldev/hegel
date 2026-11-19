@@ -1549,7 +1549,7 @@ external stub_generate_offset
   -> (int[@untagged])
   -> (int[@untagged])
   -> (int[@untagged])
-  -> (int[@untagged])
+  -> Temporal_types.Offset.t
   = "hegel_ocaml_generate_offset_byte" "hegel_ocaml_generate_offset"
 
 external stub_generate_span
@@ -1567,7 +1567,7 @@ external stub_generate_zoned
   -> (nativeint[@unboxed])
   -> (nativeint[@unboxed])
   -> (nativeint[@unboxed])
-  -> Temporal_types.Zoned_value.t
+  -> Temporal_types.Zoned.t * string
   = "hegel_ocaml_generate_zoned_byte" "hegel_ocaml_generate_zoned"
 
 external stub_generate_zoned_for_zone
@@ -1577,7 +1577,7 @@ external stub_generate_zoned_for_zone
   -> (nativeint[@unboxed])
   -> string
   -> (nativeint[@unboxed])
-  -> Temporal_types.Zoned_value.t
+  -> Temporal_types.Zoned.t
   = "hegel_ocaml_generate_zoned_for_zone_byte" "hegel_ocaml_generate_zoned_for_zone"
 
 external stub_call_handle
@@ -2292,8 +2292,6 @@ let generate_timestamp ctx tc ~min_value ~max_value ~precision =
   | value -> value
   | exception Engine_status rc -> raise (error_of_rc ctx rc)
 ;;
-
-let unknown_offset = 1 lsl 31
 
 let generate_offset ctx tc ~min_value ~max_value ~granularity ~allow_unknown =
   match

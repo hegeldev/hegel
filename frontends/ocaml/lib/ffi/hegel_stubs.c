@@ -359,9 +359,6 @@ typedef int (*generate_zoned_fn)(void *, void *, void *, void *, hegel_zoned_dat
 typedef int (*generate_zoned_for_zone_fn)(void *, void *, void *, hegel_string_t, void *,
                                           hegel_zoned_datetime_t *);
 
-/* Matches Ffi.unknown_offset: outside every known offset. */
-#define UNKNOWN_OFFSET ((intnat)1 << 31)
-
 static hegel_date_t date_of_value(value v) {
   hegel_date_t d = {(int32_t)Long_val(Field(v, 0)), (uint8_t)Long_val(Field(v, 1)),
                     (uint8_t)Long_val(Field(v, 2))};
@@ -424,39 +421,21 @@ static value alloc_pair_of_ints(intnat a, intnat b) {
   return v;
 }
 
-/* Temporal_types.Offset_value.t: [Unknown], or [Known seconds] in a block. */
-static value alloc_known(int32_t seconds) {
-  value v = caml_alloc_small(1, 0);
-  Field(v, 0) = Val_long(seconds);
-  return v;
-}
-
-/* Temporal_types.Zoned_value.t, sharing one [Known] block between offsets
-   that are equal. [zone] is a registered root of the caller. */
-static value alloc_zoned(const hegel_zoned_datetime_t *z, value *zone) {
+/* Temporal_types.Zoned.t. */
+static value alloc_zoned(const hegel_zoned_datetime_t *z) {
   CAMLparam0();
-  CAMLlocal5(civil, instant, offset, before, after);
-  CAMLlocal1(v);
+  CAMLlocal3(civil, timestamp, v);
   civil = alloc_datetime(z->civil);
-  instant = alloc_pair_of_ints(z->timestamp.second, z->timestamp.nanosecond);
-  if (z->offset_known) {
-    offset = alloc_known(z->offset_seconds);
-    before = z->offset_before == z->offset_seconds ? offset : alloc_known(z->offset_before);
-    after = z->offset_after == z->offset_seconds ? offset
-            : z->offset_after == z->offset_before ? before
-                                                   : alloc_known(z->offset_after);
-  } else {
-    offset = before = after = Val_int(0);
-  }
+  timestamp = alloc_pair_of_ints(z->timestamp.second, z->timestamp.nanosecond);
   v = caml_alloc_small(8, 0);
-  Field(v, 0) = *zone;
-  Field(v, 1) = civil;
-  Field(v, 2) = Val_int(z->kind);
-  Field(v, 3) = before;
-  Field(v, 4) = after;
-  Field(v, 5) = Val_bool(z->fold);
-  Field(v, 6) = offset;
-  Field(v, 7) = instant;
+  Field(v, 0) = civil;
+  Field(v, 1) = Val_long(z->offset_seconds);
+  Field(v, 2) = Val_bool(z->offset_known);
+  Field(v, 3) = Val_bool(z->fold);
+  Field(v, 4) = Val_long(z->kind);
+  Field(v, 5) = Val_long(z->offset_before);
+  Field(v, 6) = Val_long(z->offset_after);
+  Field(v, 7) = timestamp;
   CAMLreturn(v);
 }
 
@@ -538,21 +517,25 @@ value hegel_ocaml_generate_duration_byte(value *argv, int argc) {
                                        Long_val(argv[5]));
 }
 
-/* Returns the known offset in seconds, or UNKNOWN_OFFSET. */
-intnat hegel_ocaml_generate_offset(intnat fn, intnat ctx, intnat tc, intnat lo, intnat hi,
-                                   intnat granularity, intnat allow_unknown) {
+/* Returns Temporal_types.Offset.t. */
+value hegel_ocaml_generate_offset(intnat fn, intnat ctx, intnat tc, intnat lo, intnat hi,
+                                  intnat granularity, intnat allow_unknown) {
   hegel_offset_t out = {0, false};
   int rc = ((generate_offset_fn)fn)(PTR(ctx), PTR(tc), (int32_t)lo, (int32_t)hi,
                                     (uint32_t)granularity, allow_unknown != 0, &out);
   if (rc != 0) raise_status(rc);
-  return out.known ? out.seconds : UNKNOWN_OFFSET;
+  value v = caml_alloc_small(2, 0);
+  Field(v, 0) = Val_long(out.seconds);
+  Field(v, 1) = Val_bool(out.known);
+  return v;
 }
 
 value hegel_ocaml_generate_offset_byte(value *argv, int argc) {
   (void)argc;
-  return Val_long(hegel_ocaml_generate_offset(
-      Nativeint_val(argv[0]), Nativeint_val(argv[1]), Nativeint_val(argv[2]),
-      Long_val(argv[3]), Long_val(argv[4]), Long_val(argv[5]), Long_val(argv[6])));
+  return hegel_ocaml_generate_offset(Nativeint_val(argv[0]), Nativeint_val(argv[1]),
+                                     Nativeint_val(argv[2]), Long_val(argv[3]),
+                                     Long_val(argv[4]), Long_val(argv[5]),
+                                     Long_val(argv[6]));
 }
 
 value hegel_ocaml_generate_span(intnat fn, intnat ctx, intnat tc, intnat spec) {
@@ -569,10 +552,11 @@ value hegel_ocaml_generate_span_byte(value fn, value ctx, value tc, value spec) 
                                    Nativeint_val(tc), Nativeint_val(spec));
 }
 
+/* Returns the drawn value and its zone name as a pair. */
 value hegel_ocaml_generate_zoned(intnat fn, intnat free_fn, intnat ctx, intnat tc,
                                  intnat zones, intnat spec) {
   CAMLparam0();
-  CAMLlocal1(zone);
+  CAMLlocal3(zone, zoned, pair);
   hegel_zoned_datetime_t out;
   hegel_string_t name = {NULL, 0};
   int rc =
@@ -580,7 +564,11 @@ value hegel_ocaml_generate_zoned(intnat fn, intnat free_fn, intnat ctx, intnat t
   if (rc != 0) raise_status(rc);
   zone = caml_alloc_initialized_string(name.len, name.data);
   ((owned_string_free_fn)free_fn)(PTR(ctx), &name);
-  CAMLreturn(alloc_zoned(&out, &zone));
+  zoned = alloc_zoned(&out);
+  pair = caml_alloc_small(2, 0);
+  Field(pair, 0) = zoned;
+  Field(pair, 1) = zone;
+  CAMLreturn(pair);
 }
 
 value hegel_ocaml_generate_zoned_byte(value *argv, int argc) {
@@ -590,12 +578,10 @@ value hegel_ocaml_generate_zoned_byte(value *argv, int argc) {
                                     Nativeint_val(argv[4]), Nativeint_val(argv[5]));
 }
 
-/* The zone name is copied out of the OCaml heap first, and kept as a root: a
-   zone loader written in OCaml can run during the call and move it. The value
-   holds that same string as its zone. */
+/* The zone name is copied out of the OCaml heap first: a zone loader written
+   in OCaml can run during the call and move it. */
 value hegel_ocaml_generate_zoned_for_zone(intnat fn, intnat ctx, intnat tc,
                                           intnat source, value name, intnat spec) {
-  CAMLparam1(name);
   hegel_zoned_datetime_t out;
   size_t len = caml_string_length(name);
   char *copy = caml_stat_alloc(len + 1);
@@ -606,7 +592,7 @@ value hegel_ocaml_generate_zoned_for_zone(intnat fn, intnat ctx, intnat tc,
                                             PTR(spec), &out);
   caml_stat_free(copy);
   if (rc != 0) raise_status(rc);
-  CAMLreturn(alloc_zoned(&out, &name));
+  return alloc_zoned(&out);
 }
 
 value hegel_ocaml_generate_zoned_for_zone_byte(value *argv, int argc) {
