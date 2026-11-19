@@ -166,8 +166,9 @@ exception Assume_rejected
 exception Internal_error of string
 
 (** Raised when a libhegel call returns [HEGEL_E_INVALID_ARG]: a caller-supplied
-    argument (typically a generator bound or a setting) is semantically invalid.
-    The payload is the engine's diagnostic. *)
+    argument (typically a generator bound or a setting) is semantically invalid;
+    or [HEGEL_E_UNKNOWN_SETTING]: a setting key names no setting. The payload is
+    the engine's diagnostic. *)
 exception Usage_error of string
 
 (** {2 Phase bitmask values}
