@@ -53,6 +53,7 @@ jobs:
       csharp: ${{ (github.event_name == 'push' && steps.code.outputs.code == 'true') || steps.filter.outputs.csharp == 'true' }}
       ocaml: ${{ (github.event_name == 'push' && steps.code.outputs.code == 'true') || steps.filter.outputs.ocaml == 'true' }}
       go: ${{ (github.event_name == 'push' && steps.code.outputs.code == 'true') || steps.filter.outputs.go == 'true' }}
+      ocaml_sources: ${{ (github.event_name == 'push' && steps.code.outputs.code == 'true') || steps.filter.outputs.ocaml_sources == 'true' }}
       website: ${{ github.event_name == 'push' || steps.filter.outputs.website == 'true' }}
       code: ${{ steps.code.outputs.code == 'true' }}
     steps:
@@ -140,46 +141,13 @@ jobs:
               - *shared
               - 'libhegel/**'
               - 'frontends/go/**'
+            # Only the OCaml frontend's own files: lint builds or restores
+            # OxCaml's ocamlformat for them.
+            ocaml_sources:
+              - 'frontends/ocaml/**'
             website:
               - *shared
               - 'website/**'
-
-  # OxCaml's ocamlformat, which formats the OCaml frontend's cppo templates
-  # and OxCaml-only files. It only builds on the OxCaml compiler, but the
-  # binary runs on its own, so only the binary is cached, and a miss (a new
-  # version, or an evicted cache) builds it in a throwaway OxCaml switch.
-  oxcaml-ocamlformat:
-    name: oxcaml-ocamlformat
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    permissions:
-      contents: read
-    steps:
-      - name: Cache the binary
-        id: cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ~/oxcaml-ocamlformat
-          key: oxcaml-ocamlformat-${{ runner.os }}-5.2.0+ox-0.29.0+ox
-      - name: Free disk space
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet
-      - name: Build the binary
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          curl -fsSL \
-            "https://github.com/ocaml/opam/releases/download/2.2.1/opam-2.2.1-x86_64-linux" \
-            -o /usr/local/bin/opam
-          chmod +x /usr/local/bin/opam
-          opam init --bare --disable-sandboxing --yes
-          opam switch create oxcaml-format \
-            --packages "ocaml-variants.5.2.0+ox,ocamlformat.0.29.0+ox" \
-            --repos "oxcaml=git+https://github.com/oxcaml/opam-repository.git,default" \
-            --no-switch --yes
-          mkdir -p ~/oxcaml-ocamlformat
-          cp "$(opam var --switch=oxcaml-format bin)/ocamlformat" ~/oxcaml-ocamlformat/
 
   # Workspace-wide lints (formatting, clippy, the scripts/check-*.py lints),
   # the lints of each component the change touches (`just <component>::check-lint`,
@@ -187,10 +155,11 @@ jobs:
   # a packaging dry run. Runs on every change outside website/.
   lint:
     name: lint
-    needs: [changes, oxcaml-ocamlformat]
+    needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # A miss of the OxCaml ocamlformat cache builds the OxCaml compiler.
+    timeout-minutes: 90
     permissions:
       contents: read
     steps:
@@ -233,8 +202,7 @@ jobs:
         with:
           dotnet-version: "10.0.x"
       # The OCaml frontend's lints (dune build @fmt, the generated opam files,
-      # opam lint) run from an opam switch, and the cppo templates and
-      # OxCaml-only files are checked with the oxcaml-ocamlformat job's binary.
+      # opam lint) run from an opam switch.
       - uses: ./.github/actions/setup-opam
         if: needs.changes.outputs.ocaml == 'true'
         with:
@@ -242,12 +210,39 @@ jobs:
           cache-restore-keys: |
             opam-${{ runner.os }}-5.2.1-lint-
           packages: ocamlformat.0.29.0
-      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        if: needs.changes.outputs.ocaml == 'true'
+      # The cppo templates and OxCaml-only files are checked with OxCaml's
+      # ocamlformat, when the OCaml frontend changed. It only builds on the
+      # OxCaml compiler, but the binary runs on its own, so only the binary is
+      # cached. A miss builds it in a throwaway opam root, kept out of the
+      # opam cache above, and frees disk space for that first (not .NET's,
+      # which the C# lints use).
+      - name: Restore OxCaml's ocamlformat
+        id: oxcaml-ocamlformat
+        if: needs.changes.outputs.ocaml_sources == 'true'
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/oxcaml-ocamlformat
           key: oxcaml-ocamlformat-${{ runner.os }}-5.2.0+ox-0.29.0+ox
-          fail-on-cache-miss: true
+      - name: Build OxCaml's ocamlformat
+        if: needs.changes.outputs.ocaml_sources == 'true' && steps.oxcaml-ocamlformat.outputs.cache-hit != 'true'
+        env:
+          OPAMROOT: ${{ runner.temp }}/oxcaml-opam
+        run: |
+          sudo rm -rf /usr/local/lib/android
+          opam init --bare --disable-sandboxing --yes
+          opam switch create oxcaml-format \
+            --packages "ocaml-variants.5.2.0+ox,ocamlformat.0.29.0+ox" \
+            --repos "oxcaml=git+https://github.com/oxcaml/opam-repository.git,default" \
+            --no-switch --yes
+          mkdir -p ~/oxcaml-ocamlformat
+          cp "$(opam var --switch=oxcaml-format bin)/ocamlformat" ~/oxcaml-ocamlformat/
+          rm -rf "$OPAMROOT"
+      - name: Save OxCaml's ocamlformat
+        if: needs.changes.outputs.ocaml_sources == 'true' && steps.oxcaml-ocamlformat.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/oxcaml-ocamlformat
+          key: oxcaml-ocamlformat-${{ runner.os }}-5.2.0+ox-0.29.0+ox
       # The Go frontend's lints (gofmt, go fix, go vet, staticcheck).
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         if: needs.changes.outputs.go == 'true'
@@ -282,7 +277,7 @@ jobs:
       - name: Check OCaml frontend lint
         if: needs.changes.outputs.ocaml == 'true'
         env:
-          HEGEL_OXCAML_OCAMLFORMAT: /home/runner/oxcaml-ocamlformat/ocamlformat
+          HEGEL_OXCAML_OCAMLFORMAT: ${{ needs.changes.outputs.ocaml_sources == 'true' && '/home/runner/oxcaml-ocamlformat/ocamlformat' || '' }}
         run: just ocaml::check-lint
       - name: Check Go frontend lint
         if: needs.changes.outputs.go == 'true'
@@ -504,7 +499,7 @@ jobs:
   ci-ok:
     name: ci-ok
     if: always()
-    needs: [changes, oxcaml-ocamlformat, lint, libhegel, rust, python, typescript, cpp, java, csharp, ocaml, go, website, test-minimal-versions, coverage, nix]
+    needs: [changes, lint, libhegel, rust, python, typescript, cpp, java, csharp, ocaml, go, website, test-minimal-versions, coverage, nix]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
@@ -525,7 +520,7 @@ jobs:
     # job evaluate its condition at all when a dependency was skipped. A push
     # confined to website/ tested nothing it could release.
     if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && github.event_name == 'push' && github.repository == 'hegeldev/hegel' && needs.changes.outputs.code == 'true' }}
-    needs: [changes, oxcaml-ocamlformat, lint, libhegel, rust, python, typescript, cpp, java, csharp, ocaml, go, website, test-minimal-versions, coverage, nix]
+    needs: [changes, lint, libhegel, rust, python, typescript, cpp, java, csharp, ocaml, go, website, test-minimal-versions, coverage, nix]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
