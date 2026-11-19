@@ -230,6 +230,16 @@ class MainTest {
     }
 
     @Test
+    void anEngineFailureSettingAnOptionIsNotAUsageError() {
+        FakeLibhegel fake = new FakeLibhegel();
+        fake.settingsFromStringRc = Abi.E_INTERNAL;
+        fake.lastError = "boom";
+        Result result = run(fake, tc -> {}, new Settings(), "--seed=1");
+        assertEquals(1, result.status, result.err);
+        assertEquals("error: hegel_settings_set_from_string failed (rc=-8): boom", result.err.strip());
+    }
+
+    @Test
     void hegelMainExitsWithTheStatusAndNamesTheCaller() {
         List<Integer> statuses = new ArrayList<>();
         IntConsumer exit = Main.exit;
