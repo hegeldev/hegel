@@ -1,7 +1,7 @@
 (* capsule0 provides Capsule_blocking_sync for libraries that cannot depend on Await *)
 [@@@alert "-deprecated"]
 
-type 'a t : value mod portable contended =
+type 'a t : value mod contended portable =
   | Locked : 'k Capsule_blocking_sync.Mutex.t * ('a, 'k) Capsule_prim.Data.t -> 'a t
 
 let create (init @ portable) =
@@ -9,8 +9,10 @@ let create (init @ portable) =
   Locked (Capsule_blocking_sync.Mutex.create key, Capsule_prim.Data.create init)
 ;;
 
-let protect (type (b : value mod contended portable)) (Locked (mutex, data)) f : b =
-  let cell : (b, exn * Printexc.raw_backtrace) result option Atomic.t = Atomic.make None in
+let protect (type b : value mod contended portable) (Locked (mutex, data)) f : b =
+  let cell : (b, exn * Printexc.raw_backtrace) result option Atomic.t =
+    Atomic.make None
+  in
   Capsule_blocking_sync.Mutex.with_lock mutex ~f:(fun password ->
     Capsule_prim.Data.iter
       ~password
