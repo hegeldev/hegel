@@ -109,12 +109,17 @@ format:
     set -euo pipefail
     eval $(opam env)
     dune fmt || true
+    # The cppo templates and the OxCaml-only files need OxCaml's ocamlformat.
+    fmt=$(scripts/oxcaml-ocamlformat.sh) || { [ $? -eq 1 ] && exit 0; exit 1; }
+    PATH="$(dirname "$fmt"):$PATH" python3 scripts/format-oxcaml.py
 
 check-format:
     #!/usr/bin/env bash
     set -euo pipefail
     eval $(opam env)
     dune build @fmt
+    fmt=$(scripts/oxcaml-ocamlformat.sh) || { [ $? -eq 1 ] && exit 0; exit 1; }
+    PATH="$(dirname "$fmt"):$PATH" python3 scripts/format-oxcaml.py --check
 
 # The generated *.opam files must match dune-project, and lint clean.
 check-opam:

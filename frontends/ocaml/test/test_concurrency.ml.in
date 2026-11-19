@@ -8,10 +8,10 @@ let preserves_order (cap : unit C.t) () =
   Alcotest.(check int) "one outcome per body" 5 (List.length outcomes);
   List.iteri
     (fun i outcome ->
-       match outcome with
-       | Some (Failure msg, _) ->
-         Alcotest.(check string) "body failed with its own index" (string_of_int i) msg
-       | _ -> Alcotest.failf "unexpected or no exception")
+      match outcome with
+      | Some (Failure msg, _) ->
+        Alcotest.(check string) "body failed with its own index" (string_of_int i) msg
+      | _ -> Alcotest.failf "unexpected or no exception")
     outcomes
 ;;
 
@@ -106,6 +106,7 @@ let domain_tests =
         domains_run_off_the_main_domain
     ]
 ;;
+
 #else
 let domain_tests = []
 #endif

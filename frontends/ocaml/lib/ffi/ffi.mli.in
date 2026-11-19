@@ -314,6 +314,7 @@ val settings_get_stop_on_first_failure : context -> settings -> bool
 val settings_get_show_statistics : context -> settings -> bool
 val settings_get_print_blob : context -> settings -> bool
 val settings_get_backend : context -> settings -> backend
+
 val settings_get_nondeterminism_strictness
   :  context
   -> settings
@@ -608,11 +609,7 @@ val state_machine_add_invariant
     The engine owns rule selection.
     Raises {!Usage_error} if no rule was declared or the machine was already
     started, and {!Stop_test} when the engine's choice budget is exhausted. *)
-val state_machine_start
-  :  context
-  -> test_case
-  -> state_machine:state_machine
-  -> int
+val state_machine_start : context -> test_case -> state_machine:state_machine -> int
 
 (** [state_machine_next_group ctx tc ~state_machine] starts the machine's next
     round on the root handle, returning the round's concurrency group id and

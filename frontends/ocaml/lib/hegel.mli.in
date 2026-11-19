@@ -423,8 +423,8 @@ type test_location = Internal.test_location =
     no database key, so failures are neither stored nor replayed.
     @param failure_blobs
     a list of base64 encoded strings (blobs), where each string encodes the choices
-    made in a failing test run. Only the first blob is used. If no replay fails, the 
-    run raises [Failure] saying the blob did not reproduce. A blob is only guaranteed 
+    made in a failing test run. Only the first blob is used. If no replay fails, the
+    run raises [Failure] saying the blob did not reproduce. A blob is only guaranteed
     to reproduce a failure within the same version of Hegel. *)
 val run_hegel_test
   :  ?settings:Settings.t
@@ -453,7 +453,7 @@ val run_hegel_test_ppx
 (** {3 Standalone binaries} *)
 
 (** [main ?settings ?test_location ?database_key test_fn] is the entry point of
-    a binary that runs one test case per invocation. It parses the process's 
+    a binary that runs one test case per invocation. It parses the process's
     command line, runs [test_fn] once, and exits with status 0 if the test case
     passes and 1 if it fails.
 
@@ -467,7 +467,7 @@ val run_hegel_test_ppx
     The run's [test_cases] is always 1, and the [Too_slow] and
     [Test_cases_too_large] health checks are always suppressed.
 
-    If you run a stateful test this way, you probably want a very 
+    If you run a stateful test this way, you probably want a very
     large [step_count].
 
     The supported flags are [--profile], [--seed], [--verbosity], [--derandomize],
@@ -509,16 +509,13 @@ val main
         let n = draw tc (integers ~min_value:0 ~max_value:100 ()) in
         assert (n >= 0)
     ]} *)
-val draw
-  :  ?label:string
+val draw : ?label:string
 #ifdef OXCAML
   -> loc:[%call_pos]
 #else
   -> ?loc:Lexing.position
 #endif
-  -> test_case
-  -> ('a, printable) generator
-  -> 'a
+-> test_case -> ('a, printable) generator -> 'a
 
 (**/**)
 
