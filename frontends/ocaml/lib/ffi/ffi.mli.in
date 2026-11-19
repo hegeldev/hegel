@@ -580,9 +580,13 @@ val generate_timestamp
   -> precision:int
   -> T.Instant.t
 
+(** [unknown_offset] is what {!generate_offset} returns for the unknown
+    offset: no known offset is this many seconds. *)
+val unknown_offset : int
+
 (** [generate_offset ctx tc ~min_value ~max_value ~granularity ~allow_unknown]
-    draws a UTC offset between the bounds in seconds; [granularity] is a
-    [hegel_offset_granularity_t]. *)
+    draws a UTC offset between the bounds in seconds, or {!unknown_offset};
+    [granularity] is a [hegel_offset_granularity_t]. *)
 val generate_offset
   :  context
   -> test_case
@@ -590,7 +594,7 @@ val generate_offset
   -> max_value:int
   -> granularity:int
   -> allow_unknown:bool
-  -> T.Offset.t
+  -> int
 
 (** [generate_duration ctx tc ~min_value ~max_value ~precision] draws a signed
     duration. *)
@@ -694,7 +698,7 @@ val generate_zoned_datetime
   -> test_case
   -> timezone_spec
   -> zoned_spec
-  -> T.Zoned.t * string
+  -> T.Zoned_value.t
 
 (** [generate_zoned_datetime_for_zone ctx tc source name spec] draws a zoned
     datetime in the zone [name] of [source], recording no choice of zone.
@@ -706,7 +710,7 @@ val generate_zoned_datetime_for_zone
   -> zone_source
   -> string
   -> zoned_spec
-  -> T.Zoned.t
+  -> T.Zoned_value.t
 
 (** {2 Temporal text}
 
