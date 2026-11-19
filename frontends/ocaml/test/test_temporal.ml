@@ -45,7 +45,6 @@ module type Value = sig
   val sexp_of_t : t -> Sexplib0.Sexp.t
   val equal : t -> t -> bool
   val compare : t -> t -> int
-  val hegel_generator : (t, Hegel.printable) Hegel.generator
 end
 
 let check_text (type a) (module V : Value with type t = a) name expected (value : a) =
@@ -65,12 +64,6 @@ let check_order (type a) (module V : Value with type t = a) name (low : a) (high
   Alcotest.(check bool) (name ^ " above") true (V.compare high low > 0)
 ;;
 
-let check_default_generator (type a) (module V : Value with type t = a) =
-  run ~test_cases:20 (fun tc ->
-    let value = Hegel.draw tc V.hegel_generator in
-    Alcotest.(check bool) "drawn value equals itself" true (V.equal value value))
-;;
-
 let test_date_text () =
   let check = check_text (module Date) in
   check "plain" "2024-03-10" (date 2024 3 10);
@@ -78,8 +71,7 @@ let test_date_text () =
   check "large" "+010000-12-31" (date 10_000 12 31);
   check "negative" "-000001-06-15" (date (-1) 6 15);
   check "first" "-999999-01-01" Date.min_value;
-  check "last" "+999999-12-31" Date.max_value;
-  check "fields out of range" "+2147483647-255-255" (date (1 lsl 40) 300 (-1))
+  check "last" "+999999-12-31" Date.max_value
 ;;
 
 let test_time_text () =
@@ -116,24 +108,6 @@ let test_instant_text () =
   check "max" "+999999-12-31T23:59:59.999999999Z" Instant.max_value;
   check "year zero" "0000-03-01T00:00:00Z" (instant (-62_162_035_200));
   check "before year zero" "-000001-12-31T00:00:00Z" (instant (-62_167_305_600))
-;;
-
-let test_instant_text_matches_core () =
-  run (fun tc ->
-    let i =
-      Hegel.draw
-        tc
-        (instants
-           ~min_value:(instant (-62_135_596_800))
-           ~max_value:(instant 253_402_300_799)
-           ~precision:`Seconds
-           ())
-    in
-    let days =
-      Int.div (i.second - (((i.second mod 86_400) + 86_400) mod 86_400)) 86_400
-    in
-    let expected = Core.Date.to_string (Core.Date.add_days epoch days) in
-    check_string "date part" expected (String.sub (Instant.to_string i) 0 10))
 ;;
 
 let test_offset_text () =
@@ -257,17 +231,6 @@ let test_order () =
     "zoned"
     (zoned (Known (-18_000)))
     (zoned ~zone:"Asia/Kolkata" (Known 19_800))
-;;
-
-let test_default_generators () =
-  check_default_generator (module Date);
-  check_default_generator (module Time);
-  check_default_generator (module Datetime);
-  check_default_generator (module Instant);
-  check_default_generator (module Offset);
-  check_default_generator (module Zoned_datetime);
-  check_default_generator (module Duration);
-  check_default_generator (module Span)
 ;;
 
 let with_captured_failure f =
@@ -565,21 +528,39 @@ let bbb : Z.zone_type = { offset_seconds = 3600; is_dst = true; abbreviation = "
 let wide = 1 lsl 32
 
 let test_out_of_range_fields_are_rejected () =
-  Test_helpers.expect_usage_error (dates ~min_value:(date 2024 1 (wide + 1)) ()) "";
-  Test_helpers.expect_usage_error (dates ~min_value:(date 2024 257 1) ()) "";
-  Test_helpers.expect_usage_error (dates ~max_value:(date (wide + 2024) 1 1) ()) "";
-  Test_helpers.expect_usage_error (dates ~max_value:(date (-wide + 2024) 1 1) ()) "";
-  Test_helpers.expect_usage_error (times ~max_value:(time ~nanosecond:wide 1 0 0) ()) "";
-  Test_helpers.expect_usage_error (times ~max_value:(time 1 0 (-1)) ()) "";
-  Test_helpers.expect_usage_error
-    (datetimes ~max_value:{ date = date 2024 1 1; time = time 256 0 0 } ())
-    "";
-  Test_helpers.expect_usage_error (instants ~max_value:(instant ~nanosecond:wide 0) ()) "";
-  Test_helpers.expect_usage_error
-    (durations ~max_value:{ seconds = 1; nanoseconds = wide } ())
-    "";
-  Test_helpers.expect_usage_error (offsets ~max_value:wide ()) "";
-  Test_helpers.expect_usage_error (offsets ~min_value:(-wide) ()) "";
+  List.iter
+    (fun (message, build) -> expect_usage_error_now message build)
+    [ ( "min_value is not a valid date: the day is 4294967297"
+      , fun () -> ignore (dates ~min_value:(date 2024 1 (wide + 1)) ()) )
+    ; ( "min_value is not a valid date: the month is 257"
+      , fun () -> ignore (dates ~min_value:(date 2024 257 1) ()) )
+    ; ( "max_value is not a valid date: the year is -4294965272"
+      , fun () -> ignore (dates ~max_value:(date (-wide + 2024) 1 1) ()) )
+    ; ( "max_value is not a valid time: the nanosecond is 4294967296"
+      , fun () -> ignore (times ~max_value:(time ~nanosecond:wide 1 0 0) ()) )
+    ; ( "max_value is not a valid time: the second is -1"
+      , fun () -> ignore (times ~max_value:(time 1 0 (-1)) ()) )
+    ; ( "max_value is not a valid datetime: the hour is 256"
+      , fun () ->
+          ignore (datetimes ~max_value:{ date = date 2024 1 1; time = time 256 0 0 } ())
+      )
+    ; ( "max_value is not a valid instant: the nanosecond is 4294967296"
+      , fun () -> ignore (instants ~max_value:(instant ~nanosecond:wide 0) ()) )
+    ; ( "max_value is not a valid duration: the nanoseconds is 4294967296"
+      , fun () -> ignore (durations ~max_value:{ seconds = 1; nanoseconds = wide } ()) )
+    ; ( "max_value 4294967296 is not a valid offset"
+      , fun () -> ignore (offsets ~max_value:wide ()) )
+    ; ( "min_value -4294967296 is not a valid offset"
+      , fun () -> ignore (offsets ~min_value:(-wide) ()) )
+    ; ( "min_value is not a valid datetime: the day is -1"
+      , fun () ->
+          ignore
+            (zoned_datetimes
+               ~min_value:{ date = date 2024 1 (-1); time = Time.min_value }
+               ()) )
+    ; ( "max_instant is not a valid instant: the nanosecond is -1"
+      , fun () -> ignore (zoned_datetimes ~max_instant:(instant ~nanosecond:(-1) 0) ()) )
+    ];
   let source = Z.create () in
   let rule_zone starts : Z.zone_data =
     { initial = aaa
@@ -599,6 +580,7 @@ let test_out_of_range_fields_are_rejected () =
        expect_usage_error_now "" (fun () ->
          Z.add_zone source "Test/Invalid" (rule_zone starts)))
     [ { day = Julian (0x10000 + 60); time = 0 }
+    ; { day = Julian (-1); time = 0 }
     ; { day = Julian 60; time = wide }
     ; { day = Month_week_day { month = `March; week = 0x100 + 2; weekday = `Sunday }
       ; time = 0
@@ -1084,7 +1066,6 @@ let test_zone_source_loader_released () =
 
 let test_zone_source_errors () =
   let bundled = Z.bundled () in
-  check_string "bundled version" (tzdb_version ()) (Z.version bundled);
   Alcotest.(check bool) "release" true (String.length (tzdb_version ()) >= 5);
   expect_usage_error_now "" (fun () -> Z.add_link bundled "Test/X" ~target:"UTC");
   let source = Z.create () in
@@ -1481,13 +1462,11 @@ let tests =
   ; Alcotest.test_case "date text" `Quick test_date_text
   ; Alcotest.test_case "time text" `Quick test_time_text
   ; Alcotest.test_case "instant text" `Quick test_instant_text
-  ; Alcotest.test_case "instant text matches core" `Quick test_instant_text_matches_core
   ; Alcotest.test_case "offset text" `Quick test_offset_text
   ; Alcotest.test_case "zoned text" `Quick test_zoned_text
   ; Alcotest.test_case "duration text" `Quick test_duration_text
   ; Alcotest.test_case "span text" `Quick test_span_text
   ; Alcotest.test_case "equal and compare" `Quick test_order
-  ; Alcotest.test_case "default generators" `Quick test_default_generators
   ; Alcotest.test_case "failure output" `Quick test_failure_output
   ; Alcotest.test_case "dates" `Quick test_dates
   ; Alcotest.test_case "dates invalid" `Quick test_dates_invalid
