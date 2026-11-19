@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
 import java.util.List;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.platform.testkit.engine.EngineTestKit;
 import org.junit.platform.testkit.engine.Events;
@@ -50,5 +51,27 @@ class HegelTestAnnotationTest {
                 .execute()
                 .testEvents();
         tests.assertStatistics(stats -> stats.started(1).failed(1));
+    }
+
+    static class NamedProperties {
+        @HegelTest
+        void byMethodName(TestCase tc) {}
+
+        @HegelTest
+        @DisplayName("custom display name")
+        void byDisplayName(TestCase tc) {}
+    }
+
+    @Test
+    void hegelTestRunIsNamedAfterTheTest() {
+        List<String> names = EngineTestKit.engine("junit-jupiter")
+                .selectors(org.junit.platform.engine.discovery.DiscoverySelectors.selectClass(NamedProperties.class))
+                .execute()
+                .testEvents()
+                .started()
+                .map(e -> e.getTestDescriptor().getDisplayName())
+                .sorted()
+                .toList();
+        assertEquals(List.of("byMethodName(TestCase)", "custom display name"), names);
     }
 }
