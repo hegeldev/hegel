@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -386,21 +387,52 @@ func TestFormatInvocationResultIncludesWorkerAndStack(t *testing.T) {
 	t.Parallel()
 	pcs := make([]uintptr, 8)
 	n := runtime.Callers(1, pcs)
-	err := &workerError{
-		worker: 2,
-		err: &invocationError{
-			cause: "boom",
-			kind:  "failure",
-			pcs:   pcs[:n],
-		},
+	outcome := &invocationError{
+		cause: "boom\xff",
+		kind:  "failure",
+		pcs:   pcs[:n],
 	}
-	var out strings.Builder
-	formatInvocationResult(&out, err)
-	if got := out.String(); !strings.Contains(got, "failure in worker 2: boom") || !strings.Contains(got, "TestFormatInvocationResultIncludesWorkerAndStack") {
+	err := &workerError{worker: 2, err: outcome}
+	if got := formatInvocationResult(err, outcome); !strings.Contains(got, "failure in worker 2: boom\uFFFD\n\n") || !strings.Contains(got, "TestFormatInvocationResultIncludesWorkerAndStack") {
 		t.Fatalf("diagnostic = %q", got)
 	}
-	if got, want := err.Error(), "boom"; got != want {
+	if got, want := err.Error(), "boom\xff"; got != want {
 		t.Fatalf("worker error = %q, want %q", got, want)
+	}
+}
+
+func TestSummarizeInvocationResult(t *testing.T) {
+	t.Parallel()
+	pcs := make([]uintptr, 8)
+	n := runtime.Callers(1, pcs)
+	outcome := &invocationError{
+		cause: "boom\xff\nsecond line",
+		kind:  "failure",
+		pcs:   pcs[:n],
+	}
+	err := &workerError{worker: 2, err: outcome}
+	if got := summarizeInvocationResult(err, outcome); !regexp.MustCompile(`^testing\.go:\d+: failure in worker 2: boom\x{FFFD} …$`).MatchString(got) {
+		t.Fatalf("summary = %q", got)
+	}
+	for cause, want := range map[string]string{"a\r\nb": "panic: a …", "\nb": "panic:  …"} {
+		outcome = &invocationError{cause: cause, kind: "panic"}
+		if got := summarizeInvocationResult(outcome, outcome); got != want {
+			t.Fatalf("summary without location = %q, want %q", got, want)
+		}
+	}
+}
+
+func TestIsUserFrame(t *testing.T) {
+	t.Parallel()
+	for fn, want := range map[string]bool{
+		"runtime.gopanic":               false,
+		"hegel.dev/go/hegel.Test.func1": false,
+		"example.com/app.TestX.func1":   true,
+		"hegel.dev/go/hegel_test.TestX": true,
+	} {
+		if got := isUserFrame(fn); got != want {
+			t.Errorf("isUserFrame(%q) = %v, want %v", fn, got, want)
+		}
 	}
 }
 
@@ -663,12 +695,14 @@ func newStubTestCase(t testing.TB, opReturns ...any) *testCase {
 		uintptr(1), libhegel.OK, // settings_new
 		uintptr(1), libhegel.OK, // run_start
 		uintptr(1), libhegel.OK, // next_test_case
+		false, libhegel.OK, // wants_output
+		false, libhegel.OK, // wants_detail
 	}, opReturns...)
 	lib := libhegel.Stub(t, returns...)
 	s, _ := lib.SettingsNew()
 	run, _ := s.RunStart(lib, nil)
 	tc, _ := run.NextTestCase(lib)
-	state, _ := newTestCase(lib, tc, nil, captureUserPanics)
+	state, _ := newTestCase(lib, tc, captureUserPanics)
 	return state
 }
 
@@ -677,7 +711,7 @@ func TestFrameworkLogWritesWithoutLocation(t *testing.T) {
 	var out strings.Builder
 	tc := newEmittingTestCase(t, &out)
 	tc.log("Round %d", 3)
-	if _, err := tc.run(func(TestCase) {}); err != nil {
+	if err := tc.run(func(TestCase) {}); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := out.String(), "Round 3\n"; got != want {
@@ -690,7 +724,7 @@ func TestDrawReportOmitsLocation(t *testing.T) {
 	var out strings.Builder
 	tc := newEmittingTestCase(t, &out)
 	tc.reportDraw(0, 42)
-	if _, err := tc.run(func(TestCase) {}); err != nil {
+	if err := tc.run(func(TestCase) {}); err != nil {
 		t.Fatal(err)
 	}
 	if got := out.String(); !strings.Contains(got, " = 42\n") || strings.Contains(got, "runner_test.go:") {
@@ -726,7 +760,7 @@ func newRealTestCase(t testing.TB) *testCase {
 	if err != nil {
 		t.Fatalf("NextTestCase: %v", err)
 	}
-	state, _ := newTestCase(ctx, tc, nil, false)
+	state, _ := newTestCase(ctx, tc, captureUserPanics)
 	return state
 }
 
@@ -736,16 +770,15 @@ func TestTestCaseCloneInheritsExecutionPolicy(t *testing.T) {
 		uintptr(1), libhegel.OK, // settings_new
 		uintptr(1), libhegel.OK, // run_start
 		uintptr(1), libhegel.OK, // next_test_case
-		uintptr(1), libhegel.OK, // printer
+		true, libhegel.OK, // wants_output
+		true, libhegel.OK, // wants_detail
 		uintptr(2), libhegel.OK, // test_case_clone
-		uintptr(2),              // context_new for the cloned wrapper
-		uintptr(2), libhegel.OK, // nested printer
+		uintptr(2), // context_new for the cloned wrapper
 	)
 	s, _ := lib.SettingsNew()
 	run, _ := s.RunStart(lib, nil)
 	raw, _ := run.NextTestCase(lib)
-	var output strings.Builder
-	parent, err := newTestCase(lib, raw, &output, true)
+	parent, err := newTestCase(lib, raw, propagateUserPanics)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -761,8 +794,8 @@ func TestTestCaseCloneInheritsExecutionPolicy(t *testing.T) {
 	if clone.ctx == parent.ctx {
 		t.Fatal("clone shares its parent's error-reporting context")
 	}
-	if parent.out != &output || clone.out != nil || clone.panicPolicy != parent.panicPolicy {
-		t.Fatalf("clone changed output ownership or execution policy")
+	if !clone.wantsOutput || clone.panicPolicy != parent.panicPolicy {
+		t.Fatalf("clone changed output gate or execution policy")
 	}
 }
 
@@ -823,6 +856,8 @@ func TestRunWithHandleCollectFailures(t *testing.T) {
 		"", libhegel.OK, // deterministic failure: no caveat
 		false, libhegel.OK, // print blob
 		uintptr(1), libhegel.OK, // test_case_from_blob handle (replay)
+		false, libhegel.OK, // wants_output
+		false, libhegel.OK, // wants_detail
 		libhegel.OK,                   // mark_complete replay
 		"prop_test.go:7", libhegel.OK, // failure origin
 	)
@@ -850,10 +885,9 @@ func TestRunWithContextPrintsReproductionBlob(t *testing.T) {
 		"", libhegel.OK, // deterministic failure: no caveat
 		true, libhegel.OK, // print blob
 		uintptr(1), libhegel.OK, // test_case_from_blob
-		uintptr(1), libhegel.OK, // printer
-		libhegel.OK,     // mark_complete
-		libhegel.OK,     // resolve
-		"", libhegel.OK, // printer value
+		true, libhegel.OK, // wants_output
+		true, libhegel.OK, // wants_detail
+		libhegel.OK, // mark_complete
 		"prop_test.go:7", libhegel.OK,
 	)
 	var output strings.Builder
@@ -905,10 +939,9 @@ func TestRunWithContextReproductionBlobWriteError(t *testing.T) {
 		"", libhegel.OK, // deterministic failure: no caveat
 		true, libhegel.OK, // print blob
 		uintptr(1), libhegel.OK, // test_case_from_blob
-		uintptr(1), libhegel.OK, // printer
-		libhegel.OK,     // mark_complete
-		libhegel.OK,     // resolve
-		"", libhegel.OK, // printer value
+		true, libhegel.OK, // wants_output
+		true, libhegel.OK, // wants_detail
+		libhegel.OK, // mark_complete
 	)
 	opts := applyOpts([]Option{WithDerandomize(false)})
 	opts.output = nonemptyWriteError{want}
@@ -942,9 +975,8 @@ func TestRunWithContextReplayPropagatesUserPanic(t *testing.T) {
 		"", libhegel.OK, // deterministic failure: no caveat
 		true, libhegel.OK, // print blob
 		uintptr(1), libhegel.OK, // test_case_from_blob handle
-		uintptr(1), libhegel.OK, // printer
-		libhegel.OK,     // resolve during panic unwinding
-		"", libhegel.OK, // printer value
+		true, libhegel.OK, // wants_output
+		true, libhegel.OK, // wants_detail
 	)
 	var output strings.Builder
 	opts := applyOpts([]Option{WithDerandomize(false)})
@@ -978,6 +1010,8 @@ func TestRunWithContextReplayMarkCompleteError(t *testing.T) {
 		"", libhegel.OK, // deterministic failure: no caveat
 		false, libhegel.OK, // print blob
 		uintptr(1), libhegel.OK, // test_case_from_blob handle
+		false, libhegel.OK, // wants_output
+		false, libhegel.OK, // wants_detail
 		libhegel.E_BACKEND, "replay mark boom", // mark_complete replay
 	)
 
@@ -997,7 +1031,8 @@ func TestRunWithContextOneCaseFailure(t *testing.T) {
 		libhegel.OK,             // settings
 		uintptr(1), libhegel.OK, // run_start
 		uintptr(1), libhegel.OK, // next_test_case: one case
-		false, libhegel.OK, // should_capture
+		false, libhegel.OK, // wants_output
+		false, libhegel.OK, // wants_detail
 		libhegel.OK,             // mark_complete
 		uintptr(0), libhegel.OK, // next_test_case: run finished
 		uintptr(1), libhegel.OK, // run_result
@@ -1006,6 +1041,8 @@ func TestRunWithContextOneCaseFailure(t *testing.T) {
 		uintptr(1), libhegel.OK, // failure handle
 		"", libhegel.OK, // no reproduction blob
 		"", libhegel.OK, // deterministic failure: no caveat
+		nil, libhegel.OK, // no failure output
+		nil, libhegel.OK, // no failure diagnostic
 		"origin", libhegel.OK, // failure origin
 	)
 	err := runWithContext(lib, func(tc TestCase) { tc.(*testCase).Fail() }, applyOpts([]Option{WithDerandomize(false), WithTestCases(1)}))
@@ -1028,10 +1065,14 @@ func TestRunWithContextNondeterministicFailure(t *testing.T) {
 		uintptr(1), libhegel.OK, // failure handle
 		"", libhegel.OK, // no reproduction blob
 		"", libhegel.OK, // deterministic failure: no caveat
+		nil, libhegel.OK, // no failure output
+		nil, libhegel.OK, // no failure diagnostic
 		"first", libhegel.OK, // first failure origin
 		uintptr(2), libhegel.OK,
 		"", libhegel.OK,
 		"", libhegel.OK,
+		nil, libhegel.OK,
+		nil, libhegel.OK,
 		"second", libhegel.OK,
 	)
 	err := runWithContext(lib, func(TestCase) {}, applyOpts([]Option{WithDerandomize(false)}))
@@ -1054,12 +1095,10 @@ func TestRunWithContextEmitsNondeterministicFailureOutput(t *testing.T) {
 				libhegel.OK,             // derandomize
 				uintptr(1), libhegel.OK, // run_start
 				uintptr(1), libhegel.OK, // next_test_case: one case
-				true, libhegel.OK, // should_capture
-				uintptr(1), libhegel.OK, // printer
-				libhegel.OK,                     // note
-				libhegel.OK,                     // mark_complete
-				libhegel.OK,                     // resolve
-				"failure output\n", libhegel.OK, // value
+				true, libhegel.OK, // wants_output
+				true, libhegel.OK, // wants_detail
+				libhegel.OK,             // note
+				libhegel.OK,             // mark_complete
 				uintptr(0), libhegel.OK, // next_test_case: run finished
 				uintptr(1), libhegel.OK, // run_result
 				libhegel.RUN_STATUS_FAILED, libhegel.OK, // result status
@@ -1067,7 +1106,8 @@ func TestRunWithContextEmitsNondeterministicFailureOutput(t *testing.T) {
 				uintptr(1), libhegel.OK, // failure
 				blob, libhegel.OK, // reproduction blob
 				caveat, libhegel.OK, // confirmation caveat
-				":0 (0x0)", libhegel.OK, // failure origin
+				"failure output", libhegel.OK, // failure output
+				"failure: failed\n", libhegel.OK, // failure diagnostic
 			}
 			if blob != "" {
 				code := libhegel.OK
@@ -1079,6 +1119,7 @@ func TestRunWithContextEmitsNondeterministicFailureOutput(t *testing.T) {
 					returns = append(returns, settingErr.Error())
 				}
 			}
+			returns = append(returns, ":0 (0x0)", libhegel.OK) // failure origin
 			lib := libhegel.Stub(t, returns...)
 			var output strings.Builder
 			opts := applyOpts([]Option{WithDerandomize(false)})
@@ -1112,7 +1153,7 @@ func TestRunWithContextEmitsNondeterministicFailureOutput(t *testing.T) {
 			if !errors.Is(err, want) {
 				t.Fatalf("runWithContext: %v", err)
 			}
-			if got := output.String(); mode != "discard" && mode != "write error" && !strings.Contains(got, "failure output") {
+			if got := output.String(); mode != "discard" && mode != "write error" && !strings.HasPrefix(got, "failure output\nfailure: failed\n") {
 				t.Fatalf("output = %q, want nondeterministic failure output", got)
 			}
 			if blob != "" {
@@ -1260,7 +1301,8 @@ func TestRunWithHandleMarkCompleteError(t *testing.T) {
 		libhegel.OK,             // derandomize
 		uintptr(1), libhegel.OK, // run_start
 		uintptr(1), libhegel.OK, // next_test_case: one case
-		false, libhegel.OK, // should_capture
+		false, libhegel.OK, // wants_output
+		false, libhegel.OK, // wants_detail
 		libhegel.E_BACKEND, "mark boom", // mark_complete fails (diagnostic read by invoke)
 	)
 	err := runWithContext(lib, func(TestCase) {}, applyOpts([]Option{WithDerandomize(false)}))
@@ -1292,7 +1334,8 @@ func TestRunWithHandleTargetError(t *testing.T) {
 		libhegel.OK,             // settings
 		uintptr(1), libhegel.OK, // run_start
 		uintptr(1), libhegel.OK, // next_test_case: one case
-		false, libhegel.OK, // should_capture
+		false, libhegel.OK, // wants_output
+		false, libhegel.OK, // wants_detail
 		libhegel.E_BACKEND, "boom", // target fails (diagnostic read by invoke)
 	)
 	err := runWithContext(lib, func(tc TestCase) {
@@ -1330,7 +1373,8 @@ func stubOpCase(t *testing.T, fn func(*testCase), ops ...any) {
 		libhegel.OK,             // derandomize
 		uintptr(1), libhegel.OK, // run_start
 		uintptr(1), libhegel.OK, // next_test_case: one case
-		false, libhegel.OK, // should_capture
+		false, libhegel.OK, // wants_output
+		false, libhegel.OK, // wants_detail
 	}
 	returns = append(returns, ops...) // the failing op's outputs + Error
 	returns = append(returns,
@@ -1389,7 +1433,8 @@ func TestRunWithHandleUnrecognizedShortCircuit(t *testing.T) {
 		libhegel.OK,             // settings
 		uintptr(1), libhegel.OK, // run_start
 		uintptr(1), libhegel.OK, // next_test_case: one case
-		false, libhegel.OK, // should_capture
+		false, libhegel.OK, // wants_output
+		false, libhegel.OK, // wants_detail
 	)
 	var sentinel = errors.New("weird")
 	err := runWithContext(lib, func(tc TestCase) {

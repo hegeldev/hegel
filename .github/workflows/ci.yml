@@ -144,8 +144,9 @@ jobs:
               - *shared
               - 'website/**'
 
-  # Workspace-wide lints: formatting, clippy, the scripts/check-*.py lints,
-  # each component's own lints (via `just check-lint`), the workflow lint and
+  # Workspace-wide lints (formatting, clippy, the scripts/check-*.py lints),
+  # the lints of each component the change touches (`just <component>::check-lint`,
+  # with that component's toolchain set up only then), the workflow lint and
   # a packaging dry run. Runs on every change outside website/.
   lint:
     name: lint
@@ -165,20 +166,25 @@ jobs:
           # The Python frontend's lints (ruff, mypy) run in its virtualenv.
           tools: just uv
       - name: Set up the Python frontend
+        if: needs.changes.outputs.python == 'true'
         run: just python::setup
       # The TypeScript frontend's lints (prettier, eslint, tsc) run from its
       # node_modules.
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        if: needs.changes.outputs.typescript == 'true'
         with:
           node-version: "22"
       - name: Set up the TypeScript frontend
+        if: needs.changes.outputs.typescript == 'true'
         run: just typescript::setup
       # The C++ frontend's lints are clang-format (through uvx) and
       # clang-tidy over a configured build.
       - name: Install clang-tidy
+        if: needs.changes.outputs.cpp == 'true'
         run: sudo apt-get update && sudo apt-get install -y clang-tidy-18
       # The Java frontend's lint (spotless) runs under Maven.
       - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        if: needs.changes.outputs.java == 'true'
         with:
           distribution: temurin
           java-version: "25"
@@ -186,11 +192,13 @@ jobs:
       # The C# frontend's lints (dotnet format, the analyzers with warnings
       # as errors) need the .NET SDK.
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        if: needs.changes.outputs.csharp == 'true'
         with:
           dotnet-version: "10.0.x"
       # The OCaml frontend's lints (dune build @fmt, the generated opam files,
       # opam lint) run from an opam switch.
       - uses: ./.github/actions/setup-opam
+        if: needs.changes.outputs.ocaml == 'true'
         with:
           cache-key: opam-${{ runner.os }}-5.2.1-lint-${{ hashFiles('frontends/ocaml/*.opam', 'frontends/ocaml/.ocamlformat') }}
           cache-restore-keys: |
@@ -198,13 +206,41 @@ jobs:
           packages: ocamlformat.0.29.0
       # The Go frontend's lints (gofmt, go fix, go vet, staticcheck).
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        if: needs.changes.outputs.go == 'true'
         with:
           go-version: stable
           cache-dependency-path: frontends/go/go.sum
-      - name: Check lint
+      - name: Check workspace lint
+        run: just check-workspace-lint
+      - name: Check libhegel lint
+        if: needs.changes.outputs.libhegel == 'true'
+        run: just libhegel::check-lint
+      - name: Check Rust frontend lint
+        if: needs.changes.outputs.rust == 'true'
+        run: just rust::check-lint
+      - name: Check Python frontend lint
+        if: needs.changes.outputs.python == 'true'
+        run: just python::check-lint
+      - name: Check TypeScript frontend lint
+        if: needs.changes.outputs.typescript == 'true'
+        run: just typescript::check-lint
+      - name: Check C++ frontend lint
+        if: needs.changes.outputs.cpp == 'true'
         env:
           CLANG_TIDY: clang-tidy-18
-        run: just check-lint
+        run: just cpp::check-lint
+      - name: Check Java frontend lint
+        if: needs.changes.outputs.java == 'true'
+        run: just java::check-lint
+      - name: Check C# frontend lint
+        if: needs.changes.outputs.csharp == 'true'
+        run: just csharp::check-lint
+      - name: Check OCaml frontend lint
+        if: needs.changes.outputs.ocaml == 'true'
+        run: just ocaml::check-lint
+      - name: Check Go frontend lint
+        if: needs.changes.outputs.go == 'true'
+        run: just go::check-lint
       - name: Check zizmor
         run: |
           pipx install zizmor==1.23.1

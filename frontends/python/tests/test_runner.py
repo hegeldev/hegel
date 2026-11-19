@@ -8,12 +8,16 @@ import threading
 import pytest
 
 import hegel
+from hegel import _native
 from hegel import generators as gs
 from hegel.errors import LoopDone
 from hegel.runner import (
     RunOutput,
     _location_of,
     _origin,
+    _stderr_line,
+    _summary,
+    _user_frame,
     _user_location,
     with_output_override,
 )
@@ -483,6 +487,112 @@ def test_verbose_output_for_failures_and_rejections(output):
     assert output.text.count("Traceback") >= 2
 
 
+def test_verbose_output_streams_as_the_test_case_runs(output):
+    seen = []
+
+    def body(tc):
+        tc.note("first")
+        seen.append(list(output.lines))
+        tc.note("second")
+
+    run_test(body, verbosity=Verbosity.verbose, test_cases=1)
+    assert seen[0][-1] == "first"
+    assert output.lines[len(seen[0])] == "second"
+
+
+def test_verbose_failure_report_leaves_the_traceback_to_the_exception(output):
+    def body(tc):
+        x = tc.draw(gs.integers(0, 10))
+        raise ValueError(f"bad\r\nvalue {x}")
+
+    error = failing(body, ValueError, verbosity=Verbosity.verbose)
+    assert notes(error) == ["x = 0"]
+    line = body.__code__.co_firstlineno + 2
+    assert f'File "{__file__}", line {line}, in body: ValueError: bad …' in output.lines
+    assert "value 0" not in output.lines
+    assert "Traceback (most recent call last):" not in output.lines
+
+
+def test_debug_output_carries_each_failures_traceback(output):
+    def body(tc):
+        x = tc.draw(gs.integers(0, 10))
+        raise ValueError(f"bad\r\nvalue {x}")
+
+    error = failing(body, ValueError, verbosity=Verbosity.debug)
+    assert notes(error) == ["x = 0"]
+    traceback_start = output.lines.index("Traceback (most recent call last):")
+    assert output.lines[traceback_start + 1].startswith(f'  File "{__file__}"')
+    assert "ValueError: bad" in output.lines
+    assert "value 0" in output.lines
+    assert not any(line.endswith("ValueError: bad …") for line in output.lines)
+
+
+def test_no_output_destination_prints_nothing_and_still_reports(capsys):
+    def body(tc):
+        x = tc.draw(gs.integers(0, 10))
+        tc.note(f"noted {x}")
+        assert x < 5
+
+    with with_output_override(None):
+        error = failing(body, verbosity=Verbosity.debug)
+    assert notes(error)[0] == "x = 5\nnoted 5"
+    assert capsys.readouterr().err == ""
+
+
+def test_the_default_destination_is_stderr(capsys):
+    failing(lambda tc: tc.draw(gs.integers(0, 0)) + 1 / 0, ZeroDivisionError, verbosity="verbose")
+    assert "ZeroDivisionError: division by zero" in capsys.readouterr().err
+
+
+class _CustomError(Exception):
+    pass
+
+
+class _Unprintable(Exception):
+    def __str__(self):
+        raise RuntimeError("no")
+
+
+def _raised(exception):
+    try:
+        raise exception
+    except BaseException as caught:
+        return caught
+
+
+def test_summary_is_one_line_with_the_frame():
+    frame = _user_frame(_raised(ValueError("x")))
+    where = f'File "{__file__}", line {frame.lineno}, in _raised'
+    assert _summary(_raised(ValueError("one"))) == f"{where}: ValueError: one"
+    assert _summary(_raised(ValueError("\ntwo\nthree"))) == f"{where}: ValueError: two …"
+    assert _summary(_raised(ValueError())) == f"{where}: ValueError"
+    assert _summary(ValueError("unraised")) == "ValueError: unraised"
+    assert _summary(_CustomError("c")) == f"{__name__}._CustomError: c"
+    assert _summary(_Unprintable()) == f"{__name__}._Unprintable: <exception str() failed>"
+
+
+def test_a_rejected_completion_is_an_internal_error():
+    run = _native.Run.start(hegel.Settings(database="", test_cases=1)._build(None, None), None)
+    handle = run.next_test_case()
+    with pytest.raises(hegel.errors.InternalError, match="origin"):
+        handle.mark_complete(_native.STATUS_INTERESTING)
+    with pytest.raises(hegel.errors.InternalError, match="summary"):
+        handle.mark_complete(_native.STATUS_VALID, None, "x")
+    handle.mark_complete(_native.STATUS_VALID)
+
+
+def test_an_output_sink_raising_is_reported_as_unraisable(monkeypatch):
+    unraisable = []
+    monkeypatch.setattr(sys, "unraisablehook", unraisable.append)
+
+    def sink(line):
+        raise RuntimeError(line)
+
+    with with_output_override(sink):
+        run_test(lambda tc: tc.note("hello"), verbosity=Verbosity.verbose, test_cases=1)
+    assert "hello" in [str(u.exc_value) for u in unraisable]
+
+
 def test_verbose_overrun_message(output):
     def body(tc):
         # a very large draw during shrinking makes the engine abandon cases
@@ -496,11 +606,12 @@ def test_verbose_overrun_message(output):
 def test_quiet_verbosity_prints_nothing(output):
     def body(tc):
         x = tc.draw(gs.integers())
-        assert x < 10
+        assert x < 10, x
 
     error = failing(body, verbosity=Verbosity.quiet)
     assert output.lines == []
     assert notes(error) == []
+    assert str(error).startswith("10\n")
 
 
 def test_quiet_multiple_failures(output):
@@ -573,9 +684,12 @@ def test_output_override_is_per_thread():
         thread = threading.Thread(target=lambda: result.append(RunOutput.resolve().sink))
         thread.start()
         thread.join()
-    assert result == [None]
-    assert RunOutput.resolve().sink is None
-    RunOutput(None).block("a\nb\n")
+    assert result == [_stderr_line]
+    assert RunOutput.resolve().sink is _stderr_line
+    with with_output_override(None):
+        assert RunOutput.resolve().sink is None
+        RunOutput.resolve().block("a\nb\n")
+    assert RunOutput.resolve().sink is _stderr_line
 
 
 def test_keyboard_interrupt_propagates():
@@ -708,8 +822,9 @@ def test_a_group_with_a_user_error_in_it_is_a_failure(output):
         tc.draw(gs.integers())
         raise BaseExceptionGroup("tasks", [hegel.AssumeFailed(), ValueError("boom")])
 
-    error = failing(body, BaseExceptionGroup, verbosity=Verbosity.verbose)
+    error = failing(body, BaseExceptionGroup, verbosity=Verbosity.debug)
     assert [type(e) for e in error.exceptions] == [hegel.AssumeFailed, ValueError]
+    assert "BaseExceptionGroup: tasks (2 sub-exceptions)" in output.text
     assert "ValueError: boom" in output.text
 
 
@@ -816,16 +931,15 @@ class _FakeResult:
 
 
 class _FakeRun:
-    def __init__(self, result):
+    def __init__(self, result, sink):
         self._result = result
+        self._sink = sink
 
     def next_test_case(self):
         return None
 
-    def drain_output(self):
-        return ["engine line"]
-
     def result(self):
+        self._sink("engine line")
         return self._result
 
 
@@ -851,14 +965,16 @@ class _FakeRun:
             "nondeterministic",
         ),
         (
-            _FakeResult(hegel._native.RUN_STATUS_FAILED, failures=[("origin", None, None)]),
+            _FakeResult(hegel._native.RUN_STATUS_FAILED, failures=[("origin", None, None, None)]),
             hegel.InternalError,
             "never seen by the test",
         ),
     ],
 )
 def test_unexpected_engine_results(monkeypatch, output, result, exception, match):
-    monkeypatch.setattr(hegel._native.Run, "start", staticmethod(lambda settings: _FakeRun(result)))
+    monkeypatch.setattr(
+        hegel._native.Run, "start", staticmethod(lambda settings, sink: _FakeRun(result, sink))
+    )
     with pytest.raises(exception, match=match):
         hegel.run(lambda tc: None)
     assert "engine line" in output.lines
@@ -1044,8 +1160,24 @@ def test_explicit_cases_are_reported_in_verbose_mode(output):
     assert output.lines[first : first + 3] == ["x = 1", "noted 1", "x = 2"]
     second = output.lines.index("x = 2")
     assert output.lines[second : second + 2] == ["x = 2", "noted 2"]
-    assert "Traceback (most recent call last):" in output.lines[second:]
+    assert output.lines[second + 2].startswith(f'File "{__file__}", line ')
+    assert output.lines[second + 2].endswith(", in test_it: AssertionError: assert 2 != 2")
+    assert "Traceback (most recent call last):" not in output.lines
     assert not any(line.startswith("Test case ") for line in output.lines)
+
+
+def test_explicit_cases_are_reported_with_their_traceback_in_debug_mode(output):
+    @hegel.explicit_test_case(x=2)
+    @hegel.test(verbosity=Verbosity.debug, test_cases=1)
+    def test_it(tc):
+        x = tc.draw(gs.integers())
+        assert x != 2
+
+    with pytest.raises(AssertionError):
+        test_it()
+    traceback_start = output.lines.index("Traceback (most recent call last):")
+    assert output.lines[traceback_start - 1] == "x = 2"
+    assert output.lines[traceback_start + 1].startswith(f'  File "{__file__}"')
 
 
 def test_explicit_case_misuse_is_reported_in_verbose_mode(output):

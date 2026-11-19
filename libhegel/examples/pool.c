@@ -70,7 +70,7 @@ int main(void) {
     HEGEL_CHECK(hegel_settings_set_seed, ctx, s, 0x5ca1ab1e, true);
 
     hegel_run_t *run;
-    HEGEL_CHECK(hegel_run_start, ctx, s, NULL, NULL, &run);
+    HEGEL_CHECK(hegel_run_start, ctx, s, hegel_output_stderr, NULL, &run);
 
     const int STEPS = 12;
     size_t total = 0;
@@ -85,7 +85,7 @@ int main(void) {
         struct live_set live = { .count = 0 };
         hegel_pool_t *pool;
         if (hegel_new_pool(ctx, tc, &pool) != HEGEL_OK) {
-            HEGEL_CHECK(hegel_mark_complete, ctx, tc, HEGEL_STATUS_OVERRUN, NULL);
+            HEGEL_CHECK(hegel_mark_complete, ctx, tc, HEGEL_STATUS_OVERRUN, NULL, NULL, NULL);
             HEGEL_CHECK(hegel_test_case_free, ctx, tc);
             continue;
         }
@@ -128,18 +128,18 @@ int main(void) {
         HEGEL_CHECK(hegel_pool_free, ctx, pool);
 
         if (bad) {
-            HEGEL_CHECK(hegel_mark_complete, ctx, tc, HEGEL_STATUS_INTERESTING, &STRING("drew a non-live variable"));
+            HEGEL_CHECK(hegel_mark_complete, ctx, tc, HEGEL_STATUS_INTERESTING, &STRING("drew a non-live variable"), &STRING("drew a non-live variable"), &STRING("drew a non-live variable"));
             HEGEL_CHECK(hegel_test_case_free, ctx, tc);
             ok = false;
             continue;
         }
         if (overran) {
-            HEGEL_CHECK(hegel_mark_complete, ctx, tc, HEGEL_STATUS_OVERRUN, NULL);
+            HEGEL_CHECK(hegel_mark_complete, ctx, tc, HEGEL_STATUS_OVERRUN, NULL, NULL, NULL);
             HEGEL_CHECK(hegel_test_case_free, ctx, tc);
             continue;
         }
         total++;
-        HEGEL_CHECK(hegel_mark_complete, ctx, tc, HEGEL_STATUS_VALID, NULL);
+        HEGEL_CHECK(hegel_mark_complete, ctx, tc, HEGEL_STATUS_VALID, NULL, NULL, NULL);
         /* The caller owns every handle from hegel_next_test_case and must free it. */
         HEGEL_CHECK(hegel_test_case_free, ctx, tc);
     }

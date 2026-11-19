@@ -20,8 +20,8 @@ import java.util.function.Supplier;
  * {@link #draw(Generator)}, reject uninteresting inputs with {@link #assume(boolean)}, attach debug
  * context with {@link #note(String)}, and guide the search with {@link #target(double)}.
  *
- * <p>On an execution the engine stamped for capture ({@link #isFinal()}) — the final replay of a
- * minimal failing example among them — each top-level {@code draw} and each note is recorded, and
+ * <p>On an execution whose output the engine will use — the final replay of a minimal failing
+ * example among them — each top-level {@code draw} and each note is recorded, and
  * if the case fails and the engine reports that failure, they are handed to the run's {@link
  * Reporter} (the default prints {@code x = 42;}) and carried by the resulting {@link Failure}, so
  * the counterexample is readable. Under {@link Verbosity#VERBOSE} or higher the reporter sees every
@@ -34,10 +34,10 @@ import java.util.function.Supplier;
  */
 public final class TestCase {
     private final DataSource source;
-    /** Whether the engine stamped this execution for capture: its draws and notes are recorded. */
-    private final boolean captured;
-    /** Whether draws and notes reach the reporter live (a verbose run). */
-    private final boolean reporting;
+    /** Whether the engine will use this execution's output: its draws and notes are recorded. */
+    private final boolean wantsOutput;
+    /** Whether recorded draws and notes also reach the reporter live (a verbose run). */
+    private final boolean live;
 
     private final Reporter reporter;
     /**
@@ -93,14 +93,14 @@ public final class TestCase {
         }
     }
 
-    TestCase(DataSource source, boolean captured, Reporter reporter) {
-        this(source, captured, false, reporter);
+    TestCase(DataSource source, boolean wantsOutput, Reporter reporter) {
+        this(source, wantsOutput, false, reporter);
     }
 
-    TestCase(DataSource source, boolean captured, boolean verbose, Reporter reporter) {
+    TestCase(DataSource source, boolean wantsOutput, boolean verbose, Reporter reporter) {
         this.source = source;
-        this.captured = captured;
-        this.reporting = verbose;
+        this.wantsOutput = wantsOutput;
+        this.live = verbose;
         this.reporter = reporter;
         this.root = this;
         this.worker = -1;
@@ -109,8 +109,8 @@ public final class TestCase {
 
     private TestCase(DataSource source, TestCase root, int worker, long startNanos) {
         this.source = source;
-        this.captured = root.captured;
-        this.reporting = root.reporting;
+        this.wantsOutput = root.wantsOutput;
+        this.live = root.live;
         this.reporter = root.reporter;
         this.root = root;
         this.worker = worker;
@@ -139,8 +139,8 @@ public final class TestCase {
     }
 
     /**
-     * Take over a worker handle's buffered draws and notes: record them here (on a captured
-     * execution) and hand them to the reporter (on a verbose one), in the order the worker made
+     * Take over a worker handle's buffered draws and notes: record them here and hand them to the
+     * reporter on a verbose execution, in the order the worker made
      * them. Called on the root at a join point, once the worker has finished its round, so the
      * reporter only ever hears from the driving thread.
      */
@@ -162,38 +162,26 @@ public final class TestCase {
 
     /**
      * Deliver a draw or note: buffered on a worker handle until the root absorbs it; on the root,
-     * kept for the report when captured and reported live when verbose.
+     * kept for the report and reported live when verbose.
      */
     private void record(Event event) {
+        events.add(event);
         if (worker >= 0) {
-            events.add(event);
             return;
         }
-        if (captured) {
-            events.add(event);
-            if (event.message != null) {
-                notes.add(event.message);
-            } else {
-                draws.put(event.key, event.value);
-            }
+        if (event.message != null) {
+            notes.add(event.message);
+        } else {
+            draws.put(event.key, event.value);
         }
-        if (reporting) {
+        if (live) {
             event.replay(reporter, false);
         }
     }
 
-    /**
-     * Whether the engine stamped this execution as one a failure report can be built from — the
-     * final replay of a minimal counterexample (or of a {@link Settings#reproduceFailure(String)}
-     * blob), the replays that confirm a discovered failure — as opposed to one of the many cases it
-     * runs while generating and shrinking. Draws and notes are recorded only on a stamped
-     * execution, and reported only if it fails and the engine reports that failure; a test body can
-     * use this to do its own expensive diagnostics only where they may be seen.
-     *
-     * @return {@code true} on an execution stamped for capture
-     */
-    public boolean isFinal() {
-        return captured;
+    /** Whether the engine will use this execution's output. */
+    boolean wantsOutput() {
+        return wantsOutput;
     }
 
     /**
@@ -231,7 +219,7 @@ public final class TestCase {
             }
         }
         if (top) {
-            if (captured || reporting) {
+            if (wantsOutput) {
                 String name = root.nextName(label);
                 record(new Event(prefix() + name, name, value, null));
             }
@@ -287,7 +275,7 @@ public final class TestCase {
      * @param message the message to record
      */
     public void note(String message) {
-        if (!(captured || reporting)) {
+        if (!wantsOutput) {
             return;
         }
         if (drawDepth > 0) {
@@ -552,12 +540,12 @@ public final class TestCase {
         return source.isAborted();
     }
 
-    /** The top-level draws recorded on a captured execution, in draw order. */
+    /** The top-level draws recorded on an execution whose output was wanted, in draw order. */
     Map<String, Object> draws() {
         return draws;
     }
 
-    /** The notes recorded on a captured execution, in order. */
+    /** The notes recorded on an execution whose output was wanted, in order. */
     List<String> notes() {
         return notes;
     }

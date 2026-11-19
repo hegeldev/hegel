@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -28,31 +29,31 @@ const (
 //
 // It is compatible with most popular TestingT interfaces from assert libraries.
 type testCase struct {
-	ctx           *libhegel.Context
-	tc            *libhegel.TestCase
-	out           io.Writer // Final destination, owned only by the root; nil on clones.
-	printer       *libhegel.Printer
-	depth         int
-	panicPolicy   panicPolicy
-	abortFn       func(error)
-	failureOrigin string
+	ctx         *libhegel.Context
+	tc          *libhegel.TestCase
+	wantsOutput bool
+	wantsDetail bool
+	depth       int
+	panicPolicy panicPolicy
+	abortFn     func(error)
 }
 
-func newTestCase(ctx *libhegel.Context, tc *libhegel.TestCase, out io.Writer, policy panicPolicy) (*testCase, error) {
-	s := &testCase{
+func newTestCase(ctx *libhegel.Context, tc *libhegel.TestCase, policy panicPolicy) (*testCase, error) {
+	wantsOutput, err := tc.WantsOutput(ctx)
+	if err != nil {
+		return nil, err
+	}
+	wantsDetail, err := tc.WantsDetail(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &testCase{
 		ctx:         ctx,
 		tc:          tc,
-		out:         out,
+		wantsOutput: wantsOutput,
+		wantsDetail: wantsDetail,
 		panicPolicy: policy,
-	}
-	if out != nil {
-		printer, err := tc.Printer(ctx, nil)
-		if err != nil {
-			return nil, err
-		}
-		s.printer = printer
-	}
-	return s, nil
+	}, nil
 }
 
 type invocationError struct {
@@ -101,7 +102,7 @@ func (s *testCase) Assume(condition bool) {
 }
 
 func (s *testCase) Note(message string) {
-	if s.printer != nil {
+	if s.wantsOutput {
 		if err := s.tc.Note(s.ctx, message); err != nil {
 			s.abort(err)
 		}
@@ -121,13 +122,13 @@ func (s *testCase) EventValue(label string, value float64) {
 }
 
 func (s *testCase) log(format string, args ...any) {
-	if s.printer != nil {
+	if s.wantsOutput {
 		s.Note(fmt.Sprintf(format, args...))
 	}
 }
 
 func (s *testCase) reportDraw(skip int, value any) {
-	if s.printer == nil {
+	if !s.wantsOutput {
 		return
 	}
 	msg := formatDrawReport(skip+1, value)
@@ -174,15 +175,7 @@ func (s *testCase) clone() (TestCase, error) {
 	if err != nil {
 		return nil, err
 	}
-	clone := &testCase{ctx: s.ctx.Clone(), tc: tc, panicPolicy: s.panicPolicy}
-	if s.printer != nil {
-		clone.printer, err = tc.Printer(clone.ctx, nil)
-		if err != nil {
-			tc.Free()
-			return nil, err
-		}
-	}
-	return clone, nil
+	return &testCase{ctx: s.ctx.Clone(), tc: tc, wantsOutput: s.wantsOutput, wantsDetail: s.wantsDetail, panicPolicy: s.panicPolicy}, nil
 }
 
 func (s *testCase) free() {
@@ -374,9 +367,12 @@ const (
 	VerbosityQuiet = libhegel.VERBOSITY_QUIET
 	// VerbosityNormal is the default logging level.
 	VerbosityNormal = libhegel.VERBOSITY_NORMAL
-	// VerbosityVerbose enables verbose logging.
+	// VerbosityVerbose prints every test case's draws and notes, and a failing
+	// test case's location and message in one line.
 	VerbosityVerbose = libhegel.VERBOSITY_VERBOSE
-	// VerbosityDebug enables debug logging.
+	// VerbosityDebug prints what VerbosityVerbose does, with each failing test
+	// case's full stack trace in place of its one-line summary, and the
+	// engine's debug logging.
 	VerbosityDebug = libhegel.VERBOSITY_DEBUG
 )
 
@@ -419,8 +415,8 @@ type runOptions struct {
 	settingsAppliers []settingApplier
 	profile          string
 
-	// output receives note/draw-report output during the final replay of
-	// interesting cases. nil means no output.
+	// output receives the engine's output, including what test cases print
+	// where the engine uses it, and failure reports. nil means no output.
 	output io.Writer
 }
 
@@ -576,8 +572,8 @@ func withDatabaseKey(key string) Option {
 	}
 }
 
-// withOutput sets the writer that receives note and draw-report output during
-// the final replay of interesting cases. Unexported: [Run] sets it to
+// withOutput sets the writer that receives the engine's output and failure
+// reports. Unexported: [Run] sets it to
 // [os.Stdout], [Test] to t.Output(), [Workload] to its stdout. Tests use it to
 // inspect output.
 func withOutput(w io.Writer) Option {
@@ -654,8 +650,8 @@ func runWithContext(ctx *libhegel.Context, fn testBody, opts runOptions) error {
 	if err != nil {
 		return err
 	}
+	defer run.Free()
 
-	capturedOutput := make(map[string]*bytes.Buffer)
 	for {
 		tc, err := run.NextTestCase(ctx)
 		if err != nil {
@@ -665,33 +661,13 @@ func runWithContext(ctx *libhegel.Context, fn testBody, opts runOptions) error {
 			break
 		}
 
-		capture, err := tc.ShouldCapture(ctx)
+		state, err := newTestCase(ctx, tc, captureUserPanics)
 		if err != nil {
 			return err
 		}
 
-		var out io.Writer
-		policy := captureUserPanics
-		if capture {
-			// Keep stamped failures by origin for nondeterministic reports.
-			//
-			// NB: It doesn't make sense to propagate user panics when buffering
-			// output because we can't flush the buffer on a panic.
-			out = new(bytes.Buffer)
-		}
-
-		state, err := newTestCase(ctx, tc, out, policy)
-		if err != nil {
+		if err := state.run(fn); err != nil {
 			return err
-		}
-
-		failed, err := state.run(fn)
-		if err != nil {
-			return err
-		}
-
-		if failed && capture {
-			capturedOutput[state.failureOrigin] = out.(*bytes.Buffer)
 		}
 	}
 
@@ -710,7 +686,7 @@ func runWithContext(ctx *libhegel.Context, fn testBody, opts runOptions) error {
 		// error message.
 		return fmt.Errorf("%w: %s", errPropTestFailed, result.ErrorMessage(ctx))
 	default:
-		return replayFailures(ctx, s, result, fn, opts, capturedOutput)
+		return replayFailures(ctx, s, result, fn, opts)
 	}
 }
 
@@ -780,26 +756,14 @@ func (s *testCase) invoke(fn testBody) (result error) {
 	return nil
 }
 
-func (s *testCase) run(fn testBody) (failed bool, err error) {
-	var result error
-	defer func() {
-		// Rejected and overrun cases are probes, not results. Their native
-		// documents must remain private even when this case owns an output
-		// destination.
-		if errors.Is(result, libhegel.E_ASSUME) || errors.Is(result, libhegel.E_STOP_TEST) {
-			return
-		}
-		err = errors.Join(err, s.flushNativeOutput())
-		formatInvocationResult(s.out, result)
-	}()
-
-	result = s.invoke(fn)
+func (s *testCase) run(fn testBody) error {
+	result := s.invoke(fn)
 	if result == nil {
-		return false, s.tc.MarkComplete(s.ctx, libhegel.STATUS_VALID, "")
+		return s.tc.MarkComplete(s.ctx, libhegel.STATUS_VALID, "", "", "")
 	}
 
 	var status libhegel.Status
-	var origin string
+	var origin, summary, detail string
 	switch {
 	case errors.Is(result, libhegel.E_ASSUME):
 		status = libhegel.STATUS_INVALID
@@ -808,36 +772,25 @@ func (s *testCase) run(fn testBody) (failed bool, err error) {
 	default:
 		var outcome *invocationError
 		if !errors.As(result, &outcome) {
-			return true, result
+			return result
 		}
 		status = outcome.status
 		origin = findCallerInPCs(outcome.pcs, isNotHegelFrame)
-		s.failureOrigin = origin
+		if s.wantsOutput {
+			summary = summarizeInvocationResult(result, outcome)
+		}
+		if s.wantsDetail {
+			detail = formatInvocationResult(result, outcome)
+		}
 	}
 
-	return true, s.tc.MarkComplete(s.ctx, status, origin)
-
+	return s.tc.MarkComplete(s.ctx, status, origin, summary, detail)
 }
 
-func (s *testCase) flushNativeOutput() error {
-	if s.out == nil {
-		return nil
-	}
-	// Match the Rust frontend: no deferred regions is a harmless resolve error;
-	// Value still reports layout errors after resolution.
-	_ = s.printer.Resolve(s.ctx)
-	value, err := s.printer.Value(s.ctx)
-	if err != nil {
-		return err
-	}
-	_, err = io.WriteString(s.out, value)
-	return err
-}
-
-// replayFailures reports failures using replay or captured output.
+// replayFailures reports failures using replay or the engine's failure report.
 //
 // Returns an error describing the failures.
-func replayFailures(ctx *libhegel.Context, s *libhegel.Settings, result *libhegel.Result, fn testBody, opts runOptions, capturedOutput map[string]*bytes.Buffer) error {
+func replayFailures(ctx *libhegel.Context, s *libhegel.Settings, result *libhegel.Result, fn testBody, opts runOptions) error {
 	var origins []string
 	for i := range result.FailureCount(ctx) {
 		fail, err := result.Failure(ctx, i)
@@ -847,29 +800,17 @@ func replayFailures(ctx *libhegel.Context, s *libhegel.Settings, result *libhege
 		blob := fail.ReproductionBlob(ctx)
 		caveat := fail.Caveat(ctx)
 		// A caveat identifies nondeterministic failures, whose blobs may need
-		// several attempts to reproduce. Use their captured failing execution.
+		// several attempts to reproduce. Report their captured failing execution.
 		hasDeterministicReplay := blob != "" && caveat == ""
 		if !hasDeterministicReplay {
-			origin := fail.Origin(ctx)
-			if err := reportCapturedFailure(ctx, s, opts.output, capturedOutput[origin], caveat, blob); err != nil {
+			printed, _ := fail.Output(ctx)
+			if err := reportCapturedFailure(ctx, s, opts.output, printed, fail.Diagnostic(ctx), caveat, blob); err != nil {
 				return err
 			}
-			origins = append(origins, origin)
+			origins = append(origins, fail.Origin(ctx))
 			continue
 		}
-		printBlob, err := s.GetPrintBlob(ctx)
-		if err != nil {
-			return err
-		}
-		tc, err := s.TestCaseFromBlob(ctx, blob, opts.output)
-		if err != nil {
-			return err
-		}
-		state, err := newTestCase(ctx, tc, opts.output, propagateUserPanics)
-		if err != nil {
-			return err
-		}
-		if err := replayFailure(state, fn, opts.output, printBlob, blob); err != nil {
+		if err := replayBlob(ctx, s, fn, opts.output, blob); err != nil {
 			return err
 		}
 		origins = append(origins, fail.Origin(ctx))
@@ -877,14 +818,34 @@ func replayFailures(ctx *libhegel.Context, s *libhegel.Settings, result *libhege
 	return fmt.Errorf("%w: %d failures %v", errPropTestFailed, len(origins), origins)
 }
 
-func reportCapturedFailure(ctx *libhegel.Context, settings *libhegel.Settings, out io.Writer, captured *bytes.Buffer, caveat, blob string) error {
+// replayBlob replays the failure encoded in blob, printing to out, and frees
+// the replayed test case before returning, also when the replay panics.
+func replayBlob(ctx *libhegel.Context, s *libhegel.Settings, fn testBody, out io.Writer, blob string) error {
+	printBlob, err := s.GetPrintBlob(ctx)
+	if err != nil {
+		return err
+	}
+	tc, err := s.TestCaseFromBlob(ctx, blob, out)
+	if err != nil {
+		return err
+	}
+	defer tc.Free()
+	state, err := newTestCase(ctx, tc, propagateUserPanics)
+	if err != nil {
+		return err
+	}
+	return replayFailure(state, fn, out, printBlob, blob)
+}
+
+func reportCapturedFailure(ctx *libhegel.Context, settings *libhegel.Settings, out io.Writer, printed, diagnostic, caveat, blob string) error {
 	if out == nil {
 		return nil
 	}
 	var report bytes.Buffer
-	if captured != nil {
-		report.Write(captured.Bytes())
+	if printed != "" {
+		fmt.Fprintln(&report, printed)
 	}
+	report.WriteString(diagnostic)
 	if caveat != "" {
 		fmt.Fprintln(&report, caveat)
 	}
@@ -910,8 +871,7 @@ func replayFailure(state *testCase, fn testBody, out io.Writer, printBlob bool, 
 		_, writeErr := fmt.Fprintf(out, "reproduction blob: %s\n", blob)
 		err = errors.Join(err, writeErr)
 	}()
-	_, err = state.run(fn)
-	return err
+	return state.run(fn)
 }
 
 type callerLocation struct {
@@ -963,24 +923,42 @@ func findCallerInPCs(pcs []uintptr, filter func(string) bool) string {
 	return fmt.Sprintf("%s:%d (%#x)", frame.File, frame.Line, frame.PC)
 }
 
-func formatInvocationResult(out io.Writer, err error) {
-	var outcome *invocationError
-	if !errors.As(err, &outcome) || out == nil {
-		return
-	}
-	header := outcome.kind
+func invocationHeader(err error, outcome *invocationError) string {
 	if worker, ok := errors.AsType[*workerError](err); ok {
-		header = fmt.Sprintf("%s in worker %d", header, worker.worker)
+		return fmt.Sprintf("%s in worker %d", outcome.kind, worker.worker)
 	}
-	fmt.Fprintf(out, "%s: %s\n\n", header, outcome.Error())
+	return outcome.kind
+}
+
+// summarizeInvocationResult renders a failed invocation in one line: the
+// location of the first frame outside Hegel and the Go runtime (where the test
+// failed or panicked), its kind, and the first line of its message.
+func summarizeInvocationResult(err error, outcome *invocationError) string {
+	message := outcome.Error()
+	if i := strings.IndexAny(message, "\r\n"); i >= 0 {
+		message = message[:i] + " …"
+	}
+	summary := fmt.Sprintf("%s: %s", invocationHeader(err, outcome), message)
+	if frame, ok := findCallerFrameInPCs(outcome.pcs, isUserFrame); ok && frame.File != "" {
+		summary = fmt.Sprintf("%s:%d: %s", filepath.Base(frame.File), frame.Line, summary)
+	}
+	return strings.ToValidUTF8(summary, "\uFFFD")
+}
+
+// formatInvocationResult renders the full diagnostic of a failed invocation:
+// its kind and message, then the stack it failed on.
+func formatInvocationResult(err error, outcome *invocationError) string {
+	var out strings.Builder
+	fmt.Fprintf(&out, "%s: %s\n\n", invocationHeader(err, outcome), outcome.Error())
 	frames := runtime.CallersFrames(outcome.pcs)
 	for {
 		frame, more := frames.Next()
-		fmt.Fprintf(out, "%s(...)\n\t%s:%d\n", frame.Function, frame.File, frame.Line)
+		fmt.Fprintf(&out, "%s(...)\n\t%s:%d\n", frame.Function, frame.File, frame.Line)
 		if !more {
 			break
 		}
 	}
+	return strings.ToValidUTF8(out.String(), "\uFFFD")
 }
 
 func isHegelFrame(fn string) bool {
@@ -998,6 +976,10 @@ func isHegelFrame(fn string) bool {
 }
 
 func isNotHegelFrame(fn string) bool {
+	return !isHegelFrame(fn) && !strings.HasPrefix(fn, "runtime.")
+}
+
+func isUserFrame(fn string) bool {
 	return !isHegelFrame(fn) && !strings.HasPrefix(fn, "runtime.")
 }
 

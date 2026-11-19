@@ -19,7 +19,13 @@ import {
   type SettingsHandle,
 } from "./engine.js";
 
-/** How much the engine prints while a test runs. */
+/**
+ * How much the engine prints while a test runs: `Quiet` only how to
+ * reproduce a failure, `Normal` the report of each failure, `Verbose` also
+ * every test case as it runs with a one-line description of each failure
+ * (the error and where the test threw it), and `Debug` the error's full
+ * stack after each failing test case instead.
+ */
 export enum Verbosity {
   Quiet = "quiet",
   Normal = "normal",

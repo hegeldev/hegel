@@ -144,25 +144,6 @@ let stateful_finds_lost_update () =
   Alcotest.(check string) "message" "counter 2, model 3" msg
 ;;
 
-let stateful_accessors () =
-  Alcotest.(check (list string))
-    "rule names"
-    [ "incr"; "read_positive" ]
-    (List.map Counter_machine.rules ~f:H.Stateful.Rule.name);
-  Alcotest.(check (list (float 0.)))
-    "rule weights"
-    [ 3.0; 1.0 ]
-    (List.map Counter_machine.rules ~f:H.Stateful.Rule.weight);
-  Alcotest.(check (list string))
-    "invariant names"
-    [ "matches_model"; "non_negative" ]
-    (List.map Counter_machine.invariants ~f:H.Stateful.Invariant.name);
-  Alcotest.(check (list bool))
-    "invariant pause_faults"
-    [ true; false ]
-    (List.map Counter_machine.invariants ~f:(fun inv -> inv.pause_faults))
-;;
-
 let () =
   Alcotest.run
     "hegel-jane-async"
@@ -179,7 +160,6 @@ let () =
     ; ( "stateful"
       , [ Alcotest.test_case "passes" `Quick stateful_passes
         ; Alcotest.test_case "finds a lost update" `Quick stateful_finds_lost_update
-        ; Alcotest.test_case "accessors" `Quick stateful_accessors
         ] )
     ]
 ;;

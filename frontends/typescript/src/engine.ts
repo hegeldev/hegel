@@ -250,6 +250,9 @@ export class EngineError extends Error {
   }
 }
 
+/** Where an engine run's printed lines go, one call per line. */
+export type OutputSink = (line: string) => void;
+
 export interface Engine {
   version(): string;
   newContext(): ContextHandle;
@@ -314,19 +317,37 @@ export interface Engine {
   getBackend(s: SettingsHandle): number;
   /** The resolved `hegel_nondeterminism_strictness_t`. */
   getNondeterminismStrictness(s: SettingsHandle): number;
-  runStart(ctx: ContextHandle, settings: SettingsHandle): RunHandle;
   /**
-   * Start a run that replays a reproduce blob instead of exploring. Throws on
-   * a blob that is not valid.
+   * Start a run. `output` receives each line the engine prints for it (a
+   * verbose run's test cases, phases and statistics) until the run is freed.
    */
-  runStartBlob(ctx: ContextHandle, settings: SettingsHandle, blob: string): RunHandle;
+  runStart(ctx: ContextHandle, settings: SettingsHandle, output: OutputSink): RunHandle;
+  /**
+   * Start a run that replays a reproduce blob instead of exploring, printing
+   * to `output` as {@link runStart} does. Throws on a blob that is not valid.
+   */
+  runStartBlob(
+    ctx: ContextHandle,
+    settings: SettingsHandle,
+    blob: string,
+    output: OutputSink,
+  ): RunHandle;
   nextTestCase(ctx: ContextHandle, run: RunHandle): TestCaseHandle | null;
   runResult(ctx: ContextHandle, run: RunHandle): RunResultHandle;
   freeRunResult(r: RunResultHandle): void;
   freeRun(run: RunHandle): void;
   freeTestCase(tc: TestCaseHandle): void;
-  /** Whether the engine stamped `tc` for capture: its output may be reported. */
-  shouldCapture(ctx: ContextHandle, tc: TestCaseHandle): boolean;
+  /**
+   * Whether the engine uses what `tc` prints: a verbose run streams it, and a
+   * test case stamped for capture keeps it for its failure's report.
+   */
+  wantsOutput(ctx: ContextHandle, tc: TestCaseHandle): boolean;
+  /**
+   * Whether the engine uses the full diagnostic of `tc` if it fails: printed
+   * at debug verbosity and kept for the report of a test case stamped for
+   * capture. Implies {@link wantsOutput}.
+   */
+  wantsDetail(ctx: ContextHandle, tc: TestCaseHandle): boolean;
   /** A new handle onto an independent choice stream of the same test case. */
   cloneTestCase(ctx: ContextHandle, tc: TestCaseHandle): TestCaseHandle;
   /** A new handle onto `tc`'s choice stream, printing `indent` columns further in. */
@@ -388,9 +409,12 @@ export interface Engine {
   printerDeferred(ctx: ContextHandle, p: PrinterHandle): PrinterHandle;
   /** Whether `p` can still be written to: false once its region has died. */
   printerIsLive(ctx: ContextHandle, p: PrinterHandle): boolean;
-  /** Splice every deferred region (clones, blocks) into the document. */
+  /**
+   * Splice every deferred region into a standalone document. A test case's
+   * document is printed by the engine and cannot be resolved.
+   */
   printerResolve(ctx: ContextHandle, p: PrinterHandle): void;
-  /** Read (and seal) the document of a root printer. */
+  /** Read (and seal) the standalone document of a root printer. */
   printerValue(ctx: ContextHandle, p: PrinterHandle): string;
   generateBoolean(ctx: ContextHandle, tc: TestCaseHandle, p: number): boolean;
   generateInteger(ctx: ContextHandle, tc: TestCaseHandle, min: bigint, max: bigint): bigint;
@@ -511,7 +535,20 @@ export interface Engine {
   /** Report that the iteration just run failed, before the failure is rethrown. */
   repeatFailed(ctx: ContextHandle, tc: TestCaseHandle, repeat: RepeatHandle): void;
   freeRepeat(repeat: RepeatHandle): void;
-  markComplete(ctx: ContextHandle, tc: TestCaseHandle, status: number, origin: string | null): void;
+  /**
+   * Complete `tc` with `status`. A failure (`INTERESTING`) passes its
+   * `origin`, its one-line `summary` (required when the test case wanted
+   * output) and its complete `detail` (required when it wanted detail); every
+   * other status passes `null` for all three.
+   */
+  markComplete(
+    ctx: ContextHandle,
+    tc: TestCaseHandle,
+    status: number,
+    origin: string | null,
+    summary: string | null,
+    detail: string | null,
+  ): void;
   /** Open a variable pool for stateful testing; released with {@link freePool}. */
   newPool(ctx: ContextHandle, tc: TestCaseHandle): PoolHandle;
   /** Register a new variable in `pool`, returning its engine-assigned id. */
@@ -644,5 +681,11 @@ export interface Engine {
   reproductionBlob(fp: FailureHandle): string | null;
   /** The failure's confirmation caveat, or `null` for a deterministic failure. */
   failureCaveat(fp: FailureHandle): string | null;
+  /**
+   * The failure's report, its lines joined with `\n`: what the latest
+   * execution the engine stamped for capture that failed there printed, or
+   * `null` when none did (or the run was quiet).
+   */
+  failureOutput(fp: FailureHandle): string | null;
   freeStringGenerator(generator: StringGeneratorHandle): void;
 }

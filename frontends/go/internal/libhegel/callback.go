@@ -2,7 +2,6 @@ package libhegel
 
 import (
 	"io"
-	"runtime"
 	"unsafe"
 
 	"github.com/ebitengine/purego"
@@ -17,20 +16,25 @@ func newOutputFn(w io.Writer) (outputCallbackT, cgo.Handle) {
 	return 0, 0
 }
 
-func freeOutputFn[T ~uintptr](ptr *pointer[T], h cgo.Handle) {
+// withOutputFn extends free to release the writer's handle after the native
+// object: the engine may write to the writer until then, including from the
+// free itself.
+func withOutputFn[T ~uintptr](free func(ctxT, T) Error, h cgo.Handle) func(ctxT, T) Error {
 	if h == 0 {
-		return
+		return free
 	}
-
-	if ptr == nil {
-		// The C call failed, so there is no object whose GC will run the
-		// cleanup: delete the handle now. Falling through to AddCleanup with a
-		// nil ptr would panic.
+	return func(ctx ctxT, raw T) Error {
+		e := free(ctx, raw)
 		h.Delete()
-		return
+		return e
 	}
+}
 
-	runtime.AddCleanup(ptr, cgo.Handle.Delete, h)
+// deleteOutputFn releases the writer's handle when no native object took it.
+func deleteOutputFn(h cgo.Handle) {
+	if h != 0 {
+		h.Delete()
+	}
 }
 
 var outputCallbackPtr = outputCallbackT(purego.NewCallback(outputCallback))

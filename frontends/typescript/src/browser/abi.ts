@@ -4,6 +4,7 @@ import { EngineError } from "../engine.js";
 // against hegel.h on every engine bump. I = i32, L = i64, D = f64. JS arity
 // checks cannot verify Wasm types.
 export const signatures = {
+  output_stderr_callback: "",
   context_new: "",
   context_free: "I",
   context_last_error: "II",
@@ -49,7 +50,8 @@ export const signatures = {
   run_result_free: "II",
   run_free: "II",
   test_case_free: "II",
-  test_case_should_capture: "III",
+  test_case_wants_output: "III",
+  test_case_wants_detail: "III",
   test_case_clone: "III",
   test_case_block: "IILI",
   test_case_set_worker: "IIL",
@@ -123,7 +125,7 @@ export const signatures = {
   repeat_more: "IIII",
   repeat_failed: "III",
   repeat_free: "II",
-  mark_complete: "IIII",
+  mark_complete: "IIIIII",
   new_pool: "III",
   pool_add: "IIII",
   pool_generate: "IIIII",
@@ -155,6 +157,7 @@ export const signatures = {
   failure_origin: "III",
   failure_reproduction_blob: "III",
   failure_caveat: "III",
+  failure_output: "III",
   version: "II",
   set_unicode_version: "II",
 } as const;

@@ -32,7 +32,8 @@ let private holds (generator: Generator<'T>) (check: 'T -> unit) =
 let private minimal (generator: Generator<'T>) (bad: 'T -> bool) : string =
     let report =
         Hegel.run (
-            quiet,
+            reported,
+            Reporter.Silent,
             fun tc ->
                 if bad (tc.Draw(generator, "x")) then
                     failwith "boom"

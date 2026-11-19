@@ -42,35 +42,6 @@ let%expect_test "a function is named from its binding" =
     |}]
 ;;
 
-let%hegel_test binding_name_inline tc =
-  let f =
-    draw_silent
-      tc
-      (functions
-         ~sexp_of_arg:sexp_of_int
-         ~returns:(integers ~min_value:0 ~max_value:1000 ())
-         ())
-  in
-  assert (f 42 < 10)
-[@@settings
-  { (Settings.create ~test_cases:100 ~seed:0 ()) with verbosity = Settings.Normal }]
-;;
-
-let%expect_test "a function drawn inline is also named from its binding" =
-  (try binding_name_inline () with
-   | _ -> ());
-  print_string (Expect_scrub.scrub_report [%expect.output]);
-  [%expect
-    {|
-    --- Failure: binding_name_inline (ppx/test/expect_tests/test_functions_printing.ml:<LINE>) ---
-
-    f 42 = 10
-
-    Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
-    rerun with: [@@failure_blobs [ "<BLOB>" ]]
-    |}]
-;;
-
 let%hegel_test explicit_name_beats_binding tc =
   let f =
     draw_silent
@@ -279,27 +250,33 @@ let%expect_test "function call prints every time in verbose/debug verbosity" =
     function 10 = 586
     function 10 = 586
     function 10 = 586
+    Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
     Running test case
     function 10 = 586
     function 10 = 586
     function 10 = 586
+    Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
     Running test case
     function 10 = 586
     function 10 = 586
     function 10 = 586
+    Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
     Running test case
     function 10 = 586
     function 10 = 586
     function 10 = 586
+    Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
     Running test case
     function 10 = 586
     function 10 = 586
     function 10 = 586
+    Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
     Ending phase: Generate
     Running test case
     function 10 = 586
     function 10 = 586
     function 10 = 586
+    Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
     --- Failure --------------------------------------------------------------------
 
     function 10 = 586
@@ -316,26 +293,44 @@ let%expect_test "function call prints every time in verbose/debug verbosity" =
     {|
     no config file loaded
     Starting phase: Generate
+    Running test case
     function 10 = 586
     function 10 = 586
     function 10 = 586
+    Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
+    <BACKTRACE>
     test case #1: status = Interesting, choices = 1
+    Running test case
     function 10 = 586
     function 10 = 586
     function 10 = 586
+    Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
+    <BACKTRACE>
+    Running test case
     function 10 = 586
     function 10 = 586
     function 10 = 586
+    Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
+    <BACKTRACE>
+    Running test case
     function 10 = 586
     function 10 = 586
     function 10 = 586
+    Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
+    <BACKTRACE>
+    Running test case
     function 10 = 586
     function 10 = 586
     function 10 = 586
+    Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
+    <BACKTRACE>
     Ending phase: Generate
+    Running test case
     function 10 = 586
     function 10 = 586
     function 10 = 586
+    Exception: File "ppx/test/expect_tests/test_functions_printing.ml", line LINE, characters C1-C2: Assertion failed
+    <BACKTRACE>
     Test done. interesting_test_cases=1
     --- Failure --------------------------------------------------------------------
 

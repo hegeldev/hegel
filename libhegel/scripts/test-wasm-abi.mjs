@@ -13,6 +13,9 @@ const { instance } = await WebAssembly.instantiate(bytes, {
     monotonic_nanos() {
       return process.hrtime.bigint();
     },
+    stderr_write(ptr, len) {
+      process.stderr.write(new Uint8Array(memory.buffer, ptr, len));
+    },
   },
 });
 const api = instance.exports;
