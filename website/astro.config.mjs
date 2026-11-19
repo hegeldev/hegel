@@ -95,7 +95,6 @@ export default defineConfig({
 						{ slug: 'antithesis/python' },
 						{ slug: 'antithesis/go' },
 						{ slug: 'antithesis/cpp' },
-						{ slug: 'antithesis/typescript' },
 						{ slug: 'antithesis/java' },
 						{ slug: 'antithesis/ocaml' },
 					],
