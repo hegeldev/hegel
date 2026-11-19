@@ -16,6 +16,7 @@ import sys
 import types
 import typing
 import uuid
+import zoneinfo
 from collections.abc import Callable
 from typing import Any
 
@@ -34,7 +35,16 @@ from hegel.generators.combinators import just, none, one_of, sampled_from
 from hegel.generators.numeric import booleans, floats, integers
 from hegel.generators.recursive import Deferred
 from hegel.generators.strings import binary, ip_addresses, text, uuids
-from hegel.generators.time import dates, datetimes, timedeltas, times
+from hegel.generators.temporal import (
+    Span,
+    dates,
+    datetimes,
+    durations,
+    offsets,
+    spans,
+    times,
+    zones,
+)
 
 __all__ = ["from_type", "register_type_generator"]
 
@@ -132,7 +142,11 @@ _BUILTINS: dict[Any, Callable[[], Generator[Any]]] = {
     dt.date: dates,
     dt.time: times,
     dt.datetime: datetimes,
-    dt.timedelta: timedeltas,
+    dt.timedelta: durations,
+    dt.tzinfo: zones,
+    dt.timezone: offsets,
+    zoneinfo.ZoneInfo: zones,
+    Span: spans,
     uuid.UUID: uuids,
     ipaddress.IPv4Address: lambda: ip_addresses(v=4),
     ipaddress.IPv6Address: lambda: ip_addresses(v=6),

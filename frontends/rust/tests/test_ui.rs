@@ -122,74 +122,130 @@ fn manifest_dir_in_workspace() -> String {
         .into_owned()
 }
 
-/// The directories holding the compiled crates of the build this test binary
-/// belongs to: the `libhegel-<hash>.rlib` the case must compile against and
-/// the dependency rlibs rustc needs to load alongside it. The classic cargo
-/// layout puts every compiled crate in `target/<profile>/deps` and runs this
-/// binary from there too; nightly cargo's per-unit layout runs it from a
-/// `target/<profile>/build/<pkg>/<hash>/out` directory and scatters the
-/// rlibs across such directories. Only the running binary's own layout is
-/// searched: crates laid out the other way were built by another toolchain,
-/// and its rlibs may not be loadable by the rustc compiling the case.
-fn crate_search_dirs() -> Vec<PathBuf> {
-    fn holds_compiled_crates(dir: &Path) -> bool {
-        std::fs::read_dir(dir).is_ok_and(|entries| {
-            entries.filter_map(|entry| entry.ok()).any(|entry| {
-                let name = entry.file_name();
-                let name = name.to_string_lossy();
-                name.ends_with(".rlib")
-                    || name.ends_with(".rmeta")
-                    || name.ends_with(".dylib")
-                    || name.ends_with(".so")
-                    || name.ends_with(".dll")
-            })
-        })
-    }
-    let exe = std::env::current_exe().unwrap();
-    let exe_dir = exe.parent().unwrap();
-    if exe_dir.file_name().is_some_and(|n| n == "deps") {
-        return vec![exe_dir.to_path_buf()];
-    }
-    let build_dir = exe_dir.ancestors().nth(3).filter(|dir| {
-        exe_dir.file_name().is_some_and(|n| n == "out")
-            && dir.file_name().is_some_and(|n| n == "build")
-    });
-    let build_dir = build_dir
-        .unwrap_or_else(|| panic!("unrecognized cargo target layout at {}", exe.display()));
-    let mut dirs = Vec::new();
-    for pkg in std::fs::read_dir(build_dir)
-        .unwrap()
-        .filter_map(|entry| entry.ok())
-    {
-        for unit in std::fs::read_dir(pkg.path())
-            .into_iter()
-            .flatten()
-            .filter_map(|entry| entry.ok())
-        {
-            let out = unit.path().join("out");
-            if holds_compiled_crates(&out) {
-                dirs.push(out);
+/// The features this test binary was compiled with, which the nested cargo
+/// build in [`hegel_build`] requests to get the same hegel rlib.
+const FEATURES: &[(&str, bool)] = &[
+    ("rand", cfg!(feature = "rand")),
+    ("chrono", cfg!(feature = "chrono")),
+    ("chrono-tz", cfg!(feature = "chrono-tz")),
+    ("jiff", cfg!(feature = "jiff")),
+    ("time", cfg!(feature = "time")),
+    ("serde_json", cfg!(feature = "serde_json")),
+    (
+        "serde_json_raw_value",
+        cfg!(feature = "serde_json_raw_value"),
+    ),
+    ("static-engine", cfg!(feature = "static-engine")),
+];
+
+#[test]
+fn features_list_matches_manifest() {
+    let manifest =
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml")).unwrap();
+    let mut in_features = false;
+    let mut declared = Vec::new();
+    for line in manifest.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_features = line == "[features]";
+        } else if in_features && !line.starts_with('#') {
+            if let Some((name, _)) = line.split_once('=') {
+                if name.trim() != "default" {
+                    declared.push(name.trim().to_owned());
+                }
             }
         }
     }
-    dirs
+    let listed: Vec<String> = FEATURES
+        .iter()
+        .map(|(name, _)| (*name).to_owned())
+        .collect();
+    assert_eq!(listed, declared);
 }
 
-/// The most recently built `libhegel` rlib in `dirs`: stale rlibs from
-/// earlier builds (other feature sets, older sources) can sit alongside it,
-/// and the one cargo built or refreshed for this test run is the newest.
-fn newest_hegel_rlib(dirs: &[PathBuf]) -> PathBuf {
-    dirs.iter()
-        .filter_map(|dir| std::fs::read_dir(dir).ok())
-        .flatten()
-        .filter_map(|entry| entry.ok().map(|e| e.path()))
-        .filter(|path| {
-            path.file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with("libhegel-") && n.ends_with(".rlib"))
-        })
-        .max_by_key(|path| std::fs::metadata(path).unwrap().modified().unwrap())
-        .unwrap_or_else(|| panic!("no libhegel rlib found under {dirs:?}"))
+/// The hegel rlib of the build this test binary belongs to, and the
+/// directories holding the dependency crates rustc needs to load alongside
+/// it. Rlibs from other builds (other feature sets, older sources) sit in the
+/// same directories, so cargo is asked instead: a nested `cargo test
+/// --no-run` of this target with the same features, profile, target and
+/// target directory is a no-op that reports every artifact the build uses.
+fn hegel_build() -> (PathBuf, Vec<PathBuf>) {
+    let target_dir = Path::new(env!("CARGO_TARGET_TMPDIR")).parent().unwrap();
+    let exe = std::env::current_exe().unwrap();
+    let exe_dir = exe.parent().unwrap();
+    let profile_dir = if exe_dir.file_name().is_some_and(|n| n == "deps") {
+        exe_dir.parent().unwrap()
+    } else {
+        exe_dir
+            .ancestors()
+            .nth(4)
+            .filter(|_| exe_dir.file_name().is_some_and(|n| n == "out"))
+            .unwrap_or_else(|| panic!("unrecognized cargo target layout at {}", exe.display()))
+    };
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| env!("CARGO").into());
+    let mut command = Command::new(cargo);
+    command
+        .args(["test", "--no-run", "-p", "hegeltest", "--test", "test_ui"])
+        .args(["--message-format=json-render-diagnostics", "--target-dir"])
+        .arg(target_dir);
+    match profile_dir.file_name().unwrap().to_str().unwrap() {
+        "debug" => {}
+        "release" => {
+            command.arg("--release");
+        }
+        profile => {
+            command.args(["--profile", profile]);
+        }
+    }
+    let triple_dir = profile_dir.parent().unwrap();
+    if triple_dir != target_dir {
+        command.arg("--target").arg(triple_dir.file_name().unwrap());
+    }
+    let features: Vec<&str> = FEATURES
+        .iter()
+        .filter(|(_, enabled)| *enabled)
+        .map(|(name, _)| *name)
+        .collect();
+    if !features.is_empty() {
+        command.arg("--features").arg(features.join(","));
+    }
+    let output = command
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .stdin(Stdio::null())
+        .stderr(Stdio::inherit())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{command:?} failed");
+    let mut rlib = None;
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    for line in String::from_utf8(output.stdout).unwrap().lines() {
+        let message: serde_json::Value = serde_json::from_str(line).unwrap();
+        if message["reason"] != "compiler-artifact" {
+            continue;
+        }
+        let is_hegel_lib = message["target"]["name"] == "hegel"
+            && message["target"]["kind"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|kind| kind == "lib");
+        for filename in message["filenames"].as_array().unwrap() {
+            let path = PathBuf::from(filename.as_str().unwrap());
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if !["rlib", "rmeta", "dylib", "so", "dll"].contains(&ext) {
+                continue;
+            }
+            if is_hegel_lib && ext == "rlib" {
+                rlib = Some(path.clone());
+            }
+            let dir = path.parent().unwrap().to_path_buf();
+            if !dirs.contains(&dir) {
+                dirs.push(dir);
+            }
+        }
+    }
+    let rlib = rlib.unwrap_or_else(|| panic!("{command:?} reported no hegel rlib"));
+    (rlib, dirs)
 }
 
 /// Normalize the raw rustc stderr for the E0283 case down to its stable
@@ -334,8 +390,7 @@ fn normalize_e0283_stderr(raw: &str) -> String {
 /// it decides which types in the `required for` notes are elided to `...`,
 /// and would otherwise follow the width of whatever terminal ran the test.
 fn compile_failing_case(case: &str) -> String {
-    let search_dirs = crate_search_dirs();
-    let rlib = newest_hegel_rlib(&search_dirs);
+    let (rlib, search_dirs) = hegel_build();
     let out_dir = tempfile::tempdir().unwrap();
     let mut command = Command::new(rustc_binary());
     command

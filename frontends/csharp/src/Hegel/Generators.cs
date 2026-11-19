@@ -1,5 +1,6 @@
 using System.Numerics;
 using Hegel.Native;
+using Hegel.Temporal;
 
 namespace Hegel;
 
@@ -204,26 +205,108 @@ public static class Generators
     /// <summary>UUIDs.</summary>
     public static UuidGenerator Uuids() => new(null);
 
+    /// <summary>
+    /// The date and time generators, under the names every Hegel frontend shares. The values they
+    /// draw, and <see cref="ZoneSource"/>, are in the <see cref="Hegel.Temporal"/> namespace.
+    /// </summary>
+    public static class Temporal
+    {
+        /// <summary>Dates, of any year from 1 to 9999 unless bounded.</summary>
+        /// <remarks>
+        /// The temporal generators check their settings with the engine as each is given. A call that
+        /// completes a conflict among the settings given so far throws an <see cref="ArgumentException"/>
+        /// with the engine's message, whatever order they came in: <c>Min(a).Max(b)</c> and
+        /// <c>Max(b).Min(a)</c> both throw at the second call when <c>a</c> is after <c>b</c>. A setting
+        /// not yet given counts as unrestricted, not as its default, so a conflict with a default that
+        /// a later call could still change is left to the first draw, which reports it as a
+        /// <see cref="HegelUsageException"/>.
+        /// </remarks>
+        public static DateGenerator Dates() => new();
+
+        /// <summary>Times of day, to the tick unless <see cref="TimeGenerator.Precision"/> says otherwise.</summary>
+        /// <remarks>Bad arguments are reported as <see cref="Dates"/> describes.</remarks>
+        public static TimeGenerator Times() => new();
+
+        /// <summary>Date-times without a time zone.</summary>
+        /// <remarks>Bad arguments are reported as <see cref="Dates"/> describes.</remarks>
+        public static DateTimeGenerator DateTimes() => new();
+
+        /// <summary>Instants: <see cref="DateTimeOffset"/>s with a zero offset, anywhere in that type's range unless bounded.</summary>
+        /// <remarks>Bad arguments are reported as <see cref="Dates"/> describes.</remarks>
+        public static InstantGenerator Instants() => new();
+
+        /// <summary>UTC offsets: whole minutes between -14:00 and +14:00 unless the generator is told otherwise.</summary>
+        /// <remarks>
+        /// Bad arguments are reported as <see cref="Dates"/> describes. A bound beyond the default
+        /// range on its own (<c>Offsets().Min(TimeSpan.FromHours(15))</c>) conflicts only with the
+        /// other bound's default, so it is the first draw that reports it.
+        /// </remarks>
+        public static OffsetGenerator Offsets() => new();
+
+        /// <summary>Exact lengths of time of either sign, anywhere in <see cref="TimeSpan"/>'s range unless bounded.</summary>
+        /// <remarks>Bad arguments are reported as <see cref="Dates"/> describes.</remarks>
+        public static DurationGenerator Durations() => new();
+
+        /// <summary>Calendar spans: a count of each unit from years to nanoseconds, all of one sign.</summary>
+        /// <remarks>
+        /// Bad arguments are reported as <see cref="Dates"/> describes. Unit bounds that conflict with
+        /// the default sign policy are reported by the first draw, since <see cref="SpanGenerator.Sign"/>
+        /// could still change it.
+        /// </remarks>
+        public static SpanGenerator Spans() => new();
+
+        /// <summary>
+        /// Time zones: those of <see cref="ZoneSource.Default"/>, as it is now, that this system has a
+        /// <see cref="TimeZoneInfo"/> for.
+        /// </summary>
+        /// <remarks>
+        /// Bad arguments are reported as <see cref="Dates"/> describes. A name the zone source lacks
+        /// is reported by a builder method only once <see cref="ZoneGenerator.Source"/> has named the
+        /// source, and otherwise by the first draw, since the source could still be changed. That
+        /// <see cref="ZoneGenerator.AllowLinks"/> and <see cref="ZoneGenerator.AllowLegacy"/> leave
+        /// none of the source's zones to draw is always reported by the first draw, since
+        /// <see cref="ZoneGenerator.Names"/>, which they do not apply to, could still be called.
+        /// </remarks>
+        public static ZoneGenerator Zones() => new(ZoneSource.Default);
+
+        /// <summary>
+        /// Date-times in time zones: a wall-clock time in a zone of <see cref="ZoneSource.Default"/>,
+        /// as it is now, with the offset and instant that zone gives it. Times the clocks skipped are
+        /// not drawn unless <see cref="ZonedDateTimeGenerator.AllowImaginary"/> asks for them; repeated
+        /// times are.
+        /// </summary>
+        /// <remarks>
+        /// Bad arguments are reported as <see cref="Dates"/> describes, and what depends on the zone
+        /// source as <see cref="Zones"/> describes. A drawn value .NET cannot hold (an instant outside
+        /// the years 1 to 9999, which a wall-clock time within hours of either end can name) rejects
+        /// the test case.
+        /// </remarks>
+        public static ZonedDateTimeGenerator ZonedDateTimes() => new(ZoneSource.Default);
+    }
+
     /// <summary>Dates.</summary>
-    public static DateGenerator Dates() => new(DateOnly.MinValue, DateOnly.MaxValue);
+    [Obsolete("Use Generators.Temporal.Dates().")]
+    public static DateGenerator Dates() => Temporal.Dates();
 
     /// <summary>Times of day.</summary>
-    public static TimeGenerator Times() => new(TimeOnly.MinValue, TimeOnly.MaxValue);
+    [Obsolete("Use Generators.Temporal.Times().")]
+    public static TimeGenerator Times() => Temporal.Times();
 
     /// <summary>Date-times without a time zone.</summary>
-    public static DateTimeGenerator DateTimes() => new(DateTime.MinValue, DateTime.MaxValue);
+    [Obsolete("Use Generators.Temporal.DateTimes().")]
+    public static DateTimeGenerator DateTimes() => Temporal.DateTimes();
 
     /// <summary>Durations, from zero up.</summary>
-    public static TimeSpanGenerator TimeSpans() => new(TimeSpan.Zero, TimeSpan.MaxValue);
+    [Obsolete("Use Generators.Temporal.Durations(), which draws durations of either sign: Generators.Temporal.Durations().Min(TimeSpan.Zero) is this generator.")]
+    public static DurationGenerator TimeSpans() => DurationGenerator.NonNegative();
 
     /// <summary>UTC offsets: whole minutes between -14:00 and +14:00.</summary>
-    public static UtcOffsetGenerator UtcOffsets() => new(-UtcOffsetGenerator.Limit, UtcOffsetGenerator.Limit);
+    [Obsolete("Use Generators.Temporal.Offsets().")]
+    public static OffsetGenerator UtcOffsets() => Temporal.Offsets();
 
     /// <summary>The system's time zones.</summary>
-    public static PrintableGenerator<TimeZoneInfo> TimeZones() => SampledFrom(SystemTimeZones.Value);
-
-    private static readonly Lazy<TimeZoneInfo[]> SystemTimeZones = new(() =>
-        TimeZoneInfo.GetSystemTimeZones().OrderBy(z => z.Id, StringComparer.Ordinal).ToArray());
+    [Obsolete("Use Generators.Temporal.Zones().")]
+    public static ZoneGenerator TimeZones() => Temporal.Zones();
 
     /// <summary>Strings matching <paramref name="pattern"/>, a regular expression in Python syntax.</summary>
     public static RegexGenerator FromRegex(string pattern)

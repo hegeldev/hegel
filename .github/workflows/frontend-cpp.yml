@@ -13,7 +13,9 @@ permissions: {}
 
 jobs:
   # The test suite (with and without the throw-site hook) on every supported
-  # compiler and standard library.
+  # compiler and standard library. The main build turns on
+  # HEGEL_BOOST_DATE_TIME, so it also fetches Boost's headers and runs the
+  # Boost.DateTime adapter's tests; the coverage job does the same.
   test:
     name: test (${{ matrix.compiler }}${{ matrix.stdlib && format(' with {0}', matrix.stdlib) || '' }})
     runs-on: ubuntu-24.04
@@ -85,8 +87,10 @@ jobs:
 
   # The library consumed the ways a downstream project would: as a
   # subdirectory, through FetchContent (of the monorepo, with the frontend
-  # as its source subdirectory), from an installed package, and with its own
-  # tests switched on.
+  # as its source subdirectory), from an installed package, from a package
+  # installed with HEGEL_BOOST_DATE_TIME (whose hegel::boost_date_time target
+  # needs an installed Boost; HEGEL_REQUIRE_BOOST fails that mode instead of
+  # skipping it when there is none), and with its own tests switched on.
   consumer:
     name: consumer
     runs-on: ubuntu-latest
@@ -97,8 +101,14 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+      - name: Install Boost
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libboost-dev
       - uses: ./.github/actions/setup-rust
       - name: Run consumer tests
+        env:
+          HEGEL_REQUIRE_BOOST: 1
         run: just cpp::check-consumer-all
 
   # The library built and installed with HEGEL_REFLECTION=OFF, consumed from

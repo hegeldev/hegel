@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Numerics;
 using Hegel.Native;
+using Hegel.Temporal;
 using Hegel.Tests.Support;
 using Xunit;
 
@@ -92,6 +93,10 @@ public class PrinterTests
         Assert.Equal("DateTime.Parse(\"2024-02-29T13:04:05\")", Runs.Render(new DateTime(2024, 2, 29, 13, 4, 5)));
         Assert.Equal("DateTimeOffset.Parse(\"2024-02-29T13:04:05+02:00\")", Runs.Render(new DateTimeOffset(2024, 2, 29, 13, 4, 5, TimeSpan.FromHours(2))));
         Assert.Equal("TimeSpan.Parse(\"1.02:03:04\")", Runs.Render(new TimeSpan(1, 2, 3, 4)));
+        Assert.Equal("new CalendarSpan {Years = 1, Days = -3}", Runs.Render(new CalendarSpan { Years = 1, Days = -3 }));
+        Assert.Equal(
+            "new ZonedDateTime(DateTime.Parse(\"2024-02-29T13:04:05\"), TimeSpan.Parse(\"00:00:00\"), TimeZoneInfo.FindSystemTimeZoneById(\"UTC\"), DateTimeOffset.Parse(\"2024-02-29T13:04:05+00:00\"), WallTimeKind.Unique)",
+            Runs.Render(new ZonedDateTime(new DateTime(2024, 2, 29, 13, 4, 5), TimeSpan.Zero, TimeZoneInfo.Utc, new DateTimeOffset(2024, 2, 29, 13, 4, 5, TimeSpan.Zero), WallTimeKind.Unique), 300));
     }
 
     [Fact]

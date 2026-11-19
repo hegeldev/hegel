@@ -1,5 +1,6 @@
 package dev.hegel;
 
+import dev.hegel.generators.temporal.ZoneSource;
 import dev.hegel.lowlevel.Libhegel;
 import dev.hegel.lowlevel.LibraryLoader;
 import java.nio.file.Path;
@@ -10,7 +11,8 @@ import java.nio.file.Path;
  * <p>This is deliberately a singleton: it caches only the loaded native library and its resolved
  * function pointers, which are immutable and thread-safe to share. It holds no per-test state —
  * each property test gets its own engine ({@code hegel_run_t}, created per run in {@link Runner}),
- * so nothing leaks between tests. The library is located and opened exactly once on first use.
+ * so nothing leaks between tests. The library is located and opened exactly once on first use, and
+ * {@link ZoneSource#getDefault()} is made the engine's default zone source before it is handed out.
  * Tests may install a fake binding via {@link #setForTesting} and restore the real one with {@link
  * #reset}.
  */
@@ -26,6 +28,7 @@ final class Engine {
             Path path = LibraryLoader.fromEnvironment().resolve();
             Libhegel lib = Libhegel.load(path);
             LibraryLoader.warnOnVersionMismatch(lib.version(), LibraryLoader.targetEngineVersion(), System.err);
+            ZoneSource.installDefault(lib);
             instance = lib;
         }
         return instance;

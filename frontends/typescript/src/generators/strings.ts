@@ -304,39 +304,6 @@ export function ipAddresses(options?: IpAddressOptions): PrintableGenerator<stri
   return oneOf(new IpAddressesGenerator(4), new IpAddressesGenerator(6));
 }
 
-class DatesGenerator extends SchemaStringGenerator {
-  constructor() {
-    super({ type: "date" });
-  }
-}
-
-/** Generate date strings (ISO 8601). */
-export function dates(): PrintableGenerator<string> {
-  return new DatesGenerator();
-}
-
-class TimesGenerator extends SchemaStringGenerator {
-  constructor() {
-    super({ type: "time" });
-  }
-}
-
-/** Generate time strings (ISO 8601). */
-export function times(): PrintableGenerator<string> {
-  return new TimesGenerator();
-}
-
-class DatetimesGenerator extends SchemaStringGenerator {
-  constructor() {
-    super({ type: "datetime" });
-  }
-}
-
-/** Generate datetime strings (ISO 8601). */
-export function datetimes(): PrintableGenerator<string> {
-  return new DatetimesGenerator();
-}
-
 export interface UuidOptions {
   /** Restrict to an RFC 4122 version. Omit to generate UUIDs of any version. */
   version?: UuidVersion;

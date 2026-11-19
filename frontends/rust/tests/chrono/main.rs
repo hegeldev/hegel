@@ -9,3 +9,5 @@ mod enums;
 mod naive;
 mod offset;
 mod printing;
+#[cfg(feature = "chrono-tz")]
+mod time_zone;

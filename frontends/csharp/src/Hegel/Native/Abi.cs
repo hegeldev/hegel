@@ -2,7 +2,8 @@ namespace Hegel.Native;
 
 /// <summary>
 /// Constants from the libhegel C ABI (<c>libhegel/include/hegel.h</c>): return codes, run and case
-/// statuses, phase and health-check bit masks, and the sentinels the structured primitives use.
+/// statuses, phase and health-check bit masks, the sentinels the structured primitives use and the
+/// temporal draws' policies.
 /// Kept in sync with the engine header.
 /// </summary>
 internal static class Abi
@@ -76,4 +77,51 @@ internal static class Abi
     internal const int FilterAttempts = 3;
 
     internal const uint NoMaxCodepoint = 0xFFFFFFFF;
+
+    internal const int PrecisionNanoseconds = 0;
+    internal const int PrecisionMicroseconds = 1;
+    internal const int PrecisionMilliseconds = 2;
+    internal const int PrecisionSeconds = 3;
+    internal const int PrecisionMinutes = 4;
+    internal const int PrecisionHours = 5;
+
+    internal const uint ImaginaryAllow = 0;
+    internal const uint ImaginaryAvoid = 1;
+
+    internal const int AmbiguousBoth = 0;
+    internal const int AmbiguousEarlier = 1;
+    internal const int AmbiguousLater = 2;
+
+    internal const int OffsetGranularityHours = 0;
+    internal const int OffsetGranularityQuarterHours = 1;
+    internal const int OffsetGranularityMinutes = 2;
+    internal const int OffsetGranularitySeconds = 3;
+
+    /// <summary>The widest offset the engine draws, in seconds: 25:59:59.</summary>
+    internal const int OffsetLimitSeconds = 93599;
+
+    internal const uint SpanUnitYears = 0;
+    internal const uint SpanUnitMonths = 1;
+    internal const uint SpanUnitWeeks = 2;
+    internal const uint SpanUnitDays = 3;
+    internal const uint SpanUnitHours = 4;
+    internal const uint SpanUnitMinutes = 5;
+    internal const uint SpanUnitSeconds = 6;
+    internal const uint SpanUnitMilliseconds = 7;
+    internal const uint SpanUnitMicroseconds = 8;
+    internal const uint SpanUnitNanoseconds = 9;
+    internal const int SpanUnitCount = 10;
+
+    internal const int SpanSignUniform = 0;
+    internal const int SpanSignMixed = 1;
+    internal const int SpanSignNonNegative = 2;
+
+    internal const int ZoneAfterHold = 0;
+    internal const int ZoneAfterInfer = 2;
+
+    internal const uint TimezoneKindUnique = 0;
+    internal const uint TimezoneKindGap = 1;
+    internal const uint TimezoneKindFold = 2;
+
+    internal const uint TimezoneTagLegacy = 1 << 14;
 }

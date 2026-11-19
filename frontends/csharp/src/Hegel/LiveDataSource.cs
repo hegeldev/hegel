@@ -1,5 +1,6 @@
 using System.Numerics;
 using Hegel.Native;
+using Hegel.Temporal;
 
 namespace Hegel;
 
@@ -131,43 +132,114 @@ internal sealed class LiveDataSource : IDataSource
         }
     }
 
-    public DateOnly GenerateDate(DateOnly min, DateOnly max)
+    public ILibhegel Binding() => _lib;
+
+    public DateOnly GenerateDate(DateOnly min, DateOnly max, EngineHandle? options)
     {
         CheckLive();
-        Translate(_lib.GenerateDate(_tc, ToNative(min), ToNative(max), out var value), "generate_date");
-        return FromNative(value);
+        try
+        {
+            Translate(_lib.GenerateDate(_tc, TemporalValues.Date(min), TemporalValues.Date(max), options?.Handle ?? 0, out var value), "generate_date");
+            return TemporalValues.Date(value);
+        }
+        finally
+        {
+            GC.KeepAlive(options);
+        }
     }
 
-    public TimeOnly GenerateTime(TimeOnly min, TimeOnly max)
+    public TimeOnly GenerateTime(TimeOnly min, TimeOnly max, Precision precision)
     {
         CheckLive();
-        Translate(_lib.GenerateTime(_tc, ToNative(min), ToNative(max), out var value), "generate_time");
-        return FromNative(value);
+        Translate(_lib.GenerateTime(_tc, TemporalValues.Time(min), TemporalValues.LastTime(max), (uint)precision, out var value), "generate_time");
+        return TemporalValues.Time(value);
     }
 
-    public DateTime GenerateDatetime(DateTime min, DateTime max)
+    public DateTime GenerateDatetime(DateTime min, DateTime max, Precision precision)
     {
         CheckLive();
-        var nativeMin = new HegelDateTime { Date = ToNative(DateOnly.FromDateTime(min)), Time = ToNative(TimeOnly.FromDateTime(min)) };
-        var nativeMax = new HegelDateTime { Date = ToNative(DateOnly.FromDateTime(max)), Time = ToNative(TimeOnly.FromDateTime(max)) };
-        Translate(_lib.GenerateDatetime(_tc, nativeMin, nativeMax, out var value), "generate_datetime");
-        return FromNative(value.Date).ToDateTime(FromNative(value.Time), DateTimeKind.Unspecified);
+        Translate(_lib.GenerateDatetime(_tc, TemporalValues.DateTime(min), TemporalValues.LastDateTime(max), (uint)precision, out var value), "generate_datetime");
+        return TemporalValues.DateTime(value);
     }
 
-    internal static HegelDate ToNative(DateOnly date) => new() { Year = date.Year, Month = (byte)date.Month, Day = (byte)date.Day };
-
-    internal static DateOnly FromNative(HegelDate date) => new(date.Year, date.Month, date.Day);
-
-    internal static HegelTime ToNative(TimeOnly time) => new()
+    public DateTimeOffset GenerateInstant(DateTimeOffset min, DateTimeOffset max, Precision precision)
     {
-        Hour = (byte)time.Hour,
-        Minute = (byte)time.Minute,
-        Second = (byte)time.Second,
-        Nanosecond = (uint)(time.Ticks % TimeSpan.TicksPerSecond * 100),
-    };
+        CheckLive();
+        Translate(_lib.GenerateTimestamp(_tc, TemporalValues.Timestamp(min), TemporalValues.LastTimestamp(max), (uint)precision, out var value), "generate_timestamp");
+        return TemporalValues.Instant(value);
+    }
 
-    internal static TimeOnly FromNative(HegelTime time) =>
-        new(((time.Hour * 60L + time.Minute) * 60 + time.Second) * TimeSpan.TicksPerSecond + time.Nanosecond / 100);
+    public TimeSpan GenerateOffset(int minSeconds, int maxSeconds, OffsetGranularity granularity)
+    {
+        CheckLive();
+        Translate(_lib.GenerateOffset(_tc, minSeconds, maxSeconds, (uint)granularity, out var value), "generate_offset");
+        return TemporalValues.Offset(value.Seconds);
+    }
+
+    public TimeSpan GenerateDuration(TimeSpan min, TimeSpan max, Precision precision)
+    {
+        CheckLive();
+        Translate(_lib.GenerateDuration(_tc, TemporalValues.Duration(min), TemporalValues.LastDuration(max), (uint)precision, out var value), "generate_duration");
+        return TemporalValues.Duration(value);
+    }
+
+    public CalendarSpan GenerateSpan(EngineHandle spec)
+    {
+        CheckLive();
+        try
+        {
+            Translate(_lib.GenerateSpan(_tc, spec.Handle, out var value), "generate_span");
+            return TemporalValues.Span(value);
+        }
+        finally
+        {
+            GC.KeepAlive(spec);
+        }
+    }
+
+    public string GenerateTimezone(EngineHandle spec)
+    {
+        CheckLive();
+        try
+        {
+            Translate(_lib.GenerateTimezone(_tc, spec.Handle, out var name), "generate_timezone");
+            return name;
+        }
+        finally
+        {
+            GC.KeepAlive(spec);
+        }
+    }
+
+    public HegelZonedDateTime GenerateZonedDatetime(EngineHandle timezoneSpec, EngineHandle zonedSpec, out string zone)
+    {
+        CheckLive();
+        try
+        {
+            Translate(_lib.GenerateZonedDatetime(_tc, timezoneSpec.Handle, zonedSpec.Handle, out var value, out zone), "generate_zoned_datetime");
+            return value;
+        }
+        finally
+        {
+            GC.KeepAlive(timezoneSpec);
+            GC.KeepAlive(zonedSpec);
+        }
+    }
+
+    public HegelZonedDateTime GenerateZonedDatetimeForZone(EngineHandle source, string name, EngineHandle zonedSpec)
+    {
+        CheckLive();
+        try
+        {
+            Translate(_lib.GenerateZonedDatetimeForZone(_tc, source.Handle, name, zonedSpec.Handle, out var value), "generate_zoned_datetime_for_zone");
+            return value;
+        }
+        finally
+        {
+            GC.KeepAlive(source);
+            GC.KeepAlive(zonedSpec);
+        }
+    }
 
     public Guid GenerateUuid(int? version)
     {

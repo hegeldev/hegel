@@ -4,6 +4,8 @@ module Public = struct
   include Generators_collections
   include Generators_combinators
   include Generators_functions
+  module Temporal = Generators_temporal
+  include Generators_temporal.Legacy
 end
 
 include Public
@@ -27,6 +29,9 @@ module Private = struct
 
   let group = Generators_core.group
   let label_of = Generators_core.label_of
+  let live_temporal_specs () = Atomic.get Generators_temporal.live_specs
+  let live_zone_sources () = Atomic.get Generators_temporal.Zone_source.live
+  let zone_loader_target = Generators_temporal.Zone_source.loader_target
 end
 
 module Ppx_internal = struct

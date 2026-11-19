@@ -2,6 +2,7 @@ using System.Numerics;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
+using Hegel.Temporal;
 
 namespace Hegel;
 
@@ -221,27 +222,35 @@ internal static class Derive
         }
         if (type == typeof(TimeSpan))
         {
-            return Generators.TimeSpans();
+            return DurationGenerator.NonNegative();
         }
         if (type == typeof(DateOnly))
         {
-            return Generators.Dates();
+            return Generators.Temporal.Dates();
         }
         if (type == typeof(TimeOnly))
         {
-            return Generators.Times();
+            return Generators.Temporal.Times();
         }
         if (type == typeof(DateTime))
         {
-            return Generators.DateTimes();
+            return Generators.Temporal.DateTimes();
         }
         if (type == typeof(DateTimeOffset))
         {
-            return Generators.DateTimes().WithOffsets(Generators.UtcOffsets());
+            return Generators.Temporal.DateTimes().WithOffsets(Generators.Temporal.Offsets());
         }
         if (type == typeof(TimeZoneInfo))
         {
-            return Generators.TimeZones();
+            return Generators.Temporal.Zones();
+        }
+        if (type == typeof(ZonedDateTime))
+        {
+            return Generators.Temporal.ZonedDateTimes();
+        }
+        if (type == typeof(CalendarSpan))
+        {
+            return Generators.Temporal.Spans();
         }
         return null;
     }
