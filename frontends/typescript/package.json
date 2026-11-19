@@ -1,6 +1,6 @@
 {
   "name": "@hegeldev/hegel",
-  "version": "0.5.9",
+  "version": "0.6.0",
   "description": "Property-based testing for TypeScript",
   "type": "module",
   "repository": {
