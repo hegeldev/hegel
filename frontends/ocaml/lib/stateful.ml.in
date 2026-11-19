@@ -469,7 +469,7 @@ let run_concurrent_internal
   ?step_count
   tc
   =
-  Concurrency_internal.with_scope concurrency ~f:(fun concurrency ->
+  Concurrency_internal.with_pool concurrency ~f:(fun spawn_join_n ->
     run_concurrent_core
       ~init
       ~rules:
@@ -485,7 +485,7 @@ let run_concurrent_internal
             let rule = List.nth rules rule_index in
             rule.Concurrent_rule.name, fun tc ctx -> rule.Concurrent_rule.step tc ctx init)
         in
-        (dispatch_round [@mode portable]) concurrency.spawn_join_n tc ~num_workers ~work)
+        (dispatch_round [@mode portable]) spawn_join_n tc ~num_workers ~work)
       ?min_concurrency
       ?max_concurrency
       ?sexp_of_state

@@ -8,22 +8,26 @@ type 'ctx t (** @canonical Hegel.Concurrency.t *)
 
 type outcome = (exn * Printexc.raw_backtrace) option
 
-type 'ctx workers =
-  { spawn_join_n :
-      n:int
-      -> (f:('ctx MODE(local) -> int -> outcome) MODE(portable)
-          -> outcome list MODE(contended))
-         MODE(local)
-  }
+type 'ctx dispatch =
+  n:int
+  -> (f:('ctx MODE(local) -> int -> outcome) MODE(portable)
+      -> outcome list MODE(contended))
+     MODE(local)
 
 #ifdef OXCAML
-val of_workers : 'ctx workers MODE(local) -> 'ctx t MODE(local) @@ portable
+type 'ctx pool_runner =
+  { run : 'a. f:('ctx dispatch @ local -> 'a) @ local unyielding -> 'a }
+
+val of_pool_runner : 'ctx pool_runner @ local -> 'ctx t @ local @@ portable
+val of_dispatch : 'ctx dispatch MODE(local) -> 'ctx t MODE(local) @@ portable
 #endif
 
-val with_scope
-  :  'ctx t MODE(local)
-  -> f:('ctx workers MODE(local) -> 'a) MODE(local)
-  -> 'a
+#ifdef OXCAML
+val with_pool : 'ctx t @ local -> f:('ctx dispatch @ local -> 'a) @ local unyielding -> 'a
+
+#else
+val with_pool : 'ctx t -> f:('ctx dispatch -> 'a) -> 'a
+#endif
 
 val thread_pool : create:((unit -> unit) -> unit -> Thread.t) -> unit t
 

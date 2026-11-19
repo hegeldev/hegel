@@ -2,7 +2,7 @@ module C = Hegel.Concurrency
 module I = Hegel.Concurrency_internal
 
 let spawn_join_n (concurrency : unit C.t) ~n ~f =
-  I.with_scope concurrency ~f:(fun workers -> workers.spawn_join_n ~n ~f)
+  I.with_pool concurrency ~f:(fun spawn_join_n -> spawn_join_n ~n ~f)
 ;;
 
 let outcomes_follow_worker_indices (cap : unit C.t) () =
@@ -40,16 +40,16 @@ let check_outcomes outcomes =
 let scope_exception_stops_workers (cap : unit C.t) () =
   let seen : Thread.t option Atomic.t list = List.init 3 (fun _ -> Atomic.make None) in
   Alcotest.check_raises "scope failure" (Failure "scope") (fun () ->
-    I.with_scope cap ~f:(fun workers ->
+    I.with_pool cap ~f:(fun spawn_join_n ->
       check_outcomes
-        (workers.spawn_join_n ~n:3 ~f:(fun () i ->
+        (spawn_join_n ~n:3 ~f:(fun () i ->
            Atomic.set (List.nth seen i) (Some (Thread.self ()));
            None));
       failwith "scope"));
   List.iter (fun t -> Thread.join (Option.get (Atomic.get t))) seen;
-  I.with_scope cap ~f:(fun workers ->
+  I.with_pool cap ~f:(fun spawn_join_n ->
     check_outcomes
-      (workers.spawn_join_n ~n:3 ~f:(fun () i ->
+      (spawn_join_n ~n:3 ~f:(fun () i ->
          if Thread.id (Thread.self ())
             = Thread.id (Option.get (Atomic.get (List.nth seen i)))
          then failwith "worker reused across runs";
@@ -191,12 +191,12 @@ let workers_sharing_one_domain_make_progress () =
   let cap =
     I.domain_pool ~max_domains:1 ~create_thread:Thread.create ~spawn_domain:Domain.spawn
   in
-  I.with_scope cap ~f:(fun workers ->
+  I.with_pool cap ~f:(fun spawn_join_n ->
     for _ = 1 to 3 do
       let arrived = Atomic.make 0 in
       let deadline = Unix.gettimeofday () +. 5.0 in
       check_outcomes
-        (workers.spawn_join_n ~n:4 ~f:(fun () _ ->
+        (spawn_join_n ~n:4 ~f:(fun () _ ->
            Atomic.incr arrived;
            while Atomic.get arrived < 4 && Unix.gettimeofday () < deadline do
              Thread.yield ()
