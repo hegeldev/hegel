@@ -15,6 +15,7 @@
 //! so the flags reach every setting the engine has, in the same vocabulary
 //! as `hegel.toml` and the `HEGEL_*` variables.
 
+use crate::ffi::InvalidSetting;
 use crate::runner::Settings;
 /// Result of applying CLI overrides. The macro wrapper in `#[hegel::main]`
 /// dispatches on this to print messages and exit the process; keeping the
@@ -103,7 +104,7 @@ where
         let Some(value) = value else {
             let probe = [(key, String::new())];
             return Err(match crate::ffi::settings_with_strings(&settings, &probe) {
-                Err((_, message)) if is_unknown_setting(&message) => {
+                Err((_, InvalidSetting::UnknownSetting)) => {
                     CliError::Parse(format!("Unknown argument: {arg}"))
                 }
                 _ => CliError::Parse(format!("{arg} requires a value")),
@@ -117,17 +118,18 @@ where
         overrides.push((key, value));
         i += 1;
     }
-    crate::ffi::settings_with_strings(&settings, &overrides).map_err(|(index, message)| {
+    crate::ffi::settings_with_strings(&settings, &overrides).map_err(|(index, rejection)| {
         let key = &overrides[index].0;
         let flag = format!("--{}", key.replace('_', "-"));
-        if is_unknown_setting(&message) {
-            CliError::Parse(format!("Unknown argument: {flag}"))
-        } else {
-            let message = without_function_name(&message);
-            let reason = message
-                .strip_prefix(&format!("`{key}` "))
-                .unwrap_or(message);
-            CliError::Parse(format!("{flag} {reason}"))
+        match rejection {
+            InvalidSetting::UnknownSetting => CliError::Parse(format!("Unknown argument: {flag}")),
+            InvalidSetting::InvalidValue(message) => {
+                let message = without_function_name(&message);
+                let reason = message
+                    .strip_prefix(&format!("`{key}` "))
+                    .unwrap_or(message);
+                CliError::Parse(format!("{flag} {reason}"))
+            }
         }
     })
 }
@@ -138,10 +140,6 @@ fn without_function_name(message: &str) -> &str {
     message
         .strip_prefix("hegel_settings_set_from_string: ")
         .unwrap_or(message)
-}
-
-fn is_unknown_setting(message: &str) -> bool {
-    without_function_name(message).starts_with("unknown setting")
 }
 
 /// Extract `--profile <NAME>` (or `--profile=NAME`) from `args` before the
