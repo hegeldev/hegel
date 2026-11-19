@@ -504,8 +504,11 @@ module Concurrent_rule : sig PORTABLE
     -> ?weight:float
     -> name:string
     -> step:
-         (Internal.test_case -> 'ctx MODE(local) -> 'state MODE(contended) -> unit)
-         MODE(portable)
+         (Internal.test_case
+          -> 'ctx MODE(local)
+          -> 'state MODE(contended)
+          -> unit)
+       MODE(portable)
     -> unit
     -> ('ctx, 'state) t
 
@@ -626,7 +629,7 @@ end
     [step_count] defaults to 50 and bounds the number of rounds per test case.
     Each worker may execute multiple rules in a round.
 
-    Thread scheduling can make a run nondeterministic. [Settings.nondeterminism_strictness] 
+    Thread scheduling can make a run nondeterministic. [Settings.nondeterminism_strictness]
     controls how Hegel handles nondeterminism.
 
     Raises [Hegel.Usage_error] if [M] has no rules, [step_count] is below 1,
@@ -688,8 +691,10 @@ val run_concurrent_core
   -> invariants:invariant_info list
   -> check_invariant:(int -> Internal.test_case -> unit) MODE(local)
   -> run_round:
-       (state_machine:Internal.state_machine -> num_workers:int -> Concurrency.outcome list)
-       MODE(local)
+       (state_machine:Internal.state_machine
+        -> num_workers:int
+        -> Concurrency.outcome list)
+     MODE(local)
   -> ?min_concurrency:int
   -> ?max_concurrency:int
   -> ?sexp_of_state:('state -> Sexplib0.Sexp.t)
@@ -707,7 +712,8 @@ val%template dispatch_round
      MODE(local)
   -> Internal.test_case
   -> num_workers:int
-  -> work:('ctx MODE(local) -> worker_index:int -> Internal.test_case -> unit) MODE(m)
+  -> work:('ctx MODE(local) -> worker_index:int -> Internal.test_case -> unit)
+     MODE(m)
   -> Concurrency.outcome list
 [@@mode (m, c) = ((portable, contended), (nonportable, uncontended))]
 

@@ -520,28 +520,28 @@ def public_features() -> str:
 def run_coverage() -> Path:
     """Run coverage analysis and generate LCOV report.
 
-    A `--workspace` pass with every additive feature enabled. Running the
-    whole workspace (rather than hegeltest alone) covers the engine in
-    libhegel/src — both through hegeltest driving it over the C ABI and through
-    libhegel's own embedded tests — instead of excluding libhegel as a mere
-    dependency, while still covering the hegeltest frontend.
+    A `--workspace` pass with every additive feature enabled covers the
+    engine in libhegel/src through hegeltest (and the other workspace tests)
+    driving it over the C ABI, while still covering the hegeltest frontend.
+    Two more passes run libhegel's own tests: its integration tests, then its
+    lib tests. The LCOV files are union-merged per line.
 
-    A second pass then re-exports libhegel's lib tests on their own, after
-    cleaning the workspace artifacts, and the two LCOV files are union-merged
-    per line. This is a correctness requirement, not belt-and-braces: the
-    workspace pass links two distinct compilations of libhegel (the shared
-    rlib every other binary uses, and the crate's own `--test` build for its
-    embedded tests), and every `#[no_mangle] hegel_*` function has the *same*
-    coverage-record name but a *different* record hash in each. `llvm-cov`
-    resolves that collision by whichever object it reads the function's
-    mapping from and silently drops the other compilation's counts — so a
-    line inside a `no_mangle` function covered only by libhegel's embedded
-    tests deterministically shows as uncovered in the workspace export. The
-    isolated pass sees only the lib test's own object after workspace
-    artifacts are cleaned, where those counts resolve correctly; merging at
-    the LCOV line level is immune to record-name
-    collisions. Mangled functions are unaffected either way (their record
-    names are unique per compilation).
+    libhegel's tests stay out of the workspace pass (`--exclude-from-test`;
+    its sources stay in the report), and its lib tests out of its
+    integration-test pass. Every
+    `#[no_mangle] hegel_*` function has the same coverage-record name in
+    every compilation of libhegel but a different record hash, and `llvm-cov`
+    keeps the counts of whichever compilation it reads that record from,
+    silently dropping the others. With the crate's own `--test` build in the
+    workspace pass alongside the rlib every other binary links, which one
+    wins depends on object order, and that changes with crate metadata such
+    as the version: a version bump once left 1253 lines of the C ABI, covered
+    by the frontends, reported as uncovered. The integration tests link the
+    rlib and the lib tests are the `--test` build, so they cannot share a
+    pass either. Each pass links a single compilation of libhegel, so each record is unambiguous, and merging at
+    the LCOV line level is immune to record-name collisions. Mangled
+    functions are unaffected either way (their record names are unique per
+    compilation).
 
     hegel-macros is excluded from the report. It's a proc-macro crate whose
     code runs at the *compile* time of the test crates, which `cargo llvm-cov`
@@ -557,6 +557,7 @@ def run_coverage() -> Path:
     print("Running coverage analysis...")
     lcov_path = Path("lcov.info")
     raw_lcov = Path("lcov-all.info")
+    hegel_c_tests_lcov = Path("lcov-libhegel-tests.info")
     hegel_c_lib_lcov = Path("lcov-libhegel-lib.info")
     target_dir = cargo_target_dir()
 
@@ -570,6 +571,8 @@ def run_coverage() -> Path:
             # (frontends/python/justfile `check-coverage`), not by Rust tests.
             "--exclude",
             "hegel-python",
+            "--exclude-from-test",
+            "hegeltest-c",
             "--features",
             public_features(),
             # proc-macro compile-time execution isn't runtime coverage; keep
@@ -583,14 +586,21 @@ def run_coverage() -> Path:
     )
 
     _run_lcov_phase(
+        cargo_args=["-p", "hegeltest-c", "--test", "*"],
+        output=hegel_c_tests_lcov,
+        label="libhegel integration tests",
+        target_dir=target_dir,
+    )
+
+    _run_lcov_phase(
         cargo_args=["-p", "hegeltest-c", "--lib"],
         output=hegel_c_lib_lcov,
-        label="libhegel lib tests, isolated no_mangle records",
+        label="libhegel lib tests",
         target_dir=target_dir,
     )
 
     print("  Merging LCOV output...")
-    _merge_lcov([raw_lcov, hegel_c_lib_lcov], lcov_path)
+    _merge_lcov([raw_lcov, hegel_c_tests_lcov, hegel_c_lib_lcov], lcov_path)
     if not lcov_path.exists():
         print("ERROR: lcov.info was not generated", file=sys.stderr)
         sys.exit(1)

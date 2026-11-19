@@ -165,7 +165,6 @@ val stderr_color : string -> string -> string
     rather than being discarded. *)
 val require : test_case -> ?msg:string -> bool -> unit
 
-
 (**/**)
 
 (** [draw_display_name tc ~label ~repeatable] returns the display name to print
@@ -389,7 +388,7 @@ type rerun_hint =
       re-raised. [Hegel.main] exits from it.
     @param failure_blobs
       a list of base64 encoded strings (blobs), where each string encodes the
-      choices made in a failing test run. Only the first blob is used. The blob 
+      choices made in a failing test run. Only the first blob is used. The blob
       is only guaranteed to reproduce a failure within a specific version of Hegel *)
 val run_test
   :  settings:Settings.t

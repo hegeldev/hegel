@@ -337,6 +337,7 @@ val settings_get_stop_on_first_failure : context -> settings -> bool
 val settings_get_show_statistics : context -> settings -> bool
 val settings_get_print_blob : context -> settings -> bool
 val settings_get_backend : context -> settings -> backend
+
 val settings_get_nondeterminism_strictness
   :  context
   -> settings
@@ -512,13 +513,11 @@ val generate_string : context -> test_case -> string_generator -> string
     call a loader's release hook, which is a ctypes callback. [free] must not
     refer to [value]. A caller reading a handle out of [value] keeps [value]
     alive across the engine call with [Sys.opaque_identity]. *)
-val free_when_unreachable
-  :  (unit -> unit)
+val free_when_unreachable : (unit -> unit)
 #ifdef OXCAML
      @ portable
 #endif
-  -> 'a
-  -> unit
+-> 'a -> unit
 
 (** [free_unreachable ()] runs the frees {!free_when_unreachable} has queued.
     {!context_new} calls it, and so does a draw from a temporal
@@ -736,7 +735,12 @@ val timezone_resolve : context -> zone_source -> string -> T.Datetime.t -> T.Res
 
 (** [timezone_offset_at ctx source name instant] is the offset a zone of
     [source] has in force at [instant]. *)
-val timezone_offset_at : context -> zone_source -> string -> T.Instant.t -> T.Zone_offset.t
+val timezone_offset_at
+  :  context
+  -> zone_source
+  -> string
+  -> T.Instant.t
+  -> T.Zone_offset.t
 
 (** [timezone_info ctx source name] is what [source] knows about [name]. *)
 val timezone_info : context -> zone_source -> string -> T.Zone_info.t
@@ -924,11 +928,7 @@ val state_machine_add_invariant
     The engine owns rule selection.
     Raises {!Usage_error} if no rule was declared or the machine was already
     started, and {!Stop_test} when the engine's choice budget is exhausted. *)
-val state_machine_start
-  :  context
-  -> test_case
-  -> state_machine:state_machine
-  -> int
+val state_machine_start : context -> test_case -> state_machine:state_machine -> int
 
 (** [state_machine_next_group ctx tc ~state_machine] starts the machine's next
     round on the root handle, returning the round's concurrency group id and

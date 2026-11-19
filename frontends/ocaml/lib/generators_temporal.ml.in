@@ -523,7 +523,8 @@ module Zone_source = struct
     in
     match after with
     | Hold -> held
-    | Rule { standard; dst = None } -> { held with after = 1; standard = raw_type standard }
+    | Rule { standard; dst = None } ->
+      { held with after = 1; standard = raw_type standard }
     | Rule { standard; dst = Some { daylight; starts; ends } } ->
       { held with
         after = 1
@@ -556,8 +557,8 @@ module Zone_source = struct
     Atomic.incr live;
     Ffi.free_when_unreachable
       (fun () ->
-         Ffi.zone_source_free zone_handle;
-         Atomic.decr live)
+        Ffi.zone_source_free zone_handle;
+        Atomic.decr live)
       source;
     source
   ;;
@@ -572,13 +573,13 @@ module Zone_source = struct
   ;;
 
   let add_oracle
-        source
-        name
-        ?next_transition
-        ?(first_year = 1900)
-        ?(last_year = 2100)
-        ?(infer = false)
-        offset_at
+    source
+    name
+    ?next_transition
+    ?(first_year = 1900)
+    ?(last_year = 2100)
+    ?(infer = false)
+    offset_at
     =
     let offset_at ctx instant =
       guarded ctx ~failure:None (fun () -> Some (raw_type (offset_at instant)))
@@ -703,13 +704,13 @@ let cell ~(free : (_ -> unit) MODE(portable)) =
   let cell = { slot } in
   Ffi.free_when_unreachable
     (fun () ->
-       Locked.protect slot (fun slot ->
-         Option.iter
-           (fun spec ->
-              free spec;
-              Atomic.decr live_specs)
-           !slot;
-         slot := None))
+      Locked.protect slot (fun slot ->
+        Option.iter
+          (fun spec ->
+            free spec;
+            Atomic.decr live_specs)
+          !slot;
+        slot := None))
     cell;
   cell
 ;;
@@ -742,25 +743,24 @@ let configured ~free spec configure =
 ;;
 
 let dates
-      ?(min_value = Date.min_value)
-      ?(max_value = Date.max_value)
-      ?(weekdays =
-        [ `Monday; `Tuesday; `Wednesday; `Thursday; `Friday; `Saturday; `Sunday ])
-      ?(months =
-        [ `January
-        ; `February
-        ; `March
-        ; `April
-        ; `May
-        ; `June
-        ; `July
-        ; `August
-        ; `September
-        ; `October
-        ; `November
-        ; `December
-        ])
-      ()
+  ?(min_value = Date.min_value)
+  ?(max_value = Date.max_value)
+  ?(weekdays = [ `Monday; `Tuesday; `Wednesday; `Thursday; `Friday; `Saturday; `Sunday ])
+  ?(months =
+    [ `January
+    ; `February
+    ; `March
+    ; `April
+    ; `May
+    ; `June
+    ; `July
+    ; `August
+    ; `September
+    ; `October
+    ; `November
+    ; `December
+    ])
+  ()
   : _ MODE(portable)
   =
   let min_value = Date.raw min_value in
@@ -786,10 +786,10 @@ let dates
 ;;
 
 let times
-      ?(min_value = Time.min_value)
-      ?(max_value = Time.max_value)
-      ?(precision = `Nanoseconds)
-      ()
+  ?(min_value = Time.min_value)
+  ?(max_value = Time.max_value)
+  ?(precision = `Nanoseconds)
+  ()
   : _ MODE(portable)
   =
   let min_value = Time.raw min_value in
@@ -804,10 +804,10 @@ let times
 ;;
 
 let datetimes
-      ?(min_value = Datetime.min_value)
-      ?(max_value = Datetime.max_value)
-      ?(precision = `Nanoseconds)
-      ()
+  ?(min_value = Datetime.min_value)
+  ?(max_value = Datetime.max_value)
+  ?(precision = `Nanoseconds)
+  ()
   : _ MODE(portable)
   =
   let min_value = Datetime.raw min_value in
@@ -822,10 +822,10 @@ let datetimes
 ;;
 
 let instants
-      ?(min_value = Instant.min_value)
-      ?(max_value = Instant.max_value)
-      ?(precision = `Nanoseconds)
-      ()
+  ?(min_value = Instant.min_value)
+  ?(max_value = Instant.max_value)
+  ?(precision = `Nanoseconds)
+  ()
   : _ MODE(portable)
   =
   let min_value = Instant.raw min_value in
@@ -840,11 +840,11 @@ let instants
 ;;
 
 let offsets
-      ?(min_value = -Offset.max_seconds)
-      ?(max_value = Offset.max_seconds)
-      ?(granularity = `Seconds)
-      ?(allow_unknown = false)
-      ()
+  ?(min_value = -Offset.max_seconds)
+  ?(max_value = Offset.max_seconds)
+  ?(granularity = `Seconds)
+  ?(allow_unknown = false)
+  ()
   : _ MODE(portable)
   =
   let min_value = i32 min_value in
@@ -879,13 +879,13 @@ let with_zones cell ctx (query : zone_query) f =
 ;;
 
 let zone_query
-      ?names
-      ?(allow_links = true)
-      ?(allow_legacy = false)
-      ?(allow_unknown = false)
-      ?(allow_opaque = false)
-      ?source
-      ()
+  ?names
+  ?(allow_links = true)
+  ?(allow_legacy = false)
+  ?(allow_unknown = false)
+  ?(allow_opaque = false)
+  ?source
+  ()
   =
   { names
   ; allow_links
@@ -942,8 +942,8 @@ let zoned_bounds min_value max_value min_instant max_instant =
   | _ ->
     raise
       (Internal.Usage_error
-         "zoned_datetimes: cannot combine wall-clock bounds (min_value / max_value) \
-          with instant bounds (min_instant / max_instant)")
+         "zoned_datetimes: cannot combine wall-clock bounds (min_value / max_value) with \
+          instant bounds (min_instant / max_instant)")
 ;;
 
 let zoned_spec ctx { bounds; precision; imaginary; ambiguous } =
@@ -965,8 +965,8 @@ let draw_zoned ctx handle ~zones ~zoned query options =
       zoned
       ~build:(fun () -> zoned_spec ctx options)
       (fun spec ->
-         let value, zone = Ffi.generate_zoned_datetime ctx handle zones spec in
-         Zoned_datetime.of_raw zone value))
+        let value, zone = Ffi.generate_zoned_datetime ctx handle zones spec in
+        Zoned_datetime.of_raw zone value))
 ;;
 
 let draw_zoned_in ctx handle ~zoned ~source name options =
@@ -974,32 +974,31 @@ let draw_zoned_in ctx handle ~zoned ~source name options =
     zoned
     ~build:(fun () -> zoned_spec ctx options)
     (fun spec ->
-       match
-         with_source source (fun source ->
-           Ffi.generate_zoned_datetime_for_zone ctx handle source name spec)
-       with
-       | value -> Zoned_datetime.of_raw name value
-       | exception Internal.Usage_error message ->
-         raise
-           (Internal.Usage_error
-              (message
-               ^ ". zoned_datetimes resolves the names its ~zones generator draws \
-                  against ~source (default: the default zone source when \
-                  zoned_datetimes was called): pass the zone source that has this \
-                  zone as ~source")))
+      match
+        with_source source (fun source ->
+          Ffi.generate_zoned_datetime_for_zone ctx handle source name spec)
+      with
+      | value -> Zoned_datetime.of_raw name value
+      | exception Internal.Usage_error message ->
+        raise
+          (Internal.Usage_error
+             (message
+              ^ ". zoned_datetimes resolves the names its ~zones generator draws against \
+                 ~source (default: the default zone source when zoned_datetimes was \
+                 called): pass the zone source that has this zone as ~source")))
 ;;
 
 let%template zoned_datetimes
-               ?zones:zone_generator
-               ?source
-               ?min_value
-               ?max_value
-               ?min_instant
-               ?max_instant
-               ?(precision = `Nanoseconds)
-               ?(allow_imaginary = true)
-               ?(ambiguous = `Both)
-               ()
+  ?zones:zone_generator
+  ?source
+  ?min_value
+  ?max_value
+  ?min_instant
+  ?max_instant
+  ?(precision = `Nanoseconds)
+  ?(allow_imaginary = true)
+  ?(ambiguous = `Both)
+  ()
   : _ MODE(m)
   =
   let options =
@@ -1049,10 +1048,10 @@ let%template zoned_datetimes
 ;;
 
 let durations
-      ?(min_value = Duration.min_value)
-      ?(max_value = Duration.max_value)
-      ?(precision = `Nanoseconds)
-      ()
+  ?(min_value = Duration.min_value)
+  ?(max_value = Duration.max_value)
+  ?(precision = `Nanoseconds)
+  ()
   : _ MODE(portable)
   =
   let min_value = Duration.raw min_value in
@@ -1067,18 +1066,18 @@ let durations
 ;;
 
 let spans
-      ?years
-      ?months
-      ?weeks
-      ?days
-      ?hours
-      ?minutes
-      ?seconds
-      ?milliseconds
-      ?microseconds
-      ?nanoseconds
-      ?(sign = `Uniform)
-      ()
+  ?years
+  ?months
+  ?weeks
+  ?days
+  ?hours
+  ?minutes
+  ?seconds
+  ?milliseconds
+  ?microseconds
+  ?nanoseconds
+  ?(sign = `Uniform)
+  ()
   : _ MODE(portable)
   =
   let units =
@@ -1117,10 +1116,10 @@ let spans
             configured ~free:Ffi.span_spec_free (Ffi.span_spec_new ctx) (fun spec ->
               List.iteri
                 (fun unit bounds ->
-                   Option.iter
-                     (fun (min_value, max_value) ->
-                        Ffi.span_spec_set_unit_bounds ctx spec ~unit ~min_value ~max_value)
-                     bounds)
+                  Option.iter
+                    (fun (min_value, max_value) ->
+                      Ffi.span_spec_set_unit_bounds ctx spec ~unit ~min_value ~max_value)
+                    bounds)
                 units;
               Ffi.span_spec_set_sign ctx spec sign;
               Ffi.span_spec_validate ctx spec))
@@ -1201,11 +1200,11 @@ module Legacy = struct
   let last_date = { year = 9999; month = 12; day = 31 }
 
   let%template make_dates
-                 ~(of_date : (date -> 'a) MODE(m))
-                 ~(sexp_of : ('a -> Sexplib0.Sexp.t) MODE(m))
-                 ?(min_date = first_date)
-                 ?(max_date = last_date)
-                 ()
+    ~(of_date : (date -> 'a) MODE(m))
+    ~(sexp_of : ('a -> Sexplib0.Sexp.t) MODE(m))
+    ?(min_date = first_date)
+    ?(max_date = last_date)
+    ()
     : ('a, printable) generator MODE(m)
     =
     (with_printer [@mode m])
@@ -1215,11 +1214,11 @@ module Legacy = struct
   ;;
 
   let%template make_times
-                 ~(of_time : (time -> 'a) MODE(m))
-                 ~(sexp_of : ('a -> Sexplib0.Sexp.t) MODE(m))
-                 ?(min_time = Time.min_value)
-                 ?(max_time = Time.max_value)
-                 ()
+    ~(of_time : (time -> 'a) MODE(m))
+    ~(sexp_of : ('a -> Sexplib0.Sexp.t) MODE(m))
+    ?(min_time = Time.min_value)
+    ?(max_time = Time.max_value)
+    ()
     : ('a, printable) generator MODE(m)
     =
     (with_printer [@mode m])
@@ -1229,11 +1228,11 @@ module Legacy = struct
   ;;
 
   let%template make_datetimes
-                 ~(of_datetime : (date * time -> 'a) MODE(m))
-                 ~(sexp_of : ('a -> Sexplib0.Sexp.t) MODE(m))
-                 ?(min_datetime = first_date, Time.min_value)
-                 ?(max_datetime = last_date, Time.max_value)
-                 ()
+    ~(of_datetime : (date * time -> 'a) MODE(m))
+    ~(sexp_of : ('a -> Sexplib0.Sexp.t) MODE(m))
+    ?(min_datetime = first_date, Time.min_value)
+    ?(max_datetime = last_date, Time.max_value)
+    ()
     : ('a, printable) generator MODE(m)
     =
     let datetime (date, time) : Datetime.t = { date; time } in
