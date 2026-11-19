@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.14.1 - 2026-11-19
+
+This patch names a run of a `@HegelTest` method after the test, its `@DisplayName` or the method name.
+
 ## 0.14.0 - 2026-11-19
 
 This release moves date and time generation into the engine, which draws time zones from this JVM's own zone rules or from a pinned IANA time zone database it bundles, gathers every date and time generator into the new `Generators.Temporals` class under the names every Hegel frontend shares, and adds `instants()`, `zonedDatetimes()` and `spans()` along with the date and time options every frontend shares. A few changes can break existing code or tests.
