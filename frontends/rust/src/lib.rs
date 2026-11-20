@@ -74,7 +74,11 @@
 //! primitive generators, such as [`integers`](generators::integers),
 //! [`floats`](generators::floats), and [`text`](generators::text), and combinators that allow
 //! you to make generators out of other generators, such as [`vecs`](generators::vecs) and
-//! [`tuples`].
+//! [`tuples`]. Dates, times, instants, UTC offsets, IANA time zones, zoned datetimes,
+//! durations and calendar spans are drawn by the engine too, as the plain values of
+//! [`generators::temporal`] through [`dates`](generators::temporal::dates),
+//! [`zoned_datetimes`](generators::temporal::zoned_datetimes) and the other generators
+//! listed there, with the [`extras`] mapping them onto the `jiff`, `chrono` and `time` crates.
 //!
 //! For example, you can use [`vecs`](generators::vecs) to generate a vector of integers:
 //!

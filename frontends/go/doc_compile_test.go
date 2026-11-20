@@ -28,6 +28,18 @@ var _ = math.MinInt
 
 `
 
+const temporalDocTestHeader = `package doccheck_test
+
+import (
+	"testing"
+	"time"
+
+	"hegel.dev/go/hegel"
+	"hegel.dev/go/hegel/temporal"
+)
+
+`
+
 var markdownGoBlock = regexp.MustCompile("(?ms)^```go\n(.*?)^```")
 
 func TestDocExamplesCompile(t *testing.T) {
@@ -51,27 +63,33 @@ func TestDocExamplesCompile(t *testing.T) {
 		}
 	}
 
-	// hegel.go — code blocks from package doc comment
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "hegel.go", nil, parser.ParseComments)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var p comment.Parser
-	doc := p.Parse(f.Doc.Text())
-	for _, block := range doc.Content {
-		code, ok := block.(*comment.Code)
-		if !ok {
-			continue
+	// hegel.go and temporal/temporal.go — code blocks from package doc comments
+	for _, source := range []struct{ path, header string }{
+		{"hegel.go", docTestHeader},
+		{filepath.Join("temporal", "temporal.go"), temporalDocTestHeader},
+	} {
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, source.path, nil, parser.ParseComments)
+		if err != nil {
+			t.Fatal(err)
 		}
-		text := strings.TrimSpace(code.Text)
-		if strings.HasPrefix(text, "func Test") {
-			files = append(files, docTestHeader+text+"\n")
+		var p comment.Parser
+		doc := p.Parse(f.Doc.Text())
+		found := false
+		for _, block := range doc.Content {
+			code, ok := block.(*comment.Code)
+			if !ok {
+				continue
+			}
+			text := strings.TrimSpace(code.Text)
+			if strings.HasPrefix(text, "func Test") {
+				files = append(files, source.header+text+"\n")
+				found = true
+			}
 		}
-	}
-
-	if len(files) == 0 {
-		t.Fatal("no compilable code examples found")
+		if !found {
+			t.Fatalf("no compilable code examples found in %s", source.path)
+		}
 	}
 
 	// Write to temp dir and compile

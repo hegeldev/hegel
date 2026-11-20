@@ -103,42 +103,38 @@ namespace hegel::generators {
 
     /// @}
 
-    /// @name Datetime
+    /// @name Datetime (deprecated)
     /// @{
 
     /**
-     * @brief Generate calendar dates.
+     * @brief Generate ISO 8601 date strings (`YYYY-MM-DD`) from 0001-01-01
+     * to 9999-12-31.
      *
-     * Generates a date between January 01, 0001 through December 31, 9999 in
-     * the proleptic Gregorian calendar) and returns the ISO 8601 serialization
-     * (`YYYY-MM-DD`). Values shrink towards January 1st, 2000.
-     *
+     * @deprecated Use temporal::dates(), which draws a temporal::Date.
      * @return Generator producing ISO 8601 date strings.
      */
+    [[deprecated("use hegel::generators::temporal::dates()")]]
     Generator<std::string> dates();
 
     /**
-     * @brief Generate times of day.
+     * @brief Generate ISO 8601 time strings (`HH:MM:SS[.ffffff]`, the
+     * fraction present iff the microsecond is nonzero).
      *
-     * Generates a time between 00:00:00 and 23:59:59.999999 and returns the
-     * ISO 8601 serialization (`HH:MM:SS[.ffffff]`). Values shrink towards
-     * midnight. No timezone component is requested; generated values are naive.
-     *
+     * @deprecated Use temporal::times(), which draws a temporal::Time.
      * @return Generator producing ISO 8601 time strings.
      */
+    [[deprecated("use hegel::generators::temporal::times()")]]
     Generator<std::string> times();
 
     /**
-     * @brief Generate datetimes.
+     * @brief Generate naive ISO 8601 datetime strings
+     * (`YYYY-MM-DDTHH:MM:SS[.ffffff]`) from 0001-01-01 to 9999-12-31.
      *
-     * Generates datetimes between January 01, 0001 at 00:00:00 and December 31,
-     * 9999 at 23:59:59.999999 and returns the ISO 8601 serialization
-     * (`YYYY-MM-DDTHH:MM:SS[.ffffff]`).
-     * No timezone is requested; generated values are naive. Examples from this
-     * strategy shrink towards midnight on January 1st 2000.
-     *
+     * @deprecated Use temporal::datetimes(), which draws a
+     * temporal::DateTime.
      * @return Generator producing ISO 8601 datetime strings.
      */
+    [[deprecated("use hegel::generators::temporal::datetimes()")]]
     Generator<std::string> datetimes();
 
     /// @}

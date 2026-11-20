@@ -8,6 +8,7 @@ open System.Numerics
 open System.Runtime.CompilerServices
 open Microsoft.FSharp.Reflection
 open Hegel
+open Hegel.FSharp.Temporal
 
 /// Prints values as the F# that builds them: what the draws of a failing test are shown as under
 /// <c>Hegel.test</c>, and what a generator that prints its values itself should produce.
@@ -384,6 +385,15 @@ module Repr =
             else
                 let types = case.GetFields() |> Array.map (fun f -> f.PropertyType)
                 applied p (caseName case + "(") (Array.zip types values)
+        elif rt = typeof<ZonedDateTime> then
+            applied p "ZonedDateTime(" (fields rt [| "LocalDateTime"; "Offset"; "Zone"; "Instant"; "Kind" |] value)
+        elif rt = typeof<CalendarSpan> then
+            let units =
+                (value :?> CalendarSpan).Units()
+                |> Seq.filter (fun struct (_, count) -> count <> 0L)
+                |> Seq.map (fun struct (name, count) -> name + " = " + integerLiteral count)
+
+            p.Text("CalendarSpan(" + String.Join(", ", units) + ")")
         elif value :? IEnumerable then
             sequence p "seq [" "]" (genericArg 0 rt) (value :?> IEnumerable)
         else

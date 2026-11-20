@@ -34,13 +34,19 @@ public final class HegelTestExtension implements TestTemplateInvocationContextPr
 
     @Override
     public Stream<TestTemplateInvocationContext> provideTestTemplateInvocationContexts(ExtensionContext context) {
-        return Stream.of(new HegelInvocationContext());
+        return Stream.of(new HegelInvocationContext(context.getDisplayName()));
     }
 
     private static final class HegelInvocationContext implements TestTemplateInvocationContext {
+        private final String displayName;
+
+        HegelInvocationContext(String displayName) {
+            this.displayName = displayName;
+        }
+
         @Override
         public String getDisplayName(int invocationIndex) {
-            return "hegel";
+            return displayName;
         }
 
         @Override

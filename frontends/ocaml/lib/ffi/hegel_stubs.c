@@ -1,6 +1,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #include <caml/alloc.h>
 #include <caml/callback.h>
@@ -283,4 +284,320 @@ value hegel_ocaml_state_machine_should_check_invariant_byte(value fn, value ctx,
   return Val_long(hegel_ocaml_state_machine_should_check_invariant(
       Nativeint_val(fn), Nativeint_val(ctx), Nativeint_val(tc),
       Nativeint_val(machine), Long_val(index)));
+}
+
+/* Temporal draws. The bounds are OCaml records of ints (Temporal_types),
+   read into C structs before libhegel is called; the result is allocated as
+   the matching record after it returns. A zone draw can call a zone loader
+   written in OCaml, so no OCaml value is held across a libhegel call. */
+
+typedef struct {
+  int32_t year;
+  uint8_t month;
+  uint8_t day;
+} hegel_date_t;
+
+typedef struct {
+  uint8_t hour;
+  uint8_t minute;
+  uint8_t second;
+  uint32_t nanosecond;
+} hegel_time_t;
+
+typedef struct {
+  hegel_date_t date;
+  hegel_time_t time;
+} hegel_datetime_t;
+
+typedef struct {
+  int64_t second;
+  uint32_t nanosecond;
+} hegel_timestamp_t;
+
+typedef struct {
+  int32_t seconds;
+  bool known;
+} hegel_offset_t;
+
+typedef struct {
+  int64_t seconds;
+  int32_t nanoseconds;
+} hegel_duration_t;
+
+#define SPAN_UNITS 10
+
+typedef struct {
+  int64_t units[SPAN_UNITS];
+} hegel_span_t;
+
+typedef struct {
+  hegel_datetime_t civil;
+  int32_t offset_seconds;
+  bool offset_known;
+  bool fold;
+  uint32_t kind;
+  int32_t offset_before;
+  int32_t offset_after;
+  hegel_timestamp_t timestamp;
+} hegel_zoned_datetime_t;
+
+typedef int (*generate_date_fn)(void *, void *, hegel_date_t, hegel_date_t, void *,
+                                hegel_date_t *);
+typedef int (*generate_time_fn)(void *, void *, hegel_time_t, hegel_time_t, uint32_t,
+                                hegel_time_t *);
+typedef int (*generate_datetime_fn)(void *, void *, hegel_datetime_t, hegel_datetime_t,
+                                    uint32_t, hegel_datetime_t *);
+typedef int (*generate_timestamp_fn)(void *, void *, hegel_timestamp_t, hegel_timestamp_t,
+                                     uint32_t, hegel_timestamp_t *);
+typedef int (*generate_offset_fn)(void *, void *, int32_t, int32_t, uint32_t, bool,
+                                  hegel_offset_t *);
+typedef int (*generate_duration_fn)(void *, void *, hegel_duration_t, hegel_duration_t,
+                                    uint32_t, hegel_duration_t *);
+typedef int (*generate_span_fn)(void *, void *, void *, hegel_span_t *);
+typedef int (*generate_zoned_fn)(void *, void *, void *, void *, hegel_zoned_datetime_t *,
+                                 hegel_string_t *);
+typedef int (*generate_zoned_for_zone_fn)(void *, void *, void *, hegel_string_t, void *,
+                                          hegel_zoned_datetime_t *);
+
+static hegel_date_t date_of_value(value v) {
+  hegel_date_t d = {(int32_t)Long_val(Field(v, 0)), (uint8_t)Long_val(Field(v, 1)),
+                    (uint8_t)Long_val(Field(v, 2))};
+  return d;
+}
+
+static hegel_time_t time_of_value(value v) {
+  hegel_time_t t = {(uint8_t)Long_val(Field(v, 0)), (uint8_t)Long_val(Field(v, 1)),
+                    (uint8_t)Long_val(Field(v, 2)), (uint32_t)Long_val(Field(v, 3))};
+  return t;
+}
+
+static hegel_datetime_t datetime_of_value(value v) {
+  hegel_datetime_t dt = {date_of_value(Field(v, 0)), time_of_value(Field(v, 1))};
+  return dt;
+}
+
+static hegel_timestamp_t timestamp_of_value(value v) {
+  hegel_timestamp_t t = {Long_val(Field(v, 0)), (uint32_t)Long_val(Field(v, 1))};
+  return t;
+}
+
+static hegel_duration_t duration_of_value(value v) {
+  hegel_duration_t d = {Long_val(Field(v, 0)), (int32_t)Long_val(Field(v, 1))};
+  return d;
+}
+
+static value alloc_date(hegel_date_t d) {
+  value v = caml_alloc_small(3, 0);
+  Field(v, 0) = Val_long(d.year);
+  Field(v, 1) = Val_long(d.month);
+  Field(v, 2) = Val_long(d.day);
+  return v;
+}
+
+static value alloc_time(hegel_time_t t) {
+  value v = caml_alloc_small(4, 0);
+  Field(v, 0) = Val_long(t.hour);
+  Field(v, 1) = Val_long(t.minute);
+  Field(v, 2) = Val_long(t.second);
+  Field(v, 3) = Val_long(t.nanosecond);
+  return v;
+}
+
+static value alloc_datetime(hegel_datetime_t dt) {
+  CAMLparam0();
+  CAMLlocal3(date, time, v);
+  date = alloc_date(dt.date);
+  time = alloc_time(dt.time);
+  v = caml_alloc_small(2, 0);
+  Field(v, 0) = date;
+  Field(v, 1) = time;
+  CAMLreturn(v);
+}
+
+static value alloc_pair_of_ints(intnat a, intnat b) {
+  value v = caml_alloc_small(2, 0);
+  Field(v, 0) = Val_long(a);
+  Field(v, 1) = Val_long(b);
+  return v;
+}
+
+/* Temporal_types.Zoned.t. */
+static value alloc_zoned(const hegel_zoned_datetime_t *z) {
+  CAMLparam0();
+  CAMLlocal3(civil, timestamp, v);
+  civil = alloc_datetime(z->civil);
+  timestamp = alloc_pair_of_ints(z->timestamp.second, z->timestamp.nanosecond);
+  v = caml_alloc_small(8, 0);
+  Field(v, 0) = civil;
+  Field(v, 1) = Val_long(z->offset_seconds);
+  Field(v, 2) = Val_bool(z->offset_known);
+  Field(v, 3) = Val_bool(z->fold);
+  Field(v, 4) = Val_long(z->kind);
+  Field(v, 5) = Val_long(z->offset_before);
+  Field(v, 6) = Val_long(z->offset_after);
+  Field(v, 7) = timestamp;
+  CAMLreturn(v);
+}
+
+value hegel_ocaml_generate_date(intnat fn, intnat ctx, intnat tc, value min, value max,
+                                intnat options) {
+  hegel_date_t lo = date_of_value(min), hi = date_of_value(max), out;
+  int rc = ((generate_date_fn)fn)(PTR(ctx), PTR(tc), lo, hi, PTR(options), &out);
+  if (rc != 0) raise_status(rc);
+  return alloc_date(out);
+}
+
+value hegel_ocaml_generate_date_byte(value *argv, int argc) {
+  (void)argc;
+  return hegel_ocaml_generate_date(Nativeint_val(argv[0]), Nativeint_val(argv[1]),
+                                   Nativeint_val(argv[2]), argv[3], argv[4],
+                                   Nativeint_val(argv[5]));
+}
+
+value hegel_ocaml_generate_time(intnat fn, intnat ctx, intnat tc, value min, value max,
+                                intnat precision) {
+  hegel_time_t lo = time_of_value(min), hi = time_of_value(max), out;
+  int rc = ((generate_time_fn)fn)(PTR(ctx), PTR(tc), lo, hi, (uint32_t)precision, &out);
+  if (rc != 0) raise_status(rc);
+  return alloc_time(out);
+}
+
+value hegel_ocaml_generate_time_byte(value *argv, int argc) {
+  (void)argc;
+  return hegel_ocaml_generate_time(Nativeint_val(argv[0]), Nativeint_val(argv[1]),
+                                   Nativeint_val(argv[2]), argv[3], argv[4],
+                                   Long_val(argv[5]));
+}
+
+value hegel_ocaml_generate_datetime(intnat fn, intnat ctx, intnat tc, value min,
+                                    value max, intnat precision) {
+  hegel_datetime_t lo = datetime_of_value(min), hi = datetime_of_value(max), out;
+  int rc =
+      ((generate_datetime_fn)fn)(PTR(ctx), PTR(tc), lo, hi, (uint32_t)precision, &out);
+  if (rc != 0) raise_status(rc);
+  return alloc_datetime(out);
+}
+
+value hegel_ocaml_generate_datetime_byte(value *argv, int argc) {
+  (void)argc;
+  return hegel_ocaml_generate_datetime(Nativeint_val(argv[0]), Nativeint_val(argv[1]),
+                                       Nativeint_val(argv[2]), argv[3], argv[4],
+                                       Long_val(argv[5]));
+}
+
+value hegel_ocaml_generate_timestamp(intnat fn, intnat ctx, intnat tc, value min,
+                                     value max, intnat precision) {
+  hegel_timestamp_t lo = timestamp_of_value(min), hi = timestamp_of_value(max), out;
+  int rc =
+      ((generate_timestamp_fn)fn)(PTR(ctx), PTR(tc), lo, hi, (uint32_t)precision, &out);
+  if (rc != 0) raise_status(rc);
+  return alloc_pair_of_ints(out.second, out.nanosecond);
+}
+
+value hegel_ocaml_generate_timestamp_byte(value *argv, int argc) {
+  (void)argc;
+  return hegel_ocaml_generate_timestamp(Nativeint_val(argv[0]), Nativeint_val(argv[1]),
+                                        Nativeint_val(argv[2]), argv[3], argv[4],
+                                        Long_val(argv[5]));
+}
+
+value hegel_ocaml_generate_duration(intnat fn, intnat ctx, intnat tc, value min,
+                                    value max, intnat precision) {
+  hegel_duration_t lo = duration_of_value(min), hi = duration_of_value(max), out;
+  int rc =
+      ((generate_duration_fn)fn)(PTR(ctx), PTR(tc), lo, hi, (uint32_t)precision, &out);
+  if (rc != 0) raise_status(rc);
+  return alloc_pair_of_ints(out.seconds, out.nanoseconds);
+}
+
+value hegel_ocaml_generate_duration_byte(value *argv, int argc) {
+  (void)argc;
+  return hegel_ocaml_generate_duration(Nativeint_val(argv[0]), Nativeint_val(argv[1]),
+                                       Nativeint_val(argv[2]), argv[3], argv[4],
+                                       Long_val(argv[5]));
+}
+
+/* Returns Temporal_types.Offset.t. */
+value hegel_ocaml_generate_offset(intnat fn, intnat ctx, intnat tc, intnat lo, intnat hi,
+                                  intnat granularity, intnat allow_unknown) {
+  hegel_offset_t out = {0, false};
+  int rc = ((generate_offset_fn)fn)(PTR(ctx), PTR(tc), (int32_t)lo, (int32_t)hi,
+                                    (uint32_t)granularity, allow_unknown != 0, &out);
+  if (rc != 0) raise_status(rc);
+  value v = caml_alloc_small(2, 0);
+  Field(v, 0) = Val_long(out.seconds);
+  Field(v, 1) = Val_bool(out.known);
+  return v;
+}
+
+value hegel_ocaml_generate_offset_byte(value *argv, int argc) {
+  (void)argc;
+  return hegel_ocaml_generate_offset(Nativeint_val(argv[0]), Nativeint_val(argv[1]),
+                                     Nativeint_val(argv[2]), Long_val(argv[3]),
+                                     Long_val(argv[4]), Long_val(argv[5]),
+                                     Long_val(argv[6]));
+}
+
+value hegel_ocaml_generate_span(intnat fn, intnat ctx, intnat tc, intnat spec) {
+  hegel_span_t out;
+  int rc = ((generate_span_fn)fn)(PTR(ctx), PTR(tc), PTR(spec), &out);
+  if (rc != 0) raise_status(rc);
+  value v = caml_alloc_small(SPAN_UNITS, 0);
+  for (int i = 0; i < SPAN_UNITS; i++) Field(v, i) = Val_long(out.units[i]);
+  return v;
+}
+
+value hegel_ocaml_generate_span_byte(value fn, value ctx, value tc, value spec) {
+  return hegel_ocaml_generate_span(Nativeint_val(fn), Nativeint_val(ctx),
+                                   Nativeint_val(tc), Nativeint_val(spec));
+}
+
+/* Returns the drawn value and its zone name as a pair. */
+value hegel_ocaml_generate_zoned(intnat fn, intnat free_fn, intnat ctx, intnat tc,
+                                 intnat zones, intnat spec) {
+  CAMLparam0();
+  CAMLlocal3(zone, zoned, pair);
+  hegel_zoned_datetime_t out;
+  hegel_string_t name = {NULL, 0};
+  int rc =
+      ((generate_zoned_fn)fn)(PTR(ctx), PTR(tc), PTR(zones), PTR(spec), &out, &name);
+  if (rc != 0) raise_status(rc);
+  zone = caml_alloc_initialized_string(name.len, name.data);
+  ((owned_string_free_fn)free_fn)(PTR(ctx), &name);
+  zoned = alloc_zoned(&out);
+  pair = caml_alloc_small(2, 0);
+  Field(pair, 0) = zoned;
+  Field(pair, 1) = zone;
+  CAMLreturn(pair);
+}
+
+value hegel_ocaml_generate_zoned_byte(value *argv, int argc) {
+  (void)argc;
+  return hegel_ocaml_generate_zoned(Nativeint_val(argv[0]), Nativeint_val(argv[1]),
+                                    Nativeint_val(argv[2]), Nativeint_val(argv[3]),
+                                    Nativeint_val(argv[4]), Nativeint_val(argv[5]));
+}
+
+/* The zone name is copied out of the OCaml heap first: a zone loader written
+   in OCaml can run during the call and move it. */
+value hegel_ocaml_generate_zoned_for_zone(intnat fn, intnat ctx, intnat tc,
+                                          intnat source, value name, intnat spec) {
+  hegel_zoned_datetime_t out;
+  size_t len = caml_string_length(name);
+  char *copy = caml_stat_alloc(len + 1);
+  memcpy(copy, String_val(name), len);
+  copy[len] = '\0';
+  hegel_string_t zone = {copy, len};
+  int rc = ((generate_zoned_for_zone_fn)fn)(PTR(ctx), PTR(tc), PTR(source), zone,
+                                            PTR(spec), &out);
+  caml_stat_free(copy);
+  if (rc != 0) raise_status(rc);
+  return alloc_zoned(&out);
+}
+
+value hegel_ocaml_generate_zoned_for_zone_byte(value *argv, int argc) {
+  (void)argc;
+  return hegel_ocaml_generate_zoned_for_zone(
+      Nativeint_val(argv[0]), Nativeint_val(argv[1]), Nativeint_val(argv[2]),
+      Nativeint_val(argv[3]), argv[4], Nativeint_val(argv[5]));
 }

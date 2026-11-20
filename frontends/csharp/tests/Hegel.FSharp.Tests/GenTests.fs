@@ -6,6 +6,7 @@ open Xunit
 open Hegel.FSharp.Tests.Support
 open Hegel
 open Hegel.FSharp
+open Hegel.FSharp.Temporal
 
 type Point = { X: int; Y: int }
 
@@ -191,17 +192,71 @@ let ``guid and temporal scalars draw the right types`` () =
     let id: Guid = draw Gen.guid
     Assert.NotEqual(Guid.Empty, id)
     Assert.StartsWith("let x_1 = Guid.Parse(\"", printed Gen.guid)
+    Assert.Equal("let x_1 = DateOnly.Parse(\"2000-01-01\")", printed Gen.Temporal.date)
+    Assert.Equal("let x_1 = TimeOnly.Parse(\"00:00:00\")", printed Gen.Temporal.time)
+    Assert.Equal("let x_1 = DateTime.Parse(\"2000-01-01T00:00:00\")", printed Gen.Temporal.dateTime)
+    Assert.Equal("let x_1 = DateTimeOffset.Parse(\"2000-01-01T00:00:00+00:00\")", printed Gen.Temporal.dateTimeOffset)
+    Assert.Equal("let x_1 = DateTimeOffset.Parse(\"2000-01-01T00:00:00+00:00\")", printed Gen.Temporal.instant)
+    holds Gen.Temporal.instant (fun instant -> instant.Offset = TimeSpan.Zero)
+    Assert.Equal("let x_1 = TimeSpan.Parse(\"00:00:00\")", printed Gen.Temporal.offset)
+
+    holds Gen.Temporal.offset (fun offset ->
+        abs offset.TotalHours <= 14.0 && offset.Ticks % TimeSpan.TicksPerMinute = 0L)
+
+    Assert.Equal("let x_1 = TimeSpan.Parse(\"00:00:00\")", printed Gen.Temporal.duration)
+    holds (Gen.Temporal.duration.Max(TimeSpan.Zero)) (fun duration -> duration <= TimeSpan.Zero)
+    Assert.Equal("let x_1 = CalendarSpan()", printed Gen.Temporal.span)
+    Assert.Equal("let x_1 = CalendarSpan(Days = 1L)", printed (Gen.Temporal.span.Days(1L, 5L)))
+
+    holds (Gen.Temporal.span.Days(1L, 5L).Hours(0L, 3L)) (fun span ->
+        span.Days >= 1L && span.Days <= 5L && span.Years = 0L)
+
+    Assert.Equal("let x_1 = TimeZoneInfo.FindSystemTimeZoneById(\"UTC\")", printed (Gen.Temporal.zone ()))
+    let zone: TimeZoneInfo = draw (Gen.Temporal.zone ())
+    Assert.NotNull zone
+
+    Assert.Equal(
+        "let x_1 = ZonedDateTime(DateTime.Parse(\"2000-01-01T00:00:00\"),\n"
+        + "              TimeSpan.Parse(\"00:00:00\"),\n"
+        + "              TimeZoneInfo.FindSystemTimeZoneById(\"UTC\"),\n"
+        + "              DateTimeOffset.Parse(\"2000-01-01T00:00:00+00:00\"),\n"
+        + "              WallTimeKind.Unique)",
+        printed (Gen.Temporal.zonedDateTime ())
+    )
+
+    holds (Gen.Temporal.zonedDateTime ()) (fun zoned -> zoned.Zone.GetUtcOffset zoned.Instant = zoned.Offset)
+    let offset: DateTimeOffset = draw Gen.Temporal.dateTimeOffset
+    Assert.True(abs offset.Offset.TotalHours <= 14.0)
+
+[<Fact>]
+let ``zone generators read the default zone source when they are made`` () =
+    let fixedZone =
+        TimeZoneInfo.CreateCustomTimeZone("Test/Fixed", TimeSpan.FromHours 2.0, "Test/Fixed", "Test/Fixed")
+
+    let previous = ZoneSource.SetDefault(ZoneSource.FromTimeZones fixedZone)
+
+    try
+        holds (Gen.Temporal.zone ()) (fun zone -> Object.ReferenceEquals(zone, fixedZone))
+        holds (Gen.Temporal.zonedDateTime ()) (fun zoned -> zoned.Offset = TimeSpan.FromHours 2.0)
+    finally
+        ZoneSource.SetDefault previous |> ignore
+
+    holds (Gen.Temporal.zone ()) (fun zone -> not (Object.ReferenceEquals(zone, fixedZone)))
+
+#nowarn "44"
+
+[<Fact>]
+let ``the obsolete temporal names still draw`` () =
     Assert.Equal("let x_1 = DateOnly.Parse(\"2000-01-01\")", printed Gen.dateOnly)
     Assert.Equal("let x_1 = TimeOnly.Parse(\"00:00:00\")", printed Gen.timeOnly)
     Assert.Equal("let x_1 = DateTime.Parse(\"2000-01-01T00:00:00\")", printed Gen.dateTime)
     Assert.Equal("let x_1 = DateTimeOffset.Parse(\"2000-01-01T00:00:00+00:00\")", printed Gen.dateTimeOffset)
     Assert.Equal("let x_1 = TimeSpan.Parse(\"00:00:00\")", printed Gen.timeSpan)
+    holds Gen.timeSpan (fun duration -> duration >= TimeSpan.Zero)
     Assert.Equal("let x_1 = TimeSpan.Parse(\"00:00:00\")", printed Gen.utcOffset)
-    Assert.StartsWith("let x_1 = TimeZoneInfo.FindSystemTimeZoneById(\"", printed Gen.timeZone)
-    let zone: TimeZoneInfo = draw Gen.timeZone
-    Assert.NotNull zone
-    let offset: DateTimeOffset = draw Gen.dateTimeOffset
-    Assert.True(abs offset.Offset.TotalHours <= 24.0)
+    Assert.Equal("let x_1 = TimeZoneInfo.FindSystemTimeZoneById(\"UTC\")", printed Gen.timeZone)
+
+#warnon "44"
 
 [<Fact>]
 let ``gen blocks bind return and print their value`` () =

@@ -37,6 +37,7 @@
 //! learned from every replay; a clone's record is not shrunk (only
 //! deleted) in this cut.
 
+use crate::native::draws::timezone::TimeZoneConstraint;
 use crate::native::lark::constraint::GrammarConstraint;
 use crate::native::lark::layout::Layout;
 use alloc::boxed::Box;
@@ -51,7 +52,9 @@ use crate::native::HashMap;
 use crate::native::bignum::{BigInt, ToPrimitive};
 use crate::native::core::Constraint;
 use crate::native::core::{ChoiceData, ChoiceNode, ChoiceValue, Span, flattened_len, sort_key};
-use crate::native::graph::{Addr, Frame, Graph, Ident, Run, Step, Walked};
+use crate::native::graph::{
+    Addr, Edge, Frame, Graph, GraphKey, Ident, Run, Step, ValueRank, Walked, shrink_rank,
+};
 use crate::native::nd::{self, Evidence, GauntletVerdict};
 use crate::native::shrinker::SweepMode;
 
@@ -575,31 +578,35 @@ impl GraphShrinker {
                     })
                     .await?;
             }
-            (ChoiceData::String(sc, _), ChoiceValue::String(v)) => {
-                match sc.constraint.as_ref().and_then(Constraint::grammar) {
-                    Some(constraint) => {
-                        let constraint = Arc::clone(constraint);
-                        changed |= self
-                            .shrink_grammar_string(probe, &mut key, data, &constraint, v)
-                            .await?;
-                    }
-                    None => {
-                        let mut v = v;
-                        let simplest = sc.simplest_codepoint()?;
-                        changed |= self
-                            .shrink_sequence(
-                                probe,
-                                &mut key,
-                                data,
-                                &mut v,
-                                sc.min_size,
-                                simplest,
-                                |s| ChoiceValue::String(s.to_vec()),
-                            )
-                            .await?;
-                    }
+            (ChoiceData::String(sc, _), ChoiceValue::String(v)) => match sc.constraint.as_ref() {
+                Some(Constraint::Grammar(constraint)) => {
+                    let constraint = Arc::clone(constraint);
+                    changed |= self
+                        .shrink_grammar_string(probe, &mut key, data, &constraint, v)
+                        .await?;
                 }
-            }
+                Some(Constraint::TimeZone(zones)) => {
+                    let zones = Arc::clone(zones);
+                    changed |= self
+                        .shrink_timezone_string(probe, &mut key, data, &zones, &v)
+                        .await?;
+                }
+                _ => {
+                    let mut v = v;
+                    let simplest = sc.simplest_codepoint()?;
+                    changed |= self
+                        .shrink_sequence(
+                            probe,
+                            &mut key,
+                            data,
+                            &mut v,
+                            sc.min_size,
+                            simplest,
+                            |s| ChoiceValue::String(s.to_vec()),
+                        )
+                        .await?;
+                }
+            },
             _ => {}
         }
         Ok(changed)
@@ -645,6 +652,61 @@ impl GraphShrinker {
                 None => return Ok(changed),
             }
         }
+    }
+
+    /// The ladder for a time zone name, `text` now: the lowest-ranked
+    /// allowed name, then each name below the current one on the rank
+    /// ladder from the nearest down, starting over from the first
+    /// accepted. The graph's key ranks such a name by its ladder position
+    /// ([`Self::rank`]), so every step down is an improvement whatever
+    /// the spelling.
+    async fn shrink_timezone_string(
+        &mut self,
+        probe: &mut dyn GraphProbe,
+        key: &mut EdgeKey,
+        data: &ChoiceData,
+        zones: &TimeZoneConstraint,
+        text: &[u32],
+    ) -> Result<bool, RunError> {
+        let mut position = zones.position(text).unwrap_or(0);
+        let mut changed = false;
+        'again: while position > 0 {
+            for candidate in core::iter::once(0).chain((1..position).rev()) {
+                let value = ChoiceValue::String(zones.name_at(candidate).to_vec());
+                if self.try_value(probe, key, data, value).await? {
+                    position = candidate;
+                    changed = true;
+                    continue 'again;
+                }
+            }
+            break;
+        }
+        Ok(changed)
+    }
+
+    /// The rank of the value of `edge`, which leaves the node of identity
+    /// `ident`, in a graph's key: a time zone name by its position on the
+    /// ladder of the constraint learned for that draw, as the main
+    /// shrinker's sort key ranks it, and every other value by
+    /// [`shrink_rank`].
+    fn rank(&self, ident: &Ident, edge: &Edge) -> ValueRank {
+        let zones = self
+            .constraints
+            .get(&(ident.clone(), edge.addr.clone()))
+            .and_then(ChoiceData::as_string)
+            .and_then(|(sc, _)| sc.constraint.as_ref()?.timezone());
+        match (zones, &edge.value) {
+            (Some(zones), ChoiceValue::String(name)) => {
+                let position = zones.position(name).unwrap_or(zones.ladder().len());
+                (3, position as u64, Vec::new())
+            }
+            _ => shrink_rank(&edge.value),
+        }
+    }
+
+    /// The shrink key of `graph` under [`Self::rank`].
+    fn key_of(&self, graph: &Graph) -> GraphKey {
+        graph.key(|ident, edge| self.rank(ident, edge))
     }
 
     /// The ladder for a sequence value: halve its length toward `min_len`,
@@ -777,7 +839,7 @@ impl GraphShrinker {
             candidate.retain_settled(&settled);
         }
         let graph = candidate.pruned();
-        if graph.key() >= self.graph.key() {
+        if self.key_of(&graph) >= self.key_of(&self.graph) {
             return Ok(Verdict::Rejected);
         }
         let witness = hegel_internal_unwrap!(

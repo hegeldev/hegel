@@ -3,6 +3,7 @@ namespace Hegel.FSharp
 open System
 open System.Runtime.CompilerServices
 open Hegel
+open Hegel.FSharp.Temporal
 
 /// The generator catalogue for F#. The scalar generators are the C# ones, whose builder methods
 /// (<c>Gen.int.Min(0).Max(10)</c>) narrow them; the collection, option, tuple, record and union
@@ -187,27 +188,75 @@ module Gen =
     /// GUIDs; <c>.Version</c> picks a UUID version.
     let guid: UuidGenerator = Generators.Uuids()
 
+    /// The date and time generators, under the names every Hegel frontend shares. The values they
+    /// draw, and <c>ZoneSource</c>, are in the <c>Hegel.FSharp.Temporal</c> namespace.
+    module Temporal =
+        /// Dates; <c>.Min</c>, <c>.Max</c>, <c>.Weekdays</c> and <c>.Months</c> narrow them.
+        let date: DateGenerator = Generators.Temporal.Dates()
+
+        /// Times of day; <c>.Min</c>, <c>.Max</c> and <c>.Precision</c> narrow them.
+        let time: TimeGenerator = Generators.Temporal.Times()
+
+        /// Date-times without a time zone; <c>.Min</c>, <c>.Max</c> and <c>.Precision</c> narrow them,
+        /// and <c>.WithOffsets</c> gives them a UTC offset.
+        let dateTime: DateTimeGenerator = Generators.Temporal.DateTimes()
+
+        /// Date-times with a UTC offset.
+        let dateTimeOffset: Generator<DateTimeOffset> =
+            Generators.Temporal.DateTimes().WithOffsets(Generators.Temporal.Offsets())
+
+        /// Instants, as <c>DateTimeOffset</c>s with a zero offset; <c>.Min</c>, <c>.Max</c> and
+        /// <c>.Precision</c> narrow them.
+        let instant: InstantGenerator = Generators.Temporal.Instants()
+
+        /// UTC offsets, whole minutes between -14:00 and +14:00; <c>.Min</c>, <c>.Max</c> and
+        /// <c>.Granularity</c> narrow them.
+        let offset: OffsetGenerator = Generators.Temporal.Offsets()
+
+        /// Exact lengths of time of either sign; <c>.Min</c>, <c>.Max</c> and <c>.Precision</c> narrow them.
+        let duration: DurationGenerator = Generators.Temporal.Durations()
+
+        /// Calendar spans, a count of each unit from years to nanoseconds; the unit methods
+        /// (<c>.Years</c> to <c>.Nanoseconds</c>) bound the units drawn and <c>.Sign</c> sets their signs.
+        let span: SpanGenerator = Generators.Temporal.Spans()
+
+        /// Time zones this system has a <c>TimeZoneInfo</c> for; <c>.Names</c>, <c>.AllowLinks</c>,
+        /// <c>.AllowLegacy</c> and <c>.Source</c> narrow them. A function, because the generator draws
+        /// from <c>ZoneSource.Default</c> as it is when the generator is made.
+        let zone () : ZoneGenerator = Generators.Temporal.Zones()
+
+        /// Date-times in time zones; <c>.Zones</c>, <c>.Source</c>, <c>.Min</c>, <c>.Max</c>,
+        /// <c>.Precision</c>, <c>.Ambiguous</c> and <c>.AllowImaginary</c> narrow them. A function,
+        /// because the generator draws from <c>ZoneSource.Default</c> as it is when the generator is made.
+        let zonedDateTime () : ZonedDateTimeGenerator = Generators.Temporal.ZonedDateTimes()
+
     /// Dates; <c>.Min</c> and <c>.Max</c> bound them.
-    let dateOnly: DateGenerator = Generators.Dates()
+    [<Obsolete("Use Gen.Temporal.date.")>]
+    let dateOnly: DateGenerator = Temporal.date
 
     /// Times of day; <c>.Min</c> and <c>.Max</c> bound them.
-    let timeOnly: TimeGenerator = Generators.Times()
+    [<Obsolete("Use Gen.Temporal.time.")>]
+    let timeOnly: TimeGenerator = Temporal.time
 
-    /// Date-times; <c>.Min</c>, <c>.Max</c>, <c>.WithTimeZones</c> and <c>.WithOffsets</c> narrow them.
-    let dateTime: DateTimeGenerator = Generators.DateTimes()
+    /// Date-times without a time zone.
+    [<Obsolete("Use Gen.Temporal.dateTime.")>]
+    let dateTime: DateTimeGenerator = Temporal.dateTime
 
     /// Date-times with a UTC offset.
-    let dateTimeOffset: Generator<DateTimeOffset> =
-        Generators.DateTimes().WithOffsets(Generators.UtcOffsets())
+    [<Obsolete("Use Gen.Temporal.dateTimeOffset.")>]
+    let dateTimeOffset: Generator<DateTimeOffset> = Temporal.dateTimeOffset
 
-    /// Durations; <c>.Min</c> and <c>.Max</c> bound them.
-    let timeSpan: TimeSpanGenerator = Generators.TimeSpans()
+    /// Durations, from zero up; <c>.Min</c> and <c>.Max</c> bound them.
+    [<Obsolete("Use Gen.Temporal.duration, which draws durations of either sign: Gen.Temporal.duration.Min(TimeSpan.Zero) is this generator.")>]
+    let timeSpan: DurationGenerator = DurationGenerator.NonNegative()
 
     /// UTC offsets; <c>.Min</c> and <c>.Max</c> bound them.
-    let utcOffset: UtcOffsetGenerator = Generators.UtcOffsets()
+    [<Obsolete("Use Gen.Temporal.offset.")>]
+    let utcOffset: OffsetGenerator = Temporal.offset
 
     /// The system's time zones.
-    let timeZone: Generator<TimeZoneInfo> = Generators.TimeZones()
+    [<Obsolete("Use Gen.Temporal.zone (), which reads ZoneSource.Default when it is called.")>]
+    let timeZone: ZoneGenerator = Generators.Temporal.Zones()
 
 /// The <c>gen { }</c> block: <c>let!</c> draws from a generator and <c>return</c> gives the value,
 /// which is printed as the block's draw.

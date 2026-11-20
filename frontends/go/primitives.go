@@ -577,16 +577,27 @@ func datetimeFromTime(v time.Time) (libhegel.Datetime, error) {
 }
 
 // DateGenerator generates dates at midnight UTC within inclusive bounds.
+//
+// It is made with Dates of package [hegel.dev/go/hegel/temporal].
 type DateGenerator struct {
-	minVal *time.Time
-	maxVal *time.Time
+	minVal   *time.Time
+	maxVal   *time.Time
+	weekdays []time.Weekday
+	months   []time.Month
 }
 
 var _ Generator[time.Time] = DateGenerator{}
 
 // Dates returns a DateGenerator with default bounds of 0001-01-01 and
 // 9999-12-31. Custom bounds may use years from -999999 through 999999.
+//
+// Deprecated: Use [hegel.dev/go/hegel/temporal.Dates], which returns the same
+// generator.
 func Dates() DateGenerator {
+	return newDates()
+}
+
+func newDates() DateGenerator {
 	return DateGenerator{}
 }
 
@@ -602,6 +613,54 @@ func (g DateGenerator) Min(v time.Time) DateGenerator {
 func (g DateGenerator) Max(v time.Time) DateGenerator {
 	g.maxVal = &v
 	return g
+}
+
+// Weekdays restricts the dates to the given days of the week.
+//
+// temporal.Dates().Weekdays(time.Saturday, time.Sunday) generates weekends only. A
+// drawn date is moved to the nearest allowed one, not filtered.
+func (g DateGenerator) Weekdays(days ...time.Weekday) DateGenerator {
+	g.weekdays = append([]time.Weekday{}, days...)
+	return g
+}
+
+// Months restricts the dates to the given months.
+//
+// temporal.Dates().Months(time.February) generates dates in February only. A
+// drawn date is moved to the nearest allowed one, not filtered.
+func (g DateGenerator) Months(months ...time.Month) DateGenerator {
+	g.months = append([]time.Month{}, months...)
+	return g
+}
+
+// options returns the engine's date options for the weekday and month
+// restrictions, or nil when the generator has neither.
+func (g DateGenerator) options(ctx *libhegel.Context) (*libhegel.DateOptions, error) {
+	if g.weekdays == nil && g.months == nil {
+		return nil, nil
+	}
+	options, err := ctx.DateOptionsNew()
+	if err != nil {
+		return nil, err
+	}
+	// The engine numbers weekdays from Monday and months from January.
+	err = firstError(
+		func() error {
+			return applyDateMask(g.weekdays, time.Sunday, time.Saturday, "weekday",
+				func(d time.Weekday) int { return (int(d) + 6) % 7 },
+				func(mask uint32) error { return options.SetWeekdays(ctx, mask) })
+		},
+		func() error {
+			return applyDateMask(g.months, time.January, time.December, "month",
+				func(m time.Month) int { return int(m) - 1 },
+				func(mask uint32) error { return options.SetMonths(ctx, mask) })
+		},
+	)
+	if err != nil {
+		options.Free()
+		return nil, err
+	}
+	return options, nil
 }
 
 func (g DateGenerator) draw(tc TestCase) (time.Time, error) {
@@ -621,7 +680,14 @@ func (g DateGenerator) draw(tc TestCase) (time.Time, error) {
 		}
 	}
 	ctx, ltc := tc.engine()
-	d, err := ltc.GenerateDate(ctx, minVal, maxVal)
+	options, err := g.options(ctx)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if options != nil {
+		defer options.Free()
+	}
+	d, err := ltc.GenerateDate(ctx, minVal, maxVal, options)
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -629,9 +695,12 @@ func (g DateGenerator) draw(tc TestCase) (time.Time, error) {
 }
 
 // DatetimeGenerator generates UTC datetimes within inclusive bounds.
+//
+// It is made with Datetimes of package [hegel.dev/go/hegel/temporal].
 type DatetimeGenerator struct {
-	minVal *time.Time
-	maxVal *time.Time
+	minVal    *time.Time
+	maxVal    *time.Time
+	precision Precision
 }
 
 var _ Generator[time.Time] = DatetimeGenerator{}
@@ -639,7 +708,14 @@ var _ Generator[time.Time] = DatetimeGenerator{}
 // Datetimes returns a DatetimeGenerator with default bounds from 0001-01-01
 // through the last nanosecond of 9999-12-31. Custom bounds may use years from
 // -999999 through 999999.
+//
+// Deprecated: Use [hegel.dev/go/hegel/temporal.Datetimes], which returns the
+// same generator.
 func Datetimes() DatetimeGenerator {
+	return newDatetimes()
+}
+
+func newDatetimes() DatetimeGenerator {
 	return DatetimeGenerator{}
 }
 
@@ -657,25 +733,19 @@ func (g DatetimeGenerator) Max(v time.Time) DatetimeGenerator {
 	return g
 }
 
+// Precision makes every generated time of day a whole number of p.
+func (g DatetimeGenerator) Precision(p Precision) DatetimeGenerator {
+	g.precision = p
+	return g
+}
+
 func (g DatetimeGenerator) draw(tc TestCase) (time.Time, error) {
-	minVal := libhegel.Datetime{Date: fullDateMin}
-	maxVal := libhegel.Datetime{Date: fullDateMax, Time: fullTimeMax}
-	if g.minVal != nil {
-		var err error
-		minVal, err = datetimeFromTime(*g.minVal)
-		if err != nil {
-			return time.Time{}, err
-		}
-	}
-	if g.maxVal != nil {
-		var err error
-		maxVal, err = datetimeFromTime(*g.maxVal)
-		if err != nil {
-			return time.Time{}, err
-		}
+	minVal, maxVal, err := wallClockBounds(g.minVal, g.maxVal)
+	if err != nil {
+		return time.Time{}, err
 	}
 	ctx, ltc := tc.engine()
-	dt, err := ltc.GenerateDatetime(ctx, minVal, maxVal)
+	dt, err := ltc.GenerateDatetime(ctx, minVal, maxVal, g.precision)
 	if err != nil {
 		return time.Time{}, err
 	}

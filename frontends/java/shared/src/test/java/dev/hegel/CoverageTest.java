@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.hegel.lowlevel.Abi;
+import dev.hegel.lowlevel.Libhegel;
 import java.lang.reflect.Method;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -22,12 +23,20 @@ class CoverageTest {
         assertTrue(Label.COMPOSITE == Label.of("dev.hegel.composite"));
     }
 
-    // --- StringGeneratorHandle cleanup ---
+    // --- StringGeneratorHandle and SpecHandle cleanup ---
     @Test
     void handleFreeReleasesThroughItsBinding() {
         FakeLibhegel fake = new FakeLibhegel();
         new StringGeneratorHandle.Free(fake, FakeLibhegel.STRING_GEN).run();
         assertEquals(1, fake.freedStringGenerators);
+        new SpecHandle.Free(fake, FakeLibhegel.DATE_OPTIONS, Libhegel::dateOptionsFree).run();
+        assertEquals(1, fake.freedDateOptions);
+        new SpecHandle.Free(fake, FakeLibhegel.TIMEZONE_SPEC, Libhegel::timezoneSpecFree).run();
+        assertEquals(1, fake.freedTimezoneSpecs);
+        new SpecHandle.Free(fake, FakeLibhegel.ZONED_SPEC, Libhegel::zonedSpecFree).run();
+        assertEquals(1, fake.freedZonedSpecs);
+        new SpecHandle.Free(fake, FakeLibhegel.SPAN_SPEC, Libhegel::spanSpecFree).run();
+        assertEquals(1, fake.freedSpanSpecs);
     }
 
     // --- checked exceptions from rules fail the property, wrapped with the cause preserved ---

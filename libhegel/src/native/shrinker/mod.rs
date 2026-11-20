@@ -13,6 +13,7 @@ pub(crate) mod search;
 mod sequence;
 mod spans;
 mod strings;
+mod timezone;
 
 pub use scheduling::ShrinkPass;
 
@@ -754,6 +755,10 @@ impl<'a> Shrinker<'a> {
             ShrinkPass::new(
                 "redistribute_bytes_pairs",
                 Box::new(|sh| boxed_pass(sh.redistribute_bytes_pairs())),
+            ),
+            ShrinkPass::new(
+                "shrink_timezones",
+                Box::new(|sh| boxed_pass(sh.shrink_timezones())),
             ),
             ShrinkPass::new(
                 "shrink_grammar_strings",

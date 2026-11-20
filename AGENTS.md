@@ -52,6 +52,7 @@ just --list libhegel      # a component's recipes
 - Tests live in `tests/`, never inline in source. Tests needing private items go in `tests/embedded/`, mirroring `src/`, wired in with `#[cfg(test)] #[path = "..."] mod tests;` from the source file (both crates, e.g. `frontends/rust/src/ffi.rs` → `frontends/rust/tests/embedded/ffi_tests.rs`).
 - In tests prefer `.unwrap()` over `.expect("static message")`; use `.expect` only with a formatted value.
 - Don't bind unused results to `_`; `let _ =` only to silence `#[must_use]`.
+- Every check and test recipe builds what it tests first (cargo, maturin and cmake are incremental, so a no-op rebuild is cheap); never make one depend on a build the developer was supposed to run earlier, and never pick an artifact by mtime.
 - No comments other than `// nocov` and ones with a specific function. Before committing, delete any comments you wrote.
 - The engine must never panic across the FFI boundary: use the `hegel_internal_assert!` family instead of `assert!` in `frontends/rust/src/` and `libhegel/src/`, `invalid_argument!` / `EngineError::InvalidArgument` for argument validation (`scripts/check-internal-asserts.py` enforces this).
 - Every job in `.github/workflows/` that runs steps sets `timeout-minutes`, two to three times its slowest healthy run and looser for a release or publish job (`scripts/check-workflow-timeouts.py` enforces that it is set). A job that calls a reusable workflow cannot take one.

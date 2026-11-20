@@ -64,7 +64,9 @@ end
       one of the typed {!Internal} primitives) and returns the typed value.
       Mapping a [Leaf] composes the closure in place, staying a leaf (no extra
       span), because the engine already wraps each primitive draw in its own
-      span.
+      span. A leaf of [Temporal.zones] also holds its {!zone_query}, which
+      is how [Temporal.zoned_datetimes] recognises it and draws the zone and
+      the wall time in one engine draw; mapping drops it.
     - [Mapped] cores wrap a source and a transform function.
     - [FlatMapped] cores wrap a source and a function returning a core.
     - [Filtered] cores wrap a source and a predicate.
@@ -76,10 +78,46 @@ end
     Every core carries its span [label] (see {!Labels}), fixed at construction
     from the core's own kind and its components' labels. *)
 
+(** A zone source ([Temporal.Zone_source.t]): the owner of an engine handle,
+    which is freed once this record is unreachable. Whatever may still use
+    the source holds the record: a generator in its {!zone_query}, the
+    process default in its cell, and a call in flight through
+    [Zone_source.use]. The field is never assigned: it is mutable so that
+    the record has an identity, which the compiler may not copy or unbox,
+    since the finaliser belongs to this one block. *)
+type zone_source
+#ifdef OXCAML
+  : value mod portable contended
+#endif
+= { mutable zone_handle : Hegel_ffi.Ffi.zone_source }
+#ifdef OXCAML
+[@@unsafe_allow_any_mode_crossing]
+#endif
+
+(** What a [Temporal.zones] generator draws: the settings of its time zone
+    spec. [source] is the zone source the generator read when it was built,
+    [None] for the bundled database. *)
+type zone_query
+#ifdef OXCAML
+  : value mod portable contended
+#endif
+=
+  { names : string list option
+  ; allow_links : bool
+  ; allow_legacy : bool
+  ; allow_unknown : bool
+  ; allow_opaque : bool
+  ; source : zone_source option
+  }
+#ifdef OXCAML
+[@@unsafe_allow_any_mode_crossing]
+#endif
+
 type 'a core CROSSING =
   | Leaf :
       { draw : Internal.test_case -> 'a
       ; label : int64
+      ; zones : zone_query option
       }
       -> 'a core
   | Mapped :
@@ -186,7 +224,7 @@ let%template leaf
     -> (a, printable) generator MODE(m)
   =
   fun ~name ~draw ~sexp_of ->
-  Printable { core = Leaf { draw; label = leaf_label name }; sexp_of }
+  Printable { core = Leaf { draw; label = leaf_label name; zones = None }; sexp_of }
 [@@mode m = (nonportable, portable)]
 ;;
 
@@ -198,7 +236,8 @@ let%template leaf_silent
     -> draw:(Internal.test_case -> a) MODE(m)
     -> (a, unprintable) generator MODE(m)
   =
-  fun ~name ~draw -> Unprintable { core = Leaf { draw; label = leaf_label name } }
+  fun ~name ~draw ->
+  Unprintable { core = Leaf { draw; label = leaf_label name; zones = None } }
 [@@mode m = (nonportable, portable)]
 ;;
 
@@ -706,12 +745,13 @@ let%template map
   =
   fun f gen ->
   match (core_of [@mode m]) gen with
-  | Leaf { draw; label } ->
+  | Leaf { draw; label; _ } ->
     Unprintable
       { core =
           Leaf
             { draw = (fun tc -> f (draw tc))
             ; label = Labels.combine [ Labels.mapped; label ]
+            ; zones = None
             }
       }
   | other ->

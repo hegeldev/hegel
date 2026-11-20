@@ -65,7 +65,7 @@ func TestFromRegexDrawError(t *testing.T) {
 func TestDatesDrawError(t *testing.T) {
 	t.Parallel()
 	tc := newStubTestCase(t, libhegel.Date{}, libhegel.E_BACKEND, "boom")
-	if _, err := Dates().draw(tc); err == nil {
+	if _, err := newDates().draw(tc); err == nil {
 		t.Fatal("expected date draw error")
 	}
 }
@@ -73,7 +73,7 @@ func TestDatesDrawError(t *testing.T) {
 func TestDatetimesDrawError(t *testing.T) {
 	t.Parallel()
 	tc := newStubTestCase(t, libhegel.Datetime{}, libhegel.E_BACKEND, "boom")
-	if _, err := Datetimes().draw(tc); err == nil {
+	if _, err := newDatetimes().draw(tc); err == nil {
 		t.Fatal("expected datetime draw error")
 	}
 }

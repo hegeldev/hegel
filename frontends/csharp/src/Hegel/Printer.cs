@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using Hegel.Native;
+using Hegel.Temporal;
 
 namespace Hegel;
 
@@ -316,6 +317,12 @@ public sealed class Printer
             case Enum e:
                 Text(EnumLiteral(e));
                 break;
+            case ZonedDateTime zoned:
+                Sequence("new ZonedDateTime(", [zoned.LocalDateTime, zoned.Offset, zoned.Zone, zoned.Instant, zoned.Kind], ")");
+                break;
+            case CalendarSpan span:
+                Span(span);
+                break;
             case Array array:
                 Sequence($"new {TypeName(array.GetType().GetElementType()!)}[] {{", array.Cast<object?>(), "}");
                 break;
@@ -354,6 +361,26 @@ public sealed class Printer
             Render(entry.Key);
             Text("] = ");
             Render(entry.Value);
+        }
+        EndGroup("}");
+    }
+
+    private void Span(CalendarSpan span)
+    {
+        var units = span.Units().Where(unit => unit.Value != 0).ToArray();
+        if (units.Length == 0)
+        {
+            Text("new CalendarSpan()");
+            return;
+        }
+        BeginGroup("new CalendarSpan {");
+        for (var i = 0; i < units.Length; i++)
+        {
+            if (i > 0)
+            {
+                Separator();
+            }
+            Text(string.Create(CultureInfo.InvariantCulture, $"{units[i].Name} = {units[i].Value}"));
         }
         EndGroup("}");
     }

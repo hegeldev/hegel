@@ -83,10 +83,16 @@ func TestInPlaceAllocatedWrappersExposeFree(t *testing.T) {
 // the native call held references into the freed handle).
 func TestNativeCallsKeepHandleOwnersAlive(t *testing.T) {
 	t.Parallel()
+	for _, file := range []string{"libhegel.go", "temporal.go", "zone_source.go"} {
+		checkNativeCallsKeepHandleOwnersAlive(t, file)
+	}
+}
+
+func checkNativeCallsKeepHandleOwnersAlive(t *testing.T, file string) {
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "libhegel.go", nil, parser.SkipObjectResolution)
+	f, err := parser.ParseFile(fset, file, nil, parser.SkipObjectResolution)
 	if err != nil {
-		t.Fatalf("parse libhegel.go: %v", err)
+		t.Fatalf("parse %s: %v", file, err)
 	}
 
 	// Constructors that only touch raw before registering the cleanup: no

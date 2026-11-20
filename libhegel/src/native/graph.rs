@@ -361,14 +361,16 @@ impl Graph {
     }
 
     /// The shrink order on graphs: fewer edges, then fewer reachable nodes,
-    /// then the edge values in breadth-first order, each by
-    /// [`shrink_rank`]. Strictly smaller is better.
-    pub(crate) fn key(&self) -> GraphKey {
+    /// then the edge values in breadth-first order, each ranked by `rank`
+    /// from the identity of the node it leaves (ordinarily
+    /// [`shrink_rank`] of its value). Strictly smaller is better.
+    pub(crate) fn key(&self, rank: impl Fn(&Ident, &Edge) -> ValueRank) -> GraphKey {
         let order = self.reachable();
         let mut values = Vec::new();
         for &n in &order {
-            for e in &self.nodes[n].edges {
-                values.push(shrink_rank(&e.value));
+            let node = &self.nodes[n];
+            for e in &node.edges {
+                values.push(rank(&node.ident, e));
             }
         }
         GraphKey {
