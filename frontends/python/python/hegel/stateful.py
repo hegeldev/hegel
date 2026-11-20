@@ -201,11 +201,10 @@ class Machine:
         """Add an invariant called ``name``, checked by ``apply(tc)``;
         usable as a decorator when ``apply`` is omitted.
 
-        Every invariant runs on the initial and final state. Between steps
-        each one runs with probability ``1 / steps``, keeping its expected
-        cost constant as the step count grows, unless ``always_run`` is
-        set, in which case it runs after every step. With ``pause_faults``
-        set, fault injection is paused for the duration of each check:
+        Every invariant runs on the initial and final state. Hegel samples
+        invariants at intermediate steps. Set ``always_run`` to check the
+        invariant after every step. With ``pause_faults`` set, fault
+        injection is paused for the duration of each check:
         inside `Antithesis <https://antithesis.com/>`_ the fuzzer stops
         injecting faults while the invariant runs, so it observes the
         system under test without a fault landing in the middle of the
@@ -629,11 +628,11 @@ def invariant(
     machine's state that fails by raising. The method takes the test case:
     ``def valid(self, tc)``.
 
-    Every invariant runs on the initial and final state. Between steps
-    each one runs with probability ``1 / steps``, unless
-    ``always_run=True``, in which case it runs after every step. With
-    ``pause_faults=True``, fault injection is paused for the duration of
-    each check: inside `Antithesis <https://antithesis.com/>`_ the fuzzer
+    Every invariant runs on the initial and final state. Hegel samples
+    invariants at intermediate steps. Set ``always_run=True`` to check the
+    invariant after every step. With ``pause_faults=True``, fault
+    injection is paused for the duration of each check: inside
+    `Antithesis <https://antithesis.com/>`_ the fuzzer
     stops injecting faults while the invariant runs; elsewhere the flag
     has no effect. Usable as ``@hegel.invariant`` or
     ``@hegel.invariant(...)``; ``name`` replaces the method name in the

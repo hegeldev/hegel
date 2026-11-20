@@ -65,12 +65,10 @@
  * overlap in time, and the Rust, Python, C++, Java and OCaml frontends are
  * where concurrency bugs are hunted.
  *
- * Every invariant is checked on the initial state and on the final state. In
- * between, invariants are *sampled*: each is checked after any given step
- * with probability `1 / stepCount`, so its expected cost per test case stays
- * constant as the step count grows. Mark an invariant
- * `{ check, alwaysCheck: true }` to check it after every step instead — for
- * invariants that must observe every intermediate state, or that mutate the
+ * Every invariant is checked on the initial and final state. Hegel samples
+ * invariants at intermediate steps. Mark an invariant
+ * `{ check, alwaysCheck: true }` to check it after every step. Use this for
+ * invariants that must observe every intermediate state or that mutate the
  * state when checked.
  *
  * An invariant marked `{ check, pauseFaults: true }` asks the engine to pause
@@ -184,8 +182,7 @@ export interface RunOptions {
    * The target number of steps per test case (default
    * {@link DEFAULT_STEP_COUNT}): every test case runs at least one step and
    * at most this many; most run exactly this many, and the shrinker is free
-   * to shorten a failing one. Each sampled invariant is checked after any
-   * given step with probability `1 / stepCount`. Must be at least 1.
+   * to shorten a failing one. Must be at least 1.
    */
   stepCount?: number;
 }

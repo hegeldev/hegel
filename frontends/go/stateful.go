@@ -80,7 +80,7 @@ func WithStatefulStepCount(n int) StateMachineOption {
 
 // WithAlwaysCheckInvariants marks invariants that must run at every join point
 // (after every rule in a sequential machine). Other invariants are sampled at
-// intermediate states and run with probability 1 / the configured step count.
+// intermediate states.
 // All invariants run unconditionally on the initial and final states.
 //
 // Pass the full method names, including the Invariant prefix. Calls are

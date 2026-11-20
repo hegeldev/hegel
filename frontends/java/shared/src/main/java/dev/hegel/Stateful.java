@@ -48,11 +48,10 @@ import java.util.concurrent.LinkedBlockingQueue;
  *
  * <p>Each test case enables a random subset of rules (swarm testing) and runs an engine-chosen
  * number of steps. A rule that fails an assumption is skipped without counting as a step. Invariants
- * are checked in full on the machine's initial and final state and sampled in between: after any
- * given rule each invariant runs with probability {@code 1 / stepCount}, so its expected cost per
- * test case stays constant as the step count grows. The step count is the target number of rules
- * per test case, {@link #DEFAULT_STEP_COUNT} unless {@link Options#stepCount} sets another. Mark
- * an invariant {@code @Invariant(alwaysRun = true)} to check it after every rule instead, and
+ * are checked on the machine's initial and final state and sampled after rules in between. The
+ * step count is the target number of rules per test case, {@link #DEFAULT_STEP_COUNT} unless
+ * {@link Options#stepCount} sets another. Mark an invariant {@code @Invariant(alwaysRun = true)}
+ * to check it after every rule. Use
  * {@code @Invariant(pauseFaults = true)} to pause fault injection while it runs when the test
  * executes inside <a href="https://antithesis.com/">Antithesis</a> (see {@link
  * Invariant#pauseFaults}). Give a rule that should run more often than the others a {@link
@@ -164,8 +163,7 @@ public final class Stateful {
         /**
          * The target number of steps per test case: rules for a sequential machine, rounds for a
          * concurrent one. Every test case runs at least one step and at most {@code stepCount};
-         * the engine decides when to stop within that budget. After each step a sampled invariant
-         * is checked with probability {@code 1 / stepCount}.
+         * the engine decides when to stop within that budget.
          *
          * @param stepCount the step budget, at least 1
          * @return options with the step count set

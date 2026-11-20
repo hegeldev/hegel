@@ -1246,7 +1246,7 @@ fn should_check_invariant_is_always_true_at_step_count_one() {
 }
 
 #[test]
-fn should_check_invariant_samples_at_one_over_step_count() {
+fn should_check_invariant_samples_at_one_over_step_count_or_min() {
     let mut trues = 0;
     for seed in 0..20 {
         let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();

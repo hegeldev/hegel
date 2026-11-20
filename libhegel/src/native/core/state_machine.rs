@@ -650,7 +650,7 @@ impl NativeStateMachine {
         if always {
             return Ok(true);
         }
-        let p = (0.01 as f64).max(1.0 / self.step_count as f64);
+        let p = 0.01_f64.max(1.0 / self.step_count as f64);
         ntc.weighted_precise(p, None)
     }
 

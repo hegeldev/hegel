@@ -944,8 +944,7 @@ impl<M: StateMachine> Machine<M> {
     /// invariant checks may run fall after each rule. Invariants run in full on
     /// the machine's initial and final state; in between, each invariant runs at
     /// a join point only when the engine's sampling draw (probability
-    /// `max(0.01, 1 / step_count)`) says to, keeping an invariant's expected cost
-    /// per test case constant as the step count grows — except always-run
+    /// `max(0.01, 1 / step_count)`) says to, except always-run
     /// invariants (`#[invariant(always_run)]`), which run at every join point.
     /// Every check of an invariant declared `#[invariant(pause_faults = true)]`
     /// runs with fault injection paused. One consequence of the
