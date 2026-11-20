@@ -624,7 +624,7 @@ impl NativeStateMachine {
     /// the current join point. For an invariant registered with its
     /// always-check flag set, the answer is `true` without consuming
     /// entropy; otherwise it is a recorded boolean draw that is `true` with
-    /// probability `1 / step_count`, so over a full-length test
+    /// probability `max(0.01, 1 / step_count)`, so over a full-length test
     /// case each sampled invariant's expected number of sampled runs is
     /// one, regardless of the step count. The caller owns the machine's
     /// guaranteed checks — its initial state and the final state after the
@@ -650,7 +650,7 @@ impl NativeStateMachine {
         if always {
             return Ok(true);
         }
-        let p = 1.0 / self.step_count as f64;
+        let p = (0.01 as f64).max(1.0 / self.step_count as f64);
         ntc.weighted_precise(p, None)
     }
 

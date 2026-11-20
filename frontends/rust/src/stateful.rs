@@ -721,7 +721,7 @@ pub trait StateMachine {
     fn rules(&self) -> Vec<Rule<Self>>;
     /// Invariants: checked on the machine's initial and final state, and
     /// sampled after rules in between with probability
-    /// `1 / step_count` each — except invariants whose
+    /// `max(0.01, 1 / step_count)` each — except invariants whose
     /// [`always_run`](Invariant::always_run) flag is set, which run after
     /// every rule. Fault injection is paused around every check of an
     /// invariant whose [`pause_faults`](Invariant::pause_faults) flag is
@@ -843,7 +843,7 @@ fn machine_rule_rejected(tc: &TestCase, machine: &StateMachineHandle, worker_ind
 /// Ask the engine whether invariant `invariant_index` should run at the
 /// current join point — true unconditionally for an invariant registered
 /// always-run, otherwise a recorded draw that is true with probability
-/// `1 / step_count`, making a sampled invariant's expected sampled
+/// `max(0.01, 1 / step_count)`, making a sampled invariant's expected sampled
 /// runs per test case one regardless of step count.
 fn machine_should_check_invariant(
     tc: &TestCase,
@@ -926,7 +926,7 @@ impl<M> Machine<M> {
     /// step is one completed rule (rules that stop on a violated assumption
     /// do not count); for a concurrent machine it is one round. Each sampled
     /// invariant runs after any given step with probability
-    /// `1 / step_count`. Most test cases run the full `step_count`; the
+    /// `max(0.01, 1 / step_count)`. Most test cases run the full `step_count`; the
     /// shrinker is free to shorten a failing one. The count must be at least
     /// 1, or the run fails with a usage error.
     pub fn steps(mut self, step_count: i64) -> Self {
@@ -944,7 +944,7 @@ impl<M: StateMachine> Machine<M> {
     /// invariant checks may run fall after each rule. Invariants run in full on
     /// the machine's initial and final state; in between, each invariant runs at
     /// a join point only when the engine's sampling draw (probability
-    /// `1 / step_count`) says to, keeping an invariant's expected cost
+    /// `max(0.01, 1 / step_count)`) says to, keeping an invariant's expected cost
     /// per test case constant as the step count grows — except always-run
     /// invariants (`#[invariant(always_run)]`), which run at every join point.
     /// Every check of an invariant declared `#[invariant(pause_faults = true)]`
@@ -990,7 +990,7 @@ impl<M: ConcurrentStateMachine + Sync> Machine<M> {
     /// overlap, and a rule in several groups takes part in the rounds of
     /// each. Once every worker has finished its rules for the round, the
     /// main thread runs the invariants the engine's sampling draws select
-    /// (probability `1 / step_count` each, and always-run invariants
+    /// (probability `max(0.01, 1 / step_count)` each, and always-run invariants
     /// unconditionally); every invariant runs in full on the machine's initial
     /// and final state, and an invariant declared
     /// `#[invariant(pause_faults = true)]` runs each check with fault
@@ -1321,7 +1321,7 @@ pub trait ConcurrentStateMachine {
     /// Invariants, run on the main thread while the worker threads are
     /// parked: checked on the machine's initial and final state, and
     /// sampled at the join points in between with probability
-    /// `1 / step_count` each — except invariants whose
+    /// `max(0.01, 1 / step_count)` each — except invariants whose
     /// [`always_run`](ConcurrentInvariant::always_run) flag is set, which
     /// run at every join point. Fault injection is paused around every
     /// check of an invariant whose

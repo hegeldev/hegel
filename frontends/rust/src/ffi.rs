@@ -1529,7 +1529,7 @@ impl CTestCase {
 
     /// Ask the engine whether invariant `invariant_index` should run at the
     /// current join point: a recorded draw that is true with probability
-    /// `1 / step_count`. The guaranteed initial and final checks
+    /// `max(0.01, 1 / step_count)`. The guaranteed initial and final checks
     /// are the caller's and run without asking.
     pub(crate) fn state_machine_should_check_invariant(
         &self,

@@ -877,7 +877,7 @@ val pool_free : context -> pool -> unit
     them with {!state_machine_start} before driving any round. [step_count]
     is the target number of rounds per test case: every case runs at least
     one round and at most [step_count], and each sampled invariant is checked
-    with probability [1 / step_count] per join point (the engine has no
+    with probability [max(0.01, 1 / step_count)] per join point (the engine has no
     default). Raises {!Usage_error} if the concurrency bounds are invalid or
     [step_count] is below 1, and {!Stop_test} when the engine's choice budget
     is exhausted. *)
