@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.18.1 - 2026-11-20
+
+This patch sets a lower bound for the probability of checking a sampled invariant.
+
 ## 0.18.0 - 2026-11-19
 
 This release replaces the string-valued date generators with typed ones backed by the engine, in a new `hegel::generators::temporal` namespace (header `hegel/generators/temporal.h`, included by `hegel/hegel.h`). `gs::dates()`, `gs::times()` and `gs::datetimes()` in `hegel::generators` are deprecated, and still draw the same ISO 8601 strings as before. Use `gs::temporal::dates()`, `gs::temporal::times()` and `gs::temporal::datetimes()`, which draw `gs::temporal::Date`, `Time` and `DateTime` values instead of `std::string`:

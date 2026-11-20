@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1 - 2026-11-20
+
+This patch sets a lower bound for the probability of checking a sampled invariant.
+
 ## 0.5.0 - 2026-11-19
 
 This release moves the date and time generators into a `gs.temporal` namespace, under the names every Hegel frontend uses for them, moves date and time generation into the engine, which now bundles a pinned IANA time zone database, and adds `zoned_datetimes()`, `instants()`, `spans()`, `zone_names()`, `offsets()` and `tzdb_version()`.

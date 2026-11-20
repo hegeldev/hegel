@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1 - 2026-11-20
+
+This patch sets a lower bound for the probability of checking a sampled invariant.
+
 ## 0.6.0 - 2026-11-19
 
 This release moves the date and time generators into a new `gs.temporal` namespace, changes them to draw value objects instead of ISO strings, and adds generators for the other date and time values the engine now draws: zoned datetimes, instants, UTC offsets, time zones, calendar spans and JavaScript `Date`s.

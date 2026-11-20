@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.10.2 - 2026-11-20
+
+This patch sets a lower bound for the probability of checking a sampled invariant.
+
 ## 0.10.1 - 2026-11-20
 
 This patch fixes `hegel.Test` failing a test without saying why when the run ends without a verdict on the property, such as a failed health check, a flaky test or an engine error. The test now fails with the run's error message, for example `FailedHealthCheck: FilterTooMuch` ([#116](https://github.com/hegeldev/hegel/issues/116)).

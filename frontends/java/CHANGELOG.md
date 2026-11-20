@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.14.2 - 2026-11-20
+
+This patch sets a lower bound for the probability of checking a sampled invariant.
+
 ## 0.14.1 - 2026-11-19
 
 This patch names a run of a `@HegelTest` method after the test, its `@DisplayName` or the method name.

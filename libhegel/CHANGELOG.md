@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.53.1 - 2026-11-20
+
+This patch sets a lower bound of 1% for the probability of checking a sampled invariant. Previously, the probability was always
+1 / step_count, so using a very large step count, such as in Antithesis, meant sampled invariants almost never ran.
+
 ## 0.53.0 - 2026-11-19
 
 This release changes the signatures of `hegel_generate_time`, `hegel_generate_datetime` and `hegel_generate_date`. The first two take a `precision` argument, a `hegel_precision_t` from `HEGEL_PRECISION_NANOSECONDS` to `HEGEL_PRECISION_HOURS`, and draw a time of day that is a whole number of those units, so a frontend whose type holds microseconds or milliseconds draws exactly the values it can hold instead of truncating afterwards. `hegel_generate_date` takes a `hegel_date_options_t` handle, which may be NULL, from `hegel_date_options_new`, with `hegel_date_options_set_weekdays` and `hegel_date_options_set_months` restricting the draw to a bit set of weekdays or months (a drawn day is moved to the nearest allowed day inside the bounds rather than rejected, and bounds holding no allowed day are an argument error); release it with `hegel_date_options_free`.

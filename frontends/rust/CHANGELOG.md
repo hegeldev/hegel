@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.54.1 - 2026-11-20
+
+This patch sets a lower bound for the probability of checking a sampled invariant.
+
 ## 0.54.0 - 2026-11-19
 
 This release moves date and time generation into the engine, which now bundles a pinned IANA time zone database (`gs::temporal::tzdb_version()` names the release), gathers it under the new module `hegel::generators::temporal`, and rebuilds the `jiff` and `chrono` integrations on it. Time zones, zoned datetimes, instants, offsets, durations and calendar spans are now engine draws with the engine's shrinking, a drawn zone is stored by name so a saved failure means the same zone on every machine, and one draw in twenty on average targets a transition of the zone or an interesting calendar value, so the skipped and repeated wall times where date bugs live are generated deliberately rather than by luck. These parts of it are breaking:

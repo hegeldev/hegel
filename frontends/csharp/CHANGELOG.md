@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1 - 2026-11-20
+
+This patch sets a lower bound for the probability of checking a sampled invariant.
+
 ## 0.4.0 - 2026-11-19
 
 This release moves every date and time generator onto the engine's temporal draws and into a temporal namespace, under the names every Hegel frontend shares: the generators are on `Generators.Temporal`, and their types are in the namespace `Hegel.Temporal`. It adds `Instants()`, `Spans()` and `ZonedDateTimes()`, options on the existing generators, and zone sources, which say whose time zone data a draw reads. A few changes can break existing code or tests.
