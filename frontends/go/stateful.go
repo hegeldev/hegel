@@ -322,7 +322,7 @@ func (sm *stateMachine) Run(tc TestCase) {
 
 		// A clone anchors its native output at the current position in the root
 		// document. Create fresh handles after the round heading so each round's
-		// worker transcripts follow that heading, as they did with Go buffers.
+		// worker transcripts follow that heading.
 		errs := func() []*workerError {
 			workers := make([]TestCase, 0, concurrency)
 			defer func() {

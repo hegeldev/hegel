@@ -155,6 +155,15 @@ fn test_from_lark_explicit_values_are_spliced_in_as_drawn() {
 }
 
 #[test]
+fn test_from_lark_explicit_takes_a_boxed_generator() {
+    assert_all_examples(
+        gs::from_lark("start: NUM\n%declare NUM\n")
+            .explicit("NUM", gs::just("xyz".to_string()).boxed()),
+        |s: &String| s == "xyz",
+    );
+}
+
+#[test]
 fn test_from_lark_explicit_takes_any_string_generator() {
     let grammar = || {
         gs::from_lark("start: \"[\" NUM (\",\" NUM)* \"]\"\n%declare NUM\n")

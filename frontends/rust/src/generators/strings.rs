@@ -699,7 +699,7 @@ impl Generator<String> for DateStringGenerator {
     }
 
     fn do_draw(&self, tc: &TestCase) -> String {
-        format_date(tc.generate_date(full_ranges::MIN_DATE, full_ranges::MAX_DATE))
+        format_date(tc.generate_date(full_ranges::MIN_DATE, full_ranges::MAX_DATE, None))
     }
 }
 
@@ -725,7 +725,11 @@ impl Generator<String> for TimeStringGenerator {
     }
 
     fn do_draw(&self, tc: &TestCase) -> String {
-        format_time(tc.generate_time(full_ranges::MIDNIGHT, full_ranges::LAST_NANOSECOND))
+        format_time(tc.generate_time(
+            full_ranges::MIDNIGHT,
+            full_ranges::LAST_NANOSECOND,
+            crate::ffi::NANOSECONDS,
+        ))
     }
 }
 
@@ -750,7 +754,11 @@ impl Generator<String> for DateTimeStringGenerator {
     }
 
     fn do_draw(&self, tc: &TestCase) -> String {
-        let dt = tc.generate_datetime(full_ranges::MIN_DATETIME, full_ranges::MAX_DATETIME);
+        let dt = tc.generate_datetime(
+            full_ranges::MIN_DATETIME,
+            full_ranges::MAX_DATETIME,
+            crate::ffi::NANOSECONDS,
+        );
         format!("{}T{}", format_date(dt.date), format_time(dt.time))
     }
 }

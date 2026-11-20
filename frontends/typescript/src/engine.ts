@@ -49,6 +49,20 @@ export type GrammarHandle = { readonly [grammarBrand]: never };
 
 declare const grammarDrawBrand: unique symbol;
 export type GrammarDrawHandle = { readonly [grammarDrawBrand]: never };
+declare const dateOptionsBrand: unique symbol;
+export type DateOptionsHandle = { readonly [dateOptionsBrand]: never };
+
+declare const timeZoneSpecBrand: unique symbol;
+export type TimeZoneSpecHandle = { readonly [timeZoneSpecBrand]: never };
+
+declare const zonedSpecBrand: unique symbol;
+export type ZonedSpecHandle = { readonly [zonedSpecBrand]: never };
+
+declare const spanSpecBrand: unique symbol;
+export type SpanSpecHandle = { readonly [spanSpecBrand]: never };
+
+declare const zoneSourceBrand: unique symbol;
+export type ZoneSourceHandle = { readonly [zoneSourceBrand]: never };
 
 /** `hegel_status_t` — outcome of a single test case. */
 export const Status = {
@@ -155,6 +169,146 @@ export interface NativeDatetime {
   time: NativeTime;
 }
 
+/** A `hegel_timestamp_t`: seconds since the Unix epoch plus a nanosecond in `[0, 999999999]`. */
+export interface NativeTimestamp {
+  second: bigint;
+  nanosecond: number;
+}
+
+/** A `hegel_offset_t`: seconds east of UTC, 0 when not `known`. */
+export interface NativeOffset {
+  seconds: number;
+  known: boolean;
+}
+
+/** A `hegel_span_t`: one `int64_t` per calendar unit. */
+export interface NativeSpan {
+  years: bigint;
+  months: bigint;
+  weeks: bigint;
+  days: bigint;
+  hours: bigint;
+  minutes: bigint;
+  seconds: bigint;
+  milliseconds: bigint;
+  microseconds: bigint;
+  nanoseconds: bigint;
+}
+
+/** A `hegel_zoned_datetime_t`: a wall-clock time resolved in the drawn zone. */
+export interface NativeZonedDatetime {
+  civil: NativeDatetime;
+  offsetSeconds: number;
+  offsetKnown: boolean;
+  fold: boolean;
+  /** A {@link NativeTimeZoneKind} value. */
+  kind: number;
+  offsetBefore: number;
+  offsetAfter: number;
+  timestamp: NativeTimestamp;
+}
+
+/** A `hegel_timezone_info_t`: what the bundled database knows about a name. */
+export interface NativeTimeZoneInfo {
+  known: boolean;
+  primaryName: string;
+  isLink: boolean;
+  rank: number;
+  /** A bitwise OR of the `HEGEL_TIMEZONE_TAG_*` bits; see {@link NativeTimeZoneTag}. */
+  tags: number;
+}
+
+/** `hegel_precision_t`. */
+export const NativePrecision = {
+  NANOSECONDS: 0,
+  MICROSECONDS: 1,
+  MILLISECONDS: 2,
+  SECONDS: 3,
+  MINUTES: 4,
+  HOURS: 5,
+} as const;
+
+/** `hegel_offset_granularity_t`. */
+export const NativeGranularity = {
+  HOURS: 0,
+  QUARTER_HOURS: 1,
+  MINUTES: 2,
+  SECONDS: 3,
+} as const;
+
+/** `hegel_imaginary_t`. */
+export const NativeImaginary = { ALLOW: 0, AVOID: 1 } as const;
+
+/** `hegel_ambiguous_t`. */
+export const NativeAmbiguous = { BOTH: 0, EARLIER: 1, LATER: 2 } as const;
+
+/** `hegel_span_unit_t`. */
+export const NativeSpanUnit = {
+  YEARS: 0,
+  MONTHS: 1,
+  WEEKS: 2,
+  DAYS: 3,
+  HOURS: 4,
+  MINUTES: 5,
+  SECONDS: 6,
+  MILLISECONDS: 7,
+  MICROSECONDS: 8,
+  NANOSECONDS: 9,
+} as const;
+
+/** `hegel_span_sign_t`. */
+export const NativeSpanSign = { UNIFORM: 0, MIXED: 1, NONNEGATIVE: 2 } as const;
+
+/** `hegel_timezone_kind_t`. */
+export const NativeTimeZoneKind = { UNIQUE: 0, GAP: 1, FOLD: 2 } as const;
+
+/** `hegel_zone_after_t`: what a zone has in force after its explicit transitions. */
+export const NativeZoneAfter = { HOLD: 0, RULE: 1, INFER: 2 } as const;
+
+/** `hegel_zone_rule_day_t`: how a rule date names its day. */
+export const NativeZoneRuleDay = { JULIAN: 0, ZERO_BASED: 1, MONTH_WEEK_DAY: 2 } as const;
+
+/** A `hegel_zone_type_t`: a local time type. */
+export interface NativeZoneType {
+  utoff: number;
+  isDst: boolean;
+  abbreviation: string;
+}
+
+/** A `hegel_zone_transition_t`: from `instant` (Unix seconds) on, `type` is in force. */
+export interface NativeZoneTransition {
+  instant: bigint;
+  type: NativeZoneType;
+}
+
+/** A `hegel_zone_rule_date_t`. */
+export interface NativeZoneRuleDate {
+  /** A {@link NativeZoneRuleDay} value. */
+  kind: number;
+  day: number;
+  month: number;
+  week: number;
+  weekday: number;
+  time: number;
+}
+
+/** A `hegel_zone_data_t`: a zone's data as fields. */
+export interface NativeZoneData {
+  initial: NativeZoneType;
+  transitions: readonly NativeZoneTransition[];
+  /** A {@link NativeZoneAfter} value. */
+  after: number;
+  standard: NativeZoneType;
+  hasDst: boolean;
+  dst: NativeZoneType;
+  dstStart: NativeZoneRuleDate;
+  dstEnd: NativeZoneRuleDate;
+  lastYear: number;
+}
+
+/** The `HEGEL_TIMEZONE_TAG_*` bits this client reads. */
+export const NativeTimeZoneTag = { LINK: 1 << 13, LEGACY: 1 << 14 } as const;
+
 /** RFC 4122 UUID versions supported by the public generator. */
 export type UuidVersion = 1 | 2 | 3 | 4 | 5;
 
@@ -250,8 +404,30 @@ export class EngineError extends Error {
   }
 }
 
+/** Where an engine run's printed lines go, one call per line. */
+export type OutputSink = (line: string) => void;
+
 export interface Engine {
   version(): string;
+  /** The IANA release of the time zone database the engine bundles, e.g. `"2026e"`. */
+  tzdbVersion(): string;
+  /** The engine's canonical text of a date: `2024-03-10`, `+010000-01-01`. */
+  formatDate(value: NativeDate): string;
+  /** The engine's canonical text of a time of day: `02:30:00`, `02:30:00.5`. */
+  formatTime(value: NativeTime): string;
+  /** The engine's canonical text of a naive datetime: `2024-03-10T02:30:00`. */
+  formatDatetime(value: NativeDatetime): string;
+  /** The engine's canonical text of an instant: `2000-01-01T00:00:00Z`. */
+  formatTimestamp(value: NativeTimestamp): string;
+  /** The engine's canonical text of a UTC offset: `+05:30`, `-00:44:30`. */
+  formatOffset(value: NativeOffset): string;
+  /** The engine's canonical text of a calendar span: `1y 2mo 3d`, `-3d 4h`, `0s`. */
+  formatSpan(value: NativeSpan): string;
+  /**
+   * The engine's canonical text of a zoned datetime in `zone`:
+   * `2024-03-10T02:30:00-04:00[America/New_York][gap]`.
+   */
+  formatZonedDatetime(value: NativeZonedDatetime, zone: string): string;
   newContext(): ContextHandle;
   /**
    * Make the string generators follow the host's Unicode version, process-wide.
@@ -314,19 +490,37 @@ export interface Engine {
   getBackend(s: SettingsHandle): number;
   /** The resolved `hegel_nondeterminism_strictness_t`. */
   getNondeterminismStrictness(s: SettingsHandle): number;
-  runStart(ctx: ContextHandle, settings: SettingsHandle): RunHandle;
   /**
-   * Start a run that replays a reproduce blob instead of exploring. Throws on
-   * a blob that is not valid.
+   * Start a run. `output` receives each line the engine prints for it (a
+   * verbose run's test cases, phases and statistics) until the run is freed.
    */
-  runStartBlob(ctx: ContextHandle, settings: SettingsHandle, blob: string): RunHandle;
+  runStart(ctx: ContextHandle, settings: SettingsHandle, output: OutputSink): RunHandle;
+  /**
+   * Start a run that replays a reproduce blob instead of exploring, printing
+   * to `output` as {@link runStart} does. Throws on a blob that is not valid.
+   */
+  runStartBlob(
+    ctx: ContextHandle,
+    settings: SettingsHandle,
+    blob: string,
+    output: OutputSink,
+  ): RunHandle;
   nextTestCase(ctx: ContextHandle, run: RunHandle): TestCaseHandle | null;
   runResult(ctx: ContextHandle, run: RunHandle): RunResultHandle;
   freeRunResult(r: RunResultHandle): void;
   freeRun(run: RunHandle): void;
   freeTestCase(tc: TestCaseHandle): void;
-  /** Whether the engine stamped `tc` for capture: its output may be reported. */
-  shouldCapture(ctx: ContextHandle, tc: TestCaseHandle): boolean;
+  /**
+   * Whether the engine uses what `tc` prints: a verbose run streams it, and a
+   * test case stamped for capture keeps it for its failure's report.
+   */
+  wantsOutput(ctx: ContextHandle, tc: TestCaseHandle): boolean;
+  /**
+   * Whether the engine uses the full diagnostic of `tc` if it fails: printed
+   * at debug verbosity and kept for the report of a test case stamped for
+   * capture. Implies {@link wantsOutput}.
+   */
+  wantsDetail(ctx: ContextHandle, tc: TestCaseHandle): boolean;
   /** A new handle onto an independent choice stream of the same test case. */
   cloneTestCase(ctx: ContextHandle, tc: TestCaseHandle): TestCaseHandle;
   /** A new handle onto `tc`'s choice stream, printing `indent` columns further in. */
@@ -388,9 +582,12 @@ export interface Engine {
   printerDeferred(ctx: ContextHandle, p: PrinterHandle): PrinterHandle;
   /** Whether `p` can still be written to: false once its region has died. */
   printerIsLive(ctx: ContextHandle, p: PrinterHandle): boolean;
-  /** Splice every deferred region (clones, blocks) into the document. */
+  /**
+   * Splice every deferred region into a standalone document. A test case's
+   * document is printed by the engine and cannot be resolved.
+   */
   printerResolve(ctx: ContextHandle, p: PrinterHandle): void;
-  /** Read (and seal) the document of a root printer. */
+  /** Read (and seal) the standalone document of a root printer. */
   printerValue(ctx: ContextHandle, p: PrinterHandle): string;
   generateBoolean(ctx: ContextHandle, tc: TestCaseHandle, p: number): boolean;
   generateInteger(ctx: ContextHandle, tc: TestCaseHandle, min: bigint, max: bigint): bigint;
@@ -467,24 +664,208 @@ export interface Engine {
   /** The finished string, once {@link grammarDrawNext} has returned `null`. */
   grammarDrawResult(ctx: ContextHandle, draw: GrammarDrawHandle): string;
   freeGrammarDraw(draw: GrammarDrawHandle): void;
+  /** Create date options allowing every weekday and month; released with {@link freeDateOptions}. */
+  dateOptionsNew(ctx: ContextHandle): DateOptionsHandle;
+  /** Restrict `options` to the weekdays in `mask` (bit 0 Monday to bit 6 Sunday). */
+  dateOptionsSetWeekdays(ctx: ContextHandle, options: DateOptionsHandle, mask: number): void;
+  /** Restrict `options` to the months in `mask` (bit 0 January to bit 11 December). */
+  dateOptionsSetMonths(ctx: ContextHandle, options: DateOptionsHandle, mask: number): void;
+  freeDateOptions(options: DateOptionsHandle): void;
+  /** Draw a date in `[min, max]`, within `options` when not `null`. */
   generateDate(
     ctx: ContextHandle,
     tc: TestCaseHandle,
     min: NativeDate,
     max: NativeDate,
+    options: DateOptionsHandle | null,
   ): NativeDate;
+  /** Draw a time of day in `[min, max]` that is a whole number of `precision` units. */
   generateTime(
     ctx: ContextHandle,
     tc: TestCaseHandle,
     min: NativeTime,
     max: NativeTime,
+    precision: number,
   ): NativeTime;
+  /** Draw a naive datetime in `[min, max]` whose time is a whole number of `precision` units. */
   generateDatetime(
     ctx: ContextHandle,
     tc: TestCaseHandle,
     min: NativeDatetime,
     max: NativeDatetime,
+    precision: number,
   ): NativeDatetime;
+  /** Draw an instant in `[min, max]` that is a whole number of `precision` units since the epoch. */
+  generateTimestamp(
+    ctx: ContextHandle,
+    tc: TestCaseHandle,
+    min: NativeTimestamp,
+    max: NativeTimestamp,
+    precision: number,
+  ): NativeTimestamp;
+  /**
+   * Draw a UTC offset in `[min, max]` seconds that is a whole number of
+   * `granularity` units; with `allowUnknown` the draw may yield the unknown
+   * offset, reported with `known` false.
+   */
+  generateOffset(
+    ctx: ContextHandle,
+    tc: TestCaseHandle,
+    min: number,
+    max: number,
+    granularity: number,
+    allowUnknown: boolean,
+  ): NativeOffset;
+  /**
+   * Check the arguments of {@link generateDate} without drawing: throws what
+   * a draw with them would report.
+   */
+  validateDate(
+    ctx: ContextHandle,
+    min: NativeDate,
+    max: NativeDate,
+    options: DateOptionsHandle | null,
+  ): void;
+  /** Check the arguments of {@link generateTime} without drawing. */
+  validateTime(ctx: ContextHandle, min: NativeTime, max: NativeTime, precision: number): void;
+  /** Check the arguments of {@link generateDatetime} without drawing. */
+  validateDatetime(
+    ctx: ContextHandle,
+    min: NativeDatetime,
+    max: NativeDatetime,
+    precision: number,
+  ): void;
+  /** Check the arguments of {@link generateTimestamp} without drawing. */
+  validateTimestamp(
+    ctx: ContextHandle,
+    min: NativeTimestamp,
+    max: NativeTimestamp,
+    precision: number,
+  ): void;
+  /** Check the arguments of {@link generateOffset} without drawing. */
+  validateOffset(
+    ctx: ContextHandle,
+    min: number,
+    max: number,
+    granularity: number,
+    allowUnknown: boolean,
+  ): void;
+  /** What the bundled time zone database knows about `name`; never fails. */
+  timezoneInfo(ctx: ContextHandle, name: string): NativeTimeZoneInfo;
+  /**
+   * Create a time zone spec allowing every name of the engine's default zone
+   * source (the bundled database: this frontend never sets another);
+   * released with {@link freeTimezoneSpec}.
+   */
+  timezoneSpecNew(ctx: ContextHandle): TimeZoneSpecHandle;
+  /** Restrict `spec` to `names`; whether its source knows them is checked by {@link timezoneSpecValidate}. */
+  timezoneSpecSetNames(
+    ctx: ContextHandle,
+    spec: TimeZoneSpecHandle,
+    names: readonly string[],
+  ): void;
+  /** Draw from and evaluate against `source` rather than the process default. */
+  timezoneSpecSetSource(
+    ctx: ContextHandle,
+    spec: TimeZoneSpecHandle,
+    source: ZoneSourceHandle,
+  ): void;
+  /** Whether `spec`'s default set includes link names. */
+  timezoneSpecSetLinks(ctx: ContextHandle, spec: TimeZoneSpecHandle, links: boolean): void;
+  /** Whether `spec`'s default set includes legacy names. */
+  timezoneSpecSetLegacy(ctx: ContextHandle, spec: TimeZoneSpecHandle, legacy: boolean): void;
+  /**
+   * Check `spec` as its first draw would: a name of its explicit list that
+   * its source lacks, or no name left to draw, is an error.
+   */
+  timezoneSpecValidate(ctx: ContextHandle, spec: TimeZoneSpecHandle): void;
+  freeTimezoneSpec(spec: TimeZoneSpecHandle): void;
+  /**
+   * Create an empty zone source. It is never freed: a source lives as long as
+   * the engine, like the zone data the engine interns.
+   */
+  zoneSourceNew(ctx: ContextHandle): ZoneSourceHandle;
+  /** Add the zone `name` from a TZif file's bytes. */
+  zoneSourceAddTzif(
+    ctx: ContextHandle,
+    source: ZoneSourceHandle,
+    name: string,
+    bytes: Uint8Array,
+  ): void;
+  /** Add the zone `name` from its data as fields. */
+  zoneSourceAddZone(
+    ctx: ContextHandle,
+    source: ZoneSourceHandle,
+    name: string,
+    data: NativeZoneData,
+  ): void;
+  /** Make `name` a link to `target`. */
+  zoneSourceAddLink(
+    ctx: ContextHandle,
+    source: ZoneSourceHandle,
+    name: string,
+    target: string,
+  ): void;
+  /** Declare `names`, whose data is added before a zoned draw in them. */
+  zoneSourceDeclare(ctx: ContextHandle, source: ZoneSourceHandle, names: readonly string[]): void;
+  /** Draw a time zone name allowed by `spec`. */
+  generateTimezone(ctx: ContextHandle, tc: TestCaseHandle, spec: TimeZoneSpecHandle): string;
+  /** Create a zoned datetime spec with every option at its default; released with {@link freeZonedSpec}. */
+  zonedSpecNew(ctx: ContextHandle): ZonedSpecHandle;
+  zonedSpecSetCivilBounds(
+    ctx: ContextHandle,
+    spec: ZonedSpecHandle,
+    min: NativeDatetime,
+    max: NativeDatetime,
+  ): void;
+  zonedSpecSetInstantBounds(
+    ctx: ContextHandle,
+    spec: ZonedSpecHandle,
+    min: NativeTimestamp,
+    max: NativeTimestamp,
+  ): void;
+  zonedSpecSetPrecision(ctx: ContextHandle, spec: ZonedSpecHandle, precision: number): void;
+  zonedSpecSetImaginary(ctx: ContextHandle, spec: ZonedSpecHandle, imaginary: number): void;
+  zonedSpecSetAmbiguous(ctx: ContextHandle, spec: ZonedSpecHandle, ambiguous: number): void;
+  /**
+   * Check `spec` as every draw from it does: bounds of both kinds, or civil
+   * bounds holding no value at its precision, are an error.
+   */
+  zonedSpecValidate(ctx: ContextHandle, spec: ZonedSpecHandle): void;
+  freeZonedSpec(spec: ZonedSpecHandle): void;
+  /**
+   * Draw a wall-clock time within `zonedSpec`'s bounds in the zone `name` of
+   * `source` (`null` for the engine's default source, the bundled database),
+   * recording no choice for the zone. A zone with no value in the bounds
+   * rejects the test case; a name the source lacks is an error.
+   */
+  generateZonedDatetimeForZone(
+    ctx: ContextHandle,
+    tc: TestCaseHandle,
+    source: ZoneSourceHandle | null,
+    name: string,
+    zonedSpec: ZonedSpecHandle,
+  ): NativeZonedDatetime;
+  /** Create a span spec with no unit enabled; released with {@link freeSpanSpec}. */
+  spanSpecNew(ctx: ContextHandle): SpanSpecHandle;
+  /** Enable `unit` (a {@link NativeSpanUnit}) with the inclusive bounds `[min, max]`. */
+  spanSpecSetUnitBounds(
+    ctx: ContextHandle,
+    spec: SpanSpecHandle,
+    unit: number,
+    min: bigint,
+    max: bigint,
+  ): void;
+  /** Set how the units' signs are drawn (a {@link NativeSpanSign}). */
+  spanSpecSetSign(ctx: ContextHandle, spec: SpanSpecHandle, sign: number): void;
+  /**
+   * Check `spec` as every draw from it does: no enabled unit, or bounds its
+   * sign policy excludes, are an error.
+   */
+  spanSpecValidate(ctx: ContextHandle, spec: SpanSpecHandle): void;
+  freeSpanSpec(spec: SpanSpecHandle): void;
+  /** Draw a calendar span within `spec`'s bounds. */
+  generateSpan(ctx: ContextHandle, tc: TestCaseHandle, spec: SpanSpecHandle): NativeSpan;
   generateUuid(ctx: ContextHandle, tc: TestCaseHandle, version?: UuidVersion): Uint8Array;
   generateIpv4(ctx: ContextHandle, tc: TestCaseHandle): Uint8Array;
   generateIpv6(ctx: ContextHandle, tc: TestCaseHandle): Uint8Array;
@@ -511,7 +892,20 @@ export interface Engine {
   /** Report that the iteration just run failed, before the failure is rethrown. */
   repeatFailed(ctx: ContextHandle, tc: TestCaseHandle, repeat: RepeatHandle): void;
   freeRepeat(repeat: RepeatHandle): void;
-  markComplete(ctx: ContextHandle, tc: TestCaseHandle, status: number, origin: string | null): void;
+  /**
+   * Complete `tc` with `status`. A failure (`INTERESTING`) passes its
+   * `origin`, its one-line `summary` (required when the test case wanted
+   * output) and its complete `detail` (required when it wanted detail); every
+   * other status passes `null` for all three.
+   */
+  markComplete(
+    ctx: ContextHandle,
+    tc: TestCaseHandle,
+    status: number,
+    origin: string | null,
+    summary: string | null,
+    detail: string | null,
+  ): void;
   /** Open a variable pool for stateful testing; released with {@link freePool}. */
   newPool(ctx: ContextHandle, tc: TestCaseHandle): PoolHandle;
   /** Register a new variable in `pool`, returning its engine-assigned id. */
@@ -644,5 +1038,11 @@ export interface Engine {
   reproductionBlob(fp: FailureHandle): string | null;
   /** The failure's confirmation caveat, or `null` for a deterministic failure. */
   failureCaveat(fp: FailureHandle): string | null;
+  /**
+   * The failure's report, its lines joined with `\n`: what the latest
+   * execution the engine stamped for capture that failed there printed, or
+   * `null` when none did (or the run was quiet).
+   */
+  failureOutput(fp: FailureHandle): string | null;
   freeStringGenerator(generator: StringGeneratorHandle): void;
 }

@@ -13,7 +13,7 @@ in the root `AGENTS.md`.
 ## Commands
 
 ```bash
-just typescript::setup            # npm ci
+just typescript::setup            # npm ci; every recipe that runs a dev dependency runs it first
 just typescript::build-libhegel   # cargo-build the engine natively and for wasm32-unknown-unknown
 just typescript::check-test       # vitest with coverage against both builds (fails if < 100%)
 just typescript::check-lint       # prettier --check + libhegel-version check + eslint + tsc + typecheck:portable + typecheck:tests
@@ -72,7 +72,11 @@ the koffi entry; `scripts/packaging.test.mjs` pins that ordering.
 (`just typescript::update-libhegel-version`; `check-lint` fails when it is
 stale) and is what the runtime version checks compare the loaded engine
 against. The release script rewrites it on a libhegel release. Never edit it
-by hand.
+by hand. `src/timezone-names.ts` is likewise generated from
+`libhegel/src/tzdata/tzdata.txt` (`just typescript::update-timezone-names`,
+checked by `check-lint`): the C ABI has no call that lists the bundled time
+zones, so the frontend carries the list and filters it at run time through the
+engine's `hegel_timezone_info` and the host's `Intl`.
 
 ## Architecture
 
@@ -115,8 +119,10 @@ so a Node import creeping into a shared module fails `check-lint`.
    and drives those calls through `Engine`, handling compound structure
    (`one_of`, `tuple`, `list`, `dict`, `constant`) client-side with the
    matching shrinker spans and the collection protocol. String-shaped draws go
-   through a per-engine `StringGeneratorCache` of `hegel_string_generator_t`
-   handles, bounded and freed with the runner. The same run-owned cache
+   through a per-engine `HandleCache` of `hegel_string_generator_t` handles,
+   and the date and time draws through the engine's date options and time
+   zone, zoned datetime and span specs, kept in the same cache keyed by
+   schema object, bounded and freed with the runner. The same run-owned cache
    compiles each `fromLark` generator's grammar once (the builder loop, with
    imported files read through `RuntimeServices.readGrammarFile`) and frees
    the `hegel_grammar_t` handles when the run ends. Each kind is capped at 256
@@ -124,9 +130,19 @@ so a Node import creeping into a shared module fails `check-lint`.
    progress borrows is never evicted. A grammar draw
    (`EngineDataSource.drawGrammar`) is one `hegel_grammar_draw_t` loop per
    value, the frontend drawing each explicit terminal's value between
-   `hegel_grammar_draw_next` and `hegel_grammar_draw_provide`. Text and binary
-   draws without a `maxSize` pass `HEGEL_MAX_SIZE_DEFAULT`, and `filter` tries
-   `HEGEL_FILTER_ATTEMPTS` values: both constants live in `src/engine.ts`.
+   `hegel_grammar_draw_next` and `hegel_grammar_draw_provide`. Time zone draws go through a zone
+   source (`src/zoneSource.ts`): the host's database by default, read from
+   `Temporal` or probed from `Intl` in JavaScript (`src/hostZones.ts`) and
+   uploaded to the engine as structured data the first time a draw lands on a
+   zone, so the koffi and Wasm paths behave identically (the Wasm build has no
+   callbacks). A zoned draw is two-step: draw the name (from the `zones()`
+   spec, or with whatever generator `zonedDatetimes` was given), upload its
+   data, then `hegel_generate_zoned_datetime_for_zone` in that zone of the
+   source the generator captured when it was built. Against the host and
+   bundled sources a zoned draw whose offset the host's `Intl` disagrees with
+   is rejected like a failed assumption. Text and binary draws without a `maxSize` pass
+   `HEGEL_MAX_SIZE_DEFAULT`, and `filter` tries `HEGEL_FILTER_ATTEMPTS`
+   values: both constants live in `src/engine.ts`.
 5. **Runtime services** (`src/runtime.ts`, `src/nodeRuntime.ts`,
    `src/browser/runtime.ts`) — `RuntimeServices` is the small set of
    host-specific things the shared loop needs: how to get the `Engine`,
@@ -134,7 +150,21 @@ so a Node import creeping into a shared module fails `check-lint`.
    host can keep a database (the browser cannot, so its runs disable it), how
    to read a grammar file a `fromLark` grammar imports (Node only), and
    where report lines go (`output`: `console.error` on every host, so Node and
-   browsers print the same report). Settings defaults, CI detection and Antithesis
+   browsers print the same report). The engine prints a run's own lines (a
+   verbose run's test cases, phases, statistics) to the same `output`: the
+   native adapter registers it as the run's `hegel_output_callback_t` (a
+   koffi callback, unregistered when the run is freed); the Wasm module
+   cannot call back into JavaScript, so it gets the engine's own
+   `hegel_output_stderr` (from `hegel_output_stderr_callback()`; a NULL
+   callback would mean no output), which writes to the
+   `hegel_host.stderr_write` import: `src/browser/host.ts` splits it into
+   lines and `WasmEngine` routes them to the destination of the run whose
+   context or run handle the current call was given. A failing test case
+   passes the engine a one-line summary (`file:line:col: Error: message`, from
+   the first stack frame outside `node_modules`) when it wants output, and the
+   error's full `stack` when it wants detail (`hegel_test_case_wants_detail`):
+   a verbose run prints the summary after the test case, a debug run the
+   detail. Settings defaults, CI detection and Antithesis
    reporting all belong to the engine: a run starts from
    `hegel_settings_new` (or `_for_profile`) and `src/settings.ts` sets only
    the fields the user gave; the test's location and database key come from
@@ -153,6 +183,13 @@ so a Node import creeping into a shared module fails `check-lint`.
    that keeps the module loaded, renumbers it. A runtime without
    `Error.captureStackTrace` (Firefox) has no call site: no location, and
    the key falls back to the function's name (none for an anonymous one).
+   Each composition root also records its runtime with `installRuntime`
+   (`src/runtime.ts` keeps it as the entry runtime), so calls made outside
+   a test (`generators.temporal.tzdbVersion()`, a `ZoneSource`'s version)
+   reach the engine through `entryEngine()`. The `./generators` export has
+   its own Node and browser entries (`src/generators/node.ts`,
+   `src/browser/generators.ts`) that load their composition root first, so
+   importing only the generators still loads the engine.
 6. **Shared runner** (`src/runnerCore.ts`) — the sync and async run loops:
    explicit examples (`src/explicit.ts`: each runs once, with no engine test
    case, its draws and notes laid out by a standalone engine printer from
@@ -162,9 +199,11 @@ so a Node import creeping into a shared module fails `check-lint`.
    `run_start_blob` for each `reproduceFailure` blob) → `next_test_case` →
    `mark_complete` → `run_result`. The engine owns the whole run, the final
    replay of each failure included; the runner never replays. A test case
-   the engine stamps (`hegel_test_case_should_capture`), or every one in a
-   verbose run, prints its draws and notes into the engine's printer
-   document. Printing is the generator's job: `TestCase.draw` hands the
+   whose output the engine wants (`hegel_test_case_wants_output`: it streams
+   a verbose run's test cases, "Test case stopped" lines included, and keeps
+   a stamped failing one's as its failure's report) prints its draws and
+   notes into the engine's printer document; the engine lays it out and
+   prints it as it becomes final. Printing is the generator's job: `TestCase.draw` hands the
    document's `PrettyPrinter` to the generator's `doDrawAndPrint`, which
    prints as it draws (containers element by element, through
    `TestCase.drawAndPrint`), so only a `PrintableGenerator` can be drawn
@@ -175,15 +214,17 @@ so a Node import creeping into a shared module fails `check-lint`.
    `hegel_printer_is_live`) and `PrettyPrinter.value`, the JavaScript
    representation value-producing generators (`map`, `just`, leaves,
    `printAsValue`) print with, which calls a class's `[prettyPrint]` method
-   where it has one; the runner keeps each failure origin's
-   best capture and, on `FAILED`, prints it with the caveat and the
+   where it has one; the runner keeps each failure origin's error (the
+   latest one from a test case whose output was wanted, matching the
+   engine's report) and, on `FAILED`, prints each failure's
+   `hegel_failure_output` with the caveat and the
    `.reproduceFailure(...)` line, then rethrows the test's own error (an
    `AggregateError` of them for several distinct failures). An errored run
    throws a `RunError` subclass chosen by `hegel_run_result_error_kind`
    (`src/errors.ts`). `EngineDataSource` implements `DataSource` against an
    engine test case, owning the clones, blocks, printers and deferred
-   printer regions derived from it. Once the document is read or released,
-   writes to any of its printers do nothing, so a value holding a deferred
+   printer regions derived from it. Once the test case completes, which
+   seals its document, writes to any of its printers do nothing, so a value holding a deferred
    region may outlive its test case.
    Span labels come from the engine (`hegel_label_from_name` /
    `hegel_label_combine`, `src/labels.ts`), never hard-coded numbers.
@@ -196,7 +237,27 @@ so a Node import creeping into a shared module fails `check-lint`.
 8. **Generators** (`src/generators/`) — transport-agnostic: they build plain
    schema records and draw through the `DataSource` interface. `composite`
    (imperative) and `record` (declarative) in `compose.ts` are the composition
-   entry points.
+   entry points. The date and time generators (`temporal.ts`, exported as
+   the `generators.temporal` namespace) draw the immutable value classes of
+   `src/temporal.ts` (`PlainDate`, `PlainTime`, `PlainDateTime`, `Instant`,
+   `ZonedDateTime`, `Duration`), which the same namespace re-exports:
+   property bags shaped like their `Temporal` namesakes. Their text
+   (`toString()`, `toJSON()` and the `ClassName(text)` a failing test
+   reports) is the engine's (`hegel_format_*`, reached through
+   `entryEngine()`), never formatted here; `src/calendar.ts` holds only the
+   field checks, the weekday arithmetic and UTC offset parsing. The
+   generators use the vocabulary every frontend shares (`dates`, `times`,
+   `datetimes`, `zonedDatetimes`, `instants`, `offsets`, `zones`, `spans`,
+   plus the JS-only `jsDates`). They check option shapes, the frontend's own
+   value ranges and bound order with plain `Error`s like `integers()` does,
+   and leave what the engine checks to the engine: every generator has the
+   engine check its arguments once on `entryEngine()` when it is constructed,
+   through `hegel_validate_*` for the handle-less draws and by building its
+   spec and calling `hegel_*_spec_validate` for `zones()`,
+   `zonedDatetimes()` and `spans()`, so the engine's error is raised there
+   and never first by a draw. Do not
+   add a JavaScript copy of an engine check. A generator reads
+   `ZoneSource.default()` when it is built, never when it draws.
 
 Both adapters hand out handles as fresh opaque objects mapped to the engine's
 pointers, never the pointers themselves, and forget the mapping when the
@@ -225,7 +286,7 @@ thread (the main thread unless the user runs tests in a worker themselves).
 
 No persistence (`Database.fromPath` throws; every run's database is
 disabled), no grammar files (`fromLark`'s `importPath` fails the test), no worker offloading, no Antithesis output (the location is passed,
-but the Wasm engine has no output directory), no raw engine-output callbacks. Web
+but the Wasm engine has no output directory). Web
 Crypto in a secure context is required, and the Wasm asset must be servable
 under the page's CORS/CSP.
 

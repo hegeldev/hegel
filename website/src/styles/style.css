@@ -51,3 +51,13 @@ communicates this better than the default.*/
   background-color: currentColor;
   mask: url('../assets/external-link.svg') no-repeat center / contain;
 }
+
+.diagram {
+  border: 1px solid var(--sl-rapide-ui-border-color);
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  background-color: #121212;
+}
+:root[data-theme='light'] .diagram {
+  background-color: #ffffff;
+}

@@ -33,6 +33,8 @@ use hegel_c::{
 };
 use std::ptr;
 
+const NANOSECONDS: u32 = hegel_c::hegel_precision_t::HEGEL_PRECISION_NANOSECONDS as u32;
+
 const FULL_MIN_DATE: hegel_c::hegel_date_t = hegel_c::hegel_date_t {
     year: 1,
     month: 1,
@@ -70,6 +72,8 @@ unsafe fn complete_valid(ctx: *mut HegelContext, tc: *mut HegelTestCase) {
             ctx,
             tc,
             hegel_status_t::HEGEL_STATUS_VALID as u32,
+            ptr::null(),
+            ptr::null(),
             ptr::null(),
         ));
         ok(hegel_c::hegel_test_case_free(ctx, tc));
@@ -645,6 +649,8 @@ fn float_draws_respect_spec_and_validate_arguments() {
                     ctx,
                     tc,
                     hegel_status_t::HEGEL_STATUS_OVERRUN as u32,
+                    ptr::null(),
+                    ptr::null(),
                     ptr::null(),
                 ));
                 ok(hegel_c::hegel_test_case_free(ctx, tc));
@@ -1429,6 +1435,8 @@ fn regex_email_url_domain_generators_draw_valid_values() {
                         tc,
                         hegel_status_t::HEGEL_STATUS_VALID as u32,
                         ptr::null(),
+                        ptr::null(),
+                        ptr::null(),
                     ));
                 }
                 HEGEL_E_ASSUME => {
@@ -1436,6 +1444,8 @@ fn regex_email_url_domain_generators_draw_valid_values() {
                         ctx,
                         tc,
                         hegel_status_t::HEGEL_STATUS_INVALID as u32,
+                        ptr::null(),
+                        ptr::null(),
                         ptr::null(),
                     ));
                 }
@@ -1484,6 +1494,8 @@ fn regex_pattern_may_contain_nul() {
                 ctx,
                 tc,
                 hegel_status_t::HEGEL_STATUS_VALID as u32,
+                ptr::null(),
+                ptr::null(),
                 ptr::null(),
             ));
             ok(hegel_c::hegel_test_case_free(ctx, tc));
@@ -1541,6 +1553,8 @@ fn generate_string_validates_handles_and_reports_stop_test() {
             tc,
             hegel_status_t::HEGEL_STATUS_OVERRUN as u32,
             ptr::null(),
+            ptr::null(),
+            ptr::null(),
         ));
         ok(hegel_c::hegel_test_case_free(ctx, tc));
         drain(ctx, run);
@@ -1569,6 +1583,7 @@ fn structured_draws_produce_valid_values_and_validate_arguments() {
                 ptr::null_mut(),
                 FULL_MIN_DATE,
                 FULL_MAX_DATE,
+                ptr::null(),
                 &mut date
             ),
             HEGEL_E_INVALID_HANDLE
@@ -1585,6 +1600,7 @@ fn structured_draws_produce_valid_values_and_validate_arguments() {
                 ptr::null_mut(),
                 MIDNIGHT,
                 LAST_NANOSECOND,
+                NANOSECONDS,
                 &mut null_time
             ),
             HEGEL_E_INVALID_HANDLE
@@ -1603,6 +1619,7 @@ fn structured_draws_produce_valid_values_and_validate_arguments() {
                 ptr::null_mut(),
                 FULL_MIN_DATETIME,
                 FULL_MAX_DATETIME,
+                NANOSECONDS,
                 &mut null_dt
             ),
             HEGEL_E_INVALID_HANDLE
@@ -1631,11 +1648,25 @@ fn structured_draws_produce_valid_values_and_validate_arguments() {
                 break;
             }
             assert_eq!(
-                hegel_generate_date(ctx, tc, FULL_MIN_DATE, FULL_MAX_DATE, ptr::null_mut()),
+                hegel_generate_date(
+                    ctx,
+                    tc,
+                    FULL_MIN_DATE,
+                    FULL_MAX_DATE,
+                    ptr::null(),
+                    ptr::null_mut()
+                ),
                 HEGEL_E_INVALID_ARG
             );
             assert_eq!(
-                hegel_generate_time(ctx, tc, MIDNIGHT, LAST_NANOSECOND, ptr::null_mut()),
+                hegel_generate_time(
+                    ctx,
+                    tc,
+                    MIDNIGHT,
+                    LAST_NANOSECOND,
+                    NANOSECONDS,
+                    ptr::null_mut()
+                ),
                 HEGEL_E_INVALID_ARG
             );
             assert_eq!(
@@ -1644,6 +1675,7 @@ fn structured_draws_produce_valid_values_and_validate_arguments() {
                     tc,
                     FULL_MIN_DATETIME,
                     FULL_MAX_DATETIME,
+                    NANOSECONDS,
                     ptr::null_mut()
                 ),
                 HEGEL_E_INVALID_ARG
@@ -1679,6 +1711,7 @@ fn structured_draws_produce_valid_values_and_validate_arguments() {
                     tc,
                     FULL_MIN_DATE,
                     FULL_MAX_DATE,
+                    ptr::null(),
                     &mut date,
                 )) {
                     break 'draws true;
@@ -1698,6 +1731,7 @@ fn structured_draws_produce_valid_values_and_validate_arguments() {
                     tc,
                     MIDNIGHT,
                     LAST_NANOSECOND,
+                    NANOSECONDS,
                     &mut time,
                 )) {
                     break 'draws true;
@@ -1723,6 +1757,7 @@ fn structured_draws_produce_valid_values_and_validate_arguments() {
                     tc,
                     FULL_MIN_DATETIME,
                     FULL_MAX_DATETIME,
+                    NANOSECONDS,
                     &mut dt,
                 )) {
                     break 'draws true;
@@ -1754,6 +1789,8 @@ fn structured_draws_produce_valid_values_and_validate_arguments() {
                     ctx,
                     tc,
                     hegel_status_t::HEGEL_STATUS_OVERRUN as u32,
+                    ptr::null(),
+                    ptr::null(),
                     ptr::null(),
                 ));
                 ok(hegel_c::hegel_test_case_free(ctx, tc));
@@ -1789,7 +1826,14 @@ fn structured_draws_after_overrun_report_stop_test() {
             day: 0,
         };
         assert_eq!(
-            hegel_generate_date(ctx, tc, FULL_MIN_DATE, FULL_MAX_DATE, &mut date),
+            hegel_generate_date(
+                ctx,
+                tc,
+                FULL_MIN_DATE,
+                FULL_MAX_DATE,
+                ptr::null(),
+                &mut date
+            ),
             HEGEL_E_STOP_TEST
         );
         let mut time = hegel_c::hegel_time_t {
@@ -1799,7 +1843,7 @@ fn structured_draws_after_overrun_report_stop_test() {
             nanosecond: 0,
         };
         assert_eq!(
-            hegel_generate_time(ctx, tc, MIDNIGHT, LAST_NANOSECOND, &mut time),
+            hegel_generate_time(ctx, tc, MIDNIGHT, LAST_NANOSECOND, NANOSECONDS, &mut time),
             HEGEL_E_STOP_TEST
         );
         let mut dt = hegel_c::hegel_datetime_t {
@@ -1816,7 +1860,14 @@ fn structured_draws_after_overrun_report_stop_test() {
             },
         };
         assert_eq!(
-            hegel_generate_datetime(ctx, tc, FULL_MIN_DATETIME, FULL_MAX_DATETIME, &mut dt),
+            hegel_generate_datetime(
+                ctx,
+                tc,
+                FULL_MIN_DATETIME,
+                FULL_MAX_DATETIME,
+                NANOSECONDS,
+                &mut dt
+            ),
             HEGEL_E_STOP_TEST
         );
         let mut uuid = [0u8; 16];
@@ -1838,6 +1889,8 @@ fn structured_draws_after_overrun_report_stop_test() {
             ctx,
             tc,
             hegel_status_t::HEGEL_STATUS_OVERRUN as u32,
+            ptr::null(),
+            ptr::null(),
             ptr::null(),
         ));
         ok(hegel_c::hegel_test_case_free(ctx, tc));
@@ -1922,6 +1975,8 @@ fn typed_draws_after_overrun_report_stop_test() {
             tc,
             hegel_status_t::HEGEL_STATUS_OVERRUN as u32,
             ptr::null(),
+            ptr::null(),
+            ptr::null(),
         ));
         ok(hegel_c::hegel_test_case_free(ctx, tc));
         drain(ctx, run);
@@ -1954,7 +2009,14 @@ fn structured_draws_respect_explicit_bounds() {
                 break;
             }
             let mut date = min_date;
-            ok(hegel_generate_date(ctx, tc, min_date, max_date, &mut date));
+            ok(hegel_generate_date(
+                ctx,
+                tc,
+                min_date,
+                max_date,
+                ptr::null(),
+                &mut date,
+            ));
             assert!((1990..=2010).contains(&date.year), "{}", date.year);
 
             let bad = hegel_c::hegel_date_t {
@@ -1963,12 +2025,12 @@ fn structured_draws_respect_explicit_bounds() {
                 day: 30,
             };
             assert_eq!(
-                hegel_generate_date(ctx, tc, bad, max_date, &mut date),
+                hegel_generate_date(ctx, tc, bad, max_date, ptr::null(), &mut date),
                 HEGEL_E_INVALID_ARG
             );
             assert!(last_error(ctx).contains("not a valid date"));
             assert_eq!(
-                hegel_generate_date(ctx, tc, max_date, min_date, &mut date),
+                hegel_generate_date(ctx, tc, max_date, min_date, ptr::null(), &mut date),
                 HEGEL_E_INVALID_ARG
             );
             assert!(last_error(ctx).contains("min_value"));
@@ -1986,10 +2048,17 @@ fn structured_draws_respect_explicit_bounds() {
                 second: 0,
                 nanosecond: 0,
             };
-            ok(hegel_generate_time(ctx, tc, min_time, max_time, &mut time));
+            ok(hegel_generate_time(
+                ctx,
+                tc,
+                min_time,
+                max_time,
+                NANOSECONDS,
+                &mut time,
+            ));
             assert!((9..=17).contains(&time.hour), "{}", time.hour);
             assert_eq!(
-                hegel_generate_time(ctx, tc, max_time, min_time, &mut time),
+                hegel_generate_time(ctx, tc, max_time, min_time, NANOSECONDS, &mut time),
                 HEGEL_E_INVALID_ARG
             );
 
@@ -2002,11 +2071,18 @@ fn structured_draws_respect_explicit_bounds() {
                 date: min_date,
                 time: max_time,
             };
-            ok(hegel_generate_datetime(ctx, tc, lo, hi, &mut dt));
+            ok(hegel_generate_datetime(
+                ctx,
+                tc,
+                lo,
+                hi,
+                NANOSECONDS,
+                &mut dt,
+            ));
             assert_eq!((dt.date.year, dt.date.month, dt.date.day), (1990, 6, 15));
             assert!((9..=17).contains(&dt.time.hour));
             assert_eq!(
-                hegel_generate_datetime(ctx, tc, hi, lo, &mut dt),
+                hegel_generate_datetime(ctx, tc, hi, lo, NANOSECONDS, &mut dt),
                 HEGEL_E_INVALID_ARG
             );
             complete_valid(ctx, tc);
@@ -2147,6 +2223,8 @@ fn grammar_draws_strings_of_the_grammar() {
             tc,
             hegel_status_t::HEGEL_STATUS_VALID as u32,
             ptr::null(),
+            ptr::null(),
+            ptr::null(),
         ));
         ok(hegel_c::hegel_test_case_free(ctx, tc));
         drain(ctx, run);
@@ -2178,6 +2256,8 @@ fn a_grammar_draw_may_be_capped_below_the_grammar() {
             ctx,
             tc,
             hegel_status_t::HEGEL_STATUS_VALID as u32,
+            ptr::null(),
+            ptr::null(),
             ptr::null(),
         ));
         ok(hegel_c::hegel_test_case_free(ctx, tc));
@@ -2286,6 +2366,8 @@ fn grammar_draws_reject_the_test_case_when_values_never_fit() {
             ctx,
             tc,
             hegel_status_t::HEGEL_STATUS_INVALID as u32,
+            ptr::null(),
+            ptr::null(),
             ptr::null(),
         ));
         ok(hegel_c::hegel_test_case_free(ctx, tc));
@@ -2483,6 +2565,8 @@ fn grammar_placeholders_stand_for_explicit_terminals() {
             tc,
             hegel_status_t::HEGEL_STATUS_VALID as u32,
             ptr::null(),
+            ptr::null(),
+            ptr::null(),
         ));
         ok(hegel_c::hegel_test_case_free(ctx, tc));
         drain(ctx, run);
@@ -2634,6 +2718,8 @@ unsafe fn draw_once(ctx: *mut HegelContext, g: *const HegelGrammar) -> String {
             ctx,
             tc,
             hegel_status_t::HEGEL_STATUS_VALID as u32,
+            ptr::null(),
+            ptr::null(),
             ptr::null(),
         ));
         ok(hegel_c::hegel_test_case_free(ctx, tc));
@@ -2901,6 +2987,8 @@ fn generate_grammar_validates_handles_and_reports_stop_test() {
             ctx,
             tc,
             hegel_status_t::HEGEL_STATUS_OVERRUN as u32,
+            ptr::null(),
+            ptr::null(),
             ptr::null(),
         ));
         ok(hegel_c::hegel_test_case_free(ctx, tc));

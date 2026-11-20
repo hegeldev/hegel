@@ -9,7 +9,7 @@
 open Ctypes
 
 (* ------------------------------------------------------------------ *)
-(* Locating and opening the shared library                            *)
+(* Locating and opening the shared library *)
 (* ------------------------------------------------------------------ *)
 
 (* [memoize] is a thread-safe lazy value, used to avoid an eager dlopen in code
@@ -39,10 +39,8 @@ let lib =
 
 let binding_initializers = ref []
 
-let foreign ?(release_runtime_lock = false) name typ =
-  let binding =
-    memoize (fun () -> Foreign.foreign ~from:(lib ()) ~release_runtime_lock name typ)
-  in
+let foreign name typ =
+  let binding = memoize (fun () -> Foreign.foreign ~from:(lib ()) name typ) in
   let initialize () =
     let (_ : _ -> _) = binding () in
     ()
@@ -53,13 +51,8 @@ let foreign ?(release_runtime_lock = false) name typ =
     f arg
 ;;
 
-(* [hegel_next_test_case] runs the engine on the calling thread. An engine call
-   can take a while, so release the OCaml runtime lock for its duration to let
-   other OCaml threads run. *)
-let foreign_blocking name typ = foreign ~release_runtime_lock:true name typ
-
 (* ------------------------------------------------------------------ *)
-(* Handles                                                            *)
+(* Handles *)
 (* ------------------------------------------------------------------ *)
 
 (* In OxCaml they cross portability and contention since libhegel's threading
@@ -68,8 +61,9 @@ let foreign_blocking name typ = foreign ~release_runtime_lock:true name typ
    so we need to wrap it in a type with the kind value mod portable contended to keep
    portability and contention. *)
 #ifdef OXCAML
-type handle : value mod portable contended = H of unit ptr
+type handle : value mod contended portable = H of unit ptr
 [@@unboxed] [@@unsafe_allow_any_mode_crossing]
+
 #else
 type handle = H of unit ptr [@@unboxed]
 #endif
@@ -79,7 +73,7 @@ let handle_t : handle typ = view ~read:(fun p -> H p) ~write:raw (ptr void)
 let null_handle = H null
 
 (* ------------------------------------------------------------------ *)
-(* C structs returned by the typed draws                              *)
+(* C structs returned by the typed draws *)
 (* ------------------------------------------------------------------ *)
 
 (* [hegel_generate_bytes_result_t]: an engine-allocated byte buffer, freed with
@@ -183,15 +177,198 @@ module Datetime_struct = struct
   let () = seal t
 end
 
+module Timestamp_struct = struct
+  type s
+
+  let t : s structure typ = structure "hegel_timestamp_t"
+  let second = field t "second" int64_t
+  let nanosecond = field t "nanosecond" uint32_t
+  let () = seal t
+end
+
+module Duration_struct = struct
+  type s
+
+  let t : s structure typ = structure "hegel_duration_t"
+  let seconds = field t "seconds" int64_t
+  let nanoseconds = field t "nanoseconds" int32_t
+  let () = seal t
+end
+
+module Offset_struct = struct
+  type s
+
+  let t : s structure typ = structure "hegel_offset_t"
+  let seconds = field t "seconds" int32_t
+  let known = field t "known" bool
+  let () = seal t
+end
+
+module Span_struct = struct
+  type s
+
+  let t : s structure typ = structure "hegel_span_t"
+
+  let units =
+    List.map
+      (fun name -> field t name int64_t)
+      [ "years"
+      ; "months"
+      ; "weeks"
+      ; "days"
+      ; "hours"
+      ; "minutes"
+      ; "seconds"
+      ; "milliseconds"
+      ; "microseconds"
+      ; "nanoseconds"
+      ]
+  ;;
+
+  let () = seal t
+end
+
+module Resolution_struct = struct
+  type s
+
+  let t : s structure typ = structure "hegel_timezone_resolution_t"
+  let kind = field t "kind" uint32_t
+  let offset_before = field t "offset_before" int32_t
+  let offset_after = field t "offset_after" int32_t
+  let offset_seconds = field t "offset_seconds" int32_t
+  let offset_known = field t "offset_known" bool
+  let timestamp = field t "timestamp" Timestamp_struct.t
+  let () = seal t
+end
+
+module Zone_offset_struct = struct
+  type s
+
+  let t : s structure typ = structure "hegel_timezone_offset_t"
+  let offset_seconds = field t "offset_seconds" int32_t
+  let offset_known = field t "offset_known" bool
+  let is_dst = field t "is_dst" bool
+  let abbreviation = field t "abbreviation" Str.t
+  let () = seal t
+end
+
+module Zone_info_struct = struct
+  type s
+
+  let t : s structure typ = structure "hegel_timezone_info_t"
+  let known = field t "known" bool
+  let primary_name = field t "primary_name" Str.t
+  let is_link = field t "is_link" bool
+  let rank = field t "rank" uint16_t
+  let tags = field t "tags" uint32_t
+  let () = seal t
+end
+
+module Zoned_struct = struct
+  type s
+
+  let t : s structure typ = structure "hegel_zoned_datetime_t"
+  let civil = field t "civil" Datetime_struct.t
+  let offset_seconds = field t "offset_seconds" int32_t
+  let offset_known = field t "offset_known" bool
+  let fold = field t "fold" bool
+  let kind = field t "kind" uint32_t
+  let offset_before = field t "offset_before" int32_t
+  let offset_after = field t "offset_after" int32_t
+  let timestamp = field t "timestamp" Timestamp_struct.t
+  let () = seal t
+end
+
+module Zone_type_struct = struct
+  type s
+
+  let t : s structure typ = structure "hegel_zone_type_t"
+  let utoff = field t "utoff" int32_t
+  let is_dst = field t "is_dst" bool
+  let abbreviation = field t "abbreviation" Str.t
+  let () = seal t
+end
+
+module Zone_transition_struct = struct
+  type s
+
+  let t : s structure typ = structure "hegel_zone_transition_t"
+  let instant = field t "instant" int64_t
+  let local_type = field t "local_type" Zone_type_struct.t
+  let () = seal t
+end
+
+module Rule_date_struct = struct
+  type s
+
+  let t : s structure typ = structure "hegel_zone_rule_date_t"
+  let kind = field t "kind" uint32_t
+  let day = field t "day" uint16_t
+  let month = field t "month" uint8_t
+  let week = field t "week" uint8_t
+  let weekday = field t "weekday" uint8_t
+  let time = field t "time" int32_t
+  let () = seal t
+end
+
+module Zone_data_struct = struct
+  type s
+
+  let t : s structure typ = structure "hegel_zone_data_t"
+  let initial = field t "initial" Zone_type_struct.t
+  let transitions = field t "transitions" (ptr Zone_transition_struct.t)
+  let transition_count = field t "transition_count" size_t
+  let after = field t "after" uint32_t
+  let standard = field t "standard" Zone_type_struct.t
+  let has_dst = field t "has_dst" bool
+  let dst = field t "dst" Zone_type_struct.t
+  let dst_start = field t "dst_start" Rule_date_struct.t
+  let dst_end = field t "dst_end" Rule_date_struct.t
+  let last_year = field t "last_year" int32_t
+  let () = seal t
+end
+
+let offset_fn =
+  Foreign.funptr
+    (ptr void @-> handle_t @-> int64_t @-> ptr Zone_type_struct.t @-> returning int32_t)
+;;
+
+let next_transition_fn =
+  Foreign.funptr_opt
+    (ptr void @-> handle_t @-> int64_t @-> ptr bool @-> ptr int64_t @-> returning int32_t)
+;;
+
+(* The loader and its release hook outlive the call that passes them, so they
+   are function pointers made once and never freed, not closures whose
+   pointer dies with them. *)
+module Loader_fn =
+  (val Foreign.dynamic_funptr
+         (ptr void @-> handle_t @-> handle_t @-> Str.t @-> returning int32_t))
+
+module Loader_release_fn = (val Foreign.dynamic_funptr (ptr void @-> returning void))
+
+module Zone_oracle_struct = struct
+  type s
+
+  let t : s structure typ = structure "hegel_zone_oracle_t"
+  let offset_at = field t "offset_at" offset_fn
+  let next_transition = field t "next_transition" next_transition_fn
+  let user_data = field t "user_data" (ptr void)
+  let first_year = field t "first_year" int32_t
+  let last_year = field t "last_year" int32_t
+  let after = field t "after" uint32_t
+  let () = seal t
+end
+
 (* ------------------------------------------------------------------ *)
-(* Test context                                                        *)
+(* Test context *)
 (* ------------------------------------------------------------------ *)
 
 let c_context_new = foreign "hegel_context_new" (void @-> returning handle_t)
 let c_context_free = foreign "hegel_context_free" (handle_t @-> returning int)
 
 (* ------------------------------------------------------------------ *)
-(* Raw bindings                                                        *)
+(* Raw bindings *)
 (* ------------------------------------------------------------------ *)
 
 let c_settings_new =
@@ -388,9 +565,6 @@ let c_settings_suppress_health_check =
     (handle_t @-> handle_t @-> uint32_t @-> returning int)
 ;;
 
-(* [hegel_run_start]'s [callback]/[user_data] (the third and fourth arguments)
-   redirect the engine's own output off stderr. We always pass NULL for both,
-   keeping it on stderr. *)
 let c_run_start =
   foreign
     "hegel_run_start"
@@ -409,12 +583,6 @@ let c_run_start_blob =
      @-> returning int)
 ;;
 
-let c_next_test_case =
-  foreign_blocking
-    "hegel_next_test_case"
-    (handle_t @-> handle_t @-> ptr handle_t @-> returning int)
-;;
-
 let c_run_result =
   foreign "hegel_run_result" (handle_t @-> handle_t @-> ptr handle_t @-> returning int)
 ;;
@@ -426,16 +594,6 @@ let c_run_result_free =
 ;;
 
 let c_failure_free = foreign "hegel_failure_free" (handle_t @-> handle_t @-> returning int)
-
-let c_test_case_free =
-  foreign "hegel_test_case_free" (handle_t @-> handle_t @-> returning int)
-;;
-
-let c_test_case_should_capture =
-  foreign
-    "hegel_test_case_should_capture"
-    (handle_t @-> handle_t @-> ptr bool @-> returning int)
-;;
 
 let c_test_case_clone =
   foreign
@@ -453,35 +611,6 @@ let c_test_case_block =
   foreign
     "hegel_test_case_block"
     (handle_t @-> handle_t @-> uint64_t @-> ptr handle_t @-> returning int)
-;;
-
-let c_generate_boolean =
-  foreign
-    "hegel_generate_boolean"
-    (handle_t @-> handle_t @-> double @-> bool @-> bool @-> ptr bool @-> returning int)
-;;
-
-let c_generate_integer =
-  foreign
-    "hegel_generate_integer"
-    (handle_t @-> handle_t @-> int64_t @-> int64_t @-> ptr int64_t @-> returning int)
-;;
-
-let c_generate_float =
-  foreign
-    "hegel_generate_float"
-    (handle_t
-     @-> handle_t
-     @-> uint32_t
-     @-> double
-     @-> double
-     @-> bool
-     @-> bool
-     @-> bool
-     @-> bool
-     @-> double
-     @-> ptr double
-     @-> returning int)
 ;;
 
 let c_generate_bytes =
@@ -549,47 +678,283 @@ let c_string_generator_free =
   foreign "hegel_string_generator_free" (handle_t @-> handle_t @-> returning int)
 ;;
 
-let c_generate_string =
-  foreign
-    "hegel_generate_string"
-    (handle_t @-> handle_t @-> handle_t @-> ptr Str.t @-> returning int)
-;;
-
 let c_owned_string_free =
   foreign "hegel_owned_string_free" (handle_t @-> ptr Str.t @-> returning int)
 ;;
 
-let c_generate_date =
+let c_date_options_new =
+  foreign "hegel_date_options_new" (handle_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_date_options_free =
+  foreign "hegel_date_options_free" (handle_t @-> handle_t @-> returning int)
+;;
+
+let c_date_options_set_weekdays =
   foreign
-    "hegel_generate_date"
+    "hegel_date_options_set_weekdays"
+    (handle_t @-> handle_t @-> uint32_t @-> returning int)
+;;
+
+let c_date_options_set_months =
+  foreign
+    "hegel_date_options_set_months"
+    (handle_t @-> handle_t @-> uint32_t @-> returning int)
+;;
+
+let c_span_spec_new =
+  foreign "hegel_span_spec_new" (handle_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_span_spec_free =
+  foreign "hegel_span_spec_free" (handle_t @-> handle_t @-> returning int)
+;;
+
+let c_span_spec_set_unit_bounds =
+  foreign
+    "hegel_span_spec_set_unit_bounds"
+    (handle_t @-> handle_t @-> uint32_t @-> int64_t @-> int64_t @-> returning int)
+;;
+
+let c_span_spec_set_sign =
+  foreign "hegel_span_spec_set_sign" (handle_t @-> handle_t @-> uint32_t @-> returning int)
+;;
+
+let c_span_spec_validate =
+  foreign "hegel_span_spec_validate" (handle_t @-> handle_t @-> returning int)
+;;
+
+let c_tzdb_version = foreign "hegel_tzdb_version" (handle_t @-> ptr str @-> returning int)
+
+let c_timezone_resolve_in =
+  foreign
+    "hegel_timezone_resolve_in"
     (handle_t
      @-> handle_t
-     @-> Date_struct.t
-     @-> Date_struct.t
-     @-> ptr Date_struct.t
+     @-> str
+     @-> Datetime_struct.t
+     @-> ptr Resolution_struct.t
      @-> returning int)
 ;;
 
-let c_generate_time =
+let c_timezone_offset_at_in =
   foreign
-    "hegel_generate_time"
+    "hegel_timezone_offset_at_in"
     (handle_t
      @-> handle_t
-     @-> Time_struct.t
-     @-> Time_struct.t
-     @-> ptr Time_struct.t
+     @-> str
+     @-> Timestamp_struct.t
+     @-> ptr Zone_offset_struct.t
      @-> returning int)
 ;;
 
-let c_generate_datetime =
+let c_timezone_info_in =
   foreign
-    "hegel_generate_datetime"
+    "hegel_timezone_info_in"
+    (handle_t @-> handle_t @-> str @-> ptr Zone_info_struct.t @-> returning int)
+;;
+
+let c_zone_source_new =
+  foreign "hegel_zone_source_new" (handle_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_zone_source_bundled =
+  foreign "hegel_zone_source_bundled" (handle_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_zone_source_free =
+  foreign "hegel_zone_source_free" (handle_t @-> handle_t @-> returning int)
+;;
+
+let c_zone_source_add_tzif =
+  foreign
+    "hegel_zone_source_add_tzif"
+    (handle_t @-> handle_t @-> str @-> ptr char @-> size_t @-> returning int)
+;;
+
+let c_zone_source_add_zone =
+  foreign
+    "hegel_zone_source_add_zone"
+    (handle_t @-> handle_t @-> str @-> ptr Zone_data_struct.t @-> returning int)
+;;
+
+let c_zone_source_add_oracle =
+  foreign
+    "hegel_zone_source_add_oracle"
+    (handle_t @-> handle_t @-> str @-> ptr Zone_oracle_struct.t @-> returning int)
+;;
+
+let c_zone_source_add_link =
+  foreign
+    "hegel_zone_source_add_link"
+    (handle_t @-> handle_t @-> str @-> str @-> returning int)
+;;
+
+let c_zone_source_declare =
+  foreign
+    "hegel_zone_source_declare"
+    (handle_t @-> handle_t @-> ptr Str.t @-> size_t @-> returning int)
+;;
+
+let c_zone_source_set_loader =
+  foreign
+    "hegel_zone_source_set_loader"
     (handle_t
      @-> handle_t
-     @-> Datetime_struct.t
-     @-> Datetime_struct.t
-     @-> ptr Datetime_struct.t
+     @-> Loader_fn.t_opt
+     @-> ptr void
+     @-> Loader_release_fn.t_opt
      @-> returning int)
+;;
+
+let c_zone_source_set_version =
+  foreign "hegel_zone_source_set_version" (handle_t @-> handle_t @-> str @-> returning int)
+;;
+
+let c_zone_source_version =
+  foreign "hegel_zone_source_version" (handle_t @-> handle_t @-> ptr str @-> returning int)
+;;
+
+let c_set_default_zone_source =
+  foreign "hegel_set_default_zone_source" (handle_t @-> handle_t @-> returning int)
+;;
+
+let c_context_set_error =
+  foreign "hegel_context_set_error" (handle_t @-> str @-> returning int)
+;;
+
+let c_timezone_spec_new =
+  foreign "hegel_timezone_spec_new" (handle_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_timezone_spec_free =
+  foreign "hegel_timezone_spec_free" (handle_t @-> handle_t @-> returning int)
+;;
+
+let c_timezone_spec_set_names =
+  foreign
+    "hegel_timezone_spec_set_names"
+    (handle_t @-> handle_t @-> ptr Str.t @-> size_t @-> returning int)
+;;
+
+let c_timezone_spec_set_links =
+  foreign
+    "hegel_timezone_spec_set_links"
+    (handle_t @-> handle_t @-> bool @-> returning int)
+;;
+
+let c_timezone_spec_set_legacy =
+  foreign
+    "hegel_timezone_spec_set_legacy"
+    (handle_t @-> handle_t @-> bool @-> returning int)
+;;
+
+let c_timezone_spec_set_unknown =
+  foreign
+    "hegel_timezone_spec_set_unknown"
+    (handle_t @-> handle_t @-> bool @-> returning int)
+;;
+
+let c_timezone_spec_set_opaque =
+  foreign
+    "hegel_timezone_spec_set_opaque"
+    (handle_t @-> handle_t @-> bool @-> returning int)
+;;
+
+let c_timezone_spec_set_source =
+  foreign
+    "hegel_timezone_spec_set_source"
+    (handle_t @-> handle_t @-> handle_t @-> returning int)
+;;
+
+let c_timezone_spec_validate =
+  foreign "hegel_timezone_spec_validate" (handle_t @-> handle_t @-> returning int)
+;;
+
+let c_zoned_spec_new =
+  foreign "hegel_zoned_spec_new" (handle_t @-> ptr handle_t @-> returning int)
+;;
+
+let c_zoned_spec_free =
+  foreign "hegel_zoned_spec_free" (handle_t @-> handle_t @-> returning int)
+;;
+
+let c_zoned_spec_set_civil_bounds =
+  foreign
+    "hegel_zoned_spec_set_civil_bounds"
+    (handle_t @-> handle_t @-> Datetime_struct.t @-> Datetime_struct.t @-> returning int)
+;;
+
+let c_zoned_spec_set_instant_bounds =
+  foreign
+    "hegel_zoned_spec_set_instant_bounds"
+    (handle_t @-> handle_t @-> Timestamp_struct.t @-> Timestamp_struct.t @-> returning int)
+;;
+
+let c_zoned_spec_set_precision =
+  foreign
+    "hegel_zoned_spec_set_precision"
+    (handle_t @-> handle_t @-> uint32_t @-> returning int)
+;;
+
+let c_zoned_spec_set_imaginary =
+  foreign
+    "hegel_zoned_spec_set_imaginary"
+    (handle_t @-> handle_t @-> uint32_t @-> returning int)
+;;
+
+let c_zoned_spec_set_ambiguous =
+  foreign
+    "hegel_zoned_spec_set_ambiguous"
+    (handle_t @-> handle_t @-> uint32_t @-> returning int)
+;;
+
+let c_zoned_spec_validate =
+  foreign "hegel_zoned_spec_validate" (handle_t @-> handle_t @-> returning int)
+;;
+
+let c_format_date =
+  foreign "hegel_format_date" (handle_t @-> Date_struct.t @-> ptr Str.t @-> returning int)
+;;
+
+let c_format_time =
+  foreign "hegel_format_time" (handle_t @-> Time_struct.t @-> ptr Str.t @-> returning int)
+;;
+
+let c_format_datetime =
+  foreign
+    "hegel_format_datetime"
+    (handle_t @-> Datetime_struct.t @-> ptr Str.t @-> returning int)
+;;
+
+let c_format_timestamp =
+  foreign
+    "hegel_format_timestamp"
+    (handle_t @-> Timestamp_struct.t @-> ptr Str.t @-> returning int)
+;;
+
+let c_format_offset =
+  foreign
+    "hegel_format_offset"
+    (handle_t @-> Offset_struct.t @-> ptr Str.t @-> returning int)
+;;
+
+let c_format_duration =
+  foreign
+    "hegel_format_duration"
+    (handle_t @-> Duration_struct.t @-> ptr Str.t @-> returning int)
+;;
+
+let c_format_span =
+  foreign
+    "hegel_format_span"
+    (handle_t @-> ptr Span_struct.t @-> ptr Str.t @-> returning int)
+;;
+
+let c_format_zoned_datetime =
+  foreign
+    "hegel_format_zoned_datetime"
+    (handle_t @-> ptr Zoned_struct.t @-> str @-> ptr Str.t @-> returning int)
 ;;
 
 let c_generate_ipv4 =
@@ -598,10 +963,6 @@ let c_generate_ipv4 =
 
 let c_generate_ipv6 =
   foreign "hegel_generate_ipv6" (handle_t @-> handle_t @-> ptr uint8_t @-> returning int)
-;;
-
-let c_start_span =
-  foreign "hegel_start_span" (handle_t @-> handle_t @-> uint64_t @-> returning int)
 ;;
 
 let c_label_from_name =
@@ -614,30 +975,10 @@ let c_label_combine =
     (handle_t @-> ptr uint64_t @-> size_t @-> ptr uint64_t @-> returning int)
 ;;
 
-let c_stop_span =
-  foreign "hegel_stop_span" (handle_t @-> handle_t @-> bool @-> returning int)
-;;
-
-let c_new_collection =
-  foreign
-    "hegel_new_collection"
-    (handle_t @-> handle_t @-> uint64_t @-> uint64_t @-> ptr handle_t @-> returning int)
-;;
-
-let c_collection_more =
-  foreign
-    "hegel_collection_more"
-    (handle_t @-> handle_t @-> handle_t @-> ptr bool @-> returning int)
-;;
-
 let c_collection_reject =
   foreign
     "hegel_collection_reject"
     (handle_t @-> handle_t @-> handle_t @-> str_opt @-> returning int)
-;;
-
-let c_collection_free =
-  foreign "hegel_collection_free" (handle_t @-> handle_t @-> returning int)
 ;;
 
 let c_new_pool =
@@ -701,38 +1042,8 @@ let c_state_machine_start =
     (handle_t @-> handle_t @-> handle_t @-> ptr int64_t @-> returning int)
 ;;
 
-let c_state_machine_next_group =
-  foreign
-    "hegel_state_machine_next_group"
-    (handle_t @-> handle_t @-> handle_t @-> ptr int64_t @-> ptr int64_t @-> returning int)
-;;
-
-let c_state_machine_next_rule =
-  foreign
-    "hegel_state_machine_next_rule"
-    (handle_t @-> handle_t @-> handle_t @-> int64_t @-> ptr int64_t @-> returning int)
-;;
-
-let c_state_machine_rule_rejected =
-  foreign
-    "hegel_state_machine_rule_rejected"
-    (handle_t @-> handle_t @-> handle_t @-> int64_t @-> returning int)
-;;
-
-let c_state_machine_should_check_invariant =
-  foreign
-    "hegel_state_machine_should_check_invariant"
-    (handle_t @-> handle_t @-> handle_t @-> int64_t @-> ptr bool @-> returning int)
-;;
-
 let c_state_machine_free =
   foreign "hegel_state_machine_free" (handle_t @-> handle_t @-> returning int)
-;;
-
-let c_pause_faults = foreign "hegel_pause_faults" (handle_t @-> handle_t @-> returning int)
-
-let c_unpause_faults =
-  foreign "hegel_unpause_faults" (handle_t @-> handle_t @-> returning int)
 ;;
 
 let c_target =
@@ -742,9 +1053,7 @@ let c_target =
 let c_event = foreign "hegel_event" (handle_t @-> handle_t @-> str @-> returning int)
 
 let c_event_value =
-  foreign
-    "hegel_event_value"
-    (handle_t @-> handle_t @-> double @-> str @-> returning int)
+  foreign "hegel_event_value" (handle_t @-> handle_t @-> double @-> str @-> returning int)
 ;;
 
 let text_typ = handle_t @-> handle_t @-> str @-> returning int
@@ -837,12 +1146,6 @@ let c_test_case_printer =
 
 let c_note = foreign "hegel_note" text_typ
 
-let c_mark_complete =
-  foreign
-    "hegel_mark_complete"
-    (handle_t @-> handle_t @-> int @-> str_opt @-> returning int)
-;;
-
 let c_result_status =
   foreign "hegel_run_result_status" (handle_t @-> handle_t @-> ptr int @-> returning int)
 ;;
@@ -872,25 +1175,22 @@ let c_failure_blob =
 ;;
 
 let c_failure_caveat =
-  foreign
-    "hegel_failure_caveat"
-    (handle_t @-> handle_t @-> ptr str_opt @-> returning int)
+  foreign "hegel_failure_caveat" (handle_t @-> handle_t @-> ptr str_opt @-> returning int)
+;;
+
+let c_failure_output =
+  foreign "hegel_failure_output" (handle_t @-> handle_t @-> ptr str_opt @-> returning int)
 ;;
 
 let c_failure_origin =
-  foreign
-    "hegel_failure_origin"
-    (handle_t @-> handle_t @-> ptr str @-> returning int)
+  foreign "hegel_failure_origin" (handle_t @-> handle_t @-> ptr str @-> returning int)
 ;;
 
-let c_last_error_message =
-  foreign "hegel_context_last_error" (handle_t @-> returning str)
-;;
-
+let c_last_error_message = foreign "hegel_context_last_error" (handle_t @-> returning str)
 let c_version = foreign "hegel_version" (handle_t @-> ptr str @-> returning int)
 
 (* ------------------------------------------------------------------ *)
-(* Public types                                                        *)
+(* Public types *)
 (* ------------------------------------------------------------------ *)
 
 type context = handle
@@ -963,7 +1263,7 @@ let hc_test_cases_too_large = 1 lsl 2
 let hc_large_initial_test_case = 1 lsl 3
 
 (* ------------------------------------------------------------------ *)
-(* Helpers                                                             *)
+(* Helpers *)
 (* ------------------------------------------------------------------ *)
 
 let backend_to_int = function
@@ -997,7 +1297,8 @@ let nondeterminism_strictness_of_int = function
   | 1 -> Nondeterminism_warn
   | 2 -> Nondeterminism_error
   | n ->
-    raise (Internal_error (Printf.sprintf "hegel: unknown nondeterminism strictness %d" n))
+    raise
+      (Internal_error (Printf.sprintf "hegel: unknown nondeterminism strictness %d" n))
 ;;
 
 let backend_of_int = function
@@ -1013,16 +1314,14 @@ let status_to_int = function
   | Interesting -> 3
 ;;
 
-(* Translate a libhegel return code into success or an exception. *)
-let check_rc ctx rc =
-  if rc = ok
-  then ()
-  else if rc = e_stop_test
-  then raise Stop_test
+(* The exception a nonzero libhegel return code stands for. *)
+let error_of_rc ctx rc =
+  if rc = e_stop_test
+  then Stop_test
   else if rc = e_assume
-  then raise Assume_rejected
+  then Assume_rejected
   else if rc = e_invalid_arg
-  then raise (Usage_error (c_last_error_message ctx))
+  then Usage_error (c_last_error_message ctx)
   else (
     let label =
       if rc = e_backend
@@ -1041,11 +1340,326 @@ let check_rc ctx rc =
     in
     let msg = c_last_error_message ctx in
     let detail = if String.length msg = 0 then "" else ": " ^ msg in
-    raise (Internal_error (label ^ detail)))
+    Internal_error (label ^ detail))
 ;;
 
+(* Translate a libhegel return code into success or an exception. *)
+let check_rc ctx rc = if rc <> ok then raise (error_of_rc ctx rc)
+
 (* ------------------------------------------------------------------ *)
-(* Diagnostics                                                         *)
+(* Direct C stubs (hegel_stubs.c) for the calls made on every draw or *)
+(* test case. Each calls libhegel through a function pointer looked up *)
+(* from the same library handle as the ctypes bindings. A stub that *)
+(* returns a bool, nothing, or a handle returns a negative libhegel *)
+(* return code on failure; the integer and float draws raise *)
+(* [Engine_status] instead. *)
+(* ------------------------------------------------------------------ *)
+
+exception Engine_status of int
+
+#ifdef OXCAML
+let () = Callback.Safe.register_exception "hegel_ffi_status" (Engine_status 0)
+
+#else
+let () = Callback.register_exception "hegel_ffi_status" (Engine_status 0)
+#endif
+
+let symbol name =
+  let address = memoize (fun () -> Dl.dlsym ~handle:(lib ()) ~symbol:name) in
+  binding_initializers
+  := (fun () -> ignore (address () : nativeint)) :: !binding_initializers;
+  address
+;;
+
+let address_of h = raw_address_of_ptr (raw h)
+let check_flag ctx r = if r < 0 then raise (error_of_rc ctx r) else r = 1
+
+let check_handle ctx r =
+  if Nativeint.compare r 0n < 0 then raise (error_of_rc ctx (Nativeint.to_int r));
+  H (ptr_of_raw_address r)
+;;
+
+let s_generate_integer = symbol "hegel_generate_integer"
+let s_generate_boolean = symbol "hegel_generate_boolean"
+let s_generate_float = symbol "hegel_generate_float"
+let s_start_span = symbol "hegel_start_span"
+let s_stop_span = symbol "hegel_stop_span"
+let s_new_collection = symbol "hegel_new_collection"
+let s_collection_more = symbol "hegel_collection_more"
+let s_collection_free = symbol "hegel_collection_free"
+let s_next_test_case = symbol "hegel_next_test_case"
+let s_test_case_wants_output = symbol "hegel_test_case_wants_output"
+let s_test_case_wants_detail = symbol "hegel_test_case_wants_detail"
+let s_mark_complete = symbol "hegel_mark_complete"
+let s_test_case_free = symbol "hegel_test_case_free"
+let s_state_machine_next_group = symbol "hegel_state_machine_next_group"
+let s_state_machine_next_rule = symbol "hegel_state_machine_next_rule"
+let s_state_machine_rule_rejected = symbol "hegel_state_machine_rule_rejected"
+
+let s_state_machine_should_check_invariant =
+  symbol "hegel_state_machine_should_check_invariant"
+;;
+
+let s_generate_string = symbol "hegel_generate_string"
+let s_owned_string_free = symbol "hegel_owned_string_free"
+let s_generate_date = symbol "hegel_generate_date"
+let s_generate_time = symbol "hegel_generate_time"
+let s_generate_datetime = symbol "hegel_generate_datetime"
+let s_generate_timestamp = symbol "hegel_generate_timestamp"
+let s_generate_offset = symbol "hegel_generate_offset"
+let s_generate_duration = symbol "hegel_generate_duration"
+let s_generate_span = symbol "hegel_generate_span"
+let s_generate_timezone = symbol "hegel_generate_timezone"
+let s_generate_zoned_datetime = symbol "hegel_generate_zoned_datetime"
+let s_generate_zoned_datetime_for_zone = symbol "hegel_generate_zoned_datetime_for_zone"
+let s_pause_faults = symbol "hegel_pause_faults"
+let s_unpause_faults = symbol "hegel_unpause_faults"
+
+external stub_generate_integer
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (int[@untagged])
+  -> (int[@untagged])
+  -> int
+  = "hegel_ocaml_generate_integer_byte" "hegel_ocaml_generate_integer"
+
+external stub_generate_boolean
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (float[@unboxed])
+  -> (int[@untagged])
+  -> (int[@untagged])
+  = "hegel_ocaml_generate_boolean_byte" "hegel_ocaml_generate_boolean"
+[@@noalloc]
+
+external stub_generate_float
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (float[@unboxed])
+  -> (float[@unboxed])
+  -> (int[@untagged])
+  -> (float[@unboxed])
+  -> (float[@unboxed])
+  = "hegel_ocaml_generate_float_byte" "hegel_ocaml_generate_float"
+
+external stub_start_span
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (int64[@unboxed])
+  -> (int[@untagged])
+  = "hegel_ocaml_start_span_byte" "hegel_ocaml_start_span"
+[@@noalloc]
+
+external stub_stop_span
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> bool
+  -> (int[@untagged])
+  = "hegel_ocaml_stop_span_byte" "hegel_ocaml_stop_span"
+[@@noalloc]
+
+external stub_new_collection
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (int64[@unboxed])
+  -> (int64[@unboxed])
+  -> (nativeint[@unboxed])
+  = "hegel_ocaml_new_collection_byte" "hegel_ocaml_new_collection"
+[@@noalloc]
+
+external stub_collection_more
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (int[@untagged])
+  = "hegel_ocaml_collection_more_byte" "hegel_ocaml_collection_more"
+[@@noalloc]
+
+external stub_generate_string
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> string
+  = "hegel_ocaml_generate_string_byte" "hegel_ocaml_generate_string"
+
+external stub_generate_date
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> Temporal_types.Date.t
+  -> Temporal_types.Date.t
+  -> (nativeint[@unboxed])
+  -> Temporal_types.Date.t
+  = "hegel_ocaml_generate_date_byte" "hegel_ocaml_generate_date"
+
+external stub_generate_time
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> Temporal_types.Time.t
+  -> Temporal_types.Time.t
+  -> (int[@untagged])
+  -> Temporal_types.Time.t
+  = "hegel_ocaml_generate_time_byte" "hegel_ocaml_generate_time"
+
+external stub_generate_datetime
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> Temporal_types.Datetime.t
+  -> Temporal_types.Datetime.t
+  -> (int[@untagged])
+  -> Temporal_types.Datetime.t
+  = "hegel_ocaml_generate_datetime_byte" "hegel_ocaml_generate_datetime"
+
+external stub_generate_timestamp
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> Temporal_types.Instant.t
+  -> Temporal_types.Instant.t
+  -> (int[@untagged])
+  -> Temporal_types.Instant.t
+  = "hegel_ocaml_generate_timestamp_byte" "hegel_ocaml_generate_timestamp"
+
+external stub_generate_duration
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> Temporal_types.Duration.t
+  -> Temporal_types.Duration.t
+  -> (int[@untagged])
+  -> Temporal_types.Duration.t
+  = "hegel_ocaml_generate_duration_byte" "hegel_ocaml_generate_duration"
+
+external stub_generate_offset
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (int[@untagged])
+  -> (int[@untagged])
+  -> (int[@untagged])
+  -> (int[@untagged])
+  -> Temporal_types.Offset.t
+  = "hegel_ocaml_generate_offset_byte" "hegel_ocaml_generate_offset"
+
+external stub_generate_span
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> Temporal_types.Span.t
+  = "hegel_ocaml_generate_span_byte" "hegel_ocaml_generate_span"
+
+external stub_generate_zoned
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> Temporal_types.Zoned.t * string
+  = "hegel_ocaml_generate_zoned_byte" "hegel_ocaml_generate_zoned"
+
+external stub_generate_zoned_for_zone
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> string
+  -> (nativeint[@unboxed])
+  -> Temporal_types.Zoned.t
+  = "hegel_ocaml_generate_zoned_for_zone_byte" "hegel_ocaml_generate_zoned_for_zone"
+
+external stub_call_handle
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (int[@untagged])
+  = "hegel_ocaml_call_handle_byte" "hegel_ocaml_call_handle"
+[@@noalloc]
+
+external stub_next_test_case
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  = "hegel_ocaml_next_test_case_byte" "hegel_ocaml_next_test_case"
+
+external stub_test_case_flag
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (int[@untagged])
+  = "hegel_ocaml_test_case_flag_byte" "hegel_ocaml_test_case_flag"
+[@@noalloc]
+
+external stub_mark_complete
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (int[@untagged])
+  -> string option
+  -> string option
+  -> string option
+  -> (int[@untagged])
+  = "hegel_ocaml_mark_complete_byte" "hegel_ocaml_mark_complete"
+[@@noalloc]
+
+external stub_state_machine_next_group
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (int[@untagged])
+  = "hegel_ocaml_state_machine_next_group_byte" "hegel_ocaml_state_machine_next_group"
+[@@noalloc]
+
+external stub_state_machine_next_rule
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (int[@untagged])
+  -> (int[@untagged])
+  = "hegel_ocaml_state_machine_next_rule_byte" "hegel_ocaml_state_machine_next_rule"
+[@@noalloc]
+
+external stub_state_machine_rule_rejected
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (int[@untagged])
+  -> (int[@untagged])
+  = "hegel_ocaml_state_machine_rule_rejected_byte"
+    "hegel_ocaml_state_machine_rule_rejected"
+[@@noalloc]
+
+external stub_state_machine_should_check_invariant
+  :  (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (nativeint[@unboxed])
+  -> (int[@untagged])
+  -> (int[@untagged])
+  = "hegel_ocaml_state_machine_should_check_invariant_byte"
+    "hegel_ocaml_state_machine_should_check_invariant"
+[@@noalloc]
+
+let state_machine_done = -1000
+
+(* ------------------------------------------------------------------ *)
+(* Diagnostics *)
 (* ------------------------------------------------------------------ *)
 
 let version ctx =
@@ -1055,7 +1669,7 @@ let version ctx =
 ;;
 
 (* ------------------------------------------------------------------ *)
-(* Test context                                                       *)
+(* Test context *)
 (* ------------------------------------------------------------------ *)
 
 let context_free ctx = ignore (c_context_free ctx : int)
@@ -1067,13 +1681,29 @@ let initialize =
     binding_initializers := [])
 ;;
 
+let unreachable : (unit -> unit) list Atomic.t = Atomic.make []
+
+let rec free_later free =
+  let queued = Atomic.get unreachable in
+  if not (Atomic.compare_and_set unreachable queued (free :: queued)) then free_later free
+;;
+
+let free_when_unreachable free value = Gc.finalise_last (fun () -> free_later free) value
+
+let free_unreachable () =
+  match Atomic.get unreachable with
+  | [] -> ()
+  | _ :: _ -> List.iter (fun free -> free ()) (Atomic.exchange unreachable [])
+;;
+
 let context_new () =
   initialize ();
+  free_unreachable ();
   c_context_new ()
 ;;
 
 (* ------------------------------------------------------------------ *)
-(* Settings                                                            *)
+(* Settings *)
 (* ------------------------------------------------------------------ *)
 
 let settings_new ctx =
@@ -1152,6 +1782,7 @@ let settings_register_profile ctx name s =
 
 let set_default_profile ctx name =
   check_rc ctx (c_set_default_profile ctx (Option.value name ~default:""))
+;;
 
 let settings_get_test_cases ctx s =
   let out = allocate uint64_t Unsigned.UInt64.zero in
@@ -1222,25 +1853,29 @@ let settings_get_nondeterminism_strictness ctx s =
 ;;
 
 (* ------------------------------------------------------------------ *)
-(* Run lifecycle                                                       *)
+(* Run lifecycle *)
 (* ------------------------------------------------------------------ *)
+
+let output_stderr =
+  memoize (fun () ->
+    H (ptr_of_raw_address (Dl.dlsym ~handle:(lib ()) ~symbol:"hegel_output_stderr")))
+;;
 
 let run_start ctx s =
   let out = allocate handle_t null_handle in
-  check_rc ctx (c_run_start ctx s null_handle null_handle out);
+  check_rc ctx (c_run_start ctx s (output_stderr ()) null_handle out);
   !@out
 ;;
 
 let run_start_blob ctx s blob =
   let out = allocate handle_t null_handle in
-  check_rc ctx (c_run_start_blob ctx s blob null_handle null_handle out);
+  check_rc ctx (c_run_start_blob ctx s blob (output_stderr ()) null_handle out);
   !@out
 ;;
 
 let next_test_case ctx run =
-  let out = allocate handle_t null_handle in
-  check_rc ctx (c_next_test_case ctx run out);
-  if is_null (raw !@out) then None else Some !@out
+  let r = stub_next_test_case (s_next_test_case ()) (address_of ctx) (address_of run) in
+  if Nativeint.equal r 0n then None else Some (check_handle ctx r)
 ;;
 
 let run_result ctx run =
@@ -1252,7 +1887,10 @@ let run_result ctx run =
 let run_free ctx run = check_rc ctx (c_run_free ctx run)
 let run_result_free ctx r = check_rc ctx (c_run_result_free ctx r)
 let failure_free ctx f = check_rc ctx (c_failure_free ctx f)
-let test_case_free ctx tc = check_rc ctx (c_test_case_free ctx tc)
+
+let test_case_free ctx tc =
+  check_rc ctx (stub_call_handle (s_test_case_free ()) (address_of ctx) (address_of tc))
+;;
 
 let test_case_clone ctx tc =
   let out = allocate handle_t null_handle in
@@ -1270,14 +1908,15 @@ let test_case_block ctx tc ~indent =
   !@out
 ;;
 
-let test_case_should_capture ctx tc =
-  let out = allocate bool false in
-  check_rc ctx (c_test_case_should_capture ctx tc out);
-  !@out
+let test_case_flag ctx tc symbol =
+  check_flag ctx (stub_test_case_flag (symbol ()) (address_of ctx) (address_of tc))
 ;;
 
+let test_case_wants_output ctx tc = test_case_flag ctx tc s_test_case_wants_output
+let test_case_wants_detail ctx tc = test_case_flag ctx tc s_test_case_wants_detail
+
 (* ------------------------------------------------------------------ *)
-(* Per-test-case primitives                                            *)
+(* Per-test-case primitives *)
 (* ------------------------------------------------------------------ *)
 
 (* Marshal an OCaml string list into a [const hegel_string_t *] paired with a GC
@@ -1297,51 +1936,63 @@ let to_string_array = function
 ;;
 
 let generate_boolean ctx tc p forced =
-  let out_ptr = allocate bool false in
-  let rc =
+  let forced =
     match forced with
-    | Some b -> c_generate_boolean ctx tc p b true out_ptr
-    | None -> c_generate_boolean ctx tc p false false out_ptr
+    | Some b -> Bool.to_int b
+    | None -> -1
   in
-  check_rc ctx rc;
-  !@out_ptr
+  check_flag
+    ctx
+    (stub_generate_boolean
+       (s_generate_boolean ())
+       (address_of ctx)
+       (address_of tc)
+       p
+       forced)
 ;;
 
 let generate_integer ctx tc ~min_value ~max_value =
-  let out = allocate int64_t 0L in
-  check_rc
-    ctx
-    (c_generate_integer ctx tc (Int64.of_int min_value) (Int64.of_int max_value) out);
-  Int64.to_int !@out
+  match
+    stub_generate_integer
+      (s_generate_integer ())
+      (address_of ctx)
+      (address_of tc)
+      min_value
+      max_value
+  with
+  | v -> v
+  | exception Engine_status rc -> raise (error_of_rc ctx rc)
 ;;
 
 let generate_float
-      ctx
-      tc
-      ~min_value
-      ~max_value
-      ~allow_nan
-      ~allow_infinity
-      ~exclude_min
-      ~exclude_max
-      ~smallest_nonzero_magnitude
+  ctx
+  tc
+  ~min_value
+  ~max_value
+  ~allow_nan
+  ~allow_infinity
+  ~exclude_min
+  ~exclude_max
+  ~smallest_nonzero_magnitude
   =
-  let out = allocate double 0.0 in
-  check_rc
-    ctx
-    (c_generate_float
-       ctx
-       tc
-       (Unsigned.UInt32.of_int 64)
-       min_value
-       max_value
-       allow_nan
-       allow_infinity
-       exclude_min
-       exclude_max
-       smallest_nonzero_magnitude
-       out);
-  !@out
+  let flags =
+    Bool.to_int allow_nan
+    lor (Bool.to_int allow_infinity lsl 1)
+    lor (Bool.to_int exclude_min lsl 2)
+    lor (Bool.to_int exclude_max lsl 3)
+  in
+  match
+    stub_generate_float
+      (s_generate_float ())
+      (address_of ctx)
+      (address_of tc)
+      min_value
+      max_value
+      flags
+      smallest_nonzero_magnitude
+  with
+  | v -> v
+  | exception Engine_status rc -> raise (error_of_rc ctx rc)
 ;;
 
 let generate_bytes ctx tc ~min_size ~max_size =
@@ -1378,16 +2029,16 @@ let optional_string_array = function
 ;;
 
 let string_generator_text
-      ctx
-      ~min_size
-      ~max_size
-      ~codec
-      ~min_codepoint
-      ~max_codepoint
-      ~categories
-      ~exclude_categories
-      ~include_characters
-      ~exclude_characters
+  ctx
+  ~min_size
+  ~max_size
+  ~codec
+  ~min_codepoint
+  ~max_codepoint
+  ~categories
+  ~exclude_categories
+  ~include_characters
+  ~exclude_characters
   =
   let max_u =
     match max_size with
@@ -1421,9 +2072,7 @@ let string_generator_text
 
 let string_generator_regex ctx ~pattern ~fullmatch =
   let out = allocate handle_t null_handle in
-  check_rc
-    ctx
-    (c_string_generator_regex ctx pattern fullmatch null_handle out);
+  check_rc ctx (c_string_generator_regex ctx pattern fullmatch null_handle out);
   !@out
 ;;
 
@@ -1448,94 +2097,614 @@ let string_generator_domain ctx ~max_length =
 let string_generator_free ctx sg = ignore (c_string_generator_free ctx sg : int)
 
 let generate_string ctx tc sg =
-  let result = make Str.t in
-  check_rc ctx (c_generate_string ctx tc sg (addr result));
-  let s = string_of_str result in
-  ignore (c_owned_string_free ctx (addr result) : int);
-  s
+  match
+    stub_generate_string
+      (s_generate_string ())
+      (s_owned_string_free ())
+      (address_of ctx)
+      (address_of tc)
+      (address_of sg)
+  with
+  | s -> s
+  | exception Engine_status rc -> raise (error_of_rc ctx rc)
 ;;
 
-type date =
-  { year : int
-  ; month : int
-  ; day : int
-  }
+module T = Temporal_types
 
-type time =
-  { hour : int
-  ; minute : int
-  ; second : int
-  ; nanosecond : int
-  }
+let u8 = Unsigned.UInt8.of_int
+let u16 = Unsigned.UInt16.of_int
+let u32 = Unsigned.UInt32.of_int
 
-(* Build the by-value bound structs from [date]/[time] records. *)
-let make_date { year; month; day } =
+let make_date ({ year; month; day } : T.Date.t) =
   let d = make Date_struct.t in
   setf d Date_struct.year (Int32.of_int year);
-  setf d Date_struct.month (Unsigned.UInt8.of_int month);
-  setf d Date_struct.day (Unsigned.UInt8.of_int day);
+  setf d Date_struct.month (u8 month);
+  setf d Date_struct.day (u8 day);
   d
 ;;
 
-let make_time { hour; minute; second; nanosecond } =
+let make_time ({ hour; minute; second; nanosecond } : T.Time.t) =
   let t = make Time_struct.t in
-  setf t Time_struct.hour (Unsigned.UInt8.of_int hour);
-  setf t Time_struct.minute (Unsigned.UInt8.of_int minute);
-  setf t Time_struct.second (Unsigned.UInt8.of_int second);
-  setf t Time_struct.nanosecond (Unsigned.UInt32.of_int nanosecond);
+  setf t Time_struct.hour (u8 hour);
+  setf t Time_struct.minute (u8 minute);
+  setf t Time_struct.second (u8 second);
+  setf t Time_struct.nanosecond (u32 nanosecond);
   t
 ;;
 
-let make_datetime (date, time) =
+let make_datetime ({ date; time } : T.Datetime.t) =
   let dt = make Datetime_struct.t in
   setf dt Datetime_struct.date (make_date date);
   setf dt Datetime_struct.time (make_time time);
   dt
 ;;
 
-let read_date d =
-  { year = Int32.to_int (getf d Date_struct.year)
-  ; month = Unsigned.UInt8.to_int (getf d Date_struct.month)
-  ; day = Unsigned.UInt8.to_int (getf d Date_struct.day)
+let make_timestamp ({ second; nanosecond } : T.Instant.t) =
+  let t = make Timestamp_struct.t in
+  setf t Timestamp_struct.second (Int64.of_int second);
+  setf t Timestamp_struct.nanosecond (u32 nanosecond);
+  t
+;;
+
+let make_duration ({ seconds; nanoseconds } : T.Duration.t) =
+  let d = make Duration_struct.t in
+  setf d Duration_struct.seconds (Int64.of_int seconds);
+  setf d Duration_struct.nanoseconds (Int32.of_int nanoseconds);
+  d
+;;
+
+let make_offset ({ seconds; known } : T.Offset.t) =
+  let o = make Offset_struct.t in
+  setf o Offset_struct.seconds (Int32.of_int seconds);
+  setf o Offset_struct.known known;
+  o
+;;
+
+let make_span (s : T.Span.t) =
+  let span = make Span_struct.t in
+  List.iter2
+    (fun field value -> setf span field (Int64.of_int value))
+    Span_struct.units
+    [ s.years
+    ; s.months
+    ; s.weeks
+    ; s.days
+    ; s.hours
+    ; s.minutes
+    ; s.seconds
+    ; s.milliseconds
+    ; s.microseconds
+    ; s.nanoseconds
+    ];
+  span
+;;
+
+let make_zoned (z : T.Zoned.t) =
+  let value = make Zoned_struct.t in
+  setf value Zoned_struct.civil (make_datetime z.civil);
+  setf value Zoned_struct.offset_seconds (Int32.of_int z.offset_seconds);
+  setf value Zoned_struct.offset_known z.offset_known;
+  setf value Zoned_struct.fold z.fold;
+  setf value Zoned_struct.kind (u32 z.kind);
+  setf value Zoned_struct.offset_before (Int32.of_int z.offset_before);
+  setf value Zoned_struct.offset_after (Int32.of_int z.offset_after);
+  setf value Zoned_struct.timestamp (make_timestamp z.timestamp);
+  value
+;;
+
+let read_timestamp t : T.Instant.t =
+  { second = Int64.to_int (getf t Timestamp_struct.second)
+  ; nanosecond = Unsigned.UInt32.to_int (getf t Timestamp_struct.nanosecond)
   }
 ;;
 
-let read_time t =
-  { hour = Unsigned.UInt8.to_int (getf t Time_struct.hour)
-  ; minute = Unsigned.UInt8.to_int (getf t Time_struct.minute)
-  ; second = Unsigned.UInt8.to_int (getf t Time_struct.second)
-  ; nanosecond = Unsigned.UInt32.to_int (getf t Time_struct.nanosecond)
-  }
+let new_handle ctx create =
+  let out = allocate handle_t null_handle in
+  check_rc ctx (create ctx out);
+  !@out
 ;;
 
-let generate_date ctx tc ~min_value ~max_value =
-  let result = make Date_struct.t in
-  check_rc
-    ctx
-    (c_generate_date ctx tc (make_date min_value) (make_date max_value) (addr result));
-  read_date result
+let owned_string ctx call =
+  let result = make Str.t in
+  check_rc ctx (call (addr result));
+  let text = string_of_str result in
+  ignore (c_owned_string_free ctx (addr result) : int);
+  text
 ;;
 
-let generate_time ctx tc ~min_value ~max_value =
-  let result = make Time_struct.t in
-  check_rc
-    ctx
-    (c_generate_time ctx tc (make_time min_value) (make_time max_value) (addr result));
-  read_time result
+let with_names names f =
+  let strings = List.map str_of_string names in
+  let array = CArray.of_list Str.t strings in
+  let result = f (CArray.start array) (Unsigned.Size_t.of_int (List.length names)) in
+  ignore (Sys.opaque_identity (strings, array) : _ * _);
+  result
 ;;
 
-let generate_datetime ctx tc ~min_value ~max_value =
-  let result = make Datetime_struct.t in
+type date_options = handle
+type span_spec = handle
+type timezone_spec = handle
+type zoned_spec = handle
+type zone_source = handle
+
+let date_options_new ctx = new_handle ctx c_date_options_new
+let date_options_free options = ignore (c_date_options_free null_handle options : int)
+
+let date_options_set_weekdays ctx options mask =
+  check_rc ctx (c_date_options_set_weekdays ctx options (u32 mask))
+;;
+
+let date_options_set_months ctx options mask =
+  check_rc ctx (c_date_options_set_months ctx options (u32 mask))
+;;
+
+let generate_date ctx tc ~min_value ~max_value options =
+  match
+    stub_generate_date
+      (s_generate_date ())
+      (address_of ctx)
+      (address_of tc)
+      min_value
+      max_value
+      (address_of options)
+  with
+  | value -> value
+  | exception Engine_status rc -> raise (error_of_rc ctx rc)
+;;
+
+let generate_time ctx tc ~min_value ~max_value ~precision =
+  match
+    stub_generate_time
+      (s_generate_time ())
+      (address_of ctx)
+      (address_of tc)
+      min_value
+      max_value
+      precision
+  with
+  | value -> value
+  | exception Engine_status rc -> raise (error_of_rc ctx rc)
+;;
+
+let generate_datetime ctx tc ~min_value ~max_value ~precision =
+  match
+    stub_generate_datetime
+      (s_generate_datetime ())
+      (address_of ctx)
+      (address_of tc)
+      min_value
+      max_value
+      precision
+  with
+  | value -> value
+  | exception Engine_status rc -> raise (error_of_rc ctx rc)
+;;
+
+let generate_timestamp ctx tc ~min_value ~max_value ~precision =
+  match
+    stub_generate_timestamp
+      (s_generate_timestamp ())
+      (address_of ctx)
+      (address_of tc)
+      min_value
+      max_value
+      precision
+  with
+  | value -> value
+  | exception Engine_status rc -> raise (error_of_rc ctx rc)
+;;
+
+let generate_offset ctx tc ~min_value ~max_value ~granularity ~allow_unknown =
+  match
+    stub_generate_offset
+      (s_generate_offset ())
+      (address_of ctx)
+      (address_of tc)
+      min_value
+      max_value
+      granularity
+      (Bool.to_int allow_unknown)
+  with
+  | value -> value
+  | exception Engine_status rc -> raise (error_of_rc ctx rc)
+;;
+
+let generate_duration ctx tc ~min_value ~max_value ~precision =
+  match
+    stub_generate_duration
+      (s_generate_duration ())
+      (address_of ctx)
+      (address_of tc)
+      min_value
+      max_value
+      precision
+  with
+  | value -> value
+  | exception Engine_status rc -> raise (error_of_rc ctx rc)
+;;
+
+let span_spec_new ctx = new_handle ctx c_span_spec_new
+let span_spec_free spec = ignore (c_span_spec_free null_handle spec : int)
+
+let span_spec_set_unit_bounds ctx spec ~unit ~min_value ~max_value =
   check_rc
     ctx
-    (c_generate_datetime
+    (c_span_spec_set_unit_bounds
        ctx
-       tc
+       spec
+       (u32 unit)
+       (Int64.of_int min_value)
+       (Int64.of_int max_value))
+;;
+
+let span_spec_set_sign ctx spec sign =
+  check_rc ctx (c_span_spec_set_sign ctx spec (u32 sign))
+;;
+
+let span_spec_validate ctx spec = check_rc ctx (c_span_spec_validate ctx spec)
+
+let generate_span ctx tc spec =
+  match
+    stub_generate_span
+      (s_generate_span ())
+      (address_of ctx)
+      (address_of tc)
+      (address_of spec)
+  with
+  | value -> value
+  | exception Engine_status rc -> raise (error_of_rc ctx rc)
+;;
+
+let format_date ctx value = owned_string ctx (c_format_date ctx (make_date value))
+let format_time ctx value = owned_string ctx (c_format_time ctx (make_time value))
+
+let format_datetime ctx value =
+  owned_string ctx (c_format_datetime ctx (make_datetime value))
+;;
+
+let format_timestamp ctx value =
+  owned_string ctx (c_format_timestamp ctx (make_timestamp value))
+;;
+
+let format_offset ctx value = owned_string ctx (c_format_offset ctx (make_offset value))
+
+let format_duration ctx value =
+  owned_string ctx (c_format_duration ctx (make_duration value))
+;;
+
+let format_span ctx value =
+  let span = make_span value in
+  owned_string ctx (c_format_span ctx (addr span))
+;;
+
+let format_zoned_datetime ctx value zone =
+  let zoned = make_zoned value in
+  owned_string ctx (c_format_zoned_datetime ctx (addr zoned) zone)
+;;
+
+let tzdb_version ctx =
+  let out = allocate str "" in
+  check_rc ctx (c_tzdb_version ctx out);
+  !@out
+;;
+
+let zone_source_bundled =
+  memoize (fun () ->
+    let ctx = context_new () in
+    Fun.protect
+      ~finally:(fun () -> context_free ctx)
+      (fun () -> new_handle ctx c_zone_source_bundled))
+;;
+
+let zone_source_new ctx = new_handle ctx c_zone_source_new
+let zone_source_free source = ignore (c_zone_source_free null_handle source : int)
+
+let timezone_resolve ctx source name civil : T.Resolution.t =
+  let result = make Resolution_struct.t in
+  check_rc ctx (c_timezone_resolve_in ctx source name (make_datetime civil) (addr result));
+  { kind = Unsigned.UInt32.to_int (getf result Resolution_struct.kind)
+  ; offset_before = Int32.to_int (getf result Resolution_struct.offset_before)
+  ; offset_after = Int32.to_int (getf result Resolution_struct.offset_after)
+  ; offset_seconds = Int32.to_int (getf result Resolution_struct.offset_seconds)
+  ; offset_known = getf result Resolution_struct.offset_known
+  ; timestamp = read_timestamp (getf result Resolution_struct.timestamp)
+  }
+;;
+
+let timezone_offset_at ctx source name instant : T.Zone_offset.t =
+  let result = make Zone_offset_struct.t in
+  check_rc
+    ctx
+    (c_timezone_offset_at_in ctx source name (make_timestamp instant) (addr result));
+  { offset_seconds = Int32.to_int (getf result Zone_offset_struct.offset_seconds)
+  ; offset_known = getf result Zone_offset_struct.offset_known
+  ; is_dst = getf result Zone_offset_struct.is_dst
+  ; abbreviation = string_of_str (getf result Zone_offset_struct.abbreviation)
+  }
+;;
+
+let timezone_info ctx source name : T.Zone_info.t =
+  let result = make Zone_info_struct.t in
+  check_rc ctx (c_timezone_info_in ctx source name (addr result));
+  { known = getf result Zone_info_struct.known
+  ; primary_name = string_of_str (getf result Zone_info_struct.primary_name)
+  ; is_link = getf result Zone_info_struct.is_link
+  ; rank = Unsigned.UInt16.to_int (getf result Zone_info_struct.rank)
+  ; tags = Unsigned.UInt32.to_int (getf result Zone_info_struct.tags)
+  }
+;;
+
+let context_set_error ctx message = ignore (c_context_set_error ctx message : int)
+
+let set_zone_type target ({ offset_seconds; is_dst; abbreviation } : T.Zone_type.t) =
+  let abbreviation = str_of_string abbreviation in
+  setf target Zone_type_struct.utoff (Int32.of_int offset_seconds);
+  setf target Zone_type_struct.is_dst is_dst;
+  setf target Zone_type_struct.abbreviation abbreviation;
+  abbreviation
+;;
+
+let set_rule_date target ({ kind; day; month; week; weekday; time } : T.Rule_date.t) =
+  setf target Rule_date_struct.kind (u32 kind);
+  setf target Rule_date_struct.day (u16 day);
+  setf target Rule_date_struct.month (u8 month);
+  setf target Rule_date_struct.week (u8 week);
+  setf target Rule_date_struct.weekday (u8 weekday);
+  setf target Rule_date_struct.time (Int32.of_int time)
+;;
+
+let zone_source_add_tzif ctx source name bytes =
+  let buffer = str_of_string bytes in
+  check_rc
+    ctx
+    (c_zone_source_add_tzif ctx source name (getf buffer Str.data) (getf buffer Str.len));
+  ignore (Sys.opaque_identity buffer : Str.s structure)
+;;
+
+let zone_source_add_zone ctx source name (zone : T.Zone_data.t) =
+  let data = make Zone_data_struct.t in
+  let count = List.length zone.transitions in
+  let array = CArray.make Zone_transition_struct.t (max count 1) in
+  let kept = ref [] in
+  let set_type target local_type = kept := set_zone_type target local_type :: !kept in
+  set_type (getf data Zone_data_struct.initial) zone.initial;
+  List.iteri
+    (fun i ({ instant; local_type } : T.Zone_transition.t) ->
+      let slot = CArray.get array i in
+      setf slot Zone_transition_struct.instant (Int64.of_int instant);
+      set_type (getf slot Zone_transition_struct.local_type) local_type)
+    zone.transitions;
+  setf data Zone_data_struct.transitions (CArray.start array);
+  setf data Zone_data_struct.transition_count (Unsigned.Size_t.of_int count);
+  setf data Zone_data_struct.after (u32 zone.after);
+  set_type (getf data Zone_data_struct.standard) zone.standard;
+  setf data Zone_data_struct.has_dst zone.has_dst;
+  set_type (getf data Zone_data_struct.dst) zone.dst;
+  set_rule_date (getf data Zone_data_struct.dst_start) zone.dst_start;
+  set_rule_date (getf data Zone_data_struct.dst_end) zone.dst_end;
+  setf data Zone_data_struct.last_year (Int32.of_int zone.last_year);
+  check_rc ctx (c_zone_source_add_zone ctx source name (addr data));
+  ignore (Sys.opaque_identity (array, !kept) : _ * _)
+;;
+
+let callback_failed = 1l
+
+let zone_source_add_oracle
+  ctx
+  source
+  name
+  ~offset_at
+  ~next_transition
+  ~first_year
+  ~last_year
+  ~after
+  =
+  let abbreviation = ref (str_of_string "") in
+  let offset_callback _ callback_ctx instant out =
+    match offset_at callback_ctx (Int64.to_int instant) with
+    | None -> callback_failed
+    | Some local_type ->
+      abbreviation := set_zone_type !@out local_type;
+      0l
+  in
+  let next_callback =
+    Option.map
+      (fun next _ callback_ctx after found out ->
+        match next callback_ctx (Int64.to_int after) with
+        | None -> callback_failed
+        | Some None ->
+          found <-@ false;
+          0l
+        | Some (Some instant) ->
+          found <-@ true;
+          out <-@ Int64.of_int instant;
+          0l)
+      next_transition
+  in
+  let oracle = make Zone_oracle_struct.t in
+  setf oracle Zone_oracle_struct.offset_at offset_callback;
+  setf oracle Zone_oracle_struct.next_transition next_callback;
+  setf oracle Zone_oracle_struct.user_data null;
+  setf oracle Zone_oracle_struct.first_year (Int32.of_int first_year);
+  setf oracle Zone_oracle_struct.last_year (Int32.of_int last_year);
+  setf oracle Zone_oracle_struct.after (u32 after);
+  check_rc ctx (c_zone_source_add_oracle ctx source name (addr oracle));
+  ignore (Sys.opaque_identity (offset_callback, next_callback, abbreviation) : _ * _ * _)
+;;
+
+let zone_source_add_link ctx source name target =
+  check_rc ctx (c_zone_source_add_link ctx source name target)
+;;
+
+let zone_source_declare ctx source names =
+  with_names names (fun names count ->
+    check_rc ctx (c_zone_source_declare ctx source names count))
+;;
+
+(* A loader is rooted here under the key that is its [user_data], from
+   [hegel_zone_source_set_loader] until the engine calls the release hook. *)
+let loaders : (nativeint, context -> string -> bool) Hashtbl.t = Hashtbl.create 4
+let loaders_lock = Mutex.create ()
+let last_loader = ref 0n
+
+let loader_trampoline =
+  memoize (fun () ->
+    Loader_fn.of_fun (fun user_data callback_ctx _ name ->
+      let load =
+        Mutex.protect loaders_lock (fun () ->
+          Hashtbl.find_opt loaders (raw_address_of_ptr user_data))
+      in
+      match load with
+      | Some load when load callback_ctx (string_of_str name) -> 0l
+      | Some _ | None -> callback_failed))
+;;
+
+let loader_release_trampoline =
+  memoize (fun () ->
+    Loader_release_fn.of_fun (fun user_data ->
+      Mutex.protect loaders_lock (fun () ->
+        Hashtbl.remove loaders (raw_address_of_ptr user_data))))
+;;
+
+let zone_source_set_loader ctx source load =
+  match load with
+  | None -> check_rc ctx (c_zone_source_set_loader ctx source None null None)
+  | Some load ->
+    let key =
+      Mutex.protect loaders_lock (fun () ->
+        last_loader := Nativeint.succ !last_loader;
+        Hashtbl.replace loaders !last_loader load;
+        !last_loader)
+    in
+    check_rc
+      ctx
+      (c_zone_source_set_loader
+         ctx
+         source
+         (Some (loader_trampoline ()))
+         (ptr_of_raw_address key)
+         (Some (loader_release_trampoline ())))
+;;
+
+let zone_source_set_version ctx source version =
+  check_rc ctx (c_zone_source_set_version ctx source version)
+;;
+
+let zone_source_version ctx source =
+  let out = allocate str "" in
+  check_rc ctx (c_zone_source_version ctx source out);
+  !@out
+;;
+
+let set_default_zone_source ctx source =
+  check_rc ctx (c_set_default_zone_source ctx source)
+;;
+
+let timezone_spec_new ctx = new_handle ctx c_timezone_spec_new
+let timezone_spec_free spec = ignore (c_timezone_spec_free null_handle spec : int)
+
+let timezone_spec_set_names ctx spec names =
+  with_names names (fun names count ->
+    check_rc ctx (c_timezone_spec_set_names ctx spec names count))
+;;
+
+let timezone_spec_set_links ctx spec allow =
+  check_rc ctx (c_timezone_spec_set_links ctx spec allow)
+;;
+
+let timezone_spec_set_legacy ctx spec allow =
+  check_rc ctx (c_timezone_spec_set_legacy ctx spec allow)
+;;
+
+let timezone_spec_set_unknown ctx spec allow =
+  check_rc ctx (c_timezone_spec_set_unknown ctx spec allow)
+;;
+
+let timezone_spec_set_opaque ctx spec allow =
+  check_rc ctx (c_timezone_spec_set_opaque ctx spec allow)
+;;
+
+let timezone_spec_set_source ctx spec source =
+  check_rc ctx (c_timezone_spec_set_source ctx spec source)
+;;
+
+let timezone_spec_validate ctx spec = check_rc ctx (c_timezone_spec_validate ctx spec)
+
+let generate_timezone ctx tc spec =
+  match
+    stub_generate_string
+      (s_generate_timezone ())
+      (s_owned_string_free ())
+      (address_of ctx)
+      (address_of tc)
+      (address_of spec)
+  with
+  | value -> value
+  | exception Engine_status rc -> raise (error_of_rc ctx rc)
+;;
+
+let zoned_spec_new ctx = new_handle ctx c_zoned_spec_new
+let zoned_spec_free spec = ignore (c_zoned_spec_free null_handle spec : int)
+
+let zoned_spec_set_civil_bounds ctx spec ~min_value ~max_value =
+  check_rc
+    ctx
+    (c_zoned_spec_set_civil_bounds
+       ctx
+       spec
        (make_datetime min_value)
-       (make_datetime max_value)
-       (addr result));
-  ( read_date (getf result Datetime_struct.date)
-  , read_time (getf result Datetime_struct.time) )
+       (make_datetime max_value))
+;;
+
+let zoned_spec_set_instant_bounds ctx spec ~min_value ~max_value =
+  check_rc
+    ctx
+    (c_zoned_spec_set_instant_bounds
+       ctx
+       spec
+       (make_timestamp min_value)
+       (make_timestamp max_value))
+;;
+
+let zoned_spec_set_precision ctx spec precision =
+  check_rc ctx (c_zoned_spec_set_precision ctx spec (u32 precision))
+;;
+
+let zoned_spec_set_imaginary ctx spec imaginary =
+  check_rc ctx (c_zoned_spec_set_imaginary ctx spec (u32 imaginary))
+;;
+
+let zoned_spec_set_ambiguous ctx spec ambiguous =
+  check_rc ctx (c_zoned_spec_set_ambiguous ctx spec (u32 ambiguous))
+;;
+
+let zoned_spec_validate ctx spec = check_rc ctx (c_zoned_spec_validate ctx spec)
+
+let generate_zoned_datetime ctx tc zones spec =
+  match
+    stub_generate_zoned
+      (s_generate_zoned_datetime ())
+      (s_owned_string_free ())
+      (address_of ctx)
+      (address_of tc)
+      (address_of zones)
+      (address_of spec)
+  with
+  | value -> value
+  | exception Engine_status rc -> raise (error_of_rc ctx rc)
+;;
+
+let generate_zoned_datetime_for_zone ctx tc source name spec =
+  match
+    stub_generate_zoned_for_zone
+      (s_generate_zoned_datetime_for_zone ())
+      (address_of ctx)
+      (address_of tc)
+      (address_of source)
+      name
+      (address_of spec)
+  with
+  | value -> value
+  | exception Engine_status rc -> raise (error_of_rc ctx rc)
 ;;
 
 let generate_ip_bytes ctx tc c_fn n =
@@ -1548,7 +2717,7 @@ let generate_ipv4 ctx tc = generate_ip_bytes ctx tc c_generate_ipv4 4
 let generate_ipv6 ctx tc = generate_ip_bytes ctx tc c_generate_ipv6 16
 
 let start_span ctx tc label =
-  check_rc ctx (c_start_span ctx tc (Unsigned.UInt64.of_int64 label))
+  check_rc ctx (stub_start_span (s_start_span ()) (address_of ctx) (address_of tc) label)
 ;;
 
 let label_from_name ctx name =
@@ -1570,30 +2739,45 @@ let label_combine ctx labels =
   Unsigned.UInt64.to_int64 !@out
 ;;
 
-let stop_span ctx tc discard = check_rc ctx (c_stop_span ctx tc discard)
+let stop_span ctx tc discard =
+  check_rc ctx (stub_stop_span (s_stop_span ()) (address_of ctx) (address_of tc) discard)
+;;
 
 let new_collection ctx tc ~min_size ~max_size =
-  let out = allocate handle_t null_handle in
-  let max_u =
+  let max_size =
     match max_size with
-    | Some m -> Unsigned.UInt64.of_int m
-    | None -> Unsigned.UInt64.max_int
+    | Some m -> Int64.of_int m
+    | None -> -1L
   in
-  check_rc ctx (c_new_collection ctx tc (Unsigned.UInt64.of_int min_size) max_u out);
-  !@out
+  check_handle
+    ctx
+    (stub_new_collection
+       (s_new_collection ())
+       (address_of ctx)
+       (address_of tc)
+       (Int64.of_int min_size)
+       max_size)
 ;;
 
 let collection_more ctx tc collection =
-  let out = allocate bool false in
-  check_rc ctx (c_collection_more ctx tc collection out);
-  !@out
+  check_flag
+    ctx
+    (stub_collection_more
+       (s_collection_more ())
+       (address_of ctx)
+       (address_of tc)
+       (address_of collection))
 ;;
 
 let collection_reject ctx tc collection why =
   check_rc ctx (c_collection_reject ctx tc collection why)
 ;;
 
-let collection_free ctx collection = check_rc ctx (c_collection_free ctx collection)
+let collection_free ctx collection =
+  check_rc
+    ctx
+    (stub_call_handle (s_collection_free ()) (address_of ctx) (address_of collection))
+;;
 
 let new_pool ctx tc =
   let out = allocate handle_t null_handle in
@@ -1660,49 +2844,69 @@ let state_machine_start ctx tc ~state_machine =
 (* [HEGEL_STATE_MACHINE_DONE]: written to the out parameter by
    [hegel_state_machine_next_group] when the state machine has terminated and by
    [hegel_state_machine_next_rule] when the worker's round is over. *)
-let state_machine_done = Int64.min_int
-
-let read_index out =
-  let v = !@out in
-  if Int64.equal v state_machine_done then None else Some (Int64.to_int v)
+let check_state_machine_index ctx r =
+  if r >= 0
+  then Some r
+  else if r = state_machine_done
+  then None
+  else raise (error_of_rc ctx r)
 ;;
 
 let state_machine_next_group ctx tc ~state_machine =
-  let out = allocate int64_t 0L in
-  let concurrency = allocate int64_t 0L in
-  check_rc ctx (c_state_machine_next_group ctx tc state_machine out concurrency);
-  Option.map (fun group -> group, Int64.to_int !@concurrency) (read_index out)
+  match
+    check_state_machine_index
+      ctx
+      (stub_state_machine_next_group
+         (s_state_machine_next_group ())
+         (address_of ctx)
+         (address_of tc)
+         (address_of state_machine))
+  with
+  | None -> None
+  | Some packed -> Some (packed land 0xFFFF_FFFF, packed lsr 32)
 ;;
 
 let state_machine_next_rule ctx tc ~state_machine ~worker_index =
-  let out = allocate int64_t 0L in
-  check_rc
+  check_state_machine_index
     ctx
-    (c_state_machine_next_rule ctx tc state_machine (Int64.of_int worker_index) out);
-  read_index out
+    (stub_state_machine_next_rule
+       (s_state_machine_next_rule ())
+       (address_of ctx)
+       (address_of tc)
+       (address_of state_machine)
+       worker_index)
 ;;
 
 let state_machine_rule_rejected ctx tc ~state_machine ~worker_index =
   check_rc
     ctx
-    (c_state_machine_rule_rejected ctx tc state_machine (Int64.of_int worker_index))
+    (stub_state_machine_rule_rejected
+       (s_state_machine_rule_rejected ())
+       (address_of ctx)
+       (address_of tc)
+       (address_of state_machine)
+       worker_index)
 ;;
 
 let state_machine_should_check_invariant ctx tc ~state_machine ~invariant_index =
-  let out = allocate bool false in
-  check_rc
+  check_flag
     ctx
-    (c_state_machine_should_check_invariant
-       ctx
-       tc
-       state_machine
-       (Int64.of_int invariant_index)
-       out);
-  !@out
+    (stub_state_machine_should_check_invariant
+       (s_state_machine_should_check_invariant ())
+       (address_of ctx)
+       (address_of tc)
+       (address_of state_machine)
+       invariant_index)
 ;;
 
-let pause_faults ctx tc = check_rc ctx (c_pause_faults ctx tc)
-let unpause_faults ctx tc = check_rc ctx (c_unpause_faults ctx tc)
+let pause_faults ctx tc =
+  check_rc ctx (stub_call_handle (s_pause_faults ()) (address_of ctx) (address_of tc))
+;;
+
+let unpause_faults ctx tc =
+  check_rc ctx (stub_call_handle (s_unpause_faults ()) (address_of ctx) (address_of tc))
+;;
+
 let state_machine_free ctx state_machine =
   check_rc ctx (c_state_machine_free ctx state_machine)
 ;;
@@ -1712,7 +2916,7 @@ let event ctx tc label = check_rc ctx (c_event ctx tc label)
 let event_value ctx tc value label = check_rc ctx (c_event_value ctx tc value label)
 
 (* ------------------------------------------------------------------ *)
-(* Pretty printer                                                      *)
+(* Pretty printer *)
 (* ------------------------------------------------------------------ *)
 
 let opt_handle = function
@@ -1742,17 +2946,13 @@ let printer_new ctx options =
 
 let printer_free ctx printer = check_rc ctx (c_printer_free ctx printer)
 let printer_text ctx p s = check_rc ctx (c_printer_text ctx p s)
-
 let printer_breakable ctx p sep = check_rc ctx (c_printer_breakable ctx p sep)
-
 let printer_if_break ctx p s = check_rc ctx (c_printer_if_break ctx p s)
 let printer_comment ctx p s = check_rc ctx (c_printer_comment ctx p s)
 let printer_hard_break ctx p = check_rc ctx (c_printer_hard_break ctx p)
 
 let printer_begin_group ctx p ~indent open_ =
-  check_rc
-    ctx
-    (c_printer_begin_group ctx p (Unsigned.UInt64.of_int indent) open_)
+  check_rc ctx (c_printer_begin_group ctx p (Unsigned.UInt64.of_int indent) open_)
 ;;
 
 let printer_end_group ctx p close = check_rc ctx (c_printer_end_group ctx p close)
@@ -1796,12 +2996,25 @@ let test_case_printer ctx tc options =
 
 let note ctx tc text = check_rc ctx (c_note ctx tc text)
 
-let mark_complete ctx tc status origin =
-  check_rc ctx (c_mark_complete ctx tc (status_to_int status) origin)
+(* A rejected completion is the frontend's fault, never the user's. *)
+let mark_complete ctx tc status ~origin ~summary ~detail =
+  let rc =
+    stub_mark_complete
+      (s_mark_complete ())
+      (address_of ctx)
+      (address_of tc)
+      (status_to_int status)
+      origin
+      summary
+      detail
+  in
+  if rc = e_invalid_arg
+  then raise (Internal_error ("invalid completion: " ^ c_last_error_message ctx))
+  else check_rc ctx rc
 ;;
 
 (* ------------------------------------------------------------------ *)
-(* Result inspection                                                   *)
+(* Result inspection *)
 (* ------------------------------------------------------------------ *)
 
 (* [HEGEL_RUN_STATUS_*] values. The catch-all maps any unknown future status to
@@ -1841,6 +3054,12 @@ let result_failures ctx r =
     | None -> raise (Internal_error "hegel: failure disappeared mid-iteration"))
 ;;
 
+let failure_output ctx f =
+  let out = allocate str_opt None in
+  check_rc ctx (c_failure_output ctx f out);
+  !@out
+;;
+
 let failure_origin ctx f =
   let out = allocate str "" in
   check_rc ctx (c_failure_origin ctx f out);
@@ -1873,10 +3092,18 @@ let settings_free = Obj.magic_portable settings_free
 let settings_backend = Obj.magic_portable settings_backend
 let settings_test_cases = Obj.magic_portable settings_test_cases
 let settings_verbosity = Obj.magic_portable settings_verbosity
-let settings_nondeterminism_strictness = Obj.magic_portable settings_nondeterminism_strictness
+
+let settings_nondeterminism_strictness =
+  Obj.magic_portable settings_nondeterminism_strictness
+;;
+
 let settings_seed = Obj.magic_portable settings_seed
 let settings_derandomize = Obj.magic_portable settings_derandomize
-let settings_report_multiple_failures = Obj.magic_portable settings_report_multiple_failures
+
+let settings_report_multiple_failures =
+  Obj.magic_portable settings_report_multiple_failures
+;;
+
 let settings_stop_on_first_failure = Obj.magic_portable settings_stop_on_first_failure
 let settings_show_statistics = Obj.magic_portable settings_show_statistics
 let settings_database = Obj.magic_portable settings_database
@@ -1891,9 +3118,19 @@ let settings_get_seed = Obj.magic_portable settings_get_seed
 let settings_get_derandomize = Obj.magic_portable settings_get_derandomize
 let settings_get_database = Obj.magic_portable settings_get_database
 let settings_get_phases = Obj.magic_portable settings_get_phases
-let settings_get_suppress_health_check = Obj.magic_portable settings_get_suppress_health_check
-let settings_get_report_multiple_failures = Obj.magic_portable settings_get_report_multiple_failures
-let settings_get_stop_on_first_failure = Obj.magic_portable settings_get_stop_on_first_failure
+
+let settings_get_suppress_health_check =
+  Obj.magic_portable settings_get_suppress_health_check
+;;
+
+let settings_get_report_multiple_failures =
+  Obj.magic_portable settings_get_report_multiple_failures
+;;
+
+let settings_get_stop_on_first_failure =
+  Obj.magic_portable settings_get_stop_on_first_failure
+;;
+
 let settings_get_show_statistics = Obj.magic_portable settings_get_show_statistics
 let settings_get_print_blob = Obj.magic_portable settings_get_print_blob
 let settings_get_backend = Obj.magic_portable settings_get_backend
@@ -1913,7 +3150,8 @@ let test_case_free = Obj.magic_portable test_case_free
 let test_case_clone = Obj.magic_portable test_case_clone
 let test_case_block = Obj.magic_portable test_case_block
 let test_case_set_worker = Obj.magic_portable test_case_set_worker
-let test_case_should_capture = Obj.magic_portable test_case_should_capture
+let test_case_wants_output = Obj.magic_portable test_case_wants_output
+let test_case_wants_detail = Obj.magic_portable test_case_wants_detail
 let generate_boolean = Obj.magic_portable generate_boolean
 let generate_integer = Obj.magic_portable generate_integer
 let generate_float = Obj.magic_portable generate_float
@@ -1928,6 +3166,66 @@ let generate_string = Obj.magic_portable generate_string
 let generate_date = Obj.magic_portable generate_date
 let generate_time = Obj.magic_portable generate_time
 let generate_datetime = Obj.magic_portable generate_datetime
+let generate_timestamp = Obj.magic_portable generate_timestamp
+let generate_offset = Obj.magic_portable generate_offset
+let generate_duration = Obj.magic_portable generate_duration
+let generate_span = Obj.magic_portable generate_span
+let date_options_new = Obj.magic_portable date_options_new
+let date_options_free = Obj.magic_portable date_options_free
+let date_options_set_weekdays = Obj.magic_portable date_options_set_weekdays
+let date_options_set_months = Obj.magic_portable date_options_set_months
+let span_spec_new = Obj.magic_portable span_spec_new
+let span_spec_free = Obj.magic_portable span_spec_free
+let span_spec_set_unit_bounds = Obj.magic_portable span_spec_set_unit_bounds
+let span_spec_set_sign = Obj.magic_portable span_spec_set_sign
+let span_spec_validate = Obj.magic_portable span_spec_validate
+let format_date = Obj.magic_portable format_date
+let format_time = Obj.magic_portable format_time
+let format_datetime = Obj.magic_portable format_datetime
+let format_timestamp = Obj.magic_portable format_timestamp
+let format_offset = Obj.magic_portable format_offset
+let format_duration = Obj.magic_portable format_duration
+let format_span = Obj.magic_portable format_span
+let format_zoned_datetime = Obj.magic_portable format_zoned_datetime
+let tzdb_version = Obj.magic_portable tzdb_version
+let zone_source_bundled = Obj.magic_portable zone_source_bundled
+let zone_source_new = Obj.magic_portable zone_source_new
+let zone_source_free = Obj.magic_portable zone_source_free
+let timezone_resolve = Obj.magic_portable timezone_resolve
+let timezone_offset_at = Obj.magic_portable timezone_offset_at
+let timezone_info = Obj.magic_portable timezone_info
+let context_set_error = Obj.magic_portable context_set_error
+let zone_source_add_tzif = Obj.magic_portable zone_source_add_tzif
+let zone_source_add_zone = Obj.magic_portable zone_source_add_zone
+let zone_source_add_oracle = Obj.magic_portable zone_source_add_oracle
+let zone_source_add_link = Obj.magic_portable zone_source_add_link
+let zone_source_declare = Obj.magic_portable zone_source_declare
+let zone_source_set_loader = Obj.magic_portable zone_source_set_loader
+let zone_source_set_version = Obj.magic_portable zone_source_set_version
+let zone_source_version = Obj.magic_portable zone_source_version
+let set_default_zone_source = Obj.magic_portable set_default_zone_source
+let timezone_spec_new = Obj.magic_portable timezone_spec_new
+let timezone_spec_free = Obj.magic_portable timezone_spec_free
+let timezone_spec_set_names = Obj.magic_portable timezone_spec_set_names
+let timezone_spec_set_links = Obj.magic_portable timezone_spec_set_links
+let timezone_spec_set_legacy = Obj.magic_portable timezone_spec_set_legacy
+let timezone_spec_set_unknown = Obj.magic_portable timezone_spec_set_unknown
+let timezone_spec_set_opaque = Obj.magic_portable timezone_spec_set_opaque
+let timezone_spec_set_source = Obj.magic_portable timezone_spec_set_source
+let timezone_spec_validate = Obj.magic_portable timezone_spec_validate
+let generate_timezone = Obj.magic_portable generate_timezone
+let zoned_spec_new = Obj.magic_portable zoned_spec_new
+let zoned_spec_free = Obj.magic_portable zoned_spec_free
+let zoned_spec_set_civil_bounds = Obj.magic_portable zoned_spec_set_civil_bounds
+let zoned_spec_set_instant_bounds = Obj.magic_portable zoned_spec_set_instant_bounds
+let zoned_spec_set_precision = Obj.magic_portable zoned_spec_set_precision
+let zoned_spec_set_imaginary = Obj.magic_portable zoned_spec_set_imaginary
+let zoned_spec_set_ambiguous = Obj.magic_portable zoned_spec_set_ambiguous
+let zoned_spec_validate = Obj.magic_portable zoned_spec_validate
+let generate_zoned_datetime = Obj.magic_portable generate_zoned_datetime
+let generate_zoned_datetime_for_zone = Obj.magic_portable generate_zoned_datetime_for_zone
+let free_when_unreachable = Obj.magic_portable free_when_unreachable
+let free_unreachable = Obj.magic_portable free_unreachable
 let generate_ipv4 = Obj.magic_portable generate_ipv4
 let generate_ipv6 = Obj.magic_portable generate_ipv6
 let start_span = Obj.magic_portable start_span
@@ -1950,7 +3248,11 @@ let state_machine_start = Obj.magic_portable state_machine_start
 let state_machine_next_group = Obj.magic_portable state_machine_next_group
 let state_machine_next_rule = Obj.magic_portable state_machine_next_rule
 let state_machine_rule_rejected = Obj.magic_portable state_machine_rule_rejected
-let state_machine_should_check_invariant = Obj.magic_portable state_machine_should_check_invariant
+
+let state_machine_should_check_invariant =
+  Obj.magic_portable state_machine_should_check_invariant
+;;
+
 let state_machine_free = Obj.magic_portable state_machine_free
 let pause_faults = Obj.magic_portable pause_faults
 let unpause_faults = Obj.magic_portable unpause_faults
@@ -1987,5 +3289,6 @@ let result_failure = Obj.magic_portable result_failure
 let result_failures = Obj.magic_portable result_failures
 let failure_blob = Obj.magic_portable failure_blob
 let failure_caveat = Obj.magic_portable failure_caveat
+let failure_output = Obj.magic_portable failure_output
 let failure_origin = Obj.magic_portable failure_origin
 #endif

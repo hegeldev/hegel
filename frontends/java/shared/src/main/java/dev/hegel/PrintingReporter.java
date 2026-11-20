@@ -77,7 +77,12 @@ final class PrintingReporter implements Reporter {
         if (!quiet) {
             failure.caveat().ifPresent(caveat -> out.println("note: " + caveat));
             if (standalone) {
-                failure.exception().printStackTrace(out);
+                String diagnostic = failure.diagnostic();
+                if (diagnostic != null) {
+                    out.println(diagnostic);
+                } else {
+                    failure.exception().printStackTrace(out);
+                }
             }
         }
         if (printBlob) {

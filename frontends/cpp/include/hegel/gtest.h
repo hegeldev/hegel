@@ -34,6 +34,7 @@
 
 #include "hegel.h"
 
+#include <exception>
 #include <functional>
 #include <optional>
 #include <stdexcept>
@@ -141,6 +142,10 @@ namespace hegel {
                 }
             };
 
+            inline bool is_assertion_failure(const std::exception& e) {
+                return dynamic_cast<const GTestFailure*>(&e) != nullptr;
+            }
+
             // Runs one test-case body and collects GoogleTest assertions, then
             // raises them as one exception. A fatal failure stops the body
             // immediately.
@@ -167,8 +172,9 @@ namespace hegel {
         } // namespace gtest_hooks
 
         [[maybe_unused]] static const bool hegel_gtest_hooks_installed =
-            install_framework_hooks(
-                {&gtest_hooks::current_test_name, &gtest_hooks::run_case});
+            install_framework_hooks({&gtest_hooks::current_test_name,
+                                     &gtest_hooks::run_case,
+                                     &gtest_hooks::is_assertion_failure});
     } // namespace internal
     /// @endcond
 

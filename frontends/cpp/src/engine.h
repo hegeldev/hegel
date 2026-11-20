@@ -7,6 +7,7 @@
  * and the draw primitives (engine.cpp, generators.cpp).
  */
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -15,6 +16,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace hegel {
@@ -24,11 +26,36 @@ namespace hegel {
 namespace hegel::impl {
 
     /// This thread's libhegel error-reporting context, created on first use
-    /// and freed when the thread exits.
+    /// and freed when the thread exits; inside a CallbackContextScope, the
+    /// context of that scope.
     hegel_context_t* thread_context();
+
+    /// While it lives, thread_context() on this thread is `ctx`: the
+    /// context libhegel gave a callback it is running, which the libhegel
+    /// calls the callback makes must use.
+    class CallbackContextScope {
+      public:
+        explicit CallbackContextScope(hegel_context_t* ctx);
+        ~CallbackContextScope();
+        CallbackContextScope(const CallbackContextScope&) = delete;
+        CallbackContextScope& operator=(const CallbackContextScope&) = delete;
+        CallbackContextScope(CallbackContextScope&&) = delete;
+        CallbackContextScope& operator=(CallbackContextScope&&) = delete;
+
+      private:
+        hegel_context_t* previous_;
+    };
 
     /// Most recent error message recorded on `ctx` (empty string if none).
     std::string last_error(hegel_context_t* ctx);
+
+    /// A borrowed hegel_string_t over `text`, valid while `text` lives.
+    hegel_string_t borrow(std::string_view text);
+
+    /// Turn an engine rejection of a configuration call or a query into
+    /// std::invalid_argument, prefixed with `what`.
+    void require_configured(hegel_context_t* ctx, const char* what,
+                            hegel_result_t rc);
 
     /// The readable form of a typeid name.
     std::string demangle(const char* name);
@@ -135,11 +162,16 @@ namespace hegel::impl {
     uint64_t label_combine(hegel_context_t* ctx,
                            const std::vector<uint64_t>& labels);
 
-    hegel_run_t* run_start(hegel_context_t* ctx, hegel_settings_t* s);
-    /// A run that replays `blob`. An invalid blob throws
-    /// std::invalid_argument.
+    /// A run printing its output through `callback`, or nowhere when it is
+    /// NULL. The callback must stay valid until the run is freed.
+    hegel_run_t* run_start(hegel_context_t* ctx, hegel_settings_t* s,
+                           hegel_output_callback_t callback, void* user_data);
+    /// A run that replays `blob`, printing as run_start does. An invalid
+    /// blob throws std::invalid_argument.
     hegel_run_t* run_start_blob(hegel_context_t* ctx, hegel_settings_t* s,
-                                std::string_view blob);
+                                std::string_view blob,
+                                hegel_output_callback_t callback,
+                                void* user_data);
     /// NULL once the engine has no more cases to hand out. The returned
     /// handle is caller-owned; release it with hegel_test_case_free.
     hegel_test_case_t* next_test_case(hegel_context_t* ctx, hegel_run_t* run);
@@ -148,13 +180,21 @@ namespace hegel::impl {
     /// returned handle is caller-owned; release it with hegel_test_case_free.
     hegel_test_case_t* test_case_clone(hegel_context_t* ctx,
                                        const hegel_test_case_t* tc);
-    /// Whether the engine stamped `tc` for capture: its output and, if it
-    /// fails, its diagnostic are the material for that origin's report.
-    bool test_case_should_capture(hegel_context_t* ctx,
-                                  const hegel_test_case_t* tc);
+    /// Whether the engine uses what `tc` prints: it streams it on a verbose
+    /// run, and keeps it for the report of a failure it stamped for capture.
+    bool test_case_wants_output(hegel_context_t* ctx,
+                                const hegel_test_case_t* tc);
+    /// Whether the engine uses the full diagnostic of `tc` if it fails: at
+    /// Debug it prints it, and it keeps it for a case stamped for capture.
+    bool test_case_wants_detail(hegel_context_t* ctx,
+                                const hegel_test_case_t* tc);
+    /// Completes `tc`. `origin`, `summary` and `detail` describe a failure
+    /// and are nullopt for any other status.
     void mark_complete(hegel_context_t* ctx, hegel_test_case_t* tc,
                        hegel_status_t status,
-                       const std::optional<std::string>& origin);
+                       const std::optional<std::string>& origin,
+                       const std::optional<std::string>& summary,
+                       const std::optional<std::string>& detail);
 
     /// Caller-owned result snapshot; release with hegel_run_result_free.
     hegel_test_case_t* test_case_block(hegel_context_t* ctx,
@@ -165,7 +205,7 @@ namespace hegel::impl {
     hegel_printer_t* test_case_printer(hegel_context_t* ctx,
                                        hegel_test_case_t* tc);
     // Appends a note to `tc`'s region of its document. A note on a region
-    // whose document was already read is dropped.
+    // whose document is sealed is dropped.
     void note(hegel_context_t* ctx, hegel_test_case_t* tc,
               std::string_view text);
     void printer_free(hegel_context_t* ctx, hegel_printer_t* printer);
@@ -208,6 +248,10 @@ namespace hegel::impl {
     /// nullopt for a deterministic failure.
     std::optional<std::string> failure_caveat(hegel_context_t* ctx,
                                               const hegel_failure_t* failure);
+    // What the failing test case printed for `failure`'s report, or nothing
+    // when the engine kept no output for it.
+    std::optional<std::string> failure_output(hegel_context_t* ctx,
+                                              const hegel_failure_t* failure);
 
     // String-generator construction. Each validates its parameters
     // immediately and throws std::invalid_argument (with the engine's
@@ -236,9 +280,76 @@ namespace hegel::impl {
     hegel_string_generator_t* string_generator_domain(uint64_t max_length);
     void string_generator_free(hegel_string_generator_t* generator);
 
+    // Date and time option handles. Each is built once at generator
+    // construction from parameters the engine validates, throwing
+    // std::invalid_argument (with the engine's diagnostic) on rejection:
+    // a setter reports its own arguments, and the spec's validate function
+    // what a draw from the finished spec would reject. The returned handle
+    // is immutable, shareable across test cases and threads, and must be
+    // released with the matching *_free.
+
+    hegel_date_options_t* date_options_new(uint32_t weekday_mask,
+                                           uint32_t month_mask);
+    void date_options_free(hegel_date_options_t* options);
+
+    hegel_timezone_spec_t*
+    timezone_spec_new(const std::optional<std::vector<std::string>>& names,
+                      bool links, bool legacy, bool unknown, bool opaque,
+                      const hegel_zone_source_t* source);
+    void timezone_spec_free(hegel_timezone_spec_t* spec);
+
+    struct ZonedSpecParams {
+        uint32_t precision = HEGEL_PRECISION_NANOSECONDS;
+        std::optional<std::pair<hegel_datetime_t, hegel_datetime_t>>
+            civil_bounds;
+        std::optional<std::pair<hegel_timestamp_t, hegel_timestamp_t>>
+            instant_bounds;
+        uint32_t imaginary = HEGEL_IMAGINARY_ALLOW;
+        uint32_t ambiguous = HEGEL_AMBIGUOUS_BOTH;
+    };
+    hegel_zoned_spec_t* zoned_spec_new(const ZonedSpecParams& params);
+    void zoned_spec_free(hegel_zoned_spec_t* spec);
+
+    struct SpanUnitBounds {
+        int64_t min_value;
+        int64_t max_value;
+    };
+    /// `bounds` is indexed by hegel_span_unit_t; a unit without bounds is
+    /// not enabled.
+    hegel_span_spec_t*
+    span_spec_new(const std::array<std::optional<SpanUnitBounds>, 10>& bounds,
+                  uint32_t sign);
+    void span_spec_free(hegel_span_spec_t* spec);
+
+    // Queries of a zone source's data. A rejected argument throws
+    // std::invalid_argument with the engine's diagnostic.
+
+    std::string tzdb_version();
+    hegel_timezone_info_t timezone_info(const hegel_zone_source_t* source,
+                                        std::string_view name);
+    hegel_timezone_resolution_t
+    timezone_resolve(const hegel_zone_source_t* source, std::string_view name,
+                     hegel_datetime_t civil);
+    hegel_timezone_offset_t
+    timezone_offset_at(const hegel_zone_source_t* source, std::string_view name,
+                       hegel_timestamp_t timestamp);
+
+    // The engine's text of a date or time value.
+
+    std::string format_date(hegel_date_t value);
+    std::string format_time(hegel_time_t value);
+    std::string format_datetime(hegel_datetime_t value);
+    std::string format_timestamp(hegel_timestamp_t value);
+    std::string format_offset(hegel_offset_t value);
+    std::string format_duration(hegel_duration_t value);
+    std::string format_span(const hegel_span_t& value);
+    /// A zone name that is not UTF-8 throws std::invalid_argument.
+    std::string format_zoned_datetime(const hegel_zoned_datetime_t& value,
+                                      std::string_view zone);
+
     // Draw primitives used by the non-template generators in
-    // generators.cpp. (The template-visible ones live in
-    // hegel::internal — see include/hegel/internal.h.)
+    // generators.cpp and generators_temporal.cpp. (The template-visible
+    // ones live in hegel::internal — see include/hegel/internal.h.)
 
     void target(const TestCase& tc, double score, std::string_view label);
     void event(const TestCase& tc, std::string_view label);
@@ -248,9 +359,58 @@ namespace hegel::impl {
                             const hegel_string_generator_t* generator);
     std::vector<uint8_t> draw_bytes(const TestCase& tc, uint64_t min_size,
                                     uint64_t max_size);
-    hegel_date_t draw_date(const TestCase& tc);
-    hegel_time_t draw_time(const TestCase& tc);
-    hegel_datetime_t draw_datetime(const TestCase& tc);
+    // Check the arguments of the draw of the same name, as the engine does
+    // on the draw: a rejected argument throws std::invalid_argument with
+    // the engine's diagnostic.
+    void validate_date(hegel_date_t min_value, hegel_date_t max_value,
+                       const hegel_date_options_t* options);
+    void validate_time(hegel_time_t min_value, hegel_time_t max_value,
+                       uint32_t precision);
+    void validate_datetime(hegel_datetime_t min_value,
+                           hegel_datetime_t max_value, uint32_t precision);
+    void validate_timestamp(hegel_timestamp_t min_value,
+                            hegel_timestamp_t max_value, uint32_t precision);
+    void validate_offset(int32_t min_seconds, int32_t max_seconds,
+                         uint32_t granularity, bool allow_unknown);
+    void validate_duration(hegel_duration_t min_value,
+                           hegel_duration_t max_value, uint32_t precision);
+
+    hegel_date_t draw_date(const TestCase& tc, hegel_date_t min_value,
+                           hegel_date_t max_value,
+                           const hegel_date_options_t* options);
+    hegel_time_t draw_time(const TestCase& tc, hegel_time_t min_value,
+                           hegel_time_t max_value, uint32_t precision);
+    hegel_datetime_t draw_datetime(const TestCase& tc,
+                                   hegel_datetime_t min_value,
+                                   hegel_datetime_t max_value,
+                                   uint32_t precision);
+    hegel_timestamp_t draw_timestamp(const TestCase& tc,
+                                     hegel_timestamp_t min_value,
+                                     hegel_timestamp_t max_value,
+                                     uint32_t precision);
+    hegel_offset_t draw_offset(const TestCase& tc, int32_t min_seconds,
+                               int32_t max_seconds, uint32_t granularity,
+                               bool allow_unknown);
+    hegel_duration_t draw_duration(const TestCase& tc,
+                                   hegel_duration_t min_value,
+                                   hegel_duration_t max_value,
+                                   uint32_t precision);
+    std::string draw_timezone(const TestCase& tc,
+                              const hegel_timezone_spec_t* spec);
+    struct ZonedDraw {
+        hegel_zoned_datetime_t value;
+        std::string zone;
+    };
+    ZonedDraw draw_zoned_datetime(const TestCase& tc,
+                                  const hegel_timezone_spec_t* tz_spec,
+                                  const hegel_zoned_spec_t* zoned_spec);
+    /// A zoned datetime in the zone `name` of `source`, with no draw of
+    /// the zone. A name the source does not know throws
+    /// std::invalid_argument.
+    hegel_zoned_datetime_t draw_zoned_datetime_for_zone(
+        const TestCase& tc, const hegel_zone_source_t* source,
+        std::string_view name, const hegel_zoned_spec_t* zoned_spec);
+    hegel_span_t draw_span(const TestCase& tc, const hegel_span_spec_t* spec);
     std::string draw_uuid(const TestCase& tc, std::optional<uint8_t> version);
     /// Dotted-quad (v4) / RFC 5952 colon-hex (v6) text form.
     std::string draw_ipv4(const TestCase& tc);

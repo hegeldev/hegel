@@ -1,4 +1,5 @@
 using System.Numerics;
+using Hegel.Temporal;
 using Xunit;
 
 namespace Hegel.Tests;
@@ -118,6 +119,9 @@ public class DeriveTests
         Gen.All(Generators.ForType<DateTime>(), _ => true, 5);
         Gen.All(Generators.ForType<DateTimeOffset>(), d => Math.Abs(d.Offset.TotalHours) <= 14, 5);
         Gen.All(Generators.ForType<TimeZoneInfo>(), _ => true, 5);
+        Gen.All(Generators.ForType<ZonedDateTime>(), z => z.Zone.GetUtcOffset(z.Instant) == z.Offset, 5);
+        Gen.All(Generators.ForType<CalendarSpan>(), _ => true, 5);
+        Gen.All(Generators.ForType<(ZonedDateTime, CalendarSpan?)>(), _ => true, 5);
     }
 
     [Fact]

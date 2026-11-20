@@ -70,6 +70,8 @@ export default defineConfig({
 						{ label: 'hegel-typescript', link: 'https://github.com/hegeldev/hegel/tree/main/frontends/typescript', attrs: { target: '_blank', class: 'external-link' } },
 						{ label: 'hegel-java', link: 'https://github.com/hegeldev/hegel/tree/main/frontends/java', attrs: { target: '_blank', class: 'external-link' } },
 						{ label: 'hegel-ocaml', link: 'https://github.com/hegeldev/hegel/tree/main/frontends/ocaml', attrs: { target: '_blank', class: 'external-link' } },
+						{ label: 'hegel-csharp', link: 'https://github.com/hegeldev/hegel/tree/main/frontends/csharp', attrs: { target: '_blank', class: 'external-link' } },
+						{ label: 'hegel-fsharp', link: 'https://github.com/hegeldev/hegel/tree/main/frontends/csharp#f', attrs: { target: '_blank', class: 'external-link' } },
 					],
 				},
 				// re-enable once we actually have content here!
@@ -86,6 +88,18 @@ export default defineConfig({
 					],
 				},
 				{
+					label: 'Antithesis',
+					items: [
+						{ slug: 'antithesis/hegel-antithesis'},
+						{ slug: 'antithesis/rust' },
+						{ slug: 'antithesis/python' },
+						{ slug: 'antithesis/go' },
+						{ slug: 'antithesis/cpp' },
+						{ slug: 'antithesis/java' },
+						{ slug: 'antithesis/ocaml' },
+					],
+				},
+				{
 					label: 'API documentation',
 					items: [
 						{ label: 'hegel-rust', link: 'https://docs.rs/hegeltest', attrs: { target: '_blank', class: 'external-link' } },
@@ -95,6 +109,8 @@ export default defineConfig({
 						{ label: 'hegel-typescript', link: '/typescript/', attrs: { target: '_blank', class: 'external-link' } },
 						{ label: 'hegel-java', link: 'https://javadoc.io/doc/dev.hegel/hegel', attrs: { target: '_blank', class: 'external-link' } },
 						{ label: 'hegel-ocaml', link: '/ocaml/', attrs: { target: '_blank', class: 'external-link' } },
+						{ label: 'hegel-csharp', link: '/csharp/', attrs: { target: '_blank', class: 'external-link' } },
+						{ label: 'hegel-fsharp', link: '/fsharp/', attrs: { target: '_blank', class: 'external-link' } },
 					],
 				},
 				{

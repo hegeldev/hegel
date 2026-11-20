@@ -107,9 +107,12 @@ pub enum Verbosity {
     Quiet,
     /// Default output level.
     Normal,
-    /// Show more detail about the test run.
+    /// Show more detail about the test run: every test case's drawn
+    /// values and notes as it runs, and a one-line summary
+    /// (`file:line:col: message`) after each failing one.
     Verbose,
-    /// Show protocol-level debug information.
+    /// Show protocol-level debug information, and the full panic diagnostic
+    /// after each failing test case.
     Debug,
 }
 

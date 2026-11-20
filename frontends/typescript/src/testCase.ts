@@ -101,7 +101,17 @@ export interface DataSource {
   repeatMore(repeatId: number): boolean;
   /** Report that the iteration just run failed, before the failure is rethrown. */
   repeatFailed(repeatId: number): void;
-  markComplete(status: number, origin: string | null): void;
+  /**
+   * Complete the test case. A failure passes its origin, its one-line
+   * summary and its full detail, each `null` when not wanted; any other
+   * status passes `null` for all three.
+   */
+  markComplete(
+    status: number,
+    origin: string | null,
+    summary: string | null,
+    detail: string | null,
+  ): void;
 
   /** Open a variable pool (see `stateful.Pool`). */
   newPool(): number;
@@ -259,7 +269,7 @@ export class TestCase {
 
   /**
    * `emit` is whether this test case's draws and notes are printed: the
-   * engine stamped it for capture, or the run is verbose.
+   * engine wants its output, or it is an explicit example.
    *
    * @internal
    */

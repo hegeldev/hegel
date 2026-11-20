@@ -3,6 +3,8 @@ package dev.hegel;
 import dev.hegel.lowlevel.Abi;
 import dev.hegel.lowlevel.Libhegel;
 import dev.hegel.lowlevel.LibhegelException;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -16,12 +18,18 @@ import java.util.function.LongConsumer;
  *
  * <p>The engine owns the whole run — generation, shrinking, the replays that confirm a failure, and
  * the final replay of every failure it is about to report — so the loop only pumps cases and keeps
- * the report material as they run. The engine stamps the executions a failure report can be built
- * from ({@code hegel_test_case_should_capture}); a stamped case records its draws and notes, and
- * every interesting case's exception is kept per origin, a stamped capture winning over an unstamped
- * one and the newest winning at equal rank. Once the loop drains, each reported failure is built
- * from its origin's capture: the draws and notes are replayed to the reporter, the exception is the
- * body's own, and the engine's caveat and reproduce blob are attached. A {@link
+ * the report material as they run. The engine says which cases' output it will use ({@code
+ * hegel_test_case_wants_output}: every case of a verbose run, and the executions a failure report
+ * can be built from); such a case records its draws and notes and, if it fails, completes with a
+ * one-line summary (the exception and the user frame it was thrown from), plus its rendered stack
+ * trace as the detail when the engine wants that too ({@code hegel_test_case_wants_detail}: every
+ * case of a debug run, and the executions a failure report can be built from). Every interesting
+ * case is kept per origin, replacing the
+ * stored one when its output was wanted or none is stored yet, which mirrors the engine's choice of
+ * the latest stamped failing execution for the report. Once the loop drains, each reported failure
+ * is built from its origin's capture: the draws and notes are replayed to the reporter, the
+ * exception is the body's own, and the engine's caveat, the detail it kept ({@code
+ * hegel_failure_diagnostic}) and reproduce blob are attached. A {@link
  * Settings#reproduceFailure} run is the same loop over {@code hegel_run_start_blob}. Run-level errors
  * (a failed health check, a nondeterminism abort under {@link NondeterminismStrictness#ERROR}, an
  * engine panic) surface with the engine's own message.
@@ -50,8 +58,8 @@ final class Runner {
 
     /**
      * The body's outcome against one case: the case (holding its draws and notes when the engine
-     * stamped it for capture), the exception that made it interesting ({@code null} otherwise), and
-     * the origin the case was marked complete with.
+     * wanted its output), the exception that made it interesting ({@code null} otherwise), and the
+     * origin the case was marked complete with.
      */
     private static final class CaseRun {
         final TestCase testCase;
@@ -62,11 +70,6 @@ final class Runner {
             this.testCase = testCase;
             this.interesting = interesting;
             this.origin = origin;
-        }
-
-        /** A stamped capture outranks an unstamped one, whose only material is the exception. */
-        int rank() {
-            return testCase.isFinal() ? 1 : 0;
         }
     }
 
@@ -96,9 +99,10 @@ final class Runner {
                     Verbosity.fromCode(lib.settingsGetVerbosity(s)),
                     NondeterminismStrictness.fromCode(lib.settingsGetNondeterminismStrictness(s)));
             reporter.runStarted(effective);
+            Consumer<String> output = reporter instanceof SilentReporter ? null : reporter::engineOutput;
             long run = effective.reproduceFailure == null
-                    ? lib.runStart(s, reporter::engineOutput)
-                    : lib.runStartBlob(s, effective.reproduceFailure, reporter::engineOutput);
+                    ? lib.runStart(s, output)
+                    : lib.runStartBlob(s, effective.reproduceFailure, output);
             try {
                 report = drive(lib, run, effective, body, reporter, counts);
             } finally {
@@ -148,11 +152,9 @@ final class Runner {
                 break;
             }
             CaseRun caseRun = driveOneCase(lib, tc, body, settings, reporter, counts);
-            if (caseRun.interesting != null) {
-                CaseRun stored = captures.get(caseRun.origin);
-                if (stored == null || caseRun.rank() >= stored.rank()) {
-                    captures.put(caseRun.origin, caseRun);
-                }
+            if (caseRun.interesting != null
+                    && (caseRun.testCase.wantsOutput() || !captures.containsKey(caseRun.origin))) {
+                captures.put(caseRun.origin, caseRun);
             }
         }
         long result = lib.runResult(run);
@@ -214,7 +216,8 @@ final class Runner {
                     lib.failureCaveat(result, i),
                     capture.interesting,
                     capture.testCase.draws(),
-                    capture.testCase.notes());
+                    capture.testCase.notes(),
+                    lib.failureDiagnostic(result, i));
             reporter.failure(failure);
             failures.add(failure);
         }
@@ -225,7 +228,7 @@ final class Runner {
      * Run the body once against {@code tc}, report the outcome to the engine and the reporter, and
      * free the handle. The returned {@link CaseRun} carries the exception that made the case
      * interesting ({@code null} for any other outcome) and the case itself, whose draws and notes
-     * were recorded if the engine stamped it for capture.
+     * were recorded if the engine wanted its output.
      */
     private static CaseRun driveOneCase(
             Libhegel lib,
@@ -236,11 +239,14 @@ final class Runner {
             RunStatistics.Counter counts) {
         try {
             boolean verbose = settings.verbosity.code >= Verbosity.VERBOSE.code;
-            TestCase testCase =
-                    new TestCase(new LiveDataSource(lib, tc), lib.testCaseShouldCapture(tc), verbose, reporter);
+            boolean wantsOutput = lib.testCaseWantsOutput(tc);
+            boolean wantsDetail = lib.testCaseWantsDetail(tc);
+            TestCase testCase = new TestCase(new LiveDataSource(lib, tc), wantsOutput, verbose, reporter);
             reporter.caseStarted(false);
             CaseOutcome outcome;
             String origin = null;
+            String summary = null;
+            String detail = null;
             Throwable interesting = null;
             try {
                 body.accept(testCase);
@@ -256,8 +262,14 @@ final class Runner {
                 outcome = CaseOutcome.INTERESTING;
                 origin = originOf(e, settings.infrastructurePackages);
                 interesting = e;
+                if (wantsOutput) {
+                    summary = summary(e, settings.infrastructurePackages);
+                }
+                if (wantsDetail) {
+                    detail = diagnostic(e);
+                }
             }
-            int rc = lib.markComplete(tc, outcome.status, origin);
+            int rc = lib.markComplete(tc, outcome.status, origin, summary, detail);
             if (rc != Abi.OK) {
                 throw new HegelException(
                         "hegel_mark_complete failed (rc=" + rc + "): " + nullToEmpty(lib.lastErrorMessage()));
@@ -326,16 +338,56 @@ final class Runner {
     }
 
     /**
+     * A failure in one line, as a verbose run prints it after the case: the exception as {@link
+     * Throwable#toString()} renders it, cut at its first line (followed by {@code " …"}) when the
+     * message spans several, led by the file and line of the frame {@link #originOf} picks when
+     * there is one, e.g. {@code SortTest.java:23: java.lang.AssertionError: not sorted}.
+     */
+    static String summary(Throwable e, List<String> infrastructurePackages) {
+        String text = e.toString();
+        if (text == null || text.isBlank()) {
+            text = e.getClass().getName();
+        }
+        String[] lines = text.split("\\R", 2);
+        if (lines.length > 1) {
+            text = lines[0].stripTrailing() + " …";
+        }
+        StackTraceElement frame = userFrame(e, infrastructurePackages);
+        return frame == null ? text : location(frame) + ": " + text;
+    }
+
+    private static String location(StackTraceElement frame) {
+        String file = frame.getFileName() == null ? frame.getClassName() : frame.getFileName();
+        return frame.getLineNumber() < 0 ? file : file + ":" + frame.getLineNumber();
+    }
+
+    /** A failure's detail as the engine prints it: the exception's stack trace. */
+    static String diagnostic(Throwable e) {
+        StringWriter trace = new StringWriter();
+        e.printStackTrace(new PrintWriter(trace));
+        return trace.toString().stripTrailing();
+    }
+
+    /**
      * The shrink-dedup origin of a failure: the exception's simple type name and the first stack
      * frame outside Hegel, the JDK, the test framework, and {@code infrastructurePackages}.
      */
     static String originOf(Throwable e, List<String> infrastructurePackages) {
+        StackTraceElement f = userFrame(e, infrastructurePackages);
+        if (f == null) {
+            return e.getClass().getName();
+        }
+        return e.getClass().getSimpleName() + " at " + f.getFileName() + ":" + f.getLineNumber();
+    }
+
+    /** The first stack frame of {@code e} outside Hegel, the JDK, the test framework and {@code infrastructurePackages}. */
+    private static StackTraceElement userFrame(Throwable e, List<String> infrastructurePackages) {
         for (StackTraceElement f : e.getStackTrace()) {
             if (isUserFrame(f.getClassName(), infrastructurePackages)) {
-                return e.getClass().getSimpleName() + " at " + f.getFileName() + ":" + f.getLineNumber();
+                return f;
             }
         }
-        return e.getClass().getName();
+        return null;
     }
 
     private static boolean isUserFrame(String className, List<String> infrastructurePackages) {

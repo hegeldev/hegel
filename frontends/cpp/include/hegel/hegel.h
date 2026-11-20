@@ -21,7 +21,7 @@
  * FetchContent_Declare(
  *     hegel
  *     GIT_REPOSITORY https://github.com/hegeldev/hegel.git
- *     GIT_TAG frontends/cpp/0.17.5
+ *     GIT_TAG frontends/cpp/0.18.0
  *     SOURCE_SUBDIR frontends/cpp
  *     GIT_CONFIG lfs.fetchexclude=website
  * )
@@ -378,6 +378,8 @@
  *
  * - Browse the hegel::generators namespace for the full list of available
  *   generators.
+ * - Date and time generators, and the values they draw, are in
+ *   hegel::generators::temporal.
  * - See @Settings for more configuration settings to customise how your
  *   test runs.
  */
@@ -398,7 +400,9 @@
 #include "generators/random.h"
 #include "generators/stateful.h"
 #include "generators/strings.h"
+#include "generators/temporal.h"
 
+#include <exception>
 #include <functional>
 
 #if defined(__GNUC__) || defined(__clang__) ||                                 \
@@ -583,6 +587,9 @@ namespace hegel {
             // Runs one test-case body, raising the failed assertions the
             // framework recorded.
             void (*run_case)(const std::function<void()>&) = nullptr;
+            // Whether an exception is the framework's report of failed
+            // assertions, whose message names where each one failed.
+            bool (*is_assertion_failure)(const std::exception&) = nullptr;
         };
 
         // Makes `hooks` the integration every later run uses. Returns true, so

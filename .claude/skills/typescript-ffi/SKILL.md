@@ -37,8 +37,9 @@ The layers, and what an ABI change usually touches:
   shape or a new one replaces schema-level behaviour.
 - **`src/runnerCore.ts` / `src/session.ts`** — the run lifecycle
   (`run_start` or `run_start_blob` → `next_test_case` → `mark_complete` →
-  `run_result`, with each stamped test case's report read from its printer
-  document) and the process-global
+  `run_result`, with each failure's report read from `hegel_failure_output`
+  and the engine printing a run's output through its callback, or on Wasm
+  through the `hegel_host.stderr_write` import) and the process-global
   library handle with its `major.minor` version check. Touch only if the
   lifecycle protocol itself changes.
 - **`src/wtf8.ts`** — decodes engine-returned string bytes. Touch only if
@@ -122,13 +123,18 @@ an explicit example's `EngineDocument` (`src/pretty.ts`, also behind the
 public `Document`) frees the standalone printer from `hegel_printer_new`, its
 deferred regions and the `hegel_printer_options_t` it was made with;
 engine-owned buffers (`hegel_generate_bytes`, `hegel_generate_string`,
+`hegel_generate_timezone`, the text of the `hegel_format_*` functions,
 `hegel_printer_value`, `hegel_grammar_draw_result`) are copied out
 immediately and then freed. A grammar builder is freed as soon as its grammar
 is compiled, and a grammar draw when the draw ends. The exceptions:
-`hegel_string_generator_t` handles are cached per schema object and
-`hegel_grammar_t` handles per `fromLark` generator (`StringGeneratorCache`),
-each kind capped at 256 live handles (the oldest evicted and freed first, never
-a grammar a draw in progress borrows), and the rest freed with the runner.
+`hegel_string_generator_t`, `hegel_date_options_t`, `hegel_timezone_spec_t`,
+`hegel_zoned_spec_t` and `hegel_span_spec_t` handles are cached per schema
+object and `hegel_grammar_t` handles per `fromLark` generator (`HandleCache`
+in `src/generate.ts`), each kind capped at 256 live handles (the oldest
+evicted and freed first, never a grammar a draw in progress borrows), and the
+rest freed with the runner. A `hegel_zone_source_t` is never freed: `src/zoneSource.ts`
+builds one per `ZoneSource` per engine and keeps it for the engine's
+lifetime, since the engine interns zone data for the process anyway.
 
 ## Making a change
 
@@ -157,6 +163,12 @@ a grammar a draw in progress borrows), and the rest freed with the runner.
      catches it.
    - Changed struct layout → the `koffi.struct({...})` type objects and the
      matching `Native*` interfaces; field order and widths mirror the C struct.
+     The Wasm adapter reads and writes the same structs by hand through
+     `DataView`s (`Layout` objects and the `read*`/`write*` helpers at the
+     bottom of `src/browser/engine.ts`), with the wasm32 offsets, so a layout
+     change touches both. A 64-bit field (`hegel_timestamp_t.second`, every
+     field of `hegel_span_t`) comes back from koffi as `number | bigint` and
+     is normalised with `BigInt()` in the `Libhegel` method.
 3. **Wasm: update `signatures`, then the marshalling.** By-value structs lower
    to a pointer argument; a struct **return** lowers to an sret pointer as
    the first parameter with a void result (list the export in
@@ -183,7 +195,9 @@ a grammar a draw in progress borrows), and the rest freed with the runner.
    including function coverage. Integration coverage comes from the real
    engine: the generator tests exercise the draw paths, `tests/libhegel.test.ts`
    drives the wrapper directly including real error paths, and
-   `tests/wasm-*.test.ts` do the same for the Wasm adapter. The few branches
+   `tests/wasm-*.test.ts` do the same for the Wasm adapter (the parity test in
+   `tests/wasm-engine.test.ts` draws fixed values through every struct-passing
+   entry point in both engines and compares them). The few branches
    the real engine cannot be driven into (NULL returns, specific result
    codes, corrupt output) use an injected fake `Bindings`, fake Wasm exports
    or `tests/fakeEngine.ts`. Never mock the engine for anything the real
@@ -231,8 +245,10 @@ against the header. Do NOT edit anything — this is a read-only verification.
 4. For every parameter a bindLibrary wrapper absorbs (hardcodes rather than
    exposes on Bindings), check the Bindings interface docs explain the
    absorption. An undocumented absorbed parameter is a BURIED-DEFAULT.
-5. Check the struct type objects (date/time/datetime/string) field order and
-   widths against the C structs.
+5. Check the struct type objects (date/time/datetime/timestamp/offset/span/
+   zoned datetime/timezone info/string) field order and widths against the C
+   structs, in both the koffi type objects and the Wasm adapter's `DataView`
+   layouts.
 
 Report a table of every header function with OK / MISSING /
 SIGNATURE-MISMATCH / BURIED-DEFAULT / UNBOUND-UNUSED for each adapter, and a

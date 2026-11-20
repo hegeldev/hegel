@@ -6,10 +6,8 @@ import (
 )
 
 // TestOutputCallbackReceivesEngineOutput drives a verbose run with a non-nil
-// [OutputFn] and asserts the engine forwards its log lines through the callback.
-// This is the only mode in which libhegel invokes the callback (single-test-case
-// and replay modes emit nothing), so it covers both outputCallback and
-// freeOutputFn's AddCleanup arm end-to-end.
+// writer and asserts the engine forwards its log lines and its test cases'
+// notes through the callback, and that freeing the run releases the writer.
 func TestOutputCallbackReceivesEngineOutput(t *testing.T) {
 	ctx := NewContext()
 	s, err := ctx.SettingsNew()
@@ -36,27 +34,33 @@ func TestOutputCallbackReceivesEngineOutput(t *testing.T) {
 		if _, err := tc.GenerateInteger(ctx, 0, 100); err != nil {
 			t.Fatalf("GenerateInteger: %v", err)
 		}
-		if err := tc.MarkComplete(ctx, STATUS_VALID, ""); err != nil {
+		if err := tc.Note(ctx, "streamed note"); err != nil {
+			t.Fatalf("Note: %v", err)
+		}
+		if err := tc.MarkComplete(ctx, STATUS_VALID, "", "", ""); err != nil {
 			t.Fatalf("MarkComplete: %v", err)
 		}
 	}
 	if _, err := run.RunResult(ctx); err != nil {
 		t.Fatalf("RunResult: %v", err)
 	}
+	run.Free()
 
 	if !strings.Contains(sb.String(), "phase") {
 		t.Errorf("expected verbose phase output via callback, got %q", sb.String())
+	}
+	if got := strings.Count(sb.String(), "streamed note\n"); got != 3 {
+		t.Errorf("expected each test case's note via callback, got %d in %q", got, sb.String())
 	}
 	if !strings.HasSuffix(sb.String(), "\n") {
 		t.Errorf("expected callback output to end with a newline, got %q", sb.String())
 	}
 }
 
-// TestFreeOutputFnFailedCall covers freeOutputFn's ptr==nil arm: when a non-nil
-// output writer is supplied but the underlying C call fails (nil result
-// pointer), the handle must be deleted immediately and the call must return the
-// error without panicking on runtime.AddCleanup(nil, ...).
-func TestFreeOutputFnFailedCall(t *testing.T) {
+// TestDeleteOutputFnFailedCall covers deleteOutputFn: when a non-nil output
+// writer is supplied but the underlying C call fails, the handle is deleted
+// immediately and the call returns the error.
+func TestDeleteOutputFnFailedCall(t *testing.T) {
 	lib := Stub(t, uintptr(0), E_INTERNAL, "boom") // run_start: placeholder handle, error, diagnostic
 	s := &Settings{pointer: pointer[settingsT]{syms: lib.syms, raw: 1}}
 

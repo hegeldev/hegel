@@ -387,14 +387,7 @@ mod reproduce {
         let c_settings = SettingsHandle::build(&settings, None, None);
         let run = RunHandle::start(&c_settings, None).expect("the engine starts");
         while let Some(c_tc) = run.next_test_case() {
-            crate::run_lifecycle::run_test_case(
-                c_tc,
-                &mut test_fn,
-                false,
-                Verbosity::Quiet,
-                &crate::test_case::RunOutput::resolve(),
-                None,
-            );
+            crate::run_lifecycle::run_test_case(c_tc, &mut test_fn);
         }
         let result = run.result();
         assert!(result.failure_count() > 0, "property should have failed");

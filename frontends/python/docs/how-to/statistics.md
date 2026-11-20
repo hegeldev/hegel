@@ -46,8 +46,11 @@ values it drew and any notes:
 pytest -s --hegel-verbosity=verbose test_lists.py
 ```
 
-This is a lot of output, but it's the most direct way to see what a test is
-doing.
+Each test case's lines are printed as soon as they are final, so a
+long-running or stateful test shows its progress as it runs, and a failing test
+case ends with one line saying where it failed and with what exception
+(`--hegel-verbosity=debug` prints its full traceback instead). This is a lot of output, but it's the most direct
+way to see what a test is doing.
 
 ## Looking at a generator's values
 

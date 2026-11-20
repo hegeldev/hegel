@@ -715,17 +715,23 @@ fn a_tiny_passing_space_generates_to_its_test_case_budget() {
     assert!(execs >= 50, "a valid space is budget-bounded: {execs}");
 }
 
-/// Verbose output announces every executed test case, the simplest input
-/// that opens generation included.
+/// Verbose and debug output announce every executed test case, the
+/// simplest input that opens generation included.
 #[test]
 fn verbose_output_announces_every_case() {
+    for verbosity in [Verbosity::Verbose, Verbosity::Debug] {
+        verbose_output_announces_every_case_at(verbosity);
+    }
+}
+
+fn verbose_output_announces_every_case_at(verbosity: Verbosity) {
     let lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
     let sink = std::sync::Arc::clone(&lines);
     let (result, execs) = tiny_invalid_run(
         Settings::new()
             .database(None)
             .test_cases(50)
-            .verbosity(Verbosity::Verbose)
+            .verbosity(verbosity)
             .output(Output::callback(move |line| {
                 sink.lock().unwrap().push(line.to_string());
             })),

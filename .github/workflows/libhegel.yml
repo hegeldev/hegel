@@ -39,8 +39,10 @@ jobs:
           symbols=$("$nm" -u target/wasm32-unknown-unknown/release/libhegel_c.a)
           grep -q 'hegel_host_entropy_fill' <<<"$symbols"
           grep -q 'hegel_host_monotonic_nanos' <<<"$symbols"
+          grep -q 'hegel_host_stderr_write' <<<"$symbols"
           if grep -Eq '_RN.*host_entropy_fill' <<<"$symbols"; then exit 1; fi
           if grep -Eq '_RN.*host_monotonic_nanos' <<<"$symbols"; then exit 1; fi
+          if grep -Eq '_RN.*host_stderr_write' <<<"$symbols"; then exit 1; fi
       - name: Smoke-test the WebAssembly host and string ABI
         run: node libhegel/scripts/test-wasm-abi.mjs target/wasm32-unknown-unknown/release/hegel_c.wasm
 
@@ -114,11 +116,13 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-rust
         with:
-          # `uv` is needed for the `check-lark.py` script's
-          # `#!/usr/bin/env -S uv run --script` shebang.
+          # `uv` is needed for the `check-lark.py` and `generate_tzdata.py`
+          # scripts' `#!/usr/bin/env -S uv run --script` shebang.
           tools: just uv
       - name: Check generated strings parse with Lark
         run: just libhegel::check-lark
+      - name: Check the bundled time zone table is reproducible
+        run: just libhegel::check-tzdata
 
   # Run the C-ABI lifecycle tests under Miri to catch undefined behaviour in
   # the native engine. See the `check-miri` recipe in libhegel/justfile.

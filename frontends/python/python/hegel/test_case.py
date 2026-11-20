@@ -51,19 +51,15 @@ def _generator_class() -> type:
     return Generator
 
 
-def _discard(_line: str) -> None:
-    pass
-
-
 class _Global:
     """State shared by every handle onto one test case: whether drawn
-    values are reported, and where."""
+    values and notes are printed (the engine reports them), and the
+    explicit case supplying its values, if any."""
 
-    __slots__ = ("emit", "explicit", "sink")
+    __slots__ = ("emit", "explicit")
 
-    def __init__(self, emit: bool, sink: OutputSink | None, explicit: Any) -> None:
+    def __init__(self, emit: bool, explicit: Any) -> None:
         self.emit = emit
-        self.sink: OutputSink = sink if (emit and sink is not None) else _discard
         self.explicit = explicit
 
 
@@ -116,11 +112,10 @@ class TestCase:
         self,
         handle: _native.TestCase,
         emit: bool = False,
-        sink: OutputSink | None = None,
         explicit: Any = None,
     ) -> None:
         self._handle = handle
-        self._global = _Global(emit, sink, explicit)
+        self._global = _Global(emit, explicit)
         self._span_depth = 0
         self._span_frames: list[tuple[Any, int]] = []
         self._printing_depth = 0
@@ -502,24 +497,6 @@ class TestCase:
             self._printer = PrettyPrinter(self._handle.printer(DEFAULT_MAX_WIDTH))
         return self._printer
 
-    def _emit_rendered_output(self) -> None:
-        """Render this instance's document and push it, line by line,
-        through the output sink."""
-        if not self._global.emit:
-            return
-        try:
-            output = PrettyPrinter(self._handle.printer(DEFAULT_MAX_WIDTH))._value()
-        except Exception as error:  # nocov
-            self._global.sink(
-                "Failed to render this test case's drawn values "
-                f"({error}). This indicates a bug in printing code the test "
-                "uses: check any do_draw_and_print method for unbalanced "
-                "begin_group/end_group calls."
-            )
-            return
-        for line in output.splitlines():
-            self._global.sink(line)
-
     # -- spans -----------------------------------------------------------
 
     def start_span(self, label: int) -> None:
@@ -637,21 +614,27 @@ class TestCase:
             draw.provide(value(terminal))
         return draw.result()
 
-    def _generate_date(self, min_value: _dt.date, max_value: _dt.date) -> _dt.date:
+    def _generate_date(
+        self, min_value: _dt.date, max_value: _dt.date, options: _native.DateOptions | None
+    ) -> _dt.date:
         year, month, day = self._handle.generate_date(
             (min_value.year, min_value.month, min_value.day),
             (max_value.year, max_value.month, max_value.day),
+            options,
         )
         return _dt.date(year, month, day)
 
-    def _generate_time(self, min_value: _dt.time, max_value: _dt.time) -> _dt.time:
+    def _generate_time(self, min_value: _dt.time, max_value: _dt.time, precision: int) -> _dt.time:
         hour, minute, second, nanosecond = self._handle.generate_time(
             (min_value.hour, min_value.minute, min_value.second, min_value.microsecond * 1000),
             (max_value.hour, max_value.minute, max_value.second, max_value.microsecond * 1000),
+            precision,
         )
         return _dt.time(hour, minute, second, nanosecond // 1000)
 
-    def _generate_datetime(self, min_value: _dt.datetime, max_value: _dt.datetime) -> _dt.datetime:
+    def _generate_datetime(
+        self, min_value: _dt.datetime, max_value: _dt.datetime, precision: int
+    ) -> _dt.datetime:
         result = self._handle.generate_datetime(
             (
                 min_value.year,
@@ -671,9 +654,68 @@ class TestCase:
                 max_value.second,
                 max_value.microsecond * 1000,
             ),
+            precision,
         )
         year, month, day, hour, minute, second, nanosecond = result
         return _dt.datetime(year, month, day, hour, minute, second, nanosecond // 1000)
+
+    def _generate_duration(
+        self, min_value: _dt.timedelta, max_value: _dt.timedelta, precision: int
+    ) -> _dt.timedelta:
+        seconds, nanoseconds = self._handle.generate_duration(
+            _duration_of(min_value), _duration_of(max_value), precision
+        )
+        return _dt.timedelta(seconds=seconds, microseconds=nanoseconds // 1000)
+
+    def _generate_instant(
+        self, min_value: tuple[int, int], max_value: tuple[int, int], precision: int
+    ) -> tuple[int, int]:
+        """Draw an instant, each value ``(seconds, nanoseconds)`` since the
+        Unix epoch."""
+        return self._handle.generate_timestamp(min_value, max_value, precision)
+
+    def _generate_span(
+        self, spec: _native.SpanSpec
+    ) -> tuple[int, int, int, int, int, int, int, int, int, int]:
+        return self._handle.generate_span(spec)
+
+    def _generate_offset(self, min_seconds: int, max_seconds: int, granularity: int) -> int:
+        return self._handle.generate_offset(min_seconds, max_seconds, granularity)
+
+    def _generate_timezone(self, spec: _native.TimeZoneSpec) -> str:
+        return self._handle.generate_timezone(spec)
+
+    def _generate_zoned_datetime(
+        self, tz_spec: _native.TimeZoneSpec, zoned_spec: _native.ZonedSpec
+    ) -> tuple[str, _dt.datetime]:
+        """Draw a zone and a wall-clock time in it, as the zone's name and a
+        naive datetime carrying the fold. A wall time outside the years
+        :mod:`datetime` represents, which instant bounds near its limits can
+        reach in a zone with a large offset, rejects the test case."""
+        key, civil, fold, _, _, _, _ = self._handle.generate_zoned_datetime(tz_spec, zoned_spec)
+        return key, self._wall_time(civil, fold)
+
+    def _generate_zoned_datetime_for_zone(
+        self, source: _native.ZoneSource, name: str, zoned_spec: _native.ZonedSpec
+    ) -> _dt.datetime:
+        """Draw a wall-clock time in the zone ``name`` of ``source``, as a
+        naive datetime carrying the fold. The zone was chosen by the
+        caller, so the draw records no zone choice, and a zone with no
+        value in the spec's bounds rejects the test case, as does a wall
+        time outside the years :mod:`datetime` represents."""
+        civil, fold, _, _, _, _ = self._handle.generate_zoned_datetime_for_zone(
+            source, name, zoned_spec
+        )
+        return self._wall_time(civil, fold)
+
+    def _wall_time(
+        self, civil: tuple[int, int, int, int, int, int, int], fold: bool
+    ) -> _dt.datetime:
+        year, month, day, hour, minute, second, nanosecond = civil
+        if not _dt.MINYEAR <= year <= _dt.MAXYEAR:
+            self.reject()
+        value = _dt.datetime(year, month, day, hour, minute, second, nanosecond // 1000)
+        return value.replace(fold=int(fold))
 
     def _generate_uuid(self, version: int | None = None) -> bytes:
         return self._handle.generate_uuid(version)
@@ -737,3 +779,11 @@ class Collection:
         if self._finished:
             return
         self._ensure().reject(self._tc._handle, why)
+
+
+def _duration_of(delta: _dt.timedelta) -> tuple[int, int]:
+    """A timedelta as the engine's ``(seconds, nanoseconds)`` of one sign."""
+    microseconds = delta // _dt.timedelta(microseconds=1)
+    seconds, remainder = divmod(abs(microseconds), 1_000_000)
+    sign = -1 if microseconds < 0 else 1
+    return sign * seconds, sign * remainder * 1000

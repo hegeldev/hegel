@@ -145,7 +145,8 @@
 //		})
 //	}
 //
-// Notes only appear when Hegel replays the minimal failing example.
+// Notes only appear when Hegel replays the minimal failing example, or for
+// every test case when run with [VerbosityVerbose].
 //
 // # Change the number of test cases
 //
@@ -175,6 +176,8 @@
 //
 //   - Browse the function documentation for the full list of available
 //     generators.
+//   - See package [hegel.dev/go/hegel/temporal] for the generators of dates,
+//     times, durations and time zones.
 //   - See [WithTestCases] and other [Option] functions for more
 //     configuration settings to customize how your test runs.
 //   - See [Workload] for running a property test as a standalone CLI

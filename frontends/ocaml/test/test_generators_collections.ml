@@ -76,15 +76,6 @@ let test_lists_filtered_e2e () =
     List.iter (fun x -> assert (x > 5)) items)
 ;;
 
-(** Test: lists(filtered) without max_size (max_size=None in collection). *)
-let test_lists_filtered_no_max_e2e () =
-  Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:10 ()) (fun tc ->
-    let elem = filter (fun _ -> true) (integers ~min_value:0 ~max_value:10 ()) in
-    let gen = lists elem () in
-    let items = Hegel.draw tc gen in
-    List.iter (fun x -> assert (x >= 0 && x <= 10)) items)
-;;
-
 (** Test: lists(lists(booleans)) → nested lists work. *)
 let test_lists_nested_e2e () =
   Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:50 ()) (fun tc ->
@@ -113,58 +104,24 @@ let test_lists_unique_e2e () =
     Alcotest.(check int) "all unique" n uniq)
 ;;
 
-(** Test: lists(filtered, unique=true) E2E — elements are distinct. *)
-let test_lists_filtered_unique_e2e () =
+(** An association list respects its size bounds and has distinct keys. *)
+let test_assoc_lists_e2e () =
   Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:50 ()) (fun tc ->
-    let elem = filter (fun v -> v >= 0) (integers ~min_value:0 ~max_value:1000 ()) in
-    let gen = lists elem ~min_size:1 ~max_size:5 ~unique:true () in
-    let items = Hegel.draw tc gen in
-    let n = List.length items in
+    let gen =
+      assoc_lists
+        (integers ~min_value:0 ~max_value:10 ())
+        (booleans ())
+        ~min_size:1
+        ~max_size:5
+        ()
+    in
+    let pairs = Hegel.draw tc gen in
+    let n = List.length pairs in
     assert (n >= 1 && n <= 5);
-    let uniq = List.sort_uniq compare items |> List.length in
-    Alcotest.(check int) "all unique" n uniq)
-;;
-
-(** Test: lists(filtered, unique=true) with impossible constraints terminates
-    via the engine's rejection limit instead of hanging. Uses
-    min_value=max_value=0 so every second element is a guaranteed duplicate,
-    which causes the engine to send StopTest after its rejection threshold. No
-    case is ever valid, so the run ends [Unsatisfiable]. *)
-let test_lists_filtered_unique_exhaustion_e2e () =
-  Test_helpers.expect_unsatisfiable (fun () ->
-    Hegel.run_hegel_test
-      ~settings:
-        { (Hegel.Settings.create ~test_cases:10 ()) with
-          suppress_health_check = [ Settings.Filter_too_much ]
-        }
-      (fun tc ->
-         let elem = filter (fun _ -> true) (integers ~min_value:0 ~max_value:0 ()) in
-         (* Asking for ≥2 unique elements from {0} — impossible. The engine's
-           many.reject() limit will fire and send StopTest, which
-           collection_reject raises Internal.Stop_test. *)
-         let gen = lists elem ~min_size:2 ~unique:true () in
-         ignore (Hegel.draw tc gen : int list);
-         Alcotest.fail "an impossible unique list returned a value"))
-;;
-
-(** Test: assoc_lists(filtered keys) E2E — generates pairs. *)
-let test_assoc_lists_filtered_keys_e2e () =
-  Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:10 ()) (fun tc ->
-    let key_gen = filter (fun _ -> true) (integers ~min_value:0 ~max_value:100 ()) in
-    let val_gen = integers ~min_value:0 ~max_value:100 () in
-    let gen = assoc_lists key_gen val_gen ~min_size:0 ~max_size:5 () in
-    let pairs = Hegel.draw tc gen in
-    assert (List.length pairs <= 5))
-;;
-
-(** Test: assoc_lists(filtered values) E2E — generates pairs. *)
-let test_assoc_lists_filtered_values_e2e () =
-  Hegel.run_hegel_test ~settings:(Hegel.Settings.create ~test_cases:10 ()) (fun tc ->
-    let key_gen = integers ~min_value:0 ~max_value:100 () in
-    let val_gen = filter (fun _ -> true) (integers ~min_value:0 ~max_value:100 ()) in
-    let gen = assoc_lists key_gen val_gen ~min_size:0 ~max_size:5 () in
-    let pairs = Hegel.draw tc gen in
-    assert (List.length pairs <= 5))
+    Alcotest.(check int)
+      "distinct keys"
+      n
+      (List.length (List.sort_uniq compare (List.map fst pairs))))
 ;;
 
 (** Uniqueness applies to transformed values: a constant map cannot supply
@@ -260,27 +217,13 @@ let tests =
   ; Alcotest.test_case "lists of integers e2e" `Quick test_lists_of_integers_e2e
   ; Alcotest.test_case "lists booleans bounds e2e" `Quick test_lists_booleans_bounds_e2e
   ; Alcotest.test_case "lists filtered e2e" `Quick test_lists_filtered_e2e
-  ; Alcotest.test_case "lists filtered no max e2e" `Quick test_lists_filtered_no_max_e2e
   ; Alcotest.test_case "lists nested e2e" `Quick test_lists_nested_e2e
   ; Alcotest.test_case "lists unique e2e" `Quick test_lists_unique_e2e
-  ; Alcotest.test_case "lists filtered unique e2e" `Quick test_lists_filtered_unique_e2e
-  ; Alcotest.test_case
-      "lists filtered unique exhaustion e2e"
-      `Quick
-      test_lists_filtered_unique_exhaustion_e2e
   ; Alcotest.test_case "hash_tables e2e" `Quick test_hash_tables_e2e
   ; Alcotest.test_case
       "hash_tables min > max"
       `Quick
       test_hash_tables_min_greater_than_max
-  ; Alcotest.test_case
-      "assoc_lists filtered keys e2e"
-      `Quick
-      test_assoc_lists_filtered_keys_e2e
-  ; Alcotest.test_case
-      "assoc_lists filtered values e2e"
-      `Quick
-      test_assoc_lists_filtered_values_e2e
   ; Alcotest.test_case
       "lists unique under non-injective map e2e (regression)"
       `Quick
@@ -289,5 +232,6 @@ let tests =
       "assoc_lists unique keys under filter e2e (regression)"
       `Quick
       test_assoc_lists_unique_keys_under_filter_e2e
+  ; Alcotest.test_case "assoc_lists e2e" `Quick test_assoc_lists_e2e
   ]
 ;;

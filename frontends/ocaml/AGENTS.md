@@ -95,11 +95,26 @@ lib/                         # Library source
     locked.capsule.ml        #   locked.mutex.ml (Mutex + value). Core-free.
                              #   locked.capsule.ml is OxCaml syntax and listed in
                              #   .ocamlformat-ignore
-  ffi/                       # ctypes bindings to native libhegel (NOT instrumented)
+  ffi/                       # bindings to native libhegel (NOT instrumented)
     ffi.ml                   # dlopen + 1:1 C-ABI wrappers; settings/run/test_case
                              #   handles; typed draws + string-generator handles;
                              #   events; the pretty-printer document (printer_*,
-                             #   test_case_printer, note)
+                             #   test_case_printer, note); the temporal draws,
+                             #   formatters, spec handles (one OCaml type per
+                             #   C handle kind), zone sources and zone queries,
+                             #   which only convert between the C structs and
+                             #   temporal_types (narrow fields wrap; enums and
+                             #   masks stay ints): the logic is in
+                             #   generators_temporal. A zone loader is rooted
+                             #   in a table until the engine's release hook
+                             #   drops it. free_when_unreachable queues a
+                             #   free from a finaliser and free_unreachable
+                             #   runs the queue (see Caller-owned handles)
+    temporal_types.ml        # records mirroring the C temporal structs field
+                             #   for field, one submodule each; Hegel.Temporal
+                             #   re-exports the value types among them
+    hegel_stubs.c            # direct C stubs for the per-draw and per-test-case
+                             #   calls, through dlsym'd function pointers
     loader.ml                # locate libhegel at runtime (env > site > the
                              #   checkout's in-tree target/ build (libhegel_c.<ext>))
   cli.ml / cli.mli           # Hegel.main: cmdliner flags (--profile applied
@@ -114,10 +129,11 @@ lib/                         # Library source
                              #   default ()/from_profile/create materialized from
                              #   the engine's settings profiles (to_ffi/of_ffi)
   internal.ml.in             # Test runner + run lifecycle + typed-draw wrappers on
-                             #   top of Hegel_ffi.Ffi; note/print_line/render_sexp +
-                             #   capture_document (engine-side output, see Pretty
-                             #   printing); events (cppo → internal.ml)
-  generators.ml.in           # Re-export shim: include the four generators_* modules
+                             #   top of Hegel_ffi.Ffi; note/print_line/render_sexp
+                             #   (engine-side output, see Pretty printing); events
+                             #   (cppo → internal.ml)
+  generators.ml.in           # Re-export shim: include the generators_* modules,
+                             #   plus module Temporal = Generators_temporal
                              #   (cppo → generators.ml; generators.mli.in likewise)
   generators_core.ml         # generator type; draw/draw_silent, map/flat_map/filter,
                              #   composite, span labels — the discriminated union
@@ -128,6 +144,14 @@ lib/                         # Library source
   generators_functions.ml    # functions/functions2/functions3: memoized
                              #   function generators (Claessen's show/shrink,
                              #   but no trie — the engine shrinks results)
+  generators_temporal.ml.in  # Hegel.Temporal: dates/times/datetimes/instants/
+                             #   offsets/zones/zoned_datetimes/durations/spans,
+                             #   a module per value type (text from the
+                             #   engine's hegel_format_*), the marshalling to
+                             #   and from Ffi (saturation, enum codes, tag
+                             #   masks, zone data, callback guards),
+                             #   Zone_source, the process default source and the
+                             #   resolve/offset_at/info queries (cppo → .ml)
   derive.ml                  # Hegel.Derive: scope-resolved names derived code
                              #   refers to (hegel_generator_int/…/char/list/
                              #   option + the Sexplib0 sexp_of_* converters)
@@ -257,7 +281,8 @@ README.md                    # Project overview, install, quick-start
 
 There is no subprocess, socket, or wire protocol. The engine is the native
 `libhegel` C library (`../../libhegel`, header `libhegel/include/hegel.h`), called
-in-process via ctypes. `Hegel_ffi.Loader` resolves the shared library at runtime:
+in-process via ctypes, except for the calls made on every draw or test case (see
+Direct C stubs below). `Hegel_ffi.Loader` resolves the shared library at runtime:
 `$HEGEL_LIBHEGEL_PATH`, then the `libhegel` dune-site of an installed package
 (the opam release tarball bundles the host's library there, see Releases),
 then the in-tree cargo build — `target/{release,debug}/libhegel_c.<ext>` (the
@@ -271,7 +296,9 @@ thin 1:1 wrappers: settings handles, the run lifecycle (`run_start`,
 `next_test_case`, `run_result`, `run_free`), and per-test-case primitives — the
 typed draws (`generate_integer`, `generate_boolean`, `generate_float`,
 `generate_bytes`, `generate_string` + the `string_generator_*` handle
-constructors, `generate_date`/`time`/`datetime`, `generate_ipv4`/`ipv6`), spans,
+constructors, the temporal draws `generate_date`/`time`/`datetime`/`timestamp`/
+`offset`/`duration`/`span`/`timezone`/`zoned_datetime`/`zoned_datetime_for_zone`
+and the `format_*` text functions, `generate_ipv4`/`ipv6`), spans,
 collections, pools, state machines (`new_state_machine` takes the per-machine
 `~step_count` since libhegel 0.38.0; there is no settings-level step count;
 rules and invariants are declared one call at a time with
@@ -293,6 +320,31 @@ the OCaml runtime lock for the call's duration. The `ffi` library is
 deliberately NOT bisect_ppx-instrumented, keeping its
 mechanical marshalling out of the 100%-coverage gate (no `[@coverage off]`).
 
+**Direct C stubs.** A ctypes `Foreign` call costs about 160 ns and 260 words of
+allocation before libhegel does any work, so the calls made on every draw, test
+case or state-machine step bypass it: `generate_integer`/`boolean`/`float`,
+`start_span`, `stop_span`, `new_collection`, `collection_more`,
+`collection_free`, `next_test_case`, `test_case_wants_output`,
+`test_case_wants_detail`, `mark_complete`, `test_case_free`,
+`state_machine_next_group`, `state_machine_next_rule`,
+`state_machine_rule_rejected`, `state_machine_should_check_invariant`,
+`pause_faults`, `unpause_faults` and `generate_string` (with
+`owned_string_free`) are `external`s into `lib/ffi/hegel_stubs.c`. Each stub takes the
+libhegel function's address (from `Dl.dlsym` on the same library handle, looked up
+with the ctypes bindings by `initialize`, so loading stays lazy) and the handles'
+raw addresses (`raw_address_of_ptr`, a field read) as unboxed `nativeint`s. Stubs
+for a bool, unit or handle result are `[@@noalloc]` and return a negative libhegel
+return code on failure (handles are never negative); the integer and float draws,
+whose every value is valid, and `generate_string`, which copies the drawn
+string into the OCaml heap and frees libhegel's copy, raise `Engine_status rc`
+from C instead, and the
+wrapper maps either through `error_of_rc`. The rule and group stubs return the
+index, `-1000` for `HEGEL_STATE_MACHINE_DONE` (which does not fit an OCaml int),
+or a negative return code; `next_group` packs the round's concurrency level above
+the group's low 32 bits. The `next_test_case` stub releases the
+runtime lock around the engine call. Every stub has a bytecode variant. Move a
+call here only if it runs per draw, test case or step; the rest stay on ctypes.
+
 `lib/protocol.ml`, `lib/connection.ml`, `lib/cbor/`, `lib/cbor_helpers.ml`, and
 the old Python-subprocess install flow were removed in the native-backend and
 typed-draw migrations.
@@ -311,8 +363,11 @@ refunctionalized — the code takes the operations as closures/parameters, and
 each side instantiates them:
 - pools: `Int_pool` (an `Int_table` of values, no lock: a sequential machine runs its rules one at a time) and `Int_pool_concurrent` (the same table behind a `Locked`) are the client-side pools; `resolve_pool_draw` (find/remove closures) is the shared id-resolution step
 - hash tables: `make_hash_tables ~of_pairs ~sexp_of_t` ← `hash_tables` (Stdlib.Hashtbl) / `Hegel_jane.hash_tables` (Hashtbl.Poly)
-- dates/times: `make_dates ~of_date`/`make_times ~of_time`/`make_datetimes ~of_datetime` (+ `~sexp_of`) (+ `?min_date`/`?min_time`/`?min_datetime` and `max_*` bounds) ← `dates`/`times`/`datetimes` (ISO 8601 strings) / `Hegel_jane.dates`/`ofdays` (Core values)
-- chars: `make_characters ~of_char ~sexp_of` ← `chars` / `Hegel_jane.chars`. `Core.Char.t = char`, so both sides draw the same value and only the printer differs (`sexp_of_char` vs `Core.Char.sexp_of_t`) — unlike the other refunctionalized pairs, `of_char` is `Fun.id` on both sides, kept only for symmetry with `~of_date`
+- chars: `make_characters ~of_char ~sexp_of` ← `chars` / `Hegel_jane.chars`. `Core.Char.t = char`, so both sides draw the same value and only the printer differs (`sexp_of_char` vs `Core.Char.sexp_of_t`) — unlike the other refunctionalized pairs, `of_char` is `Fun.id` on both sides, kept only for symmetry with `make_hash_tables`'s `~of_pairs`
+
+`Hegel_jane.dates`/`ofdays`/`times` need no such pairing: they are `map` +
+`with_printer` over `Temporal.dates`/`times`/`instants`, converting the plain
+`Temporal` records to Core values.
 
 The test suite still links `core`/`core_unix` (test-only dependencies; users
 never install them). `core` being an opam depopt is about the
@@ -618,6 +673,46 @@ Who owns what in hegel-ocaml:
   dead after its last field read, so the finaliser could run in the middle of
   an engine call that had just read `tc.context` (a `note` from an invariant
   body segfaulted under a small minor heap).
+- the temporal configuration handles (date options; timezone, zoned and
+  span specs) and zone sources → the OCaml value that made them: a
+  generator's `cell`, a `Zone_source.t` (`Generators_core.zone_source`, a
+  record around the handle). They have no lexical scope (a generator or a
+  source is an ordinary value, built at module level or anywhere else), so
+  the collector decides: `Ffi.free_when_unreachable free value` registers
+  `Gc.finalise_last`, and every read of a handle keeps its owner reachable
+  until the engine call returns (`with_spec`, `Zone_source.use`, both with
+  `Sys.opaque_identity`), which is what the clone finaliser lacked. The
+  finaliser never calls the engine. It can run at any allocation, on any
+  thread, including one inside ctypes's callback table lock
+  (`Ctypes_closure_properties.tables_lock`) or `Ffi`'s loader table lock,
+  and freeing a timezone spec or a source handle can drop the last
+  reference to a source, whose loader the engine then releases through the
+  release hook: a ctypes callback that takes both locks. So the finaliser
+  pushes `free` onto a lock-free list (`Ffi.free_later`), and
+  `Ffi.free_unreachable` runs the list, with a NULL context, from two
+  places: `Ffi.context_new`, which every entry into the engine outside a
+  test case starts with (`Zone_source.create` included), and `with_spec`,
+  on every draw from a temporal configuration, since a run shares one
+  context between all its test cases. A handle is therefore freed at the
+  first such call after the collection that found its owner unreachable, on
+  whichever thread makes that call, and making a new handle always frees
+  the collected ones first, so a loop that builds sources or generators
+  does not accumulate them. Who keeps a source reachable: the user's
+  value, each generator built from it (the
+  `zone_query` in its draw closure, kept across the draw by `with_zones`
+  because a draw can call the loader after the generator's last use), and
+  the process default (`default_source`). A loader does not: the closure
+  given to the engine is rooted until the engine releases it, so it holds
+  its source in a `Weak` and looks it up on each call
+  (`Zone_source.loader_target`); a strong reference would keep the source,
+  its handle and the loader alive for the rest of the process.
+  `finalise_last` rather than `finalise` because the latter runs before weak
+  pointers are erased, so a loader could resurrect a source whose free is
+  already queued. The record's one field is `mutable`, though never
+  assigned, so that the block the finaliser is registered on has an identity
+  the compiler (flambda 2 on OxCaml) may not unbox and rebuild. The handle
+  of `Zone_source.bundled` is the one exception: `Ffi.zone_source_bundled`
+  makes it once and it is never freed.
 
 The authority on the ABI is `../../libhegel/include/hegel.h` in this
 checkout, not the published reference at <https://hegel.dev/reference/libhegel>.
@@ -625,22 +720,37 @@ checkout, not the published reference at <https://hegel.dev/reference/libhegel>.
 ### Pretty printing (engine-side layout)
 
 All user-visible test output — notes, drawn values, stateful traces — is assembled in libhegel's per-test-case *document*
-(`hegel_test_case_printer` / `hegel_note`), not streamed to stderr as it
-happens. `Internal.note` appends verbatim (pre-indented, possibly multi-line)
+(`hegel_test_case_printer` / `hegel_note`), which the engine prints itself. `Internal.note` appends verbatim (pre-indented, possibly multi-line)
 lines; `Internal.print_line` assembles a draw line from `Text`/`Value`
 segments, laying each sexp out engine-side with `Internal.render_sexp`: an
-atom is its `Sexp.to_string` escaping, a list is a group — `(`, children
+atom is its `Sexp.to_string` escaping (except an atom made by `Internal.raw_text`, which is printed verbatim: `raw_text` records the atom's physical identity in a `Locked` ephemeron table, so the mark survives embedding in a larger sexp and is invisible to everything else; the `Temporal` printers use it), a list is a group — `(`, children
 separated by breakable spaces, `)` — so a value that fits the line prints
 inline (byte-identical to `Sexp.to_string_hum`; pinned by a test) and one
 that doesn't breaks all-or-nothing, one child per line (unlike `pp_hum`'s
-fill style), at the document's default width 79. After `mark_complete`,
-`run_case` reads the document back (`capture_document`:
-`printer_resolve` — required when clone regions exist, an argument error
-otherwise, hence the catch — then `printer_value`); the runner keeps it with
-the failure (see Test Runner) and prints it inside the client-drawn failure
-frame. Verbosity gating stays client-side (`should_print`): under Quiet, or at
-Normal a case the engine did not stamp (`should_capture`), nothing is appended
-and the read is skipped.
+fill style), at the document's default width 79. The client never reads the
+document back (a test case's printer refuses
+`printer_resolve`/`printer_value`, and `mark_complete` seals it). The engine
+lays out each part of it as soon as nothing can change it — after a note or
+line break in the root region, at state-machine join points, at completion —
+and sends it through the run's output callback under Verbose/Debug, keeps it
+as the report of the failure for a case it stamped for capture, and drops it
+otherwise. The callback is always libhegel's `hegel_output_stderr` (`Ffi.run_start`
+passes it; there is no setting for it, and the frontend never passes NULL,
+which the engine would treat as no destination), and `run_test` prints the
+failure report to stderr itself. A failing case passes
+`mark_complete` its origin, a one-line `summary` (`render_summary`:
+`Exception: <exn>` cut at its first line break, led by
+`file:line:col: ` of the innermost user frame when a backtrace is recorded,
+except for `Assert_failure`/`Match_failure`, which carry their own location)
+when `wants_output`, and a `detail` (`render_detail`: `Exception: <exn>` plus
+the recorded backtrace) when `wants_detail`; the engine prints the summary
+after the case's lines in a verbose run and the detail in a debug run. Both
+gates are the engine's (`hegel_test_case_wants_output` /
+`hegel_test_case_wants_detail`, read once per case; `should_print` returns
+`wants_output`): under Quiet, or at Normal a case the engine did not stamp,
+nothing is appended or rendered. `Ffi.mark_complete` raises `Internal_error`
+when the engine rejects the call. The engine also prints a verbose run's
+"Test case stopped" lines.
 Clones write into their own region, anchored where the clone was made, so
 concurrent output assembles deterministically regardless of scheduling.
 Indentation is engine-side too (libhegel 0.37.10 block handles):
@@ -656,8 +766,8 @@ and on `Assume_rejected` reports the rejection to the engine. It only creates th
 block when `should_print tc` holds; a non-printing case runs the body on `tc` itself, since
 a block per step costs a native handle and a context, which
 measured as 50% more wall time and 20x the major collections on a
-200-case x 500-step machine. `print_failure_body` sets the captured output
-off with blank lines inside the frame. The client prepends no spaces anywhere. Mirroring
+200-case x 500-step machine. `print_failure_body` sets the case's printed
+lines off with blank lines inside the frame, before the exception. The client prepends no spaces anywhere. Mirroring
 hegel-rust's `TestCase::child`, a block starts at span depth 0 and opens a
 fresh `draw_state` (a rule's draw names are scoped to that one invocation: a
 `[@@rule]` body's `let n = draw ..` prints as `n` in every step, and a
@@ -781,18 +891,21 @@ new failure, confirmation under nondeterministic handling, and the
 report-time replay of each failure it reports all come out of
 `next_test_case` like any other case. There is no client-side final replay,
 no `is_final`, and no client flaky check. The engine stamps the executions a
-report can be built from (`hegel_test_case_should_capture`, read once per
-case into `should_capture` and `case_outcome.should_capture`); stamped cases
-print (see `should_print`). The run keeps one capture per origin in
-`captured`, a table local to `run_test`: the failure (origin, exception,
-backtrace) with its `case_outcome`. A newer capture replaces an older one,
-except that an unstamped one never replaces a stamped one — when the
-report-time replay does not fail, the newest failing execution may be a silent
-shrink probe. After the loop, each `Ffi.run_result` failure is printed from
-its capture: the output, the exception, `note: <caveat>`
+report can be built from and keeps what the newest stamped failing
+execution of each origin printed as that failure's output
+(`hegel_failure_output`).
+The run keeps one failure per origin in `failures`, a table local to
+`run_test`: the origin, exception and backtrace to raise. A newer failure
+replaces an older one when its case wanted output (`wants_output`) or none is
+stored yet, mirroring the engine, so the raised exception is the one the
+report shows — when the report-time replay does not fail, the newest failing
+execution may be a silent shrink probe. After the loop, each
+`Ffi.run_result` failure is printed: its output (`Ffi.failure_output`, when
+there is any), `Exception: <exn>` (never the engine's detail: the test runner
+shows the raised exception's backtrace itself), `note: <caveat>`
 (`hegel_failure_caveat`, only under nondeterministic handling), and
 `rerun with:` when the failure has a blob (an unconfirmed failure has none).
-A single failure re-raises its captured exception with its backtrace; several
+A single failure re-raises its stored exception with its backtrace; several
 are aggregated into "N failures found!". `?on_failure` runs after the report and
 before that raise; `Hegel.main` exits 1 from it (the exit cannot live in the
 portable `Internal`), so a binary prints only the report. Run and usage errors
@@ -1064,7 +1177,7 @@ guards the syntax upstream cannot parse (`@ m`, kind annotations).
   its own `Alcotest.test_case` list from the PPX-produced functions, same as
   any other consumer would. `ppx/test/expect_tests/` stays
   package-less and dev-only (`enabled_if (<> %{profile} release)`)
-- 100% branch and line coverage is mandatory — no exceptions, no `[@coverage off]`
+- 100% branch and line coverage is mandatory
 
 ### Error Handling
 
@@ -1083,21 +1196,31 @@ typed FFI call (`Hegel_ffi.Ffi` / `Internal.generate_*`):
 - `text` / `characters` → build a text `string_generator` handle (codec / codepoint bounds / categories / include-exclude chars) then `generate_string`; surrogates auto-excluded
 - `chars` → `generate_text` fixed to `min_size:max_size:1`, codepoints 0-0xFF (Latin-1), decoded via `String.get_utf_8_uchar` (a codepoint above 127 encodes to 2 UTF-8 bytes, so this can't just index byte 0) into a native `char` via `make_characters ~of_char ~sexp_of`
 - `from_regex` / `emails` / `urls` / `domains` → the matching `string_generator_*` handle + `generate_string`
-- `dates` / `times` / `datetimes` → `generate_date`/`time`/`datetime` structs, bounded by the caller's `?min_date`/`?max_date`, `?min_time`/`?max_time`, `?min_datetime`/`?max_datetime` (validated by the engine: a bad bound is `HEGEL_E_INVALID_ARG`, which `check_rc` raises as `Usage_error` and the runner propagates unshrunk). The parts are the `date`/`time` records (`hegel_time_t` carries nanoseconds since libhegel 0.36.0) and feed the refunctionalized builders `make_dates`/`make_times`/`make_datetimes` (`~of_date`/`~of_time`/`~of_datetime` constructor + `~sexp_of` printer); the public `dates`/`times`/`datetimes` close them over ISO 8601 strings (`YYYY-MM-DD`, `HH:MM:SS.fffffffff` with the fraction always printed, joined by `T`). A typed date library plugs in its own `~of_date` (no string parsing round-trip)
+- `Temporal.*` → the temporal draws, each a `Leaf` over the matching `Ffi.generate_*` through `Internal.with_draw` (the stop guard). Each value type is a module (`Temporal.Date`, `Time`, `Datetime`, `Instant`, `Offset`, `Zoned_datetime`, `Duration`, `Span`) with `t`, `to_string` (the engine's `hegel_format_*` text; there is no OCaml formatter), `pp`, `sexp_of_t` (that text as an `Internal.raw_text` atom), `equal`, `compare` and `hegel_generator`; the option enums are polymorphic variants, turned into the engine's codes when the generator is built. `Ffi` is not instrumented, so everything with a branch lives here and is tested: `saturated` (an int outside a narrow C field goes in as the field's maximum, which the engine rejects, instead of wrapping to a valid value), the enum codes and masks, the kind and tag decoding, `Zone_source.raw_data` (zone data as fields to the flat `Temporal_types.Zone_data`), and `guarded`, which turns an exception in an oracle or loader callback into `Ffi.context_set_error` and a failure return, never an unwind into C. The configuration handles (date options; timezone, zoned and span specs) are built on a generator's first draw, validated with the engine's `_validate` call, and kept in the generator's `cell` (a `Locked` option, one per handle), so building a generator never loads libhegel, and an engine rejection (`HEGEL_E_INVALID_ARG` → `Usage_error`) is raised from every draw since a rejected handle is freed, not kept. A cell's handle is freed once the generator is collected, and a zone source's once nothing can reach the source (`Ffi.free_when_unreachable`; see Caller-owned handles for the lifetime rules). `Generators.Private.live_temporal_specs` and `live_zone_sources` count the handles built and not yet freed, for the tests of that, which make an engine call after `Gc.full_major` since that call is what frees. Two argument errors raise at construction: civil plus instant bounds together, and `zoned_datetimes ~zones:(zones …) ~source`. The process default source lives in a `Locked` cell (`None`, meaning the bundled database, until `set_default_zone_source`, which sets the engine's default under the same lock and returns the previous one); a generator reads it once, when it is built (`source_in_effect`), and every engine call is given an explicit source, so the engine's own default is never what decides. `Temporal.zones` stores its `zone_query` (defined in `generators_core`, source included) in the `Leaf`'s `zones` field; `zoned_datetimes` given such a leaf, or no `~zones`, makes one joint engine draw (`hegel_generate_zoned_datetime`), and given any other zone generator draws the name, then the wall time with `hegel_generate_zoned_datetime_for_zone` against `~source` or the default it read at construction, adding a hint about `~source` to the engine's error for a name the source lacks. A zone is its name: there is no zone record and no second query per draw. A loader set with `Zone_source.set_loader` is released when another replaces it, `remove_loader` removes it, or the engine drops the source after its handle and every spec built from it are freed. The engine interns the data of every distinct zone for the life of the process, so the public docs still say to make a source once, outside test bodies. The deprecated string `dates`/`times`/`datetimes` and `make_dates`/`make_times`/`make_datetimes` (`Generators_temporal.Legacy`, included into `Generators.Public`) are `map` + `with_printer` over the `Temporal` generators, formatting exactly as before
 - `ip_addresses` → `generate_ipv4`/`generate_ipv6` raw bytes, rendered to strings by the `ipaddr` library (`Ipaddr.V4/V6.{of_octets_exn, to_string}`; RFC 5952 for v6)
 - `sampled_from` → `generate_integer 0 (n-1)` then index into the values array
 - `just` → a Leaf whose `draw` ignores the engine and returns the constant
 - `one_of` / `optional` / tuples / `lists` / `hashmaps` → `Composite`/`CompositeList` cores that draw an index or drive the collection protocol, calling sub-generators' draws directly
 
-String-generator handles are context-bound: built from `tc.context`, used for the
-draw, and always freed (`Internal.with_string_generator`).
+`Internal.generate_string` builds a string-generator handle the first time a
+parameter set (`string_generator_key`) is drawn from and keeps it, never freed,
+in a process-wide table: 64 buckets chosen by `Hashtbl.hash`, each an `Atomic`
+list of at most 4 entries. Building a handle costs over 1 µs, mostly in libhegel,
+and `draw tc (text ())` creates a new generator value on every draw, so the cache
+is keyed by parameters, not by generator value. Lookups take no lock, so
+concurrent workers on several domains draw strings in parallel; a `Locked`
+`Hashtbl` serialized them and made 4 workers 5× slower. The bucket array is an
+`Immutable_array` (a dune `select` like `Locked`: `stdlib_stable`'s `iarray` under
+OxCaml, so portable code can read it, and a plain array elsewhere). When a
+bucket is full, or the compare-and-set loses a race, the handle is built, drawn
+from and freed for that one draw.
 
 ### Coverage Rules
 
 - 100% line coverage is mandatory on library code
 - `scripts/check-coverage.py` parses `bisect-ppx-report summary` output
 - Unreachable engine-contract violations use `failwith "..."` (tested via unit tests on the transform)
-- `[@coverage off]` annotations are never used
+- Never add `[@coverage off]` (the OCaml `// nocov`) without explicit human permission
 - Only the instrumented `hegel` library and the `hegel.jane` sublibrary are measured; the `hegel_ffi` bindings, examples, and PPX code are not
 
 ## Lessons Learned

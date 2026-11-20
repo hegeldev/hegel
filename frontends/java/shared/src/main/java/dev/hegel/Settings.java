@@ -278,7 +278,8 @@ public final class Settings {
     /**
      * Class-name prefixes to treat as infrastructure when locating the user frame a failure was
      * thrown from. Hegel tells distinct bugs apart by the exception's type and the first stack
-     * frame outside Hegel, the JDK, and JUnit; a frontend whose own frames sit between Hegel and
+     * frame outside Hegel, the JDK, and JUnit, and a verbose run names that frame's file and line
+     * in each failing case's summary; a frontend whose own frames sit between Hegel and
      * the user's code (for example {@code "clojure.lang."} and {@code "clojure.core"}) lists them
      * here so its frames are skipped too. Replaces any previously set prefixes.
      *

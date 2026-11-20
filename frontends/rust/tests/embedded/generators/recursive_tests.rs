@@ -2,7 +2,6 @@ use super::*;
 use crate::ffi::{RunHandle, SettingsHandle};
 use crate::generators as gs;
 use crate::runner::Settings;
-use crate::test_case::current_output_sink;
 
 /// Start a real engine run and hand back its first live test case, keeping
 /// the owning [`RunHandle`] alive alongside it.
@@ -11,7 +10,7 @@ fn live_test_case() -> (RunHandle, TestCase) {
     let c_settings = SettingsHandle::build(&settings, None, None);
     let run = RunHandle::start(&c_settings, None).unwrap();
     let c_tc = run.next_test_case().unwrap();
-    let tc = TestCase::new(Arc::new(c_tc), true, current_output_sink());
+    let tc = TestCase::new(Arc::new(c_tc), true);
     (run, tc)
 }
 

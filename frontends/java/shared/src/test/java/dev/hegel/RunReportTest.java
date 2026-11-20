@@ -147,7 +147,7 @@ class RunReportTest {
         assertSame(err, f.exception());
         assertFalse(f.nondeterministic());
         assertEquals(Optional.empty(), f.caveat());
-        // The fake stamps the case for capture, so its draws and notes are the report.
+        // The fake wants the case's output, so its draws and notes are the report.
         assertEquals(List.of("x", "draw_1"), List.copyOf(f.draws().keySet()));
         assertEquals(7, f.draws().get("x"));
         assertEquals(List.of("saw 7"), f.notes());
@@ -182,11 +182,11 @@ class RunReportTest {
     @Test
     void unconfirmedFailureIsReportedFromItsDiscovery() {
         // A test that failed once and never again: the engine reports the origin unconfirmed, with a
-        // caveat and no blob, and the only failing execution was the unstamped discovery, whose
-        // exception is all the runner kept.
+        // caveat and no blob, and the only failing execution was the discovery, whose output was not
+        // wanted: its exception is all the runner kept.
         FakeLibhegel fake = new FakeLibhegel();
         fake.caseCount = 3;
-        fake.captureSequence = new boolean[] {false, true, true};
+        fake.wantsOutputSequence = new boolean[] {false, true, true};
         fake.runStatus = Abi.RUN_STATUS_FAILED;
         fake.failureBlobs.add(null);
         fake.failureCaveats.add("nondeterministic failure, unconfirmed: failed 0 of 20 replays");
@@ -207,12 +207,12 @@ class RunReportTest {
     }
 
     @Test
-    void stampedCaptureOutranksALaterUnstampedOne() {
-        // Shrink probes (unstamped) keep failing after the stamped replay: the report still comes
-        // from the stamped execution, and among stamped ones the newest wins.
+    void wantedCaptureOutranksALaterUnwantedOne() {
+        // Shrink probes (output unwanted) keep failing after the stamped replays: the report still
+        // comes from an execution whose output was wanted, and among those the newest wins.
         FakeLibhegel fake = new FakeLibhegel();
         fake.caseCount = 4;
-        fake.captureSequence = new boolean[] {false, true, true, false};
+        fake.wantsOutputSequence = new boolean[] {false, true, true, false};
         fake.runStatus = Abi.RUN_STATUS_FAILED;
         fake.failureBlobs.add("blob-1");
         AtomicInteger calls = new AtomicInteger();
@@ -283,7 +283,7 @@ class RunReportTest {
                 reporter);
         // Engine output goes through the run's callback to the reporter, whenever it arrives.
         fake.output.accept("engine says hi");
-        // The stamped case's draws and notes are not reported live; they are replayed, flagged as
+        // The wanted case's draws and notes are not reported live; they are replayed, flagged as
         // such, once the engine reports the failure.
         assertEquals(
                 List.of(

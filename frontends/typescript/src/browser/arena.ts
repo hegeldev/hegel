@@ -87,6 +87,11 @@ export class WasmArena extends WasmMemory {
     return ptr;
   }
 
+  /** Store a `hegel_string_t` of `value`'s UTF-8 at `ptr`, inside a struct being built. */
+  textAt(ptr: number, value: string): void {
+    this.writeString(ptr, new TextEncoder().encode(value));
+  }
+
   /** A `hegel_string_t` of `value`'s UTF-8, or NULL for `null`. */
   text(value: string | null): number {
     return value === null ? 0 : this.bytesValue(new TextEncoder().encode(value));

@@ -12,5 +12,5 @@ export function wasmFixture() {
   const instance = new WebAssembly.Instance(wasmModule, host.imports);
   const abi = new WasmAbi(instance.exports);
   host.setMemory(abi.memory);
-  return { abi, engine: new WasmEngine(abi), exports: instance.exports };
+  return { abi, engine: new WasmEngine(abi, host.stderr), exports: instance.exports };
 }

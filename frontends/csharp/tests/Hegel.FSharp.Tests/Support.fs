@@ -9,6 +9,11 @@ open Hegel.FSharp
 let quiet =
     Settings(Database = Database.Disabled, Verbosity = Verbosity.Quiet, PrintBlob = false)
 
+/// Settings whose failures keep their transcript: `quiet` at normal verbosity, for a run that
+/// reports to `Reporter.Silent`.
+let reported =
+    Settings(Database = Database.Disabled, Verbosity = Verbosity.Normal, PrintBlob = false)
+
 /// The text a value prints as under the F# dialect.
 let render (t: Type) (value: obj) : string =
     use doc = new Document()
@@ -22,7 +27,8 @@ let show (value: 'T) : string = render typeof<'T> (box value)
 let failing (body: TestCase -> unit) : Failure =
     let report =
         Hegel.run (
-            quiet,
+            reported,
+            Reporter.Silent,
             fun tc ->
                 body tc
                 failwith "boom"

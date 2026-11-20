@@ -39,8 +39,11 @@ mod website
 # Definition of done for the whole repo: lint + every component's tests.
 check: check-lint libhegel::check rust::check python::check typescript::check cpp::check java::check csharp::check ocaml::check go::check
 
+# Lints spanning the Cargo workspace.
+check-workspace-lint: check-format check-clippy check-nocov-style check-test-modules check-internal-asserts check-settings-env check-workflow-timeouts check-release-script
+
 # Lints spanning the Cargo workspace, plus each component's own.
-check-lint: check-format check-clippy check-nocov-style check-test-modules check-internal-asserts check-settings-env check-workflow-timeouts check-release-script libhegel::check-lint rust::check-lint python::check-lint typescript::check-lint cpp::check-lint java::check-lint csharp::check-lint ocaml::check-lint go::check-lint
+check-lint: check-workspace-lint libhegel::check-lint rust::check-lint python::check-lint typescript::check-lint cpp::check-lint java::check-lint csharp::check-lint ocaml::check-lint go::check-lint
 
 format:
     cargo fmt --all
@@ -64,9 +67,6 @@ check-format-nix:
 
 check-clippy:
     cargo clippy --workspace --all-features --all-targets -- -D warnings
-    # Without --all-features so the default mode's engine loader (compiled
-    # out under `static-engine`, which --all-features enables) is linted too.
-    cargo clippy --workspace --all-targets -- -D warnings
 
 check-nocov-style:
     scripts/check-nocov-style.py

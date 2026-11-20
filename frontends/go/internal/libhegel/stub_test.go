@@ -255,13 +255,13 @@ func TestStubTypedPrimitives(t *testing.T) {
 	if v, err := tc.GenerateBytes(lib, 0, 8); err != nil || string(v) != "xy" {
 		t.Fatalf("GenerateBytes: v=%q err=%v", v, err)
 	}
-	if v, err := tc.GenerateDate(lib, Date{}, Date{}); err != nil || v.Day != 2 {
+	if v, err := tc.GenerateDate(lib, Date{}, Date{}, nil); err != nil || v.Day != 2 {
 		t.Fatalf("GenerateDate: v=%+v err=%v", v, err)
 	}
-	if v, err := tc.GenerateTime(lib, Time{}, Time{}); err != nil || v.Second != 3 {
+	if v, err := tc.GenerateTime(lib, Time{}, Time{}, PRECISION_NANOSECONDS); err != nil || v.Second != 3 {
 		t.Fatalf("GenerateTime: v=%+v err=%v", v, err)
 	}
-	if v, err := tc.GenerateDatetime(lib, Datetime{}, Datetime{}); err != nil || v.Date.Year != 2000 {
+	if v, err := tc.GenerateDatetime(lib, Datetime{}, Datetime{}, PRECISION_NANOSECONDS); err != nil || v.Date.Year != 2000 {
 		t.Fatalf("GenerateDatetime: v=%+v err=%v", v, err)
 	}
 	if v, err := tc.GenerateIPv4(lib); err != nil || v != [4]byte{1, 2, 3, 4} {
@@ -357,6 +357,14 @@ func TestStubBlobAndFailureAccessors(t *testing.T) {
 		OK,               // failure_reproduction_blob result
 		"flaky",          // failure_caveat
 		OK,               // failure_caveat result
+		"x = 1",          // failure_output
+		OK,               // failure_output result
+		nil,              // failure_output: NULL
+		OK,               // failure_output result
+		"boom",           // failure_diagnostic
+		OK,               // failure_diagnostic result
+		nil,              // failure_diagnostic: NULL
+		OK,               // failure_diagnostic result
 	)
 
 	s := &Settings{pointer: pointer[settingsT]{syms: lib.syms, raw: 1}}
@@ -374,6 +382,18 @@ func TestStubBlobAndFailureAccessors(t *testing.T) {
 	}
 	if got := f.Caveat(lib); got != "flaky" {
 		t.Errorf("Caveat: got %q", got)
+	}
+	if got, present := f.Output(lib); got != "x = 1" || !present {
+		t.Errorf("Output: got %q, %v", got, present)
+	}
+	if got, present := f.Output(lib); got != "" || present {
+		t.Errorf("Output: got %q, %v, want absent", got, present)
+	}
+	if got := f.Diagnostic(lib); got != "boom" {
+		t.Errorf("Diagnostic: got %q", got)
+	}
+	if got := f.Diagnostic(lib); got != "" {
+		t.Errorf("Diagnostic: got %q, want none", got)
 	}
 }
 

@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using Hegel.Native;
+using Hegel.Temporal;
 
 namespace Hegel;
 
@@ -99,9 +100,17 @@ internal sealed class ExplicitDataSource : IDataSource
     public double GenerateFloat(int width, double min, double max, bool allowNan, bool allowInfinity, bool excludeMin, bool excludeMax, double smallestNonzeroMagnitude) => throw Unsupported();
     public byte[] GenerateBytes(ulong minSize, ulong maxSize) => throw Unsupported();
     public string GenerateString(StringGeneratorHandle generator) => throw Unsupported();
-    public DateOnly GenerateDate(DateOnly min, DateOnly max) => throw Unsupported();
-    public TimeOnly GenerateTime(TimeOnly min, TimeOnly max) => throw Unsupported();
-    public DateTime GenerateDatetime(DateTime min, DateTime max) => throw Unsupported();
+    public ILibhegel Binding() => throw Unsupported();
+    public DateOnly GenerateDate(DateOnly min, DateOnly max, EngineHandle? options) => throw Unsupported();
+    public TimeOnly GenerateTime(TimeOnly min, TimeOnly max, Precision precision) => throw Unsupported();
+    public DateTime GenerateDatetime(DateTime min, DateTime max, Precision precision) => throw Unsupported();
+    public DateTimeOffset GenerateInstant(DateTimeOffset min, DateTimeOffset max, Precision precision) => throw Unsupported();
+    public TimeSpan GenerateOffset(int minSeconds, int maxSeconds, OffsetGranularity granularity) => throw Unsupported();
+    public TimeSpan GenerateDuration(TimeSpan min, TimeSpan max, Precision precision) => throw Unsupported();
+    public CalendarSpan GenerateSpan(EngineHandle spec) => throw Unsupported();
+    public string GenerateTimezone(EngineHandle spec) => throw Unsupported();
+    public HegelZonedDateTime GenerateZonedDatetime(EngineHandle timezoneSpec, EngineHandle zonedSpec, out string zone) => throw Unsupported();
+    public HegelZonedDateTime GenerateZonedDatetimeForZone(EngineHandle source, string name, EngineHandle zonedSpec) => throw Unsupported();
     public Guid GenerateUuid(int? version) => throw Unsupported();
     public byte[] GenerateIpv4() => throw Unsupported();
     public byte[] GenerateIpv6() => throw Unsupported();

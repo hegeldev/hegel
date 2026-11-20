@@ -4,10 +4,14 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <regex>
+#include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <hegel/hegel.h>
 #include <hegel/internal.h>
@@ -113,6 +117,34 @@ TEST(FailureReport, WideValueBreaksAcrossLines) {
     std::string out = capture_failure_report([](hegel::TestCase& tc) {
         (void)tc.draw(gs::vectors(gs::just(std::string("a wide value")),
                                   {.min_size = 3, .max_size = 3}));
+        throw std::runtime_error("boom");
+    });
+    Approvals::verify(out, scrub_blob());
+}
+
+TEST(FailureReport, TemporalValuesPrintAsTheirTypeAndTheEngineText) {
+    namespace temporal = gs::temporal;
+    std::string out = capture_failure_report([](hegel::TestCase& tc) {
+        (void)tc.draw("date", temporal::dates());
+        (void)tc.draw(
+            "meeting",
+            temporal::zoned_datetimes(
+                {.zones = temporal::zones(
+                     {.names = std::vector<std::string>{"America/New_York"}}),
+                 .min_value = temporal::DateTime{{2024, 3, 10}, {2, 30, 0, 0}},
+                 .max_value =
+                     temporal::DateTime{{2024, 3, 10}, {2, 30, 0, 0}}}));
+        (void)tc.draw("spans",
+                      gs::vectors(temporal::spans({.microseconds = {{5, 5}}}),
+                                  {.min_size = 2, .max_size = 2}));
+        (void)tc.draw(
+            "offset",
+            temporal::offsets({.min_value = temporal::UtcOffset{19'800},
+                               .max_value = temporal::UtcOffset{19'800}}));
+        (void)tc.draw(
+            "sent",
+            temporal::instants<std::chrono::time_point<
+                std::chrono::system_clock, std::chrono::milliseconds>>());
         throw std::runtime_error("boom");
     });
     Approvals::verify(out, scrub_blob());
@@ -307,6 +339,18 @@ TEST(FailureReport, QuietPrintsOnlyTheRerunHint) {
     Approvals::verify(out, scrub_blob());
 }
 
+TEST(FailureReport, QuietRaisesTheShrunkFailure) {
+    std::string out = capture_failure_report(
+        [](hegel::TestCase& tc) {
+            int32_t x = tc.draw(gs::integers<int32_t>());
+            if (x >= 1000) {
+                throw std::runtime_error("x=" + std::to_string(x));
+            }
+        },
+        hegel::Settings{.verbosity = hegel::Verbosity::Quiet});
+    EXPECT_NE(out.find("--- rethrown: x=1000\n"), std::string::npos) << out;
+}
+
 TEST(FailureReport, MultipleFailuresNameANonStdException) {
     std::string out = capture_failure_report(
         [](hegel::TestCase& tc) {
@@ -442,6 +486,90 @@ TEST(Diagnostics, InternalExceptionMessages) {
                  "test case stopped by backend");
     EXPECT_STREQ(hegel::internal::HegelLoopDone().what(),
                  "test case ended by repeat");
+}
+
+// ---------------------------------------------------------------------------
+// The diagnostic printed after a failing test case
+// ---------------------------------------------------------------------------
+
+namespace {
+    // Runs `body` with `settings` and returns the lines it printed.
+    std::vector<std::string>
+    printed_lines(const std::function<void(hegel::TestCase&)>& body,
+                  const hegel::Settings& settings) {
+        testing::internal::CaptureStderr();
+        try {
+            hegel::test(body, report_settings(settings));
+        } catch (...) {
+        }
+        std::string out = testing::internal::GetCapturedStderr();
+        std::vector<std::string> lines;
+        std::string::size_type start = 0;
+        std::string::size_type end;
+        while ((end = out.find('\n', start)) != std::string::npos) {
+            lines.push_back(out.substr(start, end - start));
+            start = end + 1;
+        }
+        return lines;
+    }
+
+    bool has_line(const std::vector<std::string>& lines,
+                  const std::string& line) {
+        return std::find(lines.begin(), lines.end(), line) != lines.end();
+    }
+
+    std::string joined(const std::vector<std::string>& lines) {
+        std::string out;
+        for (const std::string& line : lines) {
+            out += line + "\n";
+        }
+        return out;
+    }
+
+    void two_line_failure(hegel::TestCase& tc) {
+        int32_t x = tc.draw(gs::integers<int32_t>());
+        if (x >= 10) {
+            throw std::runtime_error("x too big: " + std::to_string(x) +
+                                     "\nsecond line");
+        }
+    }
+} // namespace
+
+TEST(FailureDiagnostic, VerbosePrintsTheFirstLineAfterTheCase) {
+    std::vector<std::string> lines = printed_lines(
+        two_line_failure, {.verbosity = hegel::Verbosity::Verbose});
+    EXPECT_TRUE(has_line(lines, "std::runtime_error: x too big: 10 …"))
+        << joined(lines);
+    EXPECT_FALSE(has_line(lines, "second line")) << joined(lines);
+}
+
+TEST(FailureDiagnostic, DebugPrintsTheWholeMessage) {
+    std::vector<std::string> lines =
+        printed_lines(two_line_failure, {.verbosity = hegel::Verbosity::Debug});
+    EXPECT_TRUE(has_line(lines, "std::runtime_error: x too big: 10"))
+        << joined(lines);
+    EXPECT_TRUE(has_line(lines, "second line")) << joined(lines);
+    EXPECT_FALSE(has_line(lines, "std::runtime_error: x too big: 10 …"))
+        << joined(lines);
+}
+
+TEST(FailureDiagnostic, NormalPrintsNoDiagnostic) {
+    std::vector<std::string> lines = printed_lines(two_line_failure, {});
+    EXPECT_FALSE(has_line(lines, "second line")) << joined(lines);
+}
+
+TEST(FailureDiagnostic, AnEmptyMessageIsTheType) {
+    std::vector<std::string> lines =
+        printed_lines([](hegel::TestCase&) { throw std::logic_error(""); },
+                      {.verbosity = hegel::Verbosity::Verbose});
+    EXPECT_TRUE(has_line(lines, "std::logic_error")) << joined(lines);
+}
+
+TEST(FailureDiagnostic, ANonStdExceptionIsItsType) {
+    std::vector<std::string> lines =
+        printed_lines([](hegel::TestCase&) { throw 42; },
+                      {.verbosity = hegel::Verbosity::Debug});
+    EXPECT_TRUE(has_line(lines, "int")) << joined(lines);
 }
 
 // ---------------------------------------------------------------------------

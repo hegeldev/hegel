@@ -13,12 +13,21 @@
  * protocol, and `one_of` values come back as `[index, value]` pairs.
  *
  * String-shaped draws go through an immutable `hegel_string_generator_t`
- * built from the schema. Construction is comparatively expensive (regex
- * compilation, Unicode table lookups), so generators are cached per schema
- * object within each run, with at most 256 entries. Eviction and run teardown
- * free the handles; no cache entry can cross engine instances. Grammars
- * (`hegel_grammar_t`, for `fromLark`) are compiled once per run for each
- * generator in the same cache and freed when the run ends.
+ * built from the schema, and the date and time draws through the engine's
+ * option and spec handles. Construction is comparatively expensive (regex
+ * compilation, Unicode table lookups, zone lists), so the handles are cached
+ * per schema object within each run, with at most 256 entries. Eviction and
+ * run teardown free the handles; no cache entry can cross engine instances.
+ * Grammars (`hegel_grammar_t`, for `fromLark`) are compiled once per run for
+ * each generator in the same cache and freed when the run ends.
+ *
+ * Time zone draws use the schema's zone source (`src/zoneSource.ts`), which
+ * the generator read when it was built. A zoned draw takes two steps: it
+ * draws the name (or is given one), gives the engine that zone's data if it
+ * has not had it yet, and draws the wall-clock time in that zone
+ * (`hegel_generate_zoned_datetime_for_zone`). Against the host's or the
+ * bundled database, a zoned draw whose offset the host's `Intl` disagrees
+ * with is rejected like a failed assumption.
  *
  * @packageDocumentation
  */
@@ -27,63 +36,39 @@ import { AssumeError, StopTestError } from "./testCase.js";
 import { resolveLabel, schemaLabelSpec, type LabelSpec } from "./labels.js";
 import {
   EngineError,
+  NativeTimeZoneTag,
   type Engine,
   type ContextHandle,
   type TestCaseHandle,
   type StringGeneratorHandle,
   type GrammarHandle,
+  type TimeZoneSpecHandle,
+  type ZonedSpecHandle,
+  type SpanSpecHandle,
   type NativeDate,
   type NativeTime,
   type NativeDatetime,
+  type NativeTimestamp,
+  type NativeZonedDatetime,
   type UuidVersion,
   maxSizeArgument,
 } from "./engine.js";
 
 import { fitsInt64 } from "./bytes.js";
+import { hostOffsetSeconds } from "./hostZones.js";
+import {
+  type ZoneSource,
+  bundledZoneNames,
+  checksHostOffsets,
+  declareZoneNames,
+  engineZoneSource,
+  loadZone,
+} from "./zoneSource.js";
 
 const UINT32_MAX = 0xffffffff;
 
-// Bounds for the format draws whose schemas carry no explicit range, matching
-// the ranges the engine used for the old CBOR schemas.
-const DATE_MIN: NativeDate = { year: 1, month: 1, day: 1 };
-const DATE_MAX: NativeDate = { year: 9999, month: 12, day: 31 };
-const TIME_MIN: NativeTime = { hour: 0, minute: 0, second: 0, nanosecond: 0 };
-const TIME_MAX: NativeTime = { hour: 23, minute: 59, second: 59, nanosecond: 999_999_999 };
-
 function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-/** Format a drawn date as ISO 8601 (`YYYY-MM-DD`). */
-export function formatDate(d: NativeDate): string {
-  const year = String(d.year).padStart(4, "0");
-  const month = String(d.month).padStart(2, "0");
-  const day = String(d.day).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-/**
- * Format a drawn time of day as ISO 8601: `HH:MM:SS` on the second,
- * `HH:MM:SS.ffffff` when the fraction is a whole number of microseconds, and
- * `HH:MM:SS.fffffffff` (the full nanoseconds) otherwise.
- */
-export function formatTime(t: NativeTime): string {
-  const hour = String(t.hour).padStart(2, "0");
-  const minute = String(t.minute).padStart(2, "0");
-  const second = String(t.second).padStart(2, "0");
-  const base = `${hour}:${minute}:${second}`;
-  if (t.nanosecond === 0) {
-    return base;
-  }
-  if (t.nanosecond % 1000 === 0) {
-    return `${base}.${String(t.nanosecond / 1000).padStart(6, "0")}`;
-  }
-  return `${base}.${String(t.nanosecond).padStart(9, "0")}`;
-}
-
-/** Format a drawn naive datetime as ISO 8601 (`<date>T<time>`). */
-export function formatDatetime(dt: NativeDatetime): string {
-  return `${formatDate(dt.date)}T${formatTime(dt.time)}`;
 }
 
 /** Format 16 big-endian bytes as a canonical lowercase UUID string. */
@@ -145,7 +130,8 @@ export function formatIpv6(bytes: Uint8Array): string {
  * `unique` lists and dict keys the way the engine's value equality used to.
  * Numbers and bigints of equal value get the same key (the integer draw
  * downcasts to `number` exactly when the value is safe, so one logical value
- * can surface as either type).
+ * can surface as either type). A value of no other shape is a record (the
+ * date and time draws).
  */
 export function valueKey(value: unknown): string {
   if (value === null) {
@@ -163,9 +149,14 @@ export function valueKey(value: unknown): string {
   if (value instanceof Uint8Array) {
     return `x:${bytesToHex(value)}`;
   }
-  // The only remaining raw value shape is an array (tuple / list / dict
-  // entries / one_of pairs).
-  return `a:${(value as unknown[]).map(valueKey).join(",")}`;
+  if (Array.isArray(value)) {
+    return `a:${value.map(valueKey).join(",")}`;
+  }
+  const record = value as Record<string, unknown>;
+  const fields = Object.keys(record)
+    .sort()
+    .map((key) => `${key}=${valueKey(record[key])}`);
+  return `o:{${fields.join(",")}}`;
 }
 
 /** Downcast a drawn integer to `number` when exact, like the old CBOR decode. */
@@ -245,19 +236,35 @@ function noGrammarFiles(): never {
   throw new EngineError("Reading grammar files (importPath) is not supported on this host");
 }
 
-/** How many string generators, and how many grammars, a cache keeps alive. */
+/** An engine handle (or a group of them) built for one schema, with its release. */
+export interface CachedHandle<T> {
+  readonly value: T;
+  free(): void;
+}
+
+/** Builds the engine handle the draws of a schema go through. */
+export type HandleBuilder<T> = (
+  lib: Engine,
+  ctx: ContextHandle,
+  schema: Record<string, unknown>,
+) => CachedHandle<T>;
+
+/** How many schema handles, and how many grammars, a cache keeps alive. */
 const CACHE_LIMIT = 256;
 
 /**
- * Run-owned cache. Handles never cross engines and are freed before the
+ * Run-owned cache of the engine handles draws go through: the string
+ * generators and the date option, time zone, zoned datetime and span specs,
+ * keyed by schema object, and the grammars of `fromLark` generators, keyed
+ * by their spec. Handles never cross engines and are freed before the
  * context. Each kind holds at most {@link CACHE_LIMIT} handles, evicting the
  * oldest first, which bounds runs whose user code creates a fresh schema or
  * `fromLark` generator for every draw. A grammar is never evicted while a
  * draw borrows it: a grammar compiled during that draw (for an explicit
  * terminal) evicts the oldest idle one instead.
  */
-export class StringGeneratorCache {
-  private readonly generators = new Map<Record<string, unknown>, StringGeneratorHandle>();
+export class HandleCache {
+  private readonly handles = new Map<Record<string, unknown>, CachedHandle<unknown>>();
   private readonly grammars = new Map<GrammarSpec, GrammarHandle>();
   private readonly borrowed = new Map<GrammarSpec, number>();
   constructor(
@@ -326,29 +333,35 @@ export class StringGeneratorCache {
     return grammar;
   }
 
-  get(lib: Engine, ctx: ContextHandle, schema: Record<string, unknown>): StringGeneratorHandle {
-    if (lib !== this.engine) throw new Error("String generator cache belongs to another engine");
-    const cached = this.generators.get(schema);
-    if (cached !== undefined) return cached;
-    if (this.generators.size >= CACHE_LIMIT) {
-      const oldest = this.generators.entries().next().value!;
-      this.generators.delete(oldest[0]);
-      lib.freeStringGenerator(oldest[1]);
+  /** The handle `build` makes for `schema`, built on first use. */
+  get<T>(
+    lib: Engine,
+    ctx: ContextHandle,
+    schema: Record<string, unknown>,
+    build: HandleBuilder<T>,
+  ): T {
+    if (lib !== this.engine) throw new Error("Handle cache belongs to another engine");
+    const cached = this.handles.get(schema);
+    if (cached !== undefined) return cached.value as T;
+    if (this.handles.size >= CACHE_LIMIT) {
+      const oldest = this.handles.entries().next().value!;
+      this.handles.delete(oldest[0]);
+      oldest[1].free();
     }
-    const generator = buildStringGenerator(lib, ctx, schema);
-    this.generators.set(schema, generator);
-    return generator;
+    const handle = build(lib, ctx, schema);
+    this.handles.set(schema, handle);
+    return handle.value;
   }
 
   dispose(): void {
-    const generators = [...this.generators.values()];
-    this.generators.clear();
+    const handles = [...this.handles.values()];
+    this.handles.clear();
     const grammars = [...this.grammars.values()];
     this.grammars.clear();
     const errors: unknown[] = [];
-    for (const generator of generators) {
+    for (const handle of handles) {
       try {
-        this.engine.freeStringGenerator(generator);
+        handle.free();
       } catch (error) {
         errors.push(error);
       }
@@ -361,12 +374,235 @@ export class StringGeneratorCache {
       }
     }
     if (errors.length === 1) throw errors[0];
-    if (errors.length > 1) throw new AggregateError(errors, "String generator cleanup failed");
+    if (errors.length > 1) throw new AggregateError(errors, "Handle cleanup failed");
   }
+}
+
+/** The bundled zones the host's `Intl` knows, with their flags; computed once per engine. */
+interface HostZone {
+  name: string;
+  isLink: boolean;
+  legacy: boolean;
+}
+const hostZonesByEngine = new WeakMap<Engine, HostZone[]>();
+
+function hostZones(lib: Engine, ctx: ContextHandle): HostZone[] {
+  let zones = hostZonesByEngine.get(lib);
+  if (zones === undefined) {
+    zones = bundledZoneNames().map((name) => {
+      const info = lib.timezoneInfo(ctx, name);
+      return { name, isLink: info.isLink, legacy: (info.tags & NativeTimeZoneTag.LEGACY) !== 0 };
+    });
+    hostZonesByEngine.set(lib, zones);
+  }
+  return zones;
+}
+
+/**
+ * @internal The time zone spec of a `timezone` schema, validated: its names,
+ * or the names of its source that its link and legacy flags allow.
+ */
+export function buildTimeZoneSpec(
+  lib: Engine,
+  ctx: ContextHandle,
+  schema: Record<string, unknown>,
+): CachedHandle<TimeZoneSpecHandle> {
+  const source = schema["source"] as ZoneSource;
+  const names = schema["names"] as string[] | null;
+  const links = schema["allow_links"] as boolean;
+  const legacy = schema["allow_legacy"] as boolean;
+  const spec = lib.timezoneSpecNew(ctx);
+  const free = () => lib.freeTimezoneSpec(spec);
+  withCleanupOnFailure(() => {
+    const handle = engineZoneSource(lib, ctx, source);
+    if (handle === null) {
+      lib.timezoneSpecSetNames(
+        ctx,
+        spec,
+        names ??
+          hostZones(lib, ctx)
+            .filter((zone) => (links || !zone.isLink) && (legacy || !zone.legacy))
+            .map((zone) => zone.name),
+      );
+    } else {
+      lib.timezoneSpecSetSource(ctx, spec, handle);
+      lib.timezoneSpecSetLinks(ctx, spec, links);
+      lib.timezoneSpecSetLegacy(ctx, spec, legacy);
+      if (names !== null) {
+        declareZoneNames(lib, ctx, source, names);
+        lib.timezoneSpecSetNames(ctx, spec, names);
+      }
+    }
+    lib.timezoneSpecValidate(ctx, spec);
+  }, free);
+  return { value: spec, free };
+}
+
+/** @internal The zoned spec of a zoned draw's bounds, validated. */
+export function buildZonedSpec(
+  lib: Engine,
+  ctx: ContextHandle,
+  bounds: Record<string, unknown>,
+): CachedHandle<ZonedSpecHandle> {
+  const spec = lib.zonedSpecNew(ctx);
+  const free = () => lib.freeZonedSpec(spec);
+  withCleanupOnFailure(() => {
+    const civil = bounds["civil"] as { min: NativeDatetime; max: NativeDatetime } | null;
+    const instant = bounds["instant"] as { min: NativeTimestamp; max: NativeTimestamp } | null;
+    if (civil !== null) lib.zonedSpecSetCivilBounds(ctx, spec, civil.min, civil.max);
+    if (instant !== null) lib.zonedSpecSetInstantBounds(ctx, spec, instant.min, instant.max);
+    lib.zonedSpecSetPrecision(ctx, spec, bounds["precision"] as number);
+    lib.zonedSpecSetImaginary(ctx, spec, bounds["imaginary"] as number);
+    lib.zonedSpecSetAmbiguous(ctx, spec, bounds["ambiguous"] as number);
+    lib.zonedSpecValidate(ctx, spec);
+  }, free);
+  return { value: spec, free };
+}
+
+/** @internal The date options of a `date` schema's weekday and month masks. */
+export function buildDateOptions(
+  lib: Engine,
+  ctx: ContextHandle,
+  schema: Record<string, unknown>,
+): CachedHandle<ReturnType<Engine["dateOptionsNew"]>> {
+  const options = lib.dateOptionsNew(ctx);
+  const free = () => lib.freeDateOptions(options);
+  withCleanupOnFailure(() => {
+    const weekdays = schema["weekdays"] as number | undefined;
+    const months = schema["months"] as number | undefined;
+    if (weekdays !== undefined) lib.dateOptionsSetWeekdays(ctx, options, weekdays);
+    if (months !== undefined) lib.dateOptionsSetMonths(ctx, options, months);
+  }, free);
+  return { value: options, free };
+}
+
+/**
+ * @internal Have the engine check the arguments of a `date`, `time`,
+ * `datetime`, `timestamp` or `offset` schema's draws, without drawing.
+ */
+export function validateTemporalSchema(
+  lib: Engine,
+  ctx: ContextHandle,
+  schema: Record<string, unknown>,
+): void {
+  const precision = schema["precision"] as number;
+  switch (schema["type"]) {
+    case "date": {
+      const options = dateOptionsOf(schema) ? buildDateOptions(lib, ctx, schema) : null;
+      withCleanup(
+        () =>
+          lib.validateDate(
+            ctx,
+            schema["min"] as NativeDate,
+            schema["max"] as NativeDate,
+            options?.value ?? null,
+          ),
+        () => options?.free(),
+      );
+      return;
+    }
+    case "time":
+      lib.validateTime(ctx, schema["min"] as NativeTime, schema["max"] as NativeTime, precision);
+      return;
+    case "datetime":
+      lib.validateDatetime(
+        ctx,
+        schema["min"] as NativeDatetime,
+        schema["max"] as NativeDatetime,
+        precision,
+      );
+      return;
+    case "timestamp":
+      lib.validateTimestamp(
+        ctx,
+        schema["min"] as NativeTimestamp,
+        schema["max"] as NativeTimestamp,
+        precision,
+      );
+      return;
+    default:
+      lib.validateOffset(
+        ctx,
+        schema["min"] as number,
+        schema["max"] as number,
+        schema["granularity"] as number,
+        false,
+      );
+  }
+}
+
+/** Whether a `date` schema restricts weekdays or months, so its draws need date options. */
+function dateOptionsOf(schema: Record<string, unknown>): boolean {
+  return schema["weekdays"] !== undefined || schema["months"] !== undefined;
+}
+
+interface SpanUnitBounds {
+  unit: number;
+  min: bigint;
+  max: bigint;
+}
+
+/** @internal The span spec of a `span` schema, validated. */
+export function buildSpanSpec(
+  lib: Engine,
+  ctx: ContextHandle,
+  schema: Record<string, unknown>,
+): CachedHandle<SpanSpecHandle> {
+  const spec = lib.spanSpecNew(ctx);
+  const free = () => lib.freeSpanSpec(spec);
+  withCleanupOnFailure(() => {
+    for (const { unit, min, max } of schema["units"] as SpanUnitBounds[]) {
+      lib.spanSpecSetUnitBounds(ctx, spec, unit, min, max);
+    }
+    lib.spanSpecSetSign(ctx, spec, schema["sign"] as number);
+    lib.spanSpecValidate(ctx, spec);
+  }, free);
+  return { value: spec, free };
+}
+
+/**
+ * Draw a wall-clock time within `bounds` in `zone` of `source`, giving the
+ * engine the zone's data first.
+ */
+function drawInZone(
+  lib: Engine,
+  ctx: ContextHandle,
+  tc: TestCaseHandle,
+  source: ZoneSource,
+  zone: string,
+  bounds: Record<string, unknown>,
+  cache: HandleCache,
+): { value: NativeZonedDatetime; zone: string } {
+  const spec = cache.get(lib, ctx, bounds, buildZonedSpec);
+  loadZone(lib, ctx, source, zone);
+  const value = lib.generateZonedDatetimeForZone(
+    ctx,
+    tc,
+    engineZoneSource(lib, ctx, source),
+    zone,
+    spec,
+  );
+  if (checksHostOffsets(source)) {
+    const { timestamp } = value;
+    const epochMilliseconds =
+      Number(timestamp.second) * 1000 + Math.floor(timestamp.nanosecond / 1_000_000);
+    const hostOffset = hostOffsetSeconds(zone, epochMilliseconds);
+    if (hostOffset !== null && hostOffset !== value.offsetSeconds) throw new AssumeError();
+  }
+  return { value, zone };
 }
 
 function utf8OrNull(value: string | undefined): Uint8Array | null {
   return value === undefined ? null : new TextEncoder().encode(value);
+}
+
+function stringGeneratorHandle(
+  lib: Engine,
+  ctx: ContextHandle,
+  schema: Record<string, unknown>,
+): CachedHandle<StringGeneratorHandle> {
+  const generator = buildStringGenerator(lib, ctx, schema);
+  return { value: generator, free: () => lib.freeStringGenerator(generator) };
 }
 
 function buildStringGenerator(
@@ -415,6 +651,24 @@ function buildStringGenerator(
   }
 }
 
+/** Run `operation`, releasing with `cleanup` only when it throws. */
+function withCleanupOnFailure<T>(operation: () => T, cleanup: () => void): T {
+  let failed = false;
+  return withCleanup(
+    () => {
+      try {
+        return operation();
+      } catch (error) {
+        failed = true;
+        throw error;
+      }
+    },
+    () => {
+      if (failed) cleanup();
+    },
+  );
+}
+
 /** Run `operation`, then `cleanup`; cleanup must not replace an engine fault with ordinary draw control flow. */
 export function withCleanup<T>(operation: () => T, cleanup: () => void): T {
   let failed = false;
@@ -459,7 +713,7 @@ function drawList(
   ctx: ContextHandle,
   tc: TestCaseHandle,
   schema: Record<string, unknown>,
-  cache: StringGeneratorCache,
+  cache: HandleCache,
 ): unknown[] {
   const elementSchema = schema["elements"] as Record<string, unknown>;
   const unique = schema["unique"] as boolean;
@@ -496,7 +750,7 @@ function drawDict(
   ctx: ContextHandle,
   tc: TestCaseHandle,
   schema: Record<string, unknown>,
-  cache: StringGeneratorCache,
+  cache: HandleCache,
 ): unknown[] {
   const keySchema = schema["keys"] as Record<string, unknown>;
   const valueSchema = schema["values"] as Record<string, unknown>;
@@ -536,7 +790,7 @@ function drawChild(
   ctx: ContextHandle,
   tc: TestCaseHandle,
   schema: Record<string, unknown>,
-  cache: StringGeneratorCache,
+  cache: HandleCache,
 ): unknown {
   return withSpan(lib, ctx, tc, schemaLabelSpec(schema), () =>
     generateValue(lib, ctx, tc, schema, cache),
@@ -553,10 +807,10 @@ export function generateValue(
   ctx: ContextHandle,
   tc: TestCaseHandle,
   schema: Record<string, unknown>,
-  cache?: StringGeneratorCache,
+  cache?: HandleCache,
 ): unknown {
   if (cache === undefined) {
-    const owned = new StringGeneratorCache(lib);
+    const owned = new HandleCache(lib);
     return withCleanup(
       () => generateValue(lib, ctx, tc, schema, owned),
       () => owned.dispose(),
@@ -582,24 +836,80 @@ export function generateValue(
     case "email":
     case "url":
     case "domain":
-      return lib.generateString(ctx, tc, cache.get(lib, ctx, schema));
+      return lib.generateString(ctx, tc, cache.get(lib, ctx, schema, stringGeneratorHandle));
     case "ip_address":
       return schema["version"] === 4
         ? formatIpv4(lib.generateIpv4(ctx, tc))
         : formatIpv6(lib.generateIpv6(ctx, tc));
-    case "date":
-      return formatDate(lib.generateDate(ctx, tc, DATE_MIN, DATE_MAX));
-    case "time":
-      return formatTime(lib.generateTime(ctx, tc, TIME_MIN, TIME_MAX));
-    case "datetime":
-      return formatDatetime(
-        lib.generateDatetime(
-          ctx,
-          tc,
-          { date: DATE_MIN, time: TIME_MIN },
-          { date: DATE_MAX, time: TIME_MAX },
-        ),
+    case "date": {
+      const options = dateOptionsOf(schema) ? cache.get(lib, ctx, schema, buildDateOptions) : null;
+      return lib.generateDate(
+        ctx,
+        tc,
+        schema["min"] as NativeDate,
+        schema["max"] as NativeDate,
+        options,
       );
+    }
+    case "time":
+      return lib.generateTime(
+        ctx,
+        tc,
+        schema["min"] as NativeTime,
+        schema["max"] as NativeTime,
+        schema["precision"] as number,
+      );
+    case "datetime":
+      return lib.generateDatetime(
+        ctx,
+        tc,
+        schema["min"] as NativeDatetime,
+        schema["max"] as NativeDatetime,
+        schema["precision"] as number,
+      );
+    case "timestamp":
+      return lib.generateTimestamp(
+        ctx,
+        tc,
+        schema["min"] as NativeTimestamp,
+        schema["max"] as NativeTimestamp,
+        schema["precision"] as number,
+      );
+    case "offset":
+      return lib.generateOffset(
+        ctx,
+        tc,
+        schema["min"] as number,
+        schema["max"] as number,
+        schema["granularity"] as number,
+        false,
+      ).seconds;
+    case "timezone":
+      return lib.generateTimezone(ctx, tc, cache.get(lib, ctx, schema, buildTimeZoneSpec));
+    case "zoned_datetime": {
+      const zones = schema["zones"] as Record<string, unknown>;
+      return drawInZone(
+        lib,
+        ctx,
+        tc,
+        zones["source"] as ZoneSource,
+        lib.generateTimezone(ctx, tc, cache.get(lib, ctx, zones, buildTimeZoneSpec)),
+        schema["bounds"] as Record<string, unknown>,
+        cache,
+      );
+    }
+    case "zoned_datetime_in_zone":
+      return drawInZone(
+        lib,
+        ctx,
+        tc,
+        schema["source"] as ZoneSource,
+        schema["zone"] as string,
+        schema["bounds"] as Record<string, unknown>,
+        cache,
+      );
+    case "span":
+      return lib.generateSpan(ctx, tc, cache.get(lib, ctx, schema, buildSpanSpec));
     case "uuid":
       return formatUuid(lib.generateUuid(ctx, tc, schema["version"] as UuidVersion | undefined));
     case "constant":

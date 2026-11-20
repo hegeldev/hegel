@@ -356,7 +356,7 @@ fn width_change_after_a_read_lays_the_document_out_again() {
     p.text(M, "second").unwrap();
     p.end_group(M, "]").unwrap();
     assert_eq!(p.value().unwrap(), "[first, second]");
-    p.set_max_width(10);
+    p.set_max_width(10).unwrap();
     assert_eq!(p.value().unwrap(), "[first,\n second]");
 }
 
@@ -974,6 +974,10 @@ fn errors_have_readable_messages() {
         PrinterError::NothingToResolve.to_string(),
         "resolve called with no outstanding deferred slots"
     );
+    assert_eq!(
+        PrinterError::WidthFixed.to_string(),
+        "max_width cannot change once part of the document is taken"
+    );
 }
 
 #[test]
@@ -1256,6 +1260,501 @@ fn comments_always_terminate_their_line_and_appear_exactly_once() {
             }
         }
     }
+}
+
+/// Two printers fed the same commands. A slot is a pair of ids, one per
+/// printer: the printers may reclaim different slots and reuse their
+/// storage, so their ids differ.
+struct Twin {
+    first: Printer,
+    second: Printer,
+}
+
+type Pair = (SlotId, SlotId);
+
+#[derive(Clone, Copy)]
+enum At {
+    Main,
+    Slot(Pair),
+}
+
+impl At {
+    fn targets(self) -> (Target, Target) {
+        match self {
+            At::Main => (M, M),
+            At::Slot((a, b)) => (Target::Slot(a), Target::Slot(b)),
+        }
+    }
+}
+
+impl Twin {
+    fn on<R: PartialEq + core::fmt::Debug>(
+        &mut self,
+        at: At,
+        f: impl Fn(&mut Printer, Target) -> R,
+    ) -> R {
+        let (a, b) = at.targets();
+        let ra = f(&mut self.first, a);
+        let rb = f(&mut self.second, b);
+        assert_eq!(ra, rb);
+        ra
+    }
+
+    fn open(&mut self, at: At, f: impl Fn(&mut Printer, Target) -> SlotId) -> Pair {
+        let (a, b) = at.targets();
+        (f(&mut self.first, a), f(&mut self.second, b))
+    }
+
+    fn release(&mut self, slot: Pair) {
+        self.first.release(slot.0);
+    }
+
+    fn both<R: PartialEq + core::fmt::Debug>(
+        &mut self,
+        at: At,
+        f: impl Fn(&mut Printer, Target) -> R,
+    ) {
+        self.on(at, f);
+    }
+
+    fn release_both(&mut self, slot: Pair) {
+        self.first.release(slot.0);
+        self.second.release(slot.1);
+    }
+
+    fn open_both(
+        &mut self,
+        at: At,
+        f: impl Fn(&mut Printer, Target) -> Result<SlotId, PrinterError>,
+    ) -> Option<Pair> {
+        let (a, b) = at.targets();
+        match (f(&mut self.first, a), f(&mut self.second, b)) {
+            (Ok(a), Ok(b)) => Some((a, b)),
+            (a, b) => {
+                assert_eq!(a.err(), b.err());
+                None
+            }
+        }
+    }
+
+    fn assert_same_line_start(&self, at: At) {
+        let (a, b) = at.targets();
+        assert_eq!(self.first.at_line_start(a), self.second.at_line_start(b));
+    }
+}
+
+fn open_blank_slots(twin: &mut Twin, rng: &mut SmallRng, parent: At, held: &mut Vec<Pair>) {
+    for _ in 0..rng.random_range(1..40) {
+        let outer = if rng.random_bool(0.5) {
+            twin.open(parent, |p, t| p.deferred(t).unwrap())
+        } else {
+            twin.open(parent, |p, t| p.block(t, 2).unwrap())
+        };
+        let inner = twin.open(At::Slot(outer), |p, t| p.block(t, 2).unwrap());
+        let mut handles = [outer, inner];
+        handles.shuffle(rng);
+        for slot in handles {
+            if rng.random_bool(0.7) {
+                twin.release(slot);
+            } else {
+                held.push(slot);
+            }
+        }
+    }
+}
+
+#[test]
+fn releasing_slot_handles_never_changes_the_document() {
+    for seed in 0..200u64 {
+        let mut rng = SmallRng::seed_from_u64(seed + 2000);
+        let max_width = rng.random_range(1..40);
+        let ops = random_program(&mut rng);
+
+        let mut model = printer(max_width);
+        for op in &ops {
+            apply(&mut model, M, op);
+        }
+
+        let mut twin = Twin {
+            first: printer(max_width),
+            second: printer(max_width),
+        };
+        let mut chunks: Vec<(Pair, Vec<Op>)> = Vec::new();
+        let mut held: Vec<Pair> = Vec::new();
+        let mut i = 0;
+        while i < ops.len() {
+            if rng.random_bool(0.3) {
+                let parent = match chunks.last() {
+                    Some((slot, _)) if rng.random_bool(0.3) => At::Slot(*slot),
+                    _ => At::Main,
+                };
+                open_blank_slots(&mut twin, &mut rng, parent, &mut held);
+            }
+            if !held.is_empty() && rng.random_bool(0.3) {
+                let slot = held.swap_remove(rng.random_range(0..held.len()));
+                twin.release(slot);
+            }
+            if rng.random_bool(0.2) {
+                let len = rng.random_range(1..=(ops.len() - i).min(5));
+                let slot = twin.open(At::Main, |p, t| p.deferred(t).unwrap());
+                chunks.push((slot, ops[i..i + len].to_vec()));
+                i += len;
+            } else {
+                twin.on(At::Main, |p, t| apply(p, t, &ops[i]));
+                i += 1;
+            }
+            twin.assert_same_line_start(At::Main);
+            for (slot, _) in &chunks {
+                twin.assert_same_line_start(At::Slot(*slot));
+            }
+        }
+        chunks.shuffle(&mut rng);
+        for (slot, chunk) in &chunks {
+            for op in chunk {
+                twin.on(At::Slot(*slot), |p, t| apply(p, t, op));
+            }
+            twin.release(*slot);
+        }
+        for slot in held {
+            twin.release(slot);
+        }
+        twin.on(At::Main, |p, _| p.resolve().is_ok());
+        let value = twin.on(At::Main, |p, _| p.value().unwrap().to_string());
+        assert_eq!(value, model.value().unwrap(), "seed {seed}");
+    }
+}
+
+/// A region of the document a [`Twin`] is printing to, with the number of
+/// handles the test holds on it.
+struct Region {
+    at: At,
+    holders: usize,
+}
+
+fn random_op(twin: &mut Twin, rng: &mut SmallRng, at: At) {
+    match rng.random_range(0..14) {
+        0..=2 => {
+            let s = random_text(rng);
+            twin.both(at, |p, t| p.text(t, &s));
+        }
+        3..=4 => {
+            let sep = [" ", ", ", ""][rng.random_range(0..3)];
+            twin.both(at, |p, t| p.breakable(t, sep));
+        }
+        5 => {
+            let s = [",", ""][rng.random_range(0..2)];
+            twin.both(at, |p, t| p.if_break(t, s));
+        }
+        6..=7 => {
+            twin.both(at, |p, t| p.hard_break(t));
+        }
+        8 => {
+            let indent = rng.random_range(0..3);
+            let open = ["", "[", "("][rng.random_range(0..3)];
+            twin.both(at, |p, t| p.begin_group(t, indent, open));
+        }
+        9 => {
+            let close = ["", "]", ")"][rng.random_range(0..3)];
+            twin.both(at, |p, t| p.end_group(t, close));
+        }
+        10 => {
+            let delta = rng.random_range(-2i64..4) as isize;
+            twin.both(at, |p, t| p.shift_indent(t, delta));
+        }
+        11 => {
+            twin.both(at, |p, t| p.comment(t, " ©"));
+        }
+        12 => {
+            let s = ["> ", ""][rng.random_range(0..2)];
+            twin.both(at, |p, t| p.line_prefix(t, s));
+        }
+        _ => {
+            let text = ["a", "bb\nc", "", "\n"][rng.random_range(0..4)];
+            let prefix = [None, Some("> ")][rng.random_range(0..2)];
+            twin.both(at, |p, t| p.note(t, text, prefix));
+        }
+    }
+}
+
+fn take_final(twin: &mut Twin, taken: &mut String) {
+    taken.push_str(&twin.first.take_final().unwrap());
+}
+
+#[test]
+fn reading_the_final_prefix_piecewise_matches_the_whole_document() {
+    for seed in 0..20_000u64 {
+        let mut rng = SmallRng::seed_from_u64(seed + 3000);
+        let max_width = rng.random_range(1..40);
+        let mut twin = Twin {
+            first: printer(max_width),
+            second: printer(max_width),
+        };
+        let mut taken = String::new();
+        let mut regions = vec![Region {
+            at: At::Main,
+            holders: 1,
+        }];
+        for _ in 0..rng.random_range(1..150) {
+            let i = rng.random_range(0..regions.len());
+            let at = regions[i].at;
+            match (rng.random_range(0..20), at) {
+                (0..=7, _) => random_op(&mut twin, &mut rng, at),
+                (8, _) => {
+                    twin.both(at, |p, t| p.begin_speculative(t));
+                }
+                (9, _) => {
+                    twin.both(at, |p, t| p.commit_speculative(t));
+                }
+                (10, _) => {
+                    twin.both(at, |p, t| p.abort_speculative(t));
+                }
+                (11, _) => {
+                    let indent = [0, 0, 2, 10][rng.random_range(0..4)];
+                    if let Some(slot) = twin.open_both(at, |p, t| p.block(t, indent)) {
+                        regions.push(Region {
+                            at: At::Slot(slot),
+                            holders: 1,
+                        });
+                    }
+                }
+                (12, At::Slot(slot)) => {
+                    twin.first.retain(slot.0);
+                    twin.second.retain(slot.1);
+                    regions[i].holders += 1;
+                }
+                (13..=14, At::Slot(slot)) => {
+                    twin.release_both(slot);
+                    regions[i].holders -= 1;
+                    if regions[i].holders == 0 {
+                        regions.swap_remove(i);
+                    }
+                }
+                (15, _) => {
+                    for _ in 0..rng.random_range(1..40) {
+                        let indent = rng.random_range(0..3);
+                        if let Some(slot) = twin.open_both(at, |p, t| p.block(t, indent)) {
+                            twin.release_both(slot);
+                        }
+                    }
+                }
+                (16, _) => {
+                    let width = rng.random_range(1..40);
+                    match twin.first.set_max_width(width) {
+                        Ok(()) => twin.second.set_max_width(width).unwrap(),
+                        Err(e) => assert_eq!(e, PrinterError::WidthFixed, "seed {seed}"),
+                    }
+                }
+                _ => take_final(&mut twin, &mut taken),
+            }
+            for region in &regions {
+                twin.assert_same_line_start(region.at);
+            }
+        }
+        regions.shuffle(&mut rng);
+        for region in regions {
+            if let At::Slot(slot) = region.at {
+                for _ in 0..region.holders {
+                    twin.release_both(slot);
+                    take_final(&mut twin, &mut taken);
+                }
+            }
+        }
+        take_final(&mut twin, &mut taken);
+        let piecewise = twin.first.take_rest().map(|rest| taken + &rest);
+        let whole = match twin.second.resolve() {
+            Ok(()) | Err(PrinterError::NothingToResolve) => twin.second.value().map(str::to_string),
+            Err(e) => Err(e),
+        };
+        assert_eq!(piecewise, whole, "seed {seed}");
+    }
+}
+
+#[test]
+fn a_block_shifts_the_width_of_a_line_without_content_only_while_it_lasts() {
+    let mut p = printer(20);
+    let b = Target::Slot(p.block(M, 10).unwrap());
+    p.text(b, "x").unwrap();
+    p.hard_break(b).unwrap();
+    p.breakable(M, " ").unwrap();
+    p.text(M, "aaaaaaaaaa").unwrap();
+    p.hard_break(M).unwrap();
+    let b = Target::Slot(p.block(M, 10).unwrap());
+    p.begin_group(b, 0, "").unwrap();
+    p.breakable(b, " ").unwrap();
+    p.text(b, "aaaaaaaaaa").unwrap();
+    p.end_group(b, "").unwrap();
+    p.hard_break(b).unwrap();
+    p.resolve().unwrap();
+    assert_eq!(
+        p.value().unwrap(),
+        "          x\n aaaaaaaaaa\n          \n          aaaaaaaaaa\n"
+    );
+}
+
+#[test]
+fn the_width_is_fixed_once_part_of_the_document_is_taken() {
+    let mut p = printer(79);
+    p.set_max_width(5).unwrap();
+    p.set_max_width(79).unwrap();
+    p.shift_indent(M, 2).unwrap();
+    assert_eq!(p.take_final().unwrap(), "");
+    p.set_max_width(40).unwrap();
+    p.begin_group(M, 0, "").unwrap();
+    p.text(M, "aaaa").unwrap();
+    p.breakable(M, " ").unwrap();
+    p.text(M, "bbbb").unwrap();
+    p.end_group(M, "").unwrap();
+    p.hard_break(M).unwrap();
+    assert_eq!(p.take_final().unwrap(), "aaaa bbbb\n");
+    assert_eq!(p.set_max_width(5), Err(PrinterError::WidthFixed));
+    p.set_max_width(40).unwrap();
+    assert_eq!(p.max_width(), 40);
+}
+
+#[test]
+fn the_final_prefix_resumes_past_slots_reclaimed_under_the_scan() {
+    let mut p = printer(79);
+    let outer = p.deferred(M).unwrap();
+    let inner = p.deferred(Target::Slot(outer)).unwrap();
+    p.note(M, "after", None).unwrap();
+    p.release(outer);
+    assert_eq!(p.take_final().unwrap(), "");
+    p.release(inner);
+    assert_eq!(live_slots(&p), 0);
+    assert_eq!(p.take_final().unwrap(), "after\n");
+}
+
+#[test]
+fn reading_the_final_prefix_often_stays_linear() {
+    let mut p = printer(79);
+    p.begin_group(M, 0, "").unwrap();
+    for _ in 0..100_000 {
+        p.note(M, "x", None).unwrap();
+        assert_eq!(p.take_final().unwrap(), "");
+    }
+    p.end_group(M, "").unwrap();
+    p.hard_break(M).unwrap();
+    assert_eq!(p.take_final().unwrap().len(), 200_001);
+}
+
+#[test]
+fn the_final_prefix_stops_at_a_slot_still_held() {
+    let mut p = printer(79);
+    p.note(M, "first", None).unwrap();
+    let held = p.deferred(M).unwrap();
+    p.note(M, "after", None).unwrap();
+    assert_eq!(p.take_final().unwrap(), "first\n");
+    assert_eq!(p.take_final().unwrap(), "");
+    p.note(Target::Slot(held), "inside", None).unwrap();
+    p.release(held);
+    assert_eq!(p.take_final().unwrap(), "inside\nafter\n");
+    assert_eq!(live_slots(&p), 0);
+    assert!(p.main.is_empty());
+}
+
+#[test]
+fn the_final_prefix_ends_outside_every_group() {
+    let mut p = printer(79);
+    p.begin_group(M, 2, "[").unwrap();
+    p.text(M, "a").unwrap();
+    p.hard_break(M).unwrap();
+    assert_eq!(p.take_final().unwrap(), "");
+    p.end_group(M, "]").unwrap();
+    p.hard_break(M).unwrap();
+    assert_eq!(p.take_final().unwrap(), "[a\n  ]\n");
+}
+
+#[test]
+fn indentation_carries_over_a_taken_prefix() {
+    let mut p = printer(79);
+    p.shift_indent(M, 4).unwrap();
+    p.note(M, "a", None).unwrap();
+    assert_eq!(p.take_final().unwrap(), "a\n");
+    p.note(M, "b", None).unwrap();
+    assert_eq!(p.take_rest().unwrap(), "    b\n    ");
+    assert_eq!(p.take_final().unwrap(), "");
+}
+
+fn live_slots(p: &Printer) -> usize {
+    p.slots.entries.iter().filter(|e| e.slot.is_some()).count()
+}
+
+#[test]
+fn released_blank_slots_are_reclaimed() {
+    let mut p = printer(79);
+    for _ in 0..100_000 {
+        let clone = p.deferred(M).unwrap();
+        let block = p.block(Target::Slot(clone), 2).unwrap();
+        p.release(clone);
+        p.release(block);
+    }
+    assert_eq!(live_slots(&p), 0);
+    assert!(p.slots.entries.len() <= 2, "{}", p.slots.entries.len());
+    assert!(p.main.len() <= MIN_SWEEP_THRESHOLD, "{}", p.main.len());
+}
+
+#[test]
+fn a_released_slot_with_content_is_kept() {
+    let mut p = printer(79);
+    let clone = p.deferred(M).unwrap();
+    p.note(Target::Slot(clone), "kept", None).unwrap();
+    p.release(clone);
+    p.resolve().unwrap();
+    assert_eq!(p.value().unwrap(), "kept\n");
+}
+
+#[test]
+fn a_slot_is_kept_while_any_holder_remains() {
+    let mut p = printer(79);
+    let clone = p.deferred(M).unwrap();
+    p.retain(clone);
+    p.release(clone);
+    p.note(Target::Slot(clone), "late", None).unwrap();
+    p.release(clone);
+    p.resolve().unwrap();
+    assert_eq!(p.value().unwrap(), "late\n");
+}
+
+#[test]
+fn a_speculation_left_open_by_the_last_holder_is_aborted() {
+    let mut p = printer(79);
+    let clone = p.deferred(M).unwrap();
+    let c = Target::Slot(clone);
+    p.begin_speculative(c).unwrap();
+    p.text(c, "let x = ").unwrap();
+    let inner = p.deferred(c).unwrap();
+    p.release(clone);
+    p.release(inner);
+    assert_eq!(live_slots(&p), 0);
+    p.resolve().unwrap();
+    assert_eq!(p.value().unwrap(), "");
+}
+
+#[test]
+fn notes_held_by_an_abandoned_speculation_are_kept() {
+    let mut p = printer(79);
+    let clone = p.deferred(M).unwrap();
+    let c = Target::Slot(clone);
+    p.begin_speculative(c).unwrap();
+    p.text(c, "let x = ").unwrap();
+    p.note(c, "held", None).unwrap();
+    p.release(clone);
+    p.resolve().unwrap();
+    assert_eq!(p.value().unwrap(), "held\n");
+}
+
+#[test]
+fn a_reclaimed_slot_id_is_dead_even_when_its_storage_is_reused() {
+    let mut p = printer(79);
+    let first = p.deferred(M).unwrap();
+    p.release(first);
+    let second = p.deferred(M).unwrap();
+    assert!(!p.slot_is_live(first));
+    assert!(p.slot_is_live(second));
+    assert_eq!(
+        p.note(Target::Slot(first), "x", None),
+        Err(PrinterError::DeadSlot)
+    );
 }
 
 #[test]

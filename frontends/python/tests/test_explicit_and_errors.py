@@ -22,7 +22,7 @@ def test_no_handle_rejects_every_operation():
 
 def test_explicit_test_case_consumption():
     explicit = ExplicitTestCase(ExplicitCase((1, 2), {"x_1": 3}))
-    tc = TestCase(NO_HANDLE, True, None, explicit)
+    tc = TestCase(NO_HANDLE, True, explicit)
     assert tc.draw(hegel.generators.integers(), name="x") == 3
     assert tc.draw(hegel.generators.integers(), name="x") == 1  # no x_2: positional
     assert tc.draw(hegel.generators.integers()) == 2
@@ -38,7 +38,7 @@ def test_explicit_test_case_consumption():
 
 def test_explicit_test_case_clones_share_the_values():
     explicit = ExplicitTestCase(ExplicitCase((1, 2), {}))
-    tc = TestCase(NO_HANDLE, True, None, explicit)
+    tc = TestCase(NO_HANDLE, True, explicit)
     clone = tc.clone()
     clone.set_worker(1)
     assert tc.draw(hegel.generators.integers(), name="x") == 1
@@ -57,7 +57,7 @@ def test_explicit_test_case_unused_values():
 
 def test_explicit_target_and_events_are_ignored():
     explicit = ExplicitTestCase(ExplicitCase((), {}))
-    tc = TestCase(NO_HANDLE, True, None, explicit)
+    tc = TestCase(NO_HANDLE, True, explicit)
     tc.target(1.0)
     tc.event("e")
     tc.event_value("v", 2.0)
@@ -87,7 +87,7 @@ def test_error_hierarchy():
 
 def test_explicit_draws_without_emit_are_not_recorded():
     explicit = ExplicitTestCase(ExplicitCase((1,), {}))
-    tc = TestCase(NO_HANDLE, False, None, explicit)
+    tc = TestCase(NO_HANDLE, False, explicit)
     assert tc.draw(hegel.generators.integers(), name="x") == 1
     assert explicit.lines == []
 

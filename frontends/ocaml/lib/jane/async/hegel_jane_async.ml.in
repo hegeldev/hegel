@@ -61,15 +61,17 @@ module Stateful = struct
   (* A body's Deferred failing goes to the enclosing monitor, not to the task
      waiting on it, so run it under [try_with] and re-raise in the task. *)
   let wait (await : Await.Await.t @ local) body =
-    match Await_in_async.await_deferred await (Monitor.try_with ~extract_exn:true body) with
+    match
+      Await_in_async.await_deferred await (Monitor.try_with ~extract_exn:true body)
+    with
     | Ok () -> ()
     | Error exn -> raise exn
   ;;
 
   let spawn_join_n
-        (conc @ local)
-        ~n
-        ~(f : Await.Await.t @ local -> int -> Hegel.Concurrency.outcome)
+    (conc @ local)
+    ~n
+    ~(f : Await.Await.t @ local -> int -> Hegel.Concurrency.outcome)
     =
     let outcomes = Array.make n None in
     Concurrent.with_scope conc () ~f:(fun scope ->
@@ -81,68 +83,71 @@ module Stateful = struct
   ;;
 
   let run_concurrent_internal
-        ~init
-        ~rules
-        ~invariants
-        ?min_concurrency
-        ?max_concurrency
-        ?sexp_of_state
-        ?step_count
-        tc
+    ~init
+    ~rules
+    ~invariants
+    ?min_concurrency
+    ?max_concurrency
+    ?sexp_of_state
+    ?step_count
+    tc
     =
-    Concurrent_in_async.schedule_with_concurrent Await.Terminator.unkillable ~f:(fun conc ->
-      Hegel.Stateful.run_concurrent_core
-        ~init
-        ~rules:
-          (List.map
-             (fun (rule : _ Concurrent_rule.t) : Hegel.Stateful.rule_info ->
-                { name = rule.name; groups = rule.groups; weight = rule.weight })
-             rules)
-        ~invariants:
-          (List.map
-             (fun (inv : _ Invariant.t) : Hegel.Stateful.invariant_info ->
-                { name = inv.name
-                ; always_check = inv.always_check
-                ; pause_faults = inv.pause_faults
-                })
-             invariants)
-        ~check_invariant:(fun i tc ->
-          let inv = List.nth invariants i in
-          wait (Concurrent.await conc) (fun () -> inv.Invariant.inv tc init) [@nontail])
-        ~run_round:(fun ~state_machine ~num_workers ->
-          Hegel.Stateful.dispatch_round
-            (spawn_join_n conc)
-            tc
-            ~num_workers
-            ~work:(fun await ~worker_index tc ->
-              Hegel.Stateful.run_worker
-                tc
-                ~state_machine
-                ~worker_index
-                ~ctx:await
-                ~rule:(fun rule_index ->
-                  let rule = List.nth rules rule_index in
-                  ( rule.Concurrent_rule.name
-                  , fun tc await ->
-                      wait await (fun () -> rule.Concurrent_rule.step tc init) [@nontail] ))
-              [@nontail])
-          [@nontail])
-        ?min_concurrency
-        ?max_concurrency
-        ?sexp_of_state
-        ?step_count
-        tc [@nontail])
+    Concurrent_in_async.schedule_with_concurrent
+      Await.Terminator.unkillable
+      ~f:(fun conc ->
+        Hegel.Stateful.run_concurrent_core
+          ~init
+          ~rules:
+            (List.map
+               (fun (rule : _ Concurrent_rule.t) : Hegel.Stateful.rule_info ->
+                 { name = rule.name; groups = rule.groups; weight = rule.weight })
+               rules)
+          ~invariants:
+            (List.map
+               (fun (inv : _ Invariant.t) : Hegel.Stateful.invariant_info ->
+                 { name = inv.name
+                 ; always_check = inv.always_check
+                 ; pause_faults = inv.pause_faults
+                 })
+               invariants)
+          ~check_invariant:(fun i tc ->
+            let inv = List.nth invariants i in
+            wait (Concurrent.await conc) (fun () -> inv.Invariant.inv tc init) [@nontail])
+          ~run_round:(fun ~state_machine ~num_workers ->
+            Hegel.Stateful.dispatch_round
+              (spawn_join_n conc)
+              tc
+              ~num_workers
+              ~work:(fun await ~worker_index tc ->
+                Hegel.Stateful.run_worker
+                  tc
+                  ~state_machine
+                  ~worker_index
+                  ~ctx:await
+                  ~rule:(fun rule_index ->
+                    let rule = List.nth rules rule_index in
+                    ( rule.Concurrent_rule.name
+                    , fun tc await ->
+                        wait await (fun () -> rule.Concurrent_rule.step tc init)
+                        [@nontail] ))
+                [@nontail])
+            [@nontail])
+          ?min_concurrency
+          ?max_concurrency
+          ?sexp_of_state
+          ?step_count
+          tc [@nontail])
   ;;
 
   let run_concurrent
-        (type s)
-        ?min_concurrency
-        ?max_concurrency
-        ?step_count
-        ?sexp_of_state
-        tc
-        (module Machine : Concurrent_state_machine with type state = s)
-        ~(init : s)
+    (type s)
+    ?min_concurrency
+    ?max_concurrency
+    ?step_count
+    ?sexp_of_state
+    tc
+    (module Machine : Concurrent_state_machine with type state = s)
+    ~(init : s)
     =
     run_concurrent_internal
       ~init

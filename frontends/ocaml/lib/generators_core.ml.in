@@ -33,8 +33,8 @@ module Labels = struct
     let b = Bytes.create 8 in
     List.fold_left
       (fun h l ->
-         Bytes.set_int64_le b 0 l;
-         Bytes.fold_left step h b)
+        Bytes.set_int64_le b 0 l;
+        Bytes.fold_left step h b)
       fnv_offset_basis
       labels
   ;;
@@ -64,7 +64,9 @@ end
       one of the typed {!Internal} primitives) and returns the typed value.
       Mapping a [Leaf] composes the closure in place, staying a leaf (no extra
       span), because the engine already wraps each primitive draw in its own
-      span.
+      span. A leaf of [Temporal.zones] also holds its {!zone_query}, which
+      is how [Temporal.zoned_datetimes] recognises it and draws the zone and
+      the wall time in one engine draw; mapping drops it.
     - [Mapped] cores wrap a source and a transform function.
     - [FlatMapped] cores wrap a source and a function returning a core.
     - [Filtered] cores wrap a source and a predicate.
@@ -76,27 +78,63 @@ end
     Every core carries its span [label] (see {!Labels}), fixed at construction
     from the core's own kind and its components' labels. *)
 
+(** A zone source ([Temporal.Zone_source.t]): the owner of an engine handle,
+    which is freed once this record is unreachable. Whatever may still use
+    the source holds the record: a generator in its {!zone_query}, the
+    process default in its cell, and a call in flight through
+    [Zone_source.use]. The field is never assigned: it is mutable so that
+    the record has an identity, which the compiler may not copy or unbox,
+    since the finaliser belongs to this one block. *)
+type zone_source
+#ifdef OXCAML
+  : value mod portable contended
+#endif
+= { mutable zone_handle : Hegel_ffi.Ffi.zone_source }
+#ifdef OXCAML
+[@@unsafe_allow_any_mode_crossing]
+#endif
+
+(** What a [Temporal.zones] generator draws: the settings of its time zone
+    spec. [source] is the zone source the generator read when it was built,
+    [None] for the bundled database. *)
+type zone_query
+#ifdef OXCAML
+  : value mod portable contended
+#endif
+=
+  { names : string list option
+  ; allow_links : bool
+  ; allow_legacy : bool
+  ; allow_unknown : bool
+  ; allow_opaque : bool
+  ; source : zone_source option
+  }
+#ifdef OXCAML
+[@@unsafe_allow_any_mode_crossing]
+#endif
+
 type 'a core CROSSING =
   | Leaf :
-      { draw : (Internal.test_case -> 'a)
+      { draw : Internal.test_case -> 'a
       ; label : int64
+      ; zones : zone_query option
       }
       -> 'a core
   | Mapped :
       { source : 'b core
-      ; f : ('b -> 'a)
+      ; f : 'b -> 'a
       ; label : int64
       }
       -> 'a core
   | FlatMapped :
       { source : 'b core
-      ; f : ('b -> 'a core)
+      ; f : 'b -> 'a core
       ; label : int64
       }
       -> 'a core
   | Filtered :
       { source : 'a core
-      ; predicate : ('a -> bool)
+      ; predicate : 'a -> bool
       ; label : int64
       }
       -> 'a core
@@ -109,17 +147,17 @@ type 'a core CROSSING =
       -> 'a list core
   | Composite :
       { label : int64
-      ; generate_fn : (Internal.test_case -> 'a)
+      ; generate_fn : Internal.test_case -> 'a
       }
       -> 'a core
   | Values :
       { pool : Internal.pool
       ; consume : bool
-      ; select : (Internal.test_case -> filter:(int64 * ('a -> bool)) option -> 'a)
+      ; select : Internal.test_case -> filter:(int64 * ('a -> bool)) option -> 'a
       }
       -> 'a core
   | Function :
-      { build : (name:string option -> Internal.test_case -> 'a)
+      { build : name:string option -> Internal.test_case -> 'a
       ; label : int64
       }
       -> 'a core
@@ -159,13 +197,14 @@ type unprintable = private [ `Unprintable ]
 type ('a, 'p) generator CROSSING =
   | Printable :
       { core : 'a core
-      ; sexp_of : ('a -> Sexp.t)
+      ; sexp_of : 'a -> Sexp.t
       }
       -> ('a, printable) generator
   | Unprintable : { core : 'a core } -> ('a, unprintable) generator
 
 (** [core_of gen] is the generation structure of [gen], discarding printability. *)
-let%template core_of : type a p. (a, p) generator MODE(m) -> a core MODE(m) = function
+let%template core_of : type a p. (a, p) generator MODE(m) -> a core MODE(m)
+  = function
   | Printable { core; _ } -> core
   | Unprintable { core } -> core
 [@@mode m = (nonportable, portable)]
@@ -185,16 +224,20 @@ let%template leaf
     -> (a, printable) generator MODE(m)
   =
   fun ~name ~draw ~sexp_of ->
-  Printable { core = Leaf { draw; label = leaf_label name }; sexp_of }
+  Printable { core = Leaf { draw; label = leaf_label name; zones = None }; sexp_of }
 [@@mode m = (nonportable, portable)]
 ;;
 
 (** [leaf_silent ~name ~draw] builds an unprintable {!Leaf} generator, for
     leaves whose output type has no known printer (e.g. {!just}). *)
 let%template leaf_silent
-  : type a. name:string -> draw:(Internal.test_case -> a) MODE(m) -> (a, unprintable) generator MODE(m)
+  : type a.
+    name:string
+    -> draw:(Internal.test_case -> a) MODE(m)
+    -> (a, unprintable) generator MODE(m)
   =
-  fun ~name ~draw -> Unprintable { core = Leaf { draw; label = leaf_label name } }
+  fun ~name ~draw ->
+  Unprintable { core = Leaf { draw; label = leaf_label name; zones = None } }
 [@@mode m = (nonportable, portable)]
 ;;
 
@@ -208,15 +251,18 @@ let label_of : type a p. (a, p) generator -> int64 =
     a [map]/[flat_map]/[sampled_from]/[just] result printable. *)
 let%template with_printer
   : type a p.
-    (a -> Sexp.t) MODE(m) -> (a, p) generator MODE(m) -> (a, printable) generator MODE(m)
+    (a -> Sexp.t) MODE(m)
+    -> (a, p) generator MODE(m)
+    -> (a, printable) generator MODE(m)
   =
   fun sexp_of gen -> Printable { core = (core_of [@mode m]) gen; sexp_of }
 [@@mode m = (nonportable, portable)]
 ;;
 
 (** [printer gen] is the printer carried by the printable generator [gen]. *)
-let%template printer : type a. (a, printable) generator MODE(m) -> (a -> Sexp.t) MODE(m) =
-  function
+let%template printer
+  : type a. (a, printable) generator MODE(m) -> (a -> Sexp.t) MODE(m)
+  = function
   | Printable { sexp_of; _ } -> sexp_of
   | _ -> .
 [@@mode m = (nonportable, portable)]
@@ -229,7 +275,9 @@ let%template printer : type a. (a, printable) generator MODE(m) -> (a -> Sexp.t)
     always tags the struct/record label. *)
 let%template composite_with_label
   : type a.
-    label:int64 -> (Internal.test_case -> a) MODE(m) -> (a, unprintable) generator MODE(m)
+    label:int64
+    -> (Internal.test_case -> a) MODE(m)
+    -> (a, unprintable) generator MODE(m)
   =
   fun ~label generate_fn -> Unprintable { core = Composite { label; generate_fn } }
 [@@mode m = (nonportable, portable)]
@@ -241,10 +289,10 @@ let%template composite_with_label
     grouping), so they are suppressed on the final replay and only an outer
     [draw] of the whole value prints. *)
 let%template composite
-  : type a. (Internal.test_case -> a) MODE(m) -> (a, unprintable) generator MODE(m)
+  : type a.
+    (Internal.test_case -> a) MODE(m) -> (a, unprintable) generator MODE(m)
   =
-  fun generate_fn ->
-  (composite_with_label [@mode m]) ~label:Labels.fixed_dict generate_fn
+  fun generate_fn -> (composite_with_label [@mode m]) ~label:Labels.fixed_dict generate_fn
 [@@mode m = (nonportable, portable)]
 ;;
 
@@ -286,13 +334,11 @@ let discardable_group label data f =
 
 (** A collection handle for generating variable-length sequences.
 
-    Collections ask the engine when to stop generating elements. The [finished]
-    flag short-circuits subsequent {!collection_more} calls once the engine
-    signals completion. The engine-side collection is created on first use and
-    released when the {!with_collection} scope that owns it ends. *)
+    Collections ask the engine when to stop generating elements. The
+    engine-side collection is created on first use and released when the
+    {!with_collection} scope that owns it ends. *)
 type collection =
-  { mutable finished : bool
-  ; mutable handle : Internal.collection option
+  { mutable handle : Internal.collection option
   ; min_size : int
   ; max_size : int option
   }
@@ -313,7 +359,7 @@ let get_collection coll data =
 (** [with_collection ~min_size ?max_size data f] runs [f coll] with a new
     collection and releases the engine-side handle after. *)
 let with_collection ~min_size ?max_size data f =
-  let coll = { finished = false; handle = None; min_size; max_size } in
+  let coll = { handle = None; min_size; max_size } in
   Fun.protect
     ~finally:(fun () ->
       Option.iter
@@ -323,30 +369,20 @@ let with_collection ~min_size ?max_size data f =
 ;;
 
 (** [collection_more coll data] returns [true] if more elements should be
-    generated, [false] when the collection is complete. Once it returns [false],
-    subsequent calls return [false] immediately. Raises
+    generated, [false] when the collection is complete. Raises
     {!Internal.Stop_test} on StopTest. *)
 let collection_more coll data =
-  if coll.finished
-  then false
-  else (
-    let collection = get_collection coll data in
-    let more = Internal.collection_more data ~collection in
-    if not more then coll.finished <- true;
-    more)
+  let collection = get_collection coll data in
+  Internal.collection_more data ~collection
 ;;
 
 (** [collection_reject coll data] rejects the last element of the collection.
-    No-op if the collection is already finished. Raises
-    {!Internal.Stop_test} on StopTest. *)
+    Raises {!Internal.Stop_test} on StopTest. *)
 let collection_reject coll data =
-  if not coll.finished
-  then (
-    let collection = get_collection coll data in
-    Internal.collection_reject data ~collection)
+  let collection = get_collection coll data in
+  Internal.collection_reject data ~collection
 ;;
 
-(* separated out for unit testing *)
 let resolve_pool_draw ~find ~remove ~consume variable_id =
   match find variable_id with
   | Some v ->
@@ -355,12 +391,12 @@ let resolve_pool_draw ~find ~remove ~consume variable_id =
   | None ->
     (* State diverged between the engine and the client, or a bug in the pool
        bookkeeping. *)
-    raise Internal.Flaky_strategy
+    raise Internal.Flaky_strategy [@coverage off]
 ;;
 
 let pick tc ~find ~remove ~is_empty pool ~consume =
   Internal.assume tc (not (is_empty ()));
-  let variable_id = Internal.pool_generate tc ~pool ~consume () in
+  let variable_id = Internal.pool_generate tc ~pool ~consume in
   variable_id, resolve_pool_draw ~find ~remove ~consume variable_id
 ;;
 
@@ -383,7 +419,8 @@ let filter_consumed ~size ~pick ~remove ~pool tc (label, predicate) =
       if predicate value
       then (
         remove variable_id;
-        rejected := List.tl !rejected; (* pop accepted *)
+        rejected := List.tl !rejected;
+        (* pop accepted *)
         Internal.stop_span tc;
         value)
       else (
@@ -410,24 +447,16 @@ end
 
 #ifdef OXCAML
 module Int_table = Stdlib.Hashtbl.MakePortable (Int_key)
+
 #else
 module Int_table = Stdlib.Hashtbl.Make (Int_key)
 #endif
 
-(** [resolve_draw values ~consume variable_id] resolves a drawn pool id against
-    an OCaml-side table, removing it when [consume]. Raises [Internal.Flaky_strategy] 
-    on an unknown id. *)
-let resolve_draw values ~consume variable_id =
-  resolve_pool_draw
-    ~find:(fun id -> Int_table.find_opt values id)
-    ~remove:(fun id -> Int_table.remove values id)
-    ~consume
-    variable_id
-;;
-
 (** [all_values values clone] lists the [clone] of each value in [values], in
     no particular order. *)
-let all_values values clone = Int_table.fold (fun _ value acc -> clone value :: acc) values []
+let all_values values clone =
+  Int_table.fold (fun _ value acc -> clone value :: acc) values []
+;;
 
 (** [Int_pool] is the pool for a sequential machine *)
 module Int_pool = struct
@@ -485,6 +514,7 @@ end
 #ifdef OXCAML
 module%template [@mode portable] Lock = Locked
 module%template [@mode nonportable] Lock = Locked.Nonportable
+
 #else
 module Lock = Locked
 #endif
@@ -499,14 +529,11 @@ module%template Int_pool_concurrent = struct
   type ('a KIND(value mod m c)) t KIND(value mod m c) =
     { pool : Internal.pool
     ; values : 'a Tbl.t L.t
-    ; clone : ('a -> 'a) MODALITY(m)
+    ; clone : 'a -> 'a MODALITY(m)
     }
 
   let create tc ~clone =
-    { pool = Internal.new_pool tc
-    ; values = L.create (fun () -> Tbl.create 16)
-    ; clone
-    }
+    { pool = Internal.new_pool tc; values = L.create (fun () -> Tbl.create 16); clone }
   ;;
 
   let add t tc value =
@@ -545,7 +572,8 @@ module%template Int_pool_concurrent = struct
                       ~size:(fun () -> L.protect values Tbl.length)
                       ~pick:(fun tc ->
                         L.protect values (fun values -> pick tc values ~remove:ignore))
-                      ~remove:(fun id -> L.protect values (fun values -> Tbl.remove values id))
+                      ~remove:(fun id ->
+                        L.protect values (fun values -> Tbl.remove values id))
                       ~pool
                       tc
                       filter)
@@ -583,7 +611,8 @@ let rec do_draw : type a. a core -> Internal.test_case -> a =
     (match flatten_filter source predicate with
      | Values { consume = true; select; _ }, predicate ->
        select data ~filter:(Some (label, predicate)) (* consuming pools *)
-     | source, predicate -> (* any other generator *)
+     | source, predicate ->
+       (* any other generator *)
        let rec attempt i =
          if i > max_filter_attempts
          then raise Internal.Assume_rejected
@@ -613,6 +642,17 @@ let rec do_draw : type a. a core -> Internal.test_case -> a =
   | Function { build; _ } -> build ~name:None data
 ;;
 
+let print_draw tc ?loc name sexp_of value =
+  Internal.print_line tc (fun () ->
+    let location =
+      Option.fold
+        ~none:""
+        ~some:(fun (loc : Lexing.position) ->
+          Printf.sprintf " @ %s:%s" loc.pos_fname (string_of_int loc.pos_lnum))
+        loc
+    in
+    [ Text (name ^ location ^ " = "); Value (sexp_of value) ])
+;;
 
 (** [draw_named ~label ~repeatable tc gen] is the naming-aware draw the
     [let%hegel_test] PPX rewrites bindings to; it is not intended for direct use
@@ -632,31 +672,23 @@ let draw_named
     -> (a, printable) generator
     -> a
   =
-  let open Lexing in
   fun ~label ?loc ~repeatable tc gen ->
-    let location =
-      Option.fold
-        ~none:""
-        ~some:(fun loc ->
-          Printf.sprintf " @ %s:%s" loc.pos_fname (string_of_int loc.pos_lnum))
-        loc
-    in
-    match gen with
-    | Printable { core = Function { build; _ }; sexp_of } ->
+  match gen with
+  | Printable { core = Function { build; _ }; sexp_of } ->
+    if Internal.should_print tc
+    then (
       let name = Internal.draw_display_name tc ~label ~repeatable in
       let value = build ~name:(Some name) tc in
-      if Internal.draw_depth tc = 0
-      then
-        Internal.print_line tc [ Text (name ^ location ^ " = "); Value (sexp_of value) ];
-      value
-    | Printable { core; sexp_of } ->
-      let value = do_draw core tc in
-      if Internal.draw_depth tc = 0
-      then (
-        let name = Internal.draw_display_name tc ~label ~repeatable in
-        Internal.print_line tc [ Text (name ^ location ^ " = "); Value (sexp_of value) ]);
-      value
-    | _ -> .
+      if Internal.draw_depth tc = 0 then print_draw tc ?loc name sexp_of value;
+      value)
+    else build ~name:None tc
+  | Printable { core; sexp_of } ->
+    let value = do_draw core tc in
+    if Internal.should_print tc && Internal.draw_depth tc = 0
+    then
+      print_draw tc ?loc (Internal.draw_display_name tc ~label ~repeatable) sexp_of value;
+    value
+  | _ -> .
 ;;
 
 (** [draw ?label ?loc tc gen] produces a typed value from the printable
@@ -706,16 +738,20 @@ let draw_silent_named
     When [gen]'s core is a [Leaf], the draw closure is composed in place (no
     extra span); otherwise a [Mapped] core is created. *)
 let%template map
-  : type a b p. (a -> b) MODE(m) -> (a, p) generator MODE(m) -> (b, unprintable) generator MODE(m)
+  : type a b p.
+    (a -> b) MODE(m)
+    -> (a, p) generator MODE(m)
+    -> (b, unprintable) generator MODE(m)
   =
   fun f gen ->
   match (core_of [@mode m]) gen with
-  | Leaf { draw; label } ->
+  | Leaf { draw; label; _ } ->
     Unprintable
       { core =
           Leaf
             { draw = (fun tc -> f (draw tc))
             ; label = Labels.combine [ Labels.mapped; label ]
+            ; zones = None
             }
       }
   | other ->
@@ -756,7 +792,10 @@ let%template flat_map
     [gen]'s printability. Tries up to {!max_filter_attempts} times; calls
     [assume false] if all attempts fail. *)
 let%template filter
-  : type a p. (a -> bool) MODE(m) -> (a, p) generator MODE(m) -> (a, p) generator MODE(m)
+  : type a p.
+    (a -> bool) MODE(m)
+    -> (a, p) generator MODE(m)
+    -> (a, p) generator MODE(m)
   =
   fun predicate gen ->
   match gen with
@@ -781,4 +820,3 @@ let%template filter
       }
 [@@mode m = (nonportable, portable)]
 ;;
-

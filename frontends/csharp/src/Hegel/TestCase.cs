@@ -1,6 +1,8 @@
 using System.ComponentModel;
 using System.Numerics;
 using System.Runtime.ExceptionServices;
+using Hegel.Native;
+using Hegel.Temporal;
 
 namespace Hegel;
 
@@ -78,25 +80,19 @@ public sealed class TestCase
 
     private sealed class Shared
     {
-        internal readonly bool Captured;
         internal readonly bool Emits;
         internal readonly Printer.Regions Regions = new();
         private readonly Dictionary<string, object?> _draws = [];
         private readonly List<string> _order = [];
         private readonly List<TestCase> _blocks = [];
 
-        internal Shared(bool captured, bool verbose)
+        internal Shared(bool emits)
         {
-            Captured = captured;
-            Emits = captured || verbose;
+            Emits = emits;
         }
 
         internal void Record(string name, object? value)
         {
-            if (!Captured)
-            {
-                return;
-            }
             lock (_draws)
             {
                 var key = name;
@@ -141,8 +137,8 @@ public sealed class TestCase
         }
     }
 
-    internal TestCase(IDataSource source, bool captured, bool verbose = false)
-        : this(source, new Shared(captured, verbose), null, new Names(), false)
+    internal TestCase(IDataSource source, bool wantsOutput)
+        : this(source, new Shared(wantsOutput), null, new Names(), false)
     {
     }
 
@@ -156,7 +152,7 @@ public sealed class TestCase
     }
 
     internal static TestCase Explicit(ExplicitDraws draws) =>
-        new(ExplicitDataSource.Instance, new Shared(true, false), draws, new Names(), false);
+        new(ExplicitDataSource.Instance, new Shared(true), draws, new Names(), false);
 
     internal TestCase ForWorker(int worker)
     {
@@ -230,29 +226,7 @@ public sealed class TestCase
         }
     }
 
-    internal IReadOnlyList<string> Output()
-    {
-        ClosePrinter();
-        if (!_shared.Emits)
-        {
-            return [];
-        }
-        var root = _source.Printer(_shared.Regions);
-        try
-        {
-            return Printer.Lines(root.Read());
-        }
-        finally
-        {
-            root.Free();
-        }
-    }
-
-    /// <summary>
-    /// Whether this is the final run of a failing test case, the one that is reported: the place
-    /// for expensive diagnostics.
-    /// </summary>
-    public bool IsFinal => _shared.Captured;
+    internal bool WantsOutput => _shared.Emits;
 
     /// <summary>
     /// Draw a value from <paramref name="generator"/>, printed in the failure report as
@@ -512,15 +486,37 @@ public sealed class TestCase
 
     /// <summary>Engine primitive: a date.</summary>
     [EditorBrowsable(EditorBrowsableState.Never)]
-    public DateOnly GenerateDate(DateOnly min, DateOnly max) => _source.GenerateDate(min, max);
+    public DateOnly GenerateDate(DateOnly min, DateOnly max) => _source.GenerateDate(min, max, null);
 
     /// <summary>Engine primitive: a time of day.</summary>
     [EditorBrowsable(EditorBrowsableState.Never)]
-    public TimeOnly GenerateTime(TimeOnly min, TimeOnly max) => _source.GenerateTime(min, max);
+    public TimeOnly GenerateTime(TimeOnly min, TimeOnly max) => _source.GenerateTime(min, max, Precision.Ticks);
 
     /// <summary>Engine primitive: a date and time.</summary>
     [EditorBrowsable(EditorBrowsableState.Never)]
-    public DateTime GenerateDatetime(DateTime min, DateTime max) => _source.GenerateDatetime(min, max);
+    public DateTime GenerateDatetime(DateTime min, DateTime max) => _source.GenerateDatetime(min, max, Precision.Ticks);
+
+    internal ILibhegel Binding() => _source.Binding();
+
+    internal DateOnly GenerateDate(DateOnly min, DateOnly max, EngineHandle? options) => _source.GenerateDate(min, max, options);
+
+    internal TimeOnly GenerateTime(TimeOnly min, TimeOnly max, Precision precision) => _source.GenerateTime(min, max, precision);
+
+    internal DateTime GenerateDatetime(DateTime min, DateTime max, Precision precision) => _source.GenerateDatetime(min, max, precision);
+
+    internal DateTimeOffset GenerateInstant(DateTimeOffset min, DateTimeOffset max, Precision precision) => _source.GenerateInstant(min, max, precision);
+
+    internal TimeSpan GenerateOffset(int minSeconds, int maxSeconds, OffsetGranularity granularity) => _source.GenerateOffset(minSeconds, maxSeconds, granularity);
+
+    internal TimeSpan GenerateDuration(TimeSpan min, TimeSpan max, Precision precision) => _source.GenerateDuration(min, max, precision);
+
+    internal CalendarSpan GenerateSpan(EngineHandle spec) => _source.GenerateSpan(spec);
+
+    internal string GenerateTimezone(EngineHandle spec) => _source.GenerateTimezone(spec);
+
+    internal HegelZonedDateTime GenerateZonedDatetime(EngineHandle timezoneSpec, EngineHandle zonedSpec, out string zone) => _source.GenerateZonedDatetime(timezoneSpec, zonedSpec, out zone);
+
+    internal HegelZonedDateTime GenerateZonedDatetimeForZone(EngineHandle source, string name, EngineHandle zonedSpec) => _source.GenerateZonedDatetimeForZone(source, name, zonedSpec);
 
     /// <summary>Engine primitive: a UUID of <paramref name="version"/>, or any version.</summary>
     [EditorBrowsable(EditorBrowsableState.Never)]

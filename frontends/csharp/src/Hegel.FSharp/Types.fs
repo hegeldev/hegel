@@ -84,8 +84,31 @@ type LarkGenerator = Hegel.LarkGenerator
 type DomainGenerator = Hegel.DomainGenerator
 type IpAddressGenerator = Hegel.IpAddressGenerator
 type UuidGenerator = Hegel.UuidGenerator
-type DateGenerator = Hegel.DateGenerator
-type TimeGenerator = Hegel.TimeGenerator
-type DateTimeGenerator = Hegel.DateTimeGenerator
-type TimeSpanGenerator = Hegel.TimeSpanGenerator
-type UtcOffsetGenerator = Hegel.UtcOffsetGenerator
+type DateGenerator = Hegel.Temporal.DateGenerator
+type TimeGenerator = Hegel.Temporal.TimeGenerator
+type DateTimeGenerator = Hegel.Temporal.DateTimeGenerator
+
+namespace Hegel.FSharp.Temporal
+
+type DateGenerator = Hegel.Temporal.DateGenerator
+type TimeGenerator = Hegel.Temporal.TimeGenerator
+type DateTimeGenerator = Hegel.Temporal.DateTimeGenerator
+type InstantGenerator = Hegel.Temporal.InstantGenerator
+type OffsetGenerator = Hegel.Temporal.OffsetGenerator
+type DurationGenerator = Hegel.Temporal.DurationGenerator
+type SpanGenerator = Hegel.Temporal.SpanGenerator
+type ZoneGenerator = Hegel.Temporal.ZoneGenerator
+type ZonedDateTimeGenerator = Hegel.Temporal.ZonedDateTimeGenerator
+type ZonedDateTime = Hegel.Temporal.ZonedDateTime
+type CalendarSpan = Hegel.Temporal.CalendarSpan
+type WallTimeKind = Hegel.Temporal.WallTimeKind
+type Precision = Hegel.Temporal.Precision
+type OffsetGranularity = Hegel.Temporal.OffsetGranularity
+type Ambiguous = Hegel.Temporal.Ambiguous
+type SpanSign = Hegel.Temporal.SpanSign
+type ZoneSource = Hegel.Temporal.ZoneSource
+type ZoneSourceBuilder = Hegel.Temporal.ZoneSourceBuilder
+type IZoneData = Hegel.Temporal.IZoneData
+type ZoneOracle = Hegel.Temporal.ZoneOracle
+type ZoneLocalType = Hegel.Temporal.ZoneLocalType
+type ZoneBeyond = Hegel.Temporal.ZoneBeyond

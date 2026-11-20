@@ -70,32 +70,6 @@ let%expect_test "Verbose notes on every case (not just the final replay)" =
     |}]
 ;;
 
-let%expect_test "Debug notes on every case (not just the final replay)" =
-  run_passing Hegel.Settings.Debug;
-  print_string (Expect_scrub.scrub_report [%expect.output]);
-  [%expect
-    {|
-    no config file loaded
-    Starting phase: Generate
-    draw_1 = 0
-    NOTE_MARKER
-    draw_1 = 55
-    NOTE_MARKER
-    test case #2: status = Valid, choices = 1
-    draw_1 = 79
-    NOTE_MARKER
-    test case #3: status = Valid, choices = 1
-    draw_1 = 98
-    NOTE_MARKER
-    test case #4: status = Valid, choices = 1
-    draw_1 = 39
-    NOTE_MARKER
-    test case #5: status = Valid, choices = 1
-    Ending phase: Generate
-    Test done. interesting_test_cases=0
-    |}]
-;;
-
 let%expect_test "prints from clone interleave deterministically" =
   let settings =
     { (Hegel.Settings.create ~test_cases:1 ~seed:0 ()) with

@@ -69,11 +69,14 @@
         };
 
       # The builder consumers call: the hegel library, headers and CMake
-      # package, with the engine shipped beside the static archive.
+      # package, with the engine shipped beside the static archive. With
+      # boostDateTime the package also has the hegel::boost_date_time
+      # target (the Boost.DateTime adapter), and Boost comes with it.
       mkHegelCppProject =
         {
           pkgs,
           stdenv ? pkgs.stdenv,
+          boostDateTime ? false,
         }:
         let
           lib = pkgs.lib;
@@ -104,9 +107,12 @@
 
           buildInputs = [ libhegel ];
 
+          propagatedBuildInputs = lib.optional boostDateTime pkgs.boost;
+
           cmakeFlags = (mkFetchContentFlags pkgs) ++ [
             (lib.cmakeFeature "HEGEL_LIBHEGEL_LIBRARY" "${libhegel}/lib/libhegel_c${ext}")
             (lib.cmakeFeature "HEGEL_LIBHEGEL_INCLUDE_DIR" "${libhegel}/include")
+            (lib.cmakeBool "HEGEL_BOOST_DATE_TIME" boostDateTime)
           ];
 
           doCheck = true;

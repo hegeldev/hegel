@@ -36,9 +36,10 @@ just java::check            # lint + docs + test — what CI runs, less the JNA 
   `maven.compiler.release` is 22 for `hegel` and 17 for `hegel-lowlevel`,
   `hegel-jna` and the shared tree, so keep shared and lowlevel code
   Java-17-clean. palantir-java-format needs the javac internals
-  `.mvn/jvm.config` exports, and does not run on a JDK newer than the one
-  CI lints with (25): point `JAVA_HOME` at a JDK 25 for `just java::check-lint`
-  if your default is newer.
+  `.mvn/jvm.config` exports, and does not run on JDK 26 or later, so
+  `just java::format` / `check-format` go through `scripts/spotless.py`,
+  which runs Spotless on the default JDK when it is 17–25 and otherwise on
+  the newest installed one that is (`HEGEL_FORMAT_JAVA_HOME` picks one).
 - `scripts/engine.py` is the one place that knows where the engine is
   (`target/release/libhegel_c.{dylib,so}` or `hegel_c.dll` under the
   workspace's `target/` or `CARGO_TARGET_DIR`; `HEGEL_LIBHEGEL_PATH` overrides
@@ -113,15 +114,28 @@ unsupported); the Maven CLI is authoritative.
 Data crosses the FFI boundary through libhegel's **typed draw functions**
 (`hegel_generate_integer`, `hegel_generate_float`, `hegel_generate_string`
 through opaque `hegel_string_generator_t` handles, structured
-date/time/datetime/uuid/ip draws, …). Every fallible call takes a per-thread
-`hegel_context_t*` first argument and returns a `hegel_result_t`; results come
-back through out-parameters, and every handle is caller-owned and explicitly
-freed.
+date/time/datetime/timestamp/offset/duration/uuid/ip draws, time zone names,
+zoned datetimes and calendar spans through opaque `hegel_date_options_t`,
+`hegel_timezone_spec_t`, `hegel_zoned_spec_t` and `hegel_span_spec_t`
+handles, …). Every fallible call takes a per-thread `hegel_context_t*` first
+argument and returns a `hegel_result_t`; results come back through
+out-parameters, and every handle is caller-owned and explicitly freed.
 
 Layers live in `dev.hegel`; the concrete generator implementations are in the
 `dev.hegel.generators` subpackage (one class per generator: `IntegerGenerator`,
 `TextGenerator`, `ListGenerator`, `RegexGenerator`, `EmailGenerator`,
-`DateTimeGenerator`, `Derive`/`RecordGenerator`, etc.). The public
+`Derive`/`RecordGenerator`, etc.), with the date and time generators and
+their enums in `dev.hegel.generators.temporal` (`DateGenerator`,
+`DateTimeGenerator`, `ZonedDateTimeGenerator`, `ZoneGenerator`,
+`OffsetGenerator`, `SpanGenerator`, `OffsetGranularity`, `Ambiguous`, ...),
+named after the factories of the static nested class `Generators.Temporals`
+(`dates`, `times`, `datetimes`, `zonedDatetimes`, `instants`, `offsets`,
+`zones`, `durations`, `spans`, `tzdbVersion`), the vocabulary every frontend
+shares. Options that admit a class of values take the `allow` prefix
+(`allowLinks`, `allowLegacy`, like the float generators' `allowNan`). The deprecated top-level `Generators.dates()`, `times()`,
+`datetimes()`, `zoneOffsets()`, `zoneIds()` and `durations()` and
+`DateTimeGenerator.timezones(...)` are released names kept as delegating
+aliases. The public
 `Generator`/`TestCase`/`Generators`/`Hegel`/`Stateful` surface stays in
 `dev.hegel`.
 
@@ -136,7 +150,12 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   process-wide lazy holder of the loaded shared object (with a test hook) — it
   caches only the immutable, thread-safe library, never per-test state. Both
   bindings keep one libhegel error context per thread (read back by
-  `lastErrorMessage()`), pass date/time/datetime structs by value, pass every
+  `lastErrorMessage()`), pass date/time/datetime/timestamp/duration structs by
+  value (a `Duration`'s floored seconds and `[0, 1e9)` nanoseconds are
+  converted to and from the engine's same-sign pair) and read the
+  `hegel_zoned_datetime_t`, `hegel_timezone_info_t`, `hegel_timezone_offset_t`
+  and `hegel_timezone_resolution_t` structs into the `Libhegel` records of
+  those names, write `Libhegel.ZoneData` into `hegel_zone_data_t`, pass every
   string as the engine's `hegel_string_t` (`{const char *data; size_t len}`:
   by value for a required string, by nullable pointer where absent is
   meaningful, as a contiguous struct array for name lists; a Java `null`
@@ -148,7 +167,15 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   (`hegel_owned_string_free`, `hegel_generate_bytes_result_free`), and bridge
   the per-run output callback (`hegel_output_callback_t`) to a
   `Consumer<String>` — an FFM upcall stub whose arena lives until `runFree`, or
-  a JNA `Callback` strongly referenced until `runFree`. In the JNA binding, C
+  a JNA `Callback` strongly referenced until `runFree`; a
+  `hegel_test_case_from_blob` callback is kept the same way until that handle's
+  `testCaseFree`, since the engine prints the replay's output when the test
+  case completes. A `null` consumer crosses as a NULL callback, which the
+  engine takes as no destination (it prints nothing and renders as at normal
+  verbosity); `Reporter.silent()` maps to it. `Libhegel.STDERR` crosses as
+  libhegel's `hegel_output_stderr` (FFM looks the symbol up; JNA gets it from
+  `hegel_output_stderr_callback`, and a native-born `Callback` passes back as
+  the original pointer). In the JNA binding, C
   `bool` crosses as `byte` (JNA's default boolean mapping is a 32-bit int) and
   `size_t` as `long` (the bundled natives are all 64-bit). `Abi` (lowlevel)
   holds the C constants; `Label` (shared) holds the frontend's span labels —
@@ -156,7 +183,11 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   as the engine's `hegel_label_from_name` (`Label.of`) and
   `hegel_label_combine` (`Label.combine`); the engine has no predefined label
   enum. The engine's `hegel_set_unicode_version`, `stop_on_first_failure`
-  setting and `hegel_run_result_error_kind` have no Java surface yet.
+  setting and `hegel_run_result_error_kind` have no Java surface yet, and
+  neither binding declares `hegel_timezone_spec_set_unknown`,
+  `hegel_timezone_spec_set_opaque` (the generators produce `ZoneId`s, which
+  must resolve on this JVM) or the `hegel_format_*` functions (they produce
+  `java.time` values, which print themselves).
 - **Per-case primitives** — `DataSource` is the abstraction generators draw
   against; `LiveDataSource` wraps the engine, translating return codes
   (`StopTest` → OVERRUN, `AssumeRejected` → INVALID, `INVALID_ARG` →
@@ -175,12 +206,28 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   engine owns the *whole* run — generation, shrinking, the replays that confirm
   a failure, and the final replay of every failure it is about to report — so
   the runner never replays anything itself. It reads
-  `hegel_test_case_should_capture` once per case: a *stamped* case's `TestCase`
-  records its top-level draws and notes (`isFinal()` exposes the stamp), and
-  every interesting case's exception is kept per origin in a capture map (a
-  stamped capture outranks an unstamped one, newest wins at equal rank — the
-  unstamped discovery of a failure that never fails again is all there is for
-  an *unconfirmed* nondeterministic failure). After the loop drains,
+  `hegel_test_case_wants_output` and `hegel_test_case_wants_detail` once per
+  case. A case whose output is wanted (every case of a verbose run, and the
+  engine's stamped executions, quiet runs included) has its `TestCase` record
+  its top-level draws and notes (`wantsOutput()`), reported live
+  when verbose, and if it fails it completes with a one-line `summary`
+  (`Runner.summary`: `File.java:line: ` of the frame `originOf` picks, then the
+  exception's `toString()` cut at its first line plus ` …`). A case whose
+  detail is wanted (every case of a debug run, and the stamped executions of a
+  normal or verbose one) also passes its stack trace (`Runner.diagnostic`) as
+  the `detail`; the trace is rendered only then. A rejected
+  `hegel_mark_complete` is a `HegelException`. Java's draws and notes never go
+  into the engine's document — they are Java values the `Reporter` and
+  `Failure` expose — so the engine's output for a failing case is only the
+  summary (verbose) or detail (debug), streamed after the case's lines (with
+  its own `Test case stopped: …` lines), and `hegel_failure_diagnostic`
+  returns the detail for the failure (`hegel_failure_output`, the printed
+  lines, is always empty). Every
+  interesting case is kept per origin in a capture map, replacing the stored
+  one when its output was wanted or none is stored yet (mirroring the engine's
+  latest stamped execution; the discovery of a failure that never fails again
+  is all there is for an *unconfirmed* nondeterministic failure). After the
+  loop drains,
   `hegel_run_result` yields PASSED, FAILED, or ERROR. On FAILED each distinct
   failure is built from its origin's capture: the recorded draws/notes are
   replayed to the reporter (`caseStarted(true)` … `caseFinished(true)`), and
@@ -188,7 +235,9 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   (`hegel_failure_reproduction_blob`, null for an unconfirmed failure and for a
   blob replay) and the **caveat** (`hegel_failure_caveat`, non-null for a
   failure the run saw fail to reproduce — `Failure.nondeterministic()`; the
-  printing reporter prints it as `note: …`). A failure whose origin has no
+  printing reporter prints it as `note: …`), plus the diagnostic the engine
+  kept (package-private `Failure.diagnostic()`, which `Hegel.main`'s reporter prints in
+  place of the stack trace when present). A failure whose origin has no
   capture is an internal error. `Settings.reproduceFailure` drives the same
   loop over `hegel_run_start_blob` (the engine replays until a replay fails,
   under its budget): PASSED → `Runner.STALE_BLOB` `HegelException`, ERROR →
@@ -243,9 +292,118 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   `hegel_string_generator_t` handle once per configuration and cache it
   (`HandleCache`, rebuilt if a test swaps the `Engine` binding);
   `StringGeneratorHandle` frees the engine allocation via a `Cleaner` when
-  unreachable. `Generators` is the factory facade.
+  unreachable. The date and time generators do the same with the engine's
+  configuration handles (`SpecHandle` + `SpecCache`: date options for
+  `weekdays`/`months`, a time zone spec for `Temporals.zones()`, a zoned
+  spec and a span spec). `LiveDataSource` applies a spec's setters in any
+  order, then calls `hegel_timezone_spec_validate`, `hegel_zoned_spec_validate`
+  or `hegel_span_spec_validate`; on a failure it reads the error before
+  freeing the handle, because freeing clears the context's message. The
+  fluent methods of a temporal generator can be called in any order: the
+  same calls give the same generator, and the same outcome, however they are
+  ordered (`TemporalBuilderOrderTest`). The rule that makes it so: every
+  temporal generator's constructor (so every fluent method, each of which
+  makes a new generator) validates, through the engine, the settings given
+  explicitly so far, with each setting not yet given unconstrained rather
+  than at its default; a default is applied, and checked, only at the first
+  draw. So settings that cannot work together throw from the call that gives
+  the last of them, in any order, and a setting that conflicts only with a
+  default, which a later call can still replace, fails the first draw. The
+  eager validation goes through `EngineAccess.setup()`, a `TestCase` over
+  the process binding with no engine test case behind it: the six
+  handle-less generators call `hegel_validate_date`/`_time`/`_datetime`/
+  `_timestamp`/`_offset`/`_duration`, which make the checks of the matching
+  draw, and the spec-based ones build their spec there. The defaults of
+  `times`, `durations`, `offsets` and `spans` are the least constraining
+  values, so for them everything is eager. `dates`, `datetimes`, `instants`
+  and `zonedDatetimes` default to years 1 to 9999, narrower than the
+  engine's range, so their constructors validate with the engine's extreme
+  in place of a bound that was not set (`ZonedDateTimeGenerator` sends the
+  engine no bounds when none was set, and both kinds when both were, for
+  `hegel_zoned_spec_validate` to reject), and `doDraw` checks again with the
+  defaults: a `min` beyond the year 9999 with no `max` fails the first draw
+  (`Bounds.ordered` says the other bound is the default), and the two work
+  in either order. A zone spec has no unconstrained source, so
+  `ZoneGenerator` validates its names eagerly only once `source(...)` was
+  called (`sourceGiven`), and against the default source at the first draw.
+  Its check that the source has a zone the link and legacy flags admit always
+  waits for the first draw, since a later `names(...)` makes the flags moot.
+  A draw-time argument error is an `IllegalArgumentException` thrown in the
+  test body, which the runner reports as the test's failure;
+  `ZonedDateTimeGenerator` builds its zoned spec before it draws a zone, so
+  the error does not depend on the zone drawn. Never make a constructor
+  check an explicit setting against a default: that makes the order of the
+  fluent calls matter. Besides defaults, only what depends on a drawn value
+  is left to the draw: a zone of a non-`ZoneGenerator` zones generator that
+  the source does not know, and bounds no allowed zone has a value in. The
+  Java-side checks that remain are the ones that name Java's parameters
+  (bound order, the engine's year range, an empty set, null, a
+  `ZoneGenerator` together with `source(...)`).
+  A `ZoneGenerator` reads `ZoneSource.getDefault()` when it is created. For
+  `ZoneSource.javaTime()` its spec names no zones, so the engine filters the
+  source's names by the link and legacy flags; for any other source it names
+  the `ZoneId.getAvailableZoneIds()` the source knows (asked through
+  `hegel_timezone_info_in`, filtered by the flags in Java, since
+  `hegel_timezone_spec_set_names` ignores them), cached per source and flag
+  combination on the `ZoneSource`. `ZonedDateTimeGenerator` resolves its zone
+  source once, when created: the `ZoneGenerator`'s own source when the zones
+  are one (also calling `source(...)` is then an `IllegalArgumentException`),
+  else the `source(...)` given, else the default as it was then. With no
+  zones or a `ZoneGenerator` it draws zone and wall-clock time in one
+  `hegel_generate_zoned_datetime`; with any other zones generator it draws
+  the zone from that generator and the wall-clock time with
+  `hegel_generate_zoned_datetime_for_zone` against the resolved source, a
+  region the source does not know being an `IllegalArgumentException` that
+  names it, and a `ZoneOffset` (or a fixed-offset zone the source does not
+  list) a plain datetime draw at that offset. The value is built from the
+  drawn wall-clock time, zone and fold with the JVM's own rules
+  (`ZonedDateTime.ofLocal`), never from the engine's offset: under
+  `ZoneSource.javaTime()` a disagreement with the engine's instant is a
+  `HegelException` (the engine drew from the same rules), under any other
+  source the value means what the JVM says and a wall-clock time the JVM
+  skips, or resolves outside instant bounds, is `assume`d away. Mixing
+  wall-clock and instant bounds is an `IllegalArgumentException` when the
+  second kind is set. `Generators` is the factory facade.
+- **Zone sources** — `ZoneSource` (in `generators.temporal`) wraps a
+  `hegel_zone_source_t`: `bundled()` (the engine's pinned IANA release),
+  `javaTime()` (the default: every `ZoneRulesProvider` name declared, each
+  zone's `ZoneRules` uploaded by the loader the first time it is needed)
+  or a `builder()` of TZif bytes, `ZoneRules`, oracles, links and declared
+  names, whose `build()` uploads the data, so malformed data fails there.
+  `Engine` installs `ZoneSource.getDefault()` with
+  `hegel_set_default_zone_source` when it loads the library;
+  `ZoneSource.setDefault` returns the default it replaced. A source builds
+  its handle once per binding (again if a test swaps the binding) and owns it
+  through a `SpecHandle`, so the `Cleaner` releases the engine's reference
+  once the source is unreachable; code that passes the raw handle to the
+  engine keeps the source reachable with `Reference.reachabilityFence`. The
+  engine then drops the loader and calls the binding's release callback
+  (`hegel_zone_loader_release_t`) with the loader's key, its `user_data`:
+  each binding keeps a loader's upcall stub (FFM, in a shared arena of its
+  own) or `Callback` (JNA) in a map under that key until then, so a
+  `ZoneSource.Loader` and what it captures are collectable afterwards. The
+  loader lambda must not capture its `ZoneSource`, or neither would ever be.
+  `JavaTimeZones` maps `ZoneRules` onto `hegel_zone_data_t`: the explicit
+  transitions, then the two yearly `ZoneOffsetTransitionRule`s as the
+  engine's RFC 9636 footer (a day-of-week rule as a month-week-day date
+  shifted by whole days, a fixed day as a Julian day, the time moved into
+  the offset in force before the transition and kept within ±167 hours),
+  preceded by one more transition a second after the last explicit one when
+  the rule does not carry on from it (the engine rejects a footer that does
+  not continue the last transition). Rules no footer can express, or that
+  are not one alternating pair, are expanded into explicit transitions
+  through the year 10000 by asking `ZoneRules.getOffset` at every instant
+  the offset can change (`java.time` restarts such rules at each year's
+  start without reporting a transition), and inferred after. The loader and
+  oracle callbacks are FFM upcall stubs or JNA `Callback`s that point the
+  binding's per-thread context at the callback's `hegel_context_t*` while
+  they run, so binding calls inside report there, and turn a thrown
+  exception into `hegel_context_set_error` and a nonzero return
+  (`ZoneCallbacks.guard`), keeping the throwable for the thread so the
+  `IllegalArgumentException` that reports the failing call carries it as its
+  cause (`EngineAccess.argumentError`).
 - **Public API** — `Hegel.test`/`Hegel.run`, `TestCase`
-  (`draw`/`assume`/`note`/`target`/`isFinal`/`span`), `Label` (span labels;
+  (`draw`/`assume`/`note`/`target`/`span`), `Label` (span labels;
   `Label.of(name)` mints FNV-1a labels), `Reporter`, `RunReport`,
   `Settings.infrastructurePackages` (extra class-name prefixes skipped by
   `Runner.originOf`), the `@HegelTest` annotation + `HegelTestExtension` (a
@@ -343,7 +501,7 @@ Layers live in `dev.hegel`; the concrete generator implementations are in the
   on top of the shared suites. A few genuinely-unreachable defensive blocks
   are excluded via `@Generated` (JaCoCo ignores `*Generated*`-named
   annotations): the `NoSuchAlgorithmException` for SHA-256, the lookup of the
-  output-callback bridge method, and the `IllegalAccessException` after
+  FFM callback bridge methods, and the `IllegalAccessException` after
   `setAccessible(true)` succeeded in `Stateful`. Adding one is the Java
   equivalent of `// nocov` and needs the same explicit human permission.
   Everything else is covered by real-engine integration tests plus

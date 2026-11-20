@@ -64,13 +64,12 @@ let%template make
          first invocation in normal verbosity. *)
       if Internal.draw_depth tc = 0 && (is_fresh || Internal.is_high_verbosity tc)
       then
-        Internal.print_line
-          tc
+        Internal.print_line tc (fun () ->
           [ Text (display ^ " ")
           ; Value (sexp_of_arg arg)
           ; Text " = "
           ; Value (show_ret ret)
-          ];
+          ]);
       ret
     in
     adapt base
@@ -82,7 +81,9 @@ let%template make
 [@@mode m = (nonportable, portable)]
 ;;
 
-let%template sexp_or : type a. (a -> Sexp.t) option MODE(m) -> (a -> Sexp.t) MODE(m) = function
+let%template sexp_or
+  : type a. (a -> Sexp.t) option MODE(m) -> (a -> Sexp.t) MODE(m)
+  = function
   | Some sexp_of_arg -> sexp_of_arg
   | None -> fun _ -> Sexp.Atom "<opaque>"
 [@@mode m = (nonportable, portable)]
@@ -105,10 +106,10 @@ let%template sexp_or : type a. (a -> Sexp.t) option MODE(m) -> (a -> Sexp.t) MOD
     independent results. [sexp_of_arg] only renders the argument in the shown
     pair; an omitted [sexp_of_arg] or an unprintable [returns] shows [<opaque>]. *)
 let%template functions
-      ?name
-      ?(sexp_of_arg : ('a -> Sexp.t) option MODE(m))
-      ~(returns : ('b, _) generator MODE(m))
-      ()
+  ?name
+  ?(sexp_of_arg : ('a -> Sexp.t) option MODE(m))
+  ~(returns : ('b, _) generator MODE(m))
+  ()
   : ('a -> 'b, unprintable) generator MODE(m)
   =
   (make [@mode m]) name ((sexp_or [@mode m]) sexp_of_arg) returns (fun f -> f)
@@ -122,11 +123,11 @@ let%template functions
     one memo key and are shown uncurried as [name (arg1 arg2) = result] (more
     compact than a curried table). Draw it with {!Hegel.draw_silent}. *)
 let%template functions2
-      ?name
-      ?(sexp_of_arg1 : ('a -> Sexp.t) option MODE(m))
-      ?(sexp_of_arg2 : ('b -> Sexp.t) option MODE(m))
-      ~(returns : ('c, _) generator MODE(m))
-      ()
+  ?name
+  ?(sexp_of_arg1 : ('a -> Sexp.t) option MODE(m))
+  ?(sexp_of_arg2 : ('b -> Sexp.t) option MODE(m))
+  ~(returns : ('c, _) generator MODE(m))
+  ()
   : ('a -> 'b -> 'c, unprintable) generator MODE(m)
   =
   let s1 = (sexp_or [@mode m]) sexp_of_arg1
@@ -143,12 +144,12 @@ let%template functions2
     Like {!functions2}, keyed on the argument triple and shown uncurried as
     [name (arg1 arg2 arg3) = result]. Draw it with {!Hegel.draw_silent}. *)
 let%template functions3
-      ?name
-      ?(sexp_of_arg1 : ('a -> Sexp.t) option MODE(m))
-      ?(sexp_of_arg2 : ('b -> Sexp.t) option MODE(m))
-      ?(sexp_of_arg3 : ('c -> Sexp.t) option MODE(m))
-      ~(returns : ('d, _) generator MODE(m))
-      ()
+  ?name
+  ?(sexp_of_arg1 : ('a -> Sexp.t) option MODE(m))
+  ?(sexp_of_arg2 : ('b -> Sexp.t) option MODE(m))
+  ?(sexp_of_arg3 : ('c -> Sexp.t) option MODE(m))
+  ~(returns : ('d, _) generator MODE(m))
+  ()
   : ('a -> 'b -> 'c -> 'd, unprintable) generator MODE(m)
   =
   let s1 = (sexp_or [@mode m]) sexp_of_arg1

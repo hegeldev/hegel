@@ -2,9 +2,13 @@
 // which needs reflection — to confirm the public headers compile and run under
 // C++17 (HEGEL_REFLECTION=OFF). Instantiating tuples/collections/combinators
 // matters: C++20-only constructs in those templates only surface when used.
+#include <chrono>
 #include <hegel/hegel.h>
 #include <iostream>
+#include <set>
+#include <stdexcept>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -63,6 +67,40 @@ int main() {
             std::string printed = std::move(document).finish();
             (void)point;
             (void)printed;
+            auto date = tc.draw(gs::temporal::dates());
+            auto zoned = tc.draw(gs::temporal::zoned_datetimes(
+                {.zones = gs::temporal::zones(
+                     {.names = std::vector<std::string>{"Europe/London"}})}));
+            auto duration =
+                tc.draw(gs::temporal::durations<std::chrono::milliseconds>());
+            auto back =
+                hegel::generators::temporal::SignedDuration::from_chrono(
+                    duration);
+            auto exact = tc.draw(gs::temporal::durations());
+            using sys_ms = std::chrono::time_point<std::chrono::system_clock,
+                                                   std::chrono::milliseconds>;
+            sys_ms sent = tc.draw(
+                gs::temporal::instants<sys_ms>({.min_value = sys_ms{}}));
+            auto now = tc.draw(gs::temporal::instants<
+                               std::chrono::system_clock::time_point>());
+            if (sent < sys_ms{}) {
+                throw std::runtime_error("a time point is below its bound");
+            }
+            (void)now;
+            std::set<gs::temporal::TimeZone> zones =
+                tc.draw(gs::sets(gs::temporal::zones()));
+            std::unordered_set<gs::temporal::Date> dates{date};
+            auto at = zoned.instant.to_chrono<std::chrono::seconds>();
+            std::string text = gs::temporal::to_string(zoned);
+            if (dates.count(date) != 1 || !(date <= date) || text.empty()) {
+                throw std::runtime_error("temporal values do not compare");
+            }
+            (void)zones;
+            (void)at;
+            (void)date;
+            (void)zoned;
+            (void)back;
+            (void)exact;
             (void)named;
             (void)flag;
             (void)f;

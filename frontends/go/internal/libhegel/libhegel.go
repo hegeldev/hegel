@@ -42,7 +42,7 @@ import (
 	"unsafe"
 )
 
-//go:generate go tool stringer -type=Error,Status,Backend,Verbosity,RunStatus,RunErrorKind,HealthCheck,Phase,NondeterminismStrictness -linecomment -output=libhegel_string.go
+//go:generate go tool stringer -type=Error,Status,Backend,Verbosity,RunStatus,RunErrorKind,HealthCheck,Phase,NondeterminismStrictness,Precision,OffsetGranularity,Ambiguous,Imaginary,ZoneAfter,TimezoneKind -linecomment -output=libhegel_string.go
 
 // LibraryPathEnv names the env var that pins libhegel to an explicit path.
 // When set, that path is loaded directly with no fallback; when unset, the
@@ -110,6 +110,17 @@ const (
 	VERBOSITY_QUIET
 	VERBOSITY_VERBOSE
 	VERBOSITY_DEBUG
+)
+
+type Precision uint32 // Equivalent of hegel_precision_t (passed as a uint32_t param)
+
+const (
+	PRECISION_NANOSECONDS Precision = iota
+	PRECISION_MICROSECONDS
+	PRECISION_MILLISECONDS
+	PRECISION_SECONDS
+	PRECISION_MINUTES
+	PRECISION_HOURS
 )
 
 type NondeterminismStrictness uint32 // Equivalent of hegel_nondeterminism_strictness_t (passed as a uint32_t param)
@@ -223,6 +234,10 @@ type testCaseT uintptr       // Equivalent of hegel_test_case_t
 type resultT uintptr         // Equivalent of hegel_run_result_t
 type failureT uintptr        // Equivalent of hegel_failure_t
 type stringGenT uintptr      // Equivalent of hegel_string_generator_t
+type dateOptionsT uintptr    // Equivalent of hegel_date_options_t
+type timezoneSpecT uintptr   // Equivalent of hegel_timezone_spec_t
+type zonedSpecT uintptr      // Equivalent of hegel_zoned_spec_t
+type zoneSourceT uintptr     // Equivalent of hegel_zone_source_t
 type collectionT uintptr     // Equivalent of hegel_collection_t
 type recursionT uintptr      // Equivalent of hegel_recursion_t
 type repeatT uintptr         // Equivalent of hegel_repeat_t
@@ -236,7 +251,9 @@ type grammarDrawT uintptr    // Equivalent of hegel_grammar_draw_t
 // (void (*)(void *user_data, const char *line, size_t len)) delivering one
 // line of engine output per call. purego represents a callback argument as a
 // uintptr; a real one comes from purego.NewCallback (see newOutputFn), and 0
-// (NULL) leaves engine output on stderr.
+// (NULL) is no destination: the engine prints nothing. hegel_output_stderr and
+// hegel_output_stderr_callback are not bound: every destination is an
+// io.Writer, so stderr is os.Stderr through this callback.
 type outputCallbackT uintptr
 
 // Date mirrors hegel_date_t: a Gregorian calendar date passed to / returned
@@ -330,8 +347,7 @@ type symbols struct {
 
 	// RunStart and TestCaseFromBlob take a hegel_output_callback_t plus its
 	// void* user_data ahead of the trailing out-param. The wrapper methods
-	// forward both; every hegel-package caller passes NULL, leaving engine
-	// output on stderr. user_data is a plain void* (uintptr); the callback
+	// forward both; a NULL callback is no destination. user_data is a plain void* (uintptr); the callback
 	// carries its own type (see outputCallbackT).
 	RunStart     func(ctxT, settingsT, outputCallbackT, uintptr, out[runT]) Error
 	RunStartBlob func(ctxT, settingsT, stringT, outputCallbackT, uintptr, out[runT]) Error
@@ -339,10 +355,11 @@ type symbols struct {
 	NextTestCase func(ctxT, runT, out[testCaseT]) Error
 	RunResult    func(ctxT, runT, out[resultT]) Error
 
-	TestCaseFromBlob      func(ctxT, settingsT, stringT, outputCallbackT, uintptr, out[testCaseT]) Error
-	TestCaseClone         func(ctxT, testCaseT, out[testCaseT]) Error
-	TestCaseFree          func(ctxT, testCaseT) Error
-	TestCaseShouldCapture func(ctxT, testCaseT, out[bool]) Error
+	TestCaseFromBlob    func(ctxT, settingsT, stringT, outputCallbackT, uintptr, out[testCaseT]) Error
+	TestCaseClone       func(ctxT, testCaseT, out[testCaseT]) Error
+	TestCaseFree        func(ctxT, testCaseT) Error
+	TestCaseWantsOutput func(ctxT, testCaseT, out[bool]) Error
+	TestCaseWantsDetail func(ctxT, testCaseT, out[bool]) Error
 
 	StartSpan                func(ctxT, testCaseT, Label) Error
 	StopSpan                 func(ctxT, testCaseT, bool) Error
@@ -373,7 +390,7 @@ type symbols struct {
 	StateMachineRuleRejected func(ctxT, testCaseT, stateMachineT, int64) Error
 	StateMachineFree         func(ctxT, stateMachineT) Error
 	Target                   func(ctxT, testCaseT, float64, stringT) Error
-	MarkComplete             func(ctxT, testCaseT, Status, *stringT) Error
+	MarkComplete             func(ctxT, testCaseT, Status, *stringT, *stringT, *stringT) Error
 
 	// Typed primitive draws (0.27.0 replaced the generic schema-driven
 	// hegel_generate with these).
@@ -384,12 +401,51 @@ type symbols struct {
 	GenerateBytes      func(ctxT, testCaseT, uint64, uint64, out[bytesResult]) Error
 	GenerateBytesFree  func(ctxT, *bytesResult) Error
 	GenerateString     func(ctxT, testCaseT, stringGenT, out[ownedStringT]) Error
-	GenerateDate       func(ctxT, testCaseT, Date, Date, out[Date]) Error
-	GenerateTime       func(ctxT, testCaseT, Time, Time, out[Time]) Error
-	GenerateDatetime   func(ctxT, testCaseT, Datetime, Datetime, out[Datetime]) Error
-	GenerateUUID       func(ctxT, testCaseT, uint8, bool, out[byte]) Error
-	GenerateIPv4       func(ctxT, testCaseT, out[byte]) Error
-	GenerateIPv6       func(ctxT, testCaseT, out[byte]) Error
+	GenerateDate       func(ctxT, testCaseT, Date, Date, dateOptionsT, out[Date]) Error
+	GenerateTime       func(ctxT, testCaseT, Time, Time, Precision, out[Time]) Error
+	GenerateDatetime   func(ctxT, testCaseT, Datetime, Datetime, Precision, out[Datetime]) Error
+	GenerateDuration   func(ctxT, testCaseT, Duration, Duration, Precision, out[Duration]) Error
+	GenerateOffset     func(ctxT, testCaseT, int32, int32, OffsetGranularity, bool, out[Offset]) Error
+	FormatOffset       func(ctxT, Offset, out[ownedStringT]) Error
+
+	// Date options: the weekday and month masks of hegel_generate_date.
+	DateOptionsNew         func(ctxT, out[dateOptionsT]) Error
+	DateOptionsFree        func(ctxT, dateOptionsT) Error
+	DateOptionsSetWeekdays func(ctxT, dateOptionsT, uint32) Error
+	DateOptionsSetMonths   func(ctxT, dateOptionsT, uint32) Error
+
+	// Zone sources: where time zone names and their data come from.
+	ZoneSourceNew       func(ctxT, out[zoneSourceT]) Error
+	ZoneSourceBundled   func(ctxT, out[zoneSourceT]) Error
+	ZoneSourceFree      func(ctxT, zoneSourceT) Error
+	ZoneSourceDeclare   func(ctxT, zoneSourceT, *stringT, uint64) Error
+	ZoneSourceNameCount func(ctxT, zoneSourceT, out[uint64]) Error
+	ZoneSourceName      func(ctxT, zoneSourceT, uint64, out[stringT]) Error
+	ZoneSourceAddOracle func(ctxT, zoneSourceT, stringT, *zoneOracleT) Error
+	ZoneSourceSetLoader func(ctxT, zoneSourceT, zoneLoaderT, uintptr, zoneLoaderReleaseT) Error
+	ContextSetError     func(ctxT, stringT) Error
+	TimezoneInfoIn      func(ctxT, zoneSourceT, stringT, out[timezoneInfoT]) Error
+
+	// Time zone and zoned datetime specs and the draws that take them.
+	TimezoneSpecNew              func(ctxT, out[timezoneSpecT]) Error
+	TimezoneSpecFree             func(ctxT, timezoneSpecT) Error
+	TimezoneSpecSetNames         func(ctxT, timezoneSpecT, *stringT, uint64) Error
+	TimezoneSpecSetLinks         func(ctxT, timezoneSpecT, bool) Error
+	TimezoneSpecSetLegacy        func(ctxT, timezoneSpecT, bool) Error
+	TimezoneSpecSetSource        func(ctxT, timezoneSpecT, zoneSourceT) Error
+	GenerateTimezone             func(ctxT, testCaseT, timezoneSpecT, out[ownedStringT]) Error
+	ZonedSpecNew                 func(ctxT, out[zonedSpecT]) Error
+	ZonedSpecFree                func(ctxT, zonedSpecT) Error
+	ZonedSpecSetCivilBounds      func(ctxT, zonedSpecT, Datetime, Datetime) Error
+	ZonedSpecSetInstantBounds    func(ctxT, zonedSpecT, Timestamp, Timestamp) Error
+	ZonedSpecSetPrecision        func(ctxT, zonedSpecT, Precision) Error
+	ZonedSpecSetImaginary        func(ctxT, zonedSpecT, Imaginary) Error
+	ZonedSpecSetAmbiguous        func(ctxT, zonedSpecT, Ambiguous) Error
+	GenerateZonedDatetime        func(ctxT, testCaseT, timezoneSpecT, zonedSpecT, out[ZonedDatetime], out[ownedStringT]) Error
+	GenerateZonedDatetimeForZone func(ctxT, testCaseT, zoneSourceT, stringT, zonedSpecT, out[ZonedDatetime]) Error
+	GenerateUUID                 func(ctxT, testCaseT, uint8, bool, out[byte]) Error
+	GenerateIPv4                 func(ctxT, testCaseT, out[byte]) Error
+	GenerateIPv6                 func(ctxT, testCaseT, out[byte]) Error
 
 	// String-generator constructors (build the alphabet-and-shape spec passed
 	// to hegel_generate_string) and their shared free.
@@ -425,6 +481,8 @@ type symbols struct {
 	FailureOrigin           func(ctxT, failureT, out[stringT]) Error
 	FailureReproductionBlob func(ctxT, failureT, out[*stringT]) Error
 	FailureCaveat           func(ctxT, failureT, out[*stringT]) Error
+	FailureOutput           func(ctxT, failureT, out[*stringT]) Error
+	FailureDiagnostic       func(ctxT, failureT, out[*stringT]) Error
 
 	SettingsSetShowStatistics        func(ctxT, settingsT, bool) Error
 	SettingsSetStopOnFirstFailure    func(ctxT, settingsT, bool) Error
@@ -802,7 +860,8 @@ func tryOpen(path string) (syms *symbols, err error) {
 		{"hegel_test_case_from_blob", &syms.TestCaseFromBlob},
 		{"hegel_test_case_clone", &syms.TestCaseClone},
 		{"hegel_test_case_free", &syms.TestCaseFree},
-		{"hegel_test_case_should_capture", &syms.TestCaseShouldCapture},
+		{"hegel_test_case_wants_output", &syms.TestCaseWantsOutput},
+		{"hegel_test_case_wants_detail", &syms.TestCaseWantsDetail},
 
 		{"hegel_start_span", &syms.StartSpan},
 		{"hegel_stop_span", &syms.StopSpan},
@@ -846,6 +905,39 @@ func tryOpen(path string) (syms *symbols, err error) {
 		{"hegel_generate_date", &syms.GenerateDate},
 		{"hegel_generate_time", &syms.GenerateTime},
 		{"hegel_generate_datetime", &syms.GenerateDatetime},
+		{"hegel_generate_duration", &syms.GenerateDuration},
+		{"hegel_generate_offset", &syms.GenerateOffset},
+		{"hegel_format_offset", &syms.FormatOffset},
+		{"hegel_date_options_new", &syms.DateOptionsNew},
+		{"hegel_date_options_free", &syms.DateOptionsFree},
+		{"hegel_date_options_set_weekdays", &syms.DateOptionsSetWeekdays},
+		{"hegel_date_options_set_months", &syms.DateOptionsSetMonths},
+		{"hegel_zone_source_new", &syms.ZoneSourceNew},
+		{"hegel_zone_source_bundled", &syms.ZoneSourceBundled},
+		{"hegel_zone_source_free", &syms.ZoneSourceFree},
+		{"hegel_zone_source_declare", &syms.ZoneSourceDeclare},
+		{"hegel_zone_source_name_count", &syms.ZoneSourceNameCount},
+		{"hegel_zone_source_name", &syms.ZoneSourceName},
+		{"hegel_zone_source_add_oracle", &syms.ZoneSourceAddOracle},
+		{"hegel_zone_source_set_loader", &syms.ZoneSourceSetLoader},
+		{"hegel_context_set_error", &syms.ContextSetError},
+		{"hegel_timezone_info_in", &syms.TimezoneInfoIn},
+		{"hegel_timezone_spec_new", &syms.TimezoneSpecNew},
+		{"hegel_timezone_spec_free", &syms.TimezoneSpecFree},
+		{"hegel_timezone_spec_set_names", &syms.TimezoneSpecSetNames},
+		{"hegel_timezone_spec_set_links", &syms.TimezoneSpecSetLinks},
+		{"hegel_timezone_spec_set_legacy", &syms.TimezoneSpecSetLegacy},
+		{"hegel_timezone_spec_set_source", &syms.TimezoneSpecSetSource},
+		{"hegel_generate_timezone", &syms.GenerateTimezone},
+		{"hegel_zoned_spec_new", &syms.ZonedSpecNew},
+		{"hegel_zoned_spec_free", &syms.ZonedSpecFree},
+		{"hegel_zoned_spec_set_civil_bounds", &syms.ZonedSpecSetCivilBounds},
+		{"hegel_zoned_spec_set_instant_bounds", &syms.ZonedSpecSetInstantBounds},
+		{"hegel_zoned_spec_set_precision", &syms.ZonedSpecSetPrecision},
+		{"hegel_zoned_spec_set_imaginary", &syms.ZonedSpecSetImaginary},
+		{"hegel_zoned_spec_set_ambiguous", &syms.ZonedSpecSetAmbiguous},
+		{"hegel_generate_zoned_datetime", &syms.GenerateZonedDatetime},
+		{"hegel_generate_zoned_datetime_for_zone", &syms.GenerateZonedDatetimeForZone},
 		{"hegel_generate_uuid", &syms.GenerateUUID},
 		{"hegel_generate_ipv4", &syms.GenerateIPv4},
 		{"hegel_generate_ipv6", &syms.GenerateIPv6},
@@ -880,6 +972,8 @@ func tryOpen(path string) (syms *symbols, err error) {
 		{"hegel_failure_origin", &syms.FailureOrigin},
 		{"hegel_failure_reproduction_blob", &syms.FailureReproductionBlob},
 		{"hegel_failure_caveat", &syms.FailureCaveat},
+		{"hegel_failure_output", &syms.FailureOutput},
+		{"hegel_failure_diagnostic", &syms.FailureDiagnostic},
 
 		{"hegel_set_unicode_version", &syms.SetUnicodeVersion},
 		{"hegel_version", &syms.Version},
@@ -1202,9 +1296,9 @@ func (s *Settings) SetFromString(ctx *Context, key, value string) error {
 	})
 }
 
-// RunStart starts a run against these settings. callback and userData set the
-// engine-output destination (see [outputCallbackT]); pass a nil writer to leave
-// output on stderr, which every hegel-package caller currently does.
+// RunStart starts a run against these settings. out receives the run's engine
+// output, including what its test cases print in a verbose run, until the run
+// is released; a nil writer is no destination, so the engine prints nothing.
 func (s *Settings) RunStart(ctx *Context, out io.Writer) (*Run, error) {
 	callback, handle := newOutputFn(out)
 	r := new(Run)
@@ -1212,21 +1306,20 @@ func (s *Settings) RunStart(ctx *Context, out io.Writer) (*Run, error) {
 		e := s.syms.RunStart(ctx, s.raw, callback, uintptr(handle), raw)
 		runtime.KeepAlive(s)
 		return e
-	}, s.syms.RunFree)
+	}, withOutputFn(s.syms.RunFree, handle))
 	if !ok {
-		freeOutputFn[runT](nil, handle)
+		deleteOutputFn(handle)
 		return nil, err
 	}
-	freeOutputFn(&r.pointer, handle)
 	return r, nil
 }
 
 // RunStartBlob starts a run that replays a base64 reproduction blob (from
 // [Failure.ReproductionBlob]) instead of exploring, but is otherwise driven
 // exactly like [Settings.RunStart]. A reproducing replay is the run's failure; a
-// run with no failures means the blob is stale. callback and userData set the
-// engine-output destination (see [outputCallbackT]); pass a nil writer to leave
-// output on stderr, which every hegel-package caller currently does.
+// run with no failures means the blob is stale. out receives the run's engine
+// output until the run is released; a nil writer is no destination, so the
+// engine prints nothing.
 func (s *Settings) RunStartBlob(ctx *Context, blob string, out io.Writer) (*Run, error) {
 	callback, handle := newOutputFn(out)
 	r := new(Run)
@@ -1234,12 +1327,11 @@ func (s *Settings) RunStartBlob(ctx *Context, blob string, out io.Writer) (*Run,
 		e := s.syms.RunStartBlob(ctx, s.raw, cString(blob), callback, uintptr(handle), raw)
 		runtime.KeepAlive(s)
 		return e
-	}, s.syms.RunFree)
+	}, withOutputFn(s.syms.RunFree, handle))
 	if !ok {
-		freeOutputFn[runT](nil, handle)
+		deleteOutputFn(handle)
 		return nil, err
 	}
-	freeOutputFn(&r.pointer, handle)
 	return r, nil
 }
 
@@ -1247,18 +1339,19 @@ func (s *Settings) RunStartBlob(ctx *Context, blob string, out io.Writer) (*Run,
 // encoded in a base64 failure blob (from [Failure.ReproductionBlob]). Unlike
 // test cases from [Run.NextTestCase], the returned handle is owned by the
 // caller and is freed automatically via the GC unless [TestCase.Free] releases
-// it first. A rejected blob surfaces as a nil test case and a non-nil error. callback and userData set the
-// engine-output destination for the replay (see [outputCallbackT]); pass a nil
-// writer to leave output on stderr, which every hegel-package caller currently does.
+// it first. A rejected blob surfaces as a nil test case and a non-nil error.
+// out receives the replay's engine output, including what the test case prints
+// and its diagnostic, until the test case is released; a nil writer is no
+// destination, so the engine prints nothing.
 func (s *Settings) TestCaseFromBlob(ctx *Context, blob string, out io.Writer) (tc *TestCase, err error) {
 	callback, handle := newOutputFn(out)
 	ptr, err := allocate(ctx, "hegel_test_case_from_blob", func(ctx ctxT, raw *testCaseT) Error {
 		e := s.syms.TestCaseFromBlob(ctx, s.raw, cString(blob), callback, uintptr(handle), raw)
 		runtime.KeepAlive(s)
 		return e
-	}, s.syms.TestCaseFree)
-	freeOutputFn(ptr, handle)
+	}, withOutputFn(s.syms.TestCaseFree, handle))
 	if ptr == nil {
+		deleteOutputFn(handle)
 		return nil, err
 	}
 	return &TestCase{pointer: ptr}, err
@@ -1312,6 +1405,9 @@ type TestCase struct {
 	outDate      Date
 	outTime      Time
 	outDatetime  Datetime
+	outDuration  Duration
+	outOffset    Offset
+	outZoned     ZonedDatetime
 	outBytesRes  bytesResult
 	outStringRes ownedStringT
 	outLen       uint64
@@ -1364,14 +1460,31 @@ func (tc *TestCase) Clone(ctx *Context) (*TestCase, error) {
 	return &TestCase{pointer: ptr}, err
 }
 
-// ShouldCapture reports whether the caller should capture this test case's
-// output while running it. A blobless (nondeterministic) failure is reported
-// from what the caller captured while running the stamped test cases, so a true
-// result means this case's output must be buffered in case it turns out to be
-// that failure.
-func (tc *TestCase) ShouldCapture(ctx *Context) (bool, error) {
-	err := ctx.invoke("hegel_test_case_should_capture", func(ctx ctxT) Error {
-		e := tc.syms.TestCaseShouldCapture(ctx, tc.raw, &tc.outBool)
+// WantsOutput reports whether the engine will use what this test case prints.
+// A verbose run streams it, a test case stamped for capture keeps it for the
+// failure report ([Failure.Output]), and a [Settings.TestCaseFromBlob] replay
+// streams it to its writer.
+//
+// When it is false, printing draws and notes and rendering a failure's
+// diagnostic is wasted work. Read it once at case start.
+func (tc *TestCase) WantsOutput(ctx *Context) (bool, error) {
+	err := ctx.invoke("hegel_test_case_wants_output", func(ctx ctxT) Error {
+		e := tc.syms.TestCaseWantsOutput(ctx, tc.raw, &tc.outBool)
+		runtime.KeepAlive(tc)
+		return e
+	})
+	return tc.outBool, err
+}
+
+// WantsDetail reports whether the engine will use the full diagnostic of this
+// test case if it fails: a debug run prints it, and a test case stamped for
+// capture keeps it for the failure report ([Failure.Diagnostic]). When it is
+// true, a failure must pass a detail to [TestCase.MarkComplete]; when it is
+// false, rendering one is wasted work. True implies [TestCase.WantsOutput].
+// Read it once at case start.
+func (tc *TestCase) WantsDetail(ctx *Context) (bool, error) {
+	err := ctx.invoke("hegel_test_case_wants_detail", func(ctx ctxT) Error {
+		e := tc.syms.TestCaseWantsDetail(ctx, tc.raw, &tc.outBool)
 		runtime.KeepAlive(tc)
 		return e
 	})
@@ -1533,29 +1646,38 @@ func (tc *TestCase) GenerateString(ctx *Context, gen *StringGenerator) (string, 
 }
 
 // GenerateDate draws a Gregorian calendar date in [minValue, maxValue].
-func (tc *TestCase) GenerateDate(ctx *Context, minValue, maxValue Date) (Date, error) {
+// options restricts the weekdays and months; nil allows every weekday and
+// month.
+func (tc *TestCase) GenerateDate(ctx *Context, minValue, maxValue Date, options *DateOptions) (Date, error) {
+	var optionsRaw dateOptionsT
+	if options != nil {
+		optionsRaw = options.raw
+	}
 	err := ctx.invoke("hegel_generate_date", func(ctx ctxT) Error {
-		e := tc.syms.GenerateDate(ctx, tc.raw, minValue, maxValue, &tc.outDate)
+		e := tc.syms.GenerateDate(ctx, tc.raw, minValue, maxValue, optionsRaw, &tc.outDate)
 		runtime.KeepAlive(tc)
+		runtime.KeepAlive(options)
 		return e
 	})
 	return tc.outDate, err
 }
 
-// GenerateTime draws a time of day in [minValue, maxValue].
-func (tc *TestCase) GenerateTime(ctx *Context, minValue, maxValue Time) (Time, error) {
+// GenerateTime draws a time of day in [minValue, maxValue] that is a whole
+// number of precision units.
+func (tc *TestCase) GenerateTime(ctx *Context, minValue, maxValue Time, precision Precision) (Time, error) {
 	err := ctx.invoke("hegel_generate_time", func(ctx ctxT) Error {
-		e := tc.syms.GenerateTime(ctx, tc.raw, minValue, maxValue, &tc.outTime)
+		e := tc.syms.GenerateTime(ctx, tc.raw, minValue, maxValue, precision, &tc.outTime)
 		runtime.KeepAlive(tc)
 		return e
 	})
 	return tc.outTime, err
 }
 
-// GenerateDatetime draws a naive datetime in [minValue, maxValue].
-func (tc *TestCase) GenerateDatetime(ctx *Context, minValue, maxValue Datetime) (Datetime, error) {
+// GenerateDatetime draws a naive datetime in [minValue, maxValue] whose time
+// of day is a whole number of precision units.
+func (tc *TestCase) GenerateDatetime(ctx *Context, minValue, maxValue Datetime, precision Precision) (Datetime, error) {
 	err := ctx.invoke("hegel_generate_datetime", func(ctx ctxT) Error {
-		e := tc.syms.GenerateDatetime(ctx, tc.raw, minValue, maxValue, &tc.outDatetime)
+		e := tc.syms.GenerateDatetime(ctx, tc.raw, minValue, maxValue, precision, &tc.outDatetime)
 		runtime.KeepAlive(tc)
 		return e
 	})
@@ -1970,9 +2092,18 @@ func (tc *TestCase) Target(ctx *Context, value float64, label string) error {
 	})
 }
 
-func (tc *TestCase) MarkComplete(ctx *Context, status Status, origin string) error {
+// MarkComplete records how this test case ended. origin, summary and detail
+// describe a [STATUS_INTERESTING] failure and must be "" (passed as NULL) for
+// any other status. summary is the failure in one line, required when
+// [TestCase.WantsOutput] is true; detail is its complete diagnostic, required
+// when [TestCase.WantsDetail] is true.
+//
+// Returns an error wrapping [E_INVALID_ARG] when a required string is missing,
+// summary spans several lines, or a string is passed for another status; the
+// test case then stays in flight.
+func (tc *TestCase) MarkComplete(ctx *Context, status Status, origin, summary, detail string) error {
 	return ctx.invoke("hegel_mark_complete", func(ctx ctxT) Error {
-		e := tc.syms.MarkComplete(ctx, tc.raw, status, stringPointer(origin))
+		e := tc.syms.MarkComplete(ctx, tc.raw, status, absentIfEmpty(origin), absentIfEmpty(summary), absentIfEmpty(detail))
 		runtime.KeepAlive(tc)
 		return e
 	})
@@ -2108,6 +2239,37 @@ func (f *Failure) Caveat(ctx *Context) string {
 	return value
 }
 
+// Output returns what the failing test case printed, its drawn values and
+// notes, with lines separated by "\n".
+//
+// present is false when no execution of the failure was stamped for capture,
+// or the run was quiet; an execution that printed nothing yields "" and true.
+func (f *Failure) Output(ctx *Context) (report string, present bool) {
+	_ = ctx.invoke("hegel_failure_output", func(ctx ctxT) Error {
+		e := f.syms.FailureOutput(ctx, f.raw, &f.outBytes)
+		runtime.KeepAlive(f)
+		return e
+	})
+	present = f.outBytes != nil
+	report = optionalGoString(f.outBytes)
+	runtime.KeepAlive(f)
+	return report, present
+}
+
+// Diagnostic returns the detail that the execution reported by
+// [Failure.Output] passed to [TestCase.MarkComplete], or the empty string if
+// there is none.
+func (f *Failure) Diagnostic(ctx *Context) string {
+	_ = ctx.invoke("hegel_failure_diagnostic", func(ctx ctxT) Error {
+		e := f.syms.FailureDiagnostic(ctx, f.raw, &f.outBytes)
+		runtime.KeepAlive(f)
+		return e
+	})
+	value := optionalGoString(f.outBytes)
+	runtime.KeepAlive(f)
+	return value
+}
+
 // StringGenerator wraps a hegel_string_generator_t: the immutable
 // alphabet-and-shape spec passed to [TestCase.GenerateString]. Build one with a
 // Context constructor; it is released automatically via the GC.
@@ -2195,6 +2357,14 @@ func cString(s string) stringT {
 func stringPointer(s string) *stringT {
 	view := cString(s)
 	return &view
+}
+
+// absentIfEmpty passes "" as NULL and any other string as a present value.
+func absentIfEmpty(s string) *stringT {
+	if s == "" {
+		return nil
+	}
+	return stringPointer(s)
 }
 
 // cStringArrayArg distinguishes an absent array from a present empty array.

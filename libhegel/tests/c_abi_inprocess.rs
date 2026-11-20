@@ -15,7 +15,8 @@ use string_helpers::test_string;
 mod common;
 
 use common::{
-    last_error, make_settings, make_settings_no_db, next_case, ok, start, start_with_output,
+    complete_case, last_error, make_settings, make_settings_no_db, next_case, ok, start,
+    start_with_output,
 };
 use hegel_c::hegel_result_t::*;
 use hegel_c::{
@@ -42,7 +43,8 @@ use hegel_c::{
     hegel_state_machine_next_rule, hegel_state_machine_rule_rejected,
     hegel_state_machine_should_check_invariant, hegel_state_machine_start, hegel_status_t,
     hegel_stop_span, hegel_string_t, hegel_target, hegel_test_case_clone, hegel_test_case_free,
-    hegel_test_case_from_blob, hegel_test_case_should_capture, hegel_unpause_faults, hegel_version,
+    hegel_test_case_from_blob, hegel_test_case_wants_output, hegel_tzdb_version,
+    hegel_unpause_faults, hegel_version,
 };
 use std::ffi::{CString, c_void};
 use std::os::raw::c_char;
@@ -204,7 +206,7 @@ unsafe fn drive_to_error(
         let (status, origin) = conclude(tc);
         let origin = (!origin.is_null()).then(|| unsafe { c_string_from_ptr(origin) });
         unsafe {
-            ok(hegel_mark_complete(
+            ok(complete_case(
                 ctx,
                 tc,
                 status as u32,
@@ -328,6 +330,8 @@ fn either_out_parameter_of_the_error_kind_may_be_null() {
                 ctx,
                 tc,
                 hegel_status_t::HEGEL_STATUS_INVALID as u32,
+                ptr::null(),
+                ptr::null(),
                 ptr::null(),
             ));
             ok(hegel_test_case_free(ctx, tc));
@@ -667,9 +671,9 @@ fn null_handles_are_rejected_without_crashing() {
             HEGEL_E_INVALID_HANDLE
         );
         assert!(clone_out.is_null());
-        let mut should_capture = false;
+        let mut wants_output = false;
         assert_eq!(
-            hegel_test_case_should_capture(ctx, ptr::null(), &mut should_capture),
+            hegel_test_case_wants_output(ctx, ptr::null(), &mut wants_output),
             HEGEL_E_INVALID_HANDLE
         );
 
@@ -763,6 +767,8 @@ fn null_handles_are_rejected_without_crashing() {
                 ctx,
                 tc,
                 hegel_status_t::HEGEL_STATUS_VALID as u32,
+                ptr::null(),
+                ptr::null(),
                 ptr::null()
             ),
             HEGEL_OK
@@ -833,6 +839,8 @@ fn out_parameters_are_rejected_when_null() {
                 ctx,
                 tc,
                 hegel_status_t::HEGEL_STATUS_VALID as u32,
+                ptr::null(),
+                ptr::null(),
                 ptr::null(),
             ));
             ok(hegel_test_case_free(ctx, tc));
@@ -1059,15 +1067,15 @@ fn run_start_blob_replays_and_reports_the_failure() {
             if tc.is_null() {
                 break;
             }
-            let mut should_capture = false;
-            ok(hegel_test_case_should_capture(ctx, tc, &mut should_capture));
-            assert!(should_capture, "a blob replay is stamped for capture");
+            let mut wants_output = false;
+            ok(hegel_test_case_wants_output(ctx, tc, &mut wants_output));
+            assert!(wants_output, "a blob replay is kept for the failure report");
             let mut value = 0i64;
             let mut status = hegel_status_t::HEGEL_STATUS_INTERESTING as u32;
             if hegel_generate_integer(ctx, tc, 0, 100, &mut value) != HEGEL_OK {
                 status = hegel_status_t::HEGEL_STATUS_OVERRUN as u32;
             }
-            ok(hegel_mark_complete(ctx, tc, status, &test_string(&origin)));
+            ok(complete_case(ctx, tc, status, &test_string(&origin)));
             ok(hegel_test_case_free(ctx, tc));
         }
         let res = result(ctx, run);
@@ -1134,11 +1142,11 @@ fn explicit_backend_run_and_lifecycle_misuse() {
         let tc = next_case(ctx, run);
         assert!(!tc.is_null());
 
-        let mut should_capture = true;
-        ok(hegel_test_case_should_capture(ctx, tc, &mut should_capture));
-        assert!(!should_capture);
+        let mut wants_output = true;
+        ok(hegel_test_case_wants_output(ctx, tc, &mut wants_output));
+        assert!(!wants_output);
         assert_eq!(
-            hegel_test_case_should_capture(ctx, tc, ptr::null_mut()),
+            hegel_test_case_wants_output(ctx, tc, ptr::null_mut()),
             HEGEL_E_INVALID_ARG
         );
 
@@ -1160,6 +1168,8 @@ fn explicit_backend_run_and_lifecycle_misuse() {
                 ctx,
                 tc,
                 hegel_status_t::HEGEL_STATUS_VALID as u32,
+                ptr::null(),
+                ptr::null(),
                 ptr::null()
             ),
             HEGEL_OK
@@ -1180,6 +1190,8 @@ fn explicit_backend_run_and_lifecycle_misuse() {
                 ctx,
                 tc,
                 hegel_status_t::HEGEL_STATUS_VALID as u32,
+                ptr::null(),
+                ptr::null(),
                 ptr::null(),
             ));
             ok(hegel_test_case_free(ctx, tc));
@@ -1260,6 +1272,26 @@ fn version_is_reported() {
     ok(unsafe { hegel_context_free(ctx) });
 }
 
+#[test]
+fn tzdb_version_is_reported() {
+    let ctx = hegel_context_new();
+    assert_eq!(
+        unsafe { hegel_tzdb_version(ctx, ptr::null_mut()) },
+        HEGEL_E_INVALID_ARG
+    );
+    assert!(last_error(ctx).contains("out parameter is null"));
+    let mut p = hegel_string_t::default();
+    assert_eq!(unsafe { hegel_tzdb_version(ctx, &mut p) }, HEGEL_OK);
+    assert!(last_error(ctx).is_empty());
+    let bytes = unsafe { std::slice::from_raw_parts(p.data.cast::<u8>(), p.len + 1) };
+    assert_eq!(bytes[p.len], 0);
+    assert_eq!(
+        std::str::from_utf8(&bytes[..p.len]).unwrap(),
+        jiff_tzdb::VERSION.unwrap()
+    );
+    ok(unsafe { hegel_context_free(ctx) });
+}
+
 /// Calling `hegel_next_test_case` again after the run has already drained
 /// returns a NULL case with no error (idempotent end-of-run), rather than
 /// blocking or faulting.
@@ -1282,6 +1314,8 @@ fn next_after_drain_returns_null() {
                 ctx,
                 tc,
                 hegel_status_t::HEGEL_STATUS_VALID as u32,
+                ptr::null(),
+                ptr::null(),
                 ptr::null(),
             ));
             ok(hegel_test_case_free(ctx, tc));
@@ -1343,7 +1377,7 @@ fn out_of_range_enum_values_are_invalid_arguments() {
             }
             if !checked_status {
                 assert_eq!(
-                    hegel_mark_complete(ctx, tc, 999, ptr::null()),
+                    hegel_mark_complete(ctx, tc, 999, ptr::null(), ptr::null(), ptr::null()),
                     HEGEL_E_INVALID_ARG
                 );
                 assert!(last_error(ctx).contains("unknown status"));
@@ -1353,6 +1387,8 @@ fn out_of_range_enum_values_are_invalid_arguments() {
                 ctx,
                 tc,
                 hegel_status_t::HEGEL_STATUS_VALID as u32,
+                ptr::null(),
+                ptr::null(),
                 ptr::null(),
             ));
             ok(hegel_test_case_free(ctx, tc));
@@ -1605,7 +1641,9 @@ fn live_test_case_argument_validation() {
                 ctx,
                 tc,
                 hegel_status_t::HEGEL_STATUS_INTERESTING as u32,
-                &test_string(&bad_utf8)
+                &test_string(&bad_utf8),
+                &"failed".into(),
+                &"failed".into()
             ),
             HEGEL_E_INVALID_ARG
         );
@@ -1615,6 +1653,8 @@ fn live_test_case_argument_validation() {
                 ctx,
                 tc,
                 hegel_status_t::HEGEL_STATUS_VALID as u32,
+                ptr::null(),
+                ptr::null(),
                 ptr::null()
             ),
             HEGEL_OK
@@ -1630,6 +1670,8 @@ fn live_test_case_argument_validation() {
                 ctx,
                 tc,
                 hegel_status_t::HEGEL_STATUS_VALID as u32,
+                ptr::null(),
+                ptr::null(),
                 ptr::null()
             ),
             HEGEL_E_ALREADY_COMPLETE
@@ -1647,6 +1689,8 @@ fn live_test_case_argument_validation() {
                 ctx,
                 tc,
                 hegel_status_t::HEGEL_STATUS_VALID as u32,
+                ptr::null(),
+                ptr::null(),
                 ptr::null(),
             ));
             ok(hegel_test_case_free(ctx, tc));
@@ -1718,6 +1762,8 @@ fn recursion_budget_retry_and_depth_limit() {
             tc,
             hegel_status_t::HEGEL_STATUS_INVALID as u32,
             ptr::null(),
+            ptr::null(),
+            ptr::null(),
         ));
         ok(hegel_test_case_free(ctx, tc));
 
@@ -1733,6 +1779,8 @@ fn recursion_budget_retry_and_depth_limit() {
                 tc,
                 hegel_status_t::HEGEL_STATUS_VALID as u32,
                 ptr::null(),
+                ptr::null(),
+                ptr::null(),
             ));
             ok(hegel_test_case_free(ctx, tc));
         }
@@ -1744,83 +1792,41 @@ fn recursion_budget_retry_and_depth_limit() {
     }
 }
 
-/// A property that always reports INTERESTING with a NULL origin: the engine
-/// synthesizes the "Panic at <unknown>" placeholder for the failure's message
-/// and origin. Drives the FAILED run-result path and the failure getters'
-/// present-value arms at the C level, and reaches the out-of-range failure
-/// index branch.
+/// A failing test case must name its origin: a NULL origin is refused and
+/// completes nothing, where libhegel used to make one up.
 #[test]
-fn interesting_with_null_origin_synthesizes_placeholder() {
+fn interesting_requires_an_origin() {
     let ctx = hegel_context_new();
     unsafe {
         let s = make_settings(ctx);
         ok(hegel_settings_set_database(ctx, s, &"".into()));
-        ok(hegel_c::hegel_settings_set_test_cases(ctx, s, 5));
-        ok(hegel_c::hegel_settings_set_seed(ctx, s, 1, true));
         let run = start(ctx, s);
-        loop {
-            let tc = next_case(ctx, run);
-            if tc.is_null() {
-                break;
-            }
-            let mut value = 0i64;
-            match hegel_generate_integer(ctx, tc, 0, 100, &mut value) {
-                HEGEL_OK => {
-                    ok(hegel_mark_complete(
-                        ctx,
-                        tc,
-                        hegel_status_t::HEGEL_STATUS_INTERESTING as u32,
-                        ptr::null(),
-                    ));
-                }
-                _ => {
-                    ok(hegel_mark_complete(
-                        ctx,
-                        tc,
-                        hegel_status_t::HEGEL_STATUS_OVERRUN as u32,
-                        ptr::null(),
-                    ));
-                }
-            }
-            ok(hegel_test_case_free(ctx, tc));
-        }
-
-        let res = result(ctx, run);
-        assert!(status_of(ctx, res) == hegel_run_status_t::HEGEL_RUN_STATUS_FAILED);
-        assert!(run_error_of(ctx, res).is_null());
-        let count = failure_count_of(ctx, res);
-        assert!(
-            count >= 1,
-            "the always-interesting property records a failure"
-        );
-        let mut past_end: *mut HegelFailure = ptr::null_mut();
+        let tc = next_case(ctx, run);
+        let failed: hegel_string_t = "failed".into();
         assert_eq!(
-            hegel_run_result_failure(ctx, res, count, &mut past_end),
+            hegel_mark_complete(
+                ctx,
+                tc,
+                hegel_status_t::HEGEL_STATUS_INTERESTING as u32,
+                ptr::null(),
+                &failed,
+                &failed,
+            ),
             HEGEL_E_INVALID_ARG
         );
-        assert!(past_end.is_null());
-        assert!(last_error(ctx).contains("out of range"));
-        let f = failure_at(ctx, res, 0);
-        assert!(!f.is_null());
+        assert!(last_error(ctx).contains("origin is required"));
+        let mut next: *mut HegelTestCase = ptr::null_mut();
         assert_eq!(
-            hegel_failure_origin(ctx, f, ptr::null_mut()),
-            HEGEL_E_INVALID_ARG
+            hegel_next_test_case(ctx, run, &mut next),
+            HEGEL_E_NOT_COMPLETE
         );
-        assert_eq!(
-            hegel_failure_reproduction_blob(ctx, f, ptr::null_mut()),
-            HEGEL_E_INVALID_ARG
-        );
-        assert_eq!(
-            hegel_failure_caveat(ctx, f, ptr::null_mut()),
-            HEGEL_E_INVALID_ARG
-        );
-        let origin = String::from_utf8_lossy(bytes(&origin_of(ctx, f))).into_owned();
-        assert!(origin.contains("Panic at <unknown>"), "got {origin:?}");
-        let _ = repro_blob_of(ctx, f);
-        assert!(caveat_of(ctx, f).is_null());
-        ok(hegel_failure_free(ctx, f));
-        ok(hegel_run_result_free(ctx, res));
-
+        ok(complete_case(
+            ctx,
+            tc,
+            hegel_status_t::HEGEL_STATUS_VALID as u32,
+            ptr::null(),
+        ));
+        ok(hegel_test_case_free(ctx, tc));
         ok(hegel_run_free(ctx, run));
         ok(hegel_settings_free(ctx, s));
         ok(hegel_context_free(ctx));
@@ -1833,7 +1839,7 @@ fn interesting_with_null_origin_synthesizes_placeholder() {
 /// the bug is confirmed by replay and shrunk, and the run
 /// reports `HEGEL_RUN_STATUS_FAILED` with a reproduce blob and a
 /// confirmation caveat. The engine stamps the replay executions it makes
-/// for the report (`hegel_test_case_should_capture`).
+/// for the report (`hegel_test_case_wants_output`).
 #[test]
 fn concurrent_run_failure_has_blob_and_caveat() {
     let ctx = hegel_context_new();
@@ -1851,9 +1857,9 @@ fn concurrent_run_failure_has_blob_and_caveat() {
             if tc.is_null() {
                 break;
             }
-            let mut should_capture = false;
-            ok(hegel_test_case_should_capture(ctx, tc, &mut should_capture));
-            stamped += usize::from(should_capture);
+            let mut wants_output = false;
+            ok(hegel_test_case_wants_output(ctx, tc, &mut wants_output));
+            stamped += usize::from(wants_output);
             let mut machine: *mut HegelStateMachine = ptr::null_mut();
             let mut out_concurrency = 0i64;
             let rc = build_machine(
@@ -1873,6 +1879,8 @@ fn concurrent_run_failure_has_blob_and_caveat() {
                     tc,
                     hegel_status_t::HEGEL_STATUS_OVERRUN as u32,
                     ptr::null(),
+                    ptr::null(),
+                    ptr::null(),
                 ));
                 ok(hegel_test_case_free(ctx, tc));
                 continue;
@@ -1891,7 +1899,7 @@ fn concurrent_run_failure_has_blob_and_caveat() {
                 };
             let complete_origin =
                 (!complete_origin.is_null()).then(|| c_string_from_ptr(complete_origin));
-            ok(hegel_mark_complete(
+            ok(complete_case(
                 ctx,
                 tc,
                 status as u32,
@@ -1964,6 +1972,8 @@ unsafe fn drive_concurrent_body(ctx: *mut HegelContext, run: *mut HegelRun, orig
                     tc,
                     hegel_status_t::HEGEL_STATUS_OVERRUN as u32,
                     ptr::null(),
+                    ptr::null(),
+                    ptr::null(),
                 )
             });
             ok(unsafe { hegel_test_case_free(ctx, tc) });
@@ -1984,7 +1994,7 @@ unsafe fn drive_concurrent_body(ctx: *mut HegelContext, run: *mut HegelRun, orig
         let complete_origin =
             (!complete_origin.is_null()).then(|| unsafe { c_string_from_ptr(complete_origin) });
         ok(unsafe {
-            hegel_mark_complete(
+            complete_case(
                 ctx,
                 tc,
                 status as u32,
@@ -2195,6 +2205,8 @@ fn primitives_after_overrun_all_report_stop_test() {
             tc,
             hegel_status_t::HEGEL_STATUS_OVERRUN as u32,
             ptr::null(),
+            ptr::null(),
+            ptr::null(),
         ));
         ok(hegel_test_case_free(ctx, tc));
         loop {
@@ -2208,6 +2220,8 @@ fn primitives_after_overrun_all_report_stop_test() {
                 ctx,
                 tc,
                 hegel_status_t::HEGEL_STATUS_VALID as u32,
+                ptr::null(),
+                ptr::null(),
                 ptr::null(),
             ));
             ok(hegel_test_case_free(ctx, tc));
@@ -2765,6 +2779,8 @@ fn state_machine_and_primitive_boolean_paths() {
             tc,
             hegel_status_t::HEGEL_STATUS_VALID as u32,
             ptr::null(),
+            ptr::null(),
+            ptr::null(),
         ));
         ok(hegel_test_case_free(ctx, tc));
         loop {
@@ -2776,6 +2792,8 @@ fn state_machine_and_primitive_boolean_paths() {
                 ctx,
                 tc,
                 hegel_status_t::HEGEL_STATUS_VALID as u32,
+                ptr::null(),
+                ptr::null(),
                 ptr::null(),
             ));
             ok(hegel_test_case_free(ctx, tc));
@@ -2811,7 +2829,7 @@ unsafe fn shrunk_failure_blob_with_draws(ctx: *mut HegelContext, draws: usize) -
                     break;
                 }
             }
-            ok(hegel_mark_complete(ctx, tc, status, ptr::null()));
+            ok(complete_case(ctx, tc, status, &"failure".into()));
             ok(hegel_test_case_free(ctx, tc));
         }
         let res = result(ctx, run);
@@ -2856,7 +2874,7 @@ fn result_and_failure_snapshots_outlive_the_run() {
             } else {
                 hegel_status_t::HEGEL_STATUS_OVERRUN as u32
             };
-            ok(hegel_mark_complete(ctx, tc, status, ptr::null()));
+            ok(complete_case(ctx, tc, status, &"failure".into()));
             ok(hegel_test_case_free(ctx, tc));
         }
 
@@ -2879,12 +2897,9 @@ fn result_and_failure_snapshots_outlive_the_run() {
 }
 
 /// A clone shares the underlying test case with its root: it draws from the
-/// same source, and completion is first-caller-wins and family-wide. The first
-/// `hegel_mark_complete` anywhere in the family records the outcome; completing
-/// a *different* handle afterward is a safe no-op (so racing clones don't
-/// error), while completing the *same* handle twice is a usage error. A clone
-/// can be made after completion (and is immediately complete). Every handle —
-/// root or clone, run-owned or not — is released independently with
+/// same source, and completing the root completes the whole family. A clone
+/// cannot complete it, and completing the root twice is a usage error. Every
+/// handle — root or clone, run-owned or not — is released independently with
 /// `hegel_test_case_free`.
 #[test]
 fn clones_share_a_run_owned_family() {
@@ -2919,51 +2934,61 @@ fn clones_share_a_run_owned_family() {
         let mut c1a: *mut HegelTestCase = ptr::null_mut();
         assert_eq!(hegel_test_case_clone(ctx, c1, &mut c1a), HEGEL_OK);
         for tc in [root, c1, c1a] {
-            let mut should_capture = true;
-            ok(hegel_test_case_should_capture(ctx, tc, &mut should_capture));
-            assert!(!should_capture);
+            let mut wants_output = true;
+            ok(hegel_test_case_wants_output(ctx, tc, &mut wants_output));
+            assert!(!wants_output);
         }
         assert_eq!(
             hegel_generate_integer(ctx, c1a, 0, 100, &mut value),
             HEGEL_OK
         );
 
-        // The first handle to complete the family wins and records the outcome.
+        for clone in [c1, c1a] {
+            assert_eq!(
+                hegel_mark_complete(
+                    ctx,
+                    clone,
+                    hegel_status_t::HEGEL_STATUS_VALID as u32,
+                    ptr::null(),
+                    ptr::null(),
+                    ptr::null()
+                ),
+                HEGEL_E_INVALID_ARG
+            );
+            assert!(last_error(ctx).contains("only the test case's root handle"));
+        }
         assert_eq!(
-            hegel_mark_complete(
-                ctx,
-                c1,
-                hegel_status_t::HEGEL_STATUS_VALID as u32,
-                ptr::null()
-            ),
+            hegel_generate_integer(ctx, c1, 0, 100, &mut value),
             HEGEL_OK
         );
-        // Completing a *different* handle in the now-complete family is a safe
-        // no-op (first-caller-wins), so racing clones don't error.
         assert_eq!(
             hegel_mark_complete(
                 ctx,
                 root,
                 hegel_status_t::HEGEL_STATUS_VALID as u32,
+                ptr::null(),
+                ptr::null(),
                 ptr::null()
             ),
             HEGEL_OK
         );
-        // But completing the *same* handle twice is a usage error.
         assert_eq!(
             hegel_mark_complete(
                 ctx,
-                c1,
+                root,
                 hegel_status_t::HEGEL_STATUS_VALID as u32,
+                ptr::null(),
+                ptr::null(),
                 ptr::null()
             ),
             HEGEL_E_ALREADY_COMPLETE
         );
-        // Primitives on any family handle still report the family complete.
-        assert_eq!(
-            hegel_generate_integer(ctx, root, 0, 100, &mut value),
-            HEGEL_E_ALREADY_COMPLETE
-        );
+        for tc in [root, c1, c1a] {
+            assert_eq!(
+                hegel_generate_integer(ctx, tc, 0, 100, &mut value),
+                HEGEL_E_ALREADY_COMPLETE
+            );
+        }
 
         let mut c2: *mut HegelTestCase = ptr::null_mut();
         assert_eq!(
@@ -2985,6 +3010,8 @@ fn clones_share_a_run_owned_family() {
                 ctx,
                 tc,
                 hegel_status_t::HEGEL_STATUS_VALID as u32,
+                ptr::null(),
+                ptr::null(),
                 ptr::null(),
             ));
             ok(hegel_test_case_free(ctx, tc));
@@ -3016,22 +3043,18 @@ fn standalone_handles_are_freed_independently() {
             HEGEL_OK
         );
         assert!(!root.is_null());
-        let mut should_capture = false;
-        ok(hegel_test_case_should_capture(
-            ctx,
-            root,
-            &mut should_capture,
-        ));
-        assert!(!should_capture);
+        let mut wants_output = false;
+        ok(hegel_test_case_wants_output(ctx, root, &mut wants_output));
+        assert!(!wants_output, "a replay with no destination prints nothing");
 
         let mut c1: *mut HegelTestCase = ptr::null_mut();
         assert_eq!(hegel_test_case_clone(ctx, root, &mut c1), HEGEL_OK);
         let mut c2: *mut HegelTestCase = ptr::null_mut();
         assert_eq!(hegel_test_case_clone(ctx, root, &mut c2), HEGEL_OK);
         for tc in [c1, c2] {
-            should_capture = false;
-            ok(hegel_test_case_should_capture(ctx, tc, &mut should_capture));
-            assert!(!should_capture);
+            wants_output = false;
+            ok(hegel_test_case_wants_output(ctx, tc, &mut wants_output));
+            assert!(!wants_output, "a replay with no destination prints nothing");
         }
 
         // A non-consuming span op proves a handle is live and reaches its
@@ -3120,6 +3143,8 @@ fn two_clones_draw_concurrently_without_concurrent_use_errors() {
             root,
             hegel_status_t::HEGEL_STATUS_VALID as u32,
             ptr::null(),
+            ptr::null(),
+            ptr::null(),
         ));
         ok(hegel_test_case_free(ctx, c1));
         ok(hegel_test_case_free(ctx, c2));
@@ -3133,6 +3158,8 @@ fn two_clones_draw_concurrently_without_concurrent_use_errors() {
                 ctx,
                 tc,
                 hegel_status_t::HEGEL_STATUS_VALID as u32,
+                ptr::null(),
+                ptr::null(),
                 ptr::null(),
             ));
             ok(hegel_test_case_free(ctx, tc));
@@ -3194,7 +3221,7 @@ fn output_callback_receives_engine_output() {
             } else {
                 hegel_status_t::HEGEL_STATUS_OVERRUN as u32
             };
-            ok(hegel_mark_complete(ctx, tc, status, ptr::null()));
+            ok(complete_case(ctx, tc, status, &"failure".into()));
             ok(hegel_test_case_free(ctx, tc));
         }
         ok(hegel_run_result_free(ctx, result(ctx, run)));
@@ -3252,7 +3279,7 @@ fn null_output_callback_writes_to_stderr() {
             } else {
                 hegel_status_t::HEGEL_STATUS_OVERRUN as u32
             };
-            ok(hegel_mark_complete(ctx, tc, status, ptr::null()));
+            ok(complete_case(ctx, tc, status, &"failure".into()));
             ok(hegel_test_case_free(ctx, tc));
         }
         ok(hegel_run_result_free(ctx, result(ctx, run)));
@@ -3291,6 +3318,8 @@ fn from_blob_replay_trace_goes_to_the_output_callback() {
             ctx,
             tc,
             hegel_status_t::HEGEL_STATUS_VALID as u32,
+            ptr::null(),
+            ptr::null(),
             ptr::null(),
         ));
         ok(hegel_test_case_free(ctx, tc));
@@ -3343,6 +3372,8 @@ fn object_handles_are_freed_safely_after_the_run() {
             ctx,
             tc,
             hegel_status_t::HEGEL_STATUS_VALID as u32,
+            ptr::null(),
+            ptr::null(),
             ptr::null(),
         ));
         ok(hegel_test_case_free(ctx, tc));
@@ -3399,6 +3430,8 @@ fn collection_created_on_the_root_is_driven_via_a_clone() {
             ctx,
             tc,
             hegel_status_t::HEGEL_STATUS_VALID as u32,
+            ptr::null(),
+            ptr::null(),
             ptr::null(),
         ));
         ok(hegel_test_case_free(ctx, tc));
@@ -3535,12 +3568,12 @@ unsafe fn repeat_run(ctx: *mut HegelContext, engine_loop: bool) -> (String, Vec<
                 }
                 ok(hegel_collection_free(ctx, collection));
             }
-            let mut should_capture = false;
-            ok(hegel_test_case_should_capture(ctx, tc, &mut should_capture));
-            if should_capture {
+            let mut wants_output = false;
+            ok(hegel_test_case_wants_output(ctx, tc, &mut wants_output));
+            if wants_output {
                 last_drawn = drawn;
             }
-            ok(hegel_mark_complete(ctx, tc, status, ptr::null()));
+            ok(complete_case(ctx, tc, status, &"failure".into()));
             ok(hegel_test_case_free(ctx, tc));
         }
         let res = result(ctx, run);
@@ -3618,7 +3651,7 @@ fn repeat_created_on_the_root_is_driven_via_a_clone() {
 
         ok(hegel_repeat_free(ctx, repeat));
         ok(hegel_test_case_free(ctx, clone));
-        ok(hegel_mark_complete(ctx, tc, status, ptr::null()));
+        ok(complete_case(ctx, tc, status, &"failure".into()));
         ok(hegel_test_case_free(ctx, tc));
         ok(hegel_run_free(ctx, run));
         ok(hegel_settings_free(ctx, s));
@@ -3687,6 +3720,8 @@ fn pool_restore_puts_back_the_named_variable() {
             ctx,
             tc,
             hegel_status_t::HEGEL_STATUS_VALID as u32,
+            ptr::null(),
+            ptr::null(),
             ptr::null(),
         ));
         ok(hegel_test_case_free(ctx, tc));
@@ -3787,6 +3822,8 @@ fn pool_is_shared_across_two_clone_threads() {
             tc,
             hegel_status_t::HEGEL_STATUS_VALID as u32,
             ptr::null(),
+            ptr::null(),
+            ptr::null(),
         ));
         ok(hegel_test_case_free(ctx, tc));
         ok(hegel_run_free(ctx, run));
@@ -3851,6 +3888,8 @@ fn concurrent_clone_pools_do_not_trip_nondeterminism_detection() {
                     tc,
                     hegel_status_t::HEGEL_STATUS_VALID as u32,
                     ptr::null(),
+                    ptr::null(),
+                    ptr::null(),
                 ));
                 ok(hegel_test_case_free(ctx, tc));
                 ok(hegel_pool_free(ctx, pool.0));
@@ -3889,6 +3928,8 @@ fn unbounded_choices_lets_a_test_case_outgrow_the_buffer() {
             tc,
             hegel_status_t::HEGEL_STATUS_VALID as u32,
             ptr::null(),
+            ptr::null(),
+            ptr::null(),
         ));
         ok(hegel_test_case_free(ctx, tc));
         drain_run_valid(ctx, run);
@@ -3920,6 +3961,8 @@ fn a_test_case_overruns_one_choice_past_the_buffer() {
             ctx,
             tc,
             hegel_status_t::HEGEL_STATUS_OVERRUN as u32,
+            ptr::null(),
+            ptr::null(),
             ptr::null(),
         ));
         ok(hegel_test_case_free(ctx, tc));
@@ -4314,6 +4357,8 @@ unsafe fn drain_run_valid(ctx: *mut HegelContext, run: *mut HegelRun) {
                 ctx,
                 tc,
                 hegel_status_t::HEGEL_STATUS_VALID as u32,
+                ptr::null(),
+                ptr::null(),
                 ptr::null(),
             ));
             ok(hegel_test_case_free(ctx, tc));

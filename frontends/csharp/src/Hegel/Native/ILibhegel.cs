@@ -1,5 +1,11 @@
 namespace Hegel.Native;
 
+/// <summary>A local time type as a zone oracle answers it: seconds east of UT, the DST flag and the abbreviation.</summary>
+internal readonly record struct OracleType(int Utoff, bool IsDst, string Abbreviation);
+
+/// <summary>What a zone source knows about a name: whether it knows it, whether it is a link, and its feature tags.</summary>
+internal readonly record struct ZoneNameInfo(bool Known, bool IsLink, uint Tags);
+
 /// <summary>
 /// The engine as the frontend drives it: every C ABI function the frontend uses, with managed
 /// arguments and raw handles. Return codes are the ABI's; the <c>Free</c> functions and those
@@ -49,14 +55,15 @@ internal interface ILibhegel
     void SettingsPrintBlob(nint settings, bool yes);
     void SettingsNondeterminismStrictness(nint settings, int strictness);
 
-    nint RunStart(nint settings, Action<string> output);
-    nint RunStartBlob(nint settings, string blob, Action<string> output);
+    nint RunStart(nint settings, Action<string>? output);
+    nint RunStartBlob(nint settings, string blob, Action<string>? output);
     nint NextTestCase(nint run);
     nint RunResult(nint run);
     void RunResultFree(nint result);
     void RunFree(nint run);
     void TestCaseFree(nint testCase);
-    bool TestCaseShouldCapture(nint testCase);
+    bool TestCaseWantsOutput(nint testCase);
+    bool TestCaseWantsDetail(nint testCase);
     int TestCaseClone(nint testCase, out nint clone);
     void TestCaseSetWorker(nint testCase, long workerIndex);
     int TestCaseBlock(nint testCase, ulong indent, out nint block);
@@ -91,12 +98,69 @@ internal interface ILibhegel
     int GenerateFloat(nint testCase, int width, double min, double max, bool allowNan, bool allowInfinity, bool excludeMin, bool excludeMax, double smallestNonzeroMagnitude, out double value);
     int GenerateBytes(nint testCase, ulong minSize, ulong maxSize, out byte[] value);
     int GenerateString(nint testCase, nint generator, out string value);
-    int GenerateDate(nint testCase, HegelDate min, HegelDate max, out HegelDate value);
-    int GenerateTime(nint testCase, HegelTime min, HegelTime max, out HegelTime value);
-    int GenerateDatetime(nint testCase, HegelDateTime min, HegelDateTime max, out HegelDateTime value);
+    int GenerateDate(nint testCase, HegelDate min, HegelDate max, nint options, out HegelDate value);
+    int GenerateTime(nint testCase, HegelTime min, HegelTime max, uint precision, out HegelTime value);
+    int GenerateDatetime(nint testCase, HegelDateTime min, HegelDateTime max, uint precision, out HegelDateTime value);
     int GenerateUuid(nint testCase, int version, bool hasVersion, byte[] out16);
     int GenerateIpv4(nint testCase, byte[] out4);
     int GenerateIpv6(nint testCase, byte[] out16);
+
+    int DateOptionsNew(out nint options);
+    void DateOptionsFree(nint options);
+    int DateOptionsSetWeekdays(nint options, uint mask);
+    int DateOptionsSetMonths(nint options, uint mask);
+    int ValidateDate(HegelDate min, HegelDate max, nint options);
+    int ValidateTime(HegelTime min, HegelTime max, uint precision);
+    int ValidateDatetime(HegelDateTime min, HegelDateTime max, uint precision);
+    int GenerateTimestamp(nint testCase, HegelTimestamp min, HegelTimestamp max, uint precision, out HegelTimestamp value);
+    int ValidateTimestamp(HegelTimestamp min, HegelTimestamp max, uint precision);
+    int GenerateOffset(nint testCase, int minSeconds, int maxSeconds, uint granularity, out HegelOffset value);
+    int ValidateOffset(int minSeconds, int maxSeconds, uint granularity);
+    int GenerateDuration(nint testCase, HegelDuration min, HegelDuration max, uint precision, out HegelDuration value);
+    int ValidateDuration(HegelDuration min, HegelDuration max, uint precision);
+
+    int SpanSpecNew(out nint spec);
+    void SpanSpecFree(nint spec);
+    int SpanSpecSetUnitBounds(nint spec, uint unit, long min, long max);
+    int SpanSpecSetSign(nint spec, uint sign);
+    int SpanSpecValidate(nint spec);
+    int GenerateSpan(nint testCase, nint spec, out HegelSpan value);
+
+    int TimezoneSpecNew(out nint spec);
+    void TimezoneSpecFree(nint spec);
+    int TimezoneSpecSetNames(nint spec, IReadOnlyList<string> names);
+    int TimezoneSpecSetLinks(nint spec, bool links);
+    int TimezoneSpecSetLegacy(nint spec, bool legacy);
+    int TimezoneSpecSetSource(nint spec, nint source);
+    int TimezoneSpecValidate(nint spec);
+    int GenerateTimezone(nint testCase, nint spec, out string name);
+
+    int ZonedSpecNew(out nint spec);
+    void ZonedSpecFree(nint spec);
+    int ZonedSpecSetCivilBounds(nint spec, HegelDateTime min, HegelDateTime max);
+    int ZonedSpecSetInstantBounds(nint spec, HegelTimestamp min, HegelTimestamp max);
+    int ZonedSpecSetPrecision(nint spec, uint precision);
+    int ZonedSpecSetImaginary(nint spec, uint imaginary);
+    int ZonedSpecSetAmbiguous(nint spec, uint ambiguous);
+    int ZonedSpecValidate(nint spec);
+    int GenerateZonedDatetime(nint testCase, nint timezoneSpec, nint zonedSpec, out HegelZonedDateTime value, out string zone);
+    int GenerateZonedDatetimeForZone(nint testCase, nint source, string name, nint zonedSpec, out HegelZonedDateTime value);
+
+    int ZoneSourceNew(out nint source);
+    int ZoneSourceBundled(out nint source);
+    void ZoneSourceFree(nint source);
+    int ZoneSourceAddTzif(nint source, string name, byte[] bytes);
+    int ZoneSourceAddOracle(nint source, string name, Func<long, OracleType> offsetAt, Func<long, long?>? nextTransition, int firstYear, int lastYear, uint after);
+    int ZoneSourceAddLink(nint source, string name, string target);
+    int ZoneSourceDeclare(nint source, IReadOnlyList<string> names);
+    int ZoneSourceSetLoader(nint source, Action<nint, string> loader);
+    int ZoneSourceSetVersion(nint source, string version);
+    int ZoneSourceVersion(nint source, out string version);
+    int ZoneSourceNameCount(nint source, out ulong count);
+    int ZoneSourceName(nint source, ulong index, out string name);
+    int TimezoneInfoIn(nint source, string name, out ZoneNameInfo info);
+    int FormatSpan(HegelSpan value, out string text);
+    int FormatZonedDatetime(HegelZonedDateTime value, string zone, out string text);
 
     int StringGeneratorText(ulong minSize, ulong maxSize, string? codec, uint minCodepoint, uint maxCodepoint, IReadOnlyList<string>? categories, IReadOnlyList<string>? excludeCategories, string? includeCharacters, string? excludeCharacters, out nint generator);
     int StringGeneratorRegex(string pattern, bool fullmatch, nint alphabet, out nint generator);
@@ -153,7 +217,7 @@ internal interface ILibhegel
     int Target(nint testCase, double value, string label);
     int Event(nint testCase, string label);
     int EventValue(nint testCase, double value, string label);
-    int MarkComplete(nint testCase, int status, string? origin);
+    int MarkComplete(nint testCase, int status, string? origin, string? summary, string? detail);
 
     int RunResultStatus(nint result);
     string RunResultError(nint result);
@@ -162,6 +226,8 @@ internal interface ILibhegel
     string? FailureBlob(nint result, ulong index);
     string FailureOrigin(nint result, ulong index);
     string? FailureCaveat(nint result, ulong index);
+    string? FailureOutput(nint result, ulong index);
+    string? FailureDiagnostic(nint result, ulong index);
 
     ulong LabelFromName(string name);
     ulong LabelCombine(ulong[] labels);

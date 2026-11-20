@@ -23,7 +23,7 @@ include(FetchContent)
 FetchContent_Declare(
     hegel
     GIT_REPOSITORY https://github.com/hegeldev/hegel.git
-    GIT_TAG frontends/cpp/0.17.5
+    GIT_TAG frontends/cpp/0.18.0
     SOURCE_SUBDIR frontends/cpp
     GIT_CONFIG lfs.fetchexclude=website
 )
@@ -43,7 +43,7 @@ library and libhegel. The declaration is otherwise the same:
 ```cmake
 FetchContent_Declare(
     hegel
-    URL https://github.com/hegeldev/hegel/releases/download/frontends/cpp/0.17.1/hegel-cpp-0.17.1.tar.gz
+    URL https://github.com/hegeldev/hegel/releases/download/frontends/cpp/0.17.4/hegel-cpp-0.17.4.tar.gz
     SOURCE_SUBDIR frontends/cpp
 )
 ```

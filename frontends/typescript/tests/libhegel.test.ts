@@ -16,6 +16,7 @@ import {
 import { AssumeError, StopTestError } from "../src/testCase.js";
 import { LIBHEGEL_VERSION } from "../src/libhegel-version.js";
 import { testLibPath } from "./libPath.js";
+import { readFileSync } from "node:fs";
 
 // ---------------------------------------------------------------------------
 // Unit tests for the integer wire-format helpers.
@@ -58,6 +59,8 @@ describe("integer wire-format helpers", () => {
 // Fake-bindings unit tests for wrapper logic that the real engine cannot easily
 // be driven into (NULL returns, specific result codes, null string getters).
 // ---------------------------------------------------------------------------
+
+const discard = (_line: string): void => undefined;
 
 function fakeBindings(overrides: Partial<Bindings>): Bindings {
   const noop = (): void => undefined;
@@ -106,11 +109,13 @@ function fakeBindings(overrides: Partial<Bindings>): Bindings {
     settingsGetUnboundedChoices: () => false,
     settingsGetBackend: () => 0,
     settingsGetNondeterminismStrictness: () => 0,
-    runStart: (_ctx, _settings, out) => {
+    registerOutput: () => ({}) as Ptr,
+    unregisterOutput: noop,
+    runStart: (_ctx, _settings, _callback, out) => {
       out[0] = {} as Ptr;
       return 0;
     },
-    runStartBlob: (_ctx, _settings, _blob, out) => {
+    runStartBlob: (_ctx, _settings, _blob, _callback, out) => {
       out[0] = {} as Ptr;
       return 0;
     },
@@ -125,7 +130,8 @@ function fakeBindings(overrides: Partial<Bindings>): Bindings {
     runResultFree: noop,
     runFree: noop,
     testCaseFree: noop,
-    testCaseShouldCapture: () => 0,
+    testCaseWantsOutput: () => 0,
+    testCaseWantsDetail: () => 0,
     testCaseClone: (_ctx, _tc, out) => {
       out[0] = {} as Ptr;
       return 0;
@@ -201,9 +207,71 @@ function fakeBindings(overrides: Partial<Bindings>): Bindings {
     grammarDrawProvide: () => 0,
     grammarDrawResult: () => 0,
     grammarDrawFree: noop,
+    dateOptionsNew: (_ctx, out) => {
+      out[0] = {} as Ptr;
+      return 0;
+    },
+    dateOptionsFree: noop,
+    dateOptionsSetWeekdays: () => 0,
+    dateOptionsSetMonths: () => 0,
     generateDate: () => 0,
     generateTime: () => 0,
     generateDatetime: () => 0,
+    generateTimestamp: () => 0,
+    generateOffset: () => 0,
+    validateDate: () => 0,
+    validateTime: () => 0,
+    validateDatetime: () => 0,
+    validateTimestamp: () => 0,
+    validateOffset: () => 0,
+    timezoneInfo: () => 0,
+    timezoneSpecNew: (_ctx, out) => {
+      out[0] = {} as Ptr;
+      return 0;
+    },
+    timezoneSpecFree: noop,
+    timezoneSpecSetNames: () => 0,
+    timezoneSpecSetSource: () => 0,
+    timezoneSpecSetLinks: () => 0,
+    timezoneSpecSetLegacy: () => 0,
+    timezoneSpecValidate: () => 0,
+    zoneSourceNew: (_ctx, out) => {
+      out[0] = {} as Ptr;
+      return 0;
+    },
+    zoneSourceAddTzif: () => 0,
+    zoneSourceAddZone: () => 0,
+    zoneSourceAddLink: () => 0,
+    zoneSourceDeclare: () => 0,
+    generateTimezone: () => 0,
+    zonedSpecNew: (_ctx, out) => {
+      out[0] = {} as Ptr;
+      return 0;
+    },
+    zonedSpecFree: noop,
+    zonedSpecSetCivilBounds: () => 0,
+    zonedSpecSetInstantBounds: () => 0,
+    zonedSpecSetPrecision: () => 0,
+    zonedSpecSetImaginary: () => 0,
+    zonedSpecSetAmbiguous: () => 0,
+    zonedSpecValidate: () => 0,
+    generateZonedDatetimeForZone: () => 0,
+    spanSpecNew: (_ctx, out) => {
+      out[0] = {} as Ptr;
+      return 0;
+    },
+    spanSpecFree: noop,
+    spanSpecSetUnitBounds: () => 0,
+    spanSpecSetSign: () => 0,
+    spanSpecValidate: () => 0,
+    generateSpan: () => 0,
+    formatDate: () => "",
+    formatTime: () => "",
+    formatDatetime: () => "",
+    formatTimestamp: () => "",
+    formatOffset: () => "",
+    formatSpan: () => "",
+    formatZonedDatetime: () => "",
     generateUuid: () => 0,
     generateIpv4: () => 0,
     generateIpv6: () => 0,
@@ -258,7 +326,9 @@ function fakeBindings(overrides: Partial<Bindings>): Bindings {
     failureOrigin: () => "",
     failureReproductionBlob: () => null,
     failureCaveat: () => null,
+    failureOutput: () => null,
     version: () => "0.0.0",
+    tzdbVersion: () => "1999z",
     ...overrides,
   };
   return base;
@@ -268,7 +338,7 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
   it("throws when run_start returns an error code", () => {
     const lib = new Libhegel(
       fakeBindings({
-        runStart: (_ctx, _settings, out) => {
+        runStart: (_ctx, _settings, _callback, out) => {
           out[0] = null;
           return -3;
         },
@@ -276,7 +346,7 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
       }),
     );
     const h = lib.newContext();
-    expect(() => lib.runStart(h, h)).toThrow(/hegel_run_start failed: boom/);
+    expect(() => lib.runStart(h, h, discard)).toThrow(/hegel_run_start failed: boom/);
   });
 
   it("nextTestCase returns null at normal completion (OK code, NULL out)", () => {
@@ -342,7 +412,7 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
   it("throws when run_start_blob returns an error code", () => {
     const lib = new Libhegel(
       fakeBindings({
-        runStartBlob: (_ctx, _s, _blob, out) => {
+        runStartBlob: (_ctx, _s, _blob, _callback, out) => {
           out[0] = null;
           return -5;
         },
@@ -350,7 +420,77 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
       }),
     );
     const h = lib.newContext();
-    expect(() => lib.runStartBlob(h, h, "x")).toThrow(/hegel_run_start_blob failed: bad blob/);
+    expect(() => lib.runStartBlob(h, h, "x", discard)).toThrow(
+      /hegel_run_start_blob failed: bad blob/,
+    );
+  });
+
+  it("keeps a run's output callback registered until the run is freed", () => {
+    const callback = {} as Ptr;
+    const registered: Ptr[] = [];
+    const unregistered: Ptr[] = [];
+    const lib = new Libhegel(
+      fakeBindings({
+        registerOutput: () => {
+          registered.push(callback);
+          return callback;
+        },
+        unregisterOutput: (c) => unregistered.push(c),
+        runStart: (_ctx, _settings, given, out) => {
+          expect(given).toBe(callback);
+          out[0] = {} as Ptr;
+          return 0;
+        },
+      }),
+    );
+    const h = lib.newContext();
+    const run = lib.runStart(h, h, discard);
+    expect(registered).toEqual([callback]);
+    expect(unregistered).toEqual([]);
+    lib.freeRun(run);
+    expect(unregistered).toEqual([callback]);
+  });
+
+  it("releases the output callback of a run that fails to start", () => {
+    const unregistered: Ptr[] = [];
+    const callback = {} as Ptr;
+    const lib = new Libhegel(
+      fakeBindings({
+        registerOutput: () => callback,
+        unregisterOutput: (c) => unregistered.push(c),
+        runStartBlob: (_ctx, _s, _blob, _callback, out) => {
+          out[0] = null;
+          return -5;
+        },
+      }),
+    );
+    const h = lib.newContext();
+    expect(() => lib.runStartBlob(h, h, "x", discard)).toThrow(/hegel_run_start_blob failed/);
+    expect(unregistered).toEqual([callback]);
+  });
+
+  it("releases a run's output callback even when freeing the run fails", () => {
+    const unregistered: Ptr[] = [];
+    const lib = new Libhegel(
+      fakeBindings({
+        unregisterOutput: (c) => unregistered.push(c),
+        runFree: () => {
+          throw new Error("free failed");
+        },
+      }),
+    );
+    const h = lib.newContext();
+    const run = lib.runStart(h, h, discard);
+    expect(() => lib.freeRun(run)).toThrow("free failed");
+    expect(unregistered).toHaveLength(1);
+  });
+
+  it("frees a run handle it never registered output for", () => {
+    const unregistered: Ptr[] = [];
+    const lib = new Libhegel(fakeBindings({ unregisterOutput: (c) => unregistered.push(c) }));
+    const h = lib.newContext();
+    expect(() => lib.freeRun(h)).not.toThrow();
+    expect(unregistered).toEqual([]);
   });
 
   it("maps STOP_TEST to StopTestError", () => {
@@ -403,6 +543,7 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
     expect(lib.lastError(h)).toBe("diagnostic");
     expect(lib.failureOrigin(h)).toBe("origin");
     expect(lib.reproductionBlob(h)).toBeNull();
+    expect(lib.failureOutput(h)).toBeNull();
     expect(lib.runError(h)).toBeNull();
   });
 
@@ -508,6 +649,7 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
     const lib = new Libhegel(fakeBindings({}));
     const h = lib.newContext();
     expect(lib.version()).toBe("0.0.0");
+    expect(lib.tzdbVersion()).toBe("1999z");
     lib.freeContext(lib.newContext());
     lib.freeSettings(lib.newSettings(h));
     lib.setTestCases(h, 10);
@@ -520,7 +662,7 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
     lib.setReportMultipleFailures(h, true);
     lib.collectionReject(h, h, h, "dup");
     lib.freeCollection(lib.newContext());
-    lib.markComplete(h, h, Status.VALID, null);
+    lib.markComplete(h, h, Status.VALID, null, null, null);
     lib.freePool(lib.newPool(h, h));
     expect(lib.poolAdd(h, h, h)).toBe(0n);
     expect(lib.poolGenerate(h, h, h, true)).toBe(0n);
@@ -534,13 +676,13 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
     lib.unpauseFaults(h, h);
     lib.freeRunResult(lib.runResult(h, h));
     lib.freeFailure(lib.failure(h, 0));
-    lib.freeRun(lib.runStart(h, h));
-    lib.freeRun(lib.runStartBlob(h, h, "blob"));
+    lib.freeRun(lib.runStart(h, h, discard));
+    lib.freeRun(lib.runStartBlob(h, h, "blob", discard));
     expect(lib.getVerbosity(h)).toBe(0);
     expect(lib.getPhases(h)).toBe(0);
     expect(lib.getPrintBlob(h)).toBe(false);
     expect(lib.getReportMultipleFailures(h)).toBe(false);
-    expect(lib.shouldCapture(h, h)).toBe(false);
+    expect(lib.wantsOutput(h, h)).toBe(false);
     lib.freeTestCase(lib.cloneTestCase(h, h));
     lib.freeTestCase(lib.blockTestCase(h, h, 2));
     lib.setWorker(h, h, 1);
@@ -588,12 +730,72 @@ describe("Libhegel wrapper logic (fake bindings)", () => {
       }),
     ).toBe(0);
     expect(
-      lib.generateDate(h, h, { year: 1, month: 1, day: 1 }, { year: 2, month: 1, day: 1 }),
+      lib.generateDate(h, h, { year: 1, month: 1, day: 1 }, { year: 2, month: 1, day: 1 }, null),
     ).toEqual({
       year: 0,
       month: 0,
       day: 0,
     });
+  });
+
+  it("marshals the zeroed date and time outputs of fake bindings", () => {
+    const lib = new Libhegel(fakeBindings({}));
+    const h = lib.newContext();
+    const zero = { second: 0n, nanosecond: 0 };
+    expect(lib.generateTimestamp(h, h, zero, zero, 0)).toEqual(zero);
+    expect(lib.generateOffset(h, h, 0, 0, 0, false)).toEqual({ seconds: 0, known: false });
+    expect(lib.timezoneInfo(h, "Nowhere/Unknown")).toEqual({
+      known: false,
+      primaryName: "",
+      isLink: false,
+      rank: 0,
+      tags: 0,
+    });
+    expect(lib.generateTimezone(h, h, lib.timezoneSpecNew(h))).toBe("");
+    for (const source of [null, lib.zoneSourceNew(h)]) {
+      expect(lib.generateZonedDatetimeForZone(h, h, source, "UTC", lib.zonedSpecNew(h))).toEqual({
+        civil: {
+          date: { year: 0, month: 0, day: 0 },
+          time: { hour: 0, minute: 0, second: 0, nanosecond: 0 },
+        },
+        offsetSeconds: 0,
+        offsetKnown: false,
+        fold: false,
+        kind: 0,
+        offsetBefore: 0,
+        offsetAfter: 0,
+        timestamp: zero,
+      });
+    }
+    expect(lib.generateSpan(h, h, lib.spanSpecNew(h))).toEqual({
+      years: 0n,
+      months: 0n,
+      weeks: 0n,
+      days: 0n,
+      hours: 0n,
+      minutes: 0n,
+      seconds: 0n,
+      milliseconds: 0n,
+      microseconds: 0n,
+      nanoseconds: 0n,
+    });
+    for (const method of [
+      "dateOptionsNew",
+      "timezoneSpecNew",
+      "zonedSpecNew",
+      "spanSpecNew",
+      "zoneSourceNew",
+    ] as const) {
+      const nullHandle = new Libhegel(
+        fakeBindings({
+          [method]: (_ctx: Ptr, out: Ptr[]) => {
+            out[0] = null;
+            return 0;
+          },
+        }),
+      );
+      expect(() => nullHandle[method](nullHandle.newContext())).toThrow("returned a null handle");
+    }
   });
 });
 
@@ -617,7 +819,7 @@ function driveIntegerRun(
     lib.setSeed(settings, 12345n);
     lib.setDatabase(ctx, settings, ""); // disable persistence
     lib.setSuppressHealthCheck(settings, 0);
-    run = lib.runStart(ctx, settings);
+    run = lib.runStart(ctx, settings, discard);
 
     for (;;) {
       const tc = lib.nextTestCase(ctx, run);
@@ -637,7 +839,14 @@ function driveIntegerRun(
           throw e;
         }
       }
-      lib.markComplete(ctx, tc, status, origin);
+      lib.markComplete(
+        ctx,
+        tc,
+        status,
+        origin,
+        origin && "Error: failed",
+        origin && "Error: failed",
+      );
       lib.freeTestCase(tc);
     }
 
@@ -674,6 +883,15 @@ describe("Libhegel against the real library", () => {
     expect(lib.version()).toBe(LIBHEGEL_VERSION);
   });
 
+  it("reports the bundled time zone database release", () => {
+    expect(lib.tzdbVersion()).toBe(
+      readFileSync(
+        `${import.meta.dirname}/../../../libhegel/src/tzdata/version.txt`,
+        "utf8",
+      ).trim(),
+    );
+  });
+
   it("passes a property that always holds", () => {
     const res = driveIntegerRun(lib, (n) => n >= -1000 && n <= 1000);
     expect(res.status).toBe(RunStatus.PASSED);
@@ -691,12 +909,12 @@ describe("Libhegel against the real library", () => {
     const settings = lib.newSettings(ctx);
     lib.setDatabase(ctx, settings, "");
     lib.setVerbosity(settings, NativeVerbosity.QUIET);
-    const run = lib.runStart(ctx, settings);
+    const run = lib.runStart(ctx, settings, discard);
     const tc = lib.nextTestCase(ctx, run)!;
     try {
       lib.pauseFaults(ctx, tc);
       lib.unpauseFaults(ctx, tc);
-      lib.markComplete(ctx, tc, Status.VALID, null);
+      lib.markComplete(ctx, tc, Status.VALID, null, null, null);
     } finally {
       lib.freeTestCase(tc);
       lib.freeRun(run);
@@ -729,12 +947,12 @@ describe("Libhegel against the real library", () => {
     const settings = lib.newSettings(ctx);
     lib.setVerbosity(settings, NativeVerbosity.QUIET);
     lib.setDatabase(ctx, settings, "");
-    const run = lib.runStart(ctx, settings);
+    const run = lib.runStart(ctx, settings, discard);
     try {
       const tc = lib.nextTestCase(ctx, run);
       expect(tc).not.toBeNull();
       expect(() => lib.generateInteger(ctx, tc, 10n, -10n)).toThrow(LibhegelError);
-      lib.markComplete(ctx, tc, Status.INVALID, null);
+      lib.markComplete(ctx, tc, Status.INVALID, null, null, null);
       lib.freeTestCase(tc);
     } finally {
       lib.freeRun(run);
@@ -748,13 +966,13 @@ describe("Libhegel against the real library", () => {
     const settings = lib.newSettings(ctx);
     lib.setVerbosity(settings, NativeVerbosity.QUIET);
     lib.setDatabase(ctx, settings, "");
-    const run = lib.runStart(ctx, settings);
+    const run = lib.runStart(ctx, settings, discard);
     try {
       const tc = lib.nextTestCase(ctx, run);
       expect(tc).not.toBeNull();
       // Misuse: pull again without marking the first complete.
       expect(() => lib.nextTestCase(ctx, run)).toThrow(LibhegelError);
-      lib.markComplete(ctx, tc, Status.VALID, null);
+      lib.markComplete(ctx, tc, Status.VALID, null, null, null);
       lib.freeTestCase(tc);
     } finally {
       lib.freeRun(run);
@@ -769,7 +987,7 @@ describe("Libhegel against the real library", () => {
     lib.setTestCases(settings, 20);
     lib.setVerbosity(settings, NativeVerbosity.QUIET);
     lib.setDatabase(ctx, settings, "");
-    const run = lib.runStart(ctx, settings);
+    const run = lib.runStart(ctx, settings, discard);
     try {
       let rejectedOnce = false;
       for (;;) {
@@ -792,10 +1010,10 @@ describe("Libhegel against the real library", () => {
             lib.freeCollection(collection);
           }
           lib.stopSpan(ctx, tc, false);
-          lib.markComplete(ctx, tc, Status.VALID, null);
+          lib.markComplete(ctx, tc, Status.VALID, null, null, null);
         } catch (e) {
           if (e instanceof StopTestError) {
-            lib.markComplete(ctx, tc, Status.OVERRUN, null);
+            lib.markComplete(ctx, tc, Status.OVERRUN, null, null, null);
           } else {
             throw e;
           }
@@ -939,23 +1157,23 @@ describe("Libhegel ABI 0.42.4 regressions", () => {
     const settings = lib.newSettings(ctx);
     lib.setDatabase(ctx, settings, "");
     lib.setVerbosity(settings, NativeVerbosity.QUIET);
-    const run = lib.runStart(ctx, settings);
+    const run = lib.runStart(ctx, settings, discard);
     const tc = lib.nextTestCase(ctx, run);
     try {
       const date = { year: -12345, month: 6, day: 17 };
-      expect(lib.generateDate(ctx, tc, date, date)).toEqual(date);
+      expect(lib.generateDate(ctx, tc, date, date, null)).toEqual(date);
       for (const nanosecond of [1, 123456789, 999999999]) {
         const time = { hour: 12, minute: 34, second: 56, nanosecond };
-        expect(lib.generateTime(ctx, tc, time, time)).toEqual(time);
+        expect(lib.generateTime(ctx, tc, time, time, 0)).toEqual(time);
         const datetime = { date, time };
-        expect(lib.generateDatetime(ctx, tc, datetime, datetime)).toEqual(datetime);
+        expect(lib.generateDatetime(ctx, tc, datetime, datetime, 0)).toEqual(datetime);
       }
       const uuid = lib.generateUuid(ctx, tc, 4);
       expect(uuid).toHaveLength(16);
       expect(uuid[6] >> 4).toBe(4);
       expect(uuid[8] >> 6).toBe(2);
     } finally {
-      lib.markComplete(ctx, tc, Status.VALID, null);
+      lib.markComplete(ctx, tc, Status.VALID, null, null, null);
       lib.freeTestCase(tc);
       lib.freeRun(run);
       lib.freeSettings(settings);

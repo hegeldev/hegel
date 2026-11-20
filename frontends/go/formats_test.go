@@ -3,6 +3,7 @@ package hegel
 // formats_test.go tests email, url, domain, date, and datetime generators.
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -96,7 +97,7 @@ func TestDatesE2E(t *testing.T) {
 
 	// time.Time's zero value can be generated, so check the year bounds.
 	Test(t, func(ht *T) {
-		v := Draw(ht, Dates())
+		v := Draw(ht, newDates())
 		if v.Year() < 1 || v.Year() > 9999 {
 			panic("date year out of range")
 		}
@@ -112,7 +113,7 @@ func TestDatesInclusiveBounds(t *testing.T) {
 	minVal := time.Date(1999, time.December, 31, 12, 30, 0, 0, time.FixedZone("ignored", 3600))
 	maxVal := time.Date(2000, time.January, 2, 1, 2, 3, 0, time.UTC)
 	Test(t, func(ht *T) {
-		v := Draw(ht, Dates().Min(minVal).Max(maxVal))
+		v := Draw(ht, newDates().Min(minVal).Max(maxVal))
 		if v.Before(time.Date(1999, time.December, 31, 0, 0, 0, 0, time.UTC)) ||
 			v.After(time.Date(2000, time.January, 2, 0, 0, 0, 0, time.UTC)) {
 			panic("date outside configured bounds")
@@ -126,7 +127,7 @@ func TestDatesEqualBounds(t *testing.T) {
 	bound := time.Date(2024, time.February, 29, 18, 30, 0, 0, time.UTC)
 	Test(t, func(ht *T) {
 		want := time.Date(2024, time.February, 29, 0, 0, 0, 0, time.UTC)
-		if got := Draw(ht, Dates().Min(bound).Max(bound)); !got.Equal(want) {
+		if got := Draw(ht, newDates().Min(bound).Max(bound)); !got.Equal(want) {
 			panic("date with equal bounds did not produce the bound")
 		}
 	}, WithTestCases(1))
@@ -138,10 +139,10 @@ func TestDatesOneSidedBounds(t *testing.T) {
 	minVal := time.Date(9999, time.December, 31, 0, 0, 0, 0, time.UTC)
 	maxVal := time.Date(1, time.January, 1, 0, 0, 0, 0, time.UTC)
 	Test(t, func(ht *T) {
-		if got := Draw(ht, Dates().Min(minVal)); !got.Equal(minVal) {
+		if got := Draw(ht, newDates().Min(minVal)); !got.Equal(minVal) {
 			panic("date did not honor one-sided minimum")
 		}
-		if got := Draw(ht, Dates().Max(maxVal)); !got.Equal(maxVal) {
+		if got := Draw(ht, newDates().Max(maxVal)); !got.Equal(maxVal) {
 			panic("date did not honor one-sided maximum")
 		}
 	}, WithTestCases(1))
@@ -152,10 +153,30 @@ func TestDatesSupportExtendedYears(t *testing.T) {
 
 	bound := time.Date(-10000, time.January, 1, 0, 0, 0, 0, time.UTC)
 	Test(t, func(ht *T) {
-		if got := Draw(ht, Dates().Min(bound).Max(bound)); !got.Equal(bound) {
+		if got := Draw(ht, newDates().Min(bound).Max(bound)); !got.Equal(bound) {
 			panic("date did not preserve an engine-supported extended year")
 		}
 	}, WithTestCases(1))
+}
+
+// TestDeprecatedDateConstructors covers Dates and Datetimes, which package
+// hegel exported before package temporal had them.
+func TestDeprecatedDateConstructors(t *testing.T) {
+	t.Parallel()
+
+	if !reflect.DeepEqual(Dates(), newDates()) || !reflect.DeepEqual(Datetimes(), newDatetimes()) {
+		t.Fatal("Dates or Datetimes is not the generator package temporal returns")
+	}
+	leapDay := time.Date(2024, time.February, 29, 0, 0, 0, 0, time.UTC)
+	noon := leapDay.Add(12 * time.Hour)
+	Test(t, func(ht *T) {
+		if got := Draw(ht, Dates().Min(leapDay).Max(leapDay)); !got.Equal(leapDay) {
+			ht.Fatalf("Dates drew %v, want %v", got, leapDay)
+		}
+		if got := Draw(ht, Datetimes().Min(noon).Max(noon)); !got.Equal(noon) {
+			ht.Fatalf("Datetimes drew %v, want %v", got, noon)
+		}
+	}, WithTestCases(10))
 }
 
 func TestDatetimesE2E(t *testing.T) {
@@ -163,7 +184,7 @@ func TestDatetimesE2E(t *testing.T) {
 
 	// time.Time's zero value can be generated, so check its fields.
 	Test(t, func(ht *T) {
-		v := Draw(ht, Datetimes())
+		v := Draw(ht, newDatetimes())
 		if v.Year() < 1 || v.Year() > 9999 {
 			panic("datetime year out of range")
 		}
@@ -183,7 +204,7 @@ func TestDatetimesInclusiveBounds(t *testing.T) {
 	maxVal := time.Date(2000, time.January, 1, 0, 0, 1, 456, time.UTC)
 	wantMin := time.Date(1999, time.December, 31, 23, 59, 59, 123, time.UTC)
 	Test(t, func(ht *T) {
-		v := Draw(ht, Datetimes().Min(minVal).Max(maxVal))
+		v := Draw(ht, newDatetimes().Min(minVal).Max(maxVal))
 		if v.Before(wantMin) || v.After(maxVal) {
 			panic("datetime outside configured bounds")
 		}
@@ -195,7 +216,7 @@ func TestDatetimesEqualBounds(t *testing.T) {
 
 	bound := time.Date(2024, time.February, 29, 12, 34, 56, 789, time.UTC)
 	Test(t, func(ht *T) {
-		if got := Draw(ht, Datetimes().Min(bound).Max(bound)); !got.Equal(bound) {
+		if got := Draw(ht, newDatetimes().Min(bound).Max(bound)); !got.Equal(bound) {
 			panic("datetime with equal bounds did not produce the bound")
 		}
 	}, WithTestCases(1))
@@ -207,10 +228,10 @@ func TestDatetimesOneSidedBounds(t *testing.T) {
 	minVal := time.Date(9999, time.December, 31, 23, 59, 59, 999999999, time.UTC)
 	maxVal := time.Date(1, time.January, 1, 0, 0, 0, 0, time.UTC)
 	Test(t, func(ht *T) {
-		if got := Draw(ht, Datetimes().Min(minVal)); !got.Equal(minVal) {
+		if got := Draw(ht, newDatetimes().Min(minVal)); !got.Equal(minVal) {
 			panic("datetime did not honor one-sided minimum")
 		}
-		if got := Draw(ht, Datetimes().Max(maxVal)); !got.Equal(maxVal) {
+		if got := Draw(ht, newDatetimes().Max(maxVal)); !got.Equal(maxVal) {
 			panic("datetime did not honor one-sided maximum")
 		}
 	}, WithTestCases(1))
@@ -221,7 +242,7 @@ func TestDatetimesSupportExtendedYears(t *testing.T) {
 
 	bound := time.Date(10000, time.December, 31, 23, 59, 59, 999999999, time.UTC)
 	Test(t, func(ht *T) {
-		if got := Draw(ht, Datetimes().Min(bound).Max(bound)); !got.Equal(bound) {
+		if got := Draw(ht, newDatetimes().Min(bound).Max(bound)); !got.Equal(bound) {
 			panic("datetime did not preserve an engine-supported extended year")
 		}
 	}, WithTestCases(1))
