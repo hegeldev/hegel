@@ -8,11 +8,10 @@ import java.lang.annotation.Target;
 
 /**
  * Marks a method of a state-machine class as an invariant: a property {@link Stateful#run} checks
- * on the machine's initial and final state and samples after rules in between (each check runs with
- * probability {@code 1 / stepCount}, keeping an invariant's expected cost per test case constant as
- * the step count grows). Set {@link #alwaysRun} to check it after every rule instead, and {@link
- * #pauseFaults} to pause fault injection while it runs. The method must take a single {@link
- * TestCase} parameter and assert on the machine's state.
+ * on the machine's initial and final state and samples after rules in between. Set {@link
+ * #alwaysRun} to check it after every rule, and {@link #pauseFaults} to pause fault injection while
+ * it runs. The method must take a single {@link TestCase} parameter and assert on the machine's
+ * state.
  *
  * <p>See {@link Stateful} for a complete example.
  */

@@ -4642,7 +4642,7 @@ unsafe fn state_machine_ref<'a>(
 /// test case: every case runs at least one round and at most `step_count`
 /// (at concurrency 1, where a round is one rule, that is at most
 /// `step_count` completed rules), and each sampled invariant is checked with
-/// probability `1 / step_count` per join point. The engine has no default;
+/// probability `max(0.01, 1 / step_count)` per join point. The engine has no default;
 /// frontends typically use 50.
 ///
 /// The engine owns rule selection — including swarm testing, where each
@@ -5070,11 +5070,9 @@ pub unsafe extern "C" fn hegel_state_machine_rule_rejected(
 /// current join point, writing the decision into `*out_should_check`: true
 /// unconditionally (consuming no entropy) for an invariant declared with
 /// `always_check` set, otherwise a
-/// recorded boolean draw that is true with probability `1 / step_count`
-/// (the machine's creation-time step count), so each sampled invariant's
-/// expected number of sampled runs over a full-length test case is one,
-/// regardless of the step count. The caller owns the machine's guaranteed invariant checks —
-/// its initial state, and its final state once
+/// recorded boolean draw that is true with probability `max(0.01, 1 / step_count)`
+/// (the machine's creation-time step count). The caller owns the machine's guaranteed
+/// invariant checks — its initial state, and its final state once
 /// `hegel_state_machine_next_group` signals termination — and should run
 /// those unconditionally, without calling this.
 ///

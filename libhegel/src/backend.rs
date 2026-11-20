@@ -373,7 +373,7 @@ pub trait DataSource: Send + Sync {
     /// Decide whether the caller should run invariant `invariant_index` at
     /// the current join point: `true` without consuming entropy for an
     /// invariant registered always-check, otherwise a recorded boolean draw
-    /// that is `true` with probability `1 / step_count`, so each
+    /// that is `true` with probability `max(0.01, 1 / step_count)`, so each
     /// sampled invariant's expected number of sampled runs over a
     /// full-length test case is one. The caller runs its guaranteed checks
     /// — the machine's initial state and its final state after the last
