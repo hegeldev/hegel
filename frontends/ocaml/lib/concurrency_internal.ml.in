@@ -1,0 +1,238 @@
+#ifdef OXCAML
+#define MODE(m) @ m
+#else
+#define MODE(m)
+#endif
+
+type outcome = (exn * Printexc.raw_backtrace) option
+
+type 'ctx dispatch =
+  n:int
+  -> (f:('ctx MODE(local) -> int -> outcome) MODE(portable)
+      -> outcome list MODE(contended))
+     MODE(local)
+
+#ifdef OXCAML
+type 'ctx t = { with_pool : 'a. f:('ctx dispatch @ local -> 'a) @ local unyielding -> 'a }
+
+#else
+type 'ctx t = { with_pool : 'a. f:('ctx dispatch -> 'a) -> 'a }
+#endif
+
+let create ~spawn_join_n = { with_pool = (fun ~f -> f spawn_join_n) }
+
+let guard f i =
+  try f () i with
+  | exn -> Some (exn, Printexc.get_raw_backtrace ())
+;;
+
+module Worker_pool = struct
+  type state =
+    | Finished of outcome
+    | Pending of (unit -> outcome)
+
+  type worker =
+    { lock : Mutex.t
+    ; ready : Condition.t
+    ; mutable state : state
+    ; mutable stopped : bool
+    }
+
+  let make () =
+    { lock = Mutex.create ()
+    ; ready = Condition.create ()
+    ; state = Finished None
+    ; stopped = false
+    }
+  ;;
+
+  let rec run w =
+    let job =
+      Mutex.protect w.lock (fun () ->
+        let rec wait () =
+          if w.stopped
+          then None
+          else (
+            match w.state with
+            | Finished _ ->
+              Condition.wait w.ready w.lock;
+              wait ()
+            | Pending f -> Some f)
+        in
+        wait ())
+    in
+    match job with
+    | None -> ()
+    | Some f ->
+      let outcome = f () in
+      Mutex.protect w.lock (fun () ->
+        w.state <- Finished outcome;
+        Condition.broadcast w.ready);
+      run w
+  ;;
+
+  let stop workers =
+    List.iter
+      (fun w ->
+        Mutex.protect w.lock (fun () ->
+          w.stopped <- true;
+          Condition.broadcast w.ready))
+      workers
+  ;;
+
+  let start_threads ~create workers =
+    let threads = ref [] in
+    match
+      List.iter (fun w -> threads := create (fun () -> run w) () :: !threads) workers
+    with
+    | () -> !threads
+    | exception exn ->
+      let bt = Printexc.get_raw_backtrace () in
+      stop workers;
+      List.iter Thread.join !threads;
+      Printexc.raise_with_backtrace exn bt
+  ;;
+
+  let dispatch workers ~f =
+    List.iteri
+      (fun i w ->
+        Mutex.protect w.lock (fun () ->
+          w.state <- Pending (fun () -> guard f i);
+          Condition.signal w.ready))
+      workers;
+    List.map
+      (fun w ->
+        Mutex.protect w.lock (fun () ->
+          let rec wait () =
+            match w.state with
+            | Finished outcome -> outcome
+            | Pending _ ->
+              Condition.wait w.ready w.lock;
+              wait ()
+          in
+          wait ()))
+      workers
+  ;;
+end
+
+let create_pooled start =
+  let with_pool ~f =
+    let pool = ref None in
+    let close () =
+      Option.iter
+        (fun (workers, join) ->
+          Worker_pool.stop workers;
+          join ())
+        !pool
+    in
+    let spawn_join_n ~n ~f =
+      let workers, _ =
+        match !pool with
+        | Some pool -> pool
+        | None ->
+          let workers = List.init n (fun _ -> Worker_pool.make ()) in
+          let join = start workers in
+          let started = workers, join in
+          pool := Some started;
+          started
+      in
+      Worker_pool.dispatch workers ~f
+    in
+    match f spawn_join_n with
+    | result ->
+      close ();
+      result
+    | exception exn ->
+      let bt = Printexc.get_raw_backtrace () in
+      close ();
+      Printexc.raise_with_backtrace exn bt
+  in
+  { with_pool }
+;;
+
+let thread_pool ~create =
+  create_pooled (fun workers ->
+    let threads = Worker_pool.start_threads ~create workers in
+    fun () -> List.iter Thread.join threads)
+;;
+
+#ifndef OXCAML
+let start_domain ~create_thread ~spawn_domain workers =
+  let lock = Mutex.create () in
+  let ready = Condition.create () in
+  let started = ref None in
+  let domain =
+    spawn_domain (fun () ->
+      let result =
+        try Ok (Worker_pool.start_threads ~create:create_thread workers) with
+        | exn -> Error (exn, Printexc.get_raw_backtrace ())
+      in
+      Mutex.protect lock (fun () ->
+        started := Some result;
+        Condition.signal ready);
+      match result with
+      | Ok threads -> List.iter Thread.join threads
+      | Error _ -> ())
+  in
+  let result =
+    Mutex.protect lock (fun () ->
+      while Option.is_none !started do
+        Condition.wait ready lock
+      done;
+      Option.get !started)
+  in
+  match result with
+  | Ok _ -> domain
+  | Error (exn, bt) ->
+    Domain.join domain;
+    Printexc.raise_with_backtrace exn bt
+;;
+
+let domain_pool ~max_domains ~create_thread ~spawn_domain =
+  create_pooled (fun workers ->
+    let count = min (List.length workers) (max 1 max_domains) in
+    let groups = Array.make count [] in
+    List.iteri (fun i w -> groups.(i mod count) <- w :: groups.(i mod count)) workers;
+    let domains = ref [] in
+    let join () = List.iter Domain.join !domains in
+    match
+      Array.iter
+        (fun group ->
+          domains
+          := start_domain ~create_thread ~spawn_domain (List.rev group) :: !domains)
+        groups
+    with
+    | () -> join
+    | exception exn ->
+      let bt = Printexc.get_raw_backtrace () in
+      Worker_pool.stop workers;
+      join ();
+      Printexc.raise_with_backtrace exn bt)
+;;
+
+#endif
+
+let threads = thread_pool ~create:Thread.create
+
+#ifndef OXCAML
+let domains =
+  domain_pool
+    ~max_domains:(Domain.recommended_domain_count () - 1)
+    ~create_thread:Thread.create
+    ~spawn_domain:Domain.spawn
+;;
+
+#endif
+
+#ifdef OXCAML
+type 'ctx pool_runner =
+  { run : 'a. f:('ctx dispatch @ local -> 'a) @ local unyielding -> 'a }
+
+let of_pool_runner (pool_runner @ local) = exclave_
+  { with_pool = (fun ~f -> pool_runner.run ~f) }
+;;
+
+let of_dispatch (dispatch @ local) = exclave_ { with_pool = (fun ~f -> f dispatch) }
+#endif
+
+let with_pool (capability MODE(local)) ~f = capability.with_pool ~f

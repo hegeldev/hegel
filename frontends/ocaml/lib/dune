@@ -120,6 +120,26 @@
    %{dep:concurrency.ml.in})))
 
 (rule
+ (target concurrency_internal.mli)
+ (action
+  (run
+   %{bin:cppo}
+   %{read-strings:cppo-flags}
+   -o
+   %{target}
+   %{dep:concurrency_internal.mli.in})))
+
+(rule
+ (target concurrency_internal.ml)
+ (action
+  (run
+   %{bin:cppo}
+   %{read-strings:cppo-flags}
+   -o
+   %{target}
+   %{dep:concurrency_internal.ml.in})))
+
+(rule
  (target internal.mli)
  (action
   (run

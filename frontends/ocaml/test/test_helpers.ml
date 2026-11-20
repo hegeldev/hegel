@@ -74,15 +74,14 @@ let contains_substring s sub =
 ;;
 
 let parallel_concurrency : unit Hegel.Concurrency.t =
-  { spawn_join_n =
-      (fun ~n ~f ->
-        Stdlib.List.init n (fun i ->
-          (Stdlib.Domain.spawn [@alert "-do_not_spawn_domains-unsafe_multidomain"])
-            (fun () -> f () i))
-        |> Stdlib.List.map Stdlib.Domain.join)
-  }
+  Hegel.Concurrency.create ~spawn_join_n:(fun ~n ~f ->
+    Stdlib.List.init n (fun i ->
+      (Stdlib.Domain.spawn [@alert "-do_not_spawn_domains-unsafe_multidomain"]) (fun () ->
+        f () i))
+    |> Stdlib.List.map Stdlib.Domain.join)
 ;;
 
 let sequential_concurrency : unit Hegel.Concurrency.t =
-  { spawn_join_n = (fun ~n ~f -> Stdlib.List.init n (fun i -> f () i)) }
+  Hegel.Concurrency.create ~spawn_join_n:(fun ~n ~f ->
+    Stdlib.List.init n (fun i -> f () i))
 ;;

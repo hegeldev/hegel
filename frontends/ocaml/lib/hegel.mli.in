@@ -361,6 +361,7 @@ include module type of Derive
 (* Excluded from the documentation, not for direct use *)
 
 module Internal = Internal
+module Concurrency_internal = Concurrency_internal
 module Cli = Cli
 
 (* [Hegel_jane_async] applies [Make] to Async. *)

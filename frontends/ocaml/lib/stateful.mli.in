@@ -615,11 +615,11 @@ module type Concurrent_state_machine = sig
 end
 
 (** [run_concurrent ~concurrency tc (module M) ~init ?min_concurrency ?max_concurrency]
-    executes a state machine with [max_concurrency] workers, of which N run rules each
-    round, where N is in [[min_concurrency, max_concurrency]].
+    executes a state machine with Hegel choosing the concurrency level between
+    [min_concurrency] and [max_concurrency].
     [min_concurrency] defaults to 1 and [max_concurrency] to [min_concurrency].
 
-    [concurrency] runs each round's workers and gives each rule its context.
+    [concurrency] selects how the rules run and supplies their context.
     See {!Concurrency}. A [module%hegel_concurrent_state_machine] that does not
     declare [type ctx] defaults to using threads.
 

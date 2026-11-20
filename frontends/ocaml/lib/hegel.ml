@@ -22,6 +22,8 @@ include Derive
     tests, not for direct use. *)
 module Internal = Internal
 
+module Concurrency_internal = Concurrency_internal
+
 (** Command-line parsing for {!main}; re-exported (doc-hidden) for white-box
     tests. *)
 module Cli = Cli
