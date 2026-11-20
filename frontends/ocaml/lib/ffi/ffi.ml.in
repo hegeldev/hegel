@@ -1248,6 +1248,7 @@ let e_already_complete = -6
 let e_not_complete = -7
 let e_internal = -8
 let e_concurrent_use = -9
+let e_unknown_setting = -12
 
 (* Phase bitmask values [HEGEL_PHASE_*]. *)
 let phase_explicit = 1
@@ -1320,7 +1321,7 @@ let error_of_rc ctx rc =
   then Stop_test
   else if rc = e_assume
   then Assume_rejected
-  else if rc = e_invalid_arg
+  else if rc = e_invalid_arg || rc = e_unknown_setting
   then Usage_error (c_last_error_message ctx)
   else (
     let label =

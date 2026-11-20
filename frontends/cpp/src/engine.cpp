@@ -312,13 +312,19 @@ namespace hegel::impl {
         check_arg(ctx, hegel_set_default_profile(ctx, borrow(name)));
     }
 
-    std::optional<std::string>
+    std::optional<InvalidSetting>
     settings_set_from_string(hegel_context_t* ctx, hegel_settings_t* s,
                              std::string_view key, std::string_view value) {
-        if (hegel_settings_set_from_string(ctx, s, borrow(key),
-                                           borrow(value)) != HEGEL_OK) {
-            return last_error(ctx);
+        hegel_result_t rc =
+            hegel_settings_set_from_string(ctx, s, borrow(key), borrow(value));
+        if (rc == HEGEL_E_UNKNOWN_SETTING) {
+            return InvalidSetting{InvalidSetting::Kind::UnknownSetting, ""};
         }
+        if (rc == HEGEL_E_INVALID_ARG) {
+            return InvalidSetting{InvalidSetting::Kind::InvalidValue,
+                                  last_error(ctx)};
+        }
+        check_rc(ctx, rc);
         return std::nullopt;
     }
 

@@ -198,7 +198,7 @@ internal static class Runner
 
     private static void CheckUserCall(ILibhegel lib, int rc, string op)
     {
-        if (rc == Abi.EInvalidArg)
+        if (rc == Abi.EInvalidArg || rc == Abi.EUnknownSetting)
         {
             throw new ArgumentException(lib.LastErrorMessage());
         }

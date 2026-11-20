@@ -493,15 +493,24 @@ fn read_settings(ctx: *mut hegel_c::HegelContext, raw: *const hegel_c::HegelSett
     }
 }
 
+/// Why `hegel_settings_set_from_string` rejected a `(key, value)` pair.
+pub(crate) enum InvalidSetting {
+    /// `HEGEL_E_UNKNOWN_SETTING`: the key names no setting.
+    UnknownSetting,
+    /// `HEGEL_E_INVALID_ARG`: the value is outside its key's vocabulary,
+    /// with the engine's diagnostic.
+    InvalidValue(String),
+}
+
 /// `settings` with each `(key, value)` of `values` applied over it in
 /// order, the engine parsing each value as `hegel_settings_set_from_string`
 /// does: `key` is a `hegel.toml` key, or `unbounded_choices` or
 /// `database_key`. The `Err` carries the index of the first pair the engine
-/// rejected and its diagnostic.
+/// rejected and why.
 pub(crate) fn settings_with_strings(
     settings: &Settings,
     values: &[(String, String)],
-) -> Result<Settings, (usize, String)> {
+) -> Result<Settings, (usize, InvalidSetting)> {
     let handle = SettingsHandle::build(settings, None, None);
     let mut database_key = settings.database_key.clone();
     with_context(|ctx| {
@@ -516,10 +525,15 @@ pub(crate) fn settings_with_strings(
                     view(value.as_bytes()),
                 )
             };
-            if rc == hegel_result_t::HEGEL_E_INVALID_ARG {
-                return Err((index, last_error_string()));
+            match rc {
+                hegel_result_t::HEGEL_E_UNKNOWN_SETTING => {
+                    return Err((index, InvalidSetting::UnknownSetting));
+                }
+                hegel_result_t::HEGEL_E_INVALID_ARG => {
+                    return Err((index, InvalidSetting::InvalidValue(last_error_string())));
+                }
+                _ => require_ok(rc),
             }
-            require_ok(rc);
             if key == "database_key" {
                 database_key = Some(value.clone());
             }

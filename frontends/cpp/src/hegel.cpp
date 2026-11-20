@@ -1333,12 +1333,11 @@ yes or no. Values use the vocabulary of the matching hegel.toml key.
         std::optional<std::string>
         apply_setting_option(hegel_context_t* ctx, hegel_settings_t* s,
                              const SettingOption& option) {
-            std::optional<std::string> error = impl::settings_set_from_string(
-                ctx, s, option.key, option.value.value_or(""));
-            if (error.has_value()) {
-                error = without_function_name(*error);
-            }
-            if (error.has_value() && starts_with(*error, "unknown setting")) {
+            std::optional<impl::InvalidSetting> error =
+                impl::settings_set_from_string(ctx, s, option.key,
+                                               option.value.value_or(""));
+            if (error.has_value() &&
+                error->kind == impl::InvalidSetting::Kind::UnknownSetting) {
                 return "unknown argument: " + option.flag;
             }
             if (!option.value.has_value()) {
@@ -1351,7 +1350,7 @@ yes or no. Values use the vocabulary of the matching hegel.toml key.
                 return std::nullopt;
             }
             // The engine's message starts with the key in backticks.
-            std::string message = *error;
+            std::string message = without_function_name(error->message);
             std::string key_prefix = "`" + option.key + "` ";
             if (starts_with(message, key_prefix)) {
                 message.erase(0, key_prefix.size());
