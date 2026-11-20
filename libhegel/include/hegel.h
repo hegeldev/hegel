@@ -3267,10 +3267,8 @@ hegel_result_t hegel_state_machine_rule_rejected(hegel_context_t *ctx,
  unconditionally (consuming no entropy) for an invariant declared with
  `always_check` set, otherwise a
  recorded boolean draw that is true with probability `max(0.01, 1 / step_count)`
- (the machine's creation-time step count), so each sampled invariant's
- expected number of sampled runs over a full-length test case is one,
- regardless of the step count. The caller owns the machine's guaranteed invariant checks —
- its initial state, and its final state once
+ (the machine's creation-time step count). The caller owns the machine's guaranteed
+ invariant checks — its initial state, and its final state once
  `hegel_state_machine_next_group` signals termination — and should run
  those unconditionally, without calling this.
 

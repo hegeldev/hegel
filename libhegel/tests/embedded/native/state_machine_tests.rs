@@ -1246,21 +1246,28 @@ fn should_check_invariant_is_always_true_at_step_count_one() {
 }
 
 #[test]
-fn should_check_invariant_samples_at_one_over_step_count_or_min() {
-    let mut trues = 0;
-    for seed in 0..20 {
-        let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
-        let mut sm = build(&mut ntc, vec![0], vec![1.0], vec![false], 1, 1, 50).unwrap();
-        for _ in 0..100 {
-            if sm.should_check_invariant(&mut ntc, 0).unwrap() {
-                trues += 1;
+fn should_check_invariant_samples_at_expected_rates() {
+    const SEED_COUNT: u64 = 20;
+    const DRAWS_PER_SEED: u64 = 200;
+    const TOLERANCE: f64 = 0.004;
+
+    for (step_count, expected_rate) in [(50, 0.02), (100, 0.01), (1_000, 0.01)] {
+        let mut checks = 0;
+        for seed in 0..SEED_COUNT {
+            let mut ntc = NativeTestCase::new_random(EngineRng::seeded(seed)).unwrap();
+            let mut sm =
+                build(&mut ntc, vec![0], vec![1.0], vec![false], 1, 1, step_count).unwrap();
+            for _ in 0..DRAWS_PER_SEED {
+                checks += u64::from(sm.should_check_invariant(&mut ntc, 0).unwrap());
             }
         }
+
+        let observed_rate = checks as f64 / (SEED_COUNT * DRAWS_PER_SEED) as f64;
+        assert!(
+            (observed_rate - expected_rate).abs() <= TOLERANCE,
+            "expected a sampling rate near {expected_rate} at {step_count} steps, got {observed_rate}"
+        );
     }
-    assert!(
-        (10..=100).contains(&trues),
-        "expected about 40 sampled checks in 2000, got {trues}"
-    );
 }
 
 #[test]
