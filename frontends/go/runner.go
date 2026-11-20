@@ -92,7 +92,12 @@ func interestingInvocationError(cause any) *invocationError {
 
 // errPropTestFailed is the marker error for "property failed during this run".
 // testCase.run records individual failures; runWithContext collects the run.
+// Its failures have already been reported to the run's output.
 var errPropTestFailed = errors.New("property test failed")
+
+// errRunFailed is the marker error for a run that ended without a verdict on
+// the property. Unlike [errPropTestFailed], its message is the only report.
+var errRunFailed = errors.New("property test run failed")
 
 // Assume rejects the current test case if condition is false.
 func (s *testCase) Assume(condition bool) {
@@ -684,7 +689,7 @@ func runWithContext(ctx *libhegel.Context, fn testBody, opts runOptions) error {
 		// engine panic) and produced no verdict on the property. There are no
 		// counterexamples to collect; the diagnostic lives in the run-level
 		// error message.
-		return fmt.Errorf("%w: %s", errPropTestFailed, result.ErrorMessage(ctx))
+		return fmt.Errorf("%w: %s", errRunFailed, result.ErrorMessage(ctx))
 	default:
 		return replayFailures(ctx, s, result, fn, opts)
 	}
