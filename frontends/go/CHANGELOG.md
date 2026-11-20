@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.10.1 - 2026-11-20
+
+This patch fixes `hegel.Test` failing a test without saying why when the run ends without a verdict on the property, such as a failed health check, a flaky test or an engine error. The test now fails with the run's error message, for example `FailedHealthCheck: FilterTooMuch` ([#116](https://github.com/hegeldev/hegel/issues/116)).
+
 ## 0.10.0 - 2026-11-19
 
 This release adds the `temporal` package, `hegel.dev/go/hegel/temporal`, which is now where Hegel's date and time generators live, and deprecates `hegel.Dates()` and `hegel.Datetimes()` in favour of `temporal.Dates()` and `temporal.Datetimes()`. The package also has new generators for durations, UTC offsets, time zones and times in time zones (`temporal.Durations()`, `temporal.Offsets()`, `temporal.Zones()` and `temporal.ZonedDatetimes()`), zone sources that say which time zone database they draw from, and new options on `Dates()` and `Datetimes()`. `Default` changes for two types, described at the end.
