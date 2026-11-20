@@ -8,7 +8,7 @@ just go::check-test                              # Run tests with 100% coverage 
 just go::check-test-no-coverage -run '^TestLibhegelEndToEnd$' ./internal/libhegel  # Run one named test
 just go::format                                  # Auto-format Go code
 just go::check-lint                              # Check formatting, the empty binaries, go fix, vet, and staticcheck
-just go::check-docs                              # Run go doc over the package
+just go::check-docs                              # Run go doc over the hegel and temporal packages
 just go::docs                                    # Serve API docs locally; open the printed URL
 just go::check                                   # Run lint, check-docs, and tests
 ```
@@ -45,6 +45,39 @@ The library is structured in layers, each building on the previous:
    mark_complete) to one libhegel C call.
 3. **Generator[T]**: type-safe generator abstraction. Generators take a `TestCase`
    and produce typed values.
+
+### The `temporal` package
+
+The date, time, duration and time zone generators are public as
+`hegel.dev/go/hegel/temporal` (`temporal/`): `temporal.Dates()`,
+`temporal.Datetimes()`, `temporal.Durations()`, `temporal.Offsets()`,
+`temporal.Zones()`, `temporal.ZonedDatetimes()` and the zone source functions
+(`temporal.HostZoneSource()`, `temporal.BundledZoneSource()`,
+`temporal.ZoneSourceFromLocations(...)`, `temporal.DefaultZoneSource()`,
+`temporal.SetDefaultZoneSource(...)`). The package is a facade:
+
+- `Generator[T]` is sealed by its unexported `draw` method, so the generators
+  are implemented in package `hegel` (`temporal.go`, `zone_source.go`, and the
+  date generators in `primitives.go`). Their types (`DateGenerator`,
+  `ZoneSource`, `Precision`, ...) are exported from `hegel`, and `temporal`
+  re-exports each as a type alias, with the `Precision*`, `Granularity*` and
+  `Ambiguous*` constants.
+- The constructors are unexported in `hegel` (`newDates`, `newZones`,
+  `hostZoneSource`, ...), so `temporal.X` is their only public spelling.
+  `hegel` cannot import `temporal` (a cycle; `Default` uses the generators),
+  so its `init` stores them in `internal/temporalbridge.Registered`, a
+  `temporalbridge.Constructors` value whose type parameters are `hegel`'s
+  types, and `temporal` asserts that value to the same instantiation when it
+  is initialized.
+- `hegel.Dates()` and `hegel.Datetimes()` were released before `temporal`
+  existed. They stay as deprecated wrappers; nothing else temporal is
+  exported as a function or constant of `hegel`.
+
+A new temporal generator gets its type and unexported constructor in `hegel`,
+a field in `temporalbridge.Constructors`, and its alias, constructor and
+user-facing doc comment in `temporal`. Tests of the implementation stay in
+package `hegel`, which can reach the stubs; `temporal/` tests the public
+surface, and its `example_test.go` holds the examples.
 
 ## Testing Philosophy
 
@@ -102,9 +135,9 @@ take a while, and let it run in the background while doing independent review wo
   generator. Keep registrations for version-specific types in files with the
   corresponding Go build tags.
 - **Module path**: `hegel.dev/go/hegel`
-- **Package name**: `hegel` — single package for the library, users import `hegel.dev/go/hegel`
+- **Package names**: `hegel`, the library, which users import as `hegel.dev/go/hegel`, and `temporal` (`hegel.dev/go/hegel/temporal`), the date and time generators (see "The `temporal` package")
 - **File naming**: lowercase, multi-word files use underscores (e.g., `project_root.go`)
-- **Test files**: `*_test.go` in the same package (white-box testing for coverage)
+- **Test files**: `*_test.go` in the same package (white-box testing for coverage); `temporal/` is tested from `temporal_test`, as a user calls it
 - **Error handling**: Unexported functions should return `error` for failable operations. Reserve `panic()` for two cases: (1) truly unreachable code paths (e.g. encoding a fixed-shape CBOR map), and (2) the boundary of an exported API where the caller's contract is misuse — e.g. `Map()` panics on construction with a malformed source generator, and `Draw()` panics to unwind the test body when the underlying `draw` returns a sentinel error. Internally, propagate errors with `fmt.Errorf("...: %w", err)` rather than re-panicking.
 - **Doc comments**: Every exported symbol must have a doc comment, usually starting with the symbol name.
   The first paragraph must consist of a single short sentence. Functions should have two more paragraphs: one describing inputs if necessary (for example sentinel values) and one describing outputs (including important sentinel errors).

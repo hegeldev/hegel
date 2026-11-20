@@ -24,10 +24,10 @@ module Ffi = Hegel_ffi.Ffi
 
 #ifdef OXCAML
 module DLS = Stdlib.Domain.Safe.DLS
+
 #else
 module DLS = Stdlib.Domain.DLS
 #endif
-
 
 (** Engine signal to stop the current test case, including choice exhaustion. *)
 exception Stop_test = Ffi.Stop_test
@@ -98,8 +98,8 @@ let free_owned (tc : test_case) =
   in
   List.iter
     (fun (context, handle) ->
-       Ffi.test_case_free context handle;
-       Ffi.context_free context)
+      Ffi.test_case_free context handle;
+      Ffi.context_free context)
     clones;
   List.iter (Ffi.pool_free tc.context) pools
 ;;
@@ -194,8 +194,8 @@ let user_location bt =
     || String.starts_with name ~prefix:"Camlinternal"
     || List.exists
          (fun m ->
-            String.starts_with name ~prefix:(m ^ ".")
-            || String.starts_with name ~prefix:(m ^ "__"))
+           String.starts_with name ~prefix:(m ^ ".")
+           || String.starts_with name ~prefix:(m ^ "__"))
          library_modules
   in
   match Stdlib.Printexc.backtrace_slots bt with
@@ -203,10 +203,10 @@ let user_location bt =
   | Some slots ->
     Array.find_map
       (fun slot ->
-         match Stdlib.Printexc.Slot.(name slot, location slot) with
-         | Some name, Some (loc : Stdlib.Printexc.location)
-           when not (is_library_frame name) -> Some loc
-         | _ -> None)
+        match Stdlib.Printexc.Slot.(name slot, location slot) with
+        | Some name, Some (loc : Stdlib.Printexc.location)
+          when not (is_library_frame name) -> Some loc
+        | _ -> None)
       slots
 ;;
 
@@ -242,28 +242,29 @@ let with_stop_guard tc LOCAL(f) =
     [true]. If [forced] is [Some b] the value is forced to [b]. Raises
     {!Stop_test} on StopTest. *)
 let generate_boolean tc p forced =
-  with_stop_guard tc (fun () ->
-    Ffi.generate_boolean tc.context tc.handle p forced) NONTAIL
+  with_stop_guard tc (fun () -> Ffi.generate_boolean tc.context tc.handle p forced)
+  NONTAIL
 ;;
 
 (** [generate_integer tc ~min_value ~max_value] draws an integer in the inclusive
     range. Raises {!Stop_test} on StopTest. *)
 let generate_integer tc ~min_value ~max_value =
   with_stop_guard tc (fun () ->
-    Ffi.generate_integer tc.context tc.handle ~min_value ~max_value) NONTAIL
+    Ffi.generate_integer tc.context tc.handle ~min_value ~max_value)
+  NONTAIL
 ;;
 
 (** [generate_float tc ...] draws a width-64 float under the given policy. Raises
     {!Stop_test} on StopTest. *)
 let generate_float
-      tc
-      ~min_value
-      ~max_value
-      ~allow_nan
-      ~allow_infinity
-      ~exclude_min
-      ~exclude_max
-      ~smallest_nonzero_magnitude
+  tc
+  ~min_value
+  ~max_value
+  ~allow_nan
+  ~allow_infinity
+  ~exclude_min
+  ~exclude_max
+  ~smallest_nonzero_magnitude
   =
   with_stop_guard tc (fun () ->
     Ffi.generate_float
@@ -275,14 +276,16 @@ let generate_float
       ~allow_infinity
       ~exclude_min
       ~exclude_max
-      ~smallest_nonzero_magnitude) NONTAIL
+      ~smallest_nonzero_magnitude)
+  NONTAIL
 ;;
 
 (** [generate_bytes tc ~min_size ~max_size] draws a byte string. Raises
     {!Stop_test} on StopTest. *)
 let generate_bytes tc ~min_size ~max_size =
   with_stop_guard tc (fun () ->
-    Ffi.generate_bytes tc.context tc.handle ~min_size ~max_size) NONTAIL
+    Ffi.generate_bytes tc.context tc.handle ~min_size ~max_size)
+  NONTAIL
 ;;
 
 type string_generator_key =
@@ -368,21 +371,22 @@ let generate_string tc key =
       else
         Fun.protect
           ~finally:(fun () -> Ffi.string_generator_free ctx sg)
-          (fun () -> Ffi.generate_string ctx tc.handle sg)) NONTAIL
+          (fun () -> Ffi.generate_string ctx tc.handle sg))
+  NONTAIL
 ;;
 
 (** [generate_text tc ...] draws a text string over the described alphabet. *)
 let generate_text
-      tc
-      ~min_size
-      ~max_size
-      ~codec
-      ~min_codepoint
-      ~max_codepoint
-      ~categories
-      ~exclude_categories
-      ~include_characters
-      ~exclude_characters
+  tc
+  ~min_size
+  ~max_size
+  ~codec
+  ~min_codepoint
+  ~max_codepoint
+  ~categories
+  ~exclude_categories
+  ~include_characters
+  ~exclude_characters
   =
   generate_string
     tc
@@ -400,7 +404,9 @@ let generate_text
 ;;
 
 (** [generate_regex tc ~pattern ~fullmatch] draws a string matching [pattern]. *)
-let generate_regex tc ~pattern ~fullmatch = generate_string tc (Regex { pattern; fullmatch })
+let generate_regex tc ~pattern ~fullmatch =
+  generate_string tc (Regex { pattern; fullmatch })
+;;
 
 (** [generate_email tc] draws an RFC 5321/5322 email address. *)
 let generate_email tc = generate_string tc Email
@@ -411,40 +417,11 @@ let generate_url tc = generate_string tc Url
 (** [generate_domain tc ~max_length] draws an RFC 1035 domain name. *)
 let generate_domain tc ~max_length = generate_string tc (Domain_name max_length)
 
-(** A proleptic Gregorian calendar date, as drawn by {!generate_date}. *)
-type date = Ffi.date =
-  { year : int
-  ; month : int
-  ; day : int
-  }
+let with_draw tc f = with_stop_guard tc (fun () -> f tc.context tc.handle) NONTAIL
 
-(** A time of day at nanosecond resolution, as drawn by {!generate_time}. *)
-type time = Ffi.time =
-  { hour : int
-  ; minute : int
-  ; second : int
-  ; nanosecond : int
-  }
-
-(** [generate_date tc ~min_value ~max_value] draws a Gregorian date in the
-    inclusive range. *)
-let generate_date tc ~min_value ~max_value =
-  with_stop_guard tc (fun () ->
-    Ffi.generate_date tc.context tc.handle ~min_value ~max_value) NONTAIL
-;;
-
-(** [generate_time tc ~min_value ~max_value] draws a time in the inclusive
-    range. *)
-let generate_time tc ~min_value ~max_value =
-  with_stop_guard tc (fun () ->
-    Ffi.generate_time tc.context tc.handle ~min_value ~max_value) NONTAIL
-;;
-
-(** [generate_datetime tc ~min_value ~max_value] draws a naive datetime in the
-    inclusive range as a [(date, time)] pair. *)
-let generate_datetime tc ~min_value ~max_value =
-  with_stop_guard tc (fun () ->
-    Ffi.generate_datetime tc.context tc.handle ~min_value ~max_value) NONTAIL
+let with_context f =
+  let ctx = Ffi.context_new () in
+  Fun.protect ~finally:(fun () -> Ffi.context_free ctx) (fun () -> f ctx)
 ;;
 
 (** [generate_ipv4 tc] draws an IPv4 address as its 4 network-order bytes. *)
@@ -458,7 +435,7 @@ let generate_ipv6 tc =
 ;;
 
 (* ------------------------------------------------------------------ *)
-(* ANSI colors                                                         *)
+(* ANSI colors *)
 (* ------------------------------------------------------------------ *)
 
 (** ANSI color code for {!stderr_color}. *)
@@ -505,17 +482,51 @@ let should_print tc = tc.wants_output
     the engine prints the document as it becomes final. *)
 let note tc message = if should_print tc then Ffi.note tc.context tc.handle message
 
+(** The atoms {!raw_text} made, by physical identity. An entry goes when its
+    atom is collected. *)
+module Raw_atoms = Ephemeron.K1.Make (struct
+    type t = Sexp.t
+
+    let equal = ( == )
+    let hash = Hashtbl.hash
+  end)
+
+#ifdef OXCAML
+let raw_atoms_create = Obj.magic_portable Raw_atoms.create
+let raw_atoms_replace = Obj.magic_portable Raw_atoms.replace
+let raw_atoms_mem = Obj.magic_portable Raw_atoms.mem
+
+#else
+let raw_atoms_create = Raw_atoms.create
+let raw_atoms_replace = Raw_atoms.replace
+let raw_atoms_mem = Raw_atoms.mem
+#endif
+
+let raw_atoms = Locked.create (fun () -> raw_atoms_create 16)
+
+(** [raw_text text] is the atom [Sexp.Atom text], marked so that
+    {!render_sexp} prints [text] verbatim. *)
+let raw_text text =
+  let atom = Sexp.Atom text in
+  Locked.protect raw_atoms (fun table -> raw_atoms_replace table atom ());
+  atom
+;;
+
+let is_raw_text sexp = Locked.protect raw_atoms (fun table -> raw_atoms_mem table sexp)
+
 (** [render_sexp ctx printer sexp] writes [sexp] to [printer] in s-expression
-    syntax. Lists are printed with breaks between elemnts when the line overflows. *)
+    syntax, an atom from {!raw_text} verbatim. Lists are printed with breaks
+    between elements when the line overflows. *)
 let rec render_sexp ctx printer (sexp : Sexp.t) =
   match sexp with
-  | Sexp.Atom _ -> Ffi.printer_text ctx printer (Sexp.to_string sexp)
+  | Sexp.Atom text ->
+    Ffi.printer_text ctx printer (if is_raw_text sexp then text else Sexp.to_string sexp)
   | Sexp.List children ->
     Ffi.printer_begin_group ctx printer ~indent:1 "(";
     List.iteri
       (fun i child ->
-         if i > 0 then Ffi.printer_breakable ctx printer " ";
-         render_sexp ctx printer child)
+        if i > 0 then Ffi.printer_breakable ctx printer " ";
+        render_sexp ctx printer child)
       children;
     Ffi.printer_end_group ctx printer ")"
 ;;
@@ -538,12 +549,12 @@ let print_line tc LOCAL(segments) =
     Fun.protect
       ~finally:(fun () -> Ffi.printer_free ctx printer)
       (fun () ->
-         List.iter
-           (function
-             | Text s -> Ffi.printer_text ctx printer s
-             | Value sexp -> render_sexp ctx printer sexp)
-           segments;
-         Ffi.printer_hard_break ctx printer))
+        List.iter
+          (function
+            | Text s -> Ffi.printer_text ctx printer s
+            | Value sexp -> render_sexp ctx printer sexp)
+          segments;
+        Ffi.printer_hard_break ctx printer))
 ;;
 
 (** [require tc ?msg condition] fails the current test case when [condition] is
@@ -569,7 +580,8 @@ let draw_display_name tc ~label ~repeatable =
 (** [target tc ~label ~value] records a targeting observation to guide the search
     engine toward higher values. *)
 let target tc ~label ~value =
-  with_stop_guard tc (fun () -> Ffi.target tc.context tc.handle value label) NONTAIL
+  with_stop_guard tc (fun () -> Ffi.target tc.context tc.handle value label)
+  NONTAIL
 ;;
 
 (** [event tc ~label] records [label] as observed on this test case for the
@@ -581,21 +593,26 @@ let event tc ~label =
 (** [event_value tc ~label ~value] records the finite observation [value] under
     [label] for the end-of-run statistics report. *)
 let event_value tc ~label ~value =
-  with_stop_guard tc (fun () -> Ffi.event_value tc.context tc.handle value label) NONTAIL
+  with_stop_guard tc (fun () -> Ffi.event_value tc.context tc.handle value label)
+  NONTAIL
 ;;
 
 (** [start_span ?label tc] starts a generation span for better shrinking. *)
 let start_span ?(label = 0L) tc =
   if Atomic.get tc.test_aborted
   then () [@coverage off]
-  else with_stop_guard tc (fun () -> Ffi.start_span tc.context tc.handle label) NONTAIL
+  else
+    with_stop_guard tc (fun () -> Ffi.start_span tc.context tc.handle label)
+    NONTAIL
 ;;
 
 (** [stop_span ?discard tc] ends the current generation span. *)
 let stop_span ?(discard = false) tc =
   if Atomic.get tc.test_aborted
   then ()
-  else with_stop_guard tc (fun () -> Ffi.stop_span tc.context tc.handle discard) NONTAIL
+  else
+    with_stop_guard tc (fun () -> Ffi.stop_span tc.context tc.handle discard)
+    NONTAIL
 ;;
 
 type collection = Ffi.collection
@@ -615,12 +632,12 @@ type invariant_info =
   }
 
 let new_state_machine_with_concurrency
-      tc
-      ~rules
-      ~invariants
-      ~step_count
-      ~min_concurrency
-      ~max_concurrency
+  tc
+  ~rules
+  ~invariants
+  ~step_count
+  ~min_concurrency
+  ~max_concurrency
   =
   with_stop_guard tc (fun () ->
     let state_machine =
@@ -634,56 +651,61 @@ let new_state_machine_with_concurrency
     match
       List.iter
         (fun (rule : rule_info) ->
-           Ffi.state_machine_add_rule
-             tc.context
-             tc.handle
-             ~state_machine
-             ~name:rule.name
-             ~weight:rule.weight
-             ~groups:rule.groups)
+          Ffi.state_machine_add_rule
+            tc.context
+            tc.handle
+            ~state_machine
+            ~name:rule.name
+            ~weight:rule.weight
+            ~groups:rule.groups)
         rules;
       List.iter
         (fun (invariant : invariant_info) ->
-           Ffi.state_machine_add_invariant
-             tc.context
-             tc.handle
-             ~state_machine
-             ~name:invariant.name
-             ~always_check:invariant.always_check)
+          Ffi.state_machine_add_invariant
+            tc.context
+            tc.handle
+            ~state_machine
+            ~name:invariant.name
+            ~always_check:invariant.always_check)
         invariants;
       Ffi.state_machine_start tc.context tc.handle ~state_machine
     with
     | concurrency -> state_machine, concurrency
     | exception exn ->
       Ffi.state_machine_free tc.context state_machine;
-      raise exn) NONTAIL
+      raise exn)
+  NONTAIL
 ;;
 
 (** [new_collection tc ~min_size ~max_size] starts an engine-managed collection.
     Release it with {!collection_free}. Raises {!Stop_test} on StopTest. *)
 let new_collection tc ~min_size ~max_size =
   with_stop_guard tc (fun () ->
-    Ffi.new_collection tc.context tc.handle ~min_size ~max_size) NONTAIL
+    Ffi.new_collection tc.context tc.handle ~min_size ~max_size)
+  NONTAIL
 ;;
 
 (** [collection_more tc ~collection] returns whether the engine wants another
     element. Raises {!Stop_test} on StopTest. *)
 let collection_more tc ~collection =
-  with_stop_guard tc (fun () ->
-    Ffi.collection_more tc.context tc.handle collection) NONTAIL
+  with_stop_guard tc (fun () -> Ffi.collection_more tc.context tc.handle collection)
+  NONTAIL
 ;;
 
 (** [collection_reject tc ~collection] rejects the collection's last element.
     Raises {!Stop_test} on StopTest. *)
 let collection_reject tc ~collection =
   with_stop_guard tc (fun () ->
-    Ffi.collection_reject tc.context tc.handle collection None) NONTAIL
+    Ffi.collection_reject tc.context tc.handle collection None)
+  NONTAIL
 ;;
 
 let collection_free tc ~collection = Ffi.collection_free tc.context collection
 
 let new_pool tc =
-  let pool = with_stop_guard tc (fun () -> Ffi.new_pool tc.context tc.handle) NONTAIL in
+  let pool =
+    with_stop_guard tc (fun () -> Ffi.new_pool tc.context tc.handle) NONTAIL
+  in
   Locked.protect tc.owned (fun owned -> owned.pools <- pool :: owned.pools);
   pool
 ;;
@@ -698,34 +720,33 @@ let pool_add tc ~pool =
     [consume] is [true], the variable is also removed from the pool. Drawing
     from an empty pool raises {!Assume_rejected}. *)
 let pool_generate tc ~pool ~consume =
-  with_stop_guard tc (fun () ->
-    Ffi.pool_generate tc.context tc.handle ~pool ~consume) NONTAIL
+  with_stop_guard tc (fun () -> Ffi.pool_generate tc.context tc.handle ~pool ~consume)
+  NONTAIL
 ;;
 
 (** [pool_restore tc ~pool ~variable_id] puts back a variable that a consuming
     {!pool_generate} removed from [pool]. *)
 let pool_restore tc ~pool ~variable_id =
-  with_stop_guard tc (fun () ->
-    Ffi.pool_restore tc.context tc.handle ~pool ~variable_id) NONTAIL
+  with_stop_guard tc (fun () -> Ffi.pool_restore tc.context tc.handle ~pool ~variable_id)
+  NONTAIL
 ;;
 
 let state_machine_next_group tc ~state_machine =
   with_stop_guard tc (fun () ->
-    Ffi.state_machine_next_group tc.context tc.handle ~state_machine) NONTAIL
+    Ffi.state_machine_next_group tc.context tc.handle ~state_machine)
+  NONTAIL
 ;;
 
 let state_machine_next_rule_for_worker tc ~state_machine ~worker_index =
   with_stop_guard tc (fun () ->
-    Ffi.state_machine_next_rule tc.context tc.handle ~state_machine ~worker_index) NONTAIL
+    Ffi.state_machine_next_rule tc.context tc.handle ~state_machine ~worker_index)
+  NONTAIL
 ;;
 
 let state_machine_rule_rejected_for_worker tc ~state_machine ~worker_index =
   with_stop_guard tc (fun () ->
-    Ffi.state_machine_rule_rejected
-      tc.context
-      tc.handle
-      ~state_machine
-      ~worker_index) NONTAIL
+    Ffi.state_machine_rule_rejected tc.context tc.handle ~state_machine ~worker_index)
+  NONTAIL
 ;;
 
 (** [state_machine_should_check_invariant tc ~state_machine ~invariant_index]
@@ -737,7 +758,8 @@ let state_machine_should_check_invariant tc ~state_machine ~invariant_index =
       tc.context
       tc.handle
       ~state_machine
-      ~invariant_index) NONTAIL
+      ~invariant_index)
+  NONTAIL
 ;;
 
 let state_machine_free tc ~state_machine = Ffi.state_machine_free tc.context state_machine
@@ -749,7 +771,7 @@ let pause_faults tc = Ffi.pause_faults tc.context tc.handle
 let unpause_faults tc = Ffi.unpause_faults tc.context tc.handle
 
 (* ------------------------------------------------------------------ *)
-(* Settings translation                                                *)
+(* Settings translation *)
 (* ------------------------------------------------------------------ *)
 
 (** [build_ffi_settings ctx settings ~database_key ~test_location] allocates the
@@ -762,13 +784,13 @@ let build_ffi_settings ctx (settings : Settings.t) ~database_key ~test_location 
   let s = Settings.to_ffi ctx settings ~database_key in
   Option.iter
     (fun (loc : test_location) ->
-       Ffi.settings_test_location
-         ctx
-         s
-         ~file:loc.file
-         ~begin_line:loc.begin_line
-         ~class_name:(Filename.remove_extension loc.file)
-         ~function_name:loc.function_name)
+      Ffi.settings_test_location
+        ctx
+        s
+        ~file:loc.file
+        ~begin_line:loc.begin_line
+        ~class_name:(Filename.remove_extension loc.file)
+        ~function_name:loc.function_name)
     test_location;
   s
 ;;
@@ -853,10 +875,10 @@ let print_failure_body ~(settings : Settings.t) ~rerun_hint ~blob ~caveat ~exn ~
   then
     Option.iter
       (fun blob ->
-         match rerun_hint with
-         | Argument -> Printf.eprintf "rerun with: ~failure_blobs:[ \"%s\" ]\n%!" blob
-         | Attribute -> Printf.eprintf "rerun with: [@@failure_blobs [ \"%s\" ]]\n%!" blob
-         | Command_line -> Printf.eprintf "rerun with: --failure-blob %s\n%!" blob)
+        match rerun_hint with
+        | Argument -> Printf.eprintf "rerun with: ~failure_blobs:[ \"%s\" ]\n%!" blob
+        | Attribute -> Printf.eprintf "rerun with: [@@failure_blobs [ \"%s\" ]]\n%!" blob
+        | Command_line -> Printf.eprintf "rerun with: --failure-blob %s\n%!" blob)
       blob
 ;;
 
@@ -865,7 +887,7 @@ let reraise failure = Printexc.raise_with_backtrace failure.exn failure.backtrac
 (** [run_test ~settings ?test_location ?database_key ?failure_blobs test_fn] runs
     a property test using the given settings against the native engine.
 
-    With an empty [failure_blobs] (the default) it executes the database replay, 
+    With an empty [failure_blobs] (the default) it executes the database replay,
     generation, and shrinking phases. With a non-empty [failure_blobs]
     the engine replays the first blob until a replay fails, and ignores the
     other blobs.
@@ -891,17 +913,17 @@ let reraise failure = Printexc.raise_with_backtrace failure.exn failure.backtrac
       no database key, so failures are neither stored nor replayed.
     @param failure_blobs
       a list of base64 encoded strings (blobs), where each string encodes the choices
-      made in a failing test run. Only the first blob is used. The blob is only guaranteed 
+      made in a failing test run. Only the first blob is used. The blob is only guaranteed
       to reproduce a failure within
       a specific version of Hegel *)
 let run_test
-      ~(settings : Settings.t)
-      ?test_location
-      ?(rerun_hint = Argument)
-      ?(on_failure = ignore)
-      ?database_key
-      ?(failure_blobs = [])
-      test_fn
+  ~(settings : Settings.t)
+  ?test_location
+  ?(rerun_hint = Argument)
+  ?(on_failure = ignore)
+  ?database_key
+  ?(failure_blobs = [])
+  test_fn
   =
   if DLS.get in_test_context
   then failwith "Cannot nest test cases - already inside a test case";
@@ -1001,55 +1023,55 @@ let run_test
       Fun.protect
         ~finally:(fun () -> List.iter (fun f -> Ffi.failure_free ctx f) failures)
         (fun () ->
-           print_failure_header test_location;
-           match failures with
-           | [ failure ] ->
-             let failure_case = report_failure failure in
-             on_failure ();
-             reraise failure_case
-           | failures ->
-             let count = List.length failures in
-             List.iteri
-               (fun i failure ->
-                  Printf.eprintf
-                      "\n%s%!"
-                      (stderr_color
-                         ansi_red
-                         (Printf.sprintf "Failure %d of %d:" (i + 1) count));
-                  (* print failure messages but don't reraise exn *)
-                  ignore (report_failure failure : interesting_case))
-               failures;
-             on_failure ();
-             failwith (Printf.sprintf "%d failures found!" count))
+          print_failure_header test_location;
+          match failures with
+          | [ failure ] ->
+            let failure_case = report_failure failure in
+            on_failure ();
+            reraise failure_case
+          | failures ->
+            let count = List.length failures in
+            List.iteri
+              (fun i failure ->
+                Printf.eprintf
+                  "\n%s%!"
+                  (stderr_color
+                     ansi_red
+                     (Printf.sprintf "Failure %d of %d:" (i + 1) count));
+                (* print failure messages but don't reraise exn *)
+                ignore (report_failure failure : interesting_case))
+              failures;
+            on_failure ();
+            failwith (Printf.sprintf "%d failures found!" count))
   in
   let drive ~is_replay run =
     Fun.protect
       ~finally:(fun () -> Ffi.run_free ctx run)
       (fun () ->
-         let rec loop () =
-           match Ffi.next_test_case ctx run with
-           | None -> ()
-           | Some handle ->
-             (* Free the case before moving on to the next one. *)
-             Fun.protect
-               ~finally:(fun () -> Ffi.test_case_free ctx handle)
-               (fun () -> run_case handle);
-             loop ()
-         in
-         loop ();
-         let result = Ffi.run_result ctx run in
-         Fun.protect
-           ~finally:(fun () -> Ffi.run_result_free ctx result)
-           (fun () -> handle_result ~is_replay result))
+        let rec loop () =
+          match Ffi.next_test_case ctx run with
+          | None -> ()
+          | Some handle ->
+            (* Free the case before moving on to the next one. *)
+            Fun.protect
+              ~finally:(fun () -> Ffi.test_case_free ctx handle)
+              (fun () -> run_case handle);
+            loop ()
+        in
+        loop ();
+        let result = Ffi.run_result ctx run in
+        Fun.protect
+          ~finally:(fun () -> Ffi.run_result_free ctx result)
+          (fun () -> handle_result ~is_replay result))
   in
   Fun.protect
     ~finally:(fun () ->
       Ffi.settings_free ctx ffi_settings;
       Ffi.context_free ctx)
-    (fun () -> match failure_blobs with
-    | [] -> drive ~is_replay:false (Ffi.run_start ctx ffi_settings)
-    | blob :: _ ->
-      drive ~is_replay:true (Ffi.run_start_blob ctx ffi_settings blob))
+    (fun () ->
+      match failure_blobs with
+      | [] -> drive ~is_replay:false (Ffi.run_start ctx ffi_settings)
+      | blob :: _ -> drive ~is_replay:true (Ffi.run_start_blob ctx ffi_settings blob))
 ;;
 
 (** [run_hegel_test ?settings ?test_location ?database_key ?failure_blobs test_fn]
@@ -1062,12 +1084,12 @@ let run_test
       seed. When omitted it defaults to the test's [test_location] (see
       {!run_test}), so each [let%hegel_test] is scoped by its own identity. *)
 let run_hegel_test
-      ?(settings = Settings.default ())
-      ?test_location
-      ?rerun_hint
-      ?database_key
-      ?failure_blobs
-      test_fn
+  ?(settings = Settings.default ())
+  ?test_location
+  ?rerun_hint
+  ?database_key
+  ?failure_blobs
+  test_fn
   =
   run_test ~settings ?test_location ?rerun_hint ?database_key ?failure_blobs test_fn
 ;;

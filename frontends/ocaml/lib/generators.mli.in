@@ -171,7 +171,9 @@ val%template with_printer
 [@@mode m = (nonportable, portable)]
 
 (** [printer gen] is the printer carried by the printable generator [gen]. *)
-val%template printer : ('a, printable) generator MODE(m) -> ('a -> Sexplib0.Sexp.t) MODE(m)
+val%template printer
+  :  ('a, printable) generator MODE(m)
+  -> ('a -> Sexplib0.Sexp.t) MODE(m)
 [@@mode m = (nonportable, portable)]
 
 (** [leaf ~name ~draw ~sexp_of] builds a printable generator from a single
@@ -189,9 +191,9 @@ val%template leaf
 
 (** The generator constructors. {!Hegel} re-exports them unqualified. *)
 module Public : sig
-(** {2 Primitive generators} *)
+  (** {2 Primitive generators} *)
 
-(** [booleans ?p ()] creates a generator for boolean values, [true] with
+  (** [booleans ?p ()] creates a generator for boolean values, [true] with
     probability [p] (default [0.5]). [p] must be between 0 and 1.
 
     {[
@@ -200,9 +202,9 @@ module Public : sig
         assert (b = true || b = false)
       ;;
     ]} *)
-val booleans : ?p:float -> unit -> (bool, printable) generator MODE(portable)
+  val booleans : ?p:float -> unit -> (bool, printable) generator MODE(portable)
 
-(** [integers ?min_value ?max_value ()] creates a generator for integers within
+  (** [integers ?min_value ?max_value ()] creates a generator for integers within
     the given bounds.
 
     Defaults:
@@ -215,9 +217,13 @@ val booleans : ?p:float -> unit -> (bool, printable) generator MODE(portable)
         assert (n >= 1 && n <= 6)
       ;;
     ]} *)
-val integers : ?min_value:int -> ?max_value:int -> unit -> (int, printable) generator MODE(portable)
+  val integers
+    :  ?min_value:int
+    -> ?max_value:int
+    -> unit
+    -> (int, printable) generator MODE(portable)
 
-(** [floats ?min_value ?max_value ?exclude_min ?exclude_max ?allow_nan
+  (** [floats ?min_value ?max_value ?exclude_min ?exclude_max ?allow_nan
      ?allow_infinity ()] creates a generator for floating-point values.
 
     Defaults:
@@ -228,7 +234,7 @@ val integers : ?min_value:int -> ?max_value:int -> unit -> (int, printable) gene
     - [allow_nan]: [true] only when no bounds are set
     - [allow_infinity]: [true] when at most one bound is set
 
-    Bounds that only allow infinity to be generated while [allow_infinity] is [false], 
+    Bounds that only allow infinity to be generated while [allow_infinity] is [false],
     such as [~min_value:infinity], raise [Usage_error].
 
     {[
@@ -237,17 +243,17 @@ val integers : ?min_value:int -> ?max_value:int -> unit -> (int, printable) gene
         assert (Float.compare f 0.0 >= 0)
       ;;
     ]} *)
-val floats
-  :  ?min_value:float
-  -> ?max_value:float
-  -> ?exclude_min:bool
-  -> ?exclude_max:bool
-  -> ?allow_nan:bool
-  -> ?allow_infinity:bool
-  -> unit
-  -> (float, printable) generator MODE(portable)
+  val floats
+    :  ?min_value:float
+    -> ?max_value:float
+    -> ?exclude_min:bool
+    -> ?exclude_max:bool
+    -> ?allow_nan:bool
+    -> ?allow_infinity:bool
+    -> unit
+    -> (float, printable) generator MODE(portable)
 
-(** [text ?min_size ?max_size ?codec ?min_codepoint ?max_codepoint ?categories
+  (** [text ?min_size ?max_size ?codec ?min_codepoint ?max_codepoint ?categories
      ?exclude_categories ?include_characters ?exclude_characters ?alphabet ()]
     creates a generator for Unicode text strings.
 
@@ -275,21 +281,21 @@ val floats
         assert (String.length s >= 1)
       ;;
     ]} *)
-val text
-  :  ?min_size:int
-  -> ?max_size:int
-  -> ?codec:string
-  -> ?min_codepoint:int
-  -> ?max_codepoint:int
-  -> ?categories:string list
-  -> ?exclude_categories:string list
-  -> ?include_characters:string
-  -> ?exclude_characters:string
-  -> ?alphabet:string
-  -> unit
-  -> (string, printable) generator MODE(portable)
+  val text
+    :  ?min_size:int
+    -> ?max_size:int
+    -> ?codec:string
+    -> ?min_codepoint:int
+    -> ?max_codepoint:int
+    -> ?categories:string list
+    -> ?exclude_categories:string list
+    -> ?include_characters:string
+    -> ?exclude_characters:string
+    -> ?alphabet:string
+    -> unit
+    -> (string, printable) generator MODE(portable)
 
-(** [characters ?codec ?min_codepoint ?max_codepoint ?categories
+  (** [characters ?codec ?min_codepoint ?max_codepoint ?categories
      ?exclude_categories ?include_characters ?exclude_characters ()] creates a
     generator for single Unicode characters (as single-character UTF-8 strings).
 
@@ -303,28 +309,28 @@ val text
         assert (String.length c >= 1)
       ;;
     ]} *)
-val characters
-  :  ?codec:string
-  -> ?min_codepoint:int
-  -> ?max_codepoint:int
-  -> ?categories:string list
-  -> ?exclude_categories:string list
-  -> ?include_characters:string
-  -> ?exclude_characters:string
-  -> unit
-  -> (string, printable) generator MODE(portable)
+  val characters
+    :  ?codec:string
+    -> ?min_codepoint:int
+    -> ?max_codepoint:int
+    -> ?categories:string list
+    -> ?exclude_categories:string list
+    -> ?include_characters:string
+    -> ?exclude_characters:string
+    -> unit
+    -> (string, printable) generator MODE(portable)
 
-(** [make_characters ~of_char ~sexp_of ()] builds a generator for single
+  (** [make_characters ~of_char ~sexp_of ()] builds a generator for single
     characters over any representation ['a], covering the full native [char]
     range (codepoints 0-255, i.e. Latin-1). *)
-val%template make_characters
-  :  of_char:(char -> 'a) MODE(m)
-  -> sexp_of:('a -> Sexplib0.Sexp.t) MODE(m)
-  -> unit
-  -> ('a, printable) generator MODE(m)
-[@@mode m = (nonportable, portable)]
+  val%template make_characters
+    :  of_char:(char -> 'a) MODE(m)
+    -> sexp_of:('a -> Sexplib0.Sexp.t) MODE(m)
+    -> unit
+    -> ('a, printable) generator MODE(m)
+  [@@mode m = (nonportable, portable)]
 
-(** [chars ()] creates a generator for single characters (codepoints 0-255,
+  (** [chars ()] creates a generator for single characters (codepoints 0-255,
     i.e. Latin-1) as native [char] values.
 
     {[
@@ -333,9 +339,9 @@ val%template make_characters
         assert (Char.code c >= 0 && Char.code c <= 0xFF)
       ;;
     ]} *)
-val chars : unit -> (char, printable) generator MODE(portable)
+  val chars : unit -> (char, printable) generator MODE(portable)
 
-(** [binary ?min_size ?max_size ()] creates a generator for binary byte strings.
+  (** [binary ?min_size ?max_size ()] creates a generator for binary byte strings.
 
     {[
       let%hegel_test binary_example tc =
@@ -343,9 +349,13 @@ val chars : unit -> (char, printable) generator MODE(portable)
         assert (String.length bytes <= 16)
       ;;
     ]} *)
-val binary : ?min_size:int -> ?max_size:int -> unit -> (string, printable) generator MODE(portable)
+  val binary
+    :  ?min_size:int
+    -> ?max_size:int
+    -> unit
+    -> (string, printable) generator MODE(portable)
 
-(** [just value] creates a generator that always produces [value]. The output
+  (** [just value] creates a generator that always produces [value]. The output
     type is the caller's, so the result carries no printer.
 
     {[
@@ -354,12 +364,14 @@ val binary : ?min_size:int -> ?max_size:int -> unit -> (string, printable) gener
         assert (x = 42)
       ;;
     ]} *)
-val%template just : ('a KIND(value mod c)) MODE(m) -> ('a, unprintable) generator MODE(m)
-[@@mode (m, c) = ((nonportable, uncontended), (portable, contended))]
+  val%template just
+    :  ('a KIND(value mod c)) MODE(m)
+    -> ('a, unprintable) generator MODE(m)
+  [@@mode (m, c) = ((nonportable, uncontended), (portable, contended))]
 
-(** {2 Collection generators} *)
+  (** {2 Collection generators} *)
 
-(** [lists elements ?min_size ?max_size ?unique ()] creates a generator for
+  (** [lists elements ?min_size ?max_size ?unique ()] creates a generator for
     lists of [elements]. When [unique] is [true], elements will be
     distinct.
 
@@ -371,16 +383,16 @@ val%template just : ('a KIND(value mod c)) MODE(m) -> ('a, unprintable) generato
         assert (List.length xs <= 10)
       ;;
     ]} *)
-val%template lists
-  :  ('a, printable) generator MODE(m)
-  -> ?min_size:int
-  -> ?max_size:int
-  -> ?unique:bool
-  -> unit
-  -> ('a list, printable) generator MODE(m)
-[@@mode m = (nonportable, portable)]
+  val%template lists
+    :  ('a, printable) generator MODE(m)
+    -> ?min_size:int
+    -> ?max_size:int
+    -> ?unique:bool
+    -> unit
+    -> ('a list, printable) generator MODE(m)
+  [@@mode m = (nonportable, portable)]
 
-(** [assoc_lists keys values ?min_size ?max_size ()] creates a
+  (** [assoc_lists keys values ?min_size ?max_size ()] creates a
     generator for association lists over printable [keys] and [values]:
     [(key, value)] pairs, in generation order, whose keys are unique.
 
@@ -397,30 +409,31 @@ val%template lists
         assert (List.length m <= 5)
       ;;
     ]} *)
-val%template assoc_lists
-  :  ('a, printable) generator MODE(m)
-  -> ('b, printable) generator MODE(m)
-  -> ?min_size:int
-  -> ?max_size:int
-  -> unit
-  -> (('a * 'b) list, printable) generator MODE(m)
-[@@mode m = (nonportable, portable)]
+  val%template assoc_lists
+    :  ('a, printable) generator MODE(m)
+    -> ('b, printable) generator MODE(m)
+    -> ?min_size:int
+    -> ?max_size:int
+    -> unit
+    -> (('a * 'b) list, printable) generator MODE(m)
+  [@@mode m = (nonportable, portable)]
 
-(** [make_hash_tables ~of_pairs ~sexp_of_t keys values ?min_size ?max_size ()]
+  (** [make_hash_tables ~of_pairs ~sexp_of_t keys values ?min_size ?max_size ()]
     builds a hash-table generator over any table type ['t]. *)
-val%template make_hash_tables
-  :  of_pairs:(('a * 'b) list -> 't) MODE(m)
-  -> sexp_of_t:
-       (('a -> Sexplib0.Sexp.t) -> ('b -> Sexplib0.Sexp.t) -> 't -> Sexplib0.Sexp.t) MODE(m)
-  -> ('a, printable) generator MODE(m)
-  -> ('b, printable) generator MODE(m)
-  -> ?min_size:int
-  -> ?max_size:int
-  -> unit
-  -> ('t, printable) generator MODE(m)
-[@@mode m = (nonportable, portable)]
+  val%template make_hash_tables
+    :  of_pairs:(('a * 'b) list -> 't) MODE(m)
+    -> sexp_of_t:
+         (('a -> Sexplib0.Sexp.t) -> ('b -> Sexplib0.Sexp.t) -> 't -> Sexplib0.Sexp.t)
+       MODE(m)
+    -> ('a, printable) generator MODE(m)
+    -> ('b, printable) generator MODE(m)
+    -> ?min_size:int
+    -> ?max_size:int
+    -> unit
+    -> ('t, printable) generator MODE(m)
+  [@@mode m = (nonportable, portable)]
 
-(** [hash_tables keys values ?min_size ?max_size ()] creates a generator for
+  (** [hash_tables keys values ?min_size ?max_size ()] creates a generator for
     [Stdlib.Hashtbl.t] tables over printable [keys] and [values]
 
     {[
@@ -436,16 +449,16 @@ val%template make_hash_tables
         assert (Hashtbl.length m <= 5)
       ;;
     ]} *)
-val%template hash_tables
-  :  ('a, printable) generator MODE(m)
-  -> ('b, printable) generator MODE(m)
-  -> ?min_size:int
-  -> ?max_size:int
-  -> unit
-  -> (('a, 'b) Stdlib.Hashtbl.t, printable) generator MODE(m)
-[@@mode m = (nonportable, portable)]
+  val%template hash_tables
+    :  ('a, printable) generator MODE(m)
+    -> ('b, printable) generator MODE(m)
+    -> ?min_size:int
+    -> ?max_size:int
+    -> unit
+    -> (('a, 'b) Stdlib.Hashtbl.t, printable) generator MODE(m)
+  [@@mode m = (nonportable, portable)]
 
-(** [sampled_from options] creates a generator that samples from a non-empty
+  (** [sampled_from options] creates a generator that samples from a non-empty
     list of values.
 
     {[
@@ -454,11 +467,12 @@ val%template hash_tables
         ignore color
       ;;
     ]} *)
-val%template sampled_from
-  : ('a KIND(value mod c)) list MODE(m) -> ('a, unprintable) generator MODE(m)
-[@@mode (m, c) = ((nonportable, uncontended), (portable, contended))]
+  val%template sampled_from
+    :  ('a KIND(value mod c)) list MODE(m)
+    -> ('a, unprintable) generator MODE(m)
+  [@@mode (m, c) = ((nonportable, uncontended), (portable, contended))]
 
-(** [one_of generators] creates a generator that picks from one of the given
+  (** [one_of generators] creates a generator that picks from one of the given
     printable [generators]. Raises [Usage_error] if [generators] is empty. On a failing
     replay, the drawn value prints through the printer of the branch it was
     drawn from. The recorded branch is per generator value: if one [one_of]
@@ -478,10 +492,12 @@ val%template sampled_from
         assert (n >= 0)
       ;;
     ]} *)
-val%template one_of : ('a, printable) generator list MODE(m) -> ('a, printable) generator MODE(m)
-[@@mode m = (nonportable, portable)]
+  val%template one_of
+    :  ('a, printable) generator list MODE(m)
+    -> ('a, printable) generator MODE(m)
+  [@@mode m = (nonportable, portable)]
 
-(** [optional gen] creates a generator that produces either [None] or
+  (** [optional gen] creates a generator that produces either [None] or
     [Some value] from the printable [gen].
 
     {[
@@ -492,14 +508,14 @@ val%template one_of : ('a, printable) generator list MODE(m) -> ('a, printable) 
         | Some n -> assert (n >= 0)
       ;;
     ]} *)
-val%template optional
-  :  ('a, printable) generator MODE(m)
-  -> ('a option, printable) generator MODE(m)
-[@@mode m = (nonportable, portable)]
+  val%template optional
+    :  ('a, printable) generator MODE(m)
+    -> ('a option, printable) generator MODE(m)
+  [@@mode m = (nonportable, portable)]
 
-(** {2 Tuple generators} *)
+  (** {2 Tuple generators} *)
 
-(** [tuples2 g1 g2] creates a generator for 2-element tuples of printable
+  (** [tuples2 g1 g2] creates a generator for 2-element tuples of printable
     components.
 
     {[
@@ -511,13 +527,13 @@ val%template optional
         assert (n >= 0 && (b || not b))
       ;;
     ]} *)
-val%template tuples2
-  :  ('a, printable) generator MODE(m)
-  -> ('b, printable) generator MODE(m)
-  -> ('a * 'b, printable) generator MODE(m)
-[@@mode m = (nonportable, portable)]
+  val%template tuples2
+    :  ('a, printable) generator MODE(m)
+    -> ('b, printable) generator MODE(m)
+    -> ('a * 'b, printable) generator MODE(m)
+  [@@mode m = (nonportable, portable)]
 
-(** [tuples3 g1 g2 g3] creates a generator for 3-element tuples of printable
+  (** [tuples3 g1 g2 g3] creates a generator for 3-element tuples of printable
     components.
 
     {[
@@ -532,14 +548,14 @@ val%template tuples2
         assert (a >= 0 && (b || not b) && String.length c >= 0)
       ;;
     ]} *)
-val%template tuples3
-  :  ('a, printable) generator MODE(m)
-  -> ('b, printable) generator MODE(m)
-  -> ('c, printable) generator MODE(m)
-  -> ('a * 'b * 'c, printable) generator MODE(m)
-[@@mode m = (nonportable, portable)]
+  val%template tuples3
+    :  ('a, printable) generator MODE(m)
+    -> ('b, printable) generator MODE(m)
+    -> ('c, printable) generator MODE(m)
+    -> ('a * 'b * 'c, printable) generator MODE(m)
+  [@@mode m = (nonportable, portable)]
 
-(** [tuples4 g1 g2 g3 g4] creates a generator for 4-element tuples of printable
+  (** [tuples4 g1 g2 g3 g4] creates a generator for 4-element tuples of printable
     components.
 
     {[
@@ -555,17 +571,17 @@ val%template tuples3
         assert (a >= 0 && (b || not b) && String.length c >= 0 && Float.compare d 0.0 >= 0)
       ;;
     ]} *)
-val%template tuples4
-  :  ('a, printable) generator MODE(m)
-  -> ('b, printable) generator MODE(m)
-  -> ('c, printable) generator MODE(m)
-  -> ('d, printable) generator MODE(m)
-  -> ('a * 'b * 'c * 'd, printable) generator MODE(m)
-[@@mode m = (nonportable, portable)]
+  val%template tuples4
+    :  ('a, printable) generator MODE(m)
+    -> ('b, printable) generator MODE(m)
+    -> ('c, printable) generator MODE(m)
+    -> ('d, printable) generator MODE(m)
+    -> ('a * 'b * 'c * 'd, printable) generator MODE(m)
+  [@@mode m = (nonportable, portable)]
 
-(** {2 Function generators} *)
+  (** {2 Function generators} *)
 
-(** [functions ?name ?sexp_of_arg ~returns ()] creates a generator for functions
+  (** [functions ?name ?sexp_of_arg ~returns ()] creates a generator for functions
     ['a -> 'b] whose results are drawn from [returns].
 
     The result carries no printer (its output type is a function), so draw it
@@ -592,48 +608,48 @@ val%template tuples4
         assert (List.length (List.map f xs) = List.length xs)
       ;;
     ]} *)
-val%template functions
-  :  ?name:string
-  -> ?sexp_of_arg:('a -> Sexplib0.Sexp.t) MODE(m)
-  -> returns:('b, _) generator MODE(m)
-  -> unit
-  -> ('a -> 'b, unprintable) generator MODE(m)
-[@@mode m = (nonportable, portable)]
+  val%template functions
+    :  ?name:string
+    -> ?sexp_of_arg:('a -> Sexplib0.Sexp.t) MODE(m)
+    -> returns:('b, _) generator MODE(m)
+    -> unit
+    -> ('a -> 'b, unprintable) generator MODE(m)
+  [@@mode m = (nonportable, portable)]
 
-(** [functions2 ?name ?sexp_of_arg1 ?sexp_of_arg2 ~returns ()] creates a
+  (** [functions2 ?name ?sexp_of_arg1 ?sexp_of_arg2 ~returns ()] creates a
     generator for curried two-argument functions ['a -> 'b -> 'c].
 
     Sugar over {!functions} keyed on the argument pair: the two arguments form
     one memo key and are shown uncurried as [name (arg1 arg2) = result]. Draw it
     with {!draw_silent}. *)
-val%template functions2
-  :  ?name:string
-  -> ?sexp_of_arg1:('a -> Sexplib0.Sexp.t) MODE(m)
-  -> ?sexp_of_arg2:('b -> Sexplib0.Sexp.t) MODE(m)
-  -> returns:('c, _) generator MODE(m)
-  -> unit
-  -> ('a -> 'b -> 'c, unprintable) generator MODE(m)
-[@@mode m = (nonportable, portable)]
+  val%template functions2
+    :  ?name:string
+    -> ?sexp_of_arg1:('a -> Sexplib0.Sexp.t) MODE(m)
+    -> ?sexp_of_arg2:('b -> Sexplib0.Sexp.t) MODE(m)
+    -> returns:('c, _) generator MODE(m)
+    -> unit
+    -> ('a -> 'b -> 'c, unprintable) generator MODE(m)
+  [@@mode m = (nonportable, portable)]
 
-(** [functions3 ?name ?sexp_of_arg1 ?sexp_of_arg2 ?sexp_of_arg3 ~returns ()]
+  (** [functions3 ?name ?sexp_of_arg1 ?sexp_of_arg2 ?sexp_of_arg3 ~returns ()]
     creates a generator for curried three-argument functions
     ['a -> 'b -> 'c -> 'd].
 
     Like {!functions2}, keyed on the argument triple and shown uncurried as
     [name (arg1 arg2 arg3) = result]. Draw it with {!draw_silent}. *)
-val%template functions3
-  :  ?name:string
-  -> ?sexp_of_arg1:('a -> Sexplib0.Sexp.t) MODE(m)
-  -> ?sexp_of_arg2:('b -> Sexplib0.Sexp.t) MODE(m)
-  -> ?sexp_of_arg3:('c -> Sexplib0.Sexp.t) MODE(m)
-  -> returns:('d, _) generator MODE(m)
-  -> unit
-  -> ('a -> 'b -> 'c -> 'd, unprintable) generator MODE(m)
-[@@mode m = (nonportable, portable)]
+  val%template functions3
+    :  ?name:string
+    -> ?sexp_of_arg1:('a -> Sexplib0.Sexp.t) MODE(m)
+    -> ?sexp_of_arg2:('b -> Sexplib0.Sexp.t) MODE(m)
+    -> ?sexp_of_arg3:('c -> Sexplib0.Sexp.t) MODE(m)
+    -> returns:('d, _) generator MODE(m)
+    -> unit
+    -> ('a -> 'b -> 'c -> 'd, unprintable) generator MODE(m)
+  [@@mode m = (nonportable, portable)]
 
-(** {2 Format generators} *)
+  (** {2 Format generators} *)
 
-(** [emails ()] creates a generator for valid email address strings.
+  (** [emails ()] creates a generator for valid email address strings.
 
     Addresses follow RFC 5321/5322: a local part of 1 to 64 characters from the
     RFC 5322 [atext] set, an [@], and a domain from {!domains}, with the overall
@@ -645,9 +661,9 @@ val%template functions3
         assert (String.contains e '@')
       ;;
     ]} *)
-val emails : unit -> (string, printable) generator MODE(portable)
+  val emails : unit -> (string, printable) generator MODE(portable)
 
-(** [urls ()] creates a generator for valid URL strings.
+  (** [urls ()] creates a generator for valid URL strings.
 
     URLs follow RFC 3986, of the form
     [scheme://domain\[:port\]/path\[#fragment\]] with [scheme] one of
@@ -662,9 +678,9 @@ val emails : unit -> (string, printable) generator MODE(portable)
         assert (String.length u > 0)
       ;;
     ]} *)
-val urls : unit -> (string, printable) generator MODE(portable)
+  val urls : unit -> (string, printable) generator MODE(portable)
 
-(** [domains ?max_length ()] creates a generator for domain name strings.
+  (** [domains ?max_length ()] creates a generator for domain name strings.
 
     Domains are RFC 1035 fully-qualified domain names: a top-level domain
     sampled from the IANA TLD list followed by up to 126 dot-separated labels,
@@ -680,117 +696,12 @@ val urls : unit -> (string, printable) generator MODE(portable)
         assert (String.length d <= 64)
       ;;
     ]} *)
-val domains : ?max_length:int -> unit -> (string, printable) generator MODE(portable)
+  val domains
+    :  ?max_length:int
+    -> unit
+    -> (string, printable) generator MODE(portable)
 
-(** A proleptic Gregorian calendar date. [year] is in [\[-999999, 999999\]],
-    [month] in [\[1, 12\]], and [day] in [\[1, days-in-month\]]. *)
-type date =
-  { year : int
-  ; month : int
-  ; day : int
-  }
-
-(** A time of day at nanosecond resolution. [hour] is in [\[0, 23\]],
-    [minute] and [second] in [\[0, 59\]], and [nanosecond] in [\[0, 999999999\]]. *)
-type time =
-  { hour : int
-  ; minute : int
-  ; second : int
-  ; nanosecond : int
-  }
-
-(** [make_dates ~of_date ~sexp_of ?min_date ?max_date ()] builds a generator
-    for dates in [\[min_date, max_date\]] over any representation. [of_date]
-    converts each drawn {!date} to the desired representation. The default
-    range is [\[0001-01-01, 9999-12-31\]].
-
-    {[
-      let core_dates =
-        make_dates
-          ~of_date:(fun { year; month; day } ->
-            Core.Date.create_exn ~y:year ~m:(Core.Month.of_int_exn month) ~d:day)
-          ~sexp_of:Core.Date.sexp_of_t
-          ()
-    ]} *)
-val%template make_dates
-  :  of_date:(date -> 'a) MODE(m)
-  -> sexp_of:('a -> Sexplib0.Sexp.t) MODE(m)
-  -> ?min_date:date
-  -> ?max_date:date
-  -> unit
-  -> ('a, printable) generator MODE(m)
-[@@mode m = (nonportable, portable)]
-
-(** [make_times ~of_time ~sexp_of ?min_time ?max_time ()] builds a generator
-    for times of day in [\[min_time, max_time\]] over any representation.
-    [of_time] converts each drawn {!time} to the desired representation. The
-    default range is [\[00:00:00.000000000, 23:59:59.999999999\]]. *)
-val%template make_times
-  :  of_time:(time -> 'a) MODE(m)
-  -> sexp_of:('a -> Sexplib0.Sexp.t) MODE(m)
-  -> ?min_time:time
-  -> ?max_time:time
-  -> unit
-  -> ('a, printable) generator MODE(m)
-[@@mode m = (nonportable, portable)]
-
-(** [make_datetimes ~of_datetime ~sexp_of ?min_datetime ?max_datetime ()] builds a
-    generator for naive datetimes in [\[min_datetime, max_datetime\]] over any
-    representation. [of_datetime] converts each drawn [(date, time)] pair to the
-    desired representation. The default range is [\[0001-01-01T00:00:00.000000000, 9999-12-31T23:59:59.999999999\]]. *)
-val%template make_datetimes
-  :  of_datetime:(date * time -> 'a) MODE(m)
-  -> sexp_of:('a -> Sexplib0.Sexp.t) MODE(m)
-  -> ?min_datetime:date * time
-  -> ?max_datetime:date * time
-  -> unit
-  -> ('a, printable) generator MODE(m)
-[@@mode m = (nonportable, portable)]
-
-(** [dates ?min_date ?max_date ()] creates a generator for ISO 8601
-    [YYYY-MM-DD] date strings in [\[min_date, max_date\]]. The default range is
-    [\[0001-01-01, 9999-12-31\]].
-
-    {[
-      let%hegel_test dates_example tc =
-        let d = draw tc (dates ()) in
-        assert (String.length d = 10)
-      ;;
-    ]} *)
-val dates : ?min_date:date -> ?max_date:date -> unit -> (string, printable) generator MODE(portable)
-
-(** [times ?min_time ?max_time ()] creates a generator for ISO 8601
-    [HH:MM:SS.fffffffff] time-of-day strings in [\[min_time, max_time\]]. The
-    default range is [\[00:00:00.000000000, 23:59:59.999999999\]].
-
-    {[
-      let%hegel_test times_example tc =
-        let t =
-          draw tc (times ~min_time:{ hour = 9; minute = 0; second = 0; nanosecond = 0 } ())
-        in
-        assert (String.length t = 18 && String.compare t "09:00:00.000000000" >= 0)
-      ;;
-    ]} *)
-val times : ?min_time:time -> ?max_time:time -> unit -> (string, printable) generator MODE(portable)
-
-(** [datetimes ?min_datetime ?max_datetime ()] creates a generator for naive
-    ISO 8601 [YYYY-MM-DDTHH:MM:SS.fffffffff] datetime strings in
-    [\[min_datetime, max_datetime\]]. The default range is
-    [\[0001-01-01T00:00:00.000000000, 9999-12-31T23:59:59.999999999\]].
-
-    {[
-      let%hegel_test datetimes_example tc =
-        let dt = draw tc (datetimes ()) in
-        assert (String.contains dt 'T')
-      ;;
-    ]} *)
-val datetimes
-  :  ?min_datetime:date * time
-  -> ?max_datetime:date * time
-  -> unit
-  -> (string, printable) generator MODE(portable)
-
-(** [ip_addresses ?version ()] creates a generator for typed [Ipaddr.t] IP
+  (** [ip_addresses ?version ()] creates a generator for typed [Ipaddr.t] IP
     addresses. [version] selects IPv4 ([`V4], RFC 791) or IPv6 ([`V6],
     RFC 4291); when omitted, either version is generated. Render a drawn
     address with [Ipaddr.to_string] (RFC 5952 canonical form for v6).
@@ -802,9 +713,12 @@ val datetimes
         | Ipaddr.V6 _ -> assert false
       ;;
     ]} *)
-val ip_addresses : ?version:[ `V4 | `V6 ] -> unit -> (Ipaddr.t, printable) generator MODE(portable)
+  val ip_addresses
+    :  ?version:[ `V4 | `V6 ]
+    -> unit
+    -> (Ipaddr.t, printable) generator MODE(portable)
 
-(** [from_regex pattern ?fullmatch ()] creates a generator for strings matching
+  (** [from_regex pattern ?fullmatch ()] creates a generator for strings matching
     a regular expression [pattern], written in the syntax of Python's [re]
     module. When [fullmatch] is [true] (the default) the whole string must match
     [pattern]; otherwise a match anywhere suffices. A pattern that does not
@@ -816,11 +730,15 @@ val ip_addresses : ?version:[ `V4 | `V6 ] -> unit -> (Ipaddr.t, printable) gener
         assert (String.length s >= 1)
       ;;
     ]} *)
-val from_regex : string -> ?fullmatch:bool -> unit -> (string, printable) generator MODE(portable)
+  val from_regex
+    :  string
+    -> ?fullmatch:bool
+    -> unit
+    -> (string, printable) generator MODE(portable)
 
-(** {2 Generator combinators} *)
+  (** {2 Generator combinators} *)
 
-(** [composite generate_fn] builds a generator from an imperative [generate_fn]
+  (** [composite generate_fn] builds a generator from an imperative [generate_fn]
     that draws sub-values from the test case and assembles a result, useful when
     a value is easiest to describe by drawing its parts in sequence.
 
@@ -832,10 +750,12 @@ val from_regex : string -> ?fullmatch:bool -> unit -> (string, printable) genera
           x, y)
       ;;
     ]} *)
-val%template composite : (Internal.test_case -> 'a) MODE(m) -> ('a, unprintable) generator MODE(m)
-[@@mode m = (nonportable, portable)]
+  val%template composite
+    :  (Internal.test_case -> 'a) MODE(m)
+    -> ('a, unprintable) generator MODE(m)
+  [@@mode m = (nonportable, portable)]
 
-(** [map f gen] transforms values from [gen] using [f].
+  (** [map f gen] transforms values from [gen] using [f].
 
     {[
       let%hegel_test map_example tc =
@@ -845,13 +765,13 @@ val%template composite : (Internal.test_case -> 'a) MODE(m) -> ('a, unprintable)
         assert (even mod 2 = 0)
       ;;
     ]} *)
-val%template map
-  :  ('a -> 'b) MODE(m)
-  -> ('a, 'p) generator MODE(m)
-  -> ('b, unprintable) generator MODE(m)
-[@@mode m = (nonportable, portable)]
+  val%template map
+    :  ('a -> 'b) MODE(m)
+    -> ('a, 'p) generator MODE(m)
+    -> ('b, unprintable) generator MODE(m)
+  [@@mode m = (nonportable, portable)]
 
-(** [flat_map f gen] creates a dependent generator. [f] receives the generated
+  (** [flat_map f gen] creates a dependent generator. [f] receives the generated
     value and returns a generator whose value is the final result.
 
     {[
@@ -871,13 +791,13 @@ val%template map
         assert (List.length xs <= 5)
       ;;
     ]} *)
-val%template flat_map
-  :  ('a -> ('b, 'q) generator) MODE(m)
-  -> ('a, 'p) generator MODE(m)
-  -> ('b, unprintable) generator MODE(m)
-[@@mode m = (nonportable, portable)]
+  val%template flat_map
+    :  ('a -> ('b, 'q) generator) MODE(m)
+    -> ('a, 'p) generator MODE(m)
+    -> ('b, unprintable) generator MODE(m)
+  [@@mode m = (nonportable, portable)]
 
-(** [filter predicate gen] filters values from [gen] using [predicate], keeping
+  (** [filter predicate gen] filters values from [gen] using [predicate], keeping
     [gen]'s printability. Tries up to three times and rejects the test case if all
     attempts fail.
 
@@ -889,11 +809,1020 @@ val%template flat_map
         assert (even mod 2 = 0)
       ;;
     ]} *)
-val%template filter
-  :  ('a -> bool) MODE(m)
-  -> ('a, 'p) generator MODE(m)
-  -> ('a, 'p) generator MODE(m)
-[@@mode m = (nonportable, portable)]
+  val%template filter
+    :  ('a -> bool) MODE(m)
+    -> ('a, 'p) generator MODE(m)
+    -> ('a, 'p) generator MODE(m)
+  [@@mode m = (nonportable, portable)]
+
+  (** Date and time generators. *)
+  module Temporal : sig
+    (** Generate dates, times, instants, UTC offsets, time zones, durations
+      and calendar spans.
+
+      Values are records or variants in {!Date}, {!Time}, {!Datetime},
+      {!Instant}, {!Offset}, {!Zoned_datetime}, {!Duration} and {!Span}.
+      Time zones are strings. Each value module provides formatting,
+      comparison and a default generator for [\[@@deriving hegel_generator\]].
+      Use {!map} to convert values for a date library.
+
+      All temporal generators are printable. Failure output uses the
+      [to_string] representation without quotes or escapes, including inside
+      lists and other compound values.
+
+      {[
+        let%hegel_test weekend_dates tc =
+          let d =
+            draw
+              tc
+              (Temporal.dates
+                 ~min_value:{ year = 2024; month = 1; day = 1 }
+                 ~weekdays:[ `Saturday; `Sunday ]
+                 ())
+          in
+          assert (d.year >= 2024)
+        ;;
+      ]}
+
+      {2 Time zone data}
+
+      Draws and queries use Hegel's bundled IANA time zone database by
+      default; {!tzdb_version} returns its version. Use
+      {!set_default_zone_source} to change the process default, or pass
+      [source] to {!zones} or {!zoned_datetimes}.
+
+      {!Zone_source} lets you use the same database as the code under test.
+      It accepts TZif files, structured zone data, lookup callbacks and lazy
+      loaders. {!resolve}, {!offset_at} and {!info} query a source outside
+      a test. *)
+
+    (** {2 Options} *)
+
+    (** The unit used to generate and shrink the time component of a value.
+      Values are whole multiples of this unit. *)
+    type precision =
+      [ `Nanoseconds
+      | `Microseconds
+      | `Milliseconds
+      | `Seconds
+      | `Minutes
+      | `Hours
+      ]
+
+    (** Allowed offset increments: whole hours, quarter hours, minutes or
+      seconds. *)
+    type granularity =
+      [ `Hours
+      | `Quarter_hours
+      | `Minutes
+      | `Seconds
+      ]
+
+    (** A day of the week. *)
+    type weekday =
+      [ `Monday
+      | `Tuesday
+      | `Wednesday
+      | `Thursday
+      | `Friday
+      | `Saturday
+      | `Sunday
+      ]
+
+    (** A month of the year. *)
+    type month =
+      [ `January
+      | `February
+      | `March
+      | `April
+      | `May
+      | `June
+      | `July
+      | `August
+      | `September
+      | `October
+      | `November
+      | `December
+      ]
+
+    (** How to resolve a repeated wall time. [`Both] draws either instant
+      and shrinks toward the earlier one. [`Earlier] and [`Later] always
+      select the earlier or later instant, respectively. *)
+    type ambiguous =
+      [ `Both
+      | `Earlier
+      | `Later
+      ]
+
+    (** [`Uniform] draws one sign for all span units, [`Mixed] draws each
+      sign independently, and [`Non_negative] draws only nonnegative values. *)
+    type sign =
+      [ `Uniform
+      | `Mixed
+      | `Non_negative
+      ]
+
+    (** {2 Values} *)
+
+    (** ["Etc/Unknown"], the zone whose instants are known and whose offset is
+      not. *)
+    val unknown_zone : string
+
+    (** Calendar dates. *)
+    module Date : sig
+      (** A proleptic Gregorian calendar date: [year] in [\[-999999, 999999\]],
+        [month] in [\[1, 12\]] and [day] in [\[1, days in the month\]]. *)
+      type t =
+        { year : int
+        ; month : int
+        ; day : int
+        }
+
+      (** The first date, [-999999-01-01]. *)
+      val min_value : t
+
+      (** The last date, [+999999-12-31]. *)
+      val max_value : t
+
+      (** [to_string date] formats [date]: [2024-03-10], with a
+        signed year of at least six digits outside [0000] to [9999]. *)
+      val to_string : t -> string
+
+      (** [pp formatter date] prints [to_string date]. *)
+      val pp : Format.formatter -> t -> unit
+
+      (** [sexp_of_t date] is [to_string date] as an atom. *)
+      val sexp_of_t : t -> Sexplib0.Sexp.t
+
+      (** [equal a b] returns whether [a] and [b] have the same fields. *)
+      val equal : t -> t -> bool
+
+      (** [compare a b] orders valid dates chronologically. *)
+      val compare : t -> t -> int
+
+      (** [dates ()], every date. *)
+      val hegel_generator : (t, printable) generator
+    end
+
+    (** Times of day. *)
+    module Time : sig
+      (** A time of day from [00:00:00] to [23:59:59.999999999]: [hour] in
+        [\[0, 23\]], [minute] and [second] in [\[0, 59\]] (no leap seconds) and
+        [nanosecond] in [\[0, 999999999\]]. *)
+      type t =
+        { hour : int
+        ; minute : int
+        ; second : int
+        ; nanosecond : int
+        }
+
+      (** Midnight, [00:00:00]. *)
+      val min_value : t
+
+      (** The last nanosecond of the day, [23:59:59.999999999]. *)
+      val max_value : t
+
+      (** [to_string time] formats [time]: [02:30:00], or
+        [02:30:00.5] when the fractional part is nonzero. *)
+      val to_string : t -> string
+
+      (** [pp formatter time] prints [to_string time]. *)
+      val pp : Format.formatter -> t -> unit
+
+      (** [sexp_of_t time] is [to_string time] as an atom. *)
+      val sexp_of_t : t -> Sexplib0.Sexp.t
+
+      (** [equal a b] returns whether [a] and [b] have the same fields. *)
+      val equal : t -> t -> bool
+
+      (** [compare a b] orders valid times from midnight on. *)
+      val compare : t -> t -> int
+
+      (** [times ()], every time of day. *)
+      val hegel_generator : (t, printable) generator
+    end
+
+    (** Wall-clock dates and times. *)
+    module Datetime : sig
+      (** A wall-clock date and time with no zone or offset. *)
+      type t =
+        { date : Date.t
+        ; time : Time.t
+        }
+
+      (** Midnight on {!Date.min_value}. *)
+      val min_value : t
+
+      (** The last nanosecond of {!Date.max_value}. *)
+      val max_value : t
+
+      (** [to_string datetime] formats [datetime]:
+        [2024-03-10T02:30:00]. *)
+      val to_string : t -> string
+
+      (** [pp formatter datetime] prints [to_string datetime]. *)
+      val pp : Format.formatter -> t -> unit
+
+      (** [sexp_of_t datetime] is [to_string datetime] as an atom. *)
+      val sexp_of_t : t -> Sexplib0.Sexp.t
+
+      (** [equal a b] returns whether [a] and [b] have the same fields. *)
+      val equal : t -> t -> bool
+
+      (** [compare a b] orders valid datetimes chronologically. *)
+      val compare : t -> t -> int
+
+      (** [datetimes ()], every datetime. *)
+      val hegel_generator : (t, printable) generator
+    end
+
+    (** Instants. *)
+    module Instant : sig
+      (** An instant: [second]s since the Unix epoch, between the first second
+        of the year -999999 and the last of 999999, and a [nanosecond] in
+        [\[0, 999999999\]] counted forward from that second, so -1.5 s is
+        [{ second = -2; nanosecond = 500_000_000 }]. *)
+      type t =
+        { second : int
+        ; nanosecond : int
+        }
+
+      (** The first instant, [-999999-01-01T00:00:00Z]. *)
+      val min_value : t
+
+      (** The last instant, [+999999-12-31T23:59:59.999999999Z]. *)
+      val max_value : t
+
+      (** [to_string instant] formats [instant] as a UTC date and time
+        with a [Z] suffix: [2000-01-01T00:00:00Z]. *)
+      val to_string : t -> string
+
+      (** [pp formatter instant] prints [to_string instant]. *)
+      val pp : Format.formatter -> t -> unit
+
+      (** [sexp_of_t instant] is [to_string instant] as an atom. *)
+      val sexp_of_t : t -> Sexplib0.Sexp.t
+
+      (** [equal a b] returns whether [a] and [b] have the same fields. *)
+      val equal : t -> t -> bool
+
+      (** [compare a b] orders valid instants chronologically. *)
+      val compare : t -> t -> int
+
+      (** [instants ()], every instant. *)
+      val hegel_generator : (t, printable) generator
+    end
+
+    (** UTC offsets. *)
+    module Offset : sig
+      (** A UTC offset: a known number of seconds east of UTC within
+        [±max_seconds], or the unknown offset of RFC 3339's [-00:00]. *)
+      type t =
+        | Known of int
+        | Unknown
+
+      (** The largest magnitude of a known offset in seconds, 25:59:59. *)
+      val max_seconds : int
+
+      (** [to_string offset] formats [offset]: [+05:30],
+        [-00:44:30] when seconds are nonzero, or [-00:00] for {!Unknown}. *)
+      val to_string : t -> string
+
+      (** [pp formatter offset] prints [to_string offset]. *)
+      val pp : Format.formatter -> t -> unit
+
+      (** [sexp_of_t offset] is [to_string offset] as an atom. *)
+      val sexp_of_t : t -> Sexplib0.Sexp.t
+
+      (** [equal a b] returns whether [a] and [b] are the same offset. *)
+      val equal : t -> t -> bool
+
+      (** [compare a b] orders known offsets from west to east, after
+        {!Unknown}. *)
+      val compare : t -> t -> int
+
+      (** [offsets ()], every known offset. *)
+      val hegel_generator : (t, printable) generator
+    end
+
+    (** Wall-clock times in a time zone. *)
+    module Zoned_datetime : sig
+      (** How a wall-clock time maps to instants in its zone. *)
+      type kind =
+        | Unique (** Exactly one instant. *)
+        | Gap (** None: the clocks skipped it. *)
+        | Fold (** Two: the clocks repeated it. *)
+
+      (** A wall-clock time and its resolved instant in [zone]. [kind]
+        identifies a unique time, gap or fold. [offset_before] and
+        [offset_after] are the offsets on either side of the transition;
+        both equal the resolved offset for a unique time. [fold] selects the
+        later instant when [true]. A gap resolves using [offset_before].
+        [offset] is {!Offset.Unknown} for {!unknown_zone} and opaque zones.
+
+        To convert to another date library, use [civil], [zone] and [fold],
+        or [instant] for a gap. Avoid using the offsets: they may differ
+        between database versions. *)
+      type t =
+        { zone : string
+        ; civil : Datetime.t
+        ; kind : kind
+        ; offset_before : Offset.t
+        ; offset_after : Offset.t
+        ; fold : bool
+        ; offset : Offset.t
+        ; instant : Instant.t
+        }
+
+      (** [to_string zoned] formats [zoned], in the form of
+        RFC 9557: [2024-03-10T01:30:00-05:00[America/New_York]], with [[gap]]
+        appended to a skipped wall time and [[fold=0]] or [[fold=1]] to a
+        repeated one, and [Z] for the offset in {!unknown_zone}. *)
+      val to_string : t -> string
+
+      (** [pp formatter zoned] prints [to_string zoned]. *)
+      val pp : Format.formatter -> t -> unit
+
+      (** [sexp_of_t zoned] is [to_string zoned] as an atom. *)
+      val sexp_of_t : t -> Sexplib0.Sexp.t
+
+      (** [equal a b] returns whether [a] and [b] have the same fields. *)
+      val equal : t -> t -> bool
+
+      (** [compare a b] is a total order consistent with {!equal}: by zone
+        name, then wall time. *)
+      val compare : t -> t -> int
+
+      (** Equivalent to [zoned_datetimes ()] with the bundled database.
+        Unaffected by {!set_default_zone_source}. *)
+      val hegel_generator : (t, printable) generator
+    end
+
+    (** Signed durations. *)
+    module Duration : sig
+      (** A signed duration: [seconds] plus [nanoseconds] of the same sign, the
+        latter within [±999999999], so -1.5 s is
+        [{ seconds = -1; nanoseconds = -500_000_000 }]. *)
+      type t =
+        { seconds : int
+        ; nanoseconds : int
+        }
+
+      (** The lowest duration, [-max_int] seconds and [-999999999]
+        nanoseconds. *)
+      val min_value : t
+
+      (** The highest duration, [max_int] seconds and [999999999]
+        nanoseconds. *)
+      val max_value : t
+
+      (** [to_string duration] formats [duration] as ISO 8601, using hours
+        as the largest unit: [PT1H30M5.5S], with a leading
+        [-] when negative and [PT0S] for zero. *)
+      val to_string : t -> string
+
+      (** [pp formatter duration] prints [to_string duration]. *)
+      val pp : Format.formatter -> t -> unit
+
+      (** [sexp_of_t duration] is [to_string duration] as an atom. *)
+      val sexp_of_t : t -> Sexplib0.Sexp.t
+
+      (** [equal a b] returns whether [a] and [b] have the same fields. *)
+      val equal : t -> t -> bool
+
+      (** [compare a b] orders valid durations from the most negative up. *)
+      val compare : t -> t -> int
+
+      (** [durations ()], every duration. *)
+      val hegel_generator : (t, printable) generator
+    end
+
+    (** Calendar spans. *)
+    module Span : sig
+      (** A signed count of each unit from years to nanoseconds. Units are
+        not normalized: 90 minutes stays 90 minutes. Generated spans use one
+        sign for all units unless drawn with [~sign:`Mixed]. *)
+      type t =
+        { years : int
+        ; months : int
+        ; weeks : int
+        ; days : int
+        ; hours : int
+        ; minutes : int
+        ; seconds : int
+        ; milliseconds : int
+        ; microseconds : int
+        ; nanoseconds : int
+        }
+
+      (** [to_string span] lists nonzero units from largest to smallest:
+        [1y 2mo 3w 4d 5h 6m 7s 8ms 9µs 10ns], with one leading
+        [-] when no unit is positive ([-3d 4h] is minus three days and minus
+        four hours), a sign on every unit when the signs are mixed
+        ([-3d +4h]), and [0s] for zero. *)
+      val to_string : t -> string
+
+      (** [pp formatter span] prints [to_string span]. *)
+      val pp : Format.formatter -> t -> unit
+
+      (** [sexp_of_t span] is [to_string span] as an atom. *)
+      val sexp_of_t : t -> Sexplib0.Sexp.t
+
+      (** [equal a b] compares fields. Equivalent lengths expressed in
+        different units are not equal. *)
+      val equal : t -> t -> bool
+
+      (** [compare a b] is a total order consistent with {!equal}, comparing
+        the units largest first. It does not order spans by length. *)
+      val compare : t -> t -> int
+
+      (** [spans ()], every unit drawn over its whole range. *)
+      val hegel_generator : (t, printable) generator
+    end
+
+    (** {2 Zone sources} *)
+
+    (** Time zone data for generators and queries.
+
+      Add data with {!Zone_source.add_tzif}, {!Zone_source.add_zone} or
+      {!Zone_source.add_oracle}, and aliases with {!Zone_source.add_link}.
+      For lazy loading, use {!Zone_source.declare} and
+      {!Zone_source.set_loader}. Adding data replaces any existing data for
+      that name. Add or declare names before drawing.
+
+      {[
+        let source =
+          let source = Temporal.Zone_source.create () in
+          Temporal.Zone_source.declare source [ "America/New_York"; "Europe/London" ];
+          Temporal.Zone_source.set_loader source (fun source name ->
+            let path = Filename.concat "/usr/share/zoneinfo" name in
+            match In_channel.with_open_bin path In_channel.input_all with
+            | contents -> Temporal.Zone_source.add_tzif source name ~contents
+            | exception Sys_error _ -> ());
+          source
+        ;;
+
+        let%hegel_test zoned tc =
+          let z = draw tc (Temporal.zoned_datetimes ~source ()) in
+          ignore z
+        ;;
+      ]}
+
+      Create sources outside test bodies and reuse them across test cases.
+      Invalid data or calls raise [Usage_error]. *)
+    module Zone_source : sig
+      (** A zone source. *)
+      type t KIND(value mod portable contended)
+
+      (** A local time type of a zone: an offset of less than two days in
+        seconds east of UTC, its daylight-saving flag (reported by
+        {!offset_at}) and its abbreviation, such as [EST]. *)
+      type zone_type =
+        { offset_seconds : int
+        ; is_dst : bool
+        ; abbreviation : string
+        }
+
+      (** An explicit transition: from [instant] (Unix seconds) on, [local_type]
+        is in force. *)
+      type zone_transition =
+        { instant : int
+        ; local_type : zone_type
+        }
+
+      (** The transition day in a POSIX TZ rule (RFC 9636 §3.3.1). *)
+      type rule_day =
+        | Julian of int
+        (** [Jn]: the day of the year in [\[1, 365\]], February 29 never counted. *)
+        | Zero_based of int
+        (** [n]: the zero-based day of the year in [\[0, 365\]], February 29 counted. *)
+        | Month_week_day of
+            { month : month
+            ; week : int
+            ; weekday : weekday
+            }
+        (** [Mm.w.d]: the [week]th [weekday] of [month], [week] in [\[1, 5\]]
+          with 5 meaning the last. *)
+
+      (** When a yearly rule's transition happens: [time] seconds (within ±167
+        hours) after local midnight of [day], in the offset in force before
+        the transition. *)
+      type rule_date =
+        { day : rule_day
+        ; time : int
+        }
+
+      (** The daylight-saving half of a {!zone_rule}: the [daylight] type is in
+        force from [starts] to [ends] each year. *)
+      type dst_rule =
+        { daylight : zone_type
+        ; starts : rule_date
+        ; ends : rule_date
+        }
+
+      (** A zone's rule for every year after its last explicit transition, the
+        footer of a TZif file: a standard type and, when the zone observes
+        daylight saving time, a {!dst_rule}. The rule must agree with the
+        local type immediately after the last explicit transition. *)
+      type zone_rule =
+        { standard : zone_type
+        ; dst : dst_rule option
+        }
+
+      (** What a zone has in force after its last explicit transition. *)
+      type after =
+        | Hold (** Keep the last local type indefinitely. *)
+        | Rule of zone_rule (** The yearly rule. *)
+        | Infer of int
+        (** Infer a yearly rule from the given year and the preceding year.
+          If no rule is found, keep the last local type. *)
+
+      (** A zone's data as fields, the TZif model of RFC 9636: the type in force
+        before the first transition, the transitions strictly ascending by
+        instant, and what follows them. *)
+      type zone_data =
+        { initial : zone_type
+        ; transitions : zone_transition list
+        ; after : after
+        }
+
+      (** [bundled ()] is the IANA database bundled with Hegel. It cannot be
+        changed: every [add_*] and [set_*] function raises on it. *)
+      val bundled : unit -> t
+
+      (** [create ()] is a new, empty source. *)
+      val create : unit -> t
+
+      (** [add_tzif source name ~contents] adds the zone [name] from the
+        [contents] of a TZif file (RFC 9636, version 2 or later), such as one
+        under [/usr/share/zoneinfo]. The name must be nonempty, contain no
+        NUL bytes and differ from {!unknown_zone}. *)
+      val add_tzif : t -> string -> contents:string -> unit
+
+      (** [add_zone source name data] adds the zone [name] from its data as
+        fields. *)
+      val add_zone : t -> string -> zone_data -> unit
+
+      (** [add_oracle source name offset_at] imports a zone through lookup
+        callbacks. [offset_at] returns the local type at a Unix timestamp.
+        The import covers [first_year] (default 1900) through [last_year]
+        (default 2100).
+
+        [next_transition] returns the first transition after the given
+        timestamp, or [None] if there are no more. Without it, transitions
+        less than a day apart may be missed.
+
+        Outside the imported range, the first and last local types apply.
+        With [~infer:true], later years instead use a yearly rule inferred
+        from the last two years. Callbacks run synchronously on the calling
+        thread. Callback exceptions become [Usage_error] with the original
+        message. *)
+      val add_oracle
+        :  t
+        -> string
+        -> ?next_transition:(int -> int option)
+        -> ?first_year:int
+        -> ?last_year:int
+        -> ?infer:bool
+        -> (int -> zone_type)
+        -> unit
+
+      (** [add_link source name ~target] makes [name] a link to [target], whose
+        data then applies to both. The target need not have data, or be
+        known, yet. *)
+      val add_link : t -> string -> target:string -> unit
+
+      (** [declare source names] registers names for loading later, leaving
+        existing entries unchanged. Supply their data through a loader or
+        an [add_*] call before use. A draw or query that needs missing data
+        raises [Usage_error]. Drawing zones without [~names] loads all
+        eligible names; with [~names], it loads only those names. *)
+      val declare : t -> string list -> unit
+
+      (** [set_loader source load] calls [load source name] when a draw or
+        query needs missing zone data. The callback should use an [add_*]
+        function to add the zone or a link. If it adds nothing, the name
+        remains unknown; this is an error for a declared name.
+
+        The callback runs on the drawing or querying thread. Calls may be
+        concurrent or repeated for the same name. It must not draw values.
+        Exceptions become [Usage_error] with the original message.
+
+        Add data to the source passed to [load]; do not capture [source]
+        in the callback. *)
+      val set_loader : t -> (t -> string -> unit) -> unit
+
+      (** [remove_loader source] removes the loader. Missing names can no
+        longer be loaded. *)
+      val remove_loader : t -> unit
+
+      (** [set_version source version] records which release of its database
+        the source holds, such as ["2026e"]. *)
+      val set_version : t -> string -> unit
+
+      (** [version source] returns {!tzdb_version} for the bundled source,
+        or the string recorded by {!set_version}. Returns [""] if unset. *)
+      val version : t -> string
+    end
+
+    (** [default_zone_source ()] is the process-wide default zone source: the
+      one {!zones}, {!zoned_datetimes} and the queries use when given no
+      [source]. It is {!Zone_source.bundled} until {!set_default_zone_source}
+      sets another. *)
+    val default_zone_source : unit -> Zone_source.t
+
+    (** [set_default_zone_source source] makes [source] the process-wide
+      default and returns the previous default, so that a caller can restore
+      it. Generators keep the default from when they were created.
+      Set it before creating generators that should use it. Queries use the
+      current default on each call. *)
+    val set_default_zone_source : Zone_source.t -> Zone_source.t
+
+    (** [tzdb_version ()] is the IANA release of the time zone database bundled
+      with Hegel, such as ["2026e"]. *)
+    val tzdb_version : unit -> string
+
+    (** What a zone source knows about a time zone name; see {!info}. *)
+    module Zone_info : sig
+      (** A feature of a time zone, derived from its offsets and name. "After
+        1970" means at any instant from 1970-01-01T00:00:00Z on, the rule in
+        force after the last explicit transition included. *)
+      type tag =
+        | Fixed (** No transition after 1970. *)
+        | Whole_hour (** Every offset after 1970 is a whole number of hours. *)
+        | Fractional
+        (** Some offset after 1970 is a whole number of minutes but not of hours. *)
+        | Seconds
+        (** Some offset in the zone's history is not a whole number of minutes. *)
+        | Dst (** The current rule has a DST offset exactly one hour from standard. *)
+        | Dst_other (** The current rule has a DST offset of another size. *)
+        | Multi (** Some calendar year has more than two offset changes. *)
+        | Base_change
+        (** The lowest offset in force during some year after 1970 differs from
+          the previous year's. *)
+        | Midnight
+        (** A transition after 1970 whose wall time before or after it is midnight. *)
+        | Spans_midnight
+        (** A transition after 1970 whose wall times before and after it fall on
+          different dates. *)
+        | Whole_day (** A transition that skips or repeats a whole day. *)
+        | Same_offset
+        (** A transition after 1970 that changes the abbreviation but not the offset. *)
+        | Undefined (** The zone uses the [-00] undefined-offset abbreviation. *)
+        | Link (** The name is a link to another zone. *)
+        | Legacy (** The name is not [Area/Location] for a current area. *)
+        | Inverted_sign (** The name is one of the [Etc/GMT+5] family. *)
+
+      (** [primary_name] is the resolved zone name ([Asia/Kolkata] for the
+        link [Asia/Calcutta]). [rank] is its position in the shrinking order
+        ([UTC] is 0). [tags] lists its features in declaration order. *)
+      type t =
+        { primary_name : string
+        ; is_link : bool
+        ; rank : int
+        ; tags : tag list
+        }
+    end
+
+    (** The offset a zone has in force at an instant; see {!offset_at}. *)
+    module Zone_offset : sig
+      (** [is_dst] is the database's daylight-saving flag, informational only,
+        and [abbreviation] the abbreviation in force, such as [EST], or [-00]
+        when the offset is unknown. *)
+      type t =
+        { offset : Offset.t
+        ; is_dst : bool
+        ; abbreviation : string
+        }
+    end
+
+    (** [info ?source name] returns metadata for an exact zone name, or
+      [None] if unknown. [source] defaults to {!default_zone_source}.
+      {!unknown_zone} has itself as primary name, the tag [Undefined] and
+      the highest rank. Names absent from the bundled database use the
+      source's link target and tags, and rank after bundled names.
+      Raises [Usage_error] if loading fails. *)
+    val info : ?source:Zone_source.t -> string -> Zone_info.t option
+
+    (** [resolve ?source name civil] classifies and resolves [civil] in
+      zone [name], using [source] (default {!default_zone_source}). For a
+      repeated wall time, it selects the earlier instant ([fold] false).
+      Raises [Usage_error] if the zone is unknown or cannot be loaded,
+      [civil] is invalid, or the result is outside {!Instant.t}'s range. *)
+    val resolve : ?source:Zone_source.t -> string -> Datetime.t -> Zoned_datetime.t
+
+    (** [offset_at ?source name instant] returns the offset in zone [name]
+      at [instant], using [source] (default {!default_zone_source}). Raises
+      [Usage_error] if the zone is unknown or cannot be loaded, or [instant]
+      is invalid. *)
+    val offset_at : ?source:Zone_source.t -> string -> Instant.t -> Zone_offset.t
+
+    (** {2 Generators}
+
+      All bounds are inclusive. Invalid or inverted bounds, ranges with no
+      value at the requested precision, empty weekday lists and unknown zone
+      names raise [Usage_error] on every draw.
+
+      Invalid fields, mixing wall-clock and instant bounds, or passing
+      [source] to {!zoned_datetimes} alongside a {!zones} generator can also
+      raise [Usage_error] when creating the generator. *)
+
+    (** [dates ?min_value ?max_value ?weekdays ?months ()] generates dates in
+      [\[min_value, max_value\]] (default: {!Date.min_value} to
+      {!Date.max_value}) on the given [weekdays] and in the given [months]
+      (default: all). Empty [weekdays] or [months] lists are errors. Shrinks toward 2000-01-01 or the nearest bound, with extra
+      sampling of boundaries and dates such as leap days. *)
+    val dates
+      :  ?min_value:Date.t
+      -> ?max_value:Date.t
+      -> ?weekdays:weekday list
+      -> ?months:month list
+      -> unit
+      -> (Date.t, printable) generator MODE(portable)
+
+    (** [times ?min_value ?max_value ?precision ()] generates times of day in
+      [\[min_value, max_value\]] (default: the whole day), a whole number of
+      [precision] units (default [`Nanoseconds]) since midnight. Shrinks
+      toward midnight or the lower bound. *)
+    val times
+      :  ?min_value:Time.t
+      -> ?max_value:Time.t
+      -> ?precision:precision
+      -> unit
+      -> (Time.t, printable) generator MODE(portable)
+
+    (** [datetimes ?min_value ?max_value ?precision ()] generates naive
+      datetimes in [\[min_value, max_value\]] (default: {!Datetime.min_value}
+      to {!Datetime.max_value}) whose time of day is a whole number of
+      [precision] units (default [`Nanoseconds]). Shrinks toward
+      2000-01-01T00:00:00 or the nearest bound. *)
+    val datetimes
+      :  ?min_value:Datetime.t
+      -> ?max_value:Datetime.t
+      -> ?precision:precision
+      -> unit
+      -> (Datetime.t, printable) generator MODE(portable)
+
+    (** [instants ?min_value ?max_value ?precision ()] generates instants in
+      [\[min_value, max_value\]] (default: {!Instant.min_value} to
+      {!Instant.max_value}), a whole number of [precision] units (default
+      [`Nanoseconds]) since the epoch. Shrinks toward 2000-01-01T00:00:00Z or
+      the nearest bound, with extra sampling of epoch, integer, leap second
+      and time zone transition boundaries. *)
+    val instants
+      :  ?min_value:Instant.t
+      -> ?max_value:Instant.t
+      -> ?precision:precision
+      -> unit
+      -> (Instant.t, printable) generator MODE(portable)
+
+    (** [offsets ?min_value ?max_value ?granularity ?allow_unknown ()] generates
+      UTC offsets between [min_value] and [max_value] seconds east of UTC
+      (default [±]{!Offset.max_seconds}) that are a whole number of
+      [granularity] units (default [`Seconds]). [allow_unknown] (default
+      [false]) also permits the unknown offset. Shrinks to a known offset,
+      then toward [+00:00], with extra sampling of historical offsets. *)
+    val offsets
+      :  ?min_value:int
+      -> ?max_value:int
+      -> ?granularity:granularity
+      -> ?allow_unknown:bool
+      -> unit
+      -> (Offset.t, printable) generator MODE(portable)
+
+    (** [zones ?names ?allow_links ?allow_legacy ?allow_unknown ?allow_opaque
+      ?source ()] generates zone names from [source], which defaults to
+      {!default_zone_source} at construction.
+
+      Without [names], draws from the source's names. [allow_links] (default
+      [true]) includes aliases such as [Asia/Calcutta]; [allow_legacy]
+      (default [false]) includes names such as [EST5EDT] and [US/Eastern].
+      With [names], draws only those exact names and ignores both flags.
+
+      [allow_unknown] (default [false]) adds {!unknown_zone}.
+      [allow_opaque] (default [false]) accepts entries in [names] that are
+      absent from the source, treating them like {!unknown_zone}.
+      Otherwise, unknown names raise [Usage_error], as does an empty set of
+      eligible names.
+
+      Shrinks toward simpler zones, ending at [UTC] when allowed. *)
+    val zones
+      :  ?names:string list
+      -> ?allow_links:bool
+      -> ?allow_legacy:bool
+      -> ?allow_unknown:bool
+      -> ?allow_opaque:bool
+      -> ?source:Zone_source.t
+      -> unit
+      -> (string, printable) generator MODE(portable)
+
+    (** [zoned_datetimes ?zones ?source ?min_value ?max_value ?min_instant
+      ?max_instant ?precision ?allow_imaginary ?ambiguous ()] generates a zoned
+      wall-clock time, selecting an instant if the time is repeated.
+
+      - Without [zones], uses [zones ~source ()].
+      - A generator returned directly by {!zones} supplies both names and
+        source. Pass [source] to {!zones}; passing it here too raises
+        [Usage_error].
+      - Any other generator, including {!filter}, {!map}, {!one_of} or
+        {!sampled_from}, uses [source] for the generated names.
+        Unknown names raise [Usage_error]; opaque zones require
+        [zones ~allow_opaque:true]. If the zone has no wall time within the
+        bounds, the test case is rejected.
+
+      [source] defaults to {!default_zone_source} at construction.
+
+      Pass [~source:s] again when wrapping [zones ~source:s ()]:
+      [zoned_datetimes ~zones:(filter keep (zones ~source:s ())) ~source:s ()].
+
+      Use wall-clock bounds ([min_value] / [max_value], default
+      {!Datetime.min_value} to {!Datetime.max_value}) or instant bounds
+      ([min_instant] / [max_instant]). Mixing them raises [Usage_error].
+      Wall times are whole multiples of [precision] (default [`Nanoseconds])
+      since midnight.
+
+      [allow_imaginary] (default [true]) permits skipped wall times,
+      reported as [Gap]. Set it to [false] to exclude gaps. [ambiguous]
+      (default [`Both]) selects the instant for a repeated wall time.
+
+      Shrinks toward simpler zones, then toward 2000-01-01T00:00, preferring a
+      unique wall time to a repeated one. Extra sampling around transitions
+      covers gaps, folds and transition boundaries.
+
+      {[
+        let new_york =
+          Temporal.zoned_datetimes
+            ~zones:(Temporal.zones ~names:[ "America/New_York" ] ())
+            ~precision:`Seconds
+            ~allow_imaginary:false
+            ()
+        ;;
+
+        let%hegel_test never_in_a_gap tc =
+          let z = draw tc new_york in
+          match z.kind with
+          | Unique | Fold -> ()
+          | Gap -> assert false
+        ;;
+      ]} *)
+    val%template zoned_datetimes
+      :  ?zones:(string, 'p) generator MODE(m)
+      -> ?source:Zone_source.t
+      -> ?min_value:Datetime.t
+      -> ?max_value:Datetime.t
+      -> ?min_instant:Instant.t
+      -> ?max_instant:Instant.t
+      -> ?precision:precision
+      -> ?allow_imaginary:bool
+      -> ?ambiguous:ambiguous
+      -> unit
+      -> (Zoned_datetime.t, printable) generator MODE(m)
+    [@@mode m = (nonportable, portable)]
+
+    (** [durations ?min_value ?max_value ?precision ()] generates signed
+      durations in [\[min_value, max_value\]] (default: {!Duration.min_value}
+      to {!Duration.max_value}), a whole number of [precision] units (default
+      [`Nanoseconds]). Shrinks toward zero, with extra sampling of bounds
+      and durations such as one unit or 24 hours. *)
+    val durations
+      :  ?min_value:Duration.t
+      -> ?max_value:Duration.t
+      -> ?precision:precision
+      -> unit
+      -> (Duration.t, printable) generator MODE(portable)
+
+    (** [spans ?years ?months ?weeks ?days ?hours ?minutes ?seconds
+      ?milliseconds ?microseconds ?nanoseconds ?sign ()] generates calendar
+      spans. Each specified unit uses inclusive [(min, max)] bounds;
+      unspecified units are 0. If no units are specified, all use
+      [±max_int], or [\[0, max_int\]] with [`Non_negative].
+      [sign] defaults to [`Uniform]. Shrinks toward zero. Inverted bounds
+      or bounds incompatible with [sign] raise [Usage_error].
+
+      {[
+        let%hegel_test short_spans tc =
+          let s = draw tc (Temporal.spans ~days:(0, 30) ~hours:(0, 23) ()) in
+          assert (s.days <= 30 && s.years = 0)
+        ;;
+      ]} *)
+    val spans
+      :  ?years:int * int
+      -> ?months:int * int
+      -> ?weeks:int * int
+      -> ?days:int * int
+      -> ?hours:int * int
+      -> ?minutes:int * int
+      -> ?seconds:int * int
+      -> ?milliseconds:int * int
+      -> ?microseconds:int * int
+      -> ?nanoseconds:int * int
+      -> ?sign:sign
+      -> unit
+      -> (Span.t, printable) generator MODE(portable)
+  end
+
+  (** {2 Deprecated date and time generators}
+
+    Legacy generators that return strings. Use {!Temporal.dates},
+    {!Temporal.times} and {!Temporal.datetimes} for typed values. *)
+
+  (** A proleptic Gregorian calendar date; the same type as {!Temporal.Date.t}.
+
+    @deprecated [since 2026-11] use {!Temporal.Date.t}. *)
+  type date = Temporal.Date.t =
+    { year : int
+    ; month : int
+    ; day : int
+    }
+
+  (** A time of day at nanosecond resolution; the same type as
+    {!Temporal.Time.t}.
+
+    @deprecated [since 2026-11] use {!Temporal.Time.t}. *)
+  type time = Temporal.Time.t =
+    { hour : int
+    ; minute : int
+    ; second : int
+    ; nanosecond : int
+    }
+
+  (** [make_dates ~of_date ~sexp_of ?min_date ?max_date ()] builds a generator
+    for dates in [\[min_date, max_date\]] over any representation. [of_date]
+    converts each drawn date to the desired representation. The default range
+    is [\[0001-01-01, 9999-12-31\]]. Use [map] over {!Temporal.dates}
+    instead. *)
+  val%template make_dates
+    :  of_date:(Temporal.Date.t -> 'a) MODE(m)
+    -> sexp_of:('a -> Sexplib0.Sexp.t) MODE(m)
+    -> ?min_date:Temporal.Date.t
+    -> ?max_date:Temporal.Date.t
+    -> unit
+    -> ('a, printable) generator MODE(m)
+  [@@mode m = (nonportable, portable)]
+  [@@deprecated "[since 2026-11] use map over Temporal.dates"]
+
+  (** [make_times ~of_time ~sexp_of ?min_time ?max_time ()] builds a generator
+    for times of day in [\[min_time, max_time\]] over any representation.
+    The default range is [\[00:00:00.000000000, 23:59:59.999999999\]]. Use
+    [map] over {!Temporal.times} instead. *)
+  val%template make_times
+    :  of_time:(Temporal.Time.t -> 'a) MODE(m)
+    -> sexp_of:('a -> Sexplib0.Sexp.t) MODE(m)
+    -> ?min_time:Temporal.Time.t
+    -> ?max_time:Temporal.Time.t
+    -> unit
+    -> ('a, printable) generator MODE(m)
+  [@@mode m = (nonportable, portable)]
+  [@@deprecated "[since 2026-11] use map over Temporal.times"]
+
+  (** [make_datetimes ~of_datetime ~sexp_of ?min_datetime ?max_datetime ()]
+    builds a generator for naive datetimes in [\[min_datetime,
+    max_datetime\]] over any representation, as [(date, time)] pairs. The
+    default range is
+    [\[0001-01-01T00:00:00.000000000, 9999-12-31T23:59:59.999999999\]]. Use
+    [map] over {!Temporal.datetimes} instead. *)
+  val%template make_datetimes
+    :  of_datetime:(Temporal.Date.t * Temporal.Time.t -> 'a) MODE(m)
+    -> sexp_of:('a -> Sexplib0.Sexp.t) MODE(m)
+    -> ?min_datetime:Temporal.Date.t * Temporal.Time.t
+    -> ?max_datetime:Temporal.Date.t * Temporal.Time.t
+    -> unit
+    -> ('a, printable) generator MODE(m)
+  [@@mode m = (nonportable, portable)]
+  [@@deprecated "[since 2026-11] use map over Temporal.datetimes"]
+
+  (** [dates ?min_date ?max_date ()] creates a generator for ISO 8601
+    [YYYY-MM-DD] date strings in [\[min_date, max_date\]]. The default range
+    is [\[0001-01-01, 9999-12-31\]]. Use {!Temporal.dates} instead. *)
+  val dates
+    :  ?min_date:Temporal.Date.t
+    -> ?max_date:Temporal.Date.t
+    -> unit
+    -> (string, printable) generator MODE(portable)
+  [@@deprecated "[since 2026-11] use Temporal.dates"]
+
+  (** [times ?min_time ?max_time ()] creates a generator for ISO 8601
+    [HH:MM:SS.fffffffff] time-of-day strings in [\[min_time, max_time\]].
+    The default range is [\[00:00:00.000000000, 23:59:59.999999999\]]. Use
+    {!Temporal.times} instead. *)
+  val times
+    :  ?min_time:Temporal.Time.t
+    -> ?max_time:Temporal.Time.t
+    -> unit
+    -> (string, printable) generator MODE(portable)
+  [@@deprecated "[since 2026-11] use Temporal.times"]
+
+  (** [datetimes ?min_datetime ?max_datetime ()] creates a generator for naive
+    ISO 8601 [YYYY-MM-DDTHH:MM:SS.fffffffff] datetime strings in
+    [\[min_datetime, max_datetime\]]. The default range is
+    [\[0001-01-01T00:00:00.000000000, 9999-12-31T23:59:59.999999999\]]. Use
+    {!Temporal.datetimes} instead. *)
+  val datetimes
+    :  ?min_datetime:Temporal.Date.t * Temporal.Time.t
+    -> ?max_datetime:Temporal.Date.t * Temporal.Time.t
+    -> unit
+    -> (string, printable) generator MODE(portable)
+  [@@deprecated "[since 2026-11] use Temporal.datetimes"]
 end
 
 (**/**)
@@ -931,13 +1860,15 @@ end
     share the pool. *)
 module%template Int_pool_concurrent : sig
 #ifdef OXCAML
-  type ('a : value mod m c) t : value mod m c
+  type ('a : value mod c m) t : value mod c m
+
 #else
   type 'a t
 #endif
 
 #ifdef OXCAML
   val create : Internal.test_case -> clone:('a -> 'a) @ m -> 'a t
+
 #else
   val create : Internal.test_case -> clone:('a -> 'a) -> 'a t
 #endif
@@ -995,6 +1926,21 @@ module Private : sig
   (** [group label data f] runs [f ()] inside a span with the given [label]. The
       span is stopped with [discard:false] regardless of whether [f] raises. *)
   val group : int64 -> Internal.test_case -> (unit -> 'a) -> 'a
+
+  (** [live_temporal_specs ()] is the number of engine configurations
+      (date options and time zone, zoned and span specs) that {!Temporal}
+      generators have built and not yet freed. *)
+  val live_temporal_specs : unit -> int
+
+  (** [live_zone_sources ()] is the number of engine handles
+      {!Temporal.Zone_source.create} has made and not yet freed. *)
+  val live_zone_sources : unit -> int
+
+  (** [zone_loader_target source] is the source a zone source's loader is
+      called with: the source it was set on, held weakly. A [Failure] for
+      [None], a loader called after its source was collected, which no engine
+      call the library makes can cause. *)
+  val zone_loader_target : Temporal.Zone_source.t option -> Temporal.Zone_source.t
 end
 
 (** Helpers referenced by code generated by [ppx_hegel_generator]. Not for

@@ -21,7 +21,7 @@
  * FetchContent_Declare(
  *     hegel
  *     GIT_REPOSITORY https://github.com/hegeldev/hegel.git
- *     GIT_TAG frontends/cpp/0.17.7
+ *     GIT_TAG frontends/cpp/0.18.0
  *     SOURCE_SUBDIR frontends/cpp
  *     GIT_CONFIG lfs.fetchexclude=website
  * )
@@ -378,6 +378,8 @@
  *
  * - Browse the hegel::generators namespace for the full list of available
  *   generators.
+ * - Date and time generators, and the values they draw, are in
+ *   hegel::generators::temporal.
  * - See @Settings for more configuration settings to customise how your
  *   test runs.
  */
@@ -398,6 +400,7 @@
 #include "generators/random.h"
 #include "generators/stateful.h"
 #include "generators/strings.h"
+#include "generators/temporal.h"
 
 #include <exception>
 #include <functional>

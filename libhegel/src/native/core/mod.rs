@@ -14,8 +14,8 @@ pub use replay::Divergence;
 pub use replay::ExternalReplay;
 pub(crate) use state::float_restrict_and_redraw;
 pub use state::{
-    FloatWidth, GenerationParameters, ManyState, NativeTestCase, NativeTestCaseHandle,
-    NativeVariables, RecursionState, Span, Spans,
+    DatetimeGenerationParameters, FloatWidth, GenerationParameters, ManyState, NativeTestCase,
+    NativeTestCaseHandle, NativeVariables, RecursionState, Span, Spans, TARGETED_PROBABILITY,
 };
 pub use state_machine::NativeStateMachine;
 
@@ -88,6 +88,12 @@ pub const DIRICHLET_ALPHA_FLOAT_INFINITY: f64 = 0.125;
 pub const DIRICHLET_ALPHA_FLOAT_MAX_MAGNITUDE: f64 = 0.125;
 pub const DIRICHLET_ALPHA_FLOAT_MAX_EXACT_INTEGER: f64 = 0.125;
 pub const DIRICHLET_ALPHA_FLOAT_SIGNED_ZERO: f64 = 0.125;
+
+/// The Beta concentrations of the zoned datetime draws' targeting rate
+/// (`DatetimeGenerationParameters`): a mean of one in twenty, with most
+/// cases below it and a thin tail that targets transitions in most draws.
+pub const DIRICHLET_ALPHA_TARGETED: f64 = 0.5;
+pub const DIRICHLET_ALPHA_UNTARGETED: f64 = 9.5;
 pub const DIRICHLET_ALPHA_FLOAT_BINADE_EDGE: f64 = 0.25;
 pub const DIRICHLET_ALPHA_FLOAT_NON_DYADIC: f64 = 0.25;
 pub const DIRICHLET_ALPHA_FLOAT_DEFAULT: f64 = 4.0;

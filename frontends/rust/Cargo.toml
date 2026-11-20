@@ -1,6 +1,6 @@
 [package]
 name = "hegeltest"
-version = "0.53.1"
+version = "0.54.0"
 edition = "2024"
 # if you bump this, also bump .github/workflows/frontend-rust.yml, macros/Cargo.toml, and libhegel/Cargo.toml
 rust-version = "1.86"
@@ -101,11 +101,11 @@ path = "tests/fixtures/target_nan.rs"
 
 [dependencies]
 parking_lot = "0.12"
-hegeltest-macros = { version = "=0.53.1", path = "macros" }
+hegeltest-macros = { version = "=0.54.0", path = "macros" }
 # The native engine + C ABI ("libhegel"). hegeltest drives it through the
 # C ABI (the hegel_* extern "C" functions), exactly like other language
 # bindings, linked in as an ordinary Rust dependency (lib name `hegel_c`).
-hegeltest-c = { version = "=0.52.0", path = "../../libhegel", default-features = false, features = ["std"] }
+hegeltest-c = { version = "=0.53.0", path = "../../libhegel", default-features = false, features = ["std"] }
 # optional feature dependencies
 serde_json = { version = "1.0.61", optional = true }
 rand = { version = "0.10", optional = true }
@@ -114,6 +114,10 @@ rand = { version = "0.10", optional = true }
 chrono = { version = "0.4.41", default-features = false, features = ["std"], optional = true }
 # opting out of bundled tz features
 jiff = { version = "0.2", default-features = false, features = ["std"], optional = true }
+# IANA time zones for the chrono generators, resolved by chrono-tz's own
+# copy of the database.
+chrono-tz = { version = "0.10.4", default-features = false, optional = true }
+time = { version = "0.3.45", default-features = false, optional = true }
 
 [dev-dependencies]
 regex = "1.0"
@@ -122,6 +126,8 @@ tempfile = "3.0"
 # The bundled tz database is deliberately kept out of the library dependency
 # above; tests need one so TimeZone printing can cover IANA-named zones.
 jiff = { version = "0.2", default-features = false, features = ["std", "tzdb-bundle-always"] }
+# TZif files for the zone source tests.
+jiff-tzdb = "0.1.6"
 serde_json = "1.0.61"
 insta = "1.47.2"
 ctor = "0.2"
@@ -141,7 +147,10 @@ default = []
 # Gates `extras::rand::randoms()`, which generates `rand::RngCore` impls.
 rand = ["dep:rand"]
 chrono = ["dep:chrono"]
+# Adds `DateTime<chrono_tz::Tz>` and IANA time zone generators to the chrono integration.
+chrono-tz = ["chrono", "dep:chrono-tz"]
 jiff = ["dep:jiff"]
+time = ["dep:time"]
 serde_json = ["dep:serde_json"]
 # Enables the serde_json/raw_value feature. Enables generators for serde_json::value::RawValue.
 serde_json_raw_value = ["serde_json", "serde_json/raw_value"]

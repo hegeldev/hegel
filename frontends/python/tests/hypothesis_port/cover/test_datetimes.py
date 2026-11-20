@@ -40,7 +40,7 @@ import pytest
 import hegel
 from hegel import generators as gs
 from hegel.errors import InvalidArgument
-from hegel.generators import dates, datetimes, timedeltas, times
+from hegel.generators.temporal import dates, datetimes, durations, times
 from tests.hypothesis_port.common.compat import _num_days_in_month
 from tests.hypothesis_port.common.debug import (
     assert_all_examples,
@@ -63,42 +63,48 @@ def test_num_days_in_month_matches_monthrange(tc):
 
 
 def test_can_find_positive_delta():
-    assert minimal(timedeltas(), lambda x: x.days > 0) == dt.timedelta(1)
+    assert minimal(durations(), lambda x: x.days > 0) == dt.timedelta(1)
 
 
+@pytest.mark.xfail(
+    reason="Hegel shrinks a timedelta toward zero as a whole, so the simplest negative "
+    "delta is a microsecond below zero, where Hypothesis shrinks days, seconds and "
+    "microseconds one at a time",
+    strict=True,
+)
 def test_can_find_negative_delta():
-    assert minimal(timedeltas(max_value=dt.timedelta(10**6)), lambda x: x.days < 0) == dt.timedelta(
+    assert minimal(durations(max_value=dt.timedelta(10**6)), lambda x: x.days < 0) == dt.timedelta(
         -1
     )
 
 
 def test_can_find_on_the_second():
-    find_any(timedeltas(), lambda x: x.seconds == 0)
+    find_any(durations(), lambda x: x.seconds == 0)
 
 
 def test_can_find_off_the_second():
-    find_any(timedeltas(), lambda x: x.seconds != 0)
+    find_any(durations(), lambda x: x.seconds != 0)
 
 
 def test_simplifies_towards_zero_delta():
-    d = minimal(timedeltas())
+    d = minimal(durations())
     assert d.days == d.seconds == d.microseconds == 0
 
 
 def test_min_value_is_respected():
-    assert minimal(timedeltas(min_value=dt.timedelta(days=10))).days == 10
+    assert minimal(durations(min_value=dt.timedelta(days=10))).days == 10
 
 
 def test_max_value_is_respected():
-    assert minimal(timedeltas(max_value=dt.timedelta(days=-10))).days == -10
+    assert minimal(durations(max_value=dt.timedelta(days=-10))).days == -10
 
 
-# Hegel's timedeltas(val, val) draws a timedelta equal to val rather than
+# Hegel's durations(val, val) draws a timedelta equal to val rather than
 # handing back the bound object itself, so this checks equality.
 @hegel.test(suppress_health_check=hegel.HealthCheck.all())
 def test_single_timedelta(tc):
-    val = tc.draw(timedeltas())
-    assert_all_examples(timedeltas(val, val), lambda v: v == val, tc=tc)
+    val = tc.draw(durations())
+    assert_all_examples(durations(val, val), lambda v: v == val, tc=tc)
 
 
 def test_simplifies_towards_millenium():

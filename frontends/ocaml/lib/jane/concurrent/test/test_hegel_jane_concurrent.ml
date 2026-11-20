@@ -25,7 +25,11 @@ let rules () =
 ;;
 
 let invariants =
-  [ S.Invariant.create ~name:"nonnegative" ~inv:(fun _tc n -> assert (Atomic.get n >= 0)) () ]
+  [ S.Invariant.create
+      ~name:"nonnegative"
+      ~inv:(fun _tc n -> assert (Atomic.get n >= 0))
+      ()
+  ]
 ;;
 
 module In_thread = struct
@@ -59,7 +63,9 @@ module On_parallel = struct
 end
 
 let settings =
-  { (Hegel.Settings.create ~test_cases:5 ~seed:0 ()) with database = Hegel.Settings.Disabled }
+  { (Hegel.Settings.create ~test_cases:5 ~seed:0 ()) with
+    database = Hegel.Settings.Disabled
+  }
 ;;
 
 let in_thread_test () =
@@ -129,15 +135,17 @@ let worker_exception_test () =
     Hegel.run_hegel_test
       ~settings:{ settings with verbosity = Hegel.Settings.Quiet }
       (fun tc ->
-        Concurrent_in_thread.with_blocking Await.Terminator.unkillable ~f:(fun concurrent ->
-          S.run_concurrent
-            ~concurrency:(J.of_concurrent concurrent)
-            tc
-            (module M)
-            ~step_count:5
-            ~init:()
-            ~min_concurrency:2
-            ~max_concurrency:2 [@nontail]))
+         Concurrent_in_thread.with_blocking
+           Await.Terminator.unkillable
+           ~f:(fun concurrent ->
+             S.run_concurrent
+               ~concurrency:(J.of_concurrent concurrent)
+               tc
+               (module M)
+               ~step_count:5
+               ~init:()
+               ~min_concurrency:2
+               ~max_concurrency:2 [@nontail]))
   with
   | () -> Alcotest.fail "expected Boom"
   | exception Boom _ -> ()
@@ -150,7 +158,10 @@ let () =
       , [ Alcotest.test_case "runs on Concurrent_in_thread" `Quick in_thread_test
         ; Alcotest.test_case "runs on a Parallel scheduler" `Quick parallel_scheduler_test
         ; Alcotest.test_case "runs a ppx state machine" `Quick ppx_machine_test
-        ; Alcotest.test_case "worker exceptions reach the caller" `Quick worker_exception_test
+        ; Alcotest.test_case
+            "worker exceptions reach the caller"
+            `Quick
+            worker_exception_test
         ] )
     ]
 ;;

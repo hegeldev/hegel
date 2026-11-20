@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { wasmFixture } from "./wasmFixture.js";
 import {
   createRunner,
+  installRuntime,
   Database,
   HealthCheck,
   Verbosity,
@@ -12,9 +13,14 @@ import {
 import { FailedHealthCheckError } from "../src/errors.js";
 import { browserRuntime } from "../src/browser/runtime.js";
 import { WasmArena } from "../src/browser/arena.js";
+import { tzif } from "./tzif.js";
 import {
   EngineError,
+  NativeSpanSign,
   NativeVerbosity,
+  NativeZoneAfter,
+  NativeZoneRuleDay,
+  type NativeZoneData,
   RunStatus,
   Status,
   type Engine,
@@ -27,6 +33,7 @@ import { Libhegel } from "../src/libhegel.js";
 import { testLibPath } from "./libPath.js";
 import { fakeRuntime } from "./fakeEngine.js";
 import { prettyPrint, type PrettyPrinter } from "../src/pretty.js";
+import { readFileSync } from "node:fs";
 
 function active<T>(
   engine: Engine,
@@ -73,19 +80,109 @@ const text: TextGeneratorOptions = {
 };
 
 describe("WasmEngine pinned raw ABI", () => {
+  it("reports the bundled time zone database release like the native library", () => {
+    const release = readFileSync(
+      `${import.meta.dirname}/../../../libhegel/src/tzdata/version.txt`,
+      "utf8",
+    ).trim();
+    expect(wasmFixture().engine.tzdbVersion()).toBe(release);
+    expect(Libhegel.load(testLibPath()).tzdbVersion()).toBe(release);
+  });
+
   it("matches native fixed temporal and signed integer draws", () => {
     const wasm = wasmFixture().engine;
     const native = Libhegel.load(testLibPath());
     const draw = (engine: Engine) =>
       active(engine, (ctx, tc) => {
         const date = { year: -12345, month: 6, day: 17 };
-        const values: unknown[] = [engine.generateDate(ctx, tc, date, date)];
+        const values: unknown[] = [engine.generateDate(ctx, tc, date, date, null)];
         for (const nanosecond of [0, 1, 123456789, 999999999]) {
           const time = { hour: 12, minute: 34, second: 56, nanosecond };
-          values.push(engine.generateTime(ctx, tc, time, time));
-          values.push(engine.generateDatetime(ctx, tc, { date, time }, { date, time }));
+          values.push(engine.generateTime(ctx, tc, time, time, 0));
+          values.push(engine.generateDatetime(ctx, tc, { date, time }, { date, time }, 0));
           expect(values.at(-2)).toEqual(time);
           expect(values.at(-1)).toEqual({ date, time });
+          const timestamp = { second: -4_000_000_000_000n, nanosecond };
+          values.push(engine.generateTimestamp(ctx, tc, timestamp, timestamp, 0));
+          expect(values.at(-1)).toEqual(timestamp);
+        }
+        values.push(engine.generateOffset(ctx, tc, -19_800, -19_800, 3, false));
+        expect(values.at(-1)).toEqual({ seconds: -19_800, known: true });
+        values.push(engine.generateOffset(ctx, tc, 0, 0, 0, true));
+        expect(values.at(-1)).toMatchObject({ seconds: 0 });
+        values.push(engine.timezoneInfo(ctx, "Asia/Calcutta"), engine.timezoneInfo(ctx, "Nowhere"));
+        expect(values.at(-2)).toMatchObject({
+          known: true,
+          primaryName: "Asia/Kolkata",
+          isLink: true,
+        });
+        expect(values.at(-1)).toMatchObject({ known: false, primaryName: "" });
+        const zones = engine.timezoneSpecNew(ctx);
+        const zoned = engine.zonedSpecNew(ctx);
+        const instants = engine.zonedSpecNew(ctx);
+        const span = engine.spanSpecNew(ctx);
+        const options = engine.dateOptionsNew(ctx);
+        try {
+          engine.timezoneSpecSetNames(ctx, zones, ["America/New_York"]);
+          engine.timezoneSpecValidate(ctx, zones);
+          values.push(engine.generateTimezone(ctx, tc, zones));
+          expect(values.at(-1)).toBe("America/New_York");
+          const gap = {
+            date: { year: 2024, month: 3, day: 10 },
+            time: { hour: 2, minute: 30, second: 0, nanosecond: 0 },
+          };
+          engine.zonedSpecSetCivilBounds(ctx, zoned, gap, gap);
+          engine.zonedSpecSetPrecision(ctx, zoned, 0);
+          engine.zonedSpecSetImaginary(ctx, zoned, 0);
+          engine.zonedSpecSetAmbiguous(ctx, zoned, 0);
+          engine.zonedSpecValidate(ctx, zoned);
+          const drawn = engine.generateZonedDatetimeForZone(
+            ctx,
+            tc,
+            null,
+            "America/New_York",
+            zoned,
+          );
+          values.push(drawn);
+          expect(drawn).toEqual({
+            civil: gap,
+            offsetSeconds: -14_400,
+            offsetKnown: true,
+            fold: false,
+            kind: 1,
+            offsetBefore: -18_000,
+            offsetAfter: -14_400,
+            timestamp: { second: 1_710_055_800n, nanosecond: 0 },
+          });
+          values.push(engine.formatZonedDatetime(drawn, "America/New_York"));
+          expect(values.at(-1)).toBe("2024-03-10T02:30:00-04:00[America/New_York][gap]");
+          expect(() =>
+            engine.generateZonedDatetimeForZone(ctx, tc, null, "Mars/Base", zoned),
+          ).toThrow("Mars/Base");
+          const epoch = { second: 0n, nanosecond: 0 };
+          engine.zonedSpecSetInstantBounds(ctx, zoned, epoch, epoch);
+          expect(() => engine.zonedSpecValidate(ctx, zoned)).toThrow("not both");
+          engine.zonedSpecSetInstantBounds(ctx, instants, epoch, epoch);
+          engine.zonedSpecValidate(ctx, instants);
+          values.push(engine.generateZonedDatetimeForZone(ctx, tc, null, "UTC", instants));
+          expect(values.at(-1)).toMatchObject({ timestamp: epoch, kind: 0 });
+          engine.spanSpecSetUnitBounds(ctx, span, 0, -3n, -3n);
+          engine.spanSpecSetUnitBounds(ctx, span, 9, -(1n << 62n), -(1n << 62n));
+          engine.spanSpecSetSign(ctx, span, 0);
+          engine.spanSpecValidate(ctx, span);
+          values.push(engine.generateSpan(ctx, tc, span));
+          expect(values.at(-1)).toMatchObject({ years: -3n, nanoseconds: -(1n << 62n), days: 0n });
+          engine.dateOptionsSetWeekdays(ctx, options, 1 << 6);
+          engine.dateOptionsSetMonths(ctx, options, 1 << 11);
+          const sunday = { year: 2024, month: 12, day: 29 };
+          values.push(engine.generateDate(ctx, tc, sunday, sunday, options));
+          expect(values.at(-1)).toEqual(sunday);
+        } finally {
+          engine.freeDateOptions(options);
+          engine.freeSpanSpec(span);
+          engine.freeZonedSpec(instants);
+          engine.freeZonedSpec(zoned);
+          engine.freeTimezoneSpec(zones);
         }
         for (const value of [-1n << 127n, 1n << 127n, -129n, 0n, 128n]) {
           expect(engine.generateIntegerBig(ctx, tc, value, value)).toBe(value);
@@ -97,6 +194,268 @@ describe("WasmEngine pinned raw ABI", () => {
         expect(uuid[8] >> 6).toBe(2);
         values.push(Array.from(uuid), Array.from(engine.generateUuid(ctx, tc)));
         return values;
+      });
+    expect(draw(wasm)).toEqual(draw(native));
+  });
+
+  it("formats date and time values like the native library", () => {
+    const wasm = wasmFixture().engine;
+    const native = Libhegel.load(testLibPath());
+    const date = { year: -12345, month: 6, day: 17 };
+    const time = { hour: 12, minute: 34, second: 56, nanosecond: 123_456_789 };
+    const span = {
+      years: 1n,
+      months: 0n,
+      weeks: 0n,
+      days: 3n,
+      hours: 0n,
+      minutes: 0n,
+      seconds: 0n,
+      milliseconds: 0n,
+      microseconds: 5n,
+      nanoseconds: 1n << 62n,
+    };
+    const zoned = {
+      civil: { date: { year: 2024, month: 11, day: 3 }, time: { ...time, hour: 1, nanosecond: 0 } },
+      offsetSeconds: -18_000,
+      offsetKnown: true,
+      fold: true,
+      kind: 2,
+      offsetBefore: -14_400,
+      offsetAfter: -18_000,
+      timestamp: { second: 1_730_615_696n, nanosecond: 0 },
+    };
+    const format = (engine: Engine) => [
+      engine.formatDate(date),
+      engine.formatDate({ year: 2024, month: 3, day: 10 }),
+      engine.formatTime(time),
+      engine.formatDatetime({ date, time }),
+      engine.formatTimestamp({ second: -2n, nanosecond: 500_000_000 }),
+      engine.formatTimestamp({ second: -4_000_000_000_000n, nanosecond: 1 }),
+      engine.formatOffset({ seconds: -2_670, known: true }),
+      engine.formatOffset({ seconds: 0, known: false }),
+      engine.formatSpan(span),
+      engine.formatSpan({ ...span, years: -1n, microseconds: 0n, nanoseconds: 0n }),
+      engine.formatZonedDatetime(zoned, "America/New_York"),
+      engine.formatZonedDatetime({ ...zoned, kind: 0, offsetKnown: false }, "Zone/\u{1F642}"),
+    ];
+    expect(format(native)).toEqual([
+      "-012345-06-17",
+      "2024-03-10",
+      "12:34:56.123456789",
+      "-012345-06-17T12:34:56.123456789",
+      "1969-12-31T23:59:58.5Z",
+      "-124785-01-17T16:53:20.000000001Z",
+      "-00:44:30",
+      "-00:00",
+      "1y 3d 5µs 4611686018427387904ns",
+      "-1y +3d",
+      "2024-11-03T01:34:56-05:00[America/New_York][fold=1]",
+      "2024-11-03T01:34:56-00:00[Zone/\u{1F642}]",
+    ]);
+    expect(format(wasm)).toEqual(format(native));
+  });
+
+  it("validates specs like the native library", () => {
+    const failures = (engine: Engine) =>
+      active(engine, (ctx) => {
+        const messages: string[] = [];
+        const failure = (validate: () => void) => {
+          try {
+            validate();
+            messages.push("valid");
+          } catch (error) {
+            messages.push((error as Error).message.replace(/^.*?failed( \(-?\d+\))?: /, ""));
+          }
+        };
+        const zones = engine.timezoneSpecNew(ctx);
+        const zoned = engine.zonedSpecNew(ctx);
+        const span = engine.spanSpecNew(ctx);
+        try {
+          failure(() => engine.timezoneSpecValidate(ctx, zones));
+          engine.timezoneSpecSetNames(ctx, zones, ["Mars/Base"]);
+          failure(() => engine.timezoneSpecValidate(ctx, zones));
+          failure(() => engine.zonedSpecValidate(ctx, zoned));
+          const minute = (value: number) => ({
+            date: { year: 2024, month: 1, day: 1 },
+            time: { hour: 1, minute: value, second: 0, nanosecond: 0 },
+          });
+          engine.zonedSpecSetCivilBounds(ctx, zoned, minute(1), minute(2));
+          engine.zonedSpecSetPrecision(ctx, zoned, 5);
+          failure(() => engine.zonedSpecValidate(ctx, zoned));
+          failure(() => engine.spanSpecValidate(ctx, span));
+          engine.spanSpecSetUnitBounds(ctx, span, 0, -1n, 1n);
+          failure(() => engine.spanSpecValidate(ctx, span));
+          engine.spanSpecSetSign(ctx, span, NativeSpanSign.NONNEGATIVE);
+          failure(() => engine.spanSpecValidate(ctx, span));
+          return messages;
+        } finally {
+          engine.freeSpanSpec(span);
+          engine.freeZonedSpec(zoned);
+          engine.freeTimezoneSpec(zones);
+        }
+      });
+    const native = failures(Libhegel.load(testLibPath()));
+    expect(native.map((message) => message === "valid")).toEqual([
+      true,
+      false,
+      true,
+      false,
+      false,
+      true,
+      false,
+    ]);
+    expect(native[1]).toContain('unknown time zone "Mars/Base"');
+    expect(native[3]).toContain("no value at precision hours");
+    expect(native[4]).toContain("needs a unit enabled");
+    expect(native[6]).toContain("requires min >= 0");
+    expect(failures(wasmFixture().engine)).toEqual(native);
+  });
+
+  it("validates draw arguments like the native library", () => {
+    const failures = (engine: Engine) =>
+      active(engine, (ctx) => {
+        const messages: string[] = [];
+        const failure = (validate: () => void) => {
+          try {
+            validate();
+            messages.push("valid");
+          } catch (error) {
+            messages.push((error as Error).message.replace(/^.*?failed( \(-?\d+\))?: /, ""));
+          }
+        };
+        const date = (day: number) => ({ year: 2024, month: 3, day });
+        const time = (nanosecond: number) => ({ hour: 1, minute: 0, second: 0, nanosecond });
+        const datetime = (nanosecond: number) => ({ date: date(12), time: time(nanosecond) });
+        const instant = (nanosecond: number) => ({ second: -5_000_000_000n, nanosecond });
+        const mondays = engine.dateOptionsNew(ctx);
+        try {
+          engine.dateOptionsSetWeekdays(ctx, mondays, 1);
+          failure(() => engine.validateDate(ctx, date(12), date(12), null));
+          failure(() => engine.validateDate(ctx, date(12), date(11), null));
+          failure(() => engine.validateDate(ctx, date(11), date(12), mondays));
+          failure(() => engine.validateDate(ctx, date(12), date(12), mondays));
+          failure(() => engine.validateTime(ctx, time(1), time(999), 0));
+          failure(() => engine.validateTime(ctx, time(1), time(999), 1));
+          failure(() => engine.validateDatetime(ctx, datetime(1), datetime(999), 0));
+          failure(() => engine.validateDatetime(ctx, datetime(1), datetime(999), 1));
+          failure(() => engine.validateTimestamp(ctx, instant(1), instant(999), 0));
+          failure(() => engine.validateTimestamp(ctx, instant(1), instant(999), 1));
+          failure(() => engine.validateOffset(ctx, -3600, 3600, 0, false));
+          failure(() => engine.validateOffset(ctx, -93_600, 0, 2, true));
+          failure(() => engine.validateOffset(ctx, 60, 3540, 0, false));
+          return messages;
+        } finally {
+          engine.freeDateOptions(mondays);
+        }
+      });
+    const native = failures(Libhegel.load(testLibPath()));
+    expect(native.map((message) => message === "valid")).toEqual([
+      true,
+      false,
+      true,
+      false,
+      true,
+      false,
+      true,
+      false,
+      true,
+      false,
+      true,
+      false,
+      false,
+    ]);
+    expect(native[3]).toContain("falls on an allowed weekday and month");
+    expect(native[5]).toContain("no value at precision microseconds");
+    expect(native[11]).toContain("got -93600");
+    expect(failures(wasmFixture().engine)).toEqual(native);
+  });
+
+  it("matches native zone source uploads and the draws against them", () => {
+    const wasm = wasmFixture().engine;
+    const native = Libhegel.load(testLibPath());
+    const type = (utoff: number, abbreviation: string) => ({ utoff, isDst: false, abbreviation });
+    const date = (month: number, time: number) => ({
+      kind: NativeZoneRuleDay.MONTH_WEEK_DAY,
+      day: 0,
+      month,
+      week: 5,
+      weekday: 0,
+      time,
+    });
+    const rule: NativeZoneData = {
+      initial: type(3600, "CET"),
+      transitions: [{ instant: 1_000_000_000n, type: { ...type(7200, "CEST"), isDst: true } }],
+      after: NativeZoneAfter.RULE,
+      standard: type(3600, "CET"),
+      hasDst: true,
+      dst: { ...type(7200, "CEST"), isDst: true },
+      dstStart: date(3, 7200),
+      dstEnd: date(10, 10800),
+      lastYear: 0,
+    };
+    const fixed: NativeZoneData = {
+      ...rule,
+      initial: type(-12_345, ""),
+      transitions: [],
+      after: NativeZoneAfter.INFER,
+      lastYear: 2000,
+    };
+    const bytes = tzif([{ utoff: 19_800, isDst: false, abbreviation: "IST" }], [], "IST-5:30");
+    const draw = (engine: Engine) =>
+      active(engine, (ctx, tc) => {
+        const source = engine.zoneSourceNew(ctx);
+        engine.zoneSourceDeclare(ctx, source, ["Europe/Rule", "Europe/Fixed", "Asia/Tzif"]);
+        engine.zoneSourceAddZone(ctx, source, "Europe/Rule", rule);
+        engine.zoneSourceAddZone(ctx, source, "Europe/Fixed", fixed);
+        engine.zoneSourceAddTzif(ctx, source, "Asia/Tzif", bytes);
+        engine.zoneSourceAddLink(ctx, source, "Europe/Alias", "Europe/Rule");
+        expect(() =>
+          engine.zoneSourceAddTzif(ctx, source, "Asia/Broken", new Uint8Array([1])),
+        ).toThrow("add_tzif failed");
+        const zones = engine.timezoneSpecNew(ctx);
+        const zoned = engine.zonedSpecNew(ctx);
+        const hours = engine.zonedSpecNew(ctx);
+        try {
+          engine.timezoneSpecSetLinks(ctx, zones, false);
+          engine.timezoneSpecSetLegacy(ctx, zones, true);
+          engine.timezoneSpecSetSource(ctx, zones, source);
+          engine.timezoneSpecValidate(ctx, zones);
+          const names = new Set<string>();
+          for (let i = 0; i < 20; i++) names.add(engine.generateTimezone(ctx, tc, zones));
+          expect(names.has("Europe/Alias")).toBe(false);
+          const values: unknown[] = [[...names].sort()];
+          const gap = {
+            date: { year: 2024, month: 3, day: 31 },
+            time: { hour: 2, minute: 30, second: 0, nanosecond: 0 },
+          };
+          engine.zonedSpecSetCivilBounds(ctx, zoned, gap, gap);
+          for (const name of ["Europe/Alias", "Europe/Fixed", "Asia/Tzif"]) {
+            values.push(engine.generateZonedDatetimeForZone(ctx, tc, source, name, zoned));
+          }
+          expect(values[1]).toMatchObject({ kind: 1, offsetSeconds: 7200 });
+          expect(values[2]).toMatchObject({ offsetSeconds: -12_345 });
+          expect(values[3]).toMatchObject({ offsetSeconds: 19_800 });
+          expect(() =>
+            engine.generateZonedDatetimeForZone(ctx, tc, source, "Europe/Paris", zoned),
+          ).toThrow("Europe/Paris");
+          const hour = { second: 1_710_050_400n, nanosecond: 0 };
+          engine.zonedSpecSetInstantBounds(ctx, hours, hour, {
+            ...hour,
+            second: hour.second + 1799n,
+          });
+          engine.zonedSpecSetPrecision(ctx, hours, 5);
+          values.push(engine.generateZonedDatetimeForZone(ctx, tc, source, "Europe/Rule", hours));
+          expect(values[4]).toMatchObject({ timestamp: hour });
+          expect(() =>
+            engine.generateZonedDatetimeForZone(ctx, tc, source, "Asia/Tzif", hours),
+          ).toThrow(AssumeError);
+          return values;
+        } finally {
+          engine.freeZonedSpec(hours);
+          engine.freeZonedSpec(zoned);
+          engine.freeTimezoneSpec(zones);
+        }
       });
     expect(draw(wasm)).toEqual(draw(native));
   });
@@ -404,7 +763,9 @@ describe("WasmEngine pinned raw ABI", () => {
 
   it("runs every schema category through the single interpreter", () => {
     const { engine } = wasmFixture();
-    const runner = createRunner(browserRuntime(engine));
+    const runtime = browserRuntime(engine);
+    installRuntime(runtime);
+    const runner = createRunner(runtime);
     runner.test(
       (tc) => {
         tc.draw(gs.booleans());
@@ -418,9 +779,21 @@ describe("WasmEngine pinned raw ABI", () => {
         tc.draw(gs.emails());
         tc.draw(gs.urls());
         tc.draw(gs.domains());
-        tc.draw(gs.dates());
-        tc.draw(gs.times());
-        tc.draw(gs.datetimes());
+        tc.draw(gs.temporal.dates({ weekdays: [1, 2], months: [3] }));
+        tc.draw(gs.temporal.times({ precision: "minutes" }));
+        tc.draw(gs.temporal.datetimes());
+        tc.draw(gs.temporal.instants());
+        tc.draw(gs.temporal.offsets());
+        tc.draw(gs.temporal.zones());
+        const zoned = tc.draw(gs.temporal.zonedDatetimes());
+        expect(zoned.toString()).toContain(`${zoned.offset}[${zoned.timeZone}]`);
+        expect(
+          tc
+            .draw(gs.temporal.zonedDatetimes({ zones: gs.sampledFrom(["Asia/Kolkata"]) }))
+            .toString(),
+        ).toContain("+05:30[Asia/Kolkata]");
+        tc.draw(gs.temporal.spans());
+        tc.draw(gs.temporal.jsDates());
         tc.draw(gs.uuids());
         tc.draw(gs.uuids({ version: 4 }));
         tc.draw(gs.ipAddresses({ version: 4 }));

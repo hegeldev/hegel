@@ -320,6 +320,8 @@ namespace hegel::generators {
 
         T do_draw(const TestCase& tc) const { return inner_->do_draw(tc); }
 
+        const std::shared_ptr<IGenerator<T>>& inner() const { return inner_; }
+
         T
         do_draw_filtered(const TestCase& tc,
                          const std::function<bool(const T&)>& predicate) const {

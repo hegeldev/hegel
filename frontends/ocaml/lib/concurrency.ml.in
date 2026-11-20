@@ -9,7 +9,8 @@ type outcome = (exn * Printexc.raw_backtrace) option
 type 'ctx t =
   { spawn_join_n :
       n:int
-      -> (f:('ctx MODE(local) -> int -> outcome) MODE(portable) -> outcome list MODE(contended))
+      -> (f:('ctx MODE(local) -> int -> outcome) MODE(portable)
+          -> outcome list MODE(contended))
          MODE(local)
   }
 
@@ -68,9 +69,9 @@ module Domain_pool = struct
     at_exit (fun () ->
       Array.iter
         (fun w ->
-           Mutex.protect w.lock (fun () ->
-             w.stop <- true;
-             Condition.signal w.ready))
+          Mutex.protect w.lock (fun () ->
+            w.stop <- true;
+            Condition.signal w.ready))
         !workers;
       List.iter Domain.join !domains)
   ;;

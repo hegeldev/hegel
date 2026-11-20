@@ -4,6 +4,8 @@ module Public = struct
   include Generators_collections
   include Generators_combinators
   include Generators_functions
+  module Temporal = Generators_temporal
+  include Generators_temporal.Legacy
 end
 
 include Public
@@ -11,13 +13,12 @@ include Public
 #ifdef OXCAML
 (* The compiler fills these arguments at the caller, including through aliases
    such as Hegel.draw. Forward explicitly so the core sees the original site. *)
-let draw ?label ~(loc : [%call_pos]) tc gen =
-  Generators_core.draw ?label ~loc tc gen
-;;
+let draw ?label ~(loc : [%call_pos]) tc gen = Generators_core.draw ?label ~loc tc gen
 
 let draw_named ~label ~(loc : [%call_pos]) ~repeatable tc gen =
   Generators_core.draw_named ~label ~loc ~repeatable tc gen
 ;;
+
 #else
 let draw = Generators_core.draw
 let draw_named = Generators_core.draw_named
@@ -28,6 +29,9 @@ module Private = struct
 
   let group = Generators_core.group
   let label_of = Generators_core.label_of
+  let live_temporal_specs () = Atomic.get Generators_temporal.live_specs
+  let live_zone_sources () = Atomic.get Generators_temporal.Zone_source.live
+  let zone_loader_target = Generators_temporal.Zone_source.loader_target
 end
 
 module Ppx_internal = struct

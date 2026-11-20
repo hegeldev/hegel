@@ -1,5 +1,6 @@
 using System.Numerics;
 using Hegel.Native;
+using Hegel.Temporal;
 using Hegel.Tests.Support;
 using Xunit;
 
@@ -176,29 +177,31 @@ public class LiveDataSourceTests
     public void TemporalValuesRoundTripThroughTheNativeStructs()
     {
         var time = new TimeOnly(23, 59, 58).Add(TimeSpan.FromTicks(1234567));
-        var native = LiveDataSource.ToNative(time);
+        var native = TemporalValues.Time(time);
         Assert.Equal(23, native.Hour);
         Assert.Equal(59, native.Minute);
         Assert.Equal(58, native.Second);
         Assert.Equal(123456700u, native.Nanosecond);
-        Assert.Equal(time, LiveDataSource.FromNative(native));
+        Assert.Equal(123456799u, TemporalValues.LastTime(time).Nanosecond);
+        Assert.Equal(time, TemporalValues.Time(native));
+        Assert.Equal(time, TemporalValues.Time(TemporalValues.LastTime(time)));
         var date = new DateOnly(1999, 12, 31);
-        var nativeDate = LiveDataSource.ToNative(date);
+        var nativeDate = TemporalValues.Date(date);
         Assert.Equal(1999, nativeDate.Year);
         Assert.Equal(12, nativeDate.Month);
         Assert.Equal(31, nativeDate.Day);
-        Assert.Equal(date, LiveDataSource.FromNative(nativeDate));
+        Assert.Equal(date, TemporalValues.Date(nativeDate));
         using var run = new RawRun();
         var source = run.Source();
-        Assert.Equal(time, source.GenerateTime(time, time));
-        Assert.Equal(date, source.GenerateDate(date, date));
+        Assert.Equal(time, source.GenerateTime(time, time, Precision.Ticks));
+        Assert.Equal(date, source.GenerateDate(date, date, null));
         var dateTime = date.ToDateTime(time);
-        var drawn = source.GenerateDatetime(dateTime, dateTime);
+        var drawn = source.GenerateDatetime(dateTime, dateTime, Precision.Ticks);
         Assert.Equal(dateTime, drawn);
         Assert.Equal(DateTimeKind.Unspecified, drawn.Kind);
-        Assert.InRange(source.GenerateDate(DateOnly.MinValue, DateOnly.MaxValue), DateOnly.MinValue, DateOnly.MaxValue);
-        Assert.InRange(source.GenerateTime(TimeOnly.MinValue, TimeOnly.MaxValue), TimeOnly.MinValue, TimeOnly.MaxValue);
-        Assert.InRange(source.GenerateDatetime(DateTime.MinValue, DateTime.MaxValue), DateTime.MinValue, DateTime.MaxValue);
+        Assert.InRange(source.GenerateDate(DateOnly.MinValue, DateOnly.MaxValue, null), DateOnly.MinValue, DateOnly.MaxValue);
+        Assert.InRange(source.GenerateTime(TimeOnly.MinValue, TimeOnly.MaxValue, Precision.Ticks), TimeOnly.MinValue, TimeOnly.MaxValue);
+        Assert.InRange(source.GenerateDatetime(DateTime.MinValue, DateTime.MaxValue, Precision.Ticks), DateTime.MinValue, DateTime.MaxValue);
     }
 
     [Fact]

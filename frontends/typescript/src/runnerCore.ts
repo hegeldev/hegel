@@ -5,7 +5,7 @@
  * @packageDocumentation
  */
 
-import { generateValue, StringGeneratorCache, withCleanup, type GrammarSpec } from "./generate.js";
+import { generateValue, HandleCache, withCleanup, type GrammarSpec } from "./generate.js";
 import {
   TestCase,
   StopTestError,
@@ -36,6 +36,7 @@ import {
   type PrinterHandle,
 } from "./engine.js";
 import type { RuntimeServices } from "./runtime.js";
+import { entryRuntime, setEntryRuntime } from "./runtime.js";
 import {
   applySettings,
   newSettingsHandle,
@@ -78,7 +79,7 @@ export type { Settings, TestLocation } from "./settings.js";
  * fault any of them hit.
  */
 interface Family {
-  readonly cache: StringGeneratorCache;
+  readonly cache: HandleCache;
   readonly ownsCache: boolean;
   readonly collections: CollectionHandle[];
   readonly repeats: RepeatHandle[];
@@ -111,7 +112,7 @@ export class EngineDataSource implements DataSource {
     private readonly lib: Engine,
     private readonly ctx: ContextHandle,
     private readonly tc: TestCaseHandle,
-    cache = new StringGeneratorCache(lib),
+    cache = new HandleCache(lib),
     ownsCache = true,
     family?: Family,
   ) {
@@ -724,8 +725,6 @@ const DID_NOT_REPRODUCE =
   "replay budget (a bug failing 10% of the time escapes it about 5% of the time). Re-run to " +
   "retry, or remove the reproduceFailure call once the failure is fixed.";
 
-let installedRuntime: RuntimeServices | null = null;
-
 /**
  * Set the runtime a {@link Hegel} built without one runs on: what the Node and
  * browser entry points do when loaded.
@@ -733,7 +732,7 @@ let installedRuntime: RuntimeServices | null = null;
  * @internal
  */
 export function installRuntime(runtime: RuntimeServices): void {
-  installedRuntime = runtime;
+  setEntryRuntime(runtime);
   installDocumentEngine(() => runtime.getEngine());
 }
 
@@ -775,7 +774,7 @@ export class Hegel {
     runtime?: RuntimeServices,
     site?: CallSite | null,
   ) {
-    const resolved = runtime ?? installedRuntime;
+    const resolved = runtime ?? entryRuntime();
     if (resolved === null) throw new Error("Hegel has no runtime: import @hegeldev/hegel first");
     this.testFn = testFn;
     this.runtime = resolved;
@@ -908,7 +907,7 @@ export class Hegel {
     const contextErrors: unknown[] = [];
     try {
       const settings = newSettingsHandle(lib, ctx, this._settings);
-      const cache = new StringGeneratorCache(lib, this.runtime.readGrammarFile);
+      const cache = new HandleCache(lib, this.runtime.readGrammarFile);
       const settingsErrors: unknown[] = [];
       try {
         applySettings(lib, ctx, settings, this._settings);
@@ -953,7 +952,7 @@ export class Hegel {
     lib: Engine,
     ctx: ContextHandle,
     settings: SettingsHandle,
-    cache: StringGeneratorCache,
+    cache: HandleCache,
   ): Generator<Step, void, TestCaseResult> {
     const quiet = lib.getVerbosity(settings) === NativeVerbosity.QUIET;
     const printBlob = lib.getPrintBlob(settings);
@@ -1033,7 +1032,7 @@ export class Hegel {
     lib: Engine,
     ctx: ContextHandle,
     run: RunHandle,
-    cache: StringGeneratorCache,
+    cache: HandleCache,
     quiet: boolean,
     printBlob: boolean,
   ): Generator<Step, RunOutcome, TestCaseResult> {

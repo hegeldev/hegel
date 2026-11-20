@@ -80,11 +80,11 @@ let stateful_usage_error_test () =
         ignore
           (Hegel.draw
              tc
-             (Hegel.dates
-                ~min_date:{ year = 2024; month = 1; day = 2 }
-                ~max_date:{ year = 2024; month = 1; day = 1 }
+             (Hegel.Temporal.dates
+                ~min_value:{ year = 2024; month = 1; day = 2 }
+                ~max_value:{ year = 2024; month = 1; day = 1 }
                 ())
-           : string))
+           : Hegel.Temporal.Date.t))
       ()
   in
   let module M = struct
@@ -866,9 +866,9 @@ let concurrent_worker_usage_error_test () =
         ignore
           (Hegel.draw_silent
              tc
-             (Hegel.dates
-                ~min_date:{ year = 2024; month = 1; day = 2 }
-                ~max_date:{ year = 2024; month = 1; day = 1 }
+             (Hegel.Temporal.dates
+                ~min_value:{ year = 2024; month = 1; day = 2 }
+                ~max_value:{ year = 2024; month = 1; day = 1 }
                 ())))
       ()
   in
@@ -894,8 +894,7 @@ let concurrent_worker_usage_error_test () =
   | exception Hegel.Usage_error message ->
     Alcotest.(check string)
       "worker usage error message"
-      "generate_date requires min_value <= max_value, got [Date { year: 2024, month: 1, \
-       day: 2 }, Date { year: 2024, month: 1, day: 1 }]"
+      "generate_date requires min_value <= max_value, got [2024-01-02, 2024-01-01]"
       message
 ;;
 

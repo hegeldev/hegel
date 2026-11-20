@@ -24,6 +24,10 @@ fn run(steps: Vec<Step>) -> Run {
     Run { steps }
 }
 
+fn key(g: &Graph) -> GraphKey {
+    g.key(|_, e| shrink_rank(&e.value))
+}
+
 const COIN: &[Frame] = &[(1, 0), (10, 0)];
 const LEFT: &[Frame] = &[(2, 0), (11, 0)];
 const RIGHT: &[Frame] = &[(3, 0), (11, 0)];
@@ -263,7 +267,7 @@ fn reachable_terminates_on_cycles() {
     assert_eq!(g.edge_count(), 6);
     let pruned = g.pruned();
     assert_eq!(pruned.nodes().len(), 4);
-    assert_eq!(pruned.key(), g.key());
+    assert_eq!(key(&pruned), key(&g));
 }
 
 #[test]
@@ -271,18 +275,14 @@ fn key_orders_by_edges_then_nodes_then_values() {
     let one = Graph::from_run(&left_run(false, 3));
     let mut two = one.clone();
     two.insert(&right_run(false, 5));
-    assert!(one.key() < two.key());
+    assert!(key(&one) < key(&two));
     let coin = ChoiceValue::Boolean(false);
     let smaller = one.set_value(START, COIN, &coin, ChoiceValue::Boolean(false));
-    assert_eq!(smaller.key(), one.key());
+    assert_eq!(key(&smaller), key(&one));
     let left = one.node(&at(&[(2, 0)])).unwrap();
-    assert!(one.set_value(left, LEFT, &int(3), int(2)).key() < one.key());
-    assert!(one.set_value(left, LEFT, &int(3), int(-2)).key() < one.key());
-    assert!(
-        one.set_value(left, LEFT, &int(3), ChoiceValue::Boolean(true))
-            .key()
-            < one.key()
-    );
+    assert!(key(&one.set_value(left, LEFT, &int(3), int(2))) < key(&one));
+    assert!(key(&one.set_value(left, LEFT, &int(3), int(-2))) < key(&one));
+    assert!(key(&one.set_value(left, LEFT, &int(3), ChoiceValue::Boolean(true))) < key(&one));
     let tied = two.set_value(START, COIN, &coin, ChoiceValue::Boolean(true));
     assert!(
         tied.nodes()[START]
@@ -290,12 +290,12 @@ fn key_orders_by_edges_then_nodes_then_values() {
             .iter()
             .all(|e| e.value == ChoiceValue::Boolean(true))
     );
-    assert_eq!(two.set_value(START, LEFT, &coin, int(1)).key(), two.key());
+    assert_eq!(key(&two.set_value(START, LEFT, &coin, int(1))), key(&two));
     let mut chain = Graph::from_run(&run(vec![step(COIN, int(1)), step(LEFT, int(1))]));
     chain.insert(&run(vec![step(COIN, int(1)), step(RIGHT, int(1))]));
     let mut flat = Graph::from_run(&run(vec![step(COIN, int(1)), step(LEFT, int(1))]));
     flat.insert(&run(vec![step(COIN, int(2)), step(LEFT, int(1))]));
-    assert!(flat.key() < chain.key());
+    assert!(key(&flat) < key(&chain));
 }
 
 #[test]

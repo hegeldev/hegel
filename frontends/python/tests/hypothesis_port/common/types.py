@@ -67,10 +67,20 @@ typing_root_type = (typing._Final, typing._GenericAlias)  # type: ignore[attr-de
 
 _NOT_GENERATORS = {
     "Generator",
+    "Span",
     "composite",
     "register_type_generator",
+    "temporal",
+    "tzdb_version",
 }
-_all_generators = {name: getattr(gs, name) for name in gs.__all__ if name not in _NOT_GENERATORS}
+_all_generators = {
+    **{name: getattr(gs, name) for name in gs.__all__ if name not in _NOT_GENERATORS},
+    **{
+        name: getattr(gs.temporal, name)
+        for name in gs.temporal.__all__
+        if name not in _NOT_GENERATORS
+    },
+}
 
 
 def can_cast(type, value):

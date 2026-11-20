@@ -9,7 +9,9 @@ export { integers, bigIntegers, floats, booleans, weightedBooleans } from "./num
 export type { IntegerOptions, BigIntegerOptions, FloatOptions } from "./numeric.js";
 export { text, characters, binary, fromRegex } from "./strings.js";
 export { emails, urls, domains, ipAddresses } from "./strings.js";
-export { dates, times, datetimes, uuids } from "./strings.js";
+export { uuids } from "./strings.js";
+export * as temporal from "./temporal.js";
+export { dates, times, datetimes } from "./deprecated.js";
 export type {
   CharacterFilterOptions,
   TextOptions,
