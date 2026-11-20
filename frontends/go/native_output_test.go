@@ -448,3 +448,31 @@ func TestPanics(t *testing.T) {
 		}
 	}
 }
+
+// A run that ends without a verdict on the property reports why through
+// testing.T, since nothing else prints its message.
+func TestRunErrorIsReported(t *testing.T) {
+	out := newTempGoProject(t).
+		writeFile("hegel_test.go", `package temptest
+
+import (
+	"testing"
+
+	"hegel.dev/go/hegel"
+)
+
+func TestFilterTooMuch(t *testing.T) {
+	hegel.Test(t, func(ht *hegel.T) {
+		hegel.Draw(ht, hegel.Booleans())
+		ht.Assume(false)
+	}, hegel.WithDatabase(""), hegel.WithDerandomize(true))
+}
+`).
+		expectFailure(`"Action":"fail"`).
+		goTest()
+	result := out.Tests["TestFilterTooMuch"]
+	want := `(?m)^\s+hegel_test\.go:10: property test run failed: FailedHealthCheck: FilterTooMuch`
+	if matched, _ := regexp.MatchString(want, result.Output); !matched {
+		t.Errorf("output did not match %q:\n%s", want, result.Output)
+	}
+}

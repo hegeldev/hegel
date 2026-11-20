@@ -42,11 +42,11 @@ func TestRunHegelTestPasses(t *testing.T) {
 // assertUnsatisfiable asserts that err is the unsatisfiable-assumptions failure
 // libhegel reports when every generated case is filtered out via Assume.
 // libhegel 0.45.3 reports a fully-filtered run as an error verdict
-// (RUN_STATUS_ERROR, surfaced as [errPropTestFailed]) rather than the vacuous
+// (RUN_STATUS_ERROR, surfaced as [errRunFailed]) rather than the vacuous
 // pass earlier versions produced.
 func assertUnsatisfiable(t *testing.T, err error) {
 	t.Helper()
-	if !errors.Is(err, errPropTestFailed) || !strings.Contains(err.Error(), "Unsatisfiable") {
+	if !errors.Is(err, errRunFailed) || !strings.Contains(err.Error(), "Unsatisfiable") {
 		t.Fatalf("expected unsatisfiable-assumptions failure, got %v", err)
 	}
 }
@@ -1228,7 +1228,7 @@ func TestRunWithHandleRunError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected run-error error")
 	}
-	if !errors.Is(err, errPropTestFailed) || !strings.Contains(err.Error(), "FilterTooMuch") {
+	if !errors.Is(err, errRunFailed) || errors.Is(err, errPropTestFailed) || !strings.Contains(err.Error(), "FilterTooMuch") {
 		t.Fatalf("expected run-level error message, got %v", err)
 	}
 }
