@@ -5,7 +5,8 @@ sidebar:
 ---
 
 To get more bugfinding power and total reproducibility out of your Hegel tests, you can
-run them in [Antithesis](https://antithesis.com). 
+run them in [Antithesis](https://antithesis.com). Using Hegel for Antithesis workloads
+is officially supported in C++, Go, Java, OCaml, Python, and Rust.
 
 Any use of concurrent stateful testing is worth running in Antithesis,
 since handling nondeterministic failures is obviated by the deterministic
@@ -52,5 +53,3 @@ Finally, the key disadvantage, which we hope to fix in the near future, is
 the lack of shrinking. Since Hegel tests in Antithesis often run for a very long
 time before finding a bug, a failing test case is too large to shrink (sequentially) 
 in a reasonable amount of time, so shrinking is disabled by default. 
-
-**Language-specific Antithesis workload examples are coming soon!**
