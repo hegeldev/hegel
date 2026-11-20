@@ -15,4 +15,4 @@ dotnet add package Hegel.FSharp
 - [Everything else]({{root}}reference/index.html) in the `Hegel.FSharp` namespace.
 
 The [README](https://github.com/hegeldev/hegel/tree/main/frontends/csharp#f) is the guide. The C#
-packages, `Hegel` and `Hegel.Xunit`, have [their own reference](https://hegel.dev/csharp).
+packages, `Hegel`, `Hegel.Xunit` and `Hegel.NUnit`, have [their own reference](https://hegel.dev/csharp).

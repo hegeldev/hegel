@@ -229,7 +229,7 @@ CSHARP = Component(
     path="frontends/csharp",
     name="C#",
     manifests=("frontends/csharp/Directory.Build.props",),
-    crates=("Hegel", "Hegel.FSharp", "Hegel.Xunit"),
+    crates=("Hegel", "Hegel.FSharp", "Hegel.Xunit", "Hegel.NUnit"),
     source_dirs=(
         "frontends/csharp/src/",
         "frontends/csharp/Directory.Build.props",

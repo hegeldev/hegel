@@ -4,7 +4,7 @@
       "src": [
         {
           "src": "../../src",
-          "files": ["Hegel/Hegel.csproj", "Hegel.Xunit/Hegel.Xunit.csproj"]
+          "files": ["Hegel/Hegel.csproj", "Hegel.Xunit/Hegel.Xunit.csproj", "Hegel.NUnit/Hegel.NUnit.csproj"]
         }
       ],
       "dest": "api",
