@@ -29,7 +29,7 @@ use core::pin::Pin;
 
 use crate::sys::Instant;
 
-use crate::native::core::{ChoiceNode, ChoiceValue, MAX_SHRINKS, Spans, sort_key};
+use crate::native::core::{ChoiceNode, ChoiceValue, MAX_SHRINKS, Spans, Status, sort_key};
 
 /// Request passed to the shrinker's test function.
 ///
@@ -47,12 +47,45 @@ pub enum ShrinkRun<'a> {
     },
 }
 
-/// The boxed future a [`ShrinkProbe`] resolves to: the
-/// `(is_interesting, actual_nodes, actual_spans)` outcome of one run, or
-/// the [`ShrinkHalt`] that cut it short (a run-level error raised inside
-/// the engine's replay machinery).
-pub type ProbeFuture<'s> =
-    Pin<Box<dyn Future<Output = ShrinkResult<(bool, Vec<ChoiceNode>, Spans)>> + Send + 's>>;
+/// The boxed future a [`ShrinkProbe`] resolves to: the [`ProbeOutcome`]
+/// of one run, or the [`ShrinkHalt`] that cut it short (a run-level error
+/// raised inside the engine's replay machinery).
+pub type ProbeFuture<'s> = Pin<Box<dyn Future<Output = ShrinkResult<ProbeOutcome>> + Send + 's>>;
+
+/// What one [`ShrinkProbe::run`] observed.
+pub struct ProbeOutcome {
+    /// Whether the run reproduced the failure being shrunk. A run can end
+    /// [`Status::Interesting`] with a different failure, so this is not
+    /// implied by `status`.
+    pub interesting: bool,
+    /// How the run ended.
+    pub status: Status,
+    /// The choice nodes the run realised. For [`ShrinkRun::Full`], this may
+    /// be shorter than the candidate (early exit / flatmap bindings), or
+    /// hold different values where the candidate was punned because the
+    /// kind changed at that position.
+    pub nodes: Vec<ChoiceNode>,
+    /// The span tree the run recorded.
+    pub spans: Spans,
+}
+
+/// Converts the `(interesting, nodes, spans)` tuple that closure probes
+/// return. The status is [`Status::Interesting`] when `interesting` is set
+/// and [`Status::Valid`] otherwise.
+impl From<(bool, Vec<ChoiceNode>, Spans)> for ProbeOutcome {
+    fn from((interesting, nodes, spans): (bool, Vec<ChoiceNode>, Spans)) -> Self {
+        ProbeOutcome {
+            interesting,
+            status: if interesting {
+                Status::Interesting
+            } else {
+                Status::Valid
+            },
+            nodes,
+            spans,
+        }
+    }
+}
 
 /// How a probe judges candidates. `Fast` is the default
 /// regime: a stochastic probe may reject a candidate on a single
@@ -111,7 +144,7 @@ where
     F: FnMut(ShrinkRun<'_>) -> (bool, Vec<ChoiceNode>, Spans),
 {
     fn run<'s>(&'s mut self, req: ShrinkRun<'s>) -> ProbeFuture<'s> {
-        Box::pin(core::future::ready(Ok(self(req))))
+        Box::pin(core::future::ready(Ok(self(req).into())))
     }
 }
 
@@ -388,8 +421,12 @@ impl<'a> Shrinker<'a> {
             return Ok(false);
         }
 
-        let (is_interesting, actual_nodes, actual_spans) =
-            self.run_test_fn(ShrinkRun::Full(nodes)).await?;
+        let ProbeOutcome {
+            interesting: is_interesting,
+            nodes: actual_nodes,
+            spans: actual_spans,
+            ..
+        } = self.run_test_fn(ShrinkRun::Full(nodes)).await?;
         self.calls += 1;
         if is_interesting && sort_key(&actual_nodes) < sort_key(&self.current_nodes) {
             self.accept_improvement(actual_nodes, actual_spans)?;
@@ -420,7 +457,12 @@ impl<'a> Shrinker<'a> {
         {
             return Ok(None);
         }
-        let (is_interesting, actual_nodes, actual_spans) = self.run_test_fn(run).await?;
+        let ProbeOutcome {
+            interesting: is_interesting,
+            nodes: actual_nodes,
+            spans: actual_spans,
+            ..
+        } = self.run_test_fn(run).await?;
         self.calls += 1;
         if is_interesting && sort_key(&actual_nodes) < sort_key(&self.current_nodes) {
             self.accept_improvement(actual_nodes.clone(), actual_spans)?;
@@ -436,10 +478,7 @@ impl<'a> Shrinker<'a> {
     /// `replace`, and the inspection re-runs in individual passes all funnel
     /// through it, so a passed deadline stops every further test-body run and
     /// the `?` operator unwinds the current pass.
-    pub(super) async fn run_test_fn(
-        &mut self,
-        run: ShrinkRun<'_>,
-    ) -> ShrinkResult<(bool, Vec<ChoiceNode>, Spans)> {
+    pub(super) async fn run_test_fn(&mut self, run: ShrinkRun<'_>) -> ShrinkResult<ProbeOutcome> {
         if self.past_deadline() {
             return Err(ShrinkHalt::Stop);
         }
@@ -449,12 +488,13 @@ impl<'a> Shrinker<'a> {
     /// Run a probe: replay `prefix` then continue with random draws (capped at
     /// `max_size` choices), the continuation drawn from the engine's RNG by the
     /// test closure. If the resulting run is interesting and shortlex-smaller
-    /// than `current_nodes`, update `current_nodes`.
+    /// than `current_nodes`, update `current_nodes`. Returns how the run
+    /// ended, or `None` when the stall guard skipped it.
     pub(super) async fn probe(
         &mut self,
         prefix: &[ChoiceValue],
         max_size: usize,
-    ) -> ShrinkResult<()> {
+    ) -> ShrinkResult<Option<Status>> {
         if self.improvements >= self.max_improvements {
             return Err(ShrinkHalt::Stop);
         }
@@ -462,16 +502,16 @@ impl<'a> Shrinker<'a> {
             && self.improvements > 0
             && self.calls.saturating_sub(self.calls_at_last_shrink) >= self.max_stall
         {
-            return Ok(());
+            return Ok(None);
         }
-        let (is_interesting, actual_nodes, actual_spans) = self
+        let outcome = self
             .run_test_fn(ShrinkRun::Probe { prefix, max_size })
             .await?;
         self.calls += 1;
-        if is_interesting && sort_key(&actual_nodes) < sort_key(&self.current_nodes) {
-            self.accept_improvement(actual_nodes, actual_spans)?;
+        if outcome.interesting && sort_key(&outcome.nodes) < sort_key(&self.current_nodes) {
+            self.accept_improvement(outcome.nodes, outcome.spans)?;
         }
-        Ok(())
+        Ok(Some(outcome.status))
     }
 
     /// Common bookkeeping when a candidate becomes the new shrink target:

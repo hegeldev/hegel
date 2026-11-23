@@ -134,8 +134,12 @@ impl<'a> Shrinker<'a> {
                     if !stepped && v.to_bits() != f64::NAN.to_bits() && fc.validate(f64::NAN) {
                         let mut attempt: Vec<ChoiceNode> = self.current_nodes.clone();
                         attempt[i] = ChoiceNode::float(fc.clone(), f64::NAN, attempt[i].was_forced);
-                        let (is_interesting, actual_nodes, actual_spans) =
-                            self.run_test_fn(ShrinkRun::Full(&attempt)).await?;
+                        let super::ProbeOutcome {
+                            interesting: is_interesting,
+                            nodes: actual_nodes,
+                            spans: actual_spans,
+                            ..
+                        } = self.run_test_fn(ShrinkRun::Full(&attempt)).await?;
                         self.calls += 1;
                         if is_interesting
                             && sort_key(&actual_nodes) <= sort_key(&self.current_nodes)

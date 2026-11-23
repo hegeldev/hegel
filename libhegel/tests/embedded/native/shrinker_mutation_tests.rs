@@ -3,8 +3,8 @@
 use crate::exchange::drive_no_yield;
 use crate::native::bignum::BigInt;
 use crate::native::core::choices::IntegerChoice;
-use crate::native::core::{ChoiceNode, ChoiceValue, Spans};
-use crate::native::shrinker::{ShrinkRun, Shrinker};
+use crate::native::core::{ChoiceNode, ChoiceValue, Spans, Status};
+use crate::native::shrinker::{ProbeOutcome, ShrinkRun, Shrinker};
 use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -197,4 +197,64 @@ fn observing_replay_rejects_a_value_that_does_not_fit_the_node() {
     .unwrap();
     assert!(!diverged);
     assert_eq!(shrinker.calls, 0);
+}
+
+struct OverrunningProbe {
+    deep_probes: Arc<AtomicUsize>,
+    longer_probes: Arc<AtomicUsize>,
+}
+
+impl crate::native::shrinker::ShrinkProbe for OverrunningProbe {
+    fn run<'s>(&'s mut self, req: ShrinkRun<'s>) -> crate::native::shrinker::ProbeFuture<'s> {
+        let outcome = match req {
+            ShrinkRun::Full(nodes) => {
+                let last = if int_value(&nodes[0]) == 0 {
+                    ranged_int_node(0, 9999, 9999)
+                } else {
+                    nodes[2].clone()
+                };
+                (
+                    false,
+                    vec![nodes[0].clone(), nodes[1].clone(), last],
+                    Spans::new(),
+                )
+                    .into()
+            }
+            ShrinkRun::Probe { prefix, .. } => {
+                if prefix.len() == 1 {
+                    self.deep_probes.fetch_add(1, Ordering::Relaxed);
+                } else {
+                    self.longer_probes.fetch_add(1, Ordering::Relaxed);
+                }
+                ProbeOutcome {
+                    interesting: false,
+                    status: Status::EarlyStop,
+                    nodes: Vec::new(),
+                    spans: Spans::new(),
+                }
+            }
+        };
+        Box::pin(core::future::ready(Ok(outcome)))
+    }
+}
+
+#[test]
+fn mutate_abandons_a_candidate_after_consecutive_overruns() {
+    let deep_probes = Arc::new(AtomicUsize::new(0));
+    let longer_probes = Arc::new(AtomicUsize::new(0));
+    let mut shrinker = Shrinker::with_probe(
+        Box::new(OverrunningProbe {
+            deep_probes: deep_probes.clone(),
+            longer_probes: longer_probes.clone(),
+        }),
+        vec![
+            ranged_int_node(0, 1, 1),
+            ranged_int_node(0, 255, 0),
+            ranged_int_node(0, 7, 3),
+        ],
+        Spans::new(),
+    );
+    drive_no_yield(shrinker.mutate_and_shrink()).unwrap();
+    assert_eq!(deep_probes.load(Ordering::Relaxed), 5);
+    assert_eq!(longer_probes.load(Ordering::Relaxed), 0);
 }

@@ -248,8 +248,12 @@ impl<'a> Shrinker<'a> {
                 }
             }
 
-            let (is_interesting, actual_nodes, actual_spans) =
-                self.run_test_fn(ShrinkRun::Full(&attempt)).await?;
+            let super::ProbeOutcome {
+                interesting: is_interesting,
+                nodes: actual_nodes,
+                spans: actual_spans,
+                ..
+            } = self.run_test_fn(ShrinkRun::Full(&attempt)).await?;
             self.calls += 1;
             if is_interesting && sort_key(&actual_nodes) < sort_key(&self.current_nodes) {
                 self.accept_improvement(actual_nodes, actual_spans)?;

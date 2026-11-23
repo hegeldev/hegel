@@ -524,6 +524,20 @@ fn bytes_choice_index_round_trip_across_lengths() {
 }
 
 #[test]
+fn bytes_kind_from_index_round_trips() {
+    let bc = BytesChoice {
+        min_size: 0,
+        max_size: 4,
+    };
+    let v = vec![3u8, 0];
+    let idx = bc.to_index(&v);
+    assert_eq!(
+        ChoiceKind::Bytes(bc).from_index(idx).unwrap(),
+        Some(ChoiceValue::Bytes(v))
+    );
+}
+
+#[test]
 fn bytes_choice_from_index_past_max_returns_none() {
     let bc = BytesChoice {
         min_size: 0,

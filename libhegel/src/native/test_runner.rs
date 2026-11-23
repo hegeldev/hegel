@@ -53,7 +53,9 @@ use crate::native::lark::layout::Layout;
 use crate::native::lark::mutate::grow;
 use crate::native::nd;
 use crate::native::rng::EngineRng;
-use crate::native::shrinker::{ShrinkHalt, ShrinkProbe, ShrinkRun, Shrinker, absorb_stop};
+use crate::native::shrinker::{
+    ProbeOutcome, ShrinkHalt, ShrinkProbe, ShrinkRun, Shrinker, absorb_stop,
+};
 #[cfg(not(target_family = "wasm"))]
 use crate::settings::Database;
 use crate::settings::{
@@ -3378,9 +3380,13 @@ impl ShrinkProbe for EngineShrinkProbe<'_, '_> {
                         .await?
                 }
             };
-            let matched = run.status == Status::Interesting
-                && run.origin.as_deref() == Some(self.target_origin.as_str());
-            Ok((matched, run.nodes, Spans::from(run.spans)))
+            Ok(ProbeOutcome {
+                interesting: run.status == Status::Interesting
+                    && run.origin.as_deref() == Some(self.target_origin.as_str()),
+                status: run.status,
+                nodes: run.nodes,
+                spans: Spans::from(run.spans),
+            })
         })
     }
 }
