@@ -1,5 +1,55 @@
 # Changelog
 
+## 0.28.0 - 2026-11-23
+
+This release makes concurrent state machines reuse a fixed set of workers throughout each run when using `Concurrency.threads`, `Concurrency.domains`, or `Hegel_jane_concurrent.of_concurrent`. Workers are released when the run ends, including when a test fails.
+
+`Concurrency.t` is now abstract. Custom runners use `Concurrency.create ~spawn_join_n` in place of a `{ spawn_join_n }` record. On OxCaml, `Hegel_jane_concurrent.create_local` accepts custom schedulers with a local context.
+
+This release adds `Hegel.Temporal`, with typed generators for dates, times, naive datetimes, instants, UTC offsets, time zone names, zoned datetimes, signed durations and calendar spans.
+
+Zoned datetimes include skipped (`Gap`) and repeated (`Fold`) wall times:
+
+```ocaml
+let new_york =
+  Temporal.zoned_datetimes
+    ~zones:(Temporal.zones ~names:[ "America/New_York" ] ())
+    ~precision:`Seconds
+    ()
+
+let%hegel_test skipped_hours tc =
+  let z = draw tc new_york in
+  match z.kind with
+  | Gap -> assert (not (Temporal.Offset.equal z.offset_before z.offset_after))
+  | Unique | Fold -> ()
+```
+
+Time zones use Hegel's bundled IANA database by default. To use your own data, create a `Temporal.Zone_source.t` from TZif files, structured zone data, lookup callbacks or a lazy loader. Pass `~source` to a generator, or call `Temporal.set_default_zone_source` before creating generators. `Temporal.resolve`, `Temporal.offset_at` and `Temporal.info` query the source directly.
+
+The string `dates`, `times` and `datetimes` generators, the `make_dates`, `make_times` and `make_datetimes` builders, and the `date` and `time` types are deprecated. The types are now aliases of `Temporal.Date.t` and `Temporal.Time.t`.
+
+Use the `Temporal` records and map them to strings or your own types as needed:
+
+```ocaml
+(* before *)
+let d = draw tc (dates ~min_date:{ year = 2024; month = 1; day = 1 } ()) in
+(* after *)
+let d = draw tc (Temporal.dates ~min_value:{ year = 2024; month = 1; day = 1 } ()) in
+```
+
+`Temporal.dates` defaults to years -999999 to 999999, while the old `dates` generator defaults to years 1 to 9999.
+
+This patch significantly improves the performance of drawing values and of running stateful
+tests.
+
+This release moves the printing of a test case's output (its drawn values, notes and state machine steps) into the engine. Under `Verbose` and `Debug` verbosity, each test case's output now streams as it happens instead of appearing once the test case finishes, so a long-running or stateful test shows its progress and a concurrent state machine prints round by round. A test case no longer holds all its output in memory until it completes, so memory stays flat however long it runs.
+
+A failing test case is now followed by a one-line summary under `Verbose` (`Exception: <exn>`, led by the failing line in your test when a backtrace is recorded) and by the exception with its backtrace under `Debug`. Failure reports are unchanged.
+
+This patch sets a lower bound for the probability of checking a sampled invariant.
+
+This release updates the bundled libhegel engine to 0.53.1.
+
 ## 0.27.2 - 2026-11-16
 
 This release updates the bundled libhegel engine to 0.51.6.
