@@ -69,9 +69,9 @@ pub struct ProbeOutcome {
     pub spans: Spans,
 }
 
-/// The `(interesting, nodes, spans)` shape the closure probes return; such
-/// a run is taken to have ended [`Status::Interesting`] or
-/// [`Status::Valid`].
+/// Converts the `(interesting, nodes, spans)` tuple that closure probes
+/// return. The status is [`Status::Interesting`] when `interesting` is set
+/// and [`Status::Valid`] otherwise.
 impl From<(bool, Vec<ChoiceNode>, Spans)> for ProbeOutcome {
     fn from((interesting, nodes, spans): (bool, Vec<ChoiceNode>, Spans)) -> Self {
         ProbeOutcome {

@@ -26,11 +26,11 @@ const RANDOM_ATTEMPTS: u64 = 3;
 /// against a fixed shape.
 const DIVERGENT_RANDOM_ATTEMPTS: u64 = 32;
 
-/// Consecutive out-of-data continuations after which a candidate is
-/// abandoned, skipping its remaining [`DIVERGENT_RANDOM_ATTEMPTS`] and its
-/// downstream-node probes: the length budget past the prefix is too tight
-/// for the switched branch to fit, and those probes extend the prefix
-/// against the same budget.
+/// How many continuations in a row may run out of data before a candidate
+/// is abandoned. Abandoning it skips its remaining
+/// [`DIVERGENT_RANDOM_ATTEMPTS`] and its downstream-node probes. The length
+/// budget past the prefix is too tight for the switched branch, and the
+/// downstream-node probes use a longer prefix under the same budget.
 const MAX_CONSECUTIVE_OVERRUNS: u64 = 5;
 
 /// Results with more than this many nodes are skipped.
@@ -152,9 +152,8 @@ impl<'a> Shrinker<'a> {
     /// continuation can realise the alternative's interesting region: it is
     /// worth investing the deep random budget. A `false` result (including
     /// a fast-sweep stall-guarded no-op) means the shape either stayed
-    /// stable — the
-    /// deterministic passes cover that — or changed length, which is
-    /// collection-resize territory the deletion and clone passes own. As
+    /// stable, which the deterministic passes cover, or changed length,
+    /// which the deletion and clone passes handle as a collection resize. As
     /// with [`Shrinker::probe`], an interesting, strictly smaller replay is
     /// adopted as the new shrink target on the way through.
     async fn replay_observing_divergence(
