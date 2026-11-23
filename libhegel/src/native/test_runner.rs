@@ -1952,6 +1952,7 @@ impl<'a> Engine<'a> {
                 let probe = EngineShrinkProbe {
                     engine: &mut *self,
                     target_origin: origin.clone(),
+                    overran: false,
                 };
                 let mut shrinker =
                     Shrinker::with_probe(Box::new(probe), verify.nodes, Spans::from(verify.spans));
@@ -3352,6 +3353,7 @@ fn graft_run(graph: &mut Graph, longest: &mut usize, nodes: &[ChoiceNode], spans
 struct EngineShrinkProbe<'e, 'a> {
     engine: &'e mut Engine<'a>,
     target_origin: String,
+    overran: bool,
 }
 
 /// The deterministic shrinker's probe. Once a probe has flipped the run
@@ -3378,10 +3380,15 @@ impl ShrinkProbe for EngineShrinkProbe<'_, '_> {
                         .await?
                 }
             };
+            self.overran = run.status == Status::EarlyStop;
             let matched = run.status == Status::Interesting
                 && run.origin.as_deref() == Some(self.target_origin.as_str());
             Ok((matched, run.nodes, Spans::from(run.spans)))
         })
+    }
+
+    fn last_run_overran(&self) -> bool {
+        self.overran
     }
 }
 

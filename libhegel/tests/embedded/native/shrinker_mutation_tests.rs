@@ -198,3 +198,55 @@ fn observing_replay_rejects_a_value_that_does_not_fit_the_node() {
     assert!(!diverged);
     assert_eq!(shrinker.calls, 0);
 }
+
+struct OverrunningProbe {
+    deep_probes: Arc<AtomicUsize>,
+}
+
+impl crate::native::shrinker::ShrinkProbe for OverrunningProbe {
+    fn run<'s>(&'s mut self, req: ShrinkRun<'s>) -> crate::native::shrinker::ProbeFuture<'s> {
+        let result = match req {
+            ShrinkRun::Full(nodes) => {
+                let last = if int_value(&nodes[0]) == 0 {
+                    ranged_int_node(0, 9999, 9999)
+                } else {
+                    nodes[2].clone()
+                };
+                (
+                    false,
+                    vec![nodes[0].clone(), nodes[1].clone(), last],
+                    Spans::new(),
+                )
+            }
+            ShrinkRun::Probe { prefix, .. } => {
+                if prefix.len() == 1 {
+                    self.deep_probes.fetch_add(1, Ordering::Relaxed);
+                }
+                (false, Vec::new(), Spans::new())
+            }
+        };
+        Box::pin(core::future::ready(Ok(result)))
+    }
+
+    fn last_run_overran(&self) -> bool {
+        true
+    }
+}
+
+#[test]
+fn mutate_abandons_random_attempts_after_consecutive_overruns() {
+    let deep_probes = Arc::new(AtomicUsize::new(0));
+    let mut shrinker = Shrinker::with_probe(
+        Box::new(OverrunningProbe {
+            deep_probes: deep_probes.clone(),
+        }),
+        vec![
+            ranged_int_node(0, 1, 1),
+            ranged_int_node(0, 255, 0),
+            ranged_int_node(0, 7, 3),
+        ],
+        Spans::new(),
+    );
+    drive_no_yield(shrinker.mutate_and_shrink()).unwrap();
+    assert_eq!(deep_probes.load(Ordering::Relaxed), 5);
+}

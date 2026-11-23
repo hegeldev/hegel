@@ -104,6 +104,13 @@ pub trait ShrinkProbe {
     fn candidate_adopted(&mut self) -> Result<(), InternalError> {
         Ok(())
     }
+
+    /// Whether the immediately preceding [`ShrinkRun::Probe`] ran out of
+    /// data before its random continuation finished. A probe wrapping
+    /// another must forward this.
+    fn last_run_overran(&self) -> bool {
+        false
+    }
 }
 
 impl<F> ShrinkProbe for F
@@ -449,12 +456,13 @@ impl<'a> Shrinker<'a> {
     /// Run a probe: replay `prefix` then continue with random draws (capped at
     /// `max_size` choices), the continuation drawn from the engine's RNG by the
     /// test closure. If the resulting run is interesting and shortlex-smaller
-    /// than `current_nodes`, update `current_nodes`.
+    /// than `current_nodes`, update `current_nodes`. Returns whether the run
+    /// ran out of data (see [`ShrinkProbe::last_run_overran`]).
     pub(super) async fn probe(
         &mut self,
         prefix: &[ChoiceValue],
         max_size: usize,
-    ) -> ShrinkResult<()> {
+    ) -> ShrinkResult<bool> {
         if self.improvements >= self.max_improvements {
             return Err(ShrinkHalt::Stop);
         }
@@ -462,7 +470,7 @@ impl<'a> Shrinker<'a> {
             && self.improvements > 0
             && self.calls.saturating_sub(self.calls_at_last_shrink) >= self.max_stall
         {
-            return Ok(());
+            return Ok(false);
         }
         let (is_interesting, actual_nodes, actual_spans) = self
             .run_test_fn(ShrinkRun::Probe { prefix, max_size })
@@ -471,7 +479,7 @@ impl<'a> Shrinker<'a> {
         if is_interesting && sort_key(&actual_nodes) < sort_key(&self.current_nodes) {
             self.accept_improvement(actual_nodes, actual_spans)?;
         }
-        Ok(())
+        Ok(self.test_fn.last_run_overran())
     }
 
     /// Common bookkeeping when a candidate becomes the new shrink target:

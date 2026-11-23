@@ -26,6 +26,11 @@ const RANDOM_ATTEMPTS: u64 = 3;
 /// against a fixed shape.
 const DIVERGENT_RANDOM_ATTEMPTS: u64 = 32;
 
+/// Consecutive out-of-data continuations after which the remaining
+/// [`DIVERGENT_RANDOM_ATTEMPTS`] for a candidate are abandoned: the length
+/// budget past the prefix is too tight for the switched branch to fit.
+const MAX_CONSECUTIVE_OVERRUNS: u64 = 5;
+
 /// Results with more than this many nodes are skipped.
 const MAX_MUTATE_NODES: usize = 32;
 
@@ -90,8 +95,16 @@ impl<'a> Shrinker<'a> {
                     continue;
                 }
 
+                let mut overruns = 0;
                 for _ in 0..DIVERGENT_RANDOM_ATTEMPTS {
-                    self.probe(&prefix, max_size).await?;
+                    if self.probe(&prefix, max_size).await? {
+                        overruns += 1;
+                        if overruns >= MAX_CONSECUTIVE_OVERRUNS {
+                            break;
+                        }
+                    } else {
+                        overruns = 0;
+                    }
                 }
 
                 let mut j_offset: usize = 1;
