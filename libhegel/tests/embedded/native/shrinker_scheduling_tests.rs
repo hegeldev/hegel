@@ -680,7 +680,7 @@ impl ShrinkProbe for L3Probe {
             ),
             ShrinkRun::Probe { .. } => (false, Vec::new(), Spans::new()),
         };
-        Box::pin(core::future::ready(Ok(outcome)))
+        Box::pin(core::future::ready(Ok(outcome.into())))
     }
 }
 
@@ -754,7 +754,8 @@ impl crate::native::shrinker::ShrinkProbe for AdoptionRecorder {
         Box::pin(core::future::ready(Ok(match req {
             ShrinkRun::Full(nodes) => (true, nodes.to_vec(), Spans::new()),
             ShrinkRun::Probe { .. } => (true, vec![int_node(0)], Spans::new()),
-        })))
+        }
+        .into())))
     }
 
     fn candidate_adopted(&mut self) -> Result<(), crate::control::InternalError> {
@@ -787,7 +788,7 @@ impl ShrinkProbe for ConfirmOnlyWinner {
             ),
             ShrinkRun::Probe { .. } => (false, Vec::new(), Spans::new()),
         };
-        Box::pin(core::future::ready(Ok(outcome)))
+        Box::pin(core::future::ready(Ok(outcome.into())))
     }
 }
 

@@ -204,7 +204,11 @@ fn nested_clone_probe_routes_probe_requests_through_the_outer_test_fn() {
         i: 0,
     };
     let child_prefix = [ChoiceValue::Integer(BigInt::from(3))];
-    let (matched, nodes, _) = drive_no_yield(probe.run(ShrinkRun::Probe {
+    let crate::native::shrinker::ProbeOutcome {
+        interesting: matched,
+        nodes,
+        ..
+    } = drive_no_yield(probe.run(ShrinkRun::Probe {
         prefix: &child_prefix,
         max_size: 4,
     }))
@@ -228,7 +232,9 @@ impl ShrinkProbe for SweepRecordingProbe {
     }
 
     fn run<'s>(&'s mut self, _req: ShrinkRun<'s>) -> ProbeFuture<'s> {
-        Box::pin(core::future::ready(Ok((false, Vec::new(), Spans::new()))))
+        Box::pin(core::future::ready(Ok(
+            (false, Vec::new(), Spans::new()).into()
+        )))
     }
 }
 
@@ -276,7 +282,7 @@ impl ShrinkProbe for GauntletedCloneProbe {
             ),
             ShrinkRun::Probe { .. } => (false, Vec::new(), Spans::new()),
         };
-        Box::pin(core::future::ready(Ok(outcome)))
+        Box::pin(core::future::ready(Ok(outcome.into())))
     }
 }
 
@@ -312,7 +318,8 @@ impl crate::native::shrinker::ShrinkProbe for AdoptionRecorder {
         Box::pin(core::future::ready(Ok(match req {
             ShrinkRun::Full(nodes) => (true, nodes.to_vec(), Spans::new()),
             ShrinkRun::Probe { .. } => (false, Vec::new(), Spans::new()),
-        })))
+        }
+        .into())))
     }
 
     fn candidate_adopted(&mut self) -> Result<(), crate::control::InternalError> {

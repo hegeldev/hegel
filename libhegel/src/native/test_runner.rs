@@ -53,7 +53,9 @@ use crate::native::lark::layout::Layout;
 use crate::native::lark::mutate::grow;
 use crate::native::nd;
 use crate::native::rng::EngineRng;
-use crate::native::shrinker::{ShrinkHalt, ShrinkProbe, ShrinkRun, Shrinker, absorb_stop};
+use crate::native::shrinker::{
+    ProbeOutcome, ShrinkHalt, ShrinkProbe, ShrinkRun, Shrinker, absorb_stop,
+};
 #[cfg(not(target_family = "wasm"))]
 use crate::settings::Database;
 use crate::settings::{
@@ -1952,7 +1954,6 @@ impl<'a> Engine<'a> {
                 let probe = EngineShrinkProbe {
                     engine: &mut *self,
                     target_origin: origin.clone(),
-                    overran: false,
                 };
                 let mut shrinker =
                     Shrinker::with_probe(Box::new(probe), verify.nodes, Spans::from(verify.spans));
@@ -3353,7 +3354,6 @@ fn graft_run(graph: &mut Graph, longest: &mut usize, nodes: &[ChoiceNode], spans
 struct EngineShrinkProbe<'e, 'a> {
     engine: &'e mut Engine<'a>,
     target_origin: String,
-    overran: bool,
 }
 
 /// The deterministic shrinker's probe. Once a probe has flipped the run
@@ -3380,15 +3380,14 @@ impl ShrinkProbe for EngineShrinkProbe<'_, '_> {
                         .await?
                 }
             };
-            self.overran = run.status == Status::EarlyStop;
-            let matched = run.status == Status::Interesting
-                && run.origin.as_deref() == Some(self.target_origin.as_str());
-            Ok((matched, run.nodes, Spans::from(run.spans)))
+            Ok(ProbeOutcome {
+                interesting: run.status == Status::Interesting
+                    && run.origin.as_deref() == Some(self.target_origin.as_str()),
+                status: run.status,
+                nodes: run.nodes,
+                spans: Spans::from(run.spans),
+            })
         })
-    }
-
-    fn last_run_overran(&self) -> bool {
-        self.overran
     }
 }
 

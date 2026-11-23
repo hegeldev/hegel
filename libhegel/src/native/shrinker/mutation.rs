@@ -10,7 +10,7 @@
 //! for subsequent deterministic passes.
 
 use crate::native::bignum::BigUint;
-use crate::native::core::{ChoiceKind, ChoiceValue, sort_key};
+use crate::native::core::{ChoiceKind, ChoiceValue, Status, sort_key};
 use alloc::vec::Vec;
 
 use super::{ShrinkResult, ShrinkRun, Shrinker, SweepMode};
@@ -26,9 +26,11 @@ const RANDOM_ATTEMPTS: u64 = 3;
 /// against a fixed shape.
 const DIVERGENT_RANDOM_ATTEMPTS: u64 = 32;
 
-/// Consecutive out-of-data continuations after which the remaining
-/// [`DIVERGENT_RANDOM_ATTEMPTS`] for a candidate are abandoned: the length
-/// budget past the prefix is too tight for the switched branch to fit.
+/// Consecutive out-of-data continuations after which a candidate is
+/// abandoned, skipping its remaining [`DIVERGENT_RANDOM_ATTEMPTS`] and its
+/// downstream-node probes: the length budget past the prefix is too tight
+/// for the switched branch to fit, and those probes extend the prefix
+/// against the same budget.
 const MAX_CONSECUTIVE_OVERRUNS: u64 = 5;
 
 /// Results with more than this many nodes are skipped.
@@ -97,7 +99,7 @@ impl<'a> Shrinker<'a> {
 
                 let mut overruns = 0;
                 for _ in 0..DIVERGENT_RANDOM_ATTEMPTS {
-                    if self.probe(&prefix, max_size).await? {
+                    if self.probe(&prefix, max_size).await? == Some(Status::EarlyStop) {
                         overruns += 1;
                         if overruns >= MAX_CONSECUTIVE_OVERRUNS {
                             break;
@@ -105,6 +107,9 @@ impl<'a> Shrinker<'a> {
                     } else {
                         overruns = 0;
                     }
+                }
+                if overruns >= MAX_CONSECUTIVE_OVERRUNS {
+                    continue;
                 }
 
                 let mut j_offset: usize = 1;
@@ -173,8 +178,12 @@ impl<'a> Shrinker<'a> {
         let mut attempt = snapshot.to_vec();
         attempt[i] = replaced;
         let expected: Vec<ChoiceKind> = snapshot.iter().map(|n| n.data.kind()).collect();
-        let (is_interesting, actual_nodes, actual_spans) =
-            self.run_test_fn(ShrinkRun::Full(&attempt)).await?;
+        let super::ProbeOutcome {
+            interesting: is_interesting,
+            nodes: actual_nodes,
+            spans: actual_spans,
+            ..
+        } = self.run_test_fn(ShrinkRun::Full(&attempt)).await?;
         self.calls += 1;
         let diverged = actual_nodes.len() == expected.len()
             && actual_nodes

@@ -45,42 +45,40 @@ impl ShrinkProbe for NestedCloneProbe<'_, '_> {
         self.test_fn.candidate_adopted()
     }
 
-    fn last_run_overran(&self) -> bool {
-        self.test_fn.last_run_overran()
-    }
-
     fn run<'s>(&'s mut self, req: ShrinkRun<'s>) -> super::ProbeFuture<'s> {
         Box::pin(async move {
             let i = self.i;
-            let (matched, actual) = match req {
+            let outer = match req {
                 ShrinkRun::Full(child) => {
                     let candidate = splice_child(self.template, i, child);
-                    let (matched, actual, _) =
-                        self.test_fn.run(ShrinkRun::Full(&candidate)).await?;
-                    (matched, actual)
+                    self.test_fn.run(ShrinkRun::Full(&candidate)).await?
                 }
                 ShrinkRun::Probe { prefix, max_size } => {
                     let mut values = self.outer_values.to_vec();
                     values[i] =
                         ChoiceValue::Clone(Arc::new(CloneRecord::from_values(prefix.to_vec())));
                     let child_extend = max_size.saturating_sub(prefix.len());
-                    let (matched, actual, _) = self
-                        .test_fn
+                    self.test_fn
                         .run(ShrinkRun::Probe {
                             max_size: flattened_values_len(&values) + child_extend,
                             prefix: &values,
                         })
-                        .await?;
-                    (matched, actual)
+                        .await?
                 }
             };
-            Ok(match actual.get(i).map(|n| &n.data) {
-                Some(ChoiceData::Clone(stream)) => {
-                    let nodes = stream.nodes().to_vec();
-                    let spans = Spans::from(stream.spans().to_vec());
-                    (matched, nodes, spans)
-                }
+            let (interesting, nodes, spans) = match outer.nodes.get(i).map(|n| &n.data) {
+                Some(ChoiceData::Clone(stream)) => (
+                    outer.interesting,
+                    stream.nodes().to_vec(),
+                    Spans::from(stream.spans().to_vec()),
+                ),
                 _ => (false, Vec::new(), Spans::new()),
+            };
+            Ok(super::ProbeOutcome {
+                interesting,
+                status: outer.status,
+                nodes,
+                spans,
             })
         })
     }

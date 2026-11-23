@@ -123,7 +123,10 @@ impl<'a> Shrinker<'a> {
         };
         attempt[idx] = replaced;
 
-        let (_, actual_nodes, _) = self.run_test_fn(super::ShrinkRun::Full(&attempt)).await?;
+        let super::ProbeOutcome {
+            nodes: actual_nodes,
+            ..
+        } = self.run_test_fn(super::ShrinkRun::Full(&attempt)).await?;
         if actual_nodes.len() >= expected_len {
             return Ok(false);
         }
@@ -198,8 +201,11 @@ impl<'a> Shrinker<'a> {
                 lowered[i].was_forced,
             );
 
-            let (_, actual_nodes, actual_spans) =
-                self.run_test_fn(super::ShrinkRun::Full(&lowered)).await?;
+            let super::ProbeOutcome {
+                nodes: actual_nodes,
+                spans: actual_spans,
+                ..
+            } = self.run_test_fn(super::ShrinkRun::Full(&lowered)).await?;
 
             let mut misalignment_handled = false;
             for k in (i + 1)..lowered.len().min(actual_nodes.len()) {
