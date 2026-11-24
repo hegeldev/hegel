@@ -4,6 +4,9 @@ sidebar:
   label: Rust
 ---
 
+This is a simple test workload we call the bank test, which checks atomicity and isolation in a SQLite database and a functional correctness property
+on a model of a bank. Note that some code is omitted for brevity. See [Further reading](#further-reading) for the full code.
+
 ## Bank state
 
 ```rust
@@ -42,6 +45,24 @@ pub struct Bank {
 }
 ```
 
+`BUSY_TIMEOUT` is how long a connection waits on a locked database before it fails with `SQLITE_BUSY`.
+
+The database has one `accounts` table with an `account_id`, a `balance` and an `opCount` for each account.
+
+The database runs in WAL mode, which allows non-blocking reads while transfers are executing, and each read sees a consistent snapshot. Since writers are serialized, transfers must take the write lock first with `BEGIN IMMEDIATE`.
+
+`BankConfig` sets the number of accounts, the starting balance of each account, and the largest transfer amount.
+
+Transfers can have one of the following outcomes (`TransferOutcome`):
+
+- `Committed`: `COMMIT` returned successfully.
+- `InsufficientFunds`: the transaction was rolled back because the source balance was too low.
+- `Error`: SQLite returned an error, such as `SQLITE_BUSY`. The client does not know if the transaction committed.
+
+The test state `Bank` consists of the database path, a pool of idle connections, counts of attempted and committed transfers, and the total balance. Mutable fields of `Bank` are
+atomic or guarded by a mutex since they may be modified
+concurrently.
+
 ## Database helpers
 
 ```rust
@@ -73,6 +94,8 @@ fn open(path: &Path) -> rusqlite::Result<Connection> {
     Ok(conn)
 }
 ```
+
+`open` opens a connection with the busy timeout set. `with_conn` takes an idle connection from the pool or opens a new one if the pool is empty, runs a function on it, and returns it to the pool.
 
 ## Setup
 
@@ -115,6 +138,10 @@ pub fn init(config: BankConfig) -> rusqlite::Result<Self> {
 }
 ```
 
+`Bank::init` creates the database in a temporary directory, switches it to WAL mode, and creates the `accounts` table with one row per account. Each account starts with the initial balance and an `opCount` of 0. `Bank::init` also records the expected total `config.accounts * config.initial_balance`. The bank owns its connections and temporary directory, which are cleaned up when the bank is dropped.
+
+`with_conn` takes an idle connection from the pool or opens a new one if the pool is empty, and returns it to the pool when the function returns.
+
 ## Transfers
 
 ```rust
@@ -154,6 +181,10 @@ pub fn transfer(&self, source: i64, dest: i64, amount: i64) -> TransferOutcome {
     }
 }
 ```
+
+`transfer` increments `attempted`, then runs one transaction. If the source balance is less than the transfer amount, the transaction is rolled back. Otherwise, `transfer` subtracts the amount from the source, adds the amount to the destination, and increments `opCount` on both accounts. If a statement returns an error before commit, the transaction is rolled back when it is dropped.
+
+If the transaction commits, `transfer` increments `committed`. Any SQLite error becomes `TransferOutcome::Error`.
 
 ## Properties
 
@@ -200,6 +231,13 @@ pub fn verify_no_negative(&self) {
     assert_eq!(negative, 0, "{negative} account(s) have a negative balance");
 }
 ```
+
+`verify_total_balance` checks that `SUM(balance)` equals the starting total (i.e. no money was created or destroyed).
+
+`verify_ops_not_lost` checks `SUM(opCount)`. Each transfer increments two counts, so the sum must be even. The sum must be at least `2 * committed`, or a committed transfer was lost. It can be higher because some transfers can commit without the client knowing, but it cannot exceed `2 * attempted`.
+
+`verify_no_negative` checks that no account has a balance below zero. If two transfers
+both read the old balance before either withdraws, the account can be overdrawn.
 
 ## Rules and invariants
 
@@ -255,6 +293,29 @@ impl Bank {
 }
 ```
 
+We can now define our workload.
+
+We are required to define actions on the state, which are called rules in Hegel. Rules can belong to
+one or more groups. Only rules in the same group may execute concurrently. If no group is provided,
+the rule belongs to a default group. In this case, all the rules belong to the `bank` group for
+demonstration, but the group could have been omitted. Rules also have a weight, which gives Hegel
+a hint of how frequently a rule should run relative to other rules in its group(s). The default
+weight is 1.
+
+We can optionally define statements about the system that should always be true, which are called
+invariants. By default, invariants are sampled for performance. For example, if we had 1 million
+accounts instead of 16, we might not want check `no_negative_balance` after every single round
+because it requires checking all accounts. Using `#[invariant(always_run)]` forces the invariant
+to always be checked between rounds.
+
+Notice that we define the verification functions both as invariants and rules. Invariants check
+the state of the system at some settled state when no actions are running. When we define the
+verification function as a rule, they can run while other actions are mutating the state.
+
+For example, the invariant `total_balance_preserved` checks that after all transfers are done,
+the total amount of money has not changed. The rule `verify_total_balance_rule` checks that while
+transfers are executing, we never see a state in which the total amount of money has changed.
+
 ## Running the workload
 
 ```rust
@@ -273,6 +334,44 @@ fn main(tc: TestCase) {
     bank_machine(&tc, config).run_concurrent(tc);
 }
 ```
+
+`#[hegel::main]` turns the workload into a standalone program, which allows us to pass test settings as command line options,
+such as `cargo run --release -- --seed 1 --verbosity verbose`.
+
+Since the account balances are stored in the database, we only pass the bank handle,
+which holds the database path, the connection pool, the transfer counters, and the configuration. `steps` sets how many rounds execute within a test. Inside of Antithesis, this number should be very high to allow
+the fuzzer ample time to explore a branch. Finally, `min_concurrency` and `max_concurrency` set the bounds for the number of concurrent workers. Hegel spawns some number of workers within those bounds.
+
+<figure class="diagram">
+<svg viewBox="0 0 724 200" width="100%" role="img" aria-label="Two rounds of the bank workload with three workers. Each round runs rules from the group bank. Workers run transfer and the verify rules concurrently, and the invariants run after every worker finishes the round.">
+<text x="0" y="65" style="font-family:var(--__sl-font);font-size:15px;fill:var(--sl-color-gray-3)">Worker 1</text>
+<text x="0" y="109" style="font-family:var(--__sl-font);font-size:15px;fill:var(--sl-color-gray-3)">Worker 2</text>
+<text x="0" y="153" style="font-family:var(--__sl-font);font-size:15px;fill:var(--sl-color-gray-3)">Worker 3</text>
+<text x="92" y="20" style="font-family:var(--__sl-font);font-size:15px;fill:var(--sl-color-white)">Round 1: group “bank”</text>
+<rect x="92" y="44" width="248" height="32" rx="6" style="fill:var(--sl-color-accent-low);stroke:var(--sl-color-accent);stroke-width:1"/>
+<text x="104" y="65" style="font-family:var(--__sl-font-mono);font-size:13px;fill:var(--sl-color-white)">transfer, transfer, transfer</text>
+<rect x="92" y="88" width="248" height="32" rx="6" style="fill:var(--sl-color-accent-low);stroke:var(--sl-color-accent);stroke-width:1"/>
+<text x="104" y="109" style="font-family:var(--__sl-font-mono);font-size:13px;fill:var(--sl-color-white)">transfer, verify_no_negative</text>
+<rect x="92" y="132" width="264" height="32" rx="6" style="fill:var(--sl-color-accent-low);stroke:var(--sl-color-accent);stroke-width:1"/>
+<text x="104" y="153" style="font-family:var(--__sl-font-mono);font-size:13px;fill:var(--sl-color-white)">verify_total_balance, transfer</text>
+<line x1="372" y1="36" x2="372" y2="174" style="stroke:var(--sl-color-accent-high);stroke-width:2"/>
+<text x="372" y="194" text-anchor="middle" style="font-family:var(--__sl-font);font-size:15px;fill:var(--sl-color-gray-3)">invariants</text>
+<text x="402" y="20" style="font-family:var(--__sl-font);font-size:15px;fill:var(--sl-color-white)">Round 2: group “bank”</text>
+<rect x="402" y="44" width="256" height="32" rx="6" style="fill:var(--sl-color-accent-low);stroke:var(--sl-color-accent);stroke-width:1"/>
+<text x="414" y="65" style="font-family:var(--__sl-font-mono);font-size:13px;fill:var(--sl-color-white)">transfer, verify_ops_not_lost</text>
+<rect x="402" y="88" width="168" height="32" rx="6" style="fill:var(--sl-color-accent-low);stroke:var(--sl-color-accent);stroke-width:1"/>
+<text x="414" y="109" style="font-family:var(--__sl-font-mono);font-size:13px;fill:var(--sl-color-white)">transfer, transfer</text>
+<rect x="402" y="132" width="248" height="32" rx="6" style="fill:var(--sl-color-accent-low);stroke:var(--sl-color-accent);stroke-width:1"/>
+<text x="414" y="153" style="font-family:var(--__sl-font-mono);font-size:13px;fill:var(--sl-color-white)">transfer, transfer, transfer</text>
+<line x1="674" y1="36" x2="674" y2="174" style="stroke:var(--sl-color-accent-high);stroke-width:2"/>
+<text x="674" y="194" text-anchor="middle" style="font-family:var(--__sl-font);font-size:15px;fill:var(--sl-color-gray-3)">invariants</text>
+<text x="704" y="109" style="font-family:var(--__sl-font);font-size:15px;fill:var(--sl-color-gray-3)">…</text>
+</svg>
+</figure>
+
+The diagram above shows how the workload is executed. In each round, Hegel chooses a group, then gives each worker a set of rules to run.
+Each worker executes its rules concurrently with other workers. Once all workers have finished executing their rules in a round, Hegel runs
+the invariants.
 
 ## Further reading
 
