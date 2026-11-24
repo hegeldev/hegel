@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.54.2 - 2026-11-24
+
+This release updates the `hegeltest-c` dependency to 0.53.2.
+
 ## 0.54.1 - 2026-11-20
 
 This patch sets a lower bound for the probability of checking a sampled invariant.

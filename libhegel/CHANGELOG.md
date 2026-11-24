@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.53.2 - 2026-11-24
+
+This patch makes shrinking run the test function much less often. The mutation shrink pass now gives up on a candidate after five of its random continuations in a row run out of data.
+
 ## 0.53.1 - 2026-11-20
 
 This patch sets a lower bound of 1% for the probability of checking a sampled invariant. Previously, the probability was always

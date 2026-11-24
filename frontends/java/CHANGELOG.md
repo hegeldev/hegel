@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.14.3 - 2026-11-24
+
+This release updates the bundled libhegel engine to 0.53.2.
+
 ## 0.14.2 - 2026-11-20
 
 This patch sets a lower bound for the probability of checking a sampled invariant.
