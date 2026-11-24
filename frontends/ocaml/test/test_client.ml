@@ -330,7 +330,8 @@ let test_render_sexp_atoms () =
     "(\"a b\" 1y 9\xc2\xb5s)"
     (render_to_string
        ~max_width:79
-       (Sexp.List [ Sexp.Atom "a b"; Internal.raw_text "1y 9\xc2\xb5s" ]));
+       (Sexp.List
+          [ Sexp.Atom "a b"; Internal.raw_text (Sys.opaque_identity "1y 9\xc2\xb5s") ]));
   Alcotest.(check string)
     "an equal atom is not raw"
     "\"1y 9\\194\\181s\""
