@@ -215,7 +215,8 @@ jobs:
       # OxCaml compiler, but the binary runs on its own, so only the binary is
       # cached. A miss builds it in a throwaway opam root, kept out of the
       # opam cache above, and frees disk space for that first (not .NET's,
-      # which the C# lints use).
+      # which the C# lints use). It solves with 0install, since opam's default
+      # solver fails on this request with "Mip solver failure".
       - name: Restore OxCaml's ocamlformat
         id: oxcaml-ocamlformat
         if: needs.changes.outputs.ocaml_sources == 'true'
@@ -230,7 +231,7 @@ jobs:
         run: |
           sudo rm -rf /usr/local/lib/android
           opam init --bare --disable-sandboxing --yes
-          opam switch create oxcaml-format \
+          opam switch create oxcaml-format --solver=builtin-0install \
             --packages "ocaml-variants.5.2.0+ox,ocamlformat.0.29.0+ox" \
             --repos "oxcaml=git+https://github.com/oxcaml/opam-repository.git,default" \
             --no-switch --yes
