@@ -7,7 +7,7 @@ its C ABI (`../../libhegel/include/hegel.h`) with source-generated P/Invoke
 (C#, everything the engine offers) and `src/Hegel.FSharp/` (F#, a surface
 over `Hegel` that draws and prints F# values), each with an xunit test
 project (`tests/Hegel.Tests/`, `tests/Hegel.FSharp.Tests/`; .NET 10 by
-default, .NET 8 with `HEGEL_TEST_FRAMEWORK=net8.0`), plus `src/Hegel.Xunit/`
+default, .NET 8 or 11 with `HEGEL_TEST_FRAMEWORK=net8.0` or `net11.0`), plus `src/Hegel.Xunit/`
 (C#, the `[HegelTest]` attribute for xUnit.net v2, tested by the C# suite).
 The three packages share one version (`Directory.Build.props`) and release
 together. Repo-wide
@@ -25,7 +25,7 @@ just csharp::check-lint       # dotnet format + fantomas --check, then a build w
 just csharp::format           # dotnet format (C#) and fantomas (F#)
 just csharp::pack             # both NuGet packages into dist/, with the local engine
 just csharp::check-docs       # the API references (DocFX and fsdocs) into docs/_site/, warnings as errors
-just csharp::check            # lint + docs + test — what CI runs, less the other-OS and net8.0 jobs
+just csharp::check            # lint + docs + test — what CI runs, less the other-OS, net8.0 and net11.0 jobs
 ```
 
 - The recipes build libhegel first (incremental, so cheap once built). Plain
