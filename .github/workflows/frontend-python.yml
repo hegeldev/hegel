@@ -71,7 +71,7 @@ jobs:
   # is not writable afterwards.
   package:
     name: package (${{ matrix.platform }})
-    runs-on: ${{ fromJSON('{"linux-amd64":"ubuntu-latest","linux-arm64":"ubuntu-24.04-arm","darwin-arm64":"macos-latest","windows-amd64":"windows-latest"}')[matrix.platform] }}
+    runs-on: ${{ fromJSON('{"linux-amd64":"ubuntu-latest","linux-arm64":"ubuntu-24.04-arm","darwin-arm64":"macos-latest","windows-amd64":"windows-latest","windows-arm64":"windows-11-arm"}')[matrix.platform] }}
     timeout-minutes: 15
     permissions:
       contents: read
@@ -83,7 +83,7 @@ jobs:
       matrix:
         # darwin-arm64 only in the merge queue and on main: macOS runners
         # are scarce.
-        platform: ${{ fromJSON(github.event_name == 'pull_request' && '["linux-amd64", "linux-arm64", "windows-amd64"]' || '["linux-amd64", "linux-arm64", "darwin-arm64", "windows-amd64"]') }}
+        platform: ${{ fromJSON(github.event_name == 'pull_request' && '["linux-amd64", "linux-arm64", "windows-amd64", "windows-arm64"]' || '["linux-amd64", "linux-arm64", "darwin-arm64", "windows-amd64", "windows-arm64"]') }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -115,11 +115,11 @@ jobs:
           INTERPRETERS: ${{ steps.wheels.outputs.interpreters }}
         run: |
           set -euo pipefail
-          for v in $INTERPRETERS; do
-            uv venv --python "$v" "wheel-venv-$v"
-            uv pip install --python "wheel-venv-$v/$VENV_PYTHON" \
+          for r in $INTERPRETERS; do
+            uv venv --python "$r" "wheel-venv-$r"
+            uv pip install --python "wheel-venv-$r/$VENV_PYTHON" \
               --no-index --find-links "$GITHUB_WORKSPACE/frontends/python/dist" hegeltest
-            "wheel-venv-$v/$VENV_PYTHON" "$GITHUB_WORKSPACE/frontends/python/scripts/check_installed.py"
+            "wheel-venv-$r/$VENV_PYTHON" "$GITHUB_WORKSPACE/frontends/python/scripts/check_installed.py"
           done
       - name: Build and install the sdist into a fresh virtualenv
         if: matrix.platform == 'linux-amd64'

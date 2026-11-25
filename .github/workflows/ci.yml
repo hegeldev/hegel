@@ -1006,8 +1006,8 @@ jobs:
           echo "Published release $tag."
 
   # The Python frontend's wheels, one job per platform (the libhegel binary
-  # platforms less windows-arm64), each building for every supported CPython via
-  # the composite action the PR `package` job also uses. They check out the
+  # platforms), each building for every supported CPython via the composite
+  # action the PR `package` job also uses. They check out the
   # `frontends/python/<version>` tag the `release` job pushed; the sdist and
   # the PyPI upload follow in the next two jobs.
   release-python-wheels:
@@ -1024,6 +1024,7 @@ jobs:
           - { platform: linux-arm64,   runner: ubuntu-24.04-arm }
           - { platform: darwin-arm64,  runner: macos-latest }
           - { platform: windows-amd64, runner: windows-latest }
+          - { platform: windows-arm64, runner: windows-11-arm }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:

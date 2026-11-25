@@ -12,7 +12,7 @@ pip install hegeltest
 ```
 
 The package is imported as `hegel`. Wheels are published for Linux (x86-64
-and ARM64), Apple-silicon macOS and Windows. Anywhere else, pip builds the
+and ARM64), Apple-silicon macOS and Windows (x86-64 and ARM64). Anywhere else, pip builds the
 package from source, which needs a [Rust toolchain](https://rustup.rs).
 
 ## Write a test

@@ -4,7 +4,8 @@ description: >-
   frontends/python/dist, one per supported CPython version. On Linux the
   build runs in maturin's manylinux container (via PyO3/maturin-action) so
   the wheels work on any mainstream distribution; on macOS and Windows it
-  runs natively against interpreters uv installs. Used by the PR `package`
+  runs natively against interpreters uv installs (on a Windows ARM64 runner,
+  the ARM64 ones, built with the ARM64 Rust toolchain). Used by the PR `package`
   job and by the release wheel jobs, so what ships is what CI tested.
 inputs:
   interpreters:
@@ -12,11 +13,31 @@ inputs:
     default: "3.11 3.12 3.13 3.14 3.15"
 outputs:
   interpreters:
-    description: the CPython versions the wheels were built for
-    value: ${{ inputs.interpreters }}
+    description: >-
+      space-separated uv requests for the interpreters the wheels were built
+      for, to pass to `uv venv --python`
+    value: ${{ steps.requests.outputs.requests }}
 runs:
   using: composite
   steps:
+    # A bare version leaves the architecture to uv, which on Windows ARM64
+    # may pick an emulated x86-64 interpreter; name the ARM64 build there.
+    - name: Choose the interpreters
+      id: requests
+      shell: bash
+      env:
+        INTERPRETERS: ${{ inputs.interpreters }}
+        WINDOWS_ARM64: ${{ runner.os == 'Windows' && runner.arch == 'ARM64' }}
+      run: |
+        requests=""
+        for v in $INTERPRETERS; do
+          if [ "$WINDOWS_ARM64" = true ]; then
+            requests="$requests cpython-$v-windows-aarch64-none"
+          else
+            requests="$requests $v"
+          fi
+        done
+        echo "requests=$requests" >> "$GITHUB_OUTPUT"
     # The manylinux image also ships free-threaded CPython and PyPy, which
     # `--find-interpreter` would build for; name the interpreters instead so
     # every platform builds the same set (maturin-action puts the image's
@@ -45,19 +66,26 @@ runs:
       if: runner.os != 'Linux'
       shell: bash
       env:
-        INTERPRETERS: ${{ inputs.interpreters }}
-      run: uv python install $INTERPRETERS
+        REQUESTS: ${{ steps.requests.outputs.requests }}
+      run: uv python install $REQUESTS
     - name: Build native wheels
       if: runner.os != 'Linux'
       shell: bash
       working-directory: frontends/python
       env:
-        INTERPRETERS: ${{ inputs.interpreters }}
+        REQUESTS: ${{ steps.requests.outputs.requests }}
+        WINDOWS_ARM64: ${{ runner.os == 'Windows' && runner.arch == 'ARM64' }}
       run: |
         set -euo pipefail
+        # rustup's default host on the Windows ARM64 runners can be x86-64,
+        # which cannot link against an ARM64 interpreter.
+        if [ "$WINDOWS_ARM64" = true ]; then
+          rustup toolchain install stable-aarch64-pc-windows-msvc --profile minimal
+          export RUSTUP_TOOLCHAIN=stable-aarch64-pc-windows-msvc
+        fi
         args=()
-        for v in $INTERPRETERS; do
-          args+=(--interpreter "$(uv python find "$v")")
+        for r in $REQUESTS; do
+          args+=(--interpreter "$(uv python find "$r")")
         done
         uvx --from 'maturin>=1.9.3,<2.0' maturin build --release --out dist "${args[@]}"
     - name: List the wheels
