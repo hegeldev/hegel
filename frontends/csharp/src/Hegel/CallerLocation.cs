@@ -27,12 +27,15 @@ internal static class CallerLocation
         {
             return declaring;
         }
-        foreach (var field in body.Target.GetType().GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+        IEnumerable<object?> captures = body.Target is Delegate
+            ? [body.Target]
+            : body.Target.GetType().GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic).Select(field => field.GetValue(body.Target));
+        foreach (var value in captures)
         {
-            var captured = field.GetValue(body.Target) switch
+            var captured = value switch
             {
                 Delegate inner => UserType(inner),
-                { } value => value.GetType(),
+                { } other => other.GetType(),
                 null => null,
             };
             if (captured != null && Runner.IsUserFrame(captured, []))
