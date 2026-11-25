@@ -9,7 +9,11 @@ description: >-
 inputs:
   interpreters:
     description: space-separated CPython versions to build for
-    default: "3.11 3.12 3.13 3.14"
+    default: "3.11 3.12 3.13 3.14 3.15"
+outputs:
+  interpreters:
+    description: the CPython versions the wheels were built for
+    value: ${{ inputs.interpreters }}
 runs:
   using: composite
   steps:
