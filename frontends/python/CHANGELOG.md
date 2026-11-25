@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.3 - 2026-11-25
+
+This patch adds wheels for Python 3.15, and wheels for Windows on ARM64.
+
 ## 0.5.2 - 2026-11-24
 
 This release updates the bundled libhegel engine to 0.53.2.

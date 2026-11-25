@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.3 - 2026-11-25
+
+This patch fixes the class name reported for an F# test on .NET 11, where `Settings.TestLocation.ClassName` was `Hegel.UserCode` rather than the module the test is in.
+
 ## 0.4.2 - 2026-11-24
 
 This release updates the bundled libhegel engine to 0.53.2.
