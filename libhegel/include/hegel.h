@@ -67,15 +67,23 @@
  * to keep, so you may free or reuse the memory as soon as the call returns.
  * Run results own their data and are independent of the run they came from.
  *
- * There is one exception: a zone source keeps the loader and user_data
- * given to hegel_zone_source_set_loader, and calls them after that call
- * has returned, for as long as the source keeps the loader. It hands them
- * back through the release callback given with them, which it calls once
- * when it drops the loader; see hegel_zone_source_set_loader.
+ * There are two exceptions where libhegel keeps a callback and its
+ * user_data after the call returns:
  *
- * A pointer libhegel passes to a callback (the context, the source and
- * the name given to a zone source's loader or oracle) is borrowed for the
- * duration of that callback: do not free it or keep it.
+ * - Output callbacks: hegel_run_start and hegel_run_start_blob keep their
+ *   callback and user_data until hegel_run_free returns (freeing a run may
+ *   complete an in-flight test case and emit output);
+ *   hegel_test_case_from_blob keeps them until the test case completes.
+ *   See hegel_run_start and hegel_test_case_from_blob.
+ * - Zone loaders: a zone source keeps the loader and user_data given to
+ *   hegel_zone_source_set_loader for as long as the source keeps the
+ *   loader, and hands them back through the release callback once when it
+ *   drops the loader; see hegel_zone_source_set_loader.
+ *
+ * A pointer libhegel passes to a callback (a line given to an output
+ * callback, or the context, source and name given to a zone source's
+ * loader or oracle) is borrowed for the duration of that callback: do not
+ * free it or keep it.
  *
  * Release every pointer returned by these functions with its matching free:
  *
