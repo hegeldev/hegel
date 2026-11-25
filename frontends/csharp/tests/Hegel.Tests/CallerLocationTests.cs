@@ -59,6 +59,12 @@ public class CallerLocationTests
         Assert.Equal(typeof(Nested).FullName, CallerLocation.ClassName(body));
         wrapper.GetField("second")!.SetValue(target, new Nested().Lambda());
         Assert.Equal(typeof(Nested).FullName, CallerLocation.ClassName(body));
+
+        var call = typeof(UserCode).GetMethods(BindingFlags.Static | BindingFlags.NonPublic)
+            .Single(m => m.Name == "Call" && m.GetParameters() is [{ ParameterType.Name: "Action`1" }, _])
+            .MakeGenericMethod(typeof(TestCase));
+        var closedOverBody = call.CreateDelegate<Action<TestCase>>(body);
+        Assert.Equal(typeof(Nested).FullName, CallerLocation.ClassName(closedOverBody));
     }
 
     [Fact]

@@ -11,8 +11,9 @@ on:
 permissions: {}
 
 jobs:
-  # Both suites on both frameworks the packages are tested against, each
-  # with its 100% line coverage gate.
+  # Both suites on every framework the packages are tested against, each
+  # with its 100% line coverage gate. Only the net11.0 leg installs the .NET
+  # 11 SDK, so the others keep building with the SDK 10 the rest of CI uses.
   test:
     name: test (${{ matrix.framework }})
     runs-on: ubuntu-latest
@@ -22,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        framework: ["net8.0", "net10.0"]
+        framework: ["net8.0", "net10.0", "net11.0"]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -33,6 +34,7 @@ jobs:
           dotnet-version: |
             8.0.x
             10.0.x
+            ${{ matrix.framework == 'net11.0' && '11.0.x' || '' }}
       - name: Test with 100% coverage enforcement
         env:
           HEGEL_TEST_FRAMEWORK: ${{ matrix.framework }}
