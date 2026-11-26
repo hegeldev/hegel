@@ -169,26 +169,50 @@ final class Main {
      * option is reported as unknown rather than as missing its value.
      */
     private static void apply(Libhegel lib, long s, SettingOption option) {
-        String error = setFromString(lib, s, option.key(), Objects.requireNonNullElse(option.value(), ""));
-        if (error != null && error.startsWith("unknown setting")) {
+        InvalidSetting error = setFromString(lib, s, option.key(), Objects.requireNonNullElse(option.value(), ""));
+        if (error != null && error.kind() == InvalidSetting.Kind.UNKNOWN_SETTING) {
             throw new UsageError("unknown argument: " + option.flag());
         }
         if (option.value() == null) {
             throw new UsageError(option.flag() + " requires a value");
         }
         if (error != null) {
-            throw new UsageError(option.flag() + " " + withoutKey(error, option.key()));
+            throw new UsageError(option.flag() + " " + withoutKey(error.message(), option.key()));
         }
         if (option.key().equals("database_key") && option.value().isEmpty()) {
             throw new UsageError("--database-key expects a non-empty key");
         }
     }
 
-    private static String setFromString(Libhegel lib, long s, String key, String value) {
-        if (lib.settingsFromString(s, key, value) == Abi.OK) {
+    /**
+     * Why {@code hegel_settings_set_from_string} rejected a key and value. {@code message} is the
+     * engine's diagnostic for an {@code INVALID_VALUE}, and empty for an {@code UNKNOWN_SETTING}.
+     */
+    private record InvalidSetting(Kind kind, String message) {
+        enum Kind {
+            UNKNOWN_SETTING,
+            INVALID_VALUE
+        }
+    }
+
+    /**
+     * Returns {@code null} when the engine accepts the setting, and throws for any failure other than
+     * a rejected key or value.
+     */
+    private static InvalidSetting setFromString(Libhegel lib, long s, String key, String value) {
+        int rc = lib.settingsFromString(s, key, value);
+        if (rc == Abi.OK) {
             return null;
         }
-        return lastError(lib).replaceFirst("^hegel_settings_set_from_string: ", "");
+        if (rc == Abi.E_UNKNOWN_SETTING) {
+            return new InvalidSetting(InvalidSetting.Kind.UNKNOWN_SETTING, "");
+        }
+        if (rc == Abi.E_INVALID_ARG) {
+            return new InvalidSetting(
+                    InvalidSetting.Kind.INVALID_VALUE,
+                    lastError(lib).replaceFirst("^hegel_settings_set_from_string: ", ""));
+        }
+        throw new HegelException("hegel_settings_set_from_string failed (rc=" + rc + "): " + lastError(lib));
     }
 
     private static String withoutKey(String message, String key) {
